@@ -20,6 +20,7 @@ import {
 } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import type { STTEngineKind } from "@/lib/types";
+import { withBase } from "@/lib/basePath";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -236,7 +237,7 @@ function HamburgerMenu({
             历史
           </button>
           <a
-            href="/review"
+            href={withBase("/review")}
             role="menuitem"
             data-testid="btn-review"
             onClick={() => setOpen(false)}
@@ -338,7 +339,7 @@ export default function Header({
       {/* 品牌 / 引擎 / 操作行 */}
       <div className="flex h-14 items-center gap-3 px-4">
         <div className="flex items-center gap-2 whitespace-nowrap">
-          <img src="/icon-192.png" alt="" className="h-7 w-7" />
+          <img src={withBase("/icon-192.png")} alt="" className="h-7 w-7" />
           <div className="flex flex-col leading-tight">
             <span className="font-mono font-bold tracking-wide text-fg">
               JargonSlayer

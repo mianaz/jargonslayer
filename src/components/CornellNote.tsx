@@ -18,6 +18,7 @@ import {
   type CornellSegment,
 } from "@/lib/cornell";
 import { copyToClipboard, downloadFile } from "@/lib/history/export";
+import { withBase } from "@/lib/basePath";
 
 export interface CornellNoteProps {
   open: boolean;
@@ -330,7 +331,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
                 style={{ borderColor: PAPER_BORDER, color: PAPER_MUT }}
               >
                 <img
-                  src="/icon-192.png"
+                  src={withBase("/icon-192.png")}
                   alt=""
                   className="h-4 w-4 opacity-30"
                 />

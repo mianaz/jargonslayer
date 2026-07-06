@@ -12,6 +12,7 @@ import type {
   SummaryResult,
 } from "../types";
 import { PROVIDER_HEADERS } from "../types";
+import { withBase } from "../basePath";
 
 export class NoKeyError extends Error {
   constructor(message = "未配置 API Key") {
@@ -77,7 +78,7 @@ export async function detectApi(
 ): Promise<DetectResponse> {
   let res: Response;
   try {
-    res = await fetch("/api/detect", {
+    res = await fetch(withBase("/api/detect"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -106,7 +107,7 @@ export async function summarizeApi(
 ): Promise<SummaryResult> {
   let res: Response;
   try {
-    res = await fetch("/api/summarize", {
+    res = await fetch(withBase("/api/summarize"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -138,7 +139,7 @@ export async function defineApi(
 ): Promise<DefineResult> {
   let res: Response;
   try {
-    res = await fetch("/api/define", {
+    res = await fetch(withBase("/api/define"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

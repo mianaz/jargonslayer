@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
+import { withBase } from "@/lib/basePath";
 
 // v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.2) — monospace is
 // the brand identity: JetBrains Mono, self-hosted at build time (no
@@ -18,7 +19,7 @@ export const metadata: Metadata = {
   title: "JargonSlayer · 英文会议实时理解助手",
   description:
     "英文会议实时转录，即时解释商务俚语、隐喻和专有名词，帮你听懂每一句。",
-  manifest: "/manifest.webmanifest",
+  manifest: withBase("/manifest.webmanifest"),
   appleWebApp: {
     capable: true,
     title: "JargonSlayer",

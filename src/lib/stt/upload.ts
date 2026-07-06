@@ -22,6 +22,7 @@ import { scanCustomEntries } from "../history/glossary";
 import { mergeDetections } from "../detect/dedupe";
 import * as storage from "../history/storage";
 import { useApp } from "../store";
+import { withBase } from "../basePath";
 
 const BATCH_CHARS = 1200;
 const CONTEXT_TAIL_CHARS = 800;
@@ -284,7 +285,7 @@ export async function transcribeViaCloud(
     headers[PROVIDER_HEADERS.baseUrl] = settings.baseUrl;
   }
 
-  const res = await fetch("/api/transcribe-cloud", {
+  const res = await fetch(withBase("/api/transcribe-cloud"), {
     method: "POST",
     headers,
     body: form,

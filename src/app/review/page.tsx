@@ -9,6 +9,7 @@ import { useApp } from "@/lib/store";
 import ReviewDashboard from "@/components/review/ReviewDashboard";
 import PracticeDeck from "@/components/review/PracticeDeck";
 import Toast from "@/components/Toast";
+import { withBase } from "@/lib/basePath";
 
 export default function ReviewPage() {
   const hydrated = useApp((s) => s.hydrated);
@@ -22,7 +23,7 @@ export default function ReviewPage() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel/85 px-4 backdrop-blur">
         <a
-          href="/"
+          href={withBase("/")}
           className="flex items-center gap-1.5 text-sm text-mut hover:text-fg"
         >
           ← 返回会议

@@ -6,6 +6,7 @@
 // obtain the source MediaStream.
 
 import type { STTEvents, Settings } from "../types";
+import { withBase } from "../basePath";
 
 const RECONNECT_DELAY_MS = 1000;
 
@@ -86,7 +87,7 @@ export class WsTransport {
   async attachStream(stream: MediaStream): Promise<void> {
     const ctx = new AudioContext();
     this.ctx = ctx;
-    await ctx.audioWorklet.addModule("/worklets/pcm-processor.js");
+    await ctx.audioWorklet.addModule(withBase("/worklets/pcm-processor.js"));
 
     this.sourceNode = ctx.createMediaStreamSource(stream);
     this.workletNode = new AudioWorkletNode(ctx, "pcm-processor");

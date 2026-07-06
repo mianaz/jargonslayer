@@ -9,6 +9,7 @@ import { useState } from "react";
 import { CaretRight, CheckCircle } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import type { STTEngineKind } from "@/lib/types";
+import { withBase } from "@/lib/basePath";
 
 export interface TutorialOverlayProps {
   open: boolean;
@@ -189,7 +190,7 @@ export default function TutorialOverlay({
           {step === 0 && (
             <div>
               <div className="flex items-center gap-2">
-                <img src="/icon-192.png" alt="" className="h-8 w-8 rounded-none" />
+                <img src={withBase("/icon-192.png")} alt="" className="h-8 w-8 rounded-none" />
                 <span className="font-mono text-lg font-bold tracking-wide text-fg">
                   JargonSlayer
                 </span>
