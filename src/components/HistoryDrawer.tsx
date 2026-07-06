@@ -8,7 +8,7 @@ import { X, Trash, UploadSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
-import { importAndTrack } from "@/lib/stt/upload";
+import { importAndTrack, type ImportOptions } from "@/lib/stt/upload";
 
 // Upload-a-recording job tracking is intentionally component-local
 // (not in the global store) — it's ephemeral UI progress, and a page
@@ -54,13 +54,39 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Map<string, ImportJobState>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 导入录音 source-choice popover (#22: sidecar vs cloud). The chosen
+  // mode is stashed in a ref (not state) because it only needs to
+  // survive the synchronous "click row -> open native file picker"
+  // round trip, read once when the file input's onChange fires.
+  const [importPickerOpen, setImportPickerOpen] = useState(false);
+  const importModeRef = useRef<ImportOptions["mode"]>("sidecar");
+  const importPickerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!open) {
       setQuery("");
       setConfirmDeleteId(null);
+      setImportPickerOpen(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!importPickerOpen) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setImportPickerOpen(false);
+    };
+    const handleMouseDown = (e: MouseEvent) => {
+      if (importPickerRef.current && !importPickerRef.current.contains(e.target as Node)) {
+        setImportPickerOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [importPickerOpen]);
 
   const patchJob = (jobId: string, patch: Partial<ImportJobState>) => {
     setJobs((prev) => {
@@ -73,35 +99,49 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
 
   const handleImportFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
+    const mode = importModeRef.current ?? "sidecar";
     for (const file of Array.from(files)) {
       const jobId = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setJobs((prev) =>
         new Map(prev).set(jobId, {
           filename: file.name,
           progress: 0,
-          phase: "转录中",
+          phase: mode === "cloud" ? "云端转录中" : "转录中",
           error: null,
         }),
       );
 
-      void importAndTrack(file, settings, {
-        onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
-        onDone: async (sessionId) => {
-          await loadSession(sessionId);
-          // No dedicated "refresh session metas" action exists on the
-          // store — hydrate() re-reads settings/sessions/glossary from
-          // storage, which is a superset that also refreshes the list.
-          await useApp.getState().hydrate();
-          showToast("已导入并打开会话");
-          setJobs((prev) => {
-            const next = new Map(prev);
-            next.delete(jobId);
-            return next;
-          });
+      void importAndTrack(
+        file,
+        settings,
+        {
+          onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
+          onDone: async (sessionId) => {
+            await loadSession(sessionId);
+            // No dedicated "refresh session metas" action exists on the
+            // store — hydrate() re-reads settings/sessions/glossary from
+            // storage, which is a superset that also refreshes the list.
+            await useApp.getState().hydrate();
+            showToast("已导入并打开会话");
+            setJobs((prev) => {
+              const next = new Map(prev);
+              next.delete(jobId);
+              return next;
+            });
+          },
+          onError: (msg) => patchJob(jobId, { error: msg, phase: "失败" }),
         },
-        onError: (msg) => patchJob(jobId, { error: msg, phase: "失败" }),
-      });
+        { mode },
+      );
     }
+  };
+
+  const canUseCloud = settings.provider === "openai-compat";
+
+  const chooseImportMode = (mode: NonNullable<ImportOptions["mode"]>) => {
+    importModeRef.current = mode;
+    setImportPickerOpen(false);
+    fileInputRef.current?.click();
   };
 
   useEffect(() => {
@@ -178,14 +218,44 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                 e.target.value = "";
               }}
             />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
-            >
-              <UploadSimple size={16} weight="regular" />
-              导入录音
-            </button>
+            <div ref={importPickerRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setImportPickerOpen((v) => !v)}
+                className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+              >
+                <UploadSimple size={16} weight="regular" />
+                导入录音
+              </button>
+
+              {importPickerOpen && (
+                <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-edge bg-panel2 p-1.5 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={() => chooseImportMode("sidecar")}
+                    className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-panel3"
+                  >
+                    <div className="text-sm text-fg">本地 Whisper（推荐·不出本机）</div>
+                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                      需启动本地 sidecar
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!canUseCloud}
+                    onClick={() => chooseImportMode("cloud")}
+                    className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                  >
+                    <div className="text-sm text-fg">云端转录（上传至你配置的兼容端点）</div>
+                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                      {canUseCloud
+                        ? "音频将上传至你在设置中配置的 OpenAI 兼容端点"
+                        : "需先在设置→AI 检测中选择 OpenAI 兼容端点"}
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={onClose}

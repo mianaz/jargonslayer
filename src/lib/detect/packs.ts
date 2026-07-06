@@ -2,10 +2,13 @@
 // to the domains relevant to them (e.g. turn off 学术 jargon if they
 // never attend academic meetings). OWNER: worker G.
 
+import { getLoadedRemotePacks } from "./remotePacks";
+
 export interface DictPack {
   id: string;
   name: string;
   description: string;
+  remote?: boolean;
 }
 
 export const PACKS: DictPack[] = [
@@ -68,4 +71,21 @@ export function isPackEnabled(pack: string, enabled: string[] | null): boolean {
   if (pack === "core") return true;
   if (enabled === null) return true;
   return enabled.includes(pack);
+}
+
+/** Built-in packs plus metadata for every currently-loaded remote pack
+ *  (see remotePacks.ts), so the Settings checkbox list and any other
+ *  pack-aware UI can render both sources uniformly. Remote packs are
+ *  tagged `remote: true` and only appear once
+ *  loadRemotePacksIntoRegistry() has populated the in-memory registry
+ *  (lazily triggered by dictionary.ts's first scan or SettingsDialog's
+ *  mount effect — see those files for why). */
+export function getAllPacks(): DictPack[] {
+  const remotePacks: DictPack[] = getLoadedRemotePacks().map((p) => ({
+    id: p.id,
+    name: p.name,
+    description: p.description ?? `社区词典包 · v${p.version}`,
+    remote: true,
+  }));
+  return [...PACKS, ...remotePacks];
 }

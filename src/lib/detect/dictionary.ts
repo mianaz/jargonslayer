@@ -13,6 +13,7 @@ import type {
 import { EXTRA_EXPRESSIONS, EXTRA_TERMS } from "./dictionary-data";
 import { findEntryBySurface } from "../history/glossary";
 import { isPackEnabled } from "./packs";
+import { getLoadedRemotePacks, loadRemotePacksIntoRegistry } from "./remotePacks";
 
 // ---------------------------------------------------------------
 // Dictionary entry shapes (internal — not part of the wire schema)
@@ -1017,21 +1018,51 @@ function splitSentences(text: string): string[] {
   return raw.map((s) => s.trim()).filter(Boolean);
 }
 
+// ---------------------------------------------------------------
+// Remote pack lazy bootstrap — scanDictionary must stay synchronous
+// (called from the live detection scheduler per-segment), so the
+// registry load below is fire-and-forget: the very first call(s) to
+// scanDictionary may run before any remote packs have finished
+// loading, and later calls automatically pick them up once
+// loadRemotePacksIntoRegistry() resolves. This mirrors the module-
+// level cache pattern already used for enabledPacks/customEntries in
+// this codebase (see the comment on registeredEnabledPacks above and
+// glossary.ts's `cache`). SettingsDialog's mount effect also triggers
+// this load (see that file for why store.hydrate() isn't used here —
+// this worker doesn't own store.ts).
+// ---------------------------------------------------------------
+
+let remotePacksBootstrapped = false;
+
+function ensureRemotePacksBootstrapped(): void {
+  if (remotePacksBootstrapped) return;
+  remotePacksBootstrapped = true;
+  void loadRemotePacksIntoRegistry();
+}
+
 /** Scan text against the built-in dictionaries. Word-boundary,
  *  case-insensitive, light inflection tolerance (e.g. "circling back").
  *  `enabledPacks` defaults to the value last set via setEnabledPacks()
- *  when omitted — see the registry comment above. */
+ *  when omitted — see the registry comment above. Remote packs loaded
+ *  via remotePacks.ts (see the comment above) participate exactly
+ *  like EXTRA_EXPRESSIONS/EXTRA_TERMS, filtered by their own pack id. */
 export function scanDictionary(
   text: string,
   enabledPacks: string[] | null = registeredEnabledPacks,
 ): DetectResponse {
+  ensureRemotePacksBootstrapped();
+
   const sentences = splitSentences(text);
   if (sentences.length === 0) return { expressions: [], terms: [] };
 
   const expressions: DetectedExpression[] = [];
   const terms: DetectedTerm[] = [];
 
-  for (const entry of EXPRESSIONS) {
+  const remotePacks = getLoadedRemotePacks();
+  const remoteExpressions: ExpressionEntry[] = remotePacks.flatMap((p) => p.expressions);
+  const remoteTerms: TermEntry[] = remotePacks.flatMap((p) => p.terms);
+
+  for (const entry of [...EXPRESSIONS, ...remoteExpressions]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     // A personal-glossary entry on this exact surface owns the word —
     // the custom scan (store.addFinal) already emits it as source
@@ -1062,7 +1093,7 @@ export function scanDictionary(
     }
   }
 
-  for (const entry of TERM_DICTIONARY) {
+  for (const entry of [...TERM_DICTIONARY, ...remoteTerms]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     // Same personal-glossary shadowing as the expressions loop above.
     if (findEntryBySurface(entry.term)) continue;

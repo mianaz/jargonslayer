@@ -425,10 +425,17 @@ class JobManager:
         try:
             from pyannote.audio import Pipeline  # type: ignore[import-not-found]
 
-            self._diarize_pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=self.hf_token,
-            )
+            # pyannote 4.x renamed use_auth_token= to token=; support both.
+            try:
+                self._diarize_pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    token=self.hf_token,
+                )
+            except TypeError:
+                self._diarize_pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=self.hf_token,
+                )
             self._diarize_pipeline_error = None
         except Exception as exc:  # noqa: BLE001 - see docstring
             self._diarize_pipeline = None

@@ -9,7 +9,15 @@ import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
 import { packCounts, setEnabledPacks } from "@/lib/detect/dictionary";
-import { PACKS } from "@/lib/detect/packs";
+import { getAllPacks } from "@/lib/detect/packs";
+import {
+  addPackSource,
+  checkUpdates,
+  listPackSources,
+  loadRemotePacksIntoRegistry,
+  removePackSource,
+  type RemotePackSource,
+} from "@/lib/detect/remotePacks";
 import {
   chooseExportFolder,
   clearExportFolder,
@@ -168,8 +176,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
   const [checkedPacks, setCheckedPacks] = useState<Set<string>>(
-    new Set(settings.enabledPacks ?? PACKS.filter((p) => p.id !== "core").map((p) => p.id)),
+    new Set(settings.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
   );
+  // 包源 (remote dictionary packs, #20).
+  const [packSources, setPackSources] = useState<RemotePackSource[]>([]);
+  const [packSourceUrl, setPackSourceUrl] = useState("");
+  const [addingPackSource, setAddingPackSource] = useState(false);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [confirmRemoveUrl, setConfirmRemoveUrl] = useState<string | null>(null);
 
   // App-mount-once (not open-gated): SettingsDialog is always mounted
   // by page.tsx, so this applies the persisted pack selection to the
@@ -178,6 +192,21 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // registry-pattern comment (see setEnabledPacks there).
   useEffect(() => {
     setEnabledPacks(settings.enabledPacks);
+    // Remote packs (#20) have no store.hydrate() hook (this worker
+    // doesn't own store.ts), so they're bootstrapped here — and again,
+    // fire-and-forget, inside dictionary.ts's first scanDictionary()
+    // call — whichever happens first wins; both are idempotent no-ops
+    // once loaded (see loadRemotePacksIntoRegistry's early-return).
+    void loadRemotePacksIntoRegistry().then(() => {
+      setCheckedPacks((prev) => {
+        // Newly-loaded remote packs default to enabled, same as any
+        // other non-core pack, unless the user already has an
+        // explicit enabledPacks selection that excludes them.
+        if (settings.enabledPacks !== null) return prev;
+        return new Set(getAllPacks().filter((p) => p.id !== "core").map((p) => p.id));
+      });
+    });
+    void listPackSources().then(setPackSources);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -185,10 +214,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (open) {
       setDraft(settings);
       setCheckedPacks(
-        new Set(settings.enabledPacks ?? PACKS.filter((p) => p.id !== "core").map((p) => p.id)),
+        new Set(settings.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
       );
       void listAudioInputs().then(setMics);
       void getExportFolderName().then(setExportFolderName);
+      void listPackSources().then(setPackSources);
     }
     // Only reset the draft when the dialog is (re)opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -207,9 +237,61 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     });
   };
 
-  const nonCorePackIds = PACKS.filter((p) => p.id !== "core").map((p) => p.id);
+  const allPacks = getAllPacks();
+  const nonCorePackIds = allPacks.filter((p) => p.id !== "core").map((p) => p.id);
   const allPacksChecked = nonCorePackIds.every((id) => checkedPacks.has(id));
   const packEntryCounts = packCounts();
+
+  const handleAddPackSource = async () => {
+    const url = packSourceUrl.trim();
+    if (!url) return;
+    setAddingPackSource(true);
+    try {
+      const { pack } = await addPackSource(url);
+      setPackSources(await listPackSources());
+      setPackSourceUrl("");
+      showToast(`已添加词典包「${pack.name}」`);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "添加词典包失败");
+    } finally {
+      setAddingPackSource(false);
+    }
+  };
+
+  const handleRemovePackSource = async (url: string) => {
+    if (confirmRemoveUrl !== url) {
+      setConfirmRemoveUrl(url);
+      setTimeout(() => {
+        setConfirmRemoveUrl((cur) => (cur === url ? null : cur));
+      }, 3000);
+      return;
+    }
+    await removePackSource(url);
+    setPackSources(await listPackSources());
+    setConfirmRemoveUrl(null);
+    showToast("已移除词典包");
+  };
+
+  const handleCheckUpdates = async (url?: string) => {
+    setCheckingUpdates(true);
+    try {
+      const updatedIds = await checkUpdates();
+      setPackSources(await listPackSources());
+      if (url) {
+        // Per-source button: only report on whether this one source
+        // changed, even though checkUpdates() refreshes every source.
+        const source = packSources.find((s) => s.url === url);
+        const changed = source ? updatedIds.includes(source.pack.id) : false;
+        showToast(changed ? "已更新到最新版本" : "已是最新版本");
+      } else {
+        showToast(updatedIds.length > 0 ? `已更新 ${updatedIds.length} 个词典包` : "全部已是最新版本");
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "检查更新失败");
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
 
   const handleSave = () => {
     const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
@@ -521,13 +603,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   className="h-4 w-4 accent-acc disabled:opacity-50"
                 />
               </label>
-              {PACKS.filter((p) => p.id !== "core").map((p) => (
+              {allPacks.filter((p) => p.id !== "core").map((p) => (
                 <label
                   key={p.id}
                   className="flex items-center justify-between gap-3 py-1"
                 >
                   <div>
-                    <div className="text-sm text-fg">{p.name}</div>
+                    <div className="text-sm text-fg">
+                      {p.name}
+                      {p.remote && (
+                        <span className="ml-1.5 rounded-full border border-gold/40 px-1.5 py-0 text-[10px] font-normal text-gold">
+                          社区
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-mut2">
                       {p.description}（{packEntryCounts[p.id] ?? 0} 条）
                     </div>
@@ -540,6 +629,85 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   />
                 </label>
               ))}
+            </div>
+
+            {/* 包源 (#20): install community dictionary packs from a
+               URL. getAllPacks() above already folds loaded remote
+               packs into the checkbox list; this subsection manages
+               the underlying sources (add/remove/update-check). */}
+            <div className="space-y-2 border-t border-edge pt-3">
+              <div className="text-xs text-mut">包源</div>
+
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={packSourceUrl}
+                  onChange={(e) => setPackSourceUrl(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void handleAddPackSource();
+                  }}
+                  placeholder="https://raw.githubusercontent.com/…/pack.json"
+                  className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleAddPackSource()}
+                  disabled={addingPackSource || !packSourceUrl.trim()}
+                  className="btn-tactile shrink-0 rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {addingPackSource ? "添加中…" : "添加"}
+                </button>
+              </div>
+
+              {packSources.length > 0 && (
+                <div className="space-y-1.5">
+                  {packSources.map((s) => (
+                    <div
+                      key={s.url}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm text-fg">{s.pack.name}</div>
+                        <div className="font-mono text-xs tabular-nums text-mut2">
+                          v{s.pack.version} ·{" "}
+                          {s.pack.expressions.length + s.pack.terms.length} 条
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => void handleCheckUpdates(s.url)}
+                          disabled={checkingUpdates}
+                          className="btn-tactile rounded-lg px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          检查更新
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleRemovePackSource(s.url)}
+                          className={`btn-tactile rounded-lg px-2 py-1 text-xs hover:bg-panel3 ${
+                            confirmRemoveUrl === s.url ? "text-warn" : "text-mut hover:text-warn"
+                          }`}
+                        >
+                          {confirmRemoveUrl === s.url ? "确认移除?" : "移除"}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => void handleCheckUpdates()}
+                    disabled={checkingUpdates}
+                    className="btn-tactile w-full rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {checkingUpdates ? "检查中…" : "检查全部更新"}
+                  </button>
+                </div>
+              )}
+
+              <div className="text-xs leading-[1.7] text-mut2">
+                从 GitHub raw / jsDelivr 链接安装社区词典包，JSON 格式见文档
+              </div>
             </div>
           </section>
 
