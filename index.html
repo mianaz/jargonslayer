@@ -708,6 +708,22 @@
         </div>
       </div>
 
+      <div class="feat c-cyan reveal">
+        <div class="feat-key">bilingual transcript</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>双语字幕</b>：开启后英文每出一句，中文译文即刻跟在下方——会议还在开，你已经读完了；不用等会后报告再回头猜刚才讲了什么。</span>
+          <span class="lang-en"><b>Live bilingual subtitles</b>: each English sentence gets a Chinese translation the moment it lands — read along while the meeting is still running instead of deciphering a post-meeting summary after the fact.</span>
+        </div>
+      </div>
+
+      <div class="feat c-purple reveal">
+        <div class="feat-key">import anything</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>万物导入</b>：粘贴文稿（.txt / .srt / .vtt）直接解析；丢音频或视频文件进来——Whisper 在浏览器内转录（WebGPU 可用走 WebGPU，否则 WASM；视频经 ffmpeg.wasm 自动剥音轨），文件全程不上传；体验版开箱即用，装了本地 sidecar 还能直接贴视频链接拉取。</span>
+          <span class="lang-en"><b>Import anything</b>: paste a transcript (.txt / .srt / .vtt) for instant parsing, or drop in an audio or video file — Whisper transcribes right in the browser (WebGPU when available, WASM otherwise; video tracks are extracted via ffmpeg.wasm automatically). Nothing gets uploaded. The hosted demo works out of the box; sidecar users can also import directly from a video URL.</span>
+        </div>
+      </div>
+
       <div class="feat c-orange reveal">
         <div class="feat-key">expression detection</div>
         <div class="feat-body">
@@ -751,8 +767,8 @@
       <div class="feat c-green reveal">
         <div class="feat-key">BYOK, multi-model</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek/Qwen/OpenRouter/Ollama），Key 只存本机浏览器。</span>
-          <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama). The key lives only in your local browser.</span>
+          <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek / Qwen / OpenRouter / Ollama），Key 只存本机浏览器；OpenRouter 支持一键 OAuth 登录自动生成 Key，Poe 订阅用户有内置预设，接入零配置。</span>
+          <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama). The key lives only in your local browser. OpenRouter users can connect with one-click OAuth — the key is generated automatically; Poe subscribers get a built-in preset with zero configuration.</span>
         </div>
       </div>
 
