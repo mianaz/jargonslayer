@@ -187,6 +187,10 @@ export interface Settings {
   autoDetect: boolean; // live detection on/off
   dictionaryOnly: boolean; // force offline dictionary mode
   minConfidence: number;
+  // agent-native output layer
+  autoExport: boolean; // write session .md/.json to a chosen folder on save
+  webhookUrl: string; // "" = off; POST session JSON after meeting
+  exportFrontmatter: boolean; // YAML frontmatter on exported markdown
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -203,6 +207,9 @@ export const DEFAULT_SETTINGS: Settings = {
   autoDetect: true,
   dictionaryOnly: false,
   minConfidence: 0.55,
+  autoExport: false,
+  webhookUrl: "",
+  exportFrontmatter: true,
 };
 
 /** Headers that carry LLM provider config from browser to routes.
@@ -361,6 +368,52 @@ export function customEntryToFlashcard(e: CustomEntry): Flashcard {
     back_en: backEn,
     example: e.example || e.context,
     tags: [e.kind === "term" ? e.termType ?? "term" : e.category ?? "expression", "custom"],
+  };
+}
+
+/** Collect a live-detected card into the personal glossary
+ *  ("收藏本场卡片"). Mastery state lives only on glossary entries. */
+export function cardToCustomEntry(c: ExpressionCard): CustomEntry {
+  const now = Date.now();
+  return {
+    id: newId(),
+    kind: "expression",
+    headword: c.expression,
+    variants: [],
+    chinese_explanation: c.chinese_explanation,
+    example: "",
+    context: c.source_sentence,
+    note: "",
+    createdAt: now,
+    updatedAt: now,
+    source: "session",
+    category: c.category,
+    meaning: c.meaning,
+    plain_english: c.plain_english,
+    tone: c.tone,
+    mastered: false,
+    reviewCount: 0,
+  };
+}
+
+export function termToCustomEntry(t: TermCard): CustomEntry {
+  const now = Date.now();
+  return {
+    id: newId(),
+    kind: "term",
+    headword: t.term,
+    variants: [],
+    chinese_explanation: t.gloss_zh,
+    example: "",
+    context: "",
+    note: "",
+    createdAt: now,
+    updatedAt: now,
+    source: "session",
+    termType: t.type,
+    gloss_en: t.gloss_en,
+    mastered: false,
+    reviewCount: 0,
   };
 }
 

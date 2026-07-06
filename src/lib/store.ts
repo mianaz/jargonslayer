@@ -22,6 +22,7 @@ import { mergeDetections } from "./detect/dedupe";
 import type { DetectMode } from "./detect/scheduler";
 import * as storage from "./history/storage";
 import * as glossary from "./history/glossary";
+import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "./types";
 
 // Debounced top-up save for detection results arriving post-stop.
@@ -257,6 +258,16 @@ export const useApp = create<AppState>((set, get) => ({
     await storage.saveSession(session);
     const metas = await storage.listSessions();
     set({ sessions: metas, activeSessionId: session.id });
+    // Agent-native output layer (both no-op unless configured).
+    const { autoExport, exportFrontmatter, webhookUrl } = s.settings;
+    if (autoExport) {
+      void autoExporter.exportSessionToFolder(session, {
+        frontmatter: exportFrontmatter,
+      });
+    }
+    if (webhookUrl) {
+      void autoExporter.postWebhook(session, webhookUrl);
+    }
     return session.id;
   },
 
