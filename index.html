@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer — 英文会议实时理解助手</title>
+<meta name="description" content="JargonSlayer：本地优先的英文会议实时理解助手。把商务俚语、隐喻、委婉说法、专有名词实时变成中文卡片，会后生成双语纪要、全文翻译与学习卡片。开源 MIT。">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="JargonSlayer — 英文会议实时理解助手">
+<meta property="og:description" content="本地优先，把英文会议里的俚语、隐喻、术语实时变成中文卡片；会后生成双语纪要、全文翻译、Anki 学习卡片。开源 MIT。">
+<meta property="og:url" content="https://mianaz.github.io/jargonslayer/">
+<meta property="og:image" content="https://mianaz.github.io/jargonslayer/assets/live.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="JargonSlayer — 英文会议实时理解助手">
+<meta name="twitter:description" content="本地优先，把英文会议里的俚语、隐喻、术语实时变成中文卡片；会后生成双语纪要、全文翻译、Anki 学习卡片。开源 MIT。">
+<meta name="twitter:image" content="https://mianaz.github.io/jargonslayer/assets/live.png">
+
+<link rel="icon" type="image/png" href="assets/icon-192.png">
+<link rel="apple-touch-icon" href="assets/icon-192.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+<style>
+  :root{
+    --ink:#0A0A0A;
+    --panel:#121212;
+    --panel2:#1A1A1A;
+    --panel3:#202020;
+    --edge:#262626;
+    --edge2:#333333;
+    --fg:#EDEDED;
+    --mut:#9A9A9A;
+    --mut2:#5C5C5C;
+    --lab-red:#FF5F56;
+    --lab-orange:#FFAA44;
+    --lab-yellow:#F7D51D;
+    --lab-green:#4ADE80;
+    --lab-purple:#C084FC;
+    --lab-cyan:#22D3EE;
+    --act:#FFFFFF;
+
+    --mono:'JetBrains Mono','SF Mono',ui-monospace,Menlo,Consolas,monospace;
+    --zh:'PingFang SC','Microsoft YaHei',sans-serif;
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+
+  html{ background:var(--ink); }
+
+  body{
+    background:var(--ink);
+    color:var(--fg);
+    font-family:var(--zh);
+    -webkit-font-smoothing:antialiased;
+    line-height:1.6;
+  }
+
+  ::selection{ background:var(--fg); color:var(--ink); }
+
+  a{ color:inherit; }
+
+  img{ max-width:100%; display:block; }
+
+  /* ============ language toggle mechanism ============ */
+  html[data-lang="zh"] .lang-en{ display:none; }
+  html[data-lang="en"] .lang-zh{ display:none; }
+  html[data-lang="en"] body{ font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  html[data-lang="en"] .zh-only{ display:none; }
+
+  /* ============ focus ring ============ */
+  :focus-visible{
+    outline:2px solid var(--lab-cyan);
+    outline-offset:2px;
+  }
+
+  /* ============ layout helpers ============ */
+  .wrap{
+    max-width:1120px;
+    margin:0 auto;
+    padding:0 24px;
+  }
+
+  section{
+    padding:64px 0;
+    border-bottom:1px solid var(--edge);
+  }
+
+  .eyebrow{
+    font-family:var(--mono);
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--mut);
+    margin-bottom:14px;
+    display:block;
+  }
+
+  .section-title{
+    font-size:22px;
+    font-weight:600;
+    color:var(--fg);
+    margin-bottom:28px;
+  }
+  html[data-lang="en"] .section-title{ font-family:var(--mono); }
+
+  /* ============ titlebar (fixed) ============ */
+  .titlebar{
+    position:fixed;
+    top:0; left:0; right:0;
+    z-index:50;
+    display:flex;
+    align-items:center;
+    gap:14px;
+    height:42px;
+    padding:0 16px;
+    background:var(--panel2);
+    border-bottom:1px solid var(--edge);
+    font-family:var(--mono);
+  }
+  .tl-dots{ display:flex; gap:7px; flex-shrink:0; }
+  .tl-dot{ width:10px; height:10px; border-radius:50%; display:inline-block; }
+  .tl-dot.r{ background:var(--lab-red); }
+  .tl-dot.y{ background:var(--lab-orange); }
+  .tl-dot.g{ background:var(--lab-green); }
+
+  .tl-path{
+    font-size:12px;
+    color:var(--mut);
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .tl-path .seg-strong{ color:var(--fg); font-weight:600; }
+  .tl-path .sep{ color:var(--mut2); margin:0 3px; }
+
+  .tl-spacer{ flex:1; }
+
+  .lang-toggle{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--mut);
+    background:transparent;
+    border:1px solid var(--edge);
+    padding:5px 10px;
+    letter-spacing:0.02em;
+    cursor:pointer;
+    flex-shrink:0;
+  }
+  .lang-toggle:hover{ border-color:var(--mut2); color:var(--fg); }
+  .lang-toggle:active{ transform:scale(0.97); }
+
+  .tl-gh{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--mut);
+    border:1px solid var(--edge);
+    padding:5px 10px;
+    text-decoration:none;
+    white-space:nowrap;
+    flex-shrink:0;
+  }
+  .tl-gh:hover{ border-color:var(--mut2); color:var(--fg); }
+  .tl-gh:active{ transform:scale(0.97); }
+
+  /* ============ hero ============ */
+  .hero{
+    padding-top:130px;
+    border-bottom:1px solid var(--edge);
+  }
+  .hero-headline-zh{
+    font-size:38px;
+    font-weight:700;
+    line-height:1.4;
+    color:var(--fg);
+    margin-bottom:14px;
+    letter-spacing:0.01em;
+  }
+  .hero-headline-en{
+    font-family:var(--mono);
+    font-size:26px;
+    font-weight:600;
+    line-height:1.4;
+    color:var(--fg);
+    margin-bottom:14px;
+  }
+  .hero-sub{
+    font-size:15.5px;
+    color:var(--mut);
+    max-width:640px;
+    margin-bottom:28px;
+  }
+  html[data-lang="en"] .hero-sub{ font-family:var(--mono); font-size:14px; }
+
+  .prompt-flourish{
+    font-family:var(--mono);
+    font-size:14px;
+    color:var(--lab-green);
+    background:var(--panel);
+    border:1px solid var(--edge);
+    display:inline-flex;
+    align-items:center;
+    gap:2px;
+    padding:9px 14px;
+    margin-bottom:32px;
+  }
+  .prompt-flourish .p-sym{ color:var(--mut2); margin-right:8px; }
+  .prompt-cursor{
+    display:inline-block;
+    width:7px; height:14px;
+    background:var(--lab-green);
+    margin-left:4px;
+    animation:blink-steps 1s steps(1) infinite;
+  }
+  @keyframes blink-steps{
+    0%,49%{ opacity:1; }
+    50%,100%{ opacity:0; }
+  }
+
+  .btn-row{ display:flex; gap:12px; flex-wrap:wrap; margin-bottom:48px; }
+
+  .btn{
+    font-family:var(--zh);
+    font-size:14px;
+    padding:11px 22px;
+    border-radius:2px;
+    border:1px solid var(--edge);
+    background:transparent;
+    color:var(--fg);
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    text-decoration:none;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  html[data-lang="en"] .btn{ font-family:var(--mono); }
+  .btn:hover{ border-color:var(--mut2); }
+  .btn:active{ transform:scale(0.97); }
+  .btn-primary{
+    background:var(--act);
+    color:var(--ink);
+    border-color:var(--act);
+    font-weight:600;
+  }
+  .btn-primary:hover{ background:#E8E8E8; border-color:#E8E8E8; }
+
+  .term-frame{
+    border:1px solid var(--edge);
+    background:var(--panel);
+  }
+  .term-frame-bar{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    height:36px;
+    padding:0 14px;
+    background:var(--panel2);
+    border-bottom:1px solid var(--edge);
+  }
+  .term-frame-bar .tl-path{ font-size:11.5px; }
+  .term-frame img{ width:100%; display:block; }
+
+  /* ============ why block ============ */
+  .why-grid{
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:20px;
+  }
+  @media (max-width:720px){
+    .why-grid{ grid-template-columns:1fr; }
+  }
+  .why-block{
+    border-left:2px solid var(--mut2);
+    background:var(--panel);
+    padding:22px 22px;
+  }
+  .why-block.c-orange{ border-left-color:var(--lab-orange); }
+  .why-block.c-cyan{ border-left-color:var(--lab-cyan); }
+  .why-num{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--mut);
+    letter-spacing:0.06em;
+    display:block;
+    margin-bottom:10px;
+  }
+  .why-block.c-orange .why-num{ color:var(--lab-orange); }
+  .why-block.c-cyan .why-num{ color:var(--lab-cyan); }
+  .why-title{
+    font-family:var(--mono);
+    font-size:15px;
+    font-weight:700;
+    color:var(--fg);
+    margin-bottom:10px;
+  }
+  .why-body{
+    font-size:14.5px;
+    color:var(--mut);
+    line-height:1.7;
+  }
+  .why-body b, .why-body mark{
+    color:var(--fg);
+    font-weight:600;
+    background:transparent;
+  }
+  .why-closer{
+    margin-top:22px;
+    font-size:14.5px;
+    color:var(--fg);
+    line-height:1.7;
+  }
+
+  /* ============ features (asymmetric block list) ============ */
+  .feat-list{ display:flex; flex-direction:column; }
+  .feat{
+    display:grid;
+    grid-template-columns:220px 1fr;
+    gap:24px;
+    padding:20px 0 20px 16px;
+    border-left:2px solid var(--mut2);
+    border-bottom:1px solid var(--edge);
+  }
+  .feat:first-child{ padding-top:0; }
+  .feat:last-child{ border-bottom:none; }
+  .feat.c-red{ border-left-color:var(--lab-red); }
+  .feat.c-orange{ border-left-color:var(--lab-orange); }
+  .feat.c-yellow{ border-left-color:var(--lab-yellow); }
+  .feat.c-green{ border-left-color:var(--lab-green); }
+  .feat.c-purple{ border-left-color:var(--lab-purple); }
+  .feat.c-cyan{ border-left-color:var(--lab-cyan); }
+
+  .feat-key{
+    font-family:var(--mono);
+    font-size:15px;
+    font-weight:700;
+    color:var(--fg);
+    line-height:1.5;
+  }
+  .feat.c-red .feat-key{ color:var(--lab-red); }
+  .feat.c-orange .feat-key{ color:var(--lab-orange); }
+  .feat.c-yellow .feat-key{ color:var(--lab-yellow); }
+  .feat.c-green .feat-key{ color:var(--lab-green); }
+  .feat.c-purple .feat-key{ color:var(--lab-purple); }
+  .feat.c-cyan .feat-key{ color:var(--lab-cyan); }
+
+  .feat-body{
+    font-size:14.5px;
+    color:var(--mut);
+    line-height:1.7;
+  }
+  .feat-body b{ color:var(--fg); font-weight:600; }
+
+  @media (max-width:640px){
+    .feat{ grid-template-columns:1fr; gap:8px; }
+  }
+
+  /* ============ screenshots strip ============ */
+  .shot-strip{
+    display:grid;
+    grid-template-columns:repeat(3,1fr);
+    gap:20px;
+  }
+  @media (max-width:820px){
+    .shot-strip{ grid-template-columns:1fr; }
+  }
+  .shot{ display:flex; flex-direction:column; gap:10px; }
+  .shot-caption{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--mut);
+    letter-spacing:0.02em;
+  }
+  .shot-caption .zh-only-cap{ color:var(--fg); }
+
+  /* ============ privacy table ============ */
+  .priv-table-frame{
+    border:1px solid var(--edge);
+    background:var(--panel);
+  }
+  .priv-table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:14px;
+  }
+  .priv-table th{
+    font-family:var(--mono);
+    font-size:11px;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:var(--mut);
+    text-align:left;
+    padding:12px 16px;
+    background:var(--panel2);
+    border-bottom:1px solid var(--edge);
+  }
+  .priv-table td{
+    padding:13px 16px;
+    border-bottom:1px solid var(--edge);
+    color:var(--mut);
+    vertical-align:top;
+  }
+  .priv-table tr:last-child td{ border-bottom:none; }
+  .priv-table td.data-col{
+    color:var(--fg);
+    font-weight:500;
+    white-space:nowrap;
+  }
+  .priv-table td.dest-col b{ color:var(--fg); font-weight:600; }
+  .priv-table td.dest-col .dot{
+    display:inline-block;
+    width:7px; height:7px;
+    border-radius:50%;
+    margin-right:8px;
+    flex-shrink:0;
+  }
+  .priv-table td.dest-col{ display:flex; align-items:flex-start; gap:0; }
+  .dot.local{ background:var(--lab-green); }
+  .dot.cloud{ background:var(--lab-orange); }
+
+  .priv-motif{
+    margin-top:20px;
+    font-family:var(--mono);
+    font-size:13px;
+    color:var(--ink);
+    background:var(--lab-green);
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    padding:8px 14px;
+    font-weight:700;
+  }
+  .priv-motif .rec-blink{
+    width:6px; height:6px;
+    border-radius:50%;
+    background:var(--ink);
+    display:inline-block;
+    animation:blink-steps 1.2s steps(1) infinite;
+  }
+
+  /* ============ quickstart ============ */
+  .code-frame{
+    border:1px solid var(--edge);
+    background:var(--panel);
+    position:relative;
+  }
+  .code-frame-bar{
+    display:flex;
+    align-items:center;
+    height:36px;
+    padding:0 14px;
+    background:var(--panel2);
+    border-bottom:1px solid var(--edge);
+    gap:10px;
+  }
+  .code-frame-bar .tl-path{ font-size:11.5px; flex:1; }
+  .copy-btn{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--mut);
+    background:transparent;
+    border:1px solid var(--edge);
+    padding:4px 10px;
+    cursor:pointer;
+    flex-shrink:0;
+  }
+  .copy-btn:hover{ border-color:var(--mut2); color:var(--fg); }
+  .copy-btn:active{ transform:scale(0.97); }
+  .copy-btn.copied{ color:var(--lab-green); border-color:var(--lab-green); }
+
+  pre.code-body{
+    font-family:var(--mono);
+    font-size:13.5px;
+    line-height:1.8;
+    color:var(--fg);
+    padding:18px 20px;
+    overflow-x:auto;
+    white-space:pre;
+  }
+  pre.code-body .cm{ color:var(--mut2); }
+  pre.code-body .kw{ color:var(--lab-green); }
+
+  .quickstart-note{
+    margin-top:18px;
+    font-size:14px;
+    color:var(--mut);
+    line-height:1.7;
+  }
+  .quickstart-note b{ color:var(--fg); font-weight:600; }
+
+  /* ============ bit corner ============ */
+  .bit-corner{
+    display:grid;
+    grid-template-columns:220px 1fr;
+    gap:32px;
+    align-items:center;
+  }
+  @media (max-width:640px){
+    .bit-corner{ grid-template-columns:1fr; }
+  }
+  .bit-img-frame{
+    border:1px solid var(--edge);
+    background:var(--panel);
+    padding:12px;
+  }
+  .bit-text-title{
+    font-family:var(--mono);
+    font-size:16px;
+    font-weight:700;
+    color:var(--lab-green);
+    margin-bottom:12px;
+  }
+  .bit-text-body{
+    font-size:14.5px;
+    color:var(--mut);
+    line-height:1.75;
+  }
+  .bit-text-body b{ color:var(--fg); font-weight:600; }
+  .bit-eggs{
+    margin-top:14px;
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+  }
+  .egg-chip{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--mut);
+    border:1px solid var(--edge);
+    padding:4px 9px;
+  }
+
+  /* ============ footer status line ============ */
+  footer{
+    padding:0;
+    border-bottom:none;
+  }
+  .statusline{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    font-family:var(--mono);
+    font-size:12px;
+    border-top:1px solid var(--edge);
+    background:var(--panel2);
+  }
+  .sl-seg{
+    display:flex;
+    align-items:center;
+    height:38px;
+    padding:0 14px;
+    white-space:nowrap;
+  }
+  .sl-mode{
+    background:var(--fg);
+    color:var(--ink);
+    font-weight:800;
+    letter-spacing:0.03em;
+  }
+  .sl-sep{ color:var(--mut2); }
+  .sl-info{ color:var(--mut); }
+  .sl-info a{ color:var(--mut); text-decoration:none; }
+  .sl-info a:hover{ color:var(--fg); }
+  .statusline-spacer{ flex:1; }
+  .sl-links{ display:flex; }
+
+  /* ============ reveal-on-scroll ============ */
+  .reveal{
+    opacity:0;
+    transform:translateY(8px);
+    transition:opacity .5s ease, transform .5s ease;
+  }
+  .reveal.in-view{
+    opacity:1;
+    transform:translateY(0);
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .prompt-cursor,
+    .priv-motif .rec-blink{
+      animation:none !important;
+      opacity:1;
+    }
+    .reveal{
+      opacity:1 !important;
+      transform:none !important;
+      transition:none !important;
+    }
+    .btn:active, .lang-toggle:active, .tl-gh:active, .copy-btn:active{
+      transform:none !important;
+    }
+  }
+
+  @media (max-width:375px){
+    .wrap{ padding:0 16px; }
+    .hero-headline-zh{ font-size:28px; }
+    .hero-headline-en{ font-size:20px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ titlebar ============ -->
+<div class="titlebar">
+  <div class="tl-dots">
+    <span class="tl-dot r"></span>
+    <span class="tl-dot y"></span>
+    <span class="tl-dot g"></span>
+  </div>
+  <div class="tl-path">
+    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>v0.1.0
+  </div>
+  <div class="tl-spacer"></div>
+  <button class="lang-toggle" id="langToggle" type="button" aria-label="切换语言 / switch language">中 / EN</button>
+  <a class="tl-gh" href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub →</a>
+</div>
+
+<!-- ============ hero ============ -->
+<section class="hero">
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-zh">定位</span><span class="lang-en">POSITIONING</span></span>
+    <h1 class="hero-headline-zh lang-zh">把英文会议，变成一个正在运行的进程</h1>
+    <h1 class="hero-headline-en lang-en">Your English meeting, as a running process</h1>
+    <p class="hero-sub">
+      <span class="lang-zh">本地优先的英文会议实时理解助手：把商务俚语、隐喻、委婉说法、专有名词实时变成简短的中文卡片；会议结束一键生成双语纪要、全文翻译与学习卡片。数据默认留在本机。</span>
+      <span class="lang-en">A local-first real-time comprehension assistant for English meetings: turns business slang, idioms, metaphors, indirect phrasing, and jargon into short Chinese cards live, then produces a bilingual summary, full transcript translation, and study cards. Data stays on your machine by default.</span>
+    </p>
+
+    <div class="prompt-flourish">
+      <span class="p-sym">$</span>jargonslayer --listen<span class="prompt-cursor" aria-hidden="true"></span>
+    </div>
+
+    <div class="btn-row">
+      <a class="btn btn-primary" href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">
+        <span class="lang-zh">在 GitHub 查看</span><span class="lang-en">View on GitHub</span>
+      </a>
+      <a class="btn" href="#quickstart">
+        <span class="lang-zh">快速开始</span><span class="lang-en">Quickstart</span>
+      </a>
+    </div>
+
+    <div class="term-frame reveal">
+      <div class="term-frame-bar">
+        <div class="tl-dots">
+          <span class="tl-dot r"></span>
+          <span class="tl-dot y"></span>
+          <span class="tl-dot g"></span>
+        </div>
+        <div class="tl-path">jargonslayer — demo·本地 — 18 cards</div>
+      </div>
+      <img src="assets/live.png" alt="JargonSlayer 实时会议界面：左侧转录带高亮表达，右侧实时解释卡片" width="2880" height="1626" loading="eager">
+    </div>
+  </div>
+</section>
+
+<!-- ============ why ============ -->
+<section id="why">
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-zh">为什么</span><span class="lang-en">WHY</span></span>
+    <h2 class="section-title lang-zh">非英语母语者卡住的从来不是单词</h2>
+    <h2 class="section-title lang-en">Non-native speakers rarely get stuck on vocabulary</h2>
+
+    <div class="why-grid">
+      <div class="why-block c-orange reveal">
+        <span class="why-num">01</span>
+        <div class="why-title">Non-literal expressions</div>
+        <div class="why-body">
+          <span class="lang-zh">卡在 <b>非字面表达</b> —— <i>move the needle</i>、<i>boil the ocean</i>、<i>table this</i>。每个词都认识，句子却拼不出意思；等反应过来，会议已经翻篇。</span>
+          <span class="lang-en">You know every word in <i>move the needle</i>, <i>boil the ocean</i>, <i>table this</i> — the sentence still doesn't parse, and by the time it does, the meeting has moved on.</span>
+        </div>
+      </div>
+      <div class="why-block c-cyan reveal">
+        <span class="why-num">02</span>
+        <div class="why-title">Proper nouns &amp; acronyms</div>
+        <div class="why-body">
+          <span class="lang-zh">卡在 <b>专有名词与缩写</b> —— ARR、OKR、Series B、内部代号。母语者一秒扫过去，你花那一秒去检索。</span>
+          <span class="lang-en">ARR, OKR, Series B, internal codenames. A native speaker skips past them in a second; you spend that second retrieving.</span>
+        </div>
+      </div>
+    </div>
+
+    <p class="why-closer">
+      <span class="lang-zh">JargonSlayer 是坐在你旁边的同事：它从不打断，只是在侧边栏告诉你那句话「实际」是什么意思。</span>
+      <span class="lang-en">JargonSlayer is the colleague sitting next to you: it never interrupts, it just tells you in the sidebar what that sentence <i>actually</i> meant.</span>
+    </p>
+  </div>
+</section>
+
+<!-- ============ features ============ -->
+<section id="features">
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-zh">功能</span><span class="lang-en">FEATURES</span></span>
+    <h2 class="section-title lang-zh">功能一览</h2>
+    <h2 class="section-title lang-en">Features</h2>
+
+    <div class="feat-list">
+
+      <div class="feat c-green reveal">
+        <div class="feat-key">real-time transcription</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>实时转录</b>：浏览器识别（云端）/ 本地 Whisper / 标签页音频（后两者音频不出本机），每个引擎带「本地 / 云端」数据去向标识；内置演示零依赖看完整流程。</span>
+          <span class="lang-en">Browser speech recognition (cloud), local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled <b>local / cloud</b> so the data path is visible at a glance; a zero-dependency demo shows the whole flow without a microphone or key.</span>
+        </div>
+      </div>
+
+      <div class="feat c-orange reveal">
+        <div class="feat-key">expression detection</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>实时表达检测</b>：LLM 结合前后语境判断，只解释"字面意思 ≠ 实际意思"的表达，专有名词/缩写单独成术语条。没有 API Key 时自动用内置词典（370+ 条、10 个主题包），还能从 GitHub 安装社区词典包。解释语言可切中文或英文。</span>
+          <span class="lang-en"><b>Real-time expression detection</b>: an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether <i>table this</i> means shelving a topic or furniture); proper nouns get separate term cards. Without an API key it falls back to a built-in dictionary (370+ entries, 10 topic packs) and can install community packs from GitHub.</span>
+        </div>
+      </div>
+
+      <div class="feat c-cyan reveal">
+        <div class="feat-key">card experience</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>卡片体验</b>：表达/术语共享同一块状样式，分类色左边条区分；重复出现只计数不刷屏；转录内高亮表达可点定位；选中任意文字即席查询并可一键收进「我的词典」。</span>
+          <span class="lang-en"><b>Card experience</b>: expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup and one-click save to your glossary.</span>
+        </div>
+      </div>
+
+      <div class="feat c-purple reveal">
+        <div class="feat-key">speaker diarization</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>说话人</b>：上传录音自动转录 + 说话人分离（后台进度，完成自动载入）；实时分离 beta（本地运行，标签随会议逐步修正）；说话人标签点击即可改名。</span>
+          <span class="lang-en"><b>Speakers</b>: import a recording for offline transcription + speaker diarization (background job, auto-loads when done), or turn on realtime diarization (beta, local, labels refine as the meeting proceeds). Click a speaker label to rename it.</span>
+        </div>
+      </div>
+
+      <div class="feat c-yellow reveal">
+        <div class="feat-key">post-meeting artifacts</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>会后产物</b>：双语纪要（主题/要点/决定/行动项）、逐段对照全文、学习卡片、康奈尔笔记（正文高亮 + 右栏批注 + 小结，可导出 PNG/Markdown）；另有 Markdown / Anki TSV / JSON 导出与自动落盘、webhook。</span>
+          <span class="lang-en"><b>Post-meeting artifacts</b>: bilingual summary (topic / key points / decisions / action items), paragraph-aligned translation, study cards, and a Cornell-note sheet (highlighted body + margin annotations, exportable as PNG or Markdown); plus Markdown / Anki TSV / JSON export, auto-save to a folder, and a webhook.</span>
+        </div>
+      </div>
+
+      <div class="feat c-red reveal">
+        <div class="feat-key">learning center</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>学习中心</b>：<code>/review</code> 页有统计、高频 Top 10、词云、翻卡练习；个人词典参与后续会议的检测。</span>
+          <span class="lang-en"><b>Learning center</b>: <code>/review</code> has stats, a frequency Top 10, a word cloud, and a flashcard practice deck; your personal glossary feeds back into detection in later meetings.</span>
+        </div>
+      </div>
+
+      <div class="feat c-green reveal">
+        <div class="feat-key">BYOK, multi-model</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek/Qwen/OpenRouter/Ollama），Key 只存本机浏览器。</span>
+          <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama). The key lives only in your local browser.</span>
+        </div>
+      </div>
+
+      <div class="feat c-cyan reveal">
+        <div class="feat-key">history, no accounts</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>会议历史</b>：全部存浏览器 IndexedDB，无账号，支持搜索曾出现过的表达；一键全量备份/恢复。</span>
+          <span class="lang-en"><b>History without accounts</b>: everything in IndexedDB; search old meetings by expression; one-click full backup and restore.</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ============ screenshots strip ============ -->
+<section id="screenshots">
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-zh">截图</span><span class="lang-en">SCREENSHOTS</span></span>
+    <h2 class="section-title lang-zh">静止时 / 会后 / 复习</h2>
+    <h2 class="section-title lang-en">At rest / after the meeting / review</h2>
+
+    <div class="shot-strip">
+      <div class="shot reveal">
+        <div class="term-frame">
+          <div class="term-frame-bar">
+            <div class="tl-dots"><span class="tl-dot r"></span><span class="tl-dot y"></span><span class="tl-dot g"></span></div>
+            <div class="tl-path">jargonslayer — idle</div>
+          </div>
+          <img src="assets/home.png" alt="JargonSlayer 静止首页：终端风格空状态" width="2880" height="1626" loading="lazy">
+        </div>
+        <div class="shot-caption"><span class="lang-zh">the REPL at rest · 静止时的 REPL</span><span class="lang-en">the REPL at rest</span></div>
+      </div>
+
+      <div class="shot reveal">
+        <div class="term-frame">
+          <div class="term-frame-bar">
+            <div class="tl-dots"><span class="tl-dot r"></span><span class="tl-dot y"></span><span class="tl-dot g"></span></div>
+            <div class="tl-path">jargonslayer — summary·export</div>
+          </div>
+          <img src="assets/summary.png" alt="JargonSlayer 会后纪要与导出面板" width="2880" height="1626" loading="lazy">
+        </div>
+        <div class="shot-caption"><span class="lang-zh">minutes &amp; export · 纪要与导出</span><span class="lang-en">minutes &amp; export</span></div>
+      </div>
+
+      <div class="shot reveal">
+        <div class="term-frame">
+          <div class="term-frame-bar">
+            <div class="tl-dots"><span class="tl-dot r"></span><span class="tl-dot y"></span><span class="tl-dot g"></span></div>
+            <div class="tl-path">jargonslayer — /review</div>
+          </div>
+          <img src="assets/review.png" alt="JargonSlayer 学习中心：统计、高频词、翻卡练习" width="2880" height="1626" loading="lazy">
+        </div>
+        <div class="shot-caption"><span class="lang-zh">study deck · 学习中心</span><span class="lang-en">study deck</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ privacy ============ -->
+<section id="privacy">
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-zh">隐私</span><span class="lang-en">PRIVACY</span></span>
+    <h2 class="section-title lang-zh">隐私边界（明确说清楚）</h2>
+    <h2 class="section-title lang-en">Privacy boundaries, stated explicitly</h2>
+
+    <div class="priv-table-frame reveal">
+      <table class="priv-table">
+        <thead>
+          <tr>
+            <th><span class="lang-zh">数据</span><span class="lang-en">Data</span></th>
+            <th><span class="lang-zh">去向</span><span class="lang-en">Destination</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">音频（本地 Whisper / 标签页音频）</span><span class="lang-en">Audio (local Whisper / tab audio)</span>
+            </td>
+            <td class="dest-col"><span class="dot local"></span>
+              <span class="lang-zh">仅本机，websocket 走 127.0.0.1</span><span class="lang-en">Local only, websocket on 127.0.0.1</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">音频（浏览器识别）</span><span class="lang-en">Audio (browser recognition)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">浏览器厂商的语音服务（Google/Apple）</span><span class="lang-en">Browser vendor's speech service</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">转录文本（AI 检测开启时）</span><span class="lang-en">Transcript text (AI detection on)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">发送到 Anthropic API（或你的 OpenAI 兼容端点）用于检测/纪要</span><span class="lang-en">Anthropic API (or your OpenAI-compatible endpoint) for detection/summaries</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">转录文本（词典模式）</span><span class="lang-en">Transcript text (dictionary mode)</span>
+            </td>
+            <td class="dest-col"><span class="dot local"></span>
+              <span class="lang-zh">仅本机</span><span class="lang-en">Local only</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">会议历史、设置、API Key</span><span class="lang-en">History, settings, API key</span>
+            </td>
+            <td class="dest-col"><span class="dot local"></span>
+              <span class="lang-zh">仅本机浏览器（IndexedDB / localStorage）</span><span class="lang-en">Local browser only (IndexedDB / localStorage)</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="priv-motif reveal">
+      <span class="rec-blink" aria-hidden="true"></span>
+      <span class="lang-zh">音频未离开本机</span><span class="lang-en">audio never left this machine</span>
+    </div>
+
+    <p class="quickstart-note">
+      <span class="lang-zh">不想让任何文本出本机：设置里开「仅词典模式」。</span>
+      <span class="lang-en">To keep all text on the machine: Settings → 「仅词典模式」 (dictionary-only mode).</span>
+    </p>
+  </div>
+</section>
+
+<!-- ============ quickstart ============ -->
+<section id="quickstart">
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-zh">快速开始</span><span class="lang-en">QUICKSTART</span></span>
+    <h2 class="section-title lang-zh">快速开始</h2>
+    <h2 class="section-title lang-en">Quickstart</h2>
+
+    <div class="code-frame reveal">
+      <div class="code-frame-bar">
+        <div class="tl-path">bash</div>
+        <button class="copy-btn" id="copyBtn" type="button">
+          <span class="lang-zh">复制</span><span class="lang-en">copy</span>
+        </button>
+      </div>
+      <pre class="code-body" id="codeBlock"><span class="cm"># <span class="lang-zh">克隆仓库</span><span class="lang-en">clone the repo</span></span>
+<span class="kw">git</span> clone https://github.com/mianaz/jargonslayer.git
+<span class="kw">cd</span> jargonslayer
+<span class="kw">npm</span> install
+<span class="kw">npm</span> run dev
+<span class="cm"># <span class="lang-zh">打开</span><span class="lang-en">open</span> http://localhost:3000</span></pre>
+    </div>
+
+    <p class="quickstart-note">
+      <span class="lang-zh">第一次打开会弹出新手引导。<b>先点右上角「演示」</b> —— 不需要麦克风、不需要 API Key，就能看到完整的转录 → 检测 → 卡片 → 会后报告流程（无 Key 时演示走内置词典）。</span>
+      <span class="lang-en">On first launch an onboarding tour appears. <b>Open the ≡ menu and click 「演示」 (Demo) first</b> — no microphone, no API key, and you'll see the full transcription → detection → cards → report flow (the demo runs on the built-in dictionary when no key is configured).</span>
+    </p>
+  </div>
+</section>
+
+<!-- ============ bit corner ============ -->
+<section id="bit">
+  <div class="wrap">
+    <span class="eyebrow"><span class="lang-zh">吉祥物</span><span class="lang-en">MEET BIT</span></span>
+    <div class="bit-corner reveal">
+      <div class="bit-img-frame">
+        <img src="assets/bit.png" alt="Bit，像素龙吉祥物" width="852" height="576" loading="lazy">
+      </div>
+      <div>
+        <div class="bit-text-title">Bit</div>
+        <div class="bit-text-body">
+          <span class="lang-zh">状态栏上蹲着的像素龙叫 <b>Bit</b>：像光标一样眨眼的方块瞳孔，监听时背鳍逐格点亮如信号计，新卡片落地时喷出 ANSI 彩色像素火焰。会议结束 30 秒无动作它就会睡着。</span>
+          <span class="lang-en">The pixel dragon perched on the status line is <b>Bit</b> — cursor-block pupils that blink like a caret, dorsal fins that light up like a signal meter while listening, and ANSI-colored pixel fire when a new card lands. It sleeps 30 seconds after a meeting ends.</span>
+        </div>
+        <div class="bit-eggs">
+          <span class="egg-chip lang-zh">单击 = 眨眼 + 小火焰</span><span class="egg-chip lang-en">click = blink + small flame</span>
+          <span class="egg-chip lang-zh">连续三击 = 彩虹火焰</span><span class="egg-chip lang-en">triple-click = rainbow flame</span>
+          <span class="egg-chip lang-zh">长按 = 翻肚皮</span><span class="egg-chip lang-en">long-press = belly-up</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ footer ============ -->
+<footer>
+  <div class="statusline">
+    <div class="sl-seg sl-mode">-- OPEN SOURCE --</div>
+    <div class="sl-seg sl-info">MIT</div>
+    <div class="sl-seg sl-sep">|</div>
+    <div class="sl-seg sl-info">© 2026 Miana Zeng</div>
+    <div class="statusline-spacer"></div>
+    <div class="sl-links">
+      <div class="sl-seg sl-info"><a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">repo</a></div>
+      <div class="sl-seg sl-info"><a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">releases</a></div>
+      <div class="sl-seg sl-info"><a href="https://github.com/mianaz/jargonslayer/tree/main/docs" target="_blank" rel="noopener">docs</a></div>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  'use strict';
+
+  var html = document.documentElement;
+  var STORE_KEY = 'jargonslayer-landing-lang';
+
+  function applyLang(lang){
+    html.setAttribute('data-lang', lang);
+    html.setAttribute('lang', lang === 'zh' ? 'zh-CN' : 'en');
+  }
+
+  var saved = null;
+  try { saved = localStorage.getItem(STORE_KEY); } catch (e) {}
+  applyLang(saved === 'en' ? 'en' : 'zh');
+
+  var toggle = document.getElementById('langToggle');
+  if (toggle){
+    toggle.addEventListener('click', function(){
+      var next = html.getAttribute('data-lang') === 'zh' ? 'en' : 'zh';
+      applyLang(next);
+      try { localStorage.setItem(STORE_KEY, next); } catch (e) {}
+    });
+  }
+
+  var copyBtn = document.getElementById('copyBtn');
+  var codeBlock = document.getElementById('codeBlock');
+  if (copyBtn && codeBlock){
+    copyBtn.addEventListener('click', function(){
+      var text = codeBlock.textContent.replace(/\n{2,}/g, '\n').trim();
+      var done = function(){
+        copyBtn.classList.add('copied');
+        setTimeout(function(){ copyBtn.classList.remove('copied'); }, 1500);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText){
+        navigator.clipboard.writeText(text).then(done, function(){});
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); done(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    });
+  }
+
+  var prefersReduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var reveals = document.querySelectorAll('.reveal');
+  if (prefersReduced || !('IntersectionObserver' in window)){
+    reveals.forEach(function(el){ el.classList.add('in-view'); });
+  } else {
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(entry){
+        if (entry.isIntersecting){
+          entry.target.classList.add('in-view');
+          io.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.12 });
+    reveals.forEach(function(el){ io.observe(el); });
+  }
+})();
+</script>
+
+</body>
+</html>
