@@ -79,6 +79,14 @@ function mergeExpressions(
     const existing = byKey.get(normKey);
 
     if (existing) {
+      // Custom (personal glossary) cards are the user's own curated
+      // truth — never touched by a later llm/dictionary hit on the
+      // same word. Their count only moves via the store's addFinal
+      // custom-scan path, so this incoming detection is dropped
+      // entirely (no bump, no overwrite).
+      if (existing.source === "custom" && source !== "custom") {
+        continue;
+      }
       existing.count += 1;
       existing.lastSeenAt = now;
       // LLM knows the live context better than the built-in dictionary —
@@ -127,6 +135,10 @@ function mergeTerms(
     const existing = byKey.get(normKey);
 
     if (existing) {
+      // Same custom-glossary protection as mergeExpressions above.
+      if (existing.source === "custom" && source !== "custom") {
+        continue;
+      }
       existing.count += 1;
       existing.lastSeenAt = now;
       if (existing.source === "dictionary" && source === "llm") {

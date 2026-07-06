@@ -70,11 +70,16 @@ export function useMeeting(): UseMeetingResult {
         } else if (status === "error") {
           useApp.getState().showToast(detail ?? "转录引擎错误");
           void runStopFlow();
-        } else if (status === "idle" && detail === "demo_finished") {
+        } else if (
+          status === "idle" &&
+          (detail === "demo_finished" || detail === "capture_ended")
+        ) {
+          const endToast =
+            detail === "capture_ended"
+              ? "共享已结束，会议已保存到历史记录"
+              : "演示结束 — 打开右侧「纪要」标签生成会后报告试试";
           void runStopFlow().then(() => {
-            useApp
-              .getState()
-              .showToast("演示结束 — 打开右侧「纪要」标签生成会后报告试试");
+            useApp.getState().showToast(endToast);
           });
         }
       },

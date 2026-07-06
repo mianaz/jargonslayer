@@ -12,12 +12,14 @@ import type {
   DetectedExpression,
   DetectedTerm,
   ExpressionCategory,
+  LlmProvider,
   MeetingSummary,
   TermType,
 } from "../types";
+import { PROVIDER_HEADERS } from "../types";
 
 // ---------------------------------------------------------------
-// Key resolution
+// Key / provider resolution
 // ---------------------------------------------------------------
 
 /** Resolve the API key for a request: user-supplied header first
@@ -25,6 +27,27 @@ import type {
  *  env var. Returns null when neither is configured. */
 export function resolveKey(req: Request): string | null {
   return req.headers.get("x-meetlingo-key") || process.env.ANTHROPIC_API_KEY || null;
+}
+
+/** Resolve which LLM provider/endpoint a request targets: header
+ *  first (per-browser setting), falling back to server env, falling
+ *  back to first-party Anthropic. */
+export function resolveProvider(req: Request): {
+  provider: LlmProvider;
+  baseUrl: string;
+} {
+  const headerProvider = req.headers.get(PROVIDER_HEADERS.provider);
+  const provider: LlmProvider =
+    headerProvider === "openai-compat" || headerProvider === "anthropic"
+      ? headerProvider
+      : process.env.MEETLINGO_PROVIDER === "openai-compat"
+        ? "openai-compat"
+        : "anthropic";
+
+  const baseUrl =
+    req.headers.get(PROVIDER_HEADERS.baseUrl) || process.env.MEETLINGO_BASE_URL || "";
+
+  return { provider, baseUrl };
 }
 
 // ---------------------------------------------------------------
@@ -196,6 +219,12 @@ export interface CallJsonOptions<T> {
   /** Mark the system prompt as ephemeral-cacheable (long, static
    *  prompts reused across many calls, e.g. live detection). */
   cacheSystem?: boolean;
+  /** Which endpoint family to call. Defaults to "anthropic" so
+   *  existing call sites keep working unchanged. */
+  provider?: LlmProvider;
+  /** Required when provider is "openai-compat", e.g.
+   *  https://api.deepseek.com or http://localhost:11434/v1. */
+  baseUrl?: string;
 }
 
 /** Build the `system` param — either a plain string, or a single
@@ -251,6 +280,107 @@ async function callJsonViaFallback<T>(
   return result.data;
 }
 
+// ---------------------------------------------------------------
+// OpenAI-compatible chat-completions path (DeepSeek / Qwen /
+// OpenRouter / Ollama / any server speaking the same wire shape).
+// ---------------------------------------------------------------
+
+/** Thrown for any non-2xx response from an openai-compat endpoint.
+ *  Carries the upstream HTTP status so mapLlmError can classify it
+ *  the same way it classifies Anthropic.AuthenticationError/RateLimitError. */
+export class OpenAiCompatError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "OpenAiCompatError";
+  }
+}
+
+interface OpenAiChatResponse {
+  choices?: { message?: { content?: string | null } }[];
+}
+
+async function postChatCompletions(
+  baseUrl: string,
+  apiKey: string,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const url = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  return fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
+  if (!opts.baseUrl) {
+    throw new OpenAiCompatError("缺少 Base URL", 400);
+  }
+
+  const baseRequest = {
+    model: opts.model,
+    max_tokens: opts.maxTokens,
+    messages: [
+      { role: "system", content: opts.system },
+      { role: "user", content: opts.user },
+    ],
+    // NOTE: never pass `temperature` here — keep sampling defaults.
+  };
+
+  let res = await postChatCompletions(opts.baseUrl, opts.apiKey, {
+    ...baseRequest,
+    response_format: { type: "json_object" },
+  });
+
+  // Some openai-compat servers reject response_format with a 400 —
+  // retry once without it before treating the request as failed.
+  if (res.status === 400) {
+    res = await postChatCompletions(opts.baseUrl, opts.apiKey, baseRequest);
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new OpenAiCompatError(
+      text.slice(0, 500) || `请求失败（${res.status}）`,
+      res.status,
+    );
+  }
+
+  let payload: OpenAiChatResponse;
+  try {
+    payload = (await res.json()) as OpenAiChatResponse;
+  } catch (err) {
+    throw new BadOutputError("模型输出解析失败：JSON 格式错误", err);
+  }
+
+  const content = payload.choices?.[0]?.message?.content;
+  if (!content || !content.trim()) {
+    throw new BadOutputError("模型未返回文本内容");
+  }
+
+  const jsonText = extractJsonObject(content);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonText);
+  } catch (err) {
+    throw new BadOutputError("模型输出解析失败：JSON 格式错误", err);
+  }
+
+  const result = opts.schema.safeParse(parsed);
+  if (!result.success) {
+    throw new BadOutputError(
+      `模型输出解析失败：${result.error.issues[0]?.message ?? "schema mismatch"}`,
+      result.error,
+    );
+  }
+
+  return result.data;
+}
+
 /**
  * Call the Anthropic Messages API and parse the reply against `schema`.
  *
@@ -268,6 +398,10 @@ async function callJsonViaFallback<T>(
  * request.
  */
 export async function callJson<T>(opts: CallJsonOptions<T>): Promise<T> {
+  if (opts.provider === "openai-compat") {
+    return callJsonOpenAiCompat(opts);
+  }
+
   const client = new Anthropic({ apiKey: opts.apiKey });
 
   try {
@@ -319,6 +453,18 @@ export function mapLlmError(err: unknown): MappedError {
   }
   if (err instanceof Anthropic.RateLimitError) {
     return { status: 429, body: { error: "请求过于频繁，请稍后再试", code: "rate_limit" } };
+  }
+  if (err instanceof OpenAiCompatError) {
+    if (err.status === 400 && err.message === "缺少 Base URL") {
+      return { status: 400, body: { error: "缺少 Base URL", code: "bad_request" } };
+    }
+    if (err.status === 401 || err.status === 403) {
+      return { status: 401, body: { error: "API Key 无效", code: "no_key" } };
+    }
+    if (err.status === 429) {
+      return { status: 429, body: { error: "请求过于频繁，请稍后再试", code: "rate_limit" } };
+    }
+    return { status: 502, body: { error: err.message, code: "upstream" } };
   }
   if (err instanceof BadOutputError) {
     return { status: 502, body: { error: "模型输出解析失败", code: "upstream" } };

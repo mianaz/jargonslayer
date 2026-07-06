@@ -10,8 +10,10 @@ import {
   MeetingSummarySchema,
   mapLlmError,
   resolveKey,
+  resolveProvider,
   TranslationsSchema,
 } from "@/lib/llm/anthropic";
+import type { LlmProvider } from "@/lib/types";
 import {
   buildSweepUserMessage,
   SUMMARY_SYSTEM_PROMPT,
@@ -69,6 +71,13 @@ function errorBody(body: ApiErrorBody, status: number) {
   return NextResponse.json(body, { status });
 }
 
+/** Provider/baseUrl pair threaded through every callJson call in
+ *  this route so all three stages hit the same configured endpoint. */
+interface LlmConfig {
+  provider: LlmProvider;
+  baseUrl: string;
+}
+
 // ---------------------------------------------------------------
 // Stage a — summary
 // ---------------------------------------------------------------
@@ -83,6 +92,7 @@ async function runSummaryStage(
   apiKey: string,
   model: string,
   segments: SummarizeRequest["segments"],
+  llm: LlmConfig,
 ): Promise<MeetingSummary> {
   return callJson({
     apiKey,
@@ -91,6 +101,7 @@ async function runSummaryStage(
     user: formatSegmentsForSummary(segments),
     schema: MeetingSummarySchema,
     maxTokens: 4000,
+    ...llm,
   });
 }
 
@@ -160,6 +171,7 @@ async function translateChunk(
   apiKey: string,
   model: string,
   chunk: SummarizeRequest["segments"],
+  llm: LlmConfig,
 ): Promise<Map<number, string>> {
   const userPayload = JSON.stringify(chunk.map((s) => ({ i: s.index, en: s.text })));
   const res = await callJson({
@@ -169,6 +181,7 @@ async function translateChunk(
     user: userPayload,
     schema: TranslationsSchema,
     maxTokens: 3000,
+    ...llm,
   });
 
   const map = new Map<number, string>();
@@ -180,6 +193,7 @@ async function runTranslationStage(
   apiKey: string,
   model: string,
   segments: SummarizeRequest["segments"],
+  llm: LlmConfig,
 ): Promise<TranslationPair[]> {
   if (segments.length === 0) return [];
 
@@ -188,7 +202,7 @@ async function runTranslationStage(
 
   const chunkMaps = await runPool(chunks, TRANSLATE_CONCURRENCY, async (chunk) => {
     try {
-      return await translateChunk(apiKey, model, chunk);
+      return await translateChunk(apiKey, model, chunk, llm);
     } catch (err) {
       console.warn("[summarize] translation chunk failed", err);
       return new Map<number, string>();
@@ -202,7 +216,7 @@ async function runTranslationStage(
   const missing = segments.filter((s) => !resultsByIndex.has(s.index));
   if (missing.length > 0) {
     try {
-      const repairMap = await translateChunk(apiKey, model, missing);
+      const repairMap = await translateChunk(apiKey, model, missing, llm);
       for (const [i, zh] of repairMap) resultsByIndex.set(i, zh);
     } catch (err) {
       console.warn("[summarize] translation repair pass failed", err);
@@ -228,6 +242,7 @@ async function runSweepStage(
   model: string,
   segments: SummarizeRequest["segments"],
   alreadyCaptured: string[],
+  llm: LlmConfig,
 ): Promise<{ expressions: DetectedExpression[]; terms: DetectedTerm[] }> {
   const fullTranscript = segments
     .map((s) => (s.speaker ? `${s.speaker}: ${s.text}` : s.text))
@@ -241,6 +256,7 @@ async function runSweepStage(
       user: buildSweepUserMessage(fullTranscript, alreadyCaptured),
       schema: DetectResponseSchema,
       maxTokens: 2500,
+      ...llm,
     });
 
     return {
@@ -328,18 +344,25 @@ export async function POST(req: Request) {
     return errorBody({ error: "未配置 API Key", code: "no_key" }, 401);
   }
 
+  const { provider, baseUrl } = resolveProvider(req);
+  if (provider === "openai-compat" && !baseUrl) {
+    return errorBody({ error: "缺少 Base URL", code: "bad_request" }, 400);
+  }
+  const llm: LlmConfig = { provider, baseUrl };
+
   const model = requestedModel ?? "claude-sonnet-5";
 
   try {
-    const summary = await runSummaryStage(apiKey, model, segments);
+    const summary = await runSummaryStage(apiKey, model, segments, llm);
 
     const [translations, sweep] = await Promise.all([
-      runTranslationStage(apiKey, model, segments),
+      runTranslationStage(apiKey, model, segments, llm),
       runSweepStage(
         apiKey,
         model,
         segments,
         [...expressions.map((e) => e.expression), ...terms.map((t) => t.term)],
+        llm,
       ),
     ]);
 

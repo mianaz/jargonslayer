@@ -10,6 +10,8 @@ import type {
   ExpressionCategory,
   TermType,
 } from "../types";
+import { EXTRA_EXPRESSIONS, EXTRA_TERMS } from "./dictionary-data";
+import { findEntryBySurface } from "../history/glossary";
 
 // ---------------------------------------------------------------
 // Dictionary entry shapes (internal — not part of the wire schema)
@@ -38,7 +40,7 @@ interface TermEntry {
 // Chinese, <=40 chars, no dictionary tone. plain_english: <=10 words.
 // ---------------------------------------------------------------
 
-const EXPRESSIONS: ExpressionEntry[] = [
+const BASE_EXPRESSIONS: ExpressionEntry[] = [
   {
     expression: "get the ball rolling",
     category: "idiom",
@@ -635,7 +637,7 @@ const EXPRESSIONS: ExpressionEntry[] = [
 // Terms (>=25). gloss_zh <=25 chars.
 // ---------------------------------------------------------------
 
-const TERM_DICTIONARY: TermEntry[] = [
+const BASE_TERM_DICTIONARY: TermEntry[] = [
   {
     term: "ARR",
     type: "metric",
@@ -819,6 +821,39 @@ const TERM_DICTIONARY: TermEntry[] = [
 ];
 
 // ---------------------------------------------------------------
+// Merge base + extended (dictionary-data.ts, filled separately) —
+// dedupe by normalized expression/term string, base wins on conflict.
+// ---------------------------------------------------------------
+
+function normalizeDictKey(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+function dedupeByKey<T>(base: T[], extra: T[], keyOf: (item: T) => string): T[] {
+  const seen = new Set(base.map((item) => normalizeDictKey(keyOf(item))));
+  const merged = [...base];
+  for (const item of extra) {
+    const key = normalizeDictKey(keyOf(item));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
+}
+
+const EXPRESSIONS: ExpressionEntry[] = dedupeByKey(
+  BASE_EXPRESSIONS,
+  EXTRA_EXPRESSIONS,
+  (e) => e.expression,
+);
+
+const TERM_DICTIONARY: TermEntry[] = dedupeByKey(
+  BASE_TERM_DICTIONARY,
+  EXTRA_TERMS,
+  (t) => t.term,
+);
+
+// ---------------------------------------------------------------
 // Matching helpers
 // ---------------------------------------------------------------
 
@@ -859,6 +894,10 @@ export function scanDictionary(text: string): DetectResponse {
   const terms: DetectedTerm[] = [];
 
   for (const entry of EXPRESSIONS) {
+    // A personal-glossary entry on this exact surface owns the word —
+    // the custom scan (store.addFinal) already emits it as source
+    // "custom"; skip the dictionary's own version entirely.
+    if (findEntryBySurface(entry.expression)) continue;
     const candidates = [entry.expression, ...(entry.variants ?? [])];
     const regexes = candidates.map(buildExpressionRegex);
     let matched = false;
@@ -885,6 +924,8 @@ export function scanDictionary(text: string): DetectResponse {
   }
 
   for (const entry of TERM_DICTIONARY) {
+    // Same personal-glossary shadowing as the expressions loop above.
+    if (findEntryBySurface(entry.term)) continue;
     // All-caps acronyms match case-sensitively (\bARR\b); mixed-case
     // terms (e.g. "Series B", "headcount") match case-insensitively.
     const isAllCaps = /^[A-Z0-9&]+$/.test(entry.term);

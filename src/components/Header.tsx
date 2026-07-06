@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import {
   ClockCounterClockwise,
   GearSix,
+  GraduationCap,
   Question,
 } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
@@ -207,6 +208,15 @@ export default function Header({
         >
           <ClockCounterClockwise size={20} weight="regular" />
         </button>
+        <a
+          href="/review"
+          data-testid="btn-review"
+          title="学习中心"
+          aria-label="学习中心"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg"
+        >
+          <GraduationCap size={20} weight="regular" />
+        </a>
         <button
           type="button"
           data-testid="btn-settings"

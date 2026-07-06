@@ -202,6 +202,57 @@ export function downloadFile(filename: string, content: string, mime: string): v
   URL.revokeObjectURL(url);
 }
 
+function yamlListItem(s: string): string {
+  return `  - "${s.replace(/"/g, '\\"')}"`;
+}
+
+function yamlString(s: string): string {
+  return `"${s.replace(/"/g, '\\"')}"`;
+}
+
+/** YAML frontmatter block for exported markdown — Obsidian-compatible
+ *  (title/date/duration/engine/expressions/terms/source/schemaVersion).
+ *  Shared by the manual export button and the auto-export folder. */
+export function buildObsidianFrontmatter(session: MeetingSession): string {
+  const durationMin = Math.max(
+    0,
+    Math.round((session.endedAt - session.startedAt) / 60000),
+  );
+  const lines: string[] = ["---"];
+  lines.push(`title: ${yamlString(session.title)}`);
+  lines.push(`date: ${new Date(session.startedAt).toISOString()}`);
+  lines.push(`duration_min: ${durationMin}`);
+  lines.push(`engine: ${yamlString(session.engine)}`);
+  if (session.cards.length === 0) {
+    lines.push("expressions: []");
+  } else {
+    lines.push("expressions:");
+    for (const c of session.cards) lines.push(yamlListItem(c.expression));
+  }
+  if (session.terms.length === 0) {
+    lines.push("terms: []");
+  } else {
+    lines.push("terms:");
+    for (const t of session.terms) lines.push(yamlListItem(t.term));
+  }
+  lines.push("source: meetlingo");
+  lines.push("schemaVersion: 1");
+  lines.push("---");
+  return lines.join("\n");
+}
+
+/** Copy text to the system clipboard. Resolves false on failure
+ *  (unsupported browser, denied permission) instead of throwing. */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (err) {
+    console.warn("[export] copyToClipboard failed", err);
+    return false;
+  }
+}
+
 // Re-exported for consumers that want category labels consistent
 // with the report (e.g. UI badges) without duplicating the map.
 export function categoryLabel(category: string): string {

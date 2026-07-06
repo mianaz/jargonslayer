@@ -8,6 +8,7 @@ import {
   DetectResponseSchema,
   mapLlmError,
   resolveKey,
+  resolveProvider,
 } from "@/lib/llm/anthropic";
 import { buildDetectUserMessage, DETECT_SYSTEM_PROMPT } from "@/lib/llm/prompts";
 import type { ApiErrorBody, DetectResponse } from "@/lib/types";
@@ -60,6 +61,11 @@ export async function POST(req: Request) {
     return errorBody({ error: "未配置 API Key", code: "no_key" }, 401);
   }
 
+  const { provider, baseUrl } = resolveProvider(req);
+  if (provider === "openai-compat" && !baseUrl) {
+    return errorBody({ error: "缺少 Base URL", code: "bad_request" }, 400);
+  }
+
   try {
     const raw = await callJson({
       apiKey,
@@ -69,6 +75,8 @@ export async function POST(req: Request) {
       schema: DetectResponseSchema,
       maxTokens: 1000,
       cacheSystem: true,
+      provider,
+      baseUrl,
     });
 
     const filtered = postFilter(raw, new_text);

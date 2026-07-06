@@ -3,12 +3,15 @@
 
 import type {
   ApiErrorBody,
+  DefineRequest,
+  DefineResult,
   DetectRequest,
   DetectResponse,
   Settings,
   SummarizeRequest,
   SummaryResult,
 } from "../types";
+import { PROVIDER_HEADERS } from "../types";
 
 export class NoKeyError extends Error {
   constructor(message = "未配置 API Key") {
@@ -31,8 +34,19 @@ export class UpstreamError extends Error {
   }
 }
 
+/** Every header the routes need to resolve key + provider + endpoint
+ *  for a request, built from the current settings. */
 function authHeaders(settings: Settings): Record<string, string> {
-  return settings.apiKey ? { "x-meetlingo-key": settings.apiKey } : {};
+  const headers: Record<string, string> = {
+    [PROVIDER_HEADERS.provider]: settings.provider,
+  };
+  if (settings.apiKey) {
+    headers[PROVIDER_HEADERS.key] = settings.apiKey;
+  }
+  if (settings.provider === "openai-compat" && settings.baseUrl) {
+    headers[PROVIDER_HEADERS.baseUrl] = settings.baseUrl;
+  }
+  return headers;
 }
 
 async function parseErrorBody(res: Response): Promise<string | undefined> {
@@ -113,4 +127,56 @@ export async function summarizeApi(
   }
 
   return (await res.json()) as SummaryResult;
+}
+
+export async function defineApi(
+  body: DefineRequest,
+  settings: Settings,
+): Promise<DefineResult> {
+  let res: Response;
+  try {
+    res = await fetch("/api/define", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(settings),
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new UpstreamError("解释请求超时");
+    }
+    throw new UpstreamError("解释请求失败，请检查网络连接");
+  }
+
+  if (!res.ok) {
+    await throwForStatus(res);
+  }
+
+  return (await res.json()) as DefineResult;
+}
+
+/** Probe the configured provider/key/baseUrl with a trivial detect
+ *  call and translate the outcome into a user-facing message for the
+ *  Settings dialog's 「测试连接」button. Never throws. */
+export async function testConnection(
+  settings: Settings,
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    await detectApi(
+      { context: "", new_text: "We need to circle back on this." },
+      settings,
+    );
+    return { ok: true, message: "连接成功，模型可用" };
+  } catch (err) {
+    if (err instanceof NoKeyError) {
+      return { ok: false, message: "Key 未配置或无效" };
+    }
+    if (err instanceof RateLimitApiError) {
+      return { ok: true, message: "连接成功但被限流（Key 有效）" };
+    }
+    return { ok: false, message: err instanceof Error ? err.message : "连接失败" };
+  }
 }

@@ -9,10 +9,16 @@ import {
   buildAnkiTSV,
   buildMarkdownReport,
   buildSessionJson,
+  copyToClipboard,
   downloadFile,
 } from "@/lib/history/export";
+import { findEntryBySurface } from "@/lib/history/glossary";
+import { cardToCustomEntry, termToCustomEntry } from "@/lib/types";
 
 function ExportRow() {
+  const cards = useApp((s) => s.cards);
+  const showToast = useApp((s) => s.showToast);
+
   const handleExport = (kind: "md" | "tsv" | "json") => {
     const session = currentSessionSnapshot();
     if (!session) return;
@@ -35,6 +41,29 @@ function ExportRow() {
         "application/json",
       );
     }
+  };
+
+  const handleCopy = async () => {
+    const session = currentSessionSnapshot();
+    if (!session) return;
+    const ok = await copyToClipboard(buildMarkdownReport(session));
+    showToast(ok ? "已复制到剪贴板" : "复制失败");
+  };
+
+  const handleCollect = async () => {
+    const { cards: liveCards, terms: liveTerms, addCustomEntry } = useApp.getState();
+    let added = 0;
+    for (const c of liveCards) {
+      if (findEntryBySurface(c.expression)) continue;
+      await addCustomEntry(cardToCustomEntry(c));
+      added += 1;
+    }
+    for (const t of liveTerms) {
+      if (findEntryBySurface(t.term)) continue;
+      await addCustomEntry(termToCustomEntry(t));
+      added += 1;
+    }
+    showToast(added === 0 ? "全部已在词典中" : `已收藏 ${added} 条到我的词典`);
   };
 
   return (
@@ -60,6 +89,22 @@ function ExportRow() {
       >
         导出 JSON
       </button>
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+      >
+        复制纪要
+      </button>
+      {cards.length > 0 && (
+        <button
+          type="button"
+          onClick={() => void handleCollect()}
+          className="btn-tactile rounded-lg border border-gold/30 px-3 py-1.5 text-xs text-gold hover:bg-panel3"
+        >
+          ⭐ 收藏本场卡片
+        </button>
+      )}
     </div>
   );
 }
