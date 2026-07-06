@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+build/
+*.log
+.DS_Store
+.env
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts.bak
+
+# python sidecar
+sidecar/__pycache__/
+sidecar/.venv/
+sidecar/*.wav

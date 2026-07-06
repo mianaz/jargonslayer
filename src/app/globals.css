@@ -1,0 +1,122 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #0a0d13;
+  --panel: #10141d;
+  --panel2: #161b27;
+  --edge: #232b3a;
+  --fg: #e8ecf4;
+  --mut: #8b95a9;
+  --acc: #5b9dff;
+  --acc2: #3ed598;
+  --gold: #e5b455;
+  --warn: #e06c75;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink text-fg antialiased;
+  font-feature-settings: "cv02", "cv03";
+}
+
+/* thin scrollbars */
+.scroll-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--edge);
+  border-radius: 3px;
+}
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+  background: #2f3a4e;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* new-card highlight: gold glow that fades over ~4s */
+@keyframes cardGlow {
+  0% {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 1px var(--gold), 0 4px 24px rgba(229, 180, 85, 0.25);
+    transform: translateY(4px);
+    opacity: 0.4;
+  }
+  12% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  70% {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 1px var(--gold), 0 2px 12px rgba(229, 180, 85, 0.12);
+  }
+  100% {
+    border-color: var(--edge);
+    box-shadow: none;
+  }
+}
+.card-new {
+  animation: cardGlow 4s ease-out both;
+}
+
+/* re-detected card: brief gold pulse */
+@keyframes cardPulse {
+  0% {
+    border-color: var(--gold);
+    box-shadow: 0 0 0 1px var(--gold);
+  }
+  100% {
+    border-color: var(--edge);
+    box-shadow: none;
+  }
+}
+.card-repulse {
+  animation: cardPulse 1.6s ease-out both;
+}
+
+/* recording dot */
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+.dot-live {
+  animation: pulseDot 1.4s ease-in-out infinite;
+}
+
+/* generic fade-up for segments */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fadeUp 0.25s ease-out both;
+}
+
+/* highlighted expression inside transcript */
+.hl-expr {
+  @apply rounded px-0.5 text-gold underline decoration-gold/50 decoration-dotted underline-offset-4 cursor-pointer;
+  background: rgba(229, 180, 85, 0.08);
+}
+.hl-expr:hover {
+  background: rgba(229, 180, 85, 0.18);
+}
