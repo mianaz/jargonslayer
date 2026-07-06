@@ -118,6 +118,16 @@ body {
   background: rgba(255, 170, 68, 0.18);
 }
 
+/* highlighted term inside transcript — lab-cyan is the reserved
+   term-highlight-underline token (tailwind.config.ts / DESIGN.md). */
+.hl-term {
+  @apply rounded px-0.5 text-lab-cyan underline decoration-lab-cyan/70 decoration-dotted underline-offset-4 cursor-pointer;
+  background: rgba(34, 211, 238, 0.08);
+}
+.hl-term:hover {
+  background: rgba(34, 211, 238, 0.18);
+}
+
 /* keyboard focus baseline — every interactive element gets a visible ring */
 :focus-visible {
   outline: 2px solid var(--lab-cyan);

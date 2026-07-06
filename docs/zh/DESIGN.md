@@ -74,6 +74,7 @@ CSS 变量定义在 `globals.css` 的 `:root, [data-theme="terminal"]` 下;Tailw
 2. 旧版 v1 蓝色 `--acc #5B9DFF` 及所有蓝调灰已废弃。发现即替换。
 3. `warn` 语义:填充使用 lab-red(仅限小元素);warn **文本**使用 `warn-soft #FF8A80`(在深色面板上满足 AA)。破坏性主按钮使用 lab-red 描边而非填充(白色是唯一允许的大面积填充强调)。
 4. 迁移期别名(`acc/acc2/gold/warn`、`--font-display`)已**退役**(2026-07-06),组件中无残留引用;`warn-soft` 已提升为正式 token(规则 3)。唯一保留的 v2 遗物是 Cornell 羊皮纸导出制品,其金色/衬线值以内联方式固定:这是冻结的制品,不是迁移残留。
+5. (2026-07-06) 实时转录现已通过 `.hl-term` 高亮术语卡,使用上表中预留的 lab-cyan 术语高亮下划线 token——与 `.hl-expr` 相同的点线下划线样式(圆角、`decoration-dotted`、`underline-offset-4`、悬停时低透明度背景)。全大写术语(`surface === surface.toUpperCase()`)采用大小写敏感匹配,避免与日常词汇误撞(如 IT/US/REST);混合大小写术语保持大小写不敏感。
 
 ## v3.2 字体
 

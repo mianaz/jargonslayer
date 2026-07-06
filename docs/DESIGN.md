@@ -74,6 +74,7 @@ Rules:
 2. The old v1 blue `--acc #5B9DFF` and every blue-tinted grey are dead. If you find one, replace it.
 3. `warn` semantics: fills use lab-red (small elements only); warn **text** uses `warn-soft #FF8A80` (AA-safe on dark panels). Destructive primary buttons are outlined lab-red, not filled (white is the only large filled accent).
 4. Migration-era aliases (`acc/acc2/gold/warn`, `--font-display`) are **retired** (2026-07-06) — no component references remain; `warn-soft` was promoted to a real token (rule 3). The one intentional v2 survivor is the Cornell parchment export artifact, which pins its gold/serif values inline: it is a frozen artifact, not a migration straggler.
+5. (2026-07-06) The live transcript now also highlights term cards via `.hl-term`, using the reserved lab-cyan term-highlight-underline token from the table above — same dotted-underline pattern as `.hl-expr` (rounded, `decoration-dotted`, `underline-offset-4`, low-alpha background on hover). All-caps terms (`surface === surface.toUpperCase()`) match case-sensitively to avoid false positives against everyday words (e.g. IT/US/REST); mixed-case terms stay case-insensitive.
 
 ## v3.2 Type
 

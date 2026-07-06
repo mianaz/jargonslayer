@@ -3,11 +3,13 @@
 // no React — so it is fully unit-testable; CornellNote.tsx renders it,
 // cornellToMarkdown() serializes it for the agent-native export story.
 //
-// Matching approach mirrors TranscriptPanel.tsx's buildMatcher/
-// resolveCardId (word-boundary regex, longest-expression-first, an
-// optional trailing inflection on the last word) — not importable from
-// there (private to that component), so re-implemented here against
-// the same contract rather than inventing a different one.
+// Matching for the live transcript now lives in src/lib/highlight.ts
+// (buildHighlightMatcher, covers both expressions and terms). cornell
+// keeps its own variant deliberately: a different sort key (word count
+// then length, vs. plain length), first-registration-wins instead of
+// last-one-wins, a lang-dependent gloss payload (zh/en), and a frozen
+// post-meeting artifact contract — not a candidate for sharing code
+// with the live-transcript matcher.
 
 import type {
   ExplainLanguage,

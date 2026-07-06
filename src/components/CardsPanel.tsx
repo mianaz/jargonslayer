@@ -10,35 +10,16 @@
 // lab-* hue (CATEGORY_COLOR below); all terms share one lab-cyan bar
 // regardless of TermType (term-type chip text stays mut, not colored).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { CaretUp, CaretUpDown } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
+import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import type {
   DetectionSource,
   ExpressionCard,
   ExpressionCategory,
   TermCard,
-  TermType,
 } from "@/lib/types";
-
-const CATEGORY_LABELS: Record<ExpressionCategory, string> = {
-  idiom: "习语",
-  slang: "俚语",
-  phrase: "短语",
-  metaphor: "隐喻",
-  indirect: "委婉",
-  other: "其他",
-};
-
-const TERM_TYPE_LABELS: Record<TermType, string> = {
-  acronym: "缩写",
-  company: "公司",
-  product: "产品",
-  tech: "技术",
-  metric: "指标",
-  person: "人名",
-  other: "其他",
-};
 
 // Left-bar + category-chip hue per expression category (docs/DESIGN.md
 // v3 spec, exact mapping). "other" has no lab-* hue of its own — it maps
@@ -206,32 +187,25 @@ function CollapseAffordance({ onCollapse }: { onCollapse: () => void }) {
   );
 }
 
-function ExpressionCardRow({
-  card,
-  expanded,
-  onToggle,
-}: {
-  card: ExpressionCard;
-  expanded: boolean;
-  onToggle: () => void;
-}) {
+/** Shared focusCardId scroll+ring behavior for both card kinds: when
+ *  `id` becomes the focused card, scroll it into view and flash a ring
+ *  for 1.5s, then clear the focus request.
+ *
+ *  Scroll+ring only ever run against the expanded layout: if this card
+ *  is still collapsed when it becomes focused, the panel-level effect
+ *  (CardsPanel) expands it first, which re-runs this effect once
+ *  `expanded` flips true and the ref points at the real (expanded) row. */
+function useFocusRing(
+  id: string,
+  expanded: boolean,
+): { ref: RefObject<HTMLDivElement | null>; ring: boolean } {
   const focusCardId = useApp((s) => s.focusCardId);
   const setFocusCard = useApp((s) => s.setFocusCard);
   const ref = useRef<HTMLDivElement>(null);
 
-  const { isNew, isRepulsing } = useCardAnimation(
-    card.firstSeenAt,
-    card.lastSeenAt,
-    card.count,
-  );
-
-  const isFocused = focusCardId === card.id;
+  const isFocused = focusCardId === id;
   const [ring, setRing] = useState(false);
 
-  // Scroll+ring only ever run against the expanded layout: if this card
-  // is still collapsed when it becomes focused, the panel-level effect
-  // (CardsPanel) expands it first, which re-runs this effect once
-  // `expanded` flips true and the ref points at the real (expanded) row.
   useEffect(() => {
     if (!isFocused || !expanded) return;
     const el = ref.current;
@@ -246,6 +220,26 @@ function ExpressionCardRow({
     }
     setFocusCard(null);
   }, [isFocused, expanded, setFocusCard]);
+
+  return { ref, ring };
+}
+
+function ExpressionCardRow({
+  card,
+  expanded,
+  onToggle,
+}: {
+  card: ExpressionCard;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const { ref, ring } = useFocusRing(card.id, expanded);
+
+  const { isNew, isRepulsing } = useCardAnimation(
+    card.firstSeenAt,
+    card.lastSeenAt,
+    card.count,
+  );
 
   const hue = CATEGORY_COLOR[card.category];
 
@@ -329,6 +323,8 @@ function TermCardRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
+  const { ref, ring } = useFocusRing(term.id, expanded);
+
   const { isNew, isRepulsing } = useCardAnimation(
     term.firstSeenAt,
     term.lastSeenAt,
@@ -351,12 +347,15 @@ function TermCardRow({
   if (!expanded) {
     return (
       <div
+        ref={ref}
         data-testid="card"
         data-kind="term"
         onClick={onToggle}
         className={`relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
           isNew ? "diff-flash" : ""
-        } ${isRepulsing ? "card-repulse" : ""}`}
+        } ${isRepulsing ? "card-repulse" : ""} ${
+          ring ? "ring-1 ring-act" : ""
+        }`}
       >
         {badgeRow}
         <div className="mt-2 truncate text-sm text-mut">{term.gloss_zh}</div>
@@ -366,11 +365,14 @@ function TermCardRow({
 
   return (
     <div
+      ref={ref}
       data-testid="card"
       data-kind="term"
       className={`group relative rounded-sm border-b border-edge border-l-2 bg-panel p-3 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
         isNew ? "diff-flash" : ""
-      } ${isRepulsing ? "card-repulse" : ""}`}
+      } ${isRepulsing ? "card-repulse" : ""} ${
+        ring ? "ring-1 ring-act" : ""
+      }`}
     >
       <CollapseAffordance onCollapse={onToggle} />
       {badgeRow}

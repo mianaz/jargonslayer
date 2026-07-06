@@ -3,11 +3,11 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PencilSimple } from "@phosphor-icons/react";
 import { useApp } from "../lib/store";
-import type { ExpressionCard } from "../lib/types";
-import HoverGlossCard from "./HoverGlossCard";
+import { buildHighlightMatcher, type HighlightHit } from "../lib/highlight";
+import type { ExpressionCard, TermCard } from "../lib/types";
+import HoverGlossCard, { type GlossItem } from "./HoverGlossCard";
 
 const SCROLL_STICKY_THRESHOLD = 80;
-const MAX_HIGHLIGHT_CARDS = 30;
 const HOVER_ENTER_DELAY_MS = 150;
 const HOVER_LEAVE_DELAY_MS = 200;
 
@@ -38,93 +38,21 @@ function formatTime(ms: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function escapeRegExp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-interface HighlightMatcher {
-  regex: RegExp | null;
-  // lowercased matched literal -> card id (last one wins if duplicate
-  // expressions across cards; acceptable, purely cosmetic).
-  byLower: Map<string, string>;
-}
-
-/** Build one combined regex from the most recent cards, longest
- * expression first so multi-word phrases win over their substrings.
- * The last word of each expression may carry an optional trailing
- * inflection (s|ed|ing|d), e.g. "raise eyebrows" also matches
- * "raised eyebrows". "Most recent" is by lastSeenAt, not insertion
- * order — a card re-detected recently should stay eligible even if
- * many other cards were newly inserted after it.
- *
- * v3 reskin note: this matcher only ever takes `cards` (ExpressionCard[]),
- * never `terms` (TermCard[]) — the transcript has never highlighted terms,
- * only expressions (`.hl-expr`). There is no existing "term highlight"
- * code path here to split into a `.hl-term` variant; adding real term
- * matching would be new detection logic, out of scope for a zero-logic
- * reskin pass. See report for this finding. */
-function buildMatcher(cards: ExpressionCard[]): HighlightMatcher {
-  const recent = [...cards]
-    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
-    .slice(0, MAX_HIGHLIGHT_CARDS);
-  const byLower = new Map<string, string>();
-  const parts: string[] = [];
-
-  const sorted = [...recent].sort(
-    (a, b) => b.expression.length - a.expression.length,
-  );
-
-  for (const card of sorted) {
-    const expr = card.expression.trim();
-    if (!expr) continue;
-    byLower.set(expr.toLowerCase(), card.id);
-
-    const words = expr.split(/\s+/);
-    const escapedWords = words.map((w, i) => {
-      const escaped = escapeRegExp(w);
-      const isLast = i === words.length - 1;
-      return isLast ? `${escaped}(?:s|ed|ing|d)?` : escaped;
-    });
-    parts.push(escapedWords.join("\\s+"));
-  }
-
-  if (parts.length === 0) {
-    return { regex: null, byLower };
-  }
-
-  const regex = new RegExp(`\\b(${parts.join("|")})\\b`, "giu");
-  return { regex, byLower };
-}
-
-/** Look up a matched literal's card id, trying the exact match then
- * stripping a trailing inflection off the last word. */
-function resolveCardId(matcher: HighlightMatcher, matched: string): string | undefined {
-  const lower = matched.toLowerCase();
-  const direct = matcher.byLower.get(lower);
-  if (direct) return direct;
-
-  const stripped = lower.replace(/(?:ing|ed|s|d)$/u, "");
-  for (const [key, id] of matcher.byLower) {
-    if (key === stripped || key.replace(/(?:ing|ed|s|d)$/u, "") === stripped) {
-      return id;
-    }
-    if (lower.startsWith(key)) return id;
-  }
-  return undefined;
-}
+// Term/expression matching for the live transcript now lives in
+// src/lib/highlight.ts (buildHighlightMatcher) and covers both kinds.
 
 function HighlightedText({
   text,
   matcher,
-  onExpr,
-  onExprEnter,
-  onExprLeave,
+  onHit,
+  onHitEnter,
+  onHitLeave,
 }: {
   text: string;
-  matcher: HighlightMatcher;
-  onExpr: (cardId: string, rect: DOMRect) => void;
-  onExprEnter?: (cardId: string, rect: DOMRect) => void;
-  onExprLeave?: () => void;
+  matcher: ReturnType<typeof buildHighlightMatcher>;
+  onHit: (hit: HighlightHit, rect: DOMRect) => void;
+  onHitEnter?: (hit: HighlightHit, rect: DOMRect) => void;
+  onHitLeave?: () => void;
 }) {
   if (!matcher.regex) return <>{text}</>;
 
@@ -142,19 +70,19 @@ function HighlightedText({
         <span key={key++}>{text.slice(lastIndex, match.index)}</span>,
       );
     }
-    const cardId = resolveCardId(matcher, matched);
-    if (cardId) {
+    const hit = matcher.resolve(matched);
+    if (hit) {
       nodes.push(
         <span
           key={key++}
-          className="hl-expr"
+          className={hit.kind === "expression" ? "hl-expr" : "hl-term"}
           onClick={(e) =>
-            onExpr(cardId, e.currentTarget.getBoundingClientRect())
+            onHit(hit, e.currentTarget.getBoundingClientRect())
           }
           onMouseEnter={(e) =>
-            onExprEnter?.(cardId, e.currentTarget.getBoundingClientRect())
+            onHitEnter?.(hit, e.currentTarget.getBoundingClientRect())
           }
-          onMouseLeave={() => onExprLeave?.()}
+          onMouseLeave={() => onHitLeave?.()}
         >
           {matched}
         </span>,
@@ -176,7 +104,7 @@ function HighlightedText({
 }
 
 interface GlossState {
-  card: ExpressionCard;
+  item: GlossItem;
   x: number;
   y: number;
   pinned: boolean;
@@ -357,6 +285,7 @@ export default function TranscriptPanel() {
   const segments = useApp((s) => s.segments);
   const interim = useApp((s) => s.interim);
   const cards = useApp((s) => s.cards);
+  const terms = useApp((s) => s.terms);
   const status = useApp((s) => s.status);
   const focusMode = useApp((s) => s.focusMode);
   const setFocusCard = useApp((s) => s.setFocusCard);
@@ -400,12 +329,20 @@ export default function TranscriptPanel() {
     setEditValue("");
   };
 
-  const matcher = useMemo(() => buildMatcher(cards), [cards]);
+  const matcher = useMemo(
+    () => buildHighlightMatcher(cards, terms),
+    [cards, terms],
+  );
   const cardsById = useMemo(() => {
     const map = new Map<string, ExpressionCard>();
     for (const c of cards) map.set(c.id, c);
     return map;
   }, [cards]);
+  const termsById = useMemo(() => {
+    const map = new Map<string, TermCard>();
+    for (const t of terms) map.set(t.id, t);
+    return map;
+  }, [terms]);
 
   // Segment count per speaker, for the rename popover's hint copy.
   const speakerCounts = useMemo(() => {
@@ -445,26 +382,37 @@ export default function TranscriptPanel() {
     }
   }, [focusMode]);
 
-  const handleExprEnter = (cardId: string, rect: DOMRect) => {
+  // Resolve a hit to its full GlossItem, looking it up in whichever map
+  // matches its kind.
+  const resolveGlossItem = (hit: HighlightHit): GlossItem | undefined => {
+    if (hit.kind === "expression") {
+      const card = cardsById.get(hit.id);
+      return card ? { kind: "expression", card } : undefined;
+    }
+    const term = termsById.get(hit.id);
+    return term ? { kind: "term", term } : undefined;
+  };
+
+  const handleHitEnter = (hit: HighlightHit, rect: DOMRect) => {
     if (!focusMode) return;
     if (leaveTimer.current) {
       clearTimeout(leaveTimer.current);
       leaveTimer.current = null;
     }
-    const card = cardsById.get(cardId);
-    if (!card) return;
+    const item = resolveGlossItem(hit);
+    if (!item) return;
     if (enterTimer.current) clearTimeout(enterTimer.current);
     enterTimer.current = setTimeout(() => {
       enterTimer.current = null;
       setGloss((prev) =>
         prev?.pinned
           ? prev
-          : { card, x: rect.left, y: rect.bottom + 6, pinned: false },
+          : { item, x: rect.left, y: rect.bottom + 6, pinned: false },
       );
     }, HOVER_ENTER_DELAY_MS);
   };
 
-  const handleExprLeave = () => {
+  const handleHitLeave = () => {
     if (!focusMode) return;
     if (enterTimer.current) {
       clearTimeout(enterTimer.current);
@@ -477,15 +425,15 @@ export default function TranscriptPanel() {
     }, HOVER_LEAVE_DELAY_MS);
   };
 
-  const handleExprClick = (cardId: string, rect: DOMRect) => {
+  const handleHitClick = (hit: HighlightHit, rect: DOMRect) => {
     if (!focusMode) {
-      setFocusCard(cardId);
+      setFocusCard(hit.id);
       return;
     }
     clearTimers();
-    const card = cardsById.get(cardId);
-    if (!card) return;
-    setGloss({ card, x: rect.left, y: rect.bottom + 6, pinned: true });
+    const item = resolveGlossItem(hit);
+    if (!item) return;
+    setGloss({ item, x: rect.left, y: rect.bottom + 6, pinned: true });
   };
 
   // Escape unpins the gloss card.
@@ -669,9 +617,9 @@ export default function TranscriptPanel() {
                       <HighlightedText
                         text={seg.text}
                         matcher={matcher}
-                        onExpr={handleExprClick}
-                        onExprEnter={handleExprEnter}
-                        onExprLeave={handleExprLeave}
+                        onHit={handleHitClick}
+                        onHitEnter={handleHitEnter}
+                        onHitLeave={handleHitLeave}
                       />
                     </span>
                   )}
@@ -720,7 +668,7 @@ export default function TranscriptPanel() {
 
       {focusMode && gloss && (
         <HoverGlossCard
-          card={gloss.card}
+          item={gloss.item}
           x={gloss.x}
           y={gloss.y}
           pinned={gloss.pinned}
