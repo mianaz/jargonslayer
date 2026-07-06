@@ -53,7 +53,7 @@ function DetectModeBadge() {
       className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${config.cls}`}
     >
       {detectBusy && (
-        <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent" />
+        <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent whitespace-nowrap" />
       )}
       {config.label}
     </span>
@@ -87,7 +87,7 @@ function EnginePillGroup() {
   const disabled = status === "connecting" || status === "listening";
 
   return (
-    <div className="hidden items-center gap-0.5 rounded-lg border border-edge bg-panel2 p-0.5 md:flex">
+    <div className="hidden items-center gap-0.5 rounded-lg border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
       {ENGINE_OPTIONS.map((opt) => (
         <button
           key={opt.value}
@@ -125,7 +125,7 @@ export default function Header({
   return (
     <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel/85 px-4 backdrop-blur">
       <div className="flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-acc to-acc2 text-xs font-bold text-white">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-acc to-acc2 text-xs font-bold text-white whitespace-nowrap">
           ML
         </div>
         <span className="font-semibold text-fg">JargonSlayer</span>
@@ -142,13 +142,13 @@ export default function Header({
 
         {activeSessionId && status === "stopped" && (
           <>
-            <span className="rounded-full border border-gold/30 px-2.5 py-1 text-xs text-gold">
+            <span className="rounded-full border border-gold/30 px-2.5 py-1 text-xs text-gold whitespace-nowrap">
               历史会话
             </span>
             <button
               type="button"
               onClick={newMeeting}
-              className="btn-tactile h-9 rounded-lg border border-edge px-3 text-sm text-fg hover:bg-panel3"
+              className="btn-tactile h-9 rounded-lg border border-edge px-3 text-sm text-fg hover:bg-panel3 whitespace-nowrap"
             >
               新会议
             </button>
@@ -160,7 +160,7 @@ export default function Header({
             type="button"
             data-testid="btn-start"
             onClick={onStart}
-            className="btn-tactile h-9 rounded-lg bg-acc px-4 text-sm font-medium text-white hover:bg-acchover"
+            className="btn-tactile h-9 rounded-lg bg-acc px-4 text-sm font-medium text-white hover:bg-acchover whitespace-nowrap"
           >
             开始监听
           </button>
@@ -170,7 +170,7 @@ export default function Header({
           <button
             type="button"
             disabled
-            className="h-9 cursor-not-allowed rounded-lg bg-acc/60 px-4 text-sm font-medium text-white"
+            className="h-9 cursor-not-allowed rounded-lg bg-acc/60 px-4 text-sm font-medium text-white whitespace-nowrap"
           >
             连接中…
           </button>
@@ -181,9 +181,9 @@ export default function Header({
             type="button"
             data-testid="btn-stop"
             onClick={onStop}
-            className="btn-tactile flex h-9 items-center gap-2 rounded-lg bg-warn/90 px-4 text-sm font-medium text-white hover:bg-warn"
+            className="btn-tactile flex h-9 items-center gap-2 rounded-lg bg-warn/90 px-4 text-sm font-medium text-white hover:bg-warn whitespace-nowrap"
           >
-            <span className="dot-live h-2 w-2 rounded-full bg-acc2" />
+            <span className="dot-live h-2 w-2 rounded-full bg-acc2 whitespace-nowrap" />
             停止
           </button>
         )}
@@ -193,7 +193,7 @@ export default function Header({
             type="button"
             data-testid="btn-demo"
             onClick={onDemo}
-            className="btn-tactile h-9 rounded-lg border border-edge px-3 text-sm text-fg hover:bg-panel3"
+            className="btn-tactile h-9 rounded-lg border border-edge px-3 text-sm text-fg hover:bg-panel3 whitespace-nowrap"
           >
             演示
           </button>
@@ -204,7 +204,7 @@ export default function Header({
           data-testid="btn-history"
           onClick={onOpenHistory}
           aria-label="历史"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
         >
           <ClockCounterClockwise size={20} weight="regular" />
         </button>
@@ -213,7 +213,7 @@ export default function Header({
           data-testid="btn-review"
           title="学习中心"
           aria-label="学习中心"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
         >
           <GraduationCap size={20} weight="regular" />
         </a>
@@ -222,7 +222,7 @@ export default function Header({
           data-testid="btn-settings"
           onClick={onOpenSettings}
           aria-label="设置"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
         >
           <GearSix size={20} weight="regular" />
         </button>
@@ -231,7 +231,7 @@ export default function Header({
           data-testid="btn-help"
           onClick={onOpenHelp}
           aria-label="帮助"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg"
+          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
         >
           <Question size={20} weight="regular" />
         </button>

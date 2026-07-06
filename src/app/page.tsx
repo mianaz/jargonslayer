@@ -56,13 +56,13 @@ export default function Home() {
         onOpenHelp={() => setHelpOpen(true)}
       />
 
-      <main className="flex min-h-0 flex-1">
-        <section className="min-w-0 flex-1 border-r border-edge">
+      <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
+        <section className="min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">
           <TranscriptPanel />
         </section>
 
         {!focusMode && (
-          <aside className="flex w-[400px] shrink-0 flex-col min-h-0 xl:w-[440px]">
+          <aside className="flex max-h-[55vh] w-full shrink-0 flex-col min-h-0 lg:max-h-none lg:w-[400px] xl:w-[440px]">
             <div className="flex items-center gap-1 border-b border-edge px-3 pt-2">
               {(
                 [
