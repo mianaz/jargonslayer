@@ -74,6 +74,27 @@ describe("resolveLlmConfig", () => {
     expect(cfg!.baseUrl).toBe("https://openrouter.ai/api/v1");
     expect(cfg!.isServerKey).toBe(true);
     expect(cfg!.forcedModel).toBe("minimax/minimax-m2.5");
+    // OpenRouter server-key mode carries the data-policy override…
+    expect(cfg!.extraBody).toEqual({ provider: { data_collection: "allow" } });
+  });
+
+  it("extraBody is never set for BYOK, and only for openrouter base URLs", () => {
+    for (const [name, value] of Object.entries(SERVER_ENV)) {
+      vi.stubEnv(name, value);
+    }
+    const byok = resolveLlmConfig(
+      reqWithHeaders({
+        "x-jargonslayer-key": "user-key",
+        "x-jargonslayer-provider": "openai-compat",
+        "x-jargonslayer-base-url": "https://openrouter.ai/api/v1",
+      }),
+      "detect",
+    );
+    expect(byok!.extraBody).toBeUndefined();
+
+    vi.stubEnv("JARGONSLAYER_BASE_URL", "http://localhost:11434/v1");
+    const ollama = resolveLlmConfig(reqWithHeaders({}), "detect");
+    expect(ollama!.extraBody).toBeUndefined();
   });
 
   it("server key: per-kind forced models; define falls back to the detect-class model", () => {

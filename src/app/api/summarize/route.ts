@@ -92,6 +92,7 @@ function totalSegmentChars(segments: SummarizeRequest["segments"]): number {
 interface LlmConfig {
   provider: LlmProvider;
   baseUrl: string;
+  extraBody?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------
@@ -380,7 +381,11 @@ export async function POST(req: Request) {
     return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
   }
   const apiKey = cfg.apiKey;
-  const llm: LlmConfig = { provider: cfg.provider, baseUrl: cfg.baseUrl };
+  const llm: LlmConfig = {
+    provider: cfg.provider,
+    baseUrl: cfg.baseUrl,
+    extraBody: cfg.extraBody,
+  };
 
   const model = cfg.forcedModel ?? requestedModel ?? "claude-sonnet-5";
 

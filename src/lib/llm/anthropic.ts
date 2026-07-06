@@ -63,6 +63,13 @@ export interface ResolvedLlmConfig {
   /** True when the shared server credential (env) serves the request —
    *  callers apply per-IP rate limiting in that case. */
   isServerKey: boolean;
+  /** Extra JSON merged into openai-compat request bodies. Server-key
+   *  mode via OpenRouter sets provider.data_collection="allow" here so
+   *  the shared demo credential can reach endpoints the account's
+   *  default privacy policy would exclude (e.g. MiniMax). Never set
+   *  for BYOK requests — relaxing a data policy is the key owner's
+   *  decision, not ours. */
+  extraBody?: Record<string, unknown>;
 }
 
 /** Resolve the full LLM call config for a request.
@@ -111,13 +118,17 @@ export function resolveLlmConfig(
   if (!serverKey) return null;
 
   const detectClassModel = process.env.JARGONSLAYER_DETECT_MODEL || null;
+  const baseUrl = process.env.JARGONSLAYER_BASE_URL || "";
   return {
     apiKey: serverKey,
     provider:
       process.env.JARGONSLAYER_PROVIDER === "openai-compat"
         ? "openai-compat"
         : "anthropic",
-    baseUrl: process.env.JARGONSLAYER_BASE_URL || "",
+    baseUrl,
+    extraBody: baseUrl.includes("openrouter.ai")
+      ? { provider: { data_collection: "allow" } }
+      : undefined,
     forcedModel:
       kind === "summary"
         ? process.env.JARGONSLAYER_SUMMARY_MODEL || detectClassModel
@@ -380,6 +391,9 @@ export interface CallJsonOptions<T> {
    *  tolerate a model that (incorrectly, but commonly) returns the
    *  bare array instead of the wrapping object. */
   arrayKey?: string;
+  /** Extra JSON merged into the openai-compat request body (ignored on
+   *  the Anthropic path). See ResolvedLlmConfig.extraBody. */
+  extraBody?: Record<string, unknown>;
 }
 
 /** If `parsed` is an array and `arrayKey` is set, wrap it as
@@ -493,6 +507,7 @@ const OPENAI_COMPAT_JSON_REMINDER =
  *  untouched rather than folding it into the repair-retry loop. */
 async function requestChatContent(opts: CallJsonOptions<unknown>, system: string): Promise<string> {
   const baseRequest = {
+    ...(opts.extraBody ?? {}),
     model: opts.model,
     max_tokens: opts.maxTokens,
     messages: [

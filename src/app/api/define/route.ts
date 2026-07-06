@@ -126,6 +126,7 @@ export async function POST(req: Request) {
       maxTokens: 900,
       provider: cfg.provider,
       baseUrl: cfg.baseUrl,
+      extraBody: cfg.extraBody,
     });
 
     const result = finalizeDefineResult(raw, phrase);

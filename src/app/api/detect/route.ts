@@ -81,6 +81,7 @@ export async function POST(req: Request) {
       cacheSystem: true,
       provider: cfg.provider,
       baseUrl: cfg.baseUrl,
+      extraBody: cfg.extraBody,
     });
 
     const filtered = postFilter(raw, new_text);
