@@ -23,6 +23,7 @@ import {
   clearExportFolder,
   getExportFolderName,
 } from "@/lib/history/autoExport";
+import { fetchSidecarHealth } from "@/lib/stt/upload";
 import type { ExplainLanguage, LlmProvider, STTEngineKind, Settings } from "@/lib/types";
 
 export interface SettingsDialogProps {
@@ -172,6 +173,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [showKey, setShowKey] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
   const [exportFolderName, setExportFolderName] = useState<string | null>(null);
+  // 说话人分离 (speaker diarization, HF token) section.
+  const [showHfToken, setShowHfToken] = useState(false);
+  const [checkingDiarization, setCheckingDiarization] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -328,6 +332,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
+  const handleCheckDiarizationStatus = async () => {
+    setCheckingDiarization(true);
+    try {
+      const health = await fetchSidecarHealth(draft);
+      if (!health) {
+        showToast("无法连接 sidecar，请先启动（README）");
+        return;
+      }
+      if (health.diarization_ready) {
+        showToast("说话人分离已就绪");
+      } else {
+        showToast(
+          health.diarization_error
+            ? `说话人分离未就绪：${health.diarization_error}`
+            : "说话人分离未就绪",
+        );
+      }
+    } finally {
+      setCheckingDiarization(false);
+    }
+  };
+
   const handleChooseExportFolder = async () => {
     const name = await chooseExportFolder();
     if (name) {
@@ -416,6 +442,89 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="mt-1 w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
               />
             </div>
+          </section>
+
+          {/* 说话人分离 */}
+          <section className="space-y-3 border-t border-edge pt-5">
+            <SectionHeading>说话人分离</SectionHeading>
+
+            <div>
+              <label className="text-xs text-mut">HF Token</label>
+              <div className="mt-1 flex items-center gap-2">
+                <input
+                  type={showHfToken ? "text" : "password"}
+                  value={draft.hfToken}
+                  onChange={(e) => patch({ hfToken: e.target.value })}
+                  placeholder="hf_…"
+                  className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowHfToken((v) => !v)}
+                  aria-label={showHfToken ? "隐藏" : "显示"}
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-mut hover:bg-panel3 hover:text-fg"
+                >
+                  {showHfToken ? (
+                    <EyeSlash size={18} weight="regular" />
+                  ) : (
+                    <Eye size={18} weight="regular" />
+                  )}
+                </button>
+              </div>
+              <div className="mt-1 text-xs text-mut2">
+                仅存本机，随任务经 localhost 传给 sidecar，不经任何云端
+              </div>
+            </div>
+
+            {!draft.hfToken && (
+              <div className="space-y-2 rounded-lg border border-edge bg-panel2 p-3">
+                <ol className="space-y-2 text-xs leading-[1.7] text-mut">
+                  <li>
+                    ① 注册{" "}
+                    <a
+                      href="https://huggingface.co/settings/tokens"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-acc underline decoration-acc/40"
+                    >
+                      huggingface.co
+                    </a>{" "}
+                    并在 Settings → Access Tokens 创建一个 Read token
+                  </li>
+                  <li>
+                    ② 分别打开并接受两个模型的使用条款：
+                    <a
+                      href="https://huggingface.co/pyannote/segmentation-3.0"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-acc underline decoration-acc/40"
+                    >
+                      pyannote/segmentation-3.0
+                    </a>{" "}
+                    与{" "}
+                    <a
+                      href="https://huggingface.co/pyannote/speaker-diarization-3.1"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-acc underline decoration-acc/40"
+                    >
+                      pyannote/speaker-diarization-3.1
+                    </a>
+                    （不接受会得到 403）
+                  </li>
+                  <li>③ 粘贴 token 并保存；上传录音时选择「本地 Whisper」即可自动分离说话人</li>
+                </ol>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void handleCheckDiarizationStatus()}
+              disabled={checkingDiarization}
+              className="btn-tactile w-full rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {checkingDiarization ? "检测中…" : "检测状态"}
+            </button>
           </section>
 
           {/* AI 检测 */}

@@ -200,6 +200,10 @@ export interface Settings {
   explainLanguage: "zh" | "en";
   // dictionary theme packs: null = all packs enabled
   enabledPacks: string[] | null;
+  // Hugging Face token for the local Whisper sidecar's speaker
+  // diarization (pyannote); "" = disabled. Never leaves the browser
+  // except over localhost to the sidecar (see upload.ts).
+  hfToken: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -221,6 +225,7 @@ export const DEFAULT_SETTINGS: Settings = {
   exportFrontmatter: true,
   explainLanguage: "zh",
   enabledPacks: null,
+  hfToken: "",
 };
 
 /** Headers that carry LLM provider config from browser to routes.

@@ -64,11 +64,15 @@ export function httpBaseFromWs(whisperUrl: string): string {
 export async function uploadRecording(
   file: File,
   settings: Settings,
+  diarize: boolean = true,
 ): Promise<{ jobId: string }> {
   const base = httpBaseFromWs(settings.whisperUrl);
-  const url = `${base}/transcribe?filename=${encodeURIComponent(file.name)}&language=${encodeURIComponent(
+  let url = `${base}/transcribe?filename=${encodeURIComponent(file.name)}&language=${encodeURIComponent(
     settings.language.split("-")[0],
   )}`;
+  if (settings.hfToken) {
+    url += `&diarize=${diarize ? "1" : "0"}&hf_token=${encodeURIComponent(settings.hfToken)}`;
+  }
 
   const res = await fetch(url, {
     method: "PUT",
@@ -82,6 +86,32 @@ export async function uploadRecording(
 
   const body = (await res.json()) as { job_id: string };
   return { jobId: body.job_id };
+}
+
+/** GET /health on the sidecar's job API: reports whether speaker
+ * diarization is ready to run (pyannote importable + a token
+ * available). 3s timeout; returns null on any failure (sidecar
+ * unreachable, timeout, bad response) so callers can render a single
+ * "can't reach sidecar" state without try/catch plumbing. */
+export async function fetchSidecarHealth(
+  settings: Settings,
+): Promise<{ ok: boolean; diarization_ready: boolean; diarization_error: string | null } | null> {
+  const base = httpBaseFromWs(settings.whisperUrl);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000);
+  try {
+    const res = await fetch(`${base}/health`, { signal: controller.signal });
+    if (!res.ok) return null;
+    return (await res.json()) as {
+      ok: boolean;
+      diarization_ready: boolean;
+      diarization_error: string | null;
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function pollJob(
@@ -324,6 +354,9 @@ export interface ImportOptions {
    *  /api/transcribe-cloud, no polling — the route itself blocks
    *  until the upstream transcription completes. */
   mode?: "sidecar" | "cloud";
+  /** Sidecar mode only: request speaker diarization for this upload
+   *  (still requires settings.hfToken to actually run). Default true. */
+  diarize?: boolean;
 }
 
 /** Orchestrates the full upload -> poll -> detect -> save -> load
@@ -357,7 +390,7 @@ export async function importAndTrack(
     }
 
     onProgress(0, "转录中");
-    const { jobId } = await uploadRecording(file, settings);
+    const { jobId } = await uploadRecording(file, settings, opts.diarize ?? true);
 
     let job: JobStatus;
     for (;;) {

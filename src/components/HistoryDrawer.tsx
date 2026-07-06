@@ -8,7 +8,7 @@ import { X, Trash, UploadSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
-import { importAndTrack, type ImportOptions } from "@/lib/stt/upload";
+import { fetchSidecarHealth, importAndTrack, type ImportOptions } from "@/lib/stt/upload";
 
 // Upload-a-recording job tracking is intentionally component-local
 // (not in the global store) — it's ephemeral UI progress, and a page
@@ -61,6 +61,14 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   const [importPickerOpen, setImportPickerOpen] = useState(false);
   const importModeRef = useRef<ImportOptions["mode"]>("sidecar");
   const importPickerRef = useRef<HTMLDivElement>(null);
+  // 本地 Whisper row's diarization status line — fetched lazily each
+  // time the popover opens (not on mount) since it's a network call
+  // whose relevance is scoped to "user is about to pick an import
+  // source"; undefined = not yet checked this open, null = sidecar
+  // unreachable.
+  const [diarizationHealth, setDiarizationHealth] = useState<
+    { diarization_ready: boolean } | null | undefined
+  >(undefined);
 
   useEffect(() => {
     if (!open) {
@@ -86,6 +94,19 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
       document.removeEventListener("keydown", handleKey);
       document.removeEventListener("mousedown", handleMouseDown);
     };
+  }, [importPickerOpen]);
+
+  useEffect(() => {
+    if (!importPickerOpen) return;
+    setDiarizationHealth(undefined);
+    let cancelled = false;
+    void fetchSidecarHealth(settings).then((health) => {
+      if (!cancelled) setDiarizationHealth(health);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importPickerOpen]);
 
   const patchJob = (jobId: string, patch: Partial<ImportJobState>) => {
@@ -239,6 +260,17 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
                       需启动本地 sidecar
                     </div>
+                    {diarizationHealth !== undefined && (
+                      <div className="mt-0.5 text-[10px] leading-[1.7]">
+                        {diarizationHealth?.diarization_ready ? (
+                          <span className="text-acc2">说话人分离已就绪</span>
+                        ) : (
+                          <span className="text-mut2">
+                            说话人分离未启用 · 在设置中配置 HF Token
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </button>
                   <button
                     type="button"
