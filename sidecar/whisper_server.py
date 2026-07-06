@@ -322,12 +322,19 @@ class JobManager:
     def __init__(
         self,
         model: Any,
+        model_name: str,
         default_language: str,
         hf_token: Optional[str],
     ) -> None:
         self.model = model
+        self.model_name = model_name
         self.default_language = default_language
-        self.hf_token = hf_token
+        self.hf_token = hf_token  # CLI/env token — the fallback for every job
+        # Most recently supplied per-request token (PUT /transcribe's
+        # hf_token= query param), tracked only so GET /health can report
+        # "a token is available" even when the CLI/env token is unset and
+        # the browser is the one carrying it (Settings' HF Token field).
+        self.last_request_token: Optional[str] = None
         self._diarize_pipeline: Any = None
         self._diarize_pipeline_loaded = False
         self._diarize_pipeline_error: Optional[str] = None
@@ -352,10 +359,26 @@ class JobManager:
             )
             return [dict(j) for j in jobs[:limit]]
 
-    def start_job(self, file_path: str, language: Optional[str]) -> str:
+    def start_job(
+        self,
+        file_path: str,
+        language: Optional[str],
+        diarize: Optional[bool] = None,
+        hf_token: Optional[str] = None,
+    ) -> str:
         """Register a queued job and kick off its background worker
-        thread. Returns the job id immediately (non-blocking)."""
-        diarize_requested = bool(self.hf_token)
+        thread. Returns the job id immediately (non-blocking).
+
+        `diarize`: caller's diarize=0|1 query param, or None to fall
+        back to the default (on iff any token is available). `hf_token`:
+        this job's hf_token= query param — localhost-only transport, so
+        passing it per-request (rather than only via --hf-token/HF_TOKEN
+        at process start) is fine; it's preferred over the CLI/env token
+        for this job when present."""
+        effective_token = hf_token or self.hf_token
+        if hf_token:
+            self.last_request_token = hf_token
+        diarize_requested = bool(effective_token) if diarize is None else (diarize and bool(effective_token))
         job = new_job(diarize_requested)
         job_id = job["id"]
         with self.lock:
@@ -363,20 +386,22 @@ class JobManager:
 
         thread = threading.Thread(
             target=self._run_job,
-            args=(job_id, file_path, language or self.default_language),
+            args=(job_id, file_path, language or self.default_language, effective_token),
             daemon=True,
         )
         thread.start()
         return job_id
 
-    def _run_job(self, job_id: str, file_path: str, language: str) -> None:
+    def _run_job(
+        self, job_id: str, file_path: str, language: str, hf_token: Optional[str]
+    ) -> None:
         try:
             self._set(job_id, status="running")
             self._transcribe_job(job_id, file_path, language)
 
             job = self.get(job_id)
             if job is not None and job["diarize_requested"]:
-                self._diarize_job(job_id, file_path)
+                self._diarize_job(job_id, file_path, hf_token)
 
             self._set(job_id, status="done", progress=1.0, status_detail=None)
         except Exception as exc:  # noqa: BLE001 - report any failure to the client
@@ -411,17 +436,26 @@ class JobManager:
                     # (per spec) holds progress at DIARIZE_HOLD_PROGRESS.
                     job["progress"] = progress * DIARIZE_HOLD_PROGRESS
 
-    def _load_diarize_pipeline(self) -> tuple[Any, Optional[str]]:
+    def _load_diarize_pipeline(self, hf_token: Optional[str] = None) -> tuple[Any, Optional[str]]:
         """Returns (pipeline, error_message). error_message is None on
         success. Loading pyannote can fail in more ways than a plain
         ImportError (missing package) — broken/incompatible transitive
         dependencies (seen in practice: pyarrow version mismatches
         raising AttributeError deep inside the import), model download
         failures, etc. Any failure here degrades to "undiarized" per
-        spec — it must never take down the transcription job."""
+        spec — it must never take down the transcription job.
+
+        The pipeline is loaded (and cached) once, with whichever token
+        is available on first load — `hf_token` (a per-job override, see
+        start_job) takes precedence over the CLI/env one that day. A
+        second job supplying a *different* token after the pipeline is
+        already cached won't force a reload; that's an accepted edge
+        case for a local, single-user sidecar (mirrors the in-memory-
+        only job store tradeoff noted on JobManager)."""
         if self._diarize_pipeline_loaded:
             return self._diarize_pipeline, self._diarize_pipeline_error
         self._diarize_pipeline_loaded = True
+        token = hf_token or self.hf_token
         try:
             from pyannote.audio import Pipeline  # type: ignore[import-not-found]
 
@@ -429,12 +463,12 @@ class JobManager:
             try:
                 self._diarize_pipeline = Pipeline.from_pretrained(
                     "pyannote/speaker-diarization-3.1",
-                    token=self.hf_token,
+                    token=token,
                 )
             except TypeError:
                 self._diarize_pipeline = Pipeline.from_pretrained(
                     "pyannote/speaker-diarization-3.1",
-                    use_auth_token=self.hf_token,
+                    use_auth_token=token,
                 )
             self._diarize_pipeline_error = None
         except Exception as exc:  # noqa: BLE001 - see docstring
@@ -442,12 +476,29 @@ class JobManager:
             self._diarize_pipeline_error = f"{type(exc).__name__}: {exc}"
         return self._diarize_pipeline, self._diarize_pipeline_error
 
-    def _diarize_job(self, job_id: str, file_path: str) -> None:
+    def diarization_probe(self) -> tuple[bool, Optional[str]]:
+        """Lightweight readiness check for GET /health: does pyannote
+        import, and is a token available (CLI/env, or the most recent
+        per-request hf_token)? Deliberately does NOT call
+        Pipeline.from_pretrained() (that downloads/loads the model) —
+        it only checks the import + token presence, per spec."""
+        token = self.hf_token or self.last_request_token
+        if not token:
+            return False, "未配置 HF Token / no HF token available"
+        try:
+            import pyannote.audio  # noqa: F401  type: ignore[import-not-found]
+        except Exception as exc:  # noqa: BLE001 - see _load_diarize_pipeline docstring
+            return False, f"{type(exc).__name__}: {exc}"
+        return True, None
+
+    def _diarize_job(
+        self, job_id: str, file_path: str, hf_token: Optional[str] = None
+    ) -> None:
         self._set(
             job_id, progress=DIARIZE_HOLD_PROGRESS, status_detail="diarizing"
         )
 
-        pipeline, load_error = self._load_diarize_pipeline()
+        pipeline, load_error = self._load_diarize_pipeline(hf_token)
         if pipeline is None:
             # Token set but pyannote.audio unavailable/broken — complete
             # the job undiarized rather than failing it.
@@ -561,6 +612,14 @@ def make_job_http_handler(
             qs = parse_qs(parsed.query)
             filename = (qs.get("filename") or ["upload.bin"])[0]
             language = (qs.get("language") or [None])[0]
+            diarize_param = (qs.get("diarize") or [None])[0]
+            diarize = None if diarize_param is None else diarize_param == "1"
+            # hf_token travels over plain localhost HTTP (127.0.0.1) only
+            # — the sidecar never listens beyond loopback by default —
+            # so passing it as a query param alongside the upload is an
+            # accepted tradeoff for a local-only job API, not a general
+            # web-facing auth token.
+            hf_token = (qs.get("hf_token") or [None])[0]
 
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0:
@@ -592,12 +651,27 @@ def make_job_http_handler(
                 )
                 return
 
-            job_id = job_manager.start_job(tmp_path, language)
+            job_id = job_manager.start_job(
+                tmp_path, language, diarize=diarize, hf_token=hf_token
+            )
             self._send_json(HTTPStatus.ACCEPTED, {"job_id": job_id})
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
             parts = [p for p in parsed.path.split("/") if p]
+
+            if parts == ["health"]:
+                ready, error = job_manager.diarization_probe()
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "ok": True,
+                        "model": job_manager.model_name,
+                        "diarization_ready": ready,
+                        "diarization_error": None if ready else error,
+                    },
+                )
+                return
 
             if parts == ["jobs"]:
                 self._send_json(
@@ -768,6 +842,7 @@ async def main() -> None:
 
     job_manager = JobManager(
         model=model,
+        model_name=args.model,
         default_language=args.language,
         hf_token=args.hf_token,
     )

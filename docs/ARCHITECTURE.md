@@ -43,12 +43,14 @@
 | 转录 | `src/hooks/useMeeting.ts` | 引擎与调度器的生命周期编排 |
 | 检测 | `src/lib/detect/scheduler.ts` | 实时凑批与降级状态机（详下） |
 | 检测 | `src/lib/detect/dedupe.ts` | 纯函数合并：TTL 去重、计数、词典→LLM 内容升级 |
-| 检测 | `src/lib/detect/dictionary.ts` | 离线词典（60+ 表达 / 25+ 术语） |
+| 检测 | `src/lib/detect/dictionary.ts` | 离线词典（371 条：10 主题包，含学术会议包；支持远程社区包） |
 | 服务端 | `src/app/api/detect/route.ts` | 校验→调用 Haiku→反幻觉过滤（表达必须逐字出现在原文）→限幅 |
 | 服务端 | `src/app/api/summarize/route.ts` | 三阶段编排：纪要 → 分块翻译（索引对齐+缺失重试）→ 查漏 |
 | 存储 | `src/lib/history/*` | IndexedDB 会话持久化；Markdown/Anki/JSON 导出 |
 | UI | `src/components/*`, `src/app/page.tsx` | 深色主题；page.tsx 只做布局与弹层编排 |
-| 本地 STT | `sidecar/whisper_server.py` | websocket 服务：16k int16 → 能量 VAD 分段 → faster-whisper |
+| 本地 STT | `sidecar/whisper_server.py` | ws 实时（16k int16→能量 VAD→faster-whisper）+ HTTP 任务接口（录音上传批转录 + pyannote 说话人分离） |
+| 词库/复习 | `src/lib/history/glossary.ts`, `src/app/review/*` | 个人词库（跨会议高亮、掌握状态）与学习中心 |
+| Agent 出口 | `src/lib/history/autoExport.ts` | 自动落盘（File System Access）、webhook、全量备份 |
 
 ## 实时检测管线的关键决策
 
@@ -74,7 +76,7 @@
 
 - 音频路径：本地 Whisper 全程 127.0.0.1；Web Speech 走浏览器厂商服务（UI 与教程明示）。
 - 文本路径：AI 检测/纪要经 Next.js 路由代理到 Anthropic；「仅词典模式」下零外发。
-- 持久化：全部在浏览器 IndexedDB；API Key 存本机，请求时经 `x-meetlingo-key` 头直传路由，服务端不落盘。
+- 持久化：全部在浏览器 IndexedDB；API Key 存本机，请求时经 `x-jargonslayer-key` 头直传路由，服务端不落盘。
 - 服务端路由无状态，可整机离线运行（词典模式）。
 
 ## 已知边界
