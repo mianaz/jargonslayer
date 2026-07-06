@@ -281,7 +281,7 @@ function expressionToFlashcard(e: DetectedExpression): Flashcard {
   return {
     front: e.expression,
     back_zh: e.chinese_explanation,
-    back_en: `${e.meaning} — plain: ${e.plain_english}`,
+    back_en: `${e.meaning} (plain: ${e.plain_english})`,
     example: e.source_sentence,
     tags: [e.category, "expression"],
   };

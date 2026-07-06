@@ -3,9 +3,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../lib/store";
 import type { ExpressionCard } from "../lib/types";
+import HoverGlossCard from "./HoverGlossCard";
 
 const SCROLL_STICKY_THRESHOLD = 80;
 const MAX_HIGHLIGHT_CARDS = 30;
+const HOVER_ENTER_DELAY_MS = 150;
+const HOVER_LEAVE_DELAY_MS = 200;
 
 // Fixed 5-color palette (theme tokens only) for speaker chips, picked
 // by a stable hash of the speaker name.
@@ -99,10 +102,14 @@ function HighlightedText({
   text,
   matcher,
   onExpr,
+  onExprEnter,
+  onExprLeave,
 }: {
   text: string;
   matcher: HighlightMatcher;
-  onExpr: (cardId: string) => void;
+  onExpr: (cardId: string, rect: DOMRect) => void;
+  onExprEnter?: (cardId: string, rect: DOMRect) => void;
+  onExprLeave?: () => void;
 }) {
   if (!matcher.regex) return <>{text}</>;
 
@@ -126,7 +133,13 @@ function HighlightedText({
         <span
           key={key++}
           className="hl-expr"
-          onClick={() => onExpr(cardId)}
+          onClick={(e) =>
+            onExpr(cardId, e.currentTarget.getBoundingClientRect())
+          }
+          onMouseEnter={(e) =>
+            onExprEnter?.(cardId, e.currentTarget.getBoundingClientRect())
+          }
+          onMouseLeave={() => onExprLeave?.()}
         >
           {matched}
         </span>,
@@ -147,11 +160,19 @@ function HighlightedText({
   return <>{nodes}</>;
 }
 
+interface GlossState {
+  card: ExpressionCard;
+  x: number;
+  y: number;
+  pinned: boolean;
+}
+
 export default function TranscriptPanel() {
   const segments = useApp((s) => s.segments);
   const interim = useApp((s) => s.interim);
   const cards = useApp((s) => s.cards);
   const status = useApp((s) => s.status);
+  const focusMode = useApp((s) => s.focusMode);
   const setFocusCard = useApp((s) => s.setFocusCard);
   const setLookup = useApp((s) => s.setLookup);
 
@@ -159,6 +180,95 @@ export default function TranscriptPanel() {
   const [stickToBottom, setStickToBottom] = useState(true);
 
   const matcher = useMemo(() => buildMatcher(cards), [cards]);
+  const cardsById = useMemo(() => {
+    const map = new Map<string, ExpressionCard>();
+    for (const c of cards) map.set(c.id, c);
+    return map;
+  }, [cards]);
+
+  // Focus-mode hover gloss: one card at a time, hover shows it after a
+  // short delay, click pins it. Timers via refs so re-entering a span
+  // before the leave-timeout fires cancels the pending hide.
+  const [gloss, setGloss] = useState<GlossState | null>(null);
+  const enterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTimers = () => {
+    if (enterTimer.current) {
+      clearTimeout(enterTimer.current);
+      enterTimer.current = null;
+    }
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current);
+      leaveTimer.current = null;
+    }
+  };
+
+  useEffect(() => clearTimers, []);
+
+  // Focus mode toggling off: drop any open gloss card immediately.
+  useEffect(() => {
+    if (!focusMode) {
+      clearTimers();
+      setGloss(null);
+    }
+  }, [focusMode]);
+
+  const handleExprEnter = (cardId: string, rect: DOMRect) => {
+    if (!focusMode) return;
+    if (leaveTimer.current) {
+      clearTimeout(leaveTimer.current);
+      leaveTimer.current = null;
+    }
+    const card = cardsById.get(cardId);
+    if (!card) return;
+    if (enterTimer.current) clearTimeout(enterTimer.current);
+    enterTimer.current = setTimeout(() => {
+      enterTimer.current = null;
+      setGloss((prev) =>
+        prev?.pinned
+          ? prev
+          : { card, x: rect.left, y: rect.bottom + 6, pinned: false },
+      );
+    }, HOVER_ENTER_DELAY_MS);
+  };
+
+  const handleExprLeave = () => {
+    if (!focusMode) return;
+    if (enterTimer.current) {
+      clearTimeout(enterTimer.current);
+      enterTimer.current = null;
+    }
+    if (leaveTimer.current) clearTimeout(leaveTimer.current);
+    leaveTimer.current = setTimeout(() => {
+      leaveTimer.current = null;
+      setGloss((prev) => (prev?.pinned ? prev : null));
+    }, HOVER_LEAVE_DELAY_MS);
+  };
+
+  const handleExprClick = (cardId: string, rect: DOMRect) => {
+    if (!focusMode) {
+      setFocusCard(cardId);
+      return;
+    }
+    clearTimers();
+    const card = cardsById.get(cardId);
+    if (!card) return;
+    setGloss({ card, x: rect.left, y: rect.bottom + 6, pinned: true });
+  };
+
+  // Escape unpins the gloss card.
+  useEffect(() => {
+    if (!gloss?.pinned) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        clearTimers();
+        setGloss(null);
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => document.removeEventListener("keydown", handleKey);
+  }, [gloss?.pinned]);
 
   const isEmpty = segments.length === 0 && status === "idle";
 
@@ -263,7 +373,9 @@ export default function TranscriptPanel() {
                     <HighlightedText
                       text={seg.text}
                       matcher={matcher}
-                      onExpr={setFocusCard}
+                      onExpr={handleExprClick}
+                      onExprEnter={handleExprEnter}
+                      onExprLeave={handleExprLeave}
                     />
                   </span>
                 </div>
@@ -304,6 +416,19 @@ export default function TranscriptPanel() {
         >
           ↓ 回到底部
         </button>
+      )}
+
+      {focusMode && gloss && (
+        <HoverGlossCard
+          card={gloss.card}
+          x={gloss.x}
+          y={gloss.y}
+          pinned={gloss.pinned}
+          onClose={() => {
+            clearTimers();
+            setGloss(null);
+          }}
+        />
       )}
     </div>
   );

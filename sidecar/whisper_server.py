@@ -23,14 +23,21 @@ Protocol (per connection):
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
+import os
+import tempfile
+import threading
 import time
+import uuid
 import wave
 from dataclasses import dataclass, field
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from urllib.parse import urlparse, parse_qs
 
+import asyncio
 import numpy as np
 import websockets
 
@@ -276,6 +283,325 @@ class WhisperServer:
             pass
 
 
+# =================================================================
+# Upload-a-recording HTTP job API (stdlib only: http.server, run in
+# a daemon thread alongside the asyncio websocket server above).
+# Jobs are tracked in-memory only — a sidecar restart loses all job
+# state/history; this is an accepted tradeoff for a local, single-
+# user sidecar process, not a persistence layer.
+# =================================================================
+
+DIARIZE_HOLD_PROGRESS = 0.9  # progress shown while diarization runs
+
+
+def new_job(diarize_requested: bool) -> dict[str, Any]:
+    """Fresh job record — the exact shape returned by GET /jobs/{id}."""
+    return {
+        "id": uuid.uuid4().hex,
+        "status": "queued",  # queued | running | done | error
+        "progress": 0.0,
+        "status_detail": None,  # e.g. "diarizing"
+        "segments": [],  # [{"start","end","text","speaker"?}]
+        "error": None,
+        "diarized": False,
+        "diarize_requested": diarize_requested,
+        "warning": None,  # non-fatal note (e.g. diarization unavailable)
+        "created_at": time.time(),
+    }
+
+
+class JobManager:
+    """In-memory transcription job store + background worker.
+
+    One lock guards the whole `jobs` dict — job payloads are small
+    and updates infrequent (per-segment / per-phase), so a single
+    coarse lock is simpler and safe against the HTTP server's thread
+    pool without needing per-job locks.
+    """
+
+    def __init__(
+        self,
+        model: Any,
+        default_language: str,
+        hf_token: Optional[str],
+    ) -> None:
+        self.model = model
+        self.default_language = default_language
+        self.hf_token = hf_token
+        self._diarize_pipeline: Any = None
+        self._diarize_pipeline_loaded = False
+        self.jobs: dict[str, dict[str, Any]] = {}
+        self.lock = threading.Lock()
+
+    def _set(self, job_id: str, **patch: Any) -> None:
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is not None:
+                job.update(patch)
+
+    def get(self, job_id: str) -> Optional[dict[str, Any]]:
+        with self.lock:
+            job = self.jobs.get(job_id)
+            return dict(job) if job is not None else None
+
+    def list_recent(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self.lock:
+            jobs = sorted(
+                self.jobs.values(), key=lambda j: j["created_at"], reverse=True
+            )
+            return [dict(j) for j in jobs[:limit]]
+
+    def start_job(self, file_path: str, language: Optional[str]) -> str:
+        """Register a queued job and kick off its background worker
+        thread. Returns the job id immediately (non-blocking)."""
+        diarize_requested = bool(self.hf_token)
+        job = new_job(diarize_requested)
+        job_id = job["id"]
+        with self.lock:
+            self.jobs[job_id] = job
+
+        thread = threading.Thread(
+            target=self._run_job,
+            args=(job_id, file_path, language or self.default_language),
+            daemon=True,
+        )
+        thread.start()
+        return job_id
+
+    def _run_job(self, job_id: str, file_path: str, language: str) -> None:
+        try:
+            self._set(job_id, status="running")
+            self._transcribe_job(job_id, file_path, language)
+
+            job = self.get(job_id)
+            if job is not None and job["diarize_requested"]:
+                self._diarize_job(job_id, file_path)
+
+            self._set(job_id, status="done", progress=1.0, status_detail=None)
+        except Exception as exc:  # noqa: BLE001 - report any failure to the client
+            self._set(job_id, status="error", error=str(exc))
+        finally:
+            try:
+                os.remove(file_path)
+            except OSError:
+                pass
+
+    def _transcribe_job(self, job_id: str, file_path: str, language: str) -> None:
+        segments_gen, info = self.model.transcribe(
+            file_path,
+            language=language,
+            beam_size=1,
+            vad_filter=True,
+            word_timestamps=False,
+        )
+        duration = max(info.duration, 1e-6)
+
+        collected: list[dict[str, Any]] = []
+        for seg in segments_gen:
+            collected.append(
+                {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
+            )
+            progress = min(seg.end / duration, 1.0)
+            with self.lock:
+                job = self.jobs.get(job_id)
+                if job is not None:
+                    job["segments"] = list(collected)
+                    # Leave headroom for the diarization phase, which
+                    # (per spec) holds progress at DIARIZE_HOLD_PROGRESS.
+                    job["progress"] = progress * DIARIZE_HOLD_PROGRESS
+
+    def _load_diarize_pipeline(self) -> Any:
+        if self._diarize_pipeline_loaded:
+            return self._diarize_pipeline
+        self._diarize_pipeline_loaded = True
+        try:
+            from pyannote.audio import Pipeline  # type: ignore[import-not-found]
+
+            self._diarize_pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1",
+                use_auth_token=self.hf_token,
+            )
+        except ImportError:
+            self._diarize_pipeline = None
+        return self._diarize_pipeline
+
+    def _diarize_job(self, job_id: str, file_path: str) -> None:
+        self._set(
+            job_id, progress=DIARIZE_HOLD_PROGRESS, status_detail="diarizing"
+        )
+
+        pipeline = self._load_diarize_pipeline()
+        if pipeline is None:
+            # Token set but pyannote.audio not installed — complete
+            # the job undiarized rather than failing it.
+            self._set(
+                job_id,
+                warning=(
+                    "未安装 pyannote.audio，已跳过说话人分离 / "
+                    "pyannote.audio not installed, skipped diarization "
+                    "(pip install pyannote.audio)"
+                ),
+            )
+            return
+
+        diarization = pipeline(file_path)
+        turns = [
+            (turn.start, turn.end, label)
+            for turn, _track, label in diarization.itertracks(yield_label=True)
+        ]
+
+        # Remap pyannote's native labels (SPEAKER_00, SPEAKER_01, ...)
+        # to the spec's SPEAKER_1/2/... in first-seen order.
+        label_order: list[str] = []
+        for _start, _end, label in turns:
+            if label not in label_order:
+                label_order.append(label)
+        label_map = {
+            label: f"SPEAKER_{i + 1}" for i, label in enumerate(label_order)
+        }
+
+        job = self.get(job_id)
+        if job is None:
+            return
+        segments = job["segments"]
+        for seg in segments:
+            seg["speaker"] = self._speaker_for_segment(seg, turns, label_map)
+
+        self._set(job_id, segments=segments, diarized=True, status_detail=None)
+
+    @staticmethod
+    def _speaker_for_segment(
+        seg: dict[str, Any],
+        turns: list[tuple[float, float, str]],
+        label_map: dict[str, str],
+    ) -> Optional[str]:
+        """Assign the diarization label with maximum time-overlap
+        against this whisper segment's [start, end) span."""
+        best_label: Optional[str] = None
+        best_overlap = 0.0
+        for t_start, t_end, label in turns:
+            overlap = min(seg["end"], t_end) - max(seg["start"], t_start)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best_label = label
+        return label_map.get(best_label) if best_label is not None else None
+
+
+def make_job_http_handler(
+    job_manager: JobManager, default_language: str
+) -> type[BaseHTTPRequestHandler]:
+    """Build a BaseHTTPRequestHandler subclass closing over the shared
+    JobManager (stdlib handlers are instantiated per-request, so state
+    must live outside the class via closure)."""
+
+    class JobHTTPHandler(BaseHTTPRequestHandler):
+        server_version = "MeetLingoSidecar/1.0"
+
+        def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
+            pass  # keep stdout to the startup banner + explicit prints
+
+        def _cors(self) -> None:
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header(
+                "Access-Control-Allow-Methods", "PUT, GET, OPTIONS"
+            )
+            self.send_header(
+                "Access-Control-Allow-Headers", "Content-Type"
+            )
+
+        def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self._cors()
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_OPTIONS(self) -> None:  # noqa: N802 - stdlib naming convention
+            self.send_response(HTTPStatus.NO_CONTENT)
+            self._cors()
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_PUT(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/transcribe":
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+                return
+
+            qs = parse_qs(parsed.query)
+            filename = (qs.get("filename") or ["upload.bin"])[0]
+            language = (qs.get("language") or [None])[0]
+
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST, {"error": "empty request body"}
+                )
+                return
+
+            suffix = Path(filename).suffix or ".bin"
+            fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="meetlingo-")
+            try:
+                remaining = length
+                with os.fdopen(fd, "wb") as f:
+                    chunk_size = 1 << 20
+                    while remaining > 0:
+                        chunk = self.rfile.read(min(chunk_size, remaining))
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        remaining -= len(chunk)
+            except Exception as exc:  # noqa: BLE001
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": f"failed to read upload: {exc}"},
+                )
+                return
+
+            job_id = job_manager.start_job(tmp_path, language)
+            self._send_json(HTTPStatus.ACCEPTED, {"job_id": job_id})
+
+        def do_GET(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            parts = [p for p in parsed.path.split("/") if p]
+
+            if parts == ["jobs"]:
+                self._send_json(
+                    HTTPStatus.OK, {"jobs": job_manager.list_recent(20)}
+                )
+                return
+
+            if len(parts) == 2 and parts[0] == "jobs":
+                job = job_manager.get(parts[1])
+                if job is None:
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "job not found"})
+                    return
+                self._send_json(HTTPStatus.OK, job)
+                return
+
+            self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+
+    return JobHTTPHandler
+
+
+def run_http_server(
+    host: str, port: int, job_manager: JobManager, default_language: str
+) -> ThreadingHTTPServer:
+    """Start the job-API HTTP server on its own daemon thread; returns
+    the server instance (caller keeps a reference so it isn't GC'd)."""
+    handler_cls = make_job_http_handler(job_manager, default_language)
+    httpd = ThreadingHTTPServer((host, port), handler_cls)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    return httpd
+
+
 def load_model(model_name: str, device: str, compute_type: str):
     """Load the faster-whisper model once at startup and time it."""
     from faster_whisper import WhisperModel
@@ -302,6 +628,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--port", type=int, default=8765, help="监听端口 / listen port (default: 8765)"
+    )
+    parser.add_argument(
+        "--http-port",
+        type=int,
+        default=8766,
+        help=(
+            "录音上传任务 API 端口 / upload-a-recording job API HTTP "
+            "port (default: 8766)"
+        ),
     )
     parser.add_argument(
         "--host",
@@ -343,18 +678,42 @@ def parse_args() -> argparse.Namespace:
             "transcriptions every ~2s during active speech (default: off)"
         ),
     )
+    parser.add_argument(
+        "--hf-token",
+        default=os.environ.get("HF_TOKEN"),
+        metavar="TOKEN",
+        help=(
+            "Hugging Face token，启用录音上传的说话人分离（可选，需先在 "
+            "pyannote/speaker-diarization-3.1 模型页接受协议）/ Hugging "
+            "Face token to enable optional speaker diarization for "
+            "uploaded recordings (falls back to $HF_TOKEN env var; "
+            "requires `pip install pyannote.audio` + accepting the "
+            "model license on Hugging Face)"
+        ),
+    )
     return parser.parse_args()
 
 
 def print_banner(
-    model_name: str, device: str, load_seconds: float, host: str, port: int
+    model_name: str,
+    device: str,
+    load_seconds: float,
+    host: str,
+    port: int,
+    http_port: int,
+    diarize_enabled: bool,
 ) -> None:
     print("=" * 60)
     print("MeetLingo 本地 Whisper 服务 / local Whisper sidecar")
-    print(f"  model:  {model_name}")
-    print(f"  device: {device}")
-    print(f"  load:   {load_seconds:.2f}s")
+    print(f"  model:     {model_name}")
+    print(f"  device:    {device}")
+    print(f"  load:      {load_seconds:.2f}s")
+    print(f"  diarize:   {'on' if diarize_enabled else 'off'}")
     print(f"ws://{host}:{port} 等待连接 — 在 MeetLingo 设置中选择「本地 Whisper」")
+    print(
+        f"http://{host}:{http_port} 录音上传任务 API — "
+        "PUT /transcribe, GET /jobs"
+    )
     print("=" * 60)
 
 
@@ -362,7 +721,15 @@ async def main() -> None:
     args = parse_args()
 
     model, load_seconds = load_model(args.model, args.device, args.compute)
-    print_banner(args.model, args.device, load_seconds, args.host, args.port)
+    print_banner(
+        args.model,
+        args.device,
+        load_seconds,
+        args.host,
+        args.port,
+        args.http_port,
+        diarize_enabled=bool(args.hf_token),
+    )
 
     server = WhisperServer(
         model=model,
@@ -371,8 +738,20 @@ async def main() -> None:
         save_audio_path=args.save_audio,
     )
 
-    async with websockets.serve(server.handle, args.host, args.port):
-        await asyncio.Future()  # run forever
+    job_manager = JobManager(
+        model=model,
+        default_language=args.language,
+        hf_token=args.hf_token,
+    )
+    # Job API runs on its own daemon thread — http.server is blocking/
+    # synchronous, so it can't share the asyncio event loop below.
+    httpd = run_http_server(args.host, args.http_port, job_manager, args.language)
+
+    try:
+        async with websockets.serve(server.handle, args.host, args.port):
+            await asyncio.Future()  # run forever
+    finally:
+        httpd.shutdown()
 
 
 if __name__ == "__main__":

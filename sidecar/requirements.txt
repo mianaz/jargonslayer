@@ -1,3 +1,16 @@
 faster-whisper>=1.0,<2.0
 websockets>=12,<14
 numpy>=1.24,<3.0
+
+# Optional: speaker diarization for uploaded recordings.
+# Not required for live transcription (mic/tab audio) or basic
+# upload transcription — only needed if you pass --hf-token / set
+# $HF_TOKEN to enable per-speaker labels on imported recordings.
+#   pip install pyannote.audio
+# Also requires:
+#   1. a Hugging Face account + access token (https://hf.co/settings/tokens)
+#   2. accepting the gated model license at
+#      https://huggingface.co/pyannote/speaker-diarization-3.1
+# Without pyannote.audio installed, --hf-token is ignored and
+# uploaded recordings simply come back undiarized (with a warning
+# field on the job) — nothing fails.
