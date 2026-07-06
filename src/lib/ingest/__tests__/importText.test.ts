@@ -252,6 +252,33 @@ describe("importTranscriptText", () => {
     expect(session!.translations ?? {}).toEqual({});
   });
 
+  it("a transient translate error is retried once after 4s — retry success keeps the batch, no warning", async () => {
+    const raw = "hello there.\ngeneral kenobi.";
+    mockTranslateApi
+      .mockRejectedValueOnce(new Error("upstream 502"))
+      .mockImplementationOnce(async (body) => ({
+        translations: body.segments.map((s) => ({ id: s.id, text: `翻译:${s.text}` })),
+      }));
+
+    const promise = importTranscriptText({
+      raw,
+      translate: true,
+      settings: makeSettings(),
+      onProgress: vi.fn(),
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockTranslateApi).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(4_000);
+
+    const { sessionId, warnings } = await promise;
+    expect(mockTranslateApi).toHaveBeenCalledTimes(2);
+    expect(warnings).toEqual([]);
+
+    const session = await storage.getSession(sessionId);
+    expect(Object.keys(session!.translations ?? {})).toHaveLength(2);
+  });
+
   it("saves a session with cards/terms/translations populated from the detect and translate pipelines", async () => {
     mockDetectApi.mockResolvedValue({
       expressions: [

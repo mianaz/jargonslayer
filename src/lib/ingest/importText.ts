@@ -26,6 +26,11 @@ const TRANSLATE_BATCH_SIZE = 6;
 const RATE_LIMIT_WAIT_MS = 65_000;
 const MAX_WAITS_PER_BATCH = 2;
 const MAX_WAITS_PER_RUN = 5;
+// One short-delay retry for transient upstream failures — an import
+// is a single pass, so a brief 5xx window (observed twice on the
+// hosted gateway, 2026-07-06) would otherwise permanently strand a
+// batch untranslated. Matches runDetectionPipeline's constant.
+const TRANSIENT_RETRY_DELAY_MS = 4_000;
 
 export interface ImportTextOptions {
   raw: string;
@@ -130,6 +135,7 @@ async function runTranslation(
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
     let batchWaits = 0;
+    let transientRetried = false;
 
     for (;;) {
       try {
@@ -169,7 +175,14 @@ async function runTranslation(
           onProgress("translate", batches.length, batches.length);
           return translations;
         }
-        // Any other error: skip this batch, keep going.
+        // Transient upstream failure: one short-delay retry (see
+        // TRANSIENT_RETRY_DELAY_MS above), then skip this batch and
+        // keep going.
+        if (!transientRetried) {
+          transientRetried = true;
+          await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAY_MS));
+          continue;
+        }
         break;
       }
     }

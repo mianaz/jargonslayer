@@ -180,4 +180,45 @@ describe("runDetectionPipeline — rate-limit pacing", () => {
     expect(mockDetectApi).toHaveBeenCalledTimes(2);
     expect(mockScanDictionary).toHaveBeenCalledTimes(1);
   });
+
+  it("a transient (non-429, non-NoKey) error is retried once after 4s — retry success keeps the LLM result, no dictionary", async () => {
+    mockDetectApi
+      .mockRejectedValueOnce(new Error("upstream 502"))
+      .mockResolvedValueOnce(emptyRes());
+
+    const promise = runDetectionPipeline(
+      [{ text: "one batch, brief upstream blip" }],
+      [],
+      settings,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await promise;
+
+    expect(mockDetectApi).toHaveBeenCalledTimes(2);
+    expect(mockScanDictionary).not.toHaveBeenCalled();
+  });
+
+  it("a transient error failing twice falls back to the dictionary for that batch (one retry only)", async () => {
+    mockDetectApi.mockRejectedValue(new Error("upstream 502, persistent"));
+
+    const promise = runDetectionPipeline(
+      [{ text: "one batch, persistent upstream failure" }],
+      [],
+      settings,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4_000);
+    await promise;
+
+    expect(mockDetectApi).toHaveBeenCalledTimes(2);
+    expect(mockScanDictionary).toHaveBeenCalledTimes(1);
+  });
 });

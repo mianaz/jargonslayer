@@ -16,7 +16,7 @@ import {
   type TranscriptSegment,
 } from "../types";
 import { PROVIDER_HEADERS } from "../types";
-import { detectApi, RateLimitApiError } from "../llm/client";
+import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
 import { scanDictionary } from "../detect/dictionary";
 import { scanCustomEntries } from "../history/glossary";
 import { mergeDetections } from "../detect/dedupe";
@@ -38,6 +38,7 @@ const POLL_INTERVAL_MS = 1500;
 const RATE_LIMIT_WAIT_MS = 65_000;
 const MAX_WAITS_PER_BATCH = 2;
 const MAX_WAITS_PER_RUN = 5;
+const TRANSIENT_RETRY_DELAY_MS = 4_000;
 
 export interface JobSegment {
   start: number;
@@ -211,6 +212,7 @@ export async function runDetectionPipeline(
     const batch = batches[i];
     const context = tail.slice(-CONTEXT_TAIL_CHARS);
     let batchWaits = 0;
+    let transientRetried = false;
     let res: DetectResponse | null = null;
 
     if (!rateLimitLatched) {
@@ -242,10 +244,25 @@ export async function runDetectionPipeline(
               onRateLimitFallback?.();
             }
           }
+          // Transient upstream failures (5xx blips at the model
+          // gateway, brief network errors) get ONE short-delay retry:
+          // an import is a single pass, so a 5-second bad window would
+          // otherwise permanently degrade this batch to the dictionary
+          // — observed live 2026-07-06 (two OpenRouter 502 windows
+          // within ~40min). Rate-limit has its own pacing above;
+          // NoKeyError can't succeed on retry.
+          if (
+            !(err instanceof RateLimitApiError) &&
+            !(err instanceof NoKeyError) &&
+            !transientRetried
+          ) {
+            transientRetried = true;
+            await new Promise((resolve) => setTimeout(resolve, TRANSIENT_RETRY_DELAY_MS));
+            continue;
+          }
           // NoKeyError, a lone batch's own per-batch cap exhausted, or
-          // any other failure (network, non-rate-limit upstream) —
-          // fall back to the offline dictionary for this batch only,
-          // exactly like today.
+          // a repeated failure — fall back to the offline dictionary
+          // for this batch only, exactly like today.
           break;
         }
       }
