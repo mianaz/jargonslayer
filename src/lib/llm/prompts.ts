@@ -1,5 +1,30 @@
 // All LLM prompts live here, under lead ownership. Routes import
 // from this file; do not inline prompt strings elsewhere.
+//
+// Language variants: the wire field names (chinese_explanation,
+// gloss_zh) are frozen contract; in "en" mode their SEMANTICS become
+// "simple-English explanation" via targeted prompt splices. The
+// splice anchors below must stay in sync with the base prompts —
+// applyLangVariant warns loudly if an anchor goes missing.
+
+import type { ExplainLanguage } from "../types";
+
+function applyLangVariant(
+  base: string,
+  replacements: [anchor: string, replacement: string][],
+): string {
+  let out = base;
+  for (const [anchor, replacement] of replacements) {
+    if (!out.includes(anchor)) {
+      console.warn(
+        `[prompts] language-variant anchor missing: "${anchor.slice(0, 60)}…"`,
+      );
+      continue;
+    }
+    out = out.replace(anchor, replacement);
+  }
+  return out;
+}
 
 // ---------------- live detection ----------------
 
@@ -55,6 +80,28 @@ export function buildDetectUserMessage(
   return `CONTEXT:\n${context || "(meeting just started)"}\n\nNEW:\n${newText}`;
 }
 
+/** Detection prompt in the requested explanation language. "zh" is
+ *  the canonical base; "en" swaps audience + explanation-field
+ *  semantics (field names unchanged for wire compatibility). */
+export function buildDetectSystemPrompt(lang: ExplainLanguage): string {
+  if (lang === "zh") return DETECT_SYSTEM_PROMPT;
+  return applyLangVariant(DETECT_SYSTEM_PROMPT, [
+    [
+      "for a Chinese professional who understands intermediate business English",
+      "for a non-native English speaker who understands intermediate business English",
+    ],
+    [
+      '"chinese_explanation": "<自然的商务中文解释, <=40字, 不要词典腔, 不要逐字直译>"',
+      '"chinese_explanation": "<simple everyday-English explanation, <=25 words, plain words only, no dictionary tone>"',
+    ],
+    ['"gloss_zh": "<中文简释, <=25字>"', '"gloss_zh": "<short plain-English gloss, <=15 words>"'],
+    [
+      "6. chinese_explanation must read like a colleague explaining quickly in a meeting: idiomatic, specific, no dictionary tone, no restating the English word-for-word. In all Chinese output, put a half-width space between Chinese characters and any English words or digits (e.g. \"把 ARR 拉起来\", not \"把ARR拉起来\").",
+      "6. chinese_explanation must read like a colleague explaining quickly in plain simple English: specific, concrete, no dictionary tone, avoid rare words.",
+    ],
+  ]);
+}
+
 // ---------------- post-meeting summary ----------------
 
 export const SUMMARY_SYSTEM_PROMPT = `You summarize a completed English business meeting for a Chinese professional. You are given the full transcript.
@@ -106,6 +153,24 @@ Rules:
 3. At most 10 expressions and 6 terms, ranked most valuable first.
 4. If nothing new qualifies, return {"expressions":[],"terms":[]}.
 No markdown fences, no prose outside the JSON object.`;
+
+export function buildSweepSystemPrompt(lang: ExplainLanguage): string {
+  if (lang === "zh") return SWEEP_SYSTEM_PROMPT;
+  return applyLangVariant(SWEEP_SYSTEM_PROMPT, [
+    [
+      "for a Chinese professional and extract",
+      "for a non-native English speaker and extract",
+    ],
+    [
+      "chinese_explanation 自然商务中文 <=40字",
+      "chinese_explanation simple everyday English <=25 words",
+    ],
+    [
+      "1. Only genuinely non-literal or confusing items a Chinese professional would want on a study card.",
+      "1. Only genuinely non-literal or confusing items a non-native speaker would want on a study card.",
+    ],
+  ]);
+}
 
 export function buildSweepUserMessage(
   transcript: string,
@@ -162,4 +227,22 @@ export function buildDefineUserMessage(
   context: string,
 ): string {
   return `PHRASE:\n${phrase}\n\nCONTEXT:\n${context || "(none)"}`;
+}
+
+export function buildDefineSystemPrompt(lang: ExplainLanguage): string {
+  if (lang === "zh") return DEFINE_SYSTEM_PROMPT;
+  return applyLangVariant(DEFINE_SYSTEM_PROMPT, [
+    [
+      "that a Chinese professional deliberately selected",
+      "that a non-native English speaker deliberately selected",
+    ],
+    [
+      '"chinese_explanation": "<自然的商务中文解释, <=45字, 不要词典腔, 不要逐字直译>"',
+      '"chinese_explanation": "<simple everyday-English explanation, <=30 words, plain words only, no dictionary tone>"',
+    ],
+    [
+      "3. chinese_explanation reads like a colleague explaining quickly: idiomatic, specific, no dictionary tone. Put a half-width space between Chinese characters and any English words or digits.",
+      "3. chinese_explanation reads like a colleague explaining quickly in plain simple English: specific, concrete, no rare words.",
+    ],
+  ]);
 }

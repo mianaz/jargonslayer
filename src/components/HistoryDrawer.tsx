@@ -3,11 +3,23 @@
 // Right-side drawer listing saved sessions, with search (title +
 // lazy-loaded expression match) and delete-confirm.
 
-import { useEffect, useState } from "react";
-import { X, Trash } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
+import { X, Trash, UploadSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
+import { importAndTrack } from "@/lib/stt/upload";
+
+// Upload-a-recording job tracking is intentionally component-local
+// (not in the global store) — it's ephemeral UI progress, and a page
+// refresh losing it is an accepted tradeoff (the sidecar keeps
+// transcribing regardless; see the hint text below the section).
+interface ImportJobState {
+  filename: string;
+  progress: number;
+  phase: string;
+  error: string | null;
+}
 
 export interface HistoryDrawerProps {
   open: boolean;
@@ -34,10 +46,14 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   const sessions = useApp((s) => s.sessions);
   const loadSession = useApp((s) => s.loadSession);
   const deleteSession = useApp((s) => s.deleteSession);
+  const settings = useApp((s) => s.settings);
+  const showToast = useApp((s) => s.showToast);
 
   const [query, setQuery] = useState("");
   const [cache, setCache] = useState<Record<string, MeetingSession>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<Map<string, ImportJobState>>(new Map());
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) {
@@ -45,6 +61,48 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
       setConfirmDeleteId(null);
     }
   }, [open]);
+
+  const patchJob = (jobId: string, patch: Partial<ImportJobState>) => {
+    setJobs((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(jobId);
+      if (existing) next.set(jobId, { ...existing, ...patch });
+      return next;
+    });
+  };
+
+  const handleImportFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    for (const file of Array.from(files)) {
+      const jobId = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setJobs((prev) =>
+        new Map(prev).set(jobId, {
+          filename: file.name,
+          progress: 0,
+          phase: "转录中",
+          error: null,
+        }),
+      );
+
+      void importAndTrack(file, settings, {
+        onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
+        onDone: async (sessionId) => {
+          await loadSession(sessionId);
+          // No dedicated "refresh session metas" action exists on the
+          // store — hydrate() re-reads settings/sessions/glossary from
+          // storage, which is a superset that also refreshes the list.
+          await useApp.getState().hydrate();
+          showToast("已导入并打开会话");
+          setJobs((prev) => {
+            const next = new Map(prev);
+            next.delete(jobId);
+            return next;
+          });
+        },
+        onError: (msg) => patchJob(jobId, { error: msg, phase: "失败" }),
+      });
+    }
+  };
 
   useEffect(() => {
     const q = query.trim();
@@ -108,14 +166,35 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
       <div className="fixed inset-y-0 right-0 z-40 flex w-[380px] translate-x-0 flex-col border-l border-edge bg-panel transition-transform">
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
           <span className="font-medium text-fg">会议历史</span>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="关闭"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-mut hover:bg-panel3 hover:text-fg"
-          >
-            <X size={18} weight="regular" />
-          </button>
+          <div className="flex items-center gap-1">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="audio/*,.m4a,.mp3,.wav"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                handleImportFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+            >
+              <UploadSimple size={16} weight="regular" />
+              导入录音
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="关闭"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-mut hover:bg-panel3 hover:text-fg"
+            >
+              <X size={18} weight="regular" />
+            </button>
+          </div>
         </div>
 
         <div className="shrink-0 px-4 py-3">
@@ -129,6 +208,39 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
         </div>
 
         <div className="scroll-thin flex-1 overflow-y-auto px-3 pb-4">
+          {jobs.size > 0 && (
+            <div className="mb-3 space-y-2">
+              {Array.from(jobs.entries()).map(([jobId, job]) => (
+                <div
+                  key={jobId}
+                  className="rounded-xl border border-edge bg-panel2 p-3"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm text-fg">
+                      {job.filename}
+                    </span>
+                    <span className="shrink-0 text-xs text-mut">
+                      {job.error ? "失败" : job.phase}
+                    </span>
+                  </div>
+                  {job.error ? (
+                    <div className="mt-1.5 text-xs text-warn">
+                      {job.error} — 确认 sidecar 已启动且 --http-port 开启
+                    </div>
+                  ) : (
+                    <div
+                      className="mt-2 h-1.5 rounded bg-acc transition-all"
+                      style={{ width: `${Math.round(job.progress * 100)}%` }}
+                    />
+                  )}
+                </div>
+              ))}
+              <div className="text-xs text-mut">
+                刷新页面不会中断转录，但会丢失进度显示
+              </div>
+            </div>
+          )}
+
           {filtered.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center px-6 text-center">
               <div className="text-sm font-medium text-fg">

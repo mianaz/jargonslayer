@@ -101,10 +101,13 @@ export interface TermCard extends DetectedTerm {
 
 // ---------- API contracts ----------
 
+export type ExplainLanguage = "zh" | "en";
+
 export interface DetectRequest {
   context: string; // previously analyzed tail, disambiguation only
   new_text: string; // fresh finalized text to analyze
   model?: string;
+  lang?: ExplainLanguage; // explanation language, default "zh"
 }
 
 export interface DetectResponse {
@@ -118,6 +121,7 @@ export interface SummarizeRequest {
   terms: DetectedTerm[];
   meetingTitle?: string;
   model?: string;
+  lang?: ExplainLanguage; // affects the missed-items sweep only
 }
 
 export interface TranslationPair {
@@ -191,6 +195,11 @@ export interface Settings {
   autoExport: boolean; // write session .md/.json to a chosen folder on save
   webhookUrl: string; // "" = off; POST session JSON after meeting
   exportFrontmatter: boolean; // YAML frontmatter on exported markdown
+  // explanation target language ("zh" default; "en" = English-only
+  // explanations for non-Chinese users; more languages later)
+  explainLanguage: "zh" | "en";
+  // dictionary theme packs: null = all packs enabled
+  enabledPacks: string[] | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -210,6 +219,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoExport: false,
   webhookUrl: "",
   exportFrontmatter: true,
+  explainLanguage: "zh",
+  enabledPacks: null,
 };
 
 /** Headers that carry LLM provider config from browser to routes.
@@ -301,6 +312,7 @@ export interface DefineRequest {
   phrase: string;
   context: string; // surrounding sentence for disambiguation
   model?: string;
+  lang?: ExplainLanguage;
 }
 
 export interface DefineResult {
