@@ -17,9 +17,12 @@
     "segments": [{
       "id": "uuid", "index": 0,
       "startedAt": 1751790000300, "endedAt": 1751790002300,
-      "speaker": "SPEAKER_1",         // 可选；diarization 或演示模式提供
+      "speaker": "SPEAKER_1",         // 可选；diarization 或演示模式提供（用户重命名后为显示名）
       "text": "…", "engine": "whisper"
     }],
+    "speakerAliases": {                // 可选；实时分离（beta）下用户重命名映射
+      "SPEAKER_1": "Elena"             // 键 = 稳定说话人 id，值 = 用户改的显示名
+    },
     "cards": [{                        // 检测到的表达（含书签字段）
       "expression": "move the needle",
       "category": "idiom",            // idiom|slang|phrase|metaphor|indirect|other

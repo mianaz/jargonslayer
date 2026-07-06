@@ -22,7 +22,8 @@ export default {
         acchover: "#7FB2FF", // hover brightens on dark UI
         acc2: "#3ED598", // live status only
         gold: "#E5B455", // annotation signature only
-        warn: "#E06C75", // stop/destructive only
+        warn: "#A63D40", // stop/destructive FILLS/borders only (heraldic red, v2.3)
+        "warn-soft": "#E07A7D", // warn TEXT on dark panels — passes WCAG AA (~5.7:1); #A63D40 as text is only ~3:1
       },
       fontFamily: {
         sans: [
@@ -37,6 +38,10 @@ export default {
           "sans-serif",
         ],
         mono: ["SF Mono", "Menlo", "Consolas", "monospace"],
+        // Brand-position-only display face (v2.2): Cinzel for EN, Songti
+        // SC fallback for the CJK brand position. Never used for
+        // body/buttons/forms — see docs/DESIGN.md v2.2.
+        display: ["var(--font-display)", "Songti SC", "STSong", "serif"],
       },
     },
   },
