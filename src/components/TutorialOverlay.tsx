@@ -11,7 +11,7 @@ export interface TutorialOverlayProps {
   onClose: () => void;
 }
 
-const TUTORIAL_DONE_KEY = "meetlingo:tutorial_done";
+const TUTORIAL_DONE_KEY = "jargonslayer:tutorial_done";
 
 export function shouldShowTutorial(): boolean {
   if (typeof window === "undefined") return false;
@@ -32,7 +32,7 @@ function markTutorialDone(): void {
 
 const STEPS: { title: string; body: string }[] = [
   {
-    title: "MeetLingo 是什么",
+    title: "JargonSlayer 是什么",
     body: "开会时它听英文，你看中文解释卡片。英文习语、俚语、缩写第一时间变成看得懂的解释，不用中途打断会议去查词典。",
   },
   {

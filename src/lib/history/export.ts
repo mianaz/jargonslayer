@@ -235,7 +235,7 @@ export function buildObsidianFrontmatter(session: MeetingSession): string {
     lines.push("terms:");
     for (const t of session.terms) lines.push(yamlListItem(t.term));
   }
-  lines.push("source: meetlingo");
+  lines.push("source: jargonslayer");
   lines.push("schemaVersion: 1");
   lines.push("---");
   return lines.join("\n");

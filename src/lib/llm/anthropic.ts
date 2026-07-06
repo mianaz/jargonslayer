@@ -26,7 +26,7 @@ import { PROVIDER_HEADERS } from "../types";
  *  (BYOK, never persisted server-side), falling back to the server
  *  env var. Returns null when neither is configured. */
 export function resolveKey(req: Request): string | null {
-  return req.headers.get("x-meetlingo-key") || process.env.ANTHROPIC_API_KEY || null;
+  return req.headers.get("x-jargonslayer-key") || process.env.ANTHROPIC_API_KEY || null;
 }
 
 /** Resolve which LLM provider/endpoint a request targets: header
@@ -40,12 +40,12 @@ export function resolveProvider(req: Request): {
   const provider: LlmProvider =
     headerProvider === "openai-compat" || headerProvider === "anthropic"
       ? headerProvider
-      : process.env.MEETLINGO_PROVIDER === "openai-compat"
+      : process.env.JARGONSLAYER_PROVIDER === "openai-compat"
         ? "openai-compat"
         : "anthropic";
 
   const baseUrl =
-    req.headers.get(PROVIDER_HEADERS.baseUrl) || process.env.MEETLINGO_BASE_URL || "";
+    req.headers.get(PROVIDER_HEADERS.baseUrl) || process.env.JARGONSLAYER_BASE_URL || "";
 
   return { provider, baseUrl };
 }

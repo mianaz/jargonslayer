@@ -1,4 +1,4 @@
-# MeetLingo 打包与形态路线
+# JargonSlayer 打包与形态路线
 
 四种形态（桌面 app / 菜单栏 app / 手机 / iPad）的现实路径与取舍。
 
@@ -6,7 +6,7 @@
 
 manifest + 图标已配置，`npm run dev`（或 `npm run build && npm start`）跑起来后：
 
-- **桌面（Chrome/Edge）**：地址栏右侧「安装 MeetLingo」→ 独立窗口、Dock/任务栏图标、无浏览器 UI。体验上就是桌面 app。
+- **桌面（Chrome/Edge）**：地址栏右侧「安装 JargonSlayer」→ 独立窗口、Dock/任务栏图标、无浏览器 UI。体验上就是桌面 app。
 - **iPad / iPhone（Safari）**：分享 → 「添加到主屏幕」。iOS 16.4+ 的 PWA 支持麦克风权限，浏览器识别引擎可用；本地 Whisper 引擎需要能访问跑 sidecar 的机器（同一局域网时把 `whisperUrl` 指到电脑 IP，如 `ws://192.168.1.x:8765`）。
 - 注意：PWA 依然需要 Next 服务在某处运行（本机或局域网内一台机器）。`npm start` 常驻即可。
 

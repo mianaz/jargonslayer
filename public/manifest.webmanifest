@@ -1,6 +1,6 @@
 {
-  "name": "MeetLingo · 英文会议实时理解助手",
-  "short_name": "MeetLingo",
+  "name": "JargonSlayer · 英文会议实时理解助手",
+  "short_name": "JargonSlayer",
   "description": "实时转录英文会议，即时解释商务俚语、隐喻和专有名词，为非母语者设计。",
   "start_url": "/",
   "display": "standalone",

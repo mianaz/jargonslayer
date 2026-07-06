@@ -1,4 +1,4 @@
-# MeetLingo · 英文会议实时理解助手
+# JargonSlayer · 英文会议实时理解助手
 
 开英文会时它在旁边听，把 **商务俚语、隐喻、委婉说法、专有名词** 实时变成简短的中文卡片；会议结束一键生成 **双语纪要 + 全文翻译 + 学习卡片**。为非英语母语者设计，数据全部留在本机。
 
@@ -81,7 +81,7 @@ python whisper_server.py --model small
 
 麦克风只能听到**你自己**。Zoom/Teams/Meet 里对方的声音从扬声器出来，需要把**系统音频**变成一个"输入设备"：
 
-- **macOS**：装 [BlackHole](https://github.com/ExistentialAudio/BlackHole)（免费虚拟声卡）→ 系统设置里建一个"多输出设备"（耳机 + BlackHole，你照常听声）→ MeetLingo 设置里把麦克风选成 BlackHole，引擎用**本地 Whisper**（浏览器识别引擎不认虚拟设备选择，始终用系统默认输入）。
+- **macOS**：装 [BlackHole](https://github.com/ExistentialAudio/BlackHole)（免费虚拟声卡）→ 系统设置里建一个"多输出设备"（耳机 + BlackHole，你照常听声）→ JargonSlayer 设置里把麦克风选成 BlackHole，引擎用**本地 Whisper**（浏览器识别引擎不认虚拟设备选择，始终用系统默认输入）。
 - **Windows**：VB-Cable 同理。
 - 想同时转录你和对方：macOS「聚合设备」把麦克风 + BlackHole 合成一个输入。
 
@@ -95,7 +95,7 @@ python whisper_server.py --model small
 
 ## 说话人分离（进阶，可选）
 
-实时说话人分离对延迟影响太大，MeetLingo 采用**会后处理**路径：
+实时说话人分离对延迟影响太大，JargonSlayer 采用**会后处理**路径：
 
 ```bash
 # 1. 开会时让 sidecar 留下录音

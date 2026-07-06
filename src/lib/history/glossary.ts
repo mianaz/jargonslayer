@@ -12,7 +12,7 @@ import {
   type DetectResponse,
 } from "../types";
 
-const GLOSSARY_KEY = "meetlingo:glossary";
+const GLOSSARY_KEY = "jargonslayer:glossary";
 
 function hasIndexedDb(): boolean {
   return typeof indexedDB !== "undefined";
@@ -30,7 +30,15 @@ export function getCachedEntries(): CustomEntry[] {
 export async function loadCustomEntries(): Promise<CustomEntry[]> {
   if (!hasIndexedDb()) return [];
   try {
-    const list = await get<CustomEntry[]>(GLOSSARY_KEY);
+    let list = await get<CustomEntry[]>(GLOSSARY_KEY);
+    if (!list) {
+      // Pre-rename key migration (copy, don't delete).
+      const legacy = await get<CustomEntry[]>("meetlingo:glossary");
+      if (legacy && legacy.length > 0) {
+        await set(GLOSSARY_KEY, legacy);
+        list = legacy;
+      }
+    }
     cache = list ?? [];
   } catch (err) {
     console.warn("[glossary] load failed", err);

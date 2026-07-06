@@ -1,4 +1,4 @@
-# MeetLingo 技术架构
+# JargonSlayer 技术架构
 
 ## 总览
 

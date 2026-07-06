@@ -9,7 +9,7 @@ import { buildMarkdownReport, buildObsidianFrontmatter } from "./export";
 import * as storage from "./storage";
 import * as glossary from "./glossary";
 
-const EXPORT_DIR_KEY = "meetlingo:export-dir";
+const EXPORT_DIR_KEY = "jargonslayer:export-dir";
 
 // ---------------------------------------------------------------
 // File System Access API — not yet in TypeScript's stock lib.dom.d.ts
@@ -44,7 +44,12 @@ function hasDirectoryPicker(): boolean {
 async function getStoredHandle(): Promise<FileSystemDirectoryHandle | null> {
   if (!hasIndexedDb()) return null;
   try {
-    const handle = await get<FileSystemDirectoryHandle>(EXPORT_DIR_KEY);
+    let handle = await get<FileSystemDirectoryHandle>(EXPORT_DIR_KEY);
+    if (!handle) {
+      // Pre-rename key migration (copy, don't delete).
+      handle = await get<FileSystemDirectoryHandle>("meetlingo:export-dir");
+      if (handle) await set(EXPORT_DIR_KEY, handle);
+    }
     return handle ?? null;
   } catch (err) {
     console.warn("[autoExport] getStoredHandle failed", err);
@@ -91,12 +96,12 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** `YYYY-MM-DD-HHmm-meetlingo`, sanitized for filesystem safety. */
+/** `YYYY-MM-DD-HHmm-jargonslayer`, sanitized for filesystem safety. */
 function filenameBase(startedAt: number): string {
   const d = new Date(startedAt);
   const raw = `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(
     d.getDate(),
-  )}-${pad2(d.getHours())}${pad2(d.getMinutes())}-meetlingo`;
+  )}-${pad2(d.getHours())}${pad2(d.getMinutes())}-jargonslayer`;
   return raw.replace(/[^a-zA-Z0-9-]/g, "-");
 }
 
@@ -188,7 +193,7 @@ export async function buildFullBackup(): Promise<string> {
   return JSON.stringify(
     {
       schemaVersion: 1,
-      kind: "meetlingo-backup",
+      kind: "jargonslayer-backup",
       exportedAt: Date.now(),
       sessions,
       glossary: glossaryEntries,
@@ -217,8 +222,8 @@ export async function restoreFullBackup(
   } catch (err) {
     throw new Error("备份文件不是有效的 JSON", { cause: err });
   }
-  if (parsed.kind !== "meetlingo-backup") {
-    throw new Error("不是有效的 MeetLingo 备份文件");
+  if (parsed.kind !== "jargonslayer-backup" && parsed.kind !== "meetlingo-backup") {
+    throw new Error("不是有效的 JargonSlayer 备份文件");
   }
 
   const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];

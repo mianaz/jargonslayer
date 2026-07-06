@@ -319,7 +319,7 @@ export default function GlossaryPanel() {
 
   const handleExportAnki = () => {
     const tsv = buildAnkiTSV(customEntries.map(customEntryToFlashcard));
-    downloadFile("meetlingo-glossary.tsv", tsv, "text/tab-separated-values");
+    downloadFile("jargonslayer-glossary.tsv", tsv, "text/tab-separated-values");
     showToast("已导出 Anki .tsv");
   };
 

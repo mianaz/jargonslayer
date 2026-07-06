@@ -1,5 +1,5 @@
 // ============================================================
-// MeetLingo shared contract — single source of truth for all
+// JargonSlayer shared contract — single source of truth for all
 // cross-module types. Owned by the lead; workers code against it.
 // ============================================================
 
@@ -226,9 +226,9 @@ export const DEFAULT_SETTINGS: Settings = {
 /** Headers that carry LLM provider config from browser to routes.
  *  Wire body types stay provider-agnostic. */
 export const PROVIDER_HEADERS = {
-  key: "x-meetlingo-key",
-  provider: "x-meetlingo-provider",
-  baseUrl: "x-meetlingo-base-url",
+  key: "x-jargonslayer-key",
+  provider: "x-jargonslayer-provider",
+  baseUrl: "x-jargonslayer-base-url",
 } as const;
 
 // ---------- meeting session / history ----------

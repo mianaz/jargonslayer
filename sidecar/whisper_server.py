@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MeetLingo local Whisper sidecar.
+"""JargonSlayer local Whisper sidecar.
 
 Privacy-mode STT server: receives 16kHz mono int16 PCM over a
 WebSocket, performs energy-based VAD segmentation, and transcribes
@@ -516,7 +516,7 @@ def make_job_http_handler(
     must live outside the class via closure)."""
 
     class JobHTTPHandler(BaseHTTPRequestHandler):
-        server_version = "MeetLingoSidecar/1.0"
+        server_version = "JargonSlayerSidecar/1.0"
 
         def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
             pass  # keep stdout to the startup banner + explicit prints
@@ -563,7 +563,7 @@ def make_job_http_handler(
                 return
 
             suffix = Path(filename).suffix or ".bin"
-            fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="meetlingo-")
+            fd, tmp_path = tempfile.mkstemp(suffix=suffix, prefix="jargonslayer-")
             try:
                 remaining = length
                 with os.fdopen(fd, "wb") as f:
@@ -636,7 +636,7 @@ def load_model(model_name: str, device: str, compute_type: str):
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "MeetLingo 本地 Whisper 转录服务 / MeetLingo local Whisper "
+            "JargonSlayer 本地 Whisper 转录服务 / JargonSlayer local Whisper "
             "transcription sidecar (privacy mode, all audio stays on "
             "this machine)."
         )
@@ -725,12 +725,12 @@ def print_banner(
     diarize_enabled: bool,
 ) -> None:
     print("=" * 60)
-    print("MeetLingo 本地 Whisper 服务 / local Whisper sidecar")
+    print("JargonSlayer 本地 Whisper 服务 / local Whisper sidecar")
     print(f"  model:     {model_name}")
     print(f"  device:    {device}")
     print(f"  load:      {load_seconds:.2f}s")
     print(f"  diarize:   {'on' if diarize_enabled else 'off'}")
-    print(f"ws://{host}:{port} 等待连接 — 在 MeetLingo 设置中选择「本地 Whisper」")
+    print(f"ws://{host}:{port} 等待连接 — 在 JargonSlayer 设置中选择「本地 Whisper」")
     print(
         f"http://{host}:{http_port} 录音上传任务 API — "
         "PUT /transcribe, GET /jobs"
