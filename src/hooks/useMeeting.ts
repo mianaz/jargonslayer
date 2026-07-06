@@ -45,6 +45,12 @@ export function useMeeting(): UseMeetingResult {
       scheduler.flushNow();
       const segCount = useApp.getState().segments.length;
       useApp.getState().setStatus(segCount ? "stopped" : "idle");
+      // Persist whatever was transcribed — engine errors and demo
+      // completion must not lose the session. Late detection results
+      // are re-saved by the store's post-stop debounced save.
+      if (segCount > 0) {
+        await useApp.getState().saveCurrentSession();
+      }
     };
 
     const events: STTEvents = {

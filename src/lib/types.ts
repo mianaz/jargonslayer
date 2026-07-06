@@ -79,7 +79,7 @@ export interface DetectedTerm {
 
 // ---------- UI cards = detection + bookkeeping ----------
 
-export type DetectionSource = "llm" | "dictionary";
+export type DetectionSource = "llm" | "dictionary" | "custom";
 
 export interface ExpressionCard extends DetectedExpression {
   id: string;
@@ -232,6 +232,112 @@ export function sessionToMeta(s: MeetingSession): SessionMeta {
     cardCount: s.cards.length,
     termCount: s.terms.length,
     hasSummary: !!s.summary,
+  };
+}
+
+// ---------- personal dictionary (user-curated glossary) ----------
+// Persisted across meetings (IndexedDB). Entries participate in live
+// detection like the built-in dictionary, but rank above it and are
+// never overwritten by LLM/dictionary hits. One shape covers both an
+// explainable expression and a glossed term; kind selects which
+// optional fields are meaningful.
+
+export type CustomEntryKind = "expression" | "term";
+
+export interface CustomEntry {
+  id: string;
+  kind: CustomEntryKind;
+  headword: string; // canonical phrase/term — display + primary match
+  variants: string[]; // extra surface forms to also match
+  chinese_explanation: string; // 中文解释（两种 kind 都有）
+  example: string; // AI-generated standalone example sentence
+  context: string; // 原始会议语境句（capture 时的出处，可空）
+  note: string; // user's own note
+  createdAt: number;
+  updatedAt: number;
+  source: "ai" | "manual"; // how the entry was authored
+  // expression-only
+  category?: ExpressionCategory;
+  meaning?: string; // in-context English
+  plain_english?: string;
+  tone?: string;
+  // term-only
+  termType?: TermType;
+  gloss_en?: string;
+}
+
+// AI "define this phrase" result (client fills id/timestamps/note).
+export interface DefineRequest {
+  phrase: string;
+  context: string; // surrounding sentence for disambiguation
+  model?: string;
+}
+
+export interface DefineResult {
+  kind: CustomEntryKind;
+  headword: string;
+  variants: string[];
+  chinese_explanation: string;
+  example: string;
+  // expression-only
+  category?: ExpressionCategory;
+  meaning?: string;
+  plain_english?: string;
+  tone?: string;
+  // term-only
+  termType?: TermType;
+  gloss_en?: string;
+}
+
+/** All surface forms a custom entry should match against, deduped. */
+export function customEntrySurfaces(e: CustomEntry): string[] {
+  return Array.from(
+    new Set([e.headword, ...e.variants].map((s) => s.trim()).filter(Boolean)),
+  );
+}
+
+/** Project a custom entry onto the detection wire shape so dictionary
+ *  scanning can emit it into the live card stream. `sentence` is the
+ *  matched transcript sentence (falls back to the stored context). */
+export function customEntryToExpression(
+  e: CustomEntry,
+  sentence: string,
+): DetectedExpression {
+  return {
+    expression: e.headword,
+    category: e.category ?? "phrase",
+    meaning: e.meaning ?? e.chinese_explanation,
+    chinese_explanation: e.chinese_explanation,
+    plain_english: e.plain_english ?? e.headword,
+    tone: e.tone ?? "自定义词条",
+    confidence: 1,
+    source_sentence: sentence || e.context || e.example,
+  };
+}
+
+export function customEntryToTerm(e: CustomEntry): DetectedTerm {
+  return {
+    term: e.headword,
+    type: e.termType ?? "other",
+    gloss_en: e.gloss_en ?? "",
+    gloss_zh: e.chinese_explanation,
+  };
+}
+
+/** Build a study flashcard from a custom entry (for export/merge). */
+export function customEntryToFlashcard(e: CustomEntry): Flashcard {
+  const backEn =
+    e.kind === "term"
+      ? e.gloss_en ?? ""
+      : [e.meaning, e.plain_english && `plain: ${e.plain_english}`]
+          .filter(Boolean)
+          .join(" — ");
+  return {
+    front: e.headword,
+    back_zh: e.chinese_explanation,
+    back_en: backEn,
+    example: e.example || e.context,
+    tags: [e.kind === "term" ? e.termType ?? "term" : e.category ?? "expression", "custom"],
   };
 }
 

@@ -115,3 +115,51 @@ export function buildSweepUserMessage(
     alreadyCaptured.length ? alreadyCaptured.join(", ") : "(none)"
   }\n\nTRANSCRIPT:\n${transcript}`;
 }
+
+// ---------------- on-demand "define this" (personal dictionary) ----------------
+// Unlike live detection, this ALWAYS explains the phrase the user
+// picked — no "too basic to bother" filtering — and additionally
+// invents one standalone example sentence for study/recall.
+
+export const DEFINE_SYSTEM_PROMPT = `You explain one English word or phrase that a Chinese professional deliberately selected during a meeting to save into their personal glossary. Unlike a filter, you ALWAYS produce a full entry — never decline as "too basic".
+
+You are given:
+- PHRASE: the exact text the user selected.
+- CONTEXT: the surrounding sentence (may be empty). Use it ONLY to pick the intended sense.
+
+First decide kind:
+- "term" if PHRASE is a proper noun, acronym, product/company name, or named metric/jargon.
+- "expression" otherwise (idiom, slang, business phrase, metaphor, indirect wording, or an ordinary phrase the user still wants recorded).
+
+Return ONLY a single JSON object, no markdown fences, no prose. First char "{", last char "}".
+
+Schema (include the fields for the chosen kind; omit the other kind's fields):
+{
+  "kind": "expression | term",
+  "headword": "<clean canonical form of PHRASE, trimmed, base form if obvious>",
+  "variants": ["<other common surface forms, e.g. inflections/spellings; [] if none>"],
+  "chinese_explanation": "<自然的商务中文解释, <=45字, 不要词典腔, 不要逐字直译>",
+  "example": "<ONE natural English example sentence you write yourself, business-meeting style, that clearly shows the meaning; must actually contain the headword or a variant; <=25 words>",
+
+  "category": "idiom | slang | phrase | metaphor | indirect | other",   // expression only
+  "meaning": "<in-context English meaning, <=20 words>",                 // expression only
+  "plain_english": "<blunt plain-English rewrite, <=10 words>",          // expression only
+  "tone": "<short label, e.g. neutral / softened criticism / casual>",   // expression only
+
+  "termType": "acronym | company | product | tech | metric | person | other", // term only
+  "gloss_en": "<what it is, <=12 words>"                                       // term only
+}
+
+Rules:
+1. Explain the sense that fits CONTEXT when given; otherwise the most common business sense.
+2. "example" must be YOUR OWN new sentence, natural and specific — not copied from CONTEXT — and must contain the headword (or a listed variant).
+3. chinese_explanation reads like a colleague explaining quickly: idiomatic, specific, no dictionary tone.
+4. Keep it a single entry for exactly this PHRASE. Do not add unrelated items.
+Output the JSON object now.`;
+
+export function buildDefineUserMessage(
+  phrase: string,
+  context: string,
+): string {
+  return `PHRASE:\n${phrase}\n\nCONTEXT:\n${context || "(none)"}`;
+}
