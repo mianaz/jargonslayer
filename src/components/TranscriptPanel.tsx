@@ -291,8 +291,12 @@ export default function TranscriptPanel() {
   const setFocusCard = useApp((s) => s.setFocusCard);
   const setLookup = useApp((s) => s.setLookup);
   const updateSegmentText = useApp((s) => s.updateSegmentText);
-  // Live bilingual transcript (#42).
-  const bilingualTranscript = useApp((s) => s.settings.bilingualTranscript);
+  // Bilingual transcript (#42/#43): rendering is data-driven — a
+  // translation exists, it shows. The settings toggle governs live
+  // GENERATION only (TranslateQueue gates on it); imported sessions
+  // (#43's 中文对照 checkbox) carry translations regardless of the
+  // toggle, and hiding paid-for lines behind an unrelated setting
+  // would strand them invisibly.
   const translations = useApp((s) => s.translations);
 
   // Transcript editing only applies to sessions that are done being
@@ -624,7 +628,7 @@ export default function TranscriptPanel() {
                         onHitEnter={handleHitEnter}
                         onHitLeave={handleHitLeave}
                       />
-                      {bilingualTranscript && translations[seg.id] && (
+                      {translations[seg.id] && (
                         <div className="mt-0.5 text-xs leading-[1.6] text-mut">
                           {translations[seg.id]}
                         </div>
