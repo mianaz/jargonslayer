@@ -15,6 +15,7 @@ export interface DictExpressionEntry {
   plain_english: string;
   tone: string;
   confidence: number; // 0.9 for dictionary entries
+  pack: string; // theme pack id, see packs.ts — matches the // ===== 主题 ===== block below
 }
 
 export interface DictTermEntry {
@@ -22,6 +23,7 @@ export interface DictTermEntry {
   type: TermType;
   gloss_en: string;
   gloss_zh: string;
+  pack: string; // theme pack id, see packs.ts
 }
 
 // ---------------------------------------------------------------
@@ -42,6 +44,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's begin",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "wrap up",
@@ -52,6 +55,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's finish up",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "run out of time",
@@ -62,6 +66,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "we're low on time",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "park that",
@@ -72,6 +77,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "set that aside for now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "back-burner",
@@ -82,6 +88,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "deprioritize it for now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "hard pivot",
@@ -92,6 +99,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a sudden major direction change",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "double down",
@@ -102,6 +110,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "invest even more in this",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "zoom out",
@@ -112,6 +121,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "look at the bigger picture",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "zoom in",
@@ -122,6 +132,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "focus on this specific detail",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's table the rest",
@@ -132,6 +143,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "postpone the remaining items",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "keep this on track",
@@ -142,6 +154,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "stay focused on the agenda",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "mind the clock",
@@ -152,6 +165,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "watch the time",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's timebox this",
@@ -162,6 +176,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "set a fixed time limit",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's take this to the next meeting",
@@ -172,6 +187,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "discuss this next time instead",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's go around the room",
@@ -182,6 +198,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "everyone speaks in turn",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "before we dive in",
@@ -192,6 +209,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "before we begin",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's get into it",
@@ -202,6 +220,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's start the main topic",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's take a five",
@@ -212,6 +231,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "take a short break",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "close the loop",
@@ -222,6 +242,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "finish following up fully",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's put a bow on this",
@@ -232,6 +253,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "wrap it up nicely",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's not boil the pot here",
@@ -242,6 +264,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "keep this simple",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "housekeeping items",
@@ -252,6 +275,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "small admin items first",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's parking-lot this",
@@ -262,6 +286,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "note it for later, off-topic",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's fast-forward to the good part",
@@ -272,6 +297,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "skip to the important part",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's rally the troops",
@@ -282,6 +308,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "get everyone motivated to act",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's take stock",
@@ -292,6 +319,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "review where things stand",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's not rehash this",
@@ -302,6 +330,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's not repeat this discussion",
     tone: "neutral, mildly impatient",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's stay in our lane",
@@ -312,6 +341,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "focus only on your own area",
     tone: "neutral, slightly blunt",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's put this to rest",
@@ -322,6 +352,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "resolve this once and for all",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "can we take a beat",
@@ -332,6 +363,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's pause briefly",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's not get ahead of ourselves",
@@ -342,6 +374,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't assume this is settled yet",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's circle the wagons",
@@ -352,6 +385,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "unite defensively as a team",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "quick gut check",
@@ -362,6 +396,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a quick informal opinion check",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's not open that can of worms",
@@ -372,6 +407,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "that would open up many problems",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's not put a fine point on the timing",
@@ -382,6 +418,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't commit to an exact date yet",
     tone: "softened, hedging",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's sync up on this",
@@ -392,6 +429,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's briefly coordinate on this",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's not lose momentum",
@@ -402,6 +440,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "keep up the current pace",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's keep the trains running on time",
@@ -412,6 +451,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "keep operations reliable and on schedule",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
   {
     expression: "let's put this on the agenda",
@@ -422,6 +462,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "schedule this for discussion later",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "meeting-flow",
   },
 
   // ===== 项目与执行 =====
@@ -434,6 +475,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "release it now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "scope creep",
@@ -444,6 +486,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "requirements keep expanding",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "blocker",
@@ -454,6 +497,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "something stopping progress",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "bottleneck",
@@ -464,6 +508,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the limiting factor",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "over the finish line",
@@ -474,6 +519,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "finally get it done",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "in flight",
@@ -484,6 +530,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "currently in progress",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "up and running",
@@ -494,6 +541,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "working and operational now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "from scratch",
@@ -504,6 +552,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "starting with nothing",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "greenlight",
@@ -514,6 +563,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "get official approval",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "sunset a feature",
@@ -524,6 +574,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "gradually retire it",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "tech debt",
@@ -534,6 +585,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "accumulated shortcuts to fix later",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "moving parts",
@@ -544,6 +596,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "many interconnected pieces",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "critical path",
@@ -554,6 +607,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the tasks that set the timeline",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "single point of failure",
@@ -564,6 +618,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "one weak point that breaks everything",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "put out fires",
@@ -574,6 +629,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "constantly handling urgent problems",
     tone: "neutral, mildly stressed",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "in the pipeline",
@@ -584,6 +640,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "planned or in progress",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "move things forward",
@@ -594,6 +651,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "keep making progress",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "get buy-in from stakeholders",
@@ -604,6 +662,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "get everyone affected to agree",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "a moving target",
@@ -614,6 +673,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the goal keeps changing",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's not reinvent the wheel",
@@ -624,6 +684,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't redo existing work",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "hit the ground running",
@@ -634,6 +695,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "start fast and productively",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "throw more bodies at it",
@@ -644,6 +706,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "just add more people",
     tone: "critical, mildly negative",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "the runway is shrinking",
@@ -654,6 +717,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "we're running low on time",
     tone: "neutral, mildly urgent",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "keep the lights on",
@@ -664,6 +728,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "maintain basic operations only",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's not gold-plate this",
@@ -674,6 +739,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't over-polish this",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "get it out the door",
@@ -684,6 +750,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "finish and deliver it",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's rip the band-aid off",
@@ -694,6 +761,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "do the painful thing quickly",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "the wheels are in motion",
@@ -704,6 +772,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "it's already in motion",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's not put the cart before the horse",
@@ -714,6 +783,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "we're doing this out of order",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "a stopgap solution",
@@ -724,6 +794,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a temporary fix for now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "get everyone rowing in the same direction",
@@ -734,6 +805,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "get everyone aligned on one goal",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "low-code solution",
@@ -744,6 +816,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "building with minimal manual code",
     tone: "neutral, tech jargon",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's derisk this",
@@ -754,6 +827,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "reduce the risk before proceeding",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "we're spinning our wheels",
@@ -764,6 +838,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "working hard with no real progress",
     tone: "neutral, mildly frustrated",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's get ahead of this",
@@ -774,6 +849,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "address this proactively now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "the long pole in the tent",
@@ -784,6 +860,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the task most likely to delay us",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's not let perfect be the enemy of good",
@@ -794,6 +871,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't delay shipping for perfection",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "we're in maintenance mode",
@@ -804,6 +882,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "only minimal upkeep, no new work",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's do a postmortem",
@@ -814,6 +893,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "review what went wrong afterward",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's dogfood this internally first",
@@ -824,6 +904,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "test it internally before release",
     tone: "casual, tech jargon",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's not let this fall through the cracks",
@@ -834,6 +915,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't let this get forgotten",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "we're at a crossroads",
@@ -844,6 +926,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a critical decision point now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
   {
     expression: "let's future-proof this",
@@ -854,6 +937,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "design it to last long-term",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "project",
   },
 
   // ===== 绩效与反馈 =====
@@ -866,6 +950,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "take responsibility when needed",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "raise the bar",
@@ -876,6 +961,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "set a higher standard",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "exceeds expectations",
@@ -886,6 +972,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "did better than expected",
     tone: "neutral, formal HR phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "coaching moment",
@@ -896,6 +983,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a chance to give guidance",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "growth area",
@@ -906,6 +994,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a weak spot to improve",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "put someone on the spot",
@@ -916,6 +1005,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "put pressure on someone suddenly",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "manage up",
@@ -926,6 +1016,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "proactively work with your manager",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "own the outcome",
@@ -936,6 +1027,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "be fully responsible for it",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "constructive feedback",
@@ -946,6 +1038,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "helpful critical feedback",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "not quite hitting the mark",
@@ -956,6 +1049,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "didn't meet the standard",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "there's room to grow here",
@@ -966,6 +1060,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "you can still improve a lot",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "punching above your weight",
@@ -976,6 +1071,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "outperforming your level",
     tone: "neutral, complimentary",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "carrying the team",
@@ -986,6 +1082,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "doing most of the work alone",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "underperforming",
@@ -996,6 +1093,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "not performing well enough",
     tone: "critical, formal HR phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's set clear expectations",
@@ -1006,6 +1104,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's clarify what's expected",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "give credit where it's due",
@@ -1016,6 +1115,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "acknowledge real contributions",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "pull their weight",
@@ -1026,6 +1126,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "do your fair share",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "a stretch goal",
@@ -1036,6 +1137,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "an ambitious extra-challenging goal",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's calibrate on this",
@@ -1046,6 +1148,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "align on the same standard",
     tone: "neutral, formal HR phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "you're on thin ice",
@@ -1056,6 +1159,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "in a risky, precarious position",
     tone: "critical, negative",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's give them a soft landing",
@@ -1066,6 +1170,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "handle the transition gently",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "read between the lines",
@@ -1076,6 +1181,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "infer the unspoken meaning",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's not sugarcoat it",
@@ -1086,6 +1192,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "give it to me straight",
     tone: "critical, blunt",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "this needs a performance improvement plan",
@@ -1096,6 +1203,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a formal underperformance improvement process",
     tone: "critical, formal HR phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's recognize the effort here",
@@ -1106,6 +1214,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "acknowledge the effort put in",
     tone: "softened, encouraging",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's not micromanage this",
@@ -1116,6 +1225,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't oversee every small detail",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "leading by example",
@@ -1126,6 +1236,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "showing the behavior yourself first",
     tone: "neutral, complimentary",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's not lower the bar",
@@ -1136,6 +1247,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't accept a lower standard",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "went above and beyond",
@@ -1146,6 +1258,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "did much more than required",
     tone: "neutral, complimentary",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's give it to them straight",
@@ -1156,6 +1269,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "communicate this directly and honestly",
     tone: "critical, blunt",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's not throw them to the wolves",
@@ -1166,6 +1280,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't leave them unsupported",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "feedback",
   },
   {
     expression: "let's celebrate the small wins",
@@ -1176,6 +1291,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "acknowledge small progress too",
     tone: "neutral, encouraging",
     confidence: 0.9,
+    pack: "feedback",
   },
 
   // ===== 销售市场与增长 =====
@@ -1188,6 +1304,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "start small, then grow the account",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "the funnel",
@@ -1198,6 +1315,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the customer conversion pipeline",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "flywheel",
@@ -1208,6 +1326,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a self-reinforcing growth loop",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "traction",
@@ -1218,6 +1337,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "early signs of momentum",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "product-market fit",
@@ -1228,6 +1348,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the product truly fits the market",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "eat someone's lunch",
@@ -1238,6 +1359,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a competitor is beating us badly",
     tone: "critical, competitive",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "race to the bottom",
@@ -1248,6 +1370,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "destructive price-cutting competition",
     tone: "critical, negative",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "moat",
@@ -1258,6 +1381,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a durable competitive advantage",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "whale",
@@ -1268,6 +1392,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a very large-value customer",
     tone: "casual, sales slang",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "close the deal",
@@ -1278,6 +1403,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "finalize the sale",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "in the pipeline for sales",
@@ -1288,6 +1414,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "deals currently being pursued",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "north-star metric",
@@ -1298,6 +1425,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the single most important metric",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "sticky",
@@ -1308,6 +1436,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "users keep coming back",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "growth hacking",
@@ -1318,6 +1447,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "unconventional fast growth tactics",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "word of mouth",
@@ -1328,6 +1458,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "growth from organic recommendations",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "cross the chasm",
@@ -1338,6 +1469,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "reach the mainstream market",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "table stakes",
@@ -1348,6 +1480,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "just the baseline requirement",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "market whitespace",
@@ -1358,6 +1491,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "an untapped market opportunity",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "burn the boats",
@@ -1368,6 +1502,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "fully commit, no turning back",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "we're leaving money on the table",
@@ -1378,6 +1513,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "missing out on available revenue",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "beachhead market",
@@ -1388,6 +1524,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a small initial market foothold",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "let's not boil the ocean on positioning",
@@ -1398,6 +1535,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't try to appeal to everyone",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "we're punching above our weight class",
@@ -1408,6 +1546,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "competing well against bigger rivals",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "let's not oversell this",
@@ -1418,6 +1557,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't exaggerate the product's capabilities",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "the champion inside the account",
@@ -1428,6 +1568,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the customer's internal advocate for us",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "let's not chase every shiny logo",
@@ -1438,6 +1579,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't chase prestigious but ill-fitting deals",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "our unique value proposition",
@@ -1448,6 +1590,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "what sets us apart from others",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "let's not undercut ourselves on price",
@@ -1458,6 +1601,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't price too low, it hurts us",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "the market is heating up",
@@ -1468,6 +1612,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "competition here is intensifying",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "sales",
   },
   {
     expression: "let's not throw spaghetti at the wall on marketing",
@@ -1478,6 +1623,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't try random tactics blindly",
     tone: "critical, mildly negative",
     confidence: 0.9,
+    pack: "sales",
   },
 
   // ===== 委婉与批评 =====
@@ -1490,6 +1636,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I'm about to disagree",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "playing devil's advocate",
@@ -1500,6 +1647,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "deliberately arguing the other side",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "not to put too fine a point on it",
@@ -1510,6 +1658,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I'll just say it directly",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's agree to disagree",
@@ -1520,6 +1669,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "we won't agree on this",
     tone: "softened, ending conflict",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "I hear you",
@@ -1530,6 +1680,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I understand, but maybe disagree",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "that being said",
@@ -1540,6 +1691,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "however, on the other hand",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "food for thought",
@@ -1550,6 +1702,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "something to think about",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "low blow",
@@ -1560,6 +1713,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "an unfairly harsh comment",
     tone: "critical, negative",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "throw shade",
@@ -1570,6 +1724,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "make a subtle mocking dig",
     tone: "casual, mildly negative",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's not go down that road",
@@ -1580,6 +1735,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's not discuss that topic",
     tone: "softened, avoiding conflict",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "I'm just going to say it",
@@ -1590,6 +1746,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I'll say the blunt truth now",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "no offense, but",
@@ -1600,6 +1757,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I don't mean to offend, but",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's be real",
@@ -1610,6 +1768,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's be honest about this",
     tone: "casual, blunt",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "at the end of the day",
@@ -1620,6 +1779,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "ultimately, the bottom line is",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "I could be wrong, but",
@@ -1630,6 +1790,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I might be wrong, but here's my view",
     tone: "softened, humble",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "just playing devil's advocate here",
@@ -1640,6 +1801,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I'm just testing the idea, not attacking",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's not lose sight of",
@@ -1650,6 +1812,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't forget this important point",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "it is what it is",
@@ -1660,6 +1823,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "it can't be changed, accept it",
     tone: "neutral, resigned",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's park the emotions",
@@ -1670,6 +1834,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's discuss this objectively",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "no pushback intended, but",
@@ -1680,6 +1845,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I don't mean to object, but",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's call a spade a spade",
@@ -1690,6 +1856,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's describe it plainly and honestly",
     tone: "casual, blunt",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "just to play it back to you",
@@ -1700,6 +1867,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let me confirm I understood you",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "I want to push back a little here",
@@ -1710,6 +1878,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I want to disagree a bit",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's not sweep this under the rug",
@@ -1720,6 +1889,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't hide or ignore this problem",
     tone: "critical, direct",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "just to be devil's advocate for a second",
@@ -1730,6 +1900,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let me briefly argue the opposite",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "if I'm honest",
@@ -1740,6 +1911,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "honestly speaking",
     tone: "softened, candid",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "let's not throw the baby out with the bathwater",
@@ -1750,6 +1922,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't discard the good with the bad",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "just to steelman the other side",
@@ -1760,6 +1933,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "arguing their case as strongly as possible",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "I'll be the bearer of bad news",
@@ -1770,6 +1944,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I have to share unwelcome news",
     tone: "softened, neutral",
     confidence: 0.9,
+    pack: "softening",
   },
   {
     expression: "not to be that person, but",
@@ -1780,6 +1955,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I don't want to nitpick, but",
     tone: "softened criticism",
     confidence: 0.9,
+    pack: "softening",
   },
 
   // ===== 学术与研究会议 =====
@@ -1792,6 +1968,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "how genuinely new the idea is",
     tone: "academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "incremental contribution",
@@ -1802,6 +1979,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "too small an improvement over prior work",
     tone: "softened criticism, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "hand-wavy",
@@ -1812,6 +1990,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "not rigorous, glossing over details",
     tone: "critical, academic slang",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "cherry-pick data",
@@ -1822,6 +2001,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "only showing favorable data",
     tone: "critical, negative",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "p-hacking",
@@ -1832,6 +2012,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "manipulating stats for significance",
     tone: "critical, academic slang",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "back-of-the-envelope",
@@ -1842,6 +2023,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a quick rough estimate",
     tone: "academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "dig into the literature",
@@ -1852,6 +2034,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "thoroughly review prior papers",
     tone: "neutral, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "half-baked idea",
@@ -1862,6 +2045,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "an underdeveloped, unclear idea",
     tone: "critical, mildly negative",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "flesh out",
@@ -1872,6 +2056,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "add more detail to it",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "poke holes in",
@@ -1882,6 +2067,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "find flaws in the argument",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "reviewer 2",
@@ -1892,6 +2078,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the stereotypical harsh reviewer",
     tone: "casual, academic in-joke",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "underpowered study",
@@ -1902,6 +2089,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "sample size too small to detect effects",
     tone: "critical, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "confound the results",
@@ -1912,6 +2100,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "an uncontrolled factor skewing results",
     tone: "neutral, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "the null result",
@@ -1922,6 +2111,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "no significant effect found",
     tone: "neutral, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "overfit the model",
@@ -1932,6 +2122,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the model fits training data too closely",
     tone: "neutral, tech/academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "let's stress-test this hypothesis",
@@ -1942,6 +2133,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "rigorously test if it holds up",
     tone: "neutral, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "this needs a control group",
@@ -1952,6 +2144,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the study is missing a baseline comparison",
     tone: "critical, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "publish or perish",
@@ -1962,6 +2155,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "you must keep publishing to survive",
     tone: "critical, academic in-joke",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "the reviewers weren't buying it",
@@ -1972,6 +2166,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "reviewers found it unconvincing",
     tone: "neutral, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "a proof of principle",
@@ -1982,6 +2177,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "a minimal demonstration it can work",
     tone: "neutral, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "this doesn't replicate",
@@ -1992,6 +2188,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the result couldn't be reproduced",
     tone: "critical, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "salami slicing",
@@ -2002,6 +2199,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "splitting one study into many papers",
     tone: "critical, academic slang",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "the elephant in the dataset",
@@ -2012,6 +2210,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "an obvious outlier distorting results",
     tone: "neutral, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "let's put this to bed methodologically",
@@ -2022,6 +2221,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "resolve the methods dispute with evidence",
     tone: "neutral, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "this is a bit of a fishing expedition",
@@ -2032,6 +2232,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "analyzing data with no clear hypothesis",
     tone: "critical, academic slang",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "the effect size is pretty small",
@@ -2042,6 +2243,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the difference is real but minor",
     tone: "neutral, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "let's not overclaim in the abstract",
@@ -2052,6 +2254,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't claim more than the data shows",
     tone: "critical, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "this is orthogonal to our main finding",
@@ -2062,6 +2265,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "unrelated to our main finding",
     tone: "neutral, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "let's table this for the rebuttal",
@@ -2072,6 +2276,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "address this later in the rebuttal",
     tone: "neutral, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "this needs more statistical power",
@@ -2082,6 +2287,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the sample size is too small",
     tone: "critical, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "let's not bury this finding in the supplement",
@@ -2092,6 +2298,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't hide this in the supplement",
     tone: "critical, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "this is a bit of a strawman critique",
@@ -2102,6 +2309,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "that misrepresents our actual argument",
     tone: "critical, academic",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "let's preregister the analysis",
@@ -2112,6 +2320,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "commit to the plan before seeing data",
     tone: "neutral, academic jargon",
     confidence: 0.9,
+    pack: "academic",
   },
   {
     expression: "this reads like a fishing net rather than a hypothesis",
@@ -2122,6 +2331,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the study lacks a clear testable hypothesis",
     tone: "critical, academic",
     confidence: 0.9,
+    pack: "academic",
   },
 
   // ===== 闲聊与过渡 =====
@@ -2134,6 +2344,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "how are things on your side",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "no worries if not",
@@ -2144,6 +2355,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "it's fine if you can't",
     tone: "softened, low-pressure",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "happy to jump in",
@@ -2154,6 +2366,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "glad to help or join",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "feel free to push back",
@@ -2164,6 +2377,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "feel free to disagree openly",
     tone: "softened, inviting",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's take it from the top",
@@ -2174,6 +2388,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's start over from the beginning",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "on that note",
@@ -2184,6 +2399,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "following on from that",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "before we lose the thread",
@@ -2194,6 +2410,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "before we get too off-topic",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "just thinking out loud",
@@ -2204,6 +2421,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "just an unfinished, tentative idea",
     tone: "softened, tentative",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "can you hear me okay",
@@ -2214,6 +2432,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "checking if audio works",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "sorry, you cut out there",
@@ -2224,6 +2443,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "the connection dropped briefly",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's put a pin in the small talk",
@@ -2234,6 +2454,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's stop chatting and get started",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "happy to hop on a quick call",
@@ -2244,6 +2465,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's have a quick call instead",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's not put words in anyone's mouth",
@@ -2254,6 +2476,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't misrepresent what I said",
     tone: "neutral, mildly defensive",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "long time no see",
@@ -2264,6 +2487,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "we haven't met in a while",
     tone: "casual, common greeting",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's not bury the lede",
@@ -2274,6 +2498,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't hide the key point",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "just to level with you",
@@ -2284,6 +2509,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "I'll be honest with you now",
     tone: "softened, candid",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's see where the conversation takes us",
@@ -2294,6 +2520,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's keep this discussion flexible",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "appreciate you making the time",
@@ -2304,6 +2531,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "thanks for your time",
     tone: "neutral, polite",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's not get too far into the weeds here",
@@ -2314,6 +2542,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "don't get too detailed right now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "sorry, I stepped on you there",
@@ -2324,6 +2553,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "sorry, I interrupted you",
     tone: "casual, polite",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "go ahead, I didn't mean to jump in",
@@ -2334,6 +2564,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "please, you go first",
     tone: "casual, polite",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "just to bring everyone up to speed",
@@ -2344,6 +2575,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let me quickly fill everyone in",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's not beat a dead horse",
@@ -2354,6 +2586,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "stop repeating a settled argument",
     tone: "casual, mildly impatient",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "just chiming in here",
@@ -2364,6 +2597,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "just adding a quick comment",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "let's leave it there for today",
@@ -2374,6 +2608,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "let's stop here for today",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: "chitchat",
   },
   {
     expression: "sorry, can you say that again",
@@ -2384,6 +2619,7 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
     plain_english: "please repeat that",
     tone: "casual, polite",
     confidence: 0.9,
+    pack: "chitchat",
   },
 ];
 
@@ -2398,120 +2634,140 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     type: "acronym",
     gloss_en: "Cost Of Goods Sold",
     gloss_zh: "销货成本",
+    pack: "business-terms",
   },
   {
     term: "EBITDA",
     type: "acronym",
     gloss_en: "Earnings Before Interest, Taxes, Depreciation, and Amortization",
     gloss_zh: "息税折旧摊销前利润",
+    pack: "business-terms",
   },
   {
     term: "TAM",
     type: "acronym",
     gloss_en: "Total Addressable Market",
     gloss_zh: "总体潜在市场规模",
+    pack: "business-terms",
   },
   {
     term: "SAM",
     type: "acronym",
     gloss_en: "Serviceable Addressable Market",
     gloss_zh: "可服务市场规模",
+    pack: "business-terms",
   },
   {
     term: "SOM",
     type: "acronym",
     gloss_en: "Serviceable Obtainable Market",
     gloss_zh: "可获得市场规模",
+    pack: "business-terms",
   },
   {
     term: "ARPU",
     type: "metric",
     gloss_en: "Average Revenue Per User",
     gloss_zh: "每用户平均收入",
+    pack: "business-terms",
   },
   {
     term: "DAU",
     type: "metric",
     gloss_en: "Daily Active Users",
     gloss_zh: "日活跃用户数",
+    pack: "business-terms",
   },
   {
     term: "MAU",
     type: "metric",
     gloss_en: "Monthly Active Users",
     gloss_zh: "月活跃用户数",
+    pack: "business-terms",
   },
   {
     term: "burn rate",
     type: "metric",
     gloss_en: "the rate at which a company spends its cash reserves",
     gloss_zh: "资金消耗速度",
+    pack: "business-terms",
   },
   {
     term: "cap table",
     type: "other",
     gloss_en: "a record of a company's equity ownership",
     gloss_zh: "股权结构表",
+    pack: "business-terms",
   },
   {
     term: "term sheet",
     type: "other",
     gloss_en: "a non-binding outline of a proposed investment deal",
     gloss_zh: "投资条款清单",
+    pack: "business-terms",
   },
   {
     term: "offsite",
     type: "other",
     gloss_en: "a team event held away from the regular office",
     gloss_zh: "外部团建/团队活动",
+    pack: "business-terms",
   },
   {
     term: "all-hands",
     type: "other",
     gloss_en: "a company-wide meeting for all employees",
     gloss_zh: "全员大会",
+    pack: "business-terms",
   },
   {
     term: "1:1",
     type: "other",
     gloss_en: "a private one-on-one meeting, usually manager and report",
     gloss_zh: "一对一沟通会",
+    pack: "business-terms",
   },
   {
     term: "JD",
     type: "acronym",
     gloss_en: "Job Description",
     gloss_zh: "职位描述",
+    pack: "business-terms",
   },
   {
     term: "IC",
     type: "acronym",
     gloss_en: "Individual Contributor, a non-management track role",
     gloss_zh: "非管理岗的个人贡献者",
+    pack: "business-terms",
   },
   {
     term: "CX",
     type: "acronym",
     gloss_en: "Customer Experience",
     gloss_zh: "客户体验",
+    pack: "business-terms",
   },
   {
     term: "GRR",
     type: "metric",
     gloss_en: "Gross Revenue Retention",
     gloss_zh: "毛收入留存率",
+    pack: "business-terms",
   },
   {
     term: "NRR",
     type: "metric",
     gloss_en: "Net Revenue Retention",
     gloss_zh: "净收入留存率",
+    pack: "business-terms",
   },
   {
     term: "ELT",
     type: "acronym",
     gloss_en: "Executive Leadership Team",
     gloss_zh: "高管领导团队",
+    pack: "business-terms",
   },
 
   // ===== 学术 =====
@@ -2520,90 +2776,105 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     type: "acronym",
     gloss_en: "Principal Investigator, the lead researcher of a lab/grant",
     gloss_zh: "项目/实验室负责人",
+    pack: "academic",
   },
   {
     term: "postdoc",
     type: "other",
     gloss_en: "a researcher working after completing a PhD, before faculty",
     gloss_zh: "博士后研究员",
+    pack: "academic",
   },
   {
     term: "R1",
     type: "acronym",
     gloss_en: "a US research university with the highest research activity",
     gloss_zh: "顶尖研究型大学分类",
+    pack: "academic",
   },
   {
     term: "IRB",
     type: "acronym",
     gloss_en: "Institutional Review Board, approves human-subject research",
     gloss_zh: "伦理审查委员会",
+    pack: "academic",
   },
   {
     term: "preprint",
     type: "other",
     gloss_en: "a manuscript posted publicly before peer review",
     gloss_zh: "未经同行评审的预印本",
+    pack: "academic",
   },
   {
     term: "camera-ready",
     type: "other",
     gloss_en: "the final, publication-ready version of a paper",
     gloss_zh: "定稿待出版版本",
+    pack: "academic",
   },
   {
     term: "rebuttal",
     type: "other",
     gloss_en: "an author's written response to peer reviewer comments",
     gloss_zh: "回复审稿意见的答辩",
+    pack: "academic",
   },
   {
     term: "h-index",
     type: "metric",
     gloss_en: "a metric of a researcher's publication impact",
     gloss_zh: "学者影响力指数",
+    pack: "academic",
   },
   {
     term: "impact factor",
     type: "metric",
     gloss_en: "a measure of how often a journal's articles get cited",
     gloss_zh: "期刊影响因子",
+    pack: "academic",
   },
   {
     term: "poster session",
     type: "other",
     gloss_en: "a conference format where researchers present via posters",
     gloss_zh: "海报展示环节",
+    pack: "academic",
   },
   {
     term: "oral",
     type: "other",
     gloss_en: "a spoken conference presentation, as opposed to a poster",
     gloss_zh: "口头报告",
+    pack: "academic",
   },
   {
     term: "LOI",
     type: "acronym",
     gloss_en: "Letter Of Intent",
     gloss_zh: "意向书",
+    pack: "academic",
   },
   {
     term: "RFA",
     type: "acronym",
     gloss_en: "Request For Applications, a funding call",
     gloss_zh: "基金/项目申请征集",
+    pack: "academic",
   },
   {
     term: "co-I",
     type: "acronym",
     gloss_en: "Co-Investigator on a research grant",
     gloss_zh: "共同研究者",
+    pack: "academic",
   },
   {
     term: "K award",
     type: "other",
     gloss_en: "an NIH career development grant for early-career researchers",
     gloss_zh: "NIH职业发展基金",
+    pack: "academic",
   },
 
   // ===== 技术通用 =====
@@ -2612,41 +2883,48 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     type: "acronym",
     gloss_en: "Request For Comments, a proposal document for feedback",
     gloss_zh: "征求意见的设计文档",
+    pack: "tech-terms",
   },
   {
     term: "SLA",
     type: "acronym",
     gloss_en: "Service Level Agreement",
     gloss_zh: "服务级别协议",
+    pack: "tech-terms",
   },
   {
     term: "p95",
     type: "metric",
     gloss_en: "the 95th percentile value, often of latency",
     gloss_zh: "95分位数（常指延迟）",
+    pack: "tech-terms",
   },
   {
     term: "prod",
     type: "tech",
     gloss_en: "production, the live environment users actually use",
     gloss_zh: "生产环境",
+    pack: "tech-terms",
   },
   {
     term: "staging",
     type: "tech",
     gloss_en: "a pre-production environment for final testing",
     gloss_zh: "预发布测试环境",
+    pack: "tech-terms",
   },
   {
     term: "LGTM",
     type: "acronym",
     gloss_en: "Looks Good To Me, code review approval shorthand",
     gloss_zh: "代码审查通过（看起来没问题）",
+    pack: "tech-terms",
   },
   {
     term: "WIP",
     type: "acronym",
     gloss_en: "Work In Progress",
     gloss_zh: "进行中的工作",
+    pack: "tech-terms",
   },
 ];

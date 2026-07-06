@@ -8,13 +8,14 @@ import {
   resolveKey,
   resolveProvider,
 } from "@/lib/llm/anthropic";
-import { buildDefineUserMessage, DEFINE_SYSTEM_PROMPT } from "@/lib/llm/prompts";
+import { buildDefineSystemPrompt, buildDefineUserMessage } from "@/lib/llm/prompts";
 import type { ApiErrorBody, DefineResult } from "@/lib/types";
 
 const BodySchema = z.object({
   phrase: z.string().min(1).max(120),
   context: z.string().max(600),
   model: z.string().optional(),
+  lang: z.enum(["zh", "en"]).optional(),
 });
 
 // Length ceilings mirror the prompt's own guidance (see
@@ -102,7 +103,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { phrase, context, model } = parsedBody.data;
+  const { phrase, context, model, lang } = parsedBody.data;
 
   const apiKey = resolveKey(req);
   if (!apiKey) {
@@ -118,7 +119,7 @@ export async function POST(req: Request) {
     const raw = await callJson({
       apiKey,
       model: model ?? "claude-haiku-4-5",
-      system: DEFINE_SYSTEM_PROMPT,
+      system: buildDefineSystemPrompt(lang ?? "zh"),
       user: buildDefineUserMessage(phrase, context),
       schema: DefineResultSchema,
       maxTokens: 900,

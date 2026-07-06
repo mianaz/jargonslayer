@@ -25,8 +25,17 @@ import * as glossary from "./history/glossary";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "./types";
 
-// Debounced top-up save for detection results arriving post-stop.
+// Debounced persistence for post-stop mutations (late detections,
+// transcript edits) — one timer, latest state wins.
 let postStopSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleSessionSave(save: () => Promise<unknown>): void {
+  if (postStopSaveTimer) clearTimeout(postStopSaveTimer);
+  postStopSaveTimer = setTimeout(() => {
+    postStopSaveTimer = null;
+    void save();
+  }, 1500);
+}
 
 export interface LookupRequest {
   text: string; // selected text
@@ -92,6 +101,10 @@ interface AppState {
 
   setSummary: (s: SummaryResult | null) => void;
   setSummarizing: (v: boolean) => void;
+
+  // transcript editing (stopped/imported sessions)
+  renameSpeaker: (from: string, to: string) => void;
+  updateSegmentText: (segmentId: string, text: string) => void;
 
   saveCurrentSession: () => Promise<string | null>;
   loadSession: (id: string) => Promise<void>;
@@ -223,11 +236,7 @@ export const useApp = create<AppState>((set, get) => ({
     // later). If results land after the session was already saved,
     // top up the saved copy so history isn't missing tail cards.
     if (get().status === "stopped" && get().segments.length > 0) {
-      if (postStopSaveTimer) clearTimeout(postStopSaveTimer);
-      postStopSaveTimer = setTimeout(() => {
-        postStopSaveTimer = null;
-        void get().saveCurrentSession();
-      }, 1500);
+      scheduleSessionSave(() => get().saveCurrentSession());
     }
   },
 
@@ -238,6 +247,32 @@ export const useApp = create<AppState>((set, get) => ({
 
   setSummary: (summary) => set({ summary }),
   setSummarizing: (summarizing) => set({ summarizing }),
+
+  renameSpeaker: (from, to) => {
+    const cleaned = to.trim();
+    if (!cleaned || from === cleaned) return;
+    set({
+      segments: get().segments.map((s) =>
+        s.speaker === from ? { ...s, speaker: cleaned } : s,
+      ),
+    });
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(() => get().saveCurrentSession());
+    }
+  },
+
+  updateSegmentText: (segmentId, text) => {
+    const cleaned = text.trim();
+    if (!cleaned) return;
+    set({
+      segments: get().segments.map((s) =>
+        s.id === segmentId ? { ...s, text: cleaned } : s,
+      ),
+    });
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(() => get().saveCurrentSession());
+    }
+  },
 
   saveCurrentSession: async () => {
     const s = get();

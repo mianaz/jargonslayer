@@ -8,12 +8,14 @@ import { Eye, EyeSlash } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
+import { packCounts, setEnabledPacks } from "@/lib/detect/dictionary";
+import { PACKS } from "@/lib/detect/packs";
 import {
   chooseExportFolder,
   clearExportFolder,
   getExportFolderName,
 } from "@/lib/history/autoExport";
-import type { LlmProvider, STTEngineKind, Settings } from "@/lib/types";
+import type { ExplainLanguage, LlmProvider, STTEngineKind, Settings } from "@/lib/types";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -67,6 +69,11 @@ const SUMMARY_MODEL_OPTIONS = [
   "claude-sonnet-5",
   "claude-opus-4-8",
   "deepseek-chat",
+];
+
+const EXPLAIN_LANGUAGE_OPTIONS: { value: ExplainLanguage; label: string }[] = [
+  { value: "zh", label: "中文（默认）" },
+  { value: "en", label: "English" },
 ];
 
 type ProviderPresetId =
@@ -157,10 +164,29 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [showKey, setShowKey] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
   const [exportFolderName, setExportFolderName] = useState<string | null>(null);
+  // Draft checked-set for non-core theme packs; reconciled back into
+  // draft.enabledPacks (string[] | null) on save. "core" is always on
+  // and isn't part of this set — it renders as a disabled row instead.
+  const [checkedPacks, setCheckedPacks] = useState<Set<string>>(
+    new Set(settings.enabledPacks ?? PACKS.filter((p) => p.id !== "core").map((p) => p.id)),
+  );
+
+  // App-mount-once (not open-gated): SettingsDialog is always mounted
+  // by page.tsx, so this applies the persisted pack selection to the
+  // live scanDictionary() registry as soon as the app loads, even if
+  // the user never opens this dialog. Mirrors the dictionary.ts
+  // registry-pattern comment (see setEnabledPacks there).
+  useEffect(() => {
+    setEnabledPacks(settings.enabledPacks);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (open) {
       setDraft(settings);
+      setCheckedPacks(
+        new Set(settings.enabledPacks ?? PACKS.filter((p) => p.id !== "core").map((p) => p.id)),
+      );
       void listAudioInputs().then(setMics);
       void getExportFolderName().then(setExportFolderName);
     }
@@ -172,8 +198,23 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const patch = (p: Partial<Settings>) => setDraft((d) => ({ ...d, ...p }));
 
+  const togglePack = (id: string, checked: boolean) => {
+    setCheckedPacks((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
+  const nonCorePackIds = PACKS.filter((p) => p.id !== "core").map((p) => p.id);
+  const allPacksChecked = nonCorePackIds.every((id) => checkedPacks.has(id));
+
   const handleSave = () => {
-    updateSettings(draft);
+    const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
+    const toSave: Settings = { ...draft, enabledPacks };
+    updateSettings(toSave);
+    setEnabledPacks(enabledPacks);
     showToast("设置已保存");
     onClose();
   };

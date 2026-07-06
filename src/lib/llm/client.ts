@@ -83,7 +83,7 @@ export async function detectApi(
         "Content-Type": "application/json",
         ...authHeaders(settings),
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, lang: settings.explainLanguage } satisfies DetectRequest),
       signal: AbortSignal.timeout(8000),
     });
   } catch (err) {
@@ -112,7 +112,10 @@ export async function summarizeApi(
         "Content-Type": "application/json",
         ...authHeaders(settings),
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({
+        ...body,
+        lang: settings.explainLanguage,
+      } satisfies SummarizeRequest),
       signal: AbortSignal.timeout(300000),
     });
   } catch (err) {
@@ -141,7 +144,7 @@ export async function defineApi(
         "Content-Type": "application/json",
         ...authHeaders(settings),
       },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, lang: settings.explainLanguage } satisfies DefineRequest),
       signal: AbortSignal.timeout(20000),
     });
   } catch (err) {

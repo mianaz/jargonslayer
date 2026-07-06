@@ -13,11 +13,11 @@ import {
   resolveProvider,
   TranslationsSchema,
 } from "@/lib/llm/anthropic";
-import type { LlmProvider } from "@/lib/types";
+import type { ExplainLanguage, LlmProvider } from "@/lib/types";
 import {
+  buildSweepSystemPrompt,
   buildSweepUserMessage,
   SUMMARY_SYSTEM_PROMPT,
-  SWEEP_SYSTEM_PROMPT,
   TRANSLATE_SYSTEM_PROMPT,
 } from "@/lib/llm/prompts";
 import type {
@@ -65,6 +65,7 @@ const BodySchema = z.object({
   terms: z.array(DetectedTermSchema),
   meetingTitle: z.string().optional(),
   model: z.string().optional(),
+  lang: z.enum(["zh", "en"]).optional(),
 }) satisfies z.ZodType<SummarizeRequest>;
 
 function errorBody(body: ApiErrorBody, status: number) {
@@ -231,7 +232,10 @@ async function runTranslationStage(
 }
 
 // ---------------------------------------------------------------
-// Stage c — sweep for missed expressions/terms
+// Stage c — sweep for missed expressions/terms. `lang` affects only
+// this stage's explanation language (v1 scope — the summary and
+// translation stages below stay zh bilingual regardless of `lang`;
+// widening those to "en" is left for a later pass).
 // ---------------------------------------------------------------
 
 const SWEEP_MAX_EXPRESSIONS = 10;
@@ -243,6 +247,7 @@ async function runSweepStage(
   segments: SummarizeRequest["segments"],
   alreadyCaptured: string[],
   llm: LlmConfig,
+  lang: ExplainLanguage,
 ): Promise<{ expressions: DetectedExpression[]; terms: DetectedTerm[] }> {
   const fullTranscript = segments
     .map((s) => (s.speaker ? `${s.speaker}: ${s.text}` : s.text))
@@ -252,7 +257,7 @@ async function runSweepStage(
     const res = await callJson({
       apiKey,
       model,
-      system: SWEEP_SYSTEM_PROMPT,
+      system: buildSweepSystemPrompt(lang),
       user: buildSweepUserMessage(fullTranscript, alreadyCaptured),
       schema: DetectResponseSchema,
       maxTokens: 2500,
@@ -337,7 +342,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { segments, expressions, terms, model: requestedModel } = parsedBody.data;
+  const { segments, expressions, terms, model: requestedModel, lang } = parsedBody.data;
 
   const apiKey = resolveKey(req);
   if (!apiKey) {
@@ -363,6 +368,7 @@ export async function POST(req: Request) {
         segments,
         [...expressions.map((e) => e.expression), ...terms.map((t) => t.term)],
         llm,
+        lang ?? "zh",
       ),
     ]);
 

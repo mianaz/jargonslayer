@@ -12,6 +12,7 @@ import type {
 } from "../types";
 import { EXTRA_EXPRESSIONS, EXTRA_TERMS } from "./dictionary-data";
 import { findEntryBySurface } from "../history/glossary";
+import { isPackEnabled } from "./packs";
 
 // ---------------------------------------------------------------
 // Dictionary entry shapes (internal — not part of the wire schema)
@@ -26,6 +27,7 @@ interface ExpressionEntry {
   plain_english: string;
   tone: string;
   confidence: number;
+  pack: string;
 }
 
 interface TermEntry {
@@ -33,7 +35,13 @@ interface TermEntry {
   type: TermType;
   gloss_en: string;
   gloss_zh: string;
+  pack: string;
 }
+
+// Base tables (below) are the product floor — always tagged "core",
+// which isPackEnabled() treats as permanently enabled regardless of
+// the user's enabledPacks selection.
+const CORE_PACK = "core";
 
 // ---------------------------------------------------------------
 // Expressions (>=60). chinese_explanation: natural business
@@ -49,6 +57,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "start it now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "low-hanging fruit",
@@ -58,6 +67,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "the easy wins",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "move the needle",
@@ -67,6 +77,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "actually make an impact",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "circle back",
@@ -76,6 +87,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "discuss again later",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "take this offline",
@@ -86,6 +98,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "discuss privately later",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "table this",
@@ -96,6 +109,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "postpone this topic",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "push back",
@@ -106,6 +120,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "object or resist",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "bandwidth",
@@ -115,6 +130,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "available time/capacity",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "boil the ocean",
@@ -124,6 +140,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "overcomplicate/overreach",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "on the same page",
@@ -133,6 +150,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "we all agree",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "read the room",
@@ -142,6 +160,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "sense the mood first",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "elephant in the room",
@@ -151,6 +170,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "the obvious unspoken issue",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "unpack",
@@ -160,6 +180,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "break it down in detail",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "raise eyebrows",
@@ -170,6 +191,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "cause surprise/suspicion",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "align",
@@ -180,6 +202,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "agree on the same direction",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "touch base",
@@ -189,6 +212,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "check in briefly",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "ping me",
@@ -198,6 +222,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "message me",
     tone: "casual, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "ballpark",
@@ -207,6 +232,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a rough estimate",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "back to the drawing board",
@@ -216,6 +242,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "start over from scratch",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "drop the ball",
@@ -225,6 +252,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "fail to follow through",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "on my plate",
@@ -234,6 +262,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "my current workload",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "hard stop",
@@ -243,6 +272,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a firm deadline/end time",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "deep dive",
@@ -252,6 +282,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "look into it thoroughly",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "double-click on",
@@ -261,6 +292,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "go deeper on this point",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "level set",
@@ -270,6 +302,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "get everyone on the same page",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "north star",
@@ -279,6 +312,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "the main guiding goal",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "quick win",
@@ -288,6 +322,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a fast easy improvement",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "out of the loop",
@@ -297,6 +332,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "not kept informed",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "in the weeds",
@@ -306,6 +342,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "stuck in the details",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "30,000-foot view",
@@ -315,6 +352,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a big-picture overview",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "put a pin in it",
@@ -324,6 +362,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "pause this, revisit later",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "park this",
@@ -333,6 +372,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "set this aside for now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "moving the goalposts",
@@ -342,6 +382,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "changing the rules mid-way",
     tone: "critical, mild frustration",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "herding cats",
@@ -351,6 +392,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "hard to coordinate people",
     tone: "neutral, mildly humorous",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "run it up the flagpole",
@@ -360,6 +402,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "float the idea and see",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "straw man",
@@ -369,6 +412,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a rough draft to react to",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "steel man",
@@ -378,6 +422,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "argue the strongest opposing case",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "sanity check",
@@ -387,6 +432,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a quick reasonableness check",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "rubber stamp",
@@ -396,6 +442,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "approve without real review",
     tone: "neutral, slightly critical",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "buy-in",
@@ -405,6 +452,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "everyone's genuine agreement",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "pushing the envelope",
@@ -414,6 +462,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "going beyond the usual limits",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "singing from the same hymn sheet",
@@ -423,6 +472,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "all saying the same thing",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "throw under the bus",
@@ -432,6 +482,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "blame someone to save yourself",
     tone: "critical, negative",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "skin in the game",
@@ -441,6 +492,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "having a personal stake",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "big picture",
@@ -450,6 +502,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "the overall situation",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "granular",
@@ -459,6 +512,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "very detailed/specific",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "evangelize",
@@ -468,6 +522,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "actively promote it",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "dogfooding",
@@ -477,6 +532,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "using your own product first",
     tone: "casual, tech jargon",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "bake in",
@@ -486,6 +542,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "build it in from the start",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "greenfield",
@@ -495,6 +552,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a brand-new project from scratch",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "brownfield",
@@ -504,6 +562,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "built on existing legacy systems",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "tiger team",
@@ -513,6 +572,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "a special task force",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "boots on the ground",
@@ -522,6 +582,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "people actually on-site",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "over the wall",
@@ -531,6 +592,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "handed off without collaboration",
     tone: "neutral, mildly critical",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "air cover",
@@ -540,6 +602,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "leadership backing/protection",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "keep me honest",
@@ -549,6 +612,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "correct me if wrong",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "long story short",
@@ -558,6 +622,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "to summarize quickly",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "squeaky wheel",
@@ -567,6 +632,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "whoever complains loudest gets attention",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "whiteboard this",
@@ -576,6 +642,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "work it out together visually",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "socialize this",
@@ -585,6 +652,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "share it informally first",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "take a step back",
@@ -594,6 +662,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "pause and reconsider",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "peel the onion",
@@ -603,6 +672,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "investigate layer by layer",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "move fast and break things",
@@ -612,6 +682,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "prioritize speed over caution",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "not the hill to die on",
@@ -621,6 +692,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "not worth fighting over",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
   {
     expression: "wear many hats",
@@ -630,6 +702,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     plain_english: "handling multiple roles",
     tone: "neutral, common business phrase",
     confidence: 0.9,
+    pack: CORE_PACK,
   },
 ];
 
@@ -643,180 +716,210 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     type: "metric",
     gloss_en: "Annual Recurring Revenue",
     gloss_zh: "年度经常性收入",
+    pack: CORE_PACK,
   },
   {
     term: "OKR",
     type: "other",
     gloss_en: "Objectives and Key Results, a goal-setting framework",
     gloss_zh: "目标与关键成果法",
+    pack: CORE_PACK,
   },
   {
     term: "churn",
     type: "metric",
     gloss_en: "rate at which customers stop using a product",
     gloss_zh: "客户流失率",
+    pack: CORE_PACK,
   },
   {
     term: "runway",
     type: "metric",
     gloss_en: "how long a company can operate before running out of cash",
     gloss_zh: "现金可支撑的时间",
+    pack: CORE_PACK,
   },
   {
     term: "Series B",
     type: "other",
     gloss_en: "a company's third major round of venture funding",
     gloss_zh: "第三轮主要融资",
+    pack: CORE_PACK,
   },
   {
     term: "MVP",
     type: "acronym",
     gloss_en: "Minimum Viable Product",
     gloss_zh: "最小可行产品",
+    pack: CORE_PACK,
   },
   {
     term: "MRR",
     type: "metric",
     gloss_en: "Monthly Recurring Revenue",
     gloss_zh: "月度经常性收入",
+    pack: CORE_PACK,
   },
   {
     term: "KPI",
     type: "metric",
     gloss_en: "Key Performance Indicator",
     gloss_zh: "关键绩效指标",
+    pack: CORE_PACK,
   },
   {
     term: "ROI",
     type: "metric",
     gloss_en: "Return on Investment",
     gloss_zh: "投资回报率",
+    pack: CORE_PACK,
   },
   {
     term: "YoY",
     type: "metric",
     gloss_en: "Year-over-Year comparison",
     gloss_zh: "同比",
+    pack: CORE_PACK,
   },
   {
     term: "QoQ",
     type: "metric",
     gloss_en: "Quarter-over-Quarter comparison",
     gloss_zh: "环比（季度）",
+    pack: CORE_PACK,
   },
   {
     term: "GTM",
     type: "acronym",
     gloss_en: "Go-To-Market strategy",
     gloss_zh: "市场推广策略",
+    pack: CORE_PACK,
   },
   {
     term: "ICP",
     type: "acronym",
     gloss_en: "Ideal Customer Profile",
     gloss_zh: "理想客户画像",
+    pack: CORE_PACK,
   },
   {
     term: "CAC",
     type: "metric",
     gloss_en: "Customer Acquisition Cost",
     gloss_zh: "获客成本",
+    pack: CORE_PACK,
   },
   {
     term: "LTV",
     type: "metric",
     gloss_en: "Customer Lifetime Value",
     gloss_zh: "客户终身价值",
+    pack: CORE_PACK,
   },
   {
     term: "NPS",
     type: "metric",
     gloss_en: "Net Promoter Score, a loyalty metric",
     gloss_zh: "净推荐值",
+    pack: CORE_PACK,
   },
   {
     term: "EOD",
     type: "acronym",
     gloss_en: "End Of Day",
     gloss_zh: "今天下班前",
+    pack: CORE_PACK,
   },
   {
     term: "EOW",
     type: "acronym",
     gloss_en: "End Of Week",
     gloss_zh: "本周结束前",
+    pack: CORE_PACK,
   },
   {
     term: "ETA",
     type: "acronym",
     gloss_en: "Estimated Time of Arrival/completion",
     gloss_zh: "预计完成时间",
+    pack: CORE_PACK,
   },
   {
     term: "WFH",
     type: "acronym",
     gloss_en: "Work From Home",
     gloss_zh: "居家办公",
+    pack: CORE_PACK,
   },
   {
     term: "OOO",
     type: "acronym",
     gloss_en: "Out Of Office",
     gloss_zh: "不在办公室/休假",
+    pack: CORE_PACK,
   },
   {
     term: "PTO",
     type: "acronym",
     gloss_en: "Paid Time Off",
     gloss_zh: "带薪休假",
+    pack: CORE_PACK,
   },
   {
     term: "SOW",
     type: "acronym",
     gloss_en: "Statement of Work, a contract document",
     gloss_zh: "工作说明书",
+    pack: CORE_PACK,
   },
   {
     term: "NDA",
     type: "acronym",
     gloss_en: "Non-Disclosure Agreement",
     gloss_zh: "保密协议",
+    pack: CORE_PACK,
   },
   {
     term: "RFP",
     type: "acronym",
     gloss_en: "Request For Proposal",
     gloss_zh: "招标/征求方案书",
+    pack: CORE_PACK,
   },
   {
     term: "B2B",
     type: "acronym",
     gloss_en: "Business-to-Business",
     gloss_zh: "企业对企业",
+    pack: CORE_PACK,
   },
   {
     term: "SaaS",
     type: "tech",
     gloss_en: "Software as a Service",
     gloss_zh: "软件即服务",
+    pack: CORE_PACK,
   },
   {
     term: "PoC",
     type: "acronym",
     gloss_en: "Proof of Concept",
     gloss_zh: "概念验证",
+    pack: CORE_PACK,
   },
   {
     term: "P&L",
     type: "acronym",
     gloss_en: "Profit and Loss statement",
     gloss_zh: "损益表",
+    pack: CORE_PACK,
   },
   {
     term: "headcount",
     type: "metric",
     gloss_en: "the number of employees",
     gloss_zh: "员工人数",
+    pack: CORE_PACK,
   },
 ];
 
@@ -853,6 +956,36 @@ const TERM_DICTIONARY: TermEntry[] = dedupeByKey(
   (t) => t.term,
 );
 
+/** Entry counts per pack id, for the Settings dialog (shows how many
+ *  items a pack contributes before the user decides to disable it). */
+export function packCounts(): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const entry of EXPRESSIONS) {
+    counts[entry.pack] = (counts[entry.pack] ?? 0) + 1;
+  }
+  for (const entry of TERM_DICTIONARY) {
+    counts[entry.pack] = (counts[entry.pack] ?? 0) + 1;
+  }
+  return counts;
+}
+
+// ---------------------------------------------------------------
+// Enabled-packs registry — mirrors the glossary module's in-memory
+// cache pattern (see history/glossary.ts): scanDictionary runs
+// synchronously per transcript segment inside the live detection
+// scheduler, so pack selection can't be threaded through as a prop
+// on every call site. Instead SettingsDialog calls setEnabledPacks()
+// once on save (and once on mount, to apply persisted settings after
+// a fresh page load); scanDictionary consults this module-level value
+// whenever its own optional `enabledPacks` param is omitted.
+// ---------------------------------------------------------------
+
+let registeredEnabledPacks: string[] | null = null;
+
+export function setEnabledPacks(packs: string[] | null): void {
+  registeredEnabledPacks = packs;
+}
+
 // ---------------------------------------------------------------
 // Matching helpers
 // ---------------------------------------------------------------
@@ -885,8 +1018,13 @@ function splitSentences(text: string): string[] {
 }
 
 /** Scan text against the built-in dictionaries. Word-boundary,
- *  case-insensitive, light inflection tolerance (e.g. "circling back"). */
-export function scanDictionary(text: string): DetectResponse {
+ *  case-insensitive, light inflection tolerance (e.g. "circling back").
+ *  `enabledPacks` defaults to the value last set via setEnabledPacks()
+ *  when omitted — see the registry comment above. */
+export function scanDictionary(
+  text: string,
+  enabledPacks: string[] | null = registeredEnabledPacks,
+): DetectResponse {
   const sentences = splitSentences(text);
   if (sentences.length === 0) return { expressions: [], terms: [] };
 
@@ -894,6 +1032,7 @@ export function scanDictionary(text: string): DetectResponse {
   const terms: DetectedTerm[] = [];
 
   for (const entry of EXPRESSIONS) {
+    if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     // A personal-glossary entry on this exact surface owns the word —
     // the custom scan (store.addFinal) already emits it as source
     // "custom"; skip the dictionary's own version entirely.
@@ -924,6 +1063,7 @@ export function scanDictionary(text: string): DetectResponse {
   }
 
   for (const entry of TERM_DICTIONARY) {
+    if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     // Same personal-glossary shadowing as the expressions loop above.
     if (findEntryBySurface(entry.term)) continue;
     // All-caps acronyms match case-sensitively (\bARR\b); mixed-case

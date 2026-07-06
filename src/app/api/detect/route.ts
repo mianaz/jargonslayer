@@ -10,13 +10,14 @@ import {
   resolveKey,
   resolveProvider,
 } from "@/lib/llm/anthropic";
-import { buildDetectUserMessage, DETECT_SYSTEM_PROMPT } from "@/lib/llm/prompts";
+import { buildDetectSystemPrompt, buildDetectUserMessage } from "@/lib/llm/prompts";
 import type { ApiErrorBody, DetectResponse } from "@/lib/types";
 
 const BodySchema = z.object({
   context: z.string().max(4000),
   new_text: z.string().min(1).max(3000),
   model: z.string().optional(),
+  lang: z.enum(["zh", "en"]).optional(),
 });
 
 const MAX_EXPRESSIONS = 6;
@@ -54,7 +55,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { context, new_text, model } = parsedBody.data;
+  const { context, new_text, model, lang } = parsedBody.data;
 
   const apiKey = resolveKey(req);
   if (!apiKey) {
@@ -70,7 +71,7 @@ export async function POST(req: Request) {
     const raw = await callJson({
       apiKey,
       model: model ?? "claude-haiku-4-5",
-      system: DETECT_SYSTEM_PROMPT,
+      system: buildDetectSystemPrompt(lang ?? "zh"),
       user: buildDetectUserMessage(context, new_text),
       schema: DetectResponseSchema,
       maxTokens: 1000,

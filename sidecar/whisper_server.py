@@ -330,6 +330,7 @@ class JobManager:
         self.hf_token = hf_token
         self._diarize_pipeline: Any = None
         self._diarize_pipeline_loaded = False
+        self._diarize_pipeline_error: Optional[str] = None
         self.jobs: dict[str, dict[str, Any]] = {}
         self.lock = threading.Lock()
 
@@ -410,9 +411,16 @@ class JobManager:
                     # (per spec) holds progress at DIARIZE_HOLD_PROGRESS.
                     job["progress"] = progress * DIARIZE_HOLD_PROGRESS
 
-    def _load_diarize_pipeline(self) -> Any:
+    def _load_diarize_pipeline(self) -> tuple[Any, Optional[str]]:
+        """Returns (pipeline, error_message). error_message is None on
+        success. Loading pyannote can fail in more ways than a plain
+        ImportError (missing package) — broken/incompatible transitive
+        dependencies (seen in practice: pyarrow version mismatches
+        raising AttributeError deep inside the import), model download
+        failures, etc. Any failure here degrades to "undiarized" per
+        spec — it must never take down the transcription job."""
         if self._diarize_pipeline_loaded:
-            return self._diarize_pipeline
+            return self._diarize_pipeline, self._diarize_pipeline_error
         self._diarize_pipeline_loaded = True
         try:
             from pyannote.audio import Pipeline  # type: ignore[import-not-found]
@@ -421,34 +429,47 @@ class JobManager:
                 "pyannote/speaker-diarization-3.1",
                 use_auth_token=self.hf_token,
             )
-        except ImportError:
+            self._diarize_pipeline_error = None
+        except Exception as exc:  # noqa: BLE001 - see docstring
             self._diarize_pipeline = None
-        return self._diarize_pipeline
+            self._diarize_pipeline_error = f"{type(exc).__name__}: {exc}"
+        return self._diarize_pipeline, self._diarize_pipeline_error
 
     def _diarize_job(self, job_id: str, file_path: str) -> None:
         self._set(
             job_id, progress=DIARIZE_HOLD_PROGRESS, status_detail="diarizing"
         )
 
-        pipeline = self._load_diarize_pipeline()
+        pipeline, load_error = self._load_diarize_pipeline()
         if pipeline is None:
-            # Token set but pyannote.audio not installed — complete
+            # Token set but pyannote.audio unavailable/broken — complete
             # the job undiarized rather than failing it.
+            detail = f"（{load_error}）" if load_error else ""
             self._set(
                 job_id,
                 warning=(
-                    "未安装 pyannote.audio，已跳过说话人分离 / "
-                    "pyannote.audio not installed, skipped diarization "
-                    "(pip install pyannote.audio)"
+                    f"说话人分离不可用，已跳过{detail} / speaker diarization "
+                    "unavailable, skipped (pip install pyannote.audio; "
+                    "needs a valid HF token + accepted model license)"
                 ),
             )
             return
 
-        diarization = pipeline(file_path)
-        turns = [
-            (turn.start, turn.end, label)
-            for turn, _track, label in diarization.itertracks(yield_label=True)
-        ]
+        try:
+            diarization = pipeline(file_path)
+            turns = [
+                (turn.start, turn.end, label)
+                for turn, _track, label in diarization.itertracks(yield_label=True)
+            ]
+        except Exception as exc:  # noqa: BLE001 - diarization is best-effort
+            self._set(
+                job_id,
+                warning=(
+                    f"说话人分离运行失败，已跳过（{type(exc).__name__}: {exc}） / "
+                    "speaker diarization failed at runtime, skipped"
+                ),
+            )
+            return
 
         # Remap pyannote's native labels (SPEAKER_00, SPEAKER_01, ...)
         # to the spec's SPEAKER_1/2/... in first-seen order.
