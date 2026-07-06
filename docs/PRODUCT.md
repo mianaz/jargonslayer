@@ -1,5 +1,7 @@
 # JargonSlayer Product Design
 
+> **Languages:** English · [简体中文](zh/PRODUCT.md)
+
 **One line**: a real-time English meeting comprehension assistant for non-native speakers — transcribes as the meeting happens, and instantly surfaces cards explaining slang, business jargon, metaphorical expressions, and proper nouns; a bilingual summary and study cards are auto-generated after the meeting.
 
 ## Target users and scenarios

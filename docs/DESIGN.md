@@ -1,5 +1,7 @@
 # JargonSlayer Design Constitution
 
+> **Languages:** English · [简体中文](zh/DESIGN.md)
+
 Canonical spec for all UI work. **English is the working language of this document** so every agent can parse it reliably; literal product copy appears as quoted Chinese strings (ship them verbatim — they are content, not commentary). When this file and any older prompt disagree, this file wins.
 
 - Active theme: **v3 "Dark Tech · Meeting REPL" (terminal)** — see §v3 below.

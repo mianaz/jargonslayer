@@ -1,5 +1,7 @@
 # JargonSlayer × Agent Workflows
 
+> **Languages:** English · [简体中文](zh/AGENT-WORKFLOWS.md)
+
 **Design stance**: JargonSlayer does not bundle third-party OAuth connectors. It delivers data in agent-friendly formats to the **filesystem** and **webhooks**; orchestration happens in your own harness (Claude Code, n8n, cron, any MCP client). Bundling N vendor connectors means maintaining N sets of APIs and token lifecycles, and a power user's own orchestration layer is already better at this than we could be. Data format contracts are in [SCHEMA.md](SCHEMA.md).
 
 ## Data exits (four, all account-free)

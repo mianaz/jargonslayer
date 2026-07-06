@@ -1,5 +1,7 @@
 # JargonSlayer Packaging and Form-Factor Roadmap
 
+> **Languages:** English · [简体中文](zh/PACKAGING.md)
+
 Realistic paths and trade-offs for four form factors (desktop app / menu-bar app / phone / iPad).
 
 ## Available now: PWA (already built in)

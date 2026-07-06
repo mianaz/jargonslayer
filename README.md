@@ -1,68 +1,99 @@
-# JargonSlayer · Real-Time English Meeting Comprehension Assistant
+<div align="center">
 
-*英文会议实时理解助手*
+<img src="public/icon-192.png" width="88" alt="JargonSlayer icon" />
 
-The product UI is Simplified Chinese, built for non-native English speakers. It listens in on your English meetings and turns **business slang, metaphors, indirect phrasing, and jargon** into short Chinese cards in real time; when the meeting ends, one click generates a **bilingual summary + full transcript translation + study cards**. All data stays on your machine.
+# JargonSlayer
 
-English caption: the mock below shows the actual product UI (Simplified Chinese) — live transcript on the left, real-time explanation cards on the right.
+**Real-time English-meeting comprehension assistant · your meeting, as a running process**
 
-```
-┌──────────────────────────────┬──────────────────────┐
-│  实时转录（分段/说话人/时间戳）  │  实时解释卡片          │
-│                              │  · move the needle   │
-│  Sarah: We need something    │    产生实质性影响…     │
-│  that can really move the    │  · 术语: ARR OKR …    │
-│  needle this quarter.        │  ────────────────    │
-│                              │  纪要与导出            │
-└──────────────────────────────┴──────────────────────┘
-```
+*英文会议实时理解助手 · 把会议变成一个正在运行的进程*
 
-## Feature overview
+[![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
+[![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-246%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
+[![Local first](https://img.shields.io/badge/data-local--first-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
 
-- **Real-time transcription**: browser recognition (cloud) / local Whisper / tab audio (the latter two never leave the machine), each engine labeled "local / cloud" for data destination; a built-in zero-dependency demo shows the full flow.
-- **Real-time expression detection**: an LLM uses surrounding context to explain only expressions where "literal meaning ≠ actual meaning"; proper nouns/acronyms get their own term entries. Without an API Key it falls back to a built-in dictionary (370+ entries, 10 optional topic packs including business/academic), and can also install community dictionary packs from GitHub. Explanation language can be switched to Chinese or English.
-- **Card experience**: gold-bordered expression cards and blue-bordered term cards share one card style; the newest card expands while others stay collapsible; repeat occurrences only increment a counter instead of flooding the feed; gold dashed underlines in the transcript are clickable to jump to a card; selecting any text triggers an ad-hoc lookup, one click away from being added to "My Glossary".
-- **Speakers**: upload a recording for automatic transcription + speaker diarization (background progress, auto-loads on completion); real-time diarization (beta, runs locally, labels are progressively corrected as the meeting proceeds); click a speaker label to rename it.
-- **Post-meeting artifacts**: bilingual summary (topic/key points/decisions/action items), paragraph-aligned full transcript, study cards, **Cornell notes** (body highlights + right-column annotations + summary, exportable as PNG image/Markdown); plus Markdown / Anki TSV / JSON export with auto-save-to-disk and webhook support.
-- **Learning center**: the `/review` page has stats, a frequency Top 10, a word cloud, and flashcard practice; your personal glossary feeds into detection in subsequent meetings.
-- **BYOK / multi-model**: direct Anthropic access or any OpenAI-compatible endpoint (DeepSeek/Qwen/OpenRouter/Ollama); the Key is stored locally in the browser only.
-- **Meeting history**: everything is stored in browser IndexedDB, no account, with search across past expressions; one-click full backup/restore.
+**English** · [简体中文](README.zh-CN.md) · [Website](https://mianaz.github.io/jargonslayer/)
+
+<img src="docs/assets/live.png" alt="JargonSlayer live meeting view: block-flow transcript with highlighted expressions on the left, real-time explanation cards on the right" width="920" />
+
+</div>
+
+---
+
+It sits beside your English meetings and turns **business slang, idioms, metaphors, indirect phrasing, and jargon** into short Chinese cards in real time. When the meeting ends, one click produces a **bilingual summary, a full transcript translation, and study cards**. Everything stays on your machine.
+
+> The product UI is Simplified Chinese — it is built for non-native English speakers (Chinese-speaking professionals and researchers first). Docs are bilingual: English here, [中文文档](docs/zh/) there.
+
+## Why
+
+Non-native speakers rarely get stuck on vocabulary. They get stuck on:
+
+1. **Non-literal expressions** — *move the needle*, *boil the ocean*, *table this*. You know every word; the sentence still doesn't parse, and by the time it does, the meeting has moved on.
+2. **Proper nouns and acronyms** — ARR, OKR, Series B, internal codenames. A native speaker skips past them in a second; you spend that second retrieving.
+
+JargonSlayer is the colleague sitting next to you: it never interrupts, it just tells you in the sidebar what that sentence *actually* meant.
+
+## Features
+
+- **Real-time transcription** — browser speech recognition (cloud), local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled **local / cloud** so the data path is visible at a glance; a zero-dependency demo shows the whole flow without a microphone or key.
+- **Real-time expression detection** — an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether *table this* means shelving a topic or furniture); proper nouns get separate term cards. Without an API key it falls back to a built-in dictionary (370+ entries, 10 topic packs from business to academia) and can install community packs from GitHub. Explanations can be Chinese or English.
+- **Card experience** — expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup and one-click save to your glossary.
+- **Speakers** — import a recording for offline transcription + speaker diarization (background job, auto-loads when done), or turn on realtime diarization (beta, local, labels refine as the meeting proceeds). Click a speaker label to rename it.
+- **Post-meeting artifacts** — bilingual summary (topic / key points / decisions / action items), paragraph-aligned translation, study cards, and a **Cornell-note sheet** (highlighted body + margin annotations, exportable as PNG or Markdown); plus Markdown / Anki TSV / JSON export, auto-save to a folder, and a webhook.
+- **Learning center** — `/review` has stats, a frequency Top 10, a word cloud, and a flashcard practice deck; your personal glossary feeds back into detection in later meetings.
+- **BYOK, multi-model** — Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama). The key lives only in your local browser.
+- **History without accounts** — everything in IndexedDB; search old meetings by expression; one-click full backup and restore.
+
+<div align="center">
+<table>
+  <tr>
+    <td><img src="docs/assets/home.png" alt="Idle home screen with terminal-style empty state" /></td>
+    <td><img src="docs/assets/summary.png" alt="Summary and export panel after a meeting" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>the REPL at rest</sub></td>
+    <td align="center"><sub>minutes &amp; export</sub></td>
+  </tr>
+</table>
+</div>
 
 ## Quickstart
 
 ```bash
+git clone https://github.com/mianaz/jargonslayer.git
 cd jargonslayer
 npm install
 npm run dev
-# Open http://localhost:3000
+# open http://localhost:3000
 ```
 
-On first launch, an onboarding tour pops up. **Click "演示" (Demo) in the top-right first** — no microphone or API Key needed to see the full transcription → detection → cards → post-meeting report flow (without a Key, the demo runs on the built-in dictionary).
+On first launch an onboarding tour appears. **Open the ≡ menu (top right) and click 「演示」 (Demo) first** — no microphone, no API key, and you'll see the full transcription → detection → cards → report flow (the demo runs on the built-in dictionary when no key is configured).
 
-## Configure an API Key (unlocks AI detection and post-meeting reports)
+## Configure an API key (unlocks AI detection and reports)
 
-The built-in dictionary can only match fixed phrases; adding an Anthropic API Key unlocks context-aware AI detection (able to tell whether "table this" means "shelve the topic" or literally putting something on a table) plus post-meeting summaries/translation. Two options:
+The built-in dictionary only matches fixed phrases. An Anthropic API key adds context-aware detection plus post-meeting summaries and translation. Two ways:
 
-1. **Fill it in via the UI** (recommended for personal use): top-right ⚙ Settings → AI Detection → API Key. The Key is stored only in your local browser and sent directly with each request — never written to any server.
+1. **In the UI** (recommended): ≡ menu → 「设置」 (Settings) → AI 检测 → API Key. Stored only in your local browser, sent directly with each request.
 2. **Environment variable**: create `.env.local` in the project root:
    ```
    ANTHROPIC_API_KEY=sk-ant-...
    ```
-   Then restart `npm run dev`.
+   then restart `npm run dev`.
 
-Get a Key from [console.anthropic.com](https://console.anthropic.com/). Default models: `claude-haiku-4-5` for real-time detection (fast, cheap), `claude-sonnet-5` for post-meeting reports (quality) — both are configurable in Settings.
+Get a key at [console.anthropic.com](https://console.anthropic.com/). Defaults: `claude-haiku-4-5` for realtime detection (fast, cheap), `claude-sonnet-5` for reports (quality) — both configurable in Settings.
 
-**Cost reference**: for a 60-minute, ~9000-word meeting — real-time detection is about $0.5, post-meeting reports about $0.3–0.55, roughly $1/meeting combined; dictionary-only mode is $0.
+**Cost reference**: a 60-minute, ~9000-word meeting ≈ $0.5 of realtime detection + $0.3–0.55 of reports, roughly **$1/meeting**; dictionary-only mode is $0.
 
 ## Transcription engines
 
-| | Setup cost | Audio destination | Recommended use |
+| | Setup cost | Audio destination | Best for |
 |---|---|---|---|
-| Browser recognition | None | Browser vendor's speech service (**cloud**) | Daily, non-sensitive meetings (Chrome/Edge) |
-| Local Whisper | One-time Python environment setup | **Never leaves the machine** | Sensitive content, offline use, wants more stable recognition |
-| Tab audio | Same as above (via local sidecar) | **Never leaves the machine** | Transcribing the other party's audio in online meetings (no virtual sound card needed) |
+| Browser recognition | None | Browser vendor's speech service (**cloud**) | Everyday non-sensitive meetings (Chrome/Edge) |
+| Local Whisper | One-time Python setup | **Never leaves the machine** | Sensitive content, offline, steadier accuracy |
+| Tab audio | Same sidecar as above | **Never leaves the machine** | Hearing the *other side* of an online meeting, no virtual sound card |
 
-Every engine in the UI carries a "local / cloud" label; the current engine's data destination is visible at a glance in the top bar. "演示" (Demo) is not an engine — it's a button in the top-right corner that shows the full flow with no microphone and no Key required.
+「演示」 (Demo) is not an engine — it's a menu entry that replays a scripted meeting so you can see everything with zero setup.
 
 ### Local Whisper (privacy mode)
 
@@ -71,72 +102,94 @@ cd sidecar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 python whisper_server.py --model small
-# Once you see "ws://127.0.0.1:8765 等待连接" (waiting for connection),
-# go back to the web page: Settings → Transcription Engine → Local Whisper → Start Listening
+# when you see "ws://127.0.0.1:8765 等待连接" (waiting for connection),
+# go back to the page: Settings → transcription engine → 本地 Whisper → 开始监听
 ```
-
-Model recommendations (measured on Apple Silicon):
 
 | Model | Quality | Speed | Best for |
 |---|---|---|---|
-| `tiny` / `base` | Basic | Very fast | Trying it on low-spec machines |
-| `small` (default) | Good | Real-time, no strain | **Recommended for daily use** |
-| `medium` | Better | Near real-time | Heavy accents, technical vocabulary |
-| `large-v3` | Best | Slower | Post-meeting re-transcription, not recommended for real-time |
+| `tiny` / `base` | Basic | Very fast | Low-spec machines |
+| `small` (default) | Good | Realtime with headroom | **Daily use** |
+| `medium` | Better | Near realtime | Heavy accents, technical vocabulary |
+| `large-v3` | Best | Slower | Post-meeting re-transcription |
 
-Common flags: `--language en` (default), `--partials` (also emits gray interim results while speaking, more CPU-intensive), `--save-audio meeting.wav` (keeps the recording for post-meeting speaker diarization).
+Useful flags: `--language en` (default), `--partials` (gray interim text while speaking, more CPU), `--save-audio meeting.wav` (keep audio for post-meeting diarization).
 
-### ⚠️ Transcribing "the other party's audio" (must-read for online meetings)
+### ⚠️ Hearing "the other side" (must-read for online meetings)
 
-The microphone can only hear **you**. In Zoom/Teams/Meet, the other party's audio comes out of your speakers, so you need to turn **system audio** into an "input device":
+Your microphone only hears **you**. In Zoom/Teams/Meet the other side comes out of your speakers, so system audio has to become an input device:
 
-- **macOS**: install [BlackHole](https://github.com/ExistentialAudio/BlackHole) (free virtual sound card) → in System Settings create a "Multi-Output Device" (headphones + BlackHole, so you still hear audio normally) → in JargonSlayer settings, set the microphone to BlackHole, and use **Local Whisper** as the engine (the browser recognition engine doesn't respect virtual device selection — it always uses the system default input).
-- **Windows**: VB-Cable works the same way.
-- To transcribe both you and the other party simultaneously: on macOS, an "Aggregate Device" can combine microphone + BlackHole into one input.
+- **macOS**: install [BlackHole](https://github.com/ExistentialAudio/BlackHole) (free virtual device) → create a Multi-Output Device (headphones + BlackHole, so you still hear normally) → set JargonSlayer's microphone to BlackHole and use the **local Whisper** engine (browser recognition ignores virtual device selection).
+- **Windows**: VB-Cable, same idea.
+- To capture you *and* them: an Aggregate Device (mic + BlackHole) on macOS.
 
 ## Usage flow
 
-1. Pick an engine → "开始监听" (Start Listening) (the browser will request microphone permission).
-2. Watch the transcript on the left, "实时解释" (Real-Time Explanations) cards on the right; expressions with a gold dashed underline are clickable; selecting a span of text pops up an ad-hoc explanation.
-3. "停止" (Stop) → automatically saved to history → right side "纪要与导出" (Summary & Export) → "生成会议报告" (Generate Meeting Report).
-4. Export a Markdown report / Anki cards (TSV can be imported directly into Anki: File → Import, fields tab-separated).
-5. 🕘 In history, reopen any past meeting, searchable by expression ("哪次会说过 boil the ocean?" — which meeting mentioned "boil the ocean"?).
+1. Pick an engine → 「开始监听」 (Start listening); the browser asks for microphone permission.
+2. Transcript flows on the left; 「实时解释」 cards appear on the right. Underlined expressions are clickable; selecting any span pops an ad-hoc explanation.
+3. 「停止」 (Stop) → the session auto-saves → 「纪要与导出」 (Summary & export) → 「生成会议报告」 (Generate report).
+4. Export Markdown / Anki TSV (imports straight into Anki: File → Import, tab-separated) / JSON.
+5. ≡ menu → 「历史」 (History) reopens any past meeting — searchable by expression ("which meeting said *boil the ocean*?").
 
 ## Speaker diarization (optional)
 
-Both paths are already built into the UI — no scripting required. Shared one-time setup:
+Both paths are built into the UI. One-time shared setup:
 
-1. `pip install pyannote.audio` (into the sidecar's `.venv`);
-2. Free HuggingFace account → accept the usage terms for three models in order: [segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0), [speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1), [speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) (a new dependency added in pyannote 4.x — skipping it causes a 403);
-3. Create a Read-scoped token, fill it into Settings → Speaker Diarization (or pass `--hf-token` when starting the sidecar).
+1. `pip install pyannote.audio` inside the sidecar's `.venv`;
+2. Free HuggingFace account → accept the terms of **all three** models: [segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0), [speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1), [speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) (new dependency in pyannote 4.x — skipping it causes a 403);
+3. Create a Read-scoped token and paste it into Settings → 说话人分离 (or pass `--hf-token` when starting the sidecar).
 
-**Upload-a-recording auto-diarization**: 🕘 History → "导入录音" (Import Recording), pick an audio file (m4a/mp3/wav); it transcribes + diarizes in the background and auto-loads on completion, with speakers shown as colored labels — click a label to rename it (e.g. SPEAKER_1 → Elena).
+**Import a recording**: ≡ menu → 「历史」 → 「导入录音」, pick an m4a/mp3/wav; it transcribes + diarizes in the background and auto-loads when done. Click a speaker chip to rename (SPEAKER_1 → Elena).
 
-**Real-time diarization (beta)**: Settings → Speaker Diarization → "实时说话人分离（beta）" (Real-Time Speaker Diarization (beta)). During a meeting, labels appear a few seconds late and are progressively corrected as the meeting proceeds; this uses more CPU, but transcription itself is unaffected.
+**Realtime diarization (beta)**: Settings → 说话人分离 → 「实时说话人分离（beta）」. Labels appear a few seconds late and refine as the meeting proceeds; extra CPU, transcription unaffected.
 
-> Note: the sidecar's `.venv` contains absolute paths — **after moving or renaming the project directory, you must delete and rebuild it** (`rm -rf .venv && python3 -m venv .venv && pip install -r requirements.txt`), otherwise you'll get a "bad interpreter" error. A future release plans to fold this step into the UI.
+> Note: the sidecar `.venv` contains absolute paths — after moving/renaming the project directory, rebuild it (`rm -rf .venv && python3 -m venv .venv && pip install -r requirements.txt`).
 
 ## Privacy boundaries (stated explicitly)
 
 | Data | Destination |
 |---|---|
-| Audio (local Whisper) | Local only, websocket via 127.0.0.1 |
-| Audio (browser recognition) | Browser vendor's speech service (Google/Apple) |
-| Transcript text (AI detection enabled) | Sent to the Anthropic API for detection/summarization |
+| Audio (local Whisper / tab audio) | Local only, websocket on 127.0.0.1 |
+| Audio (browser recognition) | Browser vendor's speech service |
+| Transcript text (AI detection on) | Anthropic API (or your OpenAI-compatible endpoint) for detection/summaries |
 | Transcript text (dictionary mode) | Local only |
-| Meeting history, settings, API Key | Local browser only (IndexedDB / localStorage) |
+| History, settings, API key | Local browser only (IndexedDB / localStorage) |
 
-To keep all text from ever leaving the machine: enable "仅词典模式" (Dictionary-Only Mode) in Settings.
+To keep all text on the machine: Settings → 「仅词典模式」 (dictionary-only mode). The vim-style status line always shows the current audio path (「音频未离开本机」 / 「音频经浏览器厂商云端识别」).
+
+## Meet Bit 🐉
+
+<img src="docs/assets/bit.png" align="right" width="220" alt="Bit, the pixel dragon mascot" />
+
+The pixel dragon perched on the status line is **Bit** — cursor-block pupils that blink like a caret, dorsal fins that light up like a signal meter while listening, and ANSI-colored pixel fire when a new card lands. It sleeps 30 seconds after a meeting ends.
+
+It is also interactive. Try clicking it. Try clicking it three times fast. Try holding it down.
+
+<br clear="right" />
 
 ## FAQ
 
-- **"浏览器不支持语音识别" (browser doesn't support speech recognition)**: Safari/Firefox have poor Web Speech API support — use Chrome/Edge, or switch to local Whisper.
-- **Can't connect to Whisper**: confirm the sidecar terminal is still open and the address is `ws://localhost:8765`; make sure your firewall allows the local port.
-- **Too few / too many cards**: adjust the "置信度阈值" (Confidence Threshold) in Settings (lower = more), or switch detection models.
-- **Detection slows down while the meeting tab is in the background**: expected — browsers throttle background timers; switching back triggers an immediate catch-up check. This has already been mitigated as much as possible with event-driven flushing.
-- **Report generation is slow**: full-transcript translation for long meetings runs in parallel chunks, so 1–2 minutes is normal; if you only want the cards, you can skip report generation and export directly.
+- **"浏览器不支持语音识别" (speech recognition unsupported)** — Safari/Firefox have weak Web Speech support; use Chrome/Edge or switch to local Whisper.
+- **Whisper won't connect** — confirm the sidecar terminal is open and the address is `ws://localhost:8765`; check the local firewall.
+- **Too few / too many cards** — adjust 「置信度阈值」 (confidence threshold) in Settings, or switch detection models.
+- **Detection slows when the tab is backgrounded** — browsers throttle background timers; switching back triggers an immediate catch-up. Mitigated with event-driven flushing.
+- **Report generation is slow** — long-meeting translation runs in parallel chunks; 1–2 minutes is normal. Cards can be exported without generating a report.
 
-## Tech stack and architecture
+## Architecture & docs
 
-Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB; LLM calls go through the Anthropic Messages API (server-side route proxy, supports structured output); local transcription via a faster-whisper sidecar (websocket + energy-based VAD). See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PRODUCT.md](docs/PRODUCT.md) for details.
-</content>
+Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB; LLM calls go through server-side route proxies (Anthropic Messages API or OpenAI-compatible, structured output with repair-retry); local transcription is a faster-whisper sidecar over websocket with energy-based VAD; diarization via pyannote 4.x.
+
+| Doc | What's inside | 中文 |
+|---|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, data flow, sidecar protocol | [中文版](docs/zh/ARCHITECTURE.md) |
+| [PRODUCT.md](docs/PRODUCT.md) | Positioning, users, product decisions | [中文版](docs/zh/PRODUCT.md) |
+| [SCHEMA.md](docs/SCHEMA.md) | Agent-native output contracts (JSON/frontmatter) | [中文版](docs/zh/SCHEMA.md) |
+| [AGENT-WORKFLOWS.md](docs/AGENT-WORKFLOWS.md) | File/webhook outputs, orchestration recipes | [中文版](docs/zh/AGENT-WORKFLOWS.md) |
+| [PACKAGING.md](docs/PACKAGING.md) | PWA today, Tauri roadmap | [中文版](docs/zh/PACKAGING.md) |
+| [DESIGN.md](docs/DESIGN.md) | Design constitution (v3 terminal theme, mascot spec) | [中文版](docs/zh/DESIGN.md) |
+
+Design lineage: seven full explorations (ink-wash, grimoire, 8-bit, noir, sketch, qinglü, terminal) live in [docs/design-explorations/](docs/design-explorations/) — the terminal direction shipped as default; the others are the future skin roadmap.
+
+## License
+
+[MIT](LICENSE) © 2026 Miana Zeng

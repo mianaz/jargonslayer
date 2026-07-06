@@ -1,5 +1,7 @@
 # JargonSlayer Technical Architecture
 
+> **Languages:** English · [简体中文](zh/ARCHITECTURE.md)
+
 ## Overview
 
 ```
