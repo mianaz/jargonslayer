@@ -85,7 +85,13 @@ export async function detectApi(
         ...authHeaders(settings),
       },
       body: JSON.stringify({ ...body, lang: settings.explainLanguage } satisfies DetectRequest),
-      signal: AbortSignal.timeout(8000),
+      // Reasoning models behind openai-compat endpoints (e.g. the
+      // hosted demo's MiniMax M-series) routinely take 8-15s per
+      // batch; the previous 8s (tuned for Haiku) timed every batch
+      // out and tripped the scheduler's consecutive-failure fallback
+      // latch. Detection is async and additive, so a slow batch is
+      // still useful — cards just land a moment later.
+      signal: AbortSignal.timeout(20000),
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
