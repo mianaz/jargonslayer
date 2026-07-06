@@ -4,9 +4,11 @@
 // (user directive: terms must NOT be small chips). The chinese
 // explanation / gloss_zh row is the hero of every card (fg +
 // font-medium, leading-[1.7]) — see docs/DESIGN.md color lock.
-// Expressions stay in the gold family (category badge, no left bar);
-// terms are visually distinguished by a blue accent left bar + badge,
-// same card chrome otherwise (docs/DESIGN.md shape lock: rounded-xl).
+// v3 terminal reskin (docs/DESIGN.md v3.3/v3.1): cards are flat "blocks"
+// — border-l-2 status bar in the category hue + bg-panel + hairline
+// separation, radius 0-2px. Every expression category gets its own
+// lab-* hue (CATEGORY_COLOR below); all terms share one lab-cyan bar
+// regardless of TermType (term-type chip text stays mut, not colored).
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CaretUp, CaretUpDown } from "@phosphor-icons/react";
@@ -37,6 +39,28 @@ const TERM_TYPE_LABELS: Record<TermType, string> = {
   person: "人名",
   other: "其他",
 };
+
+// Left-bar + category-chip hue per expression category (docs/DESIGN.md
+// v3 spec, exact mapping). "other" has no lab-* hue of its own — it maps
+// to neutral `mut`, same as terms' non-colored type chip. Full class
+// strings (not bare color names) so Tailwind's static JIT scan can find
+// every class literally in source — a template-interpolated color name
+// would not be detected.
+const CATEGORY_COLOR: Record<
+  ExpressionCategory,
+  { bar: string; text: string; border: string }
+> = {
+  idiom: { bar: "border-l-lab-orange", text: "text-lab-orange", border: "border-lab-orange/40" },
+  slang: { bar: "border-l-lab-red", text: "text-lab-red", border: "border-lab-red/40" },
+  phrase: { bar: "border-l-lab-green", text: "text-lab-green", border: "border-lab-green/40" },
+  metaphor: { bar: "border-l-lab-purple", text: "text-lab-purple", border: "border-lab-purple/40" },
+  indirect: { bar: "border-l-lab-yellow", text: "text-lab-yellow", border: "border-lab-yellow/40" },
+  other: { bar: "border-l-mut", text: "text-mut", border: "border-mut/40" },
+};
+
+// All terms share one bar/chip hue regardless of TermType (spec: "ALL
+// terms=lab-cyan bar, term-type chip text stays mut").
+const TERM_COLOR = { bar: "border-l-lab-cyan", text: "text-mut", border: "border-edge" };
 
 const NEW_GLOW_MS = 4500;
 const REPULSE_MS = 2500;
@@ -130,14 +154,14 @@ function matchesQuery(item: UnifiedItem, q: string): boolean {
 function sourceBadge(source: DetectionSource) {
   if (source === "dictionary") {
     return (
-      <span className="rounded-full border border-gold/30 px-1.5 py-0 text-[10px] text-gold/80">
+      <span className="rounded-sm border border-edge px-1.5 py-0 text-[10px] text-mut">
         词典
       </span>
     );
   }
   if (source === "custom") {
     return (
-      <span className="rounded-full border border-gold/30 px-1.5 py-0 text-[10px] text-gold/80">
+      <span className="rounded-sm border border-edge px-1.5 py-0 text-[10px] text-mut">
         我的词典
       </span>
     );
@@ -175,7 +199,7 @@ function CollapseAffordance({ onCollapse }: { onCollapse: () => void }) {
       type="button"
       onClick={onCollapse}
       title="折叠"
-      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md text-mut opacity-0 transition-opacity hover:bg-panel3 hover:text-fg group-hover:opacity-100"
+      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-mut opacity-0 transition-opacity hover:bg-panel3 hover:text-fg group-hover:opacity-100"
     >
       <CaretUp size={14} weight="regular" />
     </button>
@@ -223,14 +247,16 @@ function ExpressionCardRow({
     setFocusCard(null);
   }, [isFocused, expanded, setFocusCard]);
 
+  const hue = CATEGORY_COLOR[card.category];
+
   const badgeRow = (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="font-semibold text-fg">{card.expression}</span>
-      <span className="rounded-full border border-edge px-1.5 py-0 text-[10px] text-mut">
+      <span className="font-mono font-semibold text-fg">{card.expression}</span>
+      <span className={`rounded-sm border px-1.5 py-0 text-[12px] ${hue.border} ${hue.text}`}>
         {CATEGORY_LABELS[card.category]}
       </span>
       {card.count > 1 && (
-        <span className="font-mono text-xs text-gold">×{card.count}</span>
+        <span className={`font-mono text-xs ${hue.text}`}>×{card.count}</span>
       )}
       {sourceBadge(card.source)}
     </div>
@@ -243,17 +269,12 @@ function ExpressionCardRow({
         data-testid="card"
         data-kind="expression"
         onClick={onToggle}
-        className={`card-manuscript card-manuscript-gold relative cursor-pointer rounded-xl border border-edge bg-panel p-2 transition-colors hover:bg-panel3 ${
-          isNew ? "card-new" : ""
+        className={`relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${hue.bar} ${
+          isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${
-          ring ? "ring-1 ring-gold" : ""
+          ring ? "ring-1 ring-act" : ""
         }`}
       >
-        {isNew && (
-          <span className="pointer-events-none absolute right-2 top-2 text-[10px] text-gold/70">
-            ❖
-          </span>
-        )}
         {badgeRow}
         <div className="mt-2 truncate text-sm text-mut">
           {card.chinese_explanation}
@@ -267,17 +288,12 @@ function ExpressionCardRow({
       ref={ref}
       data-testid="card"
       data-kind="expression"
-      className={`card-manuscript card-manuscript-gold group relative rounded-xl border border-edge bg-panel p-3 transition-colors hover:bg-panel3 ${
-        isNew ? "card-new" : ""
+      className={`group relative rounded-sm border-b border-edge border-l-2 bg-panel p-3 transition-colors hover:bg-panel3 ${hue.bar} ${
+        isNew ? "diff-flash" : ""
       } ${isRepulsing ? "card-repulse" : ""} ${
-        ring ? "ring-1 ring-gold" : ""
+        ring ? "ring-1 ring-act" : ""
       }`}
     >
-      {isNew && (
-        <span className="pointer-events-none absolute right-9 top-2 text-[10px] text-gold/70">
-          ❖
-        </span>
-      )}
       <CollapseAffordance onCollapse={onToggle} />
       {badgeRow}
 
@@ -288,14 +304,14 @@ function ExpressionCardRow({
       </div>
 
       <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-xs text-mut2">直白说法</span>
+        <span className="font-mono text-xs text-mut2">直白说法</span>
         <span className="text-sm text-fg/90">{card.plain_english}</span>
       </div>
 
       <div className="mt-2 text-xs italic text-mut">{card.tone}</div>
 
       <div
-        className="mt-2 line-clamp-2 border-l-2 border-edge pl-2 text-xs text-mut"
+        className="mt-2 line-clamp-2 border-l-2 border-edge bg-panel2 py-1.5 pl-2 font-mono text-xs text-mut"
         title={card.source_sentence}
       >
         {card.source_sentence}
@@ -321,12 +337,12 @@ function TermCardRow({
 
   const badgeRow = (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="font-semibold text-fg">{term.term}</span>
-      <span className="rounded-full border border-acc/30 px-1.5 py-0 text-[10px] text-acc">
+      <span className="font-mono font-semibold text-fg">{term.term}</span>
+      <span className={`rounded-sm border px-1.5 py-0 text-[12px] ${TERM_COLOR.border} ${TERM_COLOR.text}`}>
         术语 · {TERM_TYPE_LABELS[term.type]}
       </span>
       {term.count > 1 && (
-        <span className="font-mono text-xs text-gold">×{term.count}</span>
+        <span className="font-mono text-xs text-lab-cyan">×{term.count}</span>
       )}
       {sourceBadge(term.source)}
     </div>
@@ -338,15 +354,10 @@ function TermCardRow({
         data-testid="card"
         data-kind="term"
         onClick={onToggle}
-        className={`card-manuscript card-manuscript-blue relative cursor-pointer rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-2 transition-colors hover:bg-panel3 ${
-          isNew ? "card-new" : ""
+        className={`relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
+          isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""}`}
       >
-        {isNew && (
-          <span className="pointer-events-none absolute right-2 top-2 text-[10px] text-gold/70">
-            ❖
-          </span>
-        )}
         {badgeRow}
         <div className="mt-2 truncate text-sm text-mut">{term.gloss_zh}</div>
       </div>
@@ -357,15 +368,10 @@ function TermCardRow({
     <div
       data-testid="card"
       data-kind="term"
-      className={`card-manuscript card-manuscript-blue group relative rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-3 transition-colors hover:bg-panel3 ${
-        isNew ? "card-new" : ""
+      className={`group relative rounded-sm border-b border-edge border-l-2 bg-panel p-3 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
+        isNew ? "diff-flash" : ""
       } ${isRepulsing ? "card-repulse" : ""}`}
     >
-      {isNew && (
-        <span className="pointer-events-none absolute right-9 top-2 text-[10px] text-gold/70">
-          ❖
-        </span>
-      )}
       <CollapseAffordance onCollapse={onToggle} />
       {badgeRow}
 
@@ -387,7 +393,7 @@ function EmptyState() {
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
         <div className="text-sm font-medium text-fg">还没有开始会议</div>
         <div className="mt-2 max-w-xs text-xs leading-[1.7] text-mut">
-          点击右上角「演示」立即体验，无需麦克风也无需配置 API Key。
+          点击右上角菜单里的「演示」立即体验，无需麦克风也无需配置 API Key。
         </div>
       </div>
     );
@@ -518,7 +524,7 @@ export default function CardsPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="筛选表达或术语…"
-          className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+          className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
         />
 
         <div className="flex items-center gap-2">
@@ -528,9 +534,9 @@ export default function CardsPanel() {
                 key={f.key}
                 type="button"
                 onClick={() => setFilter(f.key)}
-                className={`rounded-full border px-2.5 py-1 text-xs ${
+                className={`rounded-sm border px-2.5 py-1 font-mono text-xs ${
                   filter === f.key
-                    ? "border-edge bg-panel3 text-fg"
+                    ? "border-edge2 text-act"
                     : "border-edge text-mut hover:bg-panel3"
                 }`}
               >
@@ -542,8 +548,8 @@ export default function CardsPanel() {
             type="button"
             onClick={handleCycleViewMode}
             title={viewModeTitle(viewMode)}
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-edge hover:bg-panel3 ${
-              viewMode === "auto" ? "text-mut" : "text-acc"
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-edge hover:bg-panel3 ${
+              viewMode === "auto" ? "text-mut" : "text-act"
             }`}
           >
             <CaretUpDown size={16} weight="regular" />

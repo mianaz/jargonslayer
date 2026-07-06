@@ -57,13 +57,13 @@ export default function HoverGlossCard({
 
   return (
     <div
-      className="fixed z-50 w-72 rounded-xl border border-edge bg-panel2 p-3 shadow-xl"
+      className="fixed z-50 w-72 rounded-sm border border-edge border-l-2 border-l-lab-orange bg-panel2 p-3 shadow-xl"
       style={{ left: pos.left, top: pos.top }}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-fg">{card.expression}</span>
-          <span className="rounded-full border border-edge px-1.5 py-0 text-[10px] text-mut">
+          <span className="font-mono font-semibold text-fg">{card.expression}</span>
+          <span className="rounded-sm border border-lab-orange/40 px-1.5 py-0 text-[10px] text-lab-orange">
             {CATEGORY_LABELS[card.category]}
           </span>
         </div>
@@ -72,7 +72,7 @@ export default function HoverGlossCard({
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-mut hover:bg-panel3 hover:text-fg"
+            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
           >
             <X size={14} weight="regular" />
           </button>
@@ -84,7 +84,7 @@ export default function HoverGlossCard({
       </div>
 
       <div className="mt-2 flex items-baseline gap-2">
-        <span className="text-xs text-mut2">直白说法</span>
+        <span className="font-mono text-xs text-mut2">直白说法</span>
         <span className="text-sm text-fg/90">{card.plain_english}</span>
       </div>
 

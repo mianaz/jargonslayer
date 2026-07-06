@@ -74,21 +74,21 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
       <button
         type="button"
         onClick={() => handleExport("md")}
-        className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出报告 .md
       </button>
       <button
         type="button"
         onClick={() => handleExport("tsv")}
-        className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出 Anki .tsv
       </button>
       <button
         type="button"
         onClick={() => handleExport("json")}
-        className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出 JSON
       </button>
@@ -96,7 +96,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
         type="button"
         data-testid="btn-cornell"
         onClick={onOpenCornell}
-        className="btn-tactile flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
       >
         <Notebook size={14} weight="regular" />
         康奈尔笔记
@@ -104,7 +104,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
       <button
         type="button"
         onClick={() => void handleCopy()}
-        className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
       >
         复制纪要
       </button>
@@ -112,9 +112,9 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
         <button
           type="button"
           onClick={() => void handleCollect()}
-          className="btn-tactile flex items-center gap-2 rounded-lg border border-gold/30 px-3 py-1.5 text-xs text-gold hover:bg-panel3"
+          className="btn-tactile flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
         >
-          <Star size={14} weight="regular" />
+          <Star size={14} weight="regular" className="text-lab-orange" />
           收藏本场卡片
         </button>
       )}
@@ -169,7 +169,7 @@ function GenerateCta() {
         type="button"
         data-testid="btn-generate-summary"
         onClick={() => void handleGenerate()}
-        className="btn-tactile h-10 rounded-lg bg-acc px-5 text-sm font-medium text-white hover:bg-acchover"
+        className="btn-terminal h-10 rounded-none bg-act px-5 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8]"
       >
         生成会议报告
       </button>
@@ -188,7 +188,7 @@ function GenerateCta() {
 function SummarizingState() {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
-      <span className="h-6 w-6 animate-spin rounded-full border-2 border-acc border-t-transparent" />
+      <span className="h-6 w-6 animate-spin rounded-full border-2 border-lab-cyan border-t-transparent" />
       <div className="text-sm text-mut">生成中，长会议可能需要一两分钟</div>
     </div>
   );
@@ -225,7 +225,7 @@ function SummaryContent() {
         <div className="text-xs uppercase tracking-wide text-mut">要点</div>
         <ul className="mt-2 space-y-2">
           {summary.summary.key_points.map((p, i) => (
-            <li key={i} className="rounded-lg bg-panel2 px-3 py-2">
+            <li key={i} className="rounded-none border-l-2 border-edge bg-panel2 px-3 py-2">
               <div className="text-sm text-fg/90">{p.en}</div>
               <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                 {p.zh}
@@ -242,7 +242,7 @@ function SummaryContent() {
         ) : (
           <ul className="mt-2 space-y-2">
             {summary.summary.decisions.map((d, i) => (
-              <li key={i} className="rounded-lg bg-panel2 px-3 py-2">
+              <li key={i} className="rounded-none border-l-2 border-edge bg-panel2 px-3 py-2">
                 <div className="text-sm text-fg/90">{d.en}</div>
                 <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                   {d.zh}
@@ -288,8 +288,8 @@ function SummaryContent() {
         <div className="text-xs uppercase tracking-wide text-mut">学习卡片</div>
         <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {summary.flashcards.map((f, i) => (
-            <div key={i} className="rounded-xl border border-edge bg-panel2 p-3">
-              <div className="font-semibold text-fg">{f.front}</div>
+            <div key={i} className="rounded-none border border-edge bg-panel2 p-3">
+              <div className="font-mono font-semibold text-fg">{f.front}</div>
               <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                 {f.back_zh}
               </div>
@@ -309,7 +309,7 @@ function SummaryContent() {
           </summary>
           <div className="mt-2 space-y-2">
             {segments.map((seg) => (
-              <div key={seg.id} className="rounded-lg bg-panel2 px-3 py-2">
+              <div key={seg.id} className="rounded-none border-l-2 border-edge bg-panel2 px-3 py-2">
                 <div className="text-sm leading-relaxed text-fg/90">{seg.text}</div>
                 <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                   {translationByIndex.get(seg.index) ?? ""}

@@ -1,14 +1,16 @@
 import type { Metadata, Viewport } from "next";
-import { Cinzel } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-// Brand-position-only display face (v2.2): self-hosted at build time,
-// no runtime external request. Applied via font-display in Tailwind —
-// never on body/buttons/forms.
-const cinzel = Cinzel({
-  weight: ["600", "700"],
+// v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.2) — monospace is
+// the brand identity: JetBrains Mono, self-hosted at build time (no
+// runtime external request) as --font-mono-brand. Retires v2's
+// brand-position-only Cinzel serif; the Cornell parchment artifact
+// pins its own Songti serif stack inline.
+const jetbrainsMono = JetBrains_Mono({
+  weight: ["400", "700"],
   subsets: ["latin"],
-  variable: "--font-display",
+  variable: "--font-mono-brand",
   display: "swap",
 });
 
@@ -25,7 +27,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#07090E",
+  themeColor: "#0A0A0A",
   width: "device-width",
   initialScale: 1,
 };
@@ -34,7 +36,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="zh-CN" className={cinzel.variable}>
+    <html lang="zh-CN" data-theme="terminal" className={jetbrainsMono.variable}>
       <body className="font-sans">{children}</body>
     </html>
   );

@@ -89,17 +89,20 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
 
   return (
     <div>
-      <div className="font-display text-lg font-semibold text-fg">
+      <div className="text-lg font-medium text-fg">
         选择转录引擎
       </div>
 
       <button
         type="button"
         onClick={onStartDemo}
-        className="btn-tactile mt-3 flex w-full items-center justify-between gap-2 rounded-lg border border-dashed border-edge2 bg-panel2 px-3 py-2 text-left text-xs text-mut hover:border-gold/40 hover:text-fg"
+        className="btn-tactile mt-3 flex w-full items-center justify-between gap-2 rounded-none border border-dashed border-edge2 bg-panel2 px-3 py-2 text-left text-xs text-mut hover:border-lab-orange/40 hover:text-fg"
       >
-        <span>先看演示（无需麦克风/API Key）</span>
-        <CaretRight size={14} weight="regular" className="shrink-0 text-gold" />
+        <span>
+          <span className="font-mono text-mut2">$</span> demo —
+          先看演示（无需麦克风/API Key）
+        </span>
+        <CaretRight size={14} weight="regular" className="shrink-0 text-lab-orange" />
       </button>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
@@ -110,23 +113,23 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
               key={opt.value}
               type="button"
               onClick={() => updateSettings({ engine: opt.value })}
-              className={`rounded-lg border p-3 text-left text-sm transition-colors ${
+              className={`rounded-none border p-3 text-left text-sm transition-colors ${
                 selected
-                  ? "border-acc ring-1 ring-acc bg-panel3 text-fg"
+                  ? "border-act bg-panel3 text-fg"
                   : "border-edge text-fg hover:bg-panel3"
               }`}
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="font-medium">{opt.label}</span>
                 {selected && (
-                  <CheckCircle size={18} weight="regular" className="shrink-0 text-acc" />
+                  <CheckCircle size={18} weight="regular" className="shrink-0 text-act" />
                 )}
               </div>
               <div className="mt-2 text-xs leading-[1.7] text-mut">{opt.hint}</div>
               <div
-                className={`mt-2 inline-block rounded-full border px-2 py-0.5 text-[10px] ${
+                className={`mt-2 inline-block rounded-sm border px-2 py-0.5 text-[10px] ${
                   opt.posture === "local"
-                    ? "border-gold/30 text-gold"
+                    ? "border-lab-green/30 text-lab-green"
                     : "border-warn-soft/30 text-warn-soft"
                 }`}
               >
@@ -167,28 +170,31 @@ export default function TutorialOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="w-[560px] max-w-[92vw] rounded-xl border border-edge bg-panel p-6">
-        <div className="flex items-center justify-center gap-1.5">
-          {Array.from({ length: STEP_COUNT }, (_, i) => (
-            <span
-              key={i}
-              className={`h-1.5 w-1.5 rounded-full ${
-                i === step ? "bg-acc" : "bg-edge2"
-              }`}
-            />
-          ))}
+      <div className="w-[560px] max-w-[92vw] rounded-none border border-edge2 bg-panel p-6">
+        <div className="flex items-center justify-center gap-2 font-mono text-xs tabular-nums text-mut">
+          <span className="text-fg">
+            [{step + 1}/{STEP_COUNT}]
+          </span>
+          <span className="flex items-center gap-1">
+            {Array.from({ length: STEP_COUNT }, (_, i) => (
+              <span
+                key={i}
+                className={`h-1 w-3 ${i === step ? "bg-act" : "bg-edge2"}`}
+              />
+            ))}
+          </span>
         </div>
 
         <div className="mt-6 min-h-[260px]">
           {step === 0 && (
             <div>
               <div className="flex items-center gap-2">
-                <img src="/icon-192.png" alt="" className="h-8 w-8 rounded-lg" />
-                <span className="font-display text-lg font-semibold tracking-wide text-fg">
+                <img src="/icon-192.png" alt="" className="h-8 w-8 rounded-none" />
+                <span className="font-mono text-lg font-bold tracking-wide text-fg">
                   JargonSlayer
                 </span>
               </div>
-              <div className="drop-cap mt-4 text-base font-medium leading-[26px] text-fg">
+              <div className="mt-4 text-base font-medium leading-[26px] text-fg">
                 把听不懂的行话，一条条屠掉。
               </div>
               <div className="mt-3 text-sm leading-[26px] text-mut">
@@ -201,23 +207,23 @@ export default function TutorialOverlay({
 
           {step === 2 && (
             <div>
-              <div className="font-display text-lg font-semibold text-fg">
+              <div className="text-lg font-medium text-fg">
                 三种用法
               </div>
               <div className="mt-4 space-y-3">
-                <div className="rounded-lg border border-edge p-3">
+                <div className="rounded-none border border-edge p-3">
                   <div className="text-sm font-medium text-fg">免费词典模式</div>
                   <div className="mt-2 text-xs leading-[1.7] text-mut">
                     开箱即用，371 条内置商务表达与术语，无需任何配置。
                   </div>
                 </div>
-                <div className="rounded-lg border border-edge p-3">
+                <div className="rounded-none border border-edge p-3">
                   <div className="text-sm font-medium text-fg">填 API Key 解锁 AI 上下文检测</div>
                   <div className="mt-2 text-xs leading-[1.7] text-mut">
                     设置→AI 检测，兼容 DeepSeek/Ollama，解释更贴合当前语境。
                   </div>
                 </div>
-                <div className="rounded-lg border border-edge p-3">
+                <div className="rounded-none border border-edge p-3">
                   <div className="text-sm font-medium text-fg">全离线</div>
                   <div className="mt-2 text-xs leading-[1.7] text-mut">
                     本地 Whisper + Ollama，音频和内容完全不出本机。
@@ -229,7 +235,7 @@ export default function TutorialOverlay({
 
           {step === 3 && (
             <div>
-              <div className="font-display text-lg font-semibold text-fg">
+              <div className="text-lg font-medium text-fg">
                 实时体验
               </div>
               <div className="mt-3 text-sm leading-[26px] text-fg/90">
@@ -240,7 +246,7 @@ export default function TutorialOverlay({
 
           {step === 4 && (
             <div>
-              <div className="font-display text-lg font-semibold text-fg">
+              <div className="text-lg font-medium text-fg">
                 会后
               </div>
               <div className="mt-3 text-sm leading-[26px] text-fg/90">
@@ -264,7 +270,7 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={() => setStep((s) => Math.max(0, s - 1))}
-                className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                className="btn-tactile rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
               >
                 上一步
               </button>
@@ -273,7 +279,7 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={finish}
-                className="btn-tactile rounded-lg bg-acc px-3 py-1.5 text-sm font-medium text-white hover:bg-acchover"
+                className="btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8]"
               >
                 开始使用
               </button>
@@ -281,7 +287,7 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={() => setStep((s) => Math.min(STEP_COUNT - 1, s + 1))}
-                className="btn-tactile rounded-lg bg-acc px-3 py-1.5 text-sm font-medium text-white hover:bg-acchover"
+                className="btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8]"
               >
                 下一步
               </button>

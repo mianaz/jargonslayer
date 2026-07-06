@@ -364,7 +364,7 @@ export async function POST(req: Request) {
     segments.length > MAX_SEGMENTS ||
     totalSegmentChars(segments) > MAX_TOTAL_SEGMENT_CHARS
   ) {
-    return errorBody({ error: "请求体过大", code: "bad_request" }, 413);
+    return errorBody({ error: "会议内容过长，超出报告生成上限", code: "bad_request" }, 413);
   }
 
   const apiKey = resolveKey(req);

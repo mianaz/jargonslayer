@@ -11,14 +11,17 @@ const MAX_HIGHLIGHT_CARDS = 30;
 const HOVER_ENTER_DELAY_MS = 150;
 const HOVER_LEAVE_DELAY_MS = 200;
 
-// Fixed 5-color palette (theme tokens only) for speaker chips, picked
-// by a stable hash of the speaker name.
+// Terminal speaker set (docs/DESIGN.md v3.3: "说话人 glyph($ / > / # 三色)").
+// Six deterministic glyph+hue pairs (spec calls out 6: $ > # % @ &) picked
+// by a stable hash of the speaker name — glyph and speaker-name text share
+// the same lab-* hue, no filled chip background.
 const SPEAKER_PALETTE = [
-  { text: "text-acc", border: "border-acc/40", bg: "bg-acc/10" },
-  { text: "text-acc2", border: "border-acc2/40", bg: "bg-acc2/10" },
-  { text: "text-gold", border: "border-gold/40", bg: "bg-gold/10" },
-  { text: "text-warn", border: "border-warn/40", bg: "bg-warn/10" },
-  { text: "text-fg", border: "border-fg/30", bg: "bg-fg/5" },
+  { glyph: "$", text: "text-lab-cyan" },
+  { glyph: ">", text: "text-lab-purple" },
+  { glyph: "#", text: "text-lab-orange" },
+  { glyph: "%", text: "text-lab-green" },
+  { glyph: "@", text: "text-lab-yellow" },
+  { glyph: "&", text: "text-lab-red" },
 ];
 
 function hashSpeaker(name: string): number {
@@ -52,7 +55,14 @@ interface HighlightMatcher {
  * inflection (s|ed|ing|d), e.g. "raise eyebrows" also matches
  * "raised eyebrows". "Most recent" is by lastSeenAt, not insertion
  * order — a card re-detected recently should stay eligible even if
- * many other cards were newly inserted after it. */
+ * many other cards were newly inserted after it.
+ *
+ * v3 reskin note: this matcher only ever takes `cards` (ExpressionCard[]),
+ * never `terms` (TermCard[]) — the transcript has never highlighted terms,
+ * only expressions (`.hl-expr`). There is no existing "term highlight"
+ * code path here to split into a `.hl-term` variant; adding real term
+ * matching would be new detection logic, out of scope for a zero-logic
+ * reskin pass. See report for this finding. */
 function buildMatcher(cards: ExpressionCard[]): HighlightMatcher {
   const recent = [...cards]
     .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
@@ -246,7 +256,7 @@ function SpeakerRenamePopover({
   return (
     <div
       ref={ref}
-      className="fixed z-50 w-64 rounded-xl border border-edge bg-panel2 p-3 shadow-xl"
+      className="fixed z-50 w-64 rounded-sm border border-edge bg-panel2 p-3 shadow-xl"
       style={{ left: pos.left, top: pos.top }}
     >
       <input
@@ -257,7 +267,7 @@ function SpeakerRenamePopover({
         onKeyDown={(e) => {
           if (e.key === "Enter") handleConfirm();
         }}
-        className="w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
+        className="w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
       />
       <div className="mt-2 text-xs leading-[1.7] text-mut">
         重命名将应用到该说话人的所有 {request.segmentCount} 段发言
@@ -266,14 +276,14 @@ function SpeakerRenamePopover({
         <button
           type="button"
           onClick={onClose}
-          className="btn-tactile rounded-lg px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+          className="btn-tactile rounded-sm px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
         >
           取消
         </button>
         <button
           type="button"
           onClick={handleConfirm}
-          className="btn-tactile rounded-lg bg-acc px-3 py-1.5 text-xs font-medium text-white hover:bg-acchover"
+          className="btn-terminal rounded-sm bg-act px-3 py-1.5 text-xs font-medium text-ink hover:bg-[#E8E8E8]"
         >
           确定
         </button>
@@ -321,20 +331,20 @@ function SegmentEditTextarea({
             onSave();
           }
         }}
-        className="w-full resize-none rounded-lg border border-edge bg-panel2 p-2 text-[15px] leading-relaxed text-fg focus:outline-none"
+        className="w-full resize-none rounded-sm border border-edge bg-panel2 p-2 text-[15px] leading-relaxed text-fg focus:outline-none"
       />
       <div className="mt-2 flex justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="btn-tactile rounded-lg px-3 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg"
+          className="btn-tactile rounded-sm px-3 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg"
         >
           取消
         </button>
         <button
           type="button"
           onClick={onSave}
-          className="btn-tactile rounded-lg bg-acc px-3 py-1 text-xs font-medium text-white hover:bg-acchover"
+          className="btn-terminal rounded-sm bg-act px-3 py-1 text-xs font-medium text-ink hover:bg-[#E8E8E8]"
         >
           保存
         </button>
@@ -562,28 +572,22 @@ export default function TranscriptPanel() {
     <div className="relative flex h-full flex-col" data-testid="transcript-panel">
       <div
         ref={containerRef}
-        className="scroll-thin flex-1 overflow-y-auto px-4 py-3"
+        className="scroll-thin flex-1 overflow-y-auto"
         onScroll={handleScroll}
         onMouseUp={handleMouseUp}
       >
         {isEmpty ? (
-          <div className="relative flex h-full flex-col items-center justify-center text-center">
-            <div className="text-xl font-display font-semibold text-fg">
-              <span className="text-gold/50">❖</span> 准备好开会了{" "}
-              <span className="text-gold/50">❖</span>
+          <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+            <div className="rounded-sm border border-edge bg-panel2 px-4 py-2 font-mono text-sm text-mut">
+              <span className="text-lab-green">$</span> jargonslayer --listen
+              <span className="cursor-block ml-1 inline-block h-[1em] w-[0.55em] translate-y-[0.15em] bg-mut align-baseline">
+                &nbsp;
+              </span>
             </div>
-            {/* No drop-cap here: on a centered two-line zh paragraph the
-                floated cap splits the word 「选择」 and reads as a bug;
-                the cap stays on the tutorial's left-aligned lead. */}
-            <div className="mt-2 max-w-sm text-[15px] leading-[26px] text-mut">
-              选择上方引擎并点「开始监听」，或点「演示」先看效果，演示无需麦克风与
+            <div className="mt-3 max-w-sm text-[15px] leading-[26px] text-mut">
+              选择上方引擎并点「开始监听」，或在右上角 ≡ 菜单里点「演示」先看效果，演示无需麦克风与
               API Key。
             </div>
-            <img
-              src="/icon-192.png"
-              alt=""
-              className="pointer-events-none absolute bottom-6 right-6 h-56 w-56 select-none opacity-[0.05]"
-            />
           </div>
         ) : (
           <>
@@ -595,46 +599,54 @@ export default function TranscriptPanel() {
               return (
                 <div
                   key={seg.id}
-                  className="fade-up mb-2 flex items-start gap-2"
+                  className="fade-up grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3"
                   data-segment-text={seg.text}
                 >
-                  <span className="mt-0.5 shrink-0 font-mono text-xs text-mut">
-                    {formatTime(seg.startedAt)}
-                  </span>
-                  {seg.speaker && palette && (
-                    <span
-                      onClick={
-                        editable
-                          ? (e) => {
-                              const rect =
-                                e.currentTarget.getBoundingClientRect();
-                              setRenameRequest({
-                                speaker: seg.speaker!,
-                                segmentCount: speakerCounts.get(seg.speaker!) ?? 1,
-                                x: rect.left,
-                                y: rect.bottom,
-                              });
-                            }
-                          : undefined
-                      }
-                      className={`group/chip mt-0.5 flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-xs ${palette.text} ${palette.border} ${palette.bg} ${
-                        editable
-                          ? "cursor-pointer hover:ring-1 hover:ring-edge"
-                          : ""
-                      }`}
-                    >
-                      {seg.speaker}
-                      {editable && (
-                        <PencilSimple
-                          size={10}
-                          weight="regular"
-                          className="opacity-0 transition-opacity group-hover/chip:opacity-100"
-                        />
-                      )}
+                  <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
+                    {palette && (
+                      <span className={`block text-sm font-bold ${palette.text}`}>
+                        {palette.glyph}
+                      </span>
+                    )}
+                    <span className="block whitespace-nowrap">
+                      {formatTime(seg.startedAt)}
                     </span>
-                  )}
+                    {seg.speaker && palette && (
+                      <span
+                        onClick={
+                          editable
+                            ? (e) => {
+                                const rect =
+                                  e.currentTarget.getBoundingClientRect();
+                                setRenameRequest({
+                                  speaker: seg.speaker!,
+                                  segmentCount:
+                                    speakerCounts.get(seg.speaker!) ?? 1,
+                                  x: rect.left,
+                                  y: rect.bottom,
+                                });
+                              }
+                            : undefined
+                        }
+                        className={`group/chip mt-0.5 inline-flex items-center gap-1 ${palette.text} ${
+                          editable
+                            ? "cursor-pointer hover:underline hover:decoration-dotted hover:underline-offset-2"
+                            : ""
+                        }`}
+                      >
+                        {seg.speaker}
+                        {editable && (
+                          <PencilSimple
+                            size={9}
+                            weight="regular"
+                            className="opacity-0 transition-opacity group-hover/chip:opacity-100"
+                          />
+                        )}
+                      </span>
+                    )}
+                  </div>
                   {isEditingThis ? (
-                    <div className="flex-1">
+                    <div>
                       <SegmentEditTextarea
                         value={editValue}
                         onChange={setEditValue}
@@ -668,24 +680,27 @@ export default function TranscriptPanel() {
             })}
 
             {interim && (
-              <div className="flex items-start gap-2">
-                <span className="mt-0.5 shrink-0 font-mono text-xs text-mut opacity-0">
-                  --:--:--
-                </span>
-                {interim.speaker &&
-                  (() => {
-                    const palette = SPEAKER_PALETTE[hashSpeaker(interim.speaker)];
-                    return (
-                      <span
-                        className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-xs ${palette.text} ${palette.border} ${palette.bg}`}
-                      >
-                        {interim.speaker}
-                      </span>
-                    );
-                  })()}
+              <div className="grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3">
+                <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
+                  {interim.speaker &&
+                    (() => {
+                      const palette =
+                        SPEAKER_PALETTE[hashSpeaker(interim.speaker)];
+                      return (
+                        <>
+                          <span className={`block text-sm font-bold ${palette.text}`}>
+                            {palette.glyph}
+                          </span>
+                          <span className={`mt-0.5 inline-block ${palette.text}`}>
+                            {interim.speaker}
+                          </span>
+                        </>
+                      );
+                    })()}
+                </div>
                 <span className="text-[15px] italic leading-relaxed text-mut">
                   {interim.text}
-                  <span className="dot-live inline-block">▍</span>
+                  <span className="cursor-block ml-0.5 inline-block h-[1em] w-[0.6em] translate-y-[0.15em] bg-mut align-baseline" />
                 </span>
               </div>
             )}
@@ -697,7 +712,7 @@ export default function TranscriptPanel() {
         <button
           type="button"
           onClick={scrollToBottom}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-full border border-edge bg-panel2 px-3 py-1 text-xs text-fg shadow-lg"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-sm border border-edge bg-panel2 px-3 py-1 font-mono text-xs text-fg shadow-xl"
         >
           ↓ 回到底部
         </button>

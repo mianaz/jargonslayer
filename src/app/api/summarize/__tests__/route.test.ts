@@ -26,7 +26,7 @@ describe("POST /api/summarize — request size caps", () => {
     const res = await POST(makeRequest({ ...baseBody, segments: makeSegments(2001, 1) }));
     expect(res.status).toBe(413);
     const json = await res.json();
-    expect(json).toEqual({ error: "请求体过大", code: "bad_request" });
+    expect(json).toEqual({ error: "会议内容过长，超出报告生成上限", code: "bad_request" });
   });
 
   it("rejects a body whose total segment text exceeds 400k chars with 413", async () => {
@@ -34,7 +34,7 @@ describe("POST /api/summarize — request size caps", () => {
     const res = await POST(makeRequest({ ...baseBody, segments: makeSegments(500, 900) }));
     expect(res.status).toBe(413);
     const json = await res.json();
-    expect(json).toEqual({ error: "请求体过大", code: "bad_request" });
+    expect(json).toEqual({ error: "会议内容过长，超出报告生成上限", code: "bad_request" });
   });
 
   it("a body within both caps proceeds past the size check (fails later for lack of an API key, not 413)", async () => {

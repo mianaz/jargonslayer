@@ -1,154 +1,130 @@
-# JargonSlayer 视觉与交互规范
+# JargonSlayer Design Constitution
 
-> **v2 识别性改造（生效中）**：v1 的"深夜仪表"骨架保留，视觉身份升级为
-> **泥金手抄本 × 瑞士网格**（Illuminated manuscript, Swiss-engineered）。
-> 详见文末 v2 章节；v2 与正文冲突处以 v2 为准。
+Canonical spec for all UI work. **English is the working language of this document** so every agent can parse it reliably; literal product copy appears as quoted Chinese strings (ship them verbatim — they are content, not commentary). When this file and any older prompt disagree, this file wins.
 
-**设计判断**：面向中国职场人的英文会议实时理解仪表。用户注意力在会议本身，界面在余光里工作——所以框架稳定、动效克制、信息密度中高，任何视觉噪音都是成本。气质参照"深夜同传席位"：深色、专注、一层金色的译员标注。
-
-刻度（taste-skill 三旋钮）：VARIANCE 3 / MOTION 3 / DENSITY 6。这是实时工具，不是落地页——taste-skill 的营销页条款（hero 规则、滚动叙事、bento）不适用，其工艺条款（状态完整性、对比度、一致性锁、动效纪律）全部适用。
-
-## 唯一的视觉签名：金色标注层
-
-产品的灵魂时刻是"听不懂的表达变成看得懂的卡片"。全部表现力预算花在这一处：
-
-- 转录文本里被检测的表达 = 金色虚线下划线（`.hl-expr`），像译员在文稿上做的记号；
-- 新卡片到达 = 金色辉光 4 秒衰减（`.card-new`）；重复命中 = 金色脉冲（`.card-repulse`）；
-- 词典/自定义来源徽标用金色系。
-
-除此之外**不允许再出现表现性装饰**。没有渐变、没有 glow、没有装饰性圆点、没有 marquee。
-
-## 色彩：语义单一职责（Color Consistency Lock）
-
-| Token | 值 | 唯一职责 |
-|---|---|---|
-| `ink / panel / panel2 / edge` | 深色中性系 | 背景层级（页面/面板/浮层/描边） |
-| `fg` | #E8ECF4 | 主文本。**中文解释用 fg + font-medium**（产品核心载荷配最高阅读对比度，不用彩色） |
-| `mut` | #8B95A9 | 次级文本、标签、时间戳 |
-| `acc`（蓝） | #5B9DFF | 可交互：主按钮、链接、开关、焦点环。不作装饰 |
-| `acc2`（绿） | #3ED598 | 只干一件事：直播状态（录音点、listening 徽标） |
-| `gold`（金） | #E5B455 | 签名标注层专属（见上）。不用于按钮 |
-| `warn` | #E06C75 | 停止/删除/错误专属 |
-
-禁：AI 紫、彩色渐变文本、同一视图内的第四种彩色。中文解释一律不用绿色（旧规范作废）。
-
-## 字体
-
-系统栈（SF Pro / PingFang SC）是**刻意选择**：中文渲染最佳、零加载、INP 友好。个性来自排印而非字体文件：
-
-- 转录 EN 正文：15–16px，`leading-relaxed`；
-- 卡片中文解释：15px `font-medium text-fg`——每张卡片的视觉主角；
-- 时间戳/计数/度量：`font-mono tabular-nums text-mut`；
-- 标题层级靠字重和颜色，不靠字号膨胀；展示性大字仅限空态/教程页。
-
-## 形状一致性锁
-
-- 控件（按钮/输入框）：`rounded-lg`（8px）
-- 容器（卡片/面板/弹窗）：`rounded-xl`（12px）
-- 徽标/chip/状态点：full-pill
-- 全项目不得出现第四种圆角。
-
-## 动效清单（封闭集合，MOTION 3）
-
-允许且仅允许：① card-new 辉光；② card-repulse 脉冲；③ 分段入场 fade-up 250ms；④ 录音点 pulse；⑤ 按钮 `.btn-tactile` 按压（scale 0.97）；⑥ 抽屉/弹窗 200ms ease-out。全部已受 `prefers-reduced-motion` 门控（reduce 时 card-new 退化为静态金边）。新增动效需先回答"它传达什么状态？"答不出就不加。
-
-## 图标
-
-`@phosphor-icons/react`（已安装），weight 统一 `regular`，尺寸 18/20。**禁手绘 SVG path**。全项目一个图标家族。
-
-## 交互便利性硬标准
-
-- 每个可交互元素有 `:focus-visible` 环（globals.css 已全局兜底）；点击目标 ≥ 36px。
-- 按钮文案 = 动作结果（"开始监听"→ toast"已开始"语义闭环）；同一动作全程同名。
-- 空态是行动邀请：告诉用户下一步点哪里（空转录 → 指向「演示」；空卡片 → 解释检测何时出现；空历史 → 指向开第一场会）。
-- 错误态说清楚发生了什么 + 怎么修（已在降级链 toast 文案中执行：错误 → 建议动作）。
-- Esc 关闭一切浮层；Toast 不遮挡主操作按钮。
-- 加载态用骨架/内联 spinner + 进度文案，不用全屏遮罩。
-
-## 文案声音（frontend-design 写作规范）
-
-- 站在用户侧命名：「本地 Whisper（音频不出本机）」而不是「WebSocket STT sidecar」；
-- 主动语态、句首动词、无填充词；界面词汇表全程一致（引擎名、按钮名、面板名）；
-- 中文为主，关键术语保留英文原文（expression 原文永不翻译——它就是学习对象）。
-
-## 目标用户审美判断（为什么是这个风格）
-
-用户画像：外企/海外团队的中国职场人、海外研究生，与少数派/即刻效率工具社区高度重叠。三层依据：
-
-1. **身份认同**：这批用户的 aspirational 工具是 Linear/Raycast/Cursor 家族——craft-tool 工艺风。且存在"屏幕共享尊严"约束：工具可能被同事瞥见，越像严肃的工程师工具，用户越敢开着它；可爱风/游戏风是负资产。
-2. **情绪功能**：使用底色是语言焦虑 → 界面必须镇静（深色、低刺激、框架稳定）。金色批注的心理联想是荧光笔/Kindle 标注——把"听不懂"重构为"在做学习标注"，是尊严设计。纯黑客风抽干温度，纯商务蓝放弃身份信号。
-3. **双时刻**：会中=仪表（余光可读）；会后纪要/卡片=阅读与学习（同一深色体系内做阅读化处理：更宽松行高、受控行长；不引入衬线——中文衬线在屏幕小字号不可用）。
-
-## 中文排印（用户凝视最久的像素，一流 CJK 排印是核心风格差异化）
-
-- 中文正文（chinese_explanation、纪要 zh 行）：`leading-[1.7]`；英文转录 `leading-relaxed`（1.625）。
-- 中文强调用 `font-medium`（PingFang Medium），正文级中文**禁用 bold**（小字号发闷）。
-- 中西文混排间距（盘古之白）：在 LLM 提示词层强制"中英文与数字之间加半角空格"，从生成源头解决；UI 静态文案人工执行。
-- 行长控制：中文阅读块 `max-w-[38em]` 级别；卡片内自然受容器约束。
-- UI 引用符号统一用「」；时间戳/计数一律 `font-mono tabular-nums`。
-
-## 参考校准（awesome-design-md：Warp / Linear / Superhuman）
-
-对照三份真实产品的逆向 token 后的修订与确认：
-
-- **表面分层（采纳，来自 Linear）**：深色 UI 的深度感来自表面阶梯而非阴影。token 升级为 ink（页面画布，压深到 #07090E）→ panel → panel2（浮层）→ panel3（hover/激活态）+ 双档 hairline（edge / edge2）。层级规则：交互悬停 = 表面上移一档（bg-panel → bg-panel3），不加阴影。
-- **文字三级（采纳）**：fg（正文/中文解释）→ mut（次级/标签）→ mut2（时间戳、计数等元信息）。
-- **hover 变亮（采纳，来自 Linear）**：深色 UI 上主按钮 hover 用更亮的 acc-hover，不用变暗或加 glow。
-- **强调色纪律（获得印证）**：Linear 的原话规则"accent 出现在品牌标记、焦点环和少数刻意的 CTA 上，从不装饰性使用"——与本规范 Color Lock 一致，维持。
-- **圆角锁（获得印证）**：Linear 的 6/8/12px 与本规范 8/12px 锁一致；Warp 的 2–4px 终端风更紧但不换（我们的卡片承载双语长文本，需要更柔的容器）。
-- **拒绝**：Warp 的暖米色实心主按钮与 Instrument Serif 斜体点缀（营销页手法，且该字体在 taste-skill 禁用名单）；Superhuman 的浅色编辑部结构（与实时工具不同类）；Linear 的薰衣草紫强调色（那是它的签名，我们的签名是金色标注层）。
-
-## AI 味清单（产品 UI 适用子集，polish pass 逐条过）
-
-- 零 em-dash（`—`）出现在任何可见字符串（中文破折号"——"属正常中文标点，不在此列；英文文案禁 em-dash）；
-- 无装饰性状态圆点（绿点只出现在真实 listening 状态）；
-- 无假精确数字；演示脚本数据已语义自洽；
-- 无 `v0.1.2` 类版本装饰、无 section 编号眉标、无滚动提示；
-- 按钮/表单对比度 WCAG AA 逐个过检。
+- Active theme: **v3 "Dark Tech · Meeting REPL" (terminal)** — see §v3 below.
+- Retired themes (v1 Linear-calibrated dark, v2 illuminated-manuscript × Swiss grid): summarized in §Lineage; full original text in git history; visual explorations in `docs/design-explorations/`.
 
 ---
 
-# v2 识别性改造：泥金手抄本 × 瑞士网格
+## Universal rules (apply to every theme, including future skins)
 
-**判断**：v1 是称职的通用深色工具（用户评语"一眼AI"成立）。差异化不靠换个色板，靠让品牌叙事贯穿材质系统——JargonSlayer 的名字、喷火龙 icon、以及 v1 就有的"夜与金"配色，本源都是**泥金装饰手抄本**（illuminated manuscript）：深夜羊皮纸上，重要的字用金箔点亮——这正是产品在做的事（把听不懂的表达"点亮"）。骨架纪律来自 Müller-Brockmann 网格系统（中世纪手抄本版面本就是严格网格，Van de Graaf canon）。复古是材质与符号，专业是网格与节奏，两者不冲突。
+### CJK typography (the pixels users stare at longest)
+- Chinese body text: PingFang SC, **≥14px**, line-height 1.6–1.7. Chinese *reading* text (cards, transcript, summaries) is never set in a monospace or display face. Applying `font-mono` to short zh chrome labels (buttons, status line, menu items) is acceptable: the mono stack carries no CJK glyphs, so Chinese falls through to PingFang while Latin/digits render mono. Never add a CJK monospace font to the stack.
+- Pangu spacing: half-width space between CJK and Latin/digits ("本地 Whisper", not "本地Whisper").
+- Chinese explanation lines are the hero of every card: `text-fg font-medium`, never de-emphasized below `--mut`.
+- `--mut2` (faintest grey) may carry only decoration: numerals, ×N counters, arrows, separators — **never Chinese words**.
+- Contrast: every text/background pair ≥4.5:1 (WCAG AA). Compute it; do not eyeball.
 
-## v2.1 网格纪律（Müller-Brockmann 移植）
+### Interaction hard standards
+- Visible keyboard focus on every interactive element (global `:focus-visible` ring).
+- Every empty state names a concrete next action (e.g. pointing at 「演示」), never mood-only copy.
+- Loading = skeletons shaped like the final layout; errors say what happened and what to do; toasts only for transient facts.
+- All decorative motion collapses under `@media (prefers-reduced-motion: reduce)`. No exceptions, including the mascot.
+- Press feedback on buttons: scale(0.97) via `.btn-tactile` / `.btn-terminal`.
 
-- `:root` 单一来源：`--bl: 8px`（基线单位）；所有 margin/padding/gap 必须是 8 的倍数（Tailwind 4px 刻度里只用偶数档）。
-- 行高 px 化吸附：EN 正文 15px/24px（3bl）；**中文正文 15px/26px**——刻意偏离基线 2px，CJK 可读性优先于教条，此处为全站唯一豁免，不得再增。
-- 段落节奏：卡片内行距 8px（mt-2 系），区块间 16/24px，页面区段 32px。禁止 5/10/14px 这类脱格值。
-- 大数字签名（MB 惯用）：/review 统计数字升格为 `text-4xl font-mono tabular-nums`，是页面的排版主角。
+### Writing voice (frontend-design rules, zh)
+- Buttons say exactly what happens: 「开始监听」 not 「提交」. An action keeps one name through its whole flow.
+- Name things by what users control, never by implementation (「说话人分离」, not 「pyannote pipeline」).
+- No em-dash (—) in visible copy. No AI-flavored fillers (综上所述 / 值得注意 / 首先其次最后 / "不是A而是B" constructions).
+- Dragon-slaying microcopy (屠龙 metaphor) appears in **at most 3 places** app-wide (empty/achievement positions only). Current: transcript empty state, review empty state, practice-deck completion.
 
-## v2.2 字体（品牌位专用 display）
+### Anti-AI-slop checklist (run during every polish pass)
+- No purple-blue gradient glows, no glassmorphism-by-default, no three-equal-feature-cards patterns.
+- One icon family only (Phosphor), standardized strokeWidth; no emoji in UI; no hand-rolled icon paths.
+- One corner-radius system per theme; one palette temperature; shadows tinted to background hue (when a theme uses shadows at all).
 
-- **EN display：Cinzel**（罗马碑刻体，next/font/google 构建期自托管，无运行时外联）——仅限：logo 词标、空态大标题、教程步骤标题、练习卡正面 headword。禁止用于正文/按钮/表单。
-- **中文 display：Songti SC**（系统宋体，无需加载）——同样仅限品牌位大字。中文的"手抄本感"对应物是典籍排印，不是伪装的哥特体。
-- 正文/界面一律维持系统栈。Grenze Gotisch（blackletter）已评估并否决：可读性损失大，且容易滑向万圣节。
+---
 
-## v2.3 材质与符号
+# v3 ACTIVE THEME — Dark Tech · Meeting REPL (terminal)
 
-- **双线金边卡牌**：卡片外框 1px `edge` 不变；内衬 `::before` inset 2px 的 1px 内线——表达卡 `gold/15`、术语卡 `acc/15`。泥金是材质引用，不是发光效果；禁 box-shadow glow。
-- **角部纹饰 ❖**：克制到三处——新卡辉光态的右上角、空态标题两侧、练习卡牌。不进普通卡片。
-- **分隔符**：面板区段标题间用 `❖` 居中细分隔（替代部分纯 hairline）；hairline 仍是主力。
-- **首字下沉**：空态与教程第一步的首字 drop-cap（3 行高，EN 用 Cinzel / 中文用宋体）。
-- **龙形水印**：空转录区右下角，龙 icon 单色 4% 透明度、约 280px，`pointer-events-none`。唯一的水印位。
-- **纹章红**：`warn` #E06C75 → **#A63D40**（茜草红/纹章红），停止与删除的语义不变，色相入典。
-- **盾徽徽章**：检测模式徽标（AI 检测/词典模式）前缀 Phosphor `ShieldCheck`/`Shield` 16px；不搞 clip-path 异形。
+User decision (2026-07-06): direction #4 of the seven explorations is the default theme. The other six (qinglü focus-flow, ink-wash, grimoire, noir editorial, sketch notebook, 8-bit) become optional skins on the roadmap (§v3.5). Approved visual target: `docs/design-explorations/preview-4-terminal.html`.
 
-## v2.4 微文案（屠龙隐喻，全站限三处）
+**Positioning in one line:** the meeting is a running process — every utterance is an output block, every card is a lint diagnostic; a black/white/grey machine where only labels carry color, and a pixel dragon is the ghost in the machine.
 
-1. 教程欢迎页 tagline：「把听不懂的行话，一条条屠掉。」
-2. 练习卡全部标掌握后的完成态：「本轮的龙都屠完了。」+ 重新洗牌入口。
-3. /review 空态标题保持功能性，副标题可用「装备词典，出门屠龙」。
-其余文案维持工具性直白。禁 emoji。
+## v3.1 Color (single source of truth; no blue-tinted greys anywhere)
 
-## v2.5 渐进披露（卡片折叠，交互定案）
+CSS variables live in `globals.css` under `:root, [data-theme="terminal"]`; Tailwind mirrors them 1:1 (literal hex, keep in sync manually).
 
-最新 3 张全展开，其余折叠为两行摘要（headword+徽标 / 中文解释单行）；用户手动展开/折叠的卡进 pinned 集合，自动规则永不覆盖；筛选行右侧全部展开/折叠循环按钮（auto → all-expanded → all-collapsed → auto）。定位聚焦（focusCardId）自动展开目标卡。
+| token | value | role |
+|---|---|---|
+| ink | #0A0A0A | page canvas (pure neutral black) |
+| panel | #121212 | primary panels |
+| panel2 | #1A1A1A | raised: dialogs, popovers |
+| panel3 | #202020 | hover/active surface |
+| edge | #262626 | hairline |
+| edge2 | #333333 | strong divider |
+| fg | #EDEDED | primary text |
+| mut | #9A9A9A | secondary text (minimum tier that may carry Chinese) |
+| mut2 | #5C5C5C | decorative micro-elements only, never Chinese |
+| lab-red | #FF5F56 | label: slang 俚语 / danger / errors |
+| lab-orange | #FFAA44 | label: idiom 习语; **expression highlight underline** |
+| lab-yellow | #F7D51D | label: indirect 委婉 / caution |
+| lab-green | #4ADE80 | label: listening state / success / diff-flash |
+| lab-purple | #C084FC | label: metaphor 隐喻 |
+| lab-cyan | #22D3EE | label: terms 术语; **term highlight underline** |
+| act | #FFFFFF | the single accent: primary button = white bg, black text |
 
-## v2.6 v1 遗留 polish 清单（并入本轮）
+Category→color map (exact): idiom=orange, slang=red, phrase=green, metaphor=purple, indirect=yellow, other=neutral grey; **all terms=cyan** (term-type chips stay neutral).
 
-- TranscriptPanel 空态与演示脚本中的 em-dash 清理（真实 STT 不输出 em-dash）。
-- 顶栏徽标/按钮 `whitespace-nowrap`（修窄视口折行）。
-- `<lg` 响应式：右栏 340px；`<md` 上下堆叠（转录在上）。
-- CJK 行高全站核查至 v2.1 标准。
+Rules:
+1. Any hue where R≠G≠B may only appear on elements ≤24px tall (labels, underlines, status dots, glyphs). Large fills are neutral or white.
+2. The old v1 blue `--acc #5B9DFF` and every blue-tinted grey are dead. If you find one, replace it.
+3. `warn` semantics: fills use lab-red (small elements only); warn **text** uses `warn-soft #FF8A80` (AA-safe on dark panels). Destructive primary buttons are outlined lab-red, not filled (white is the only large filled accent).
+4. Migration-era aliases (`acc/acc2/gold/warn`, `--font-display`) are **retired** (2026-07-06) — no component references remain; `warn-soft` was promoted to a real token (rule 3). The one intentional v2 survivor is the Cornell parchment export artifact, which pins its gold/serif values inline: it is a frozen artifact, not a migration straggler.
+
+## v3.2 Type
+
+- **Monospace is the brand identity**: JetBrains Mono (`next/font`, var `--font-mono-brand`, fallback SF Mono/Menlo) for: brand wordmark, English button words, numbers/timestamps/counters, English card headwords, status line, English label text.
+- Chinese never gets CJK-mono glyphs: PingFang SC, body ≥14px per Universal rules. `font-mono` on short zh chrome labels (primary buttons, status line) is fine — CJK falls back to PingFang (see Universal rules); zh *reading* text stays `font-sans`. Micro-labels in Chinese: 12px floor, only for pure decoration tiers.
+- ALL-CAPS micro-labels (English only) + `tabular-nums` for all numerals.
+- Display serifs are retired in this theme; the `font-display` utility and `--font-display` variable are removed. The Cornell parchment artifact pins `"Songti SC", "STSong", serif` inline (frozen v2 artifact).
+
+## v3.3 Shape & structure
+
+- Corner radius 0–2px globally. Tiny status dots may stay round.
+- Cards degrade to **blocks**: 2px left status-color bar + `bg-panel` + top/bottom 1px `edge` separators. No full border boxes, no rounded cards, no manuscript double rules.
+- Transcript = **Warp-style block flow**: each segment is a block with a left gutter (mono timestamp + speaker glyph). Speaker identity = glyph `$ > # % @ &` + name text colored from the lab palette (deterministic via hashSpeaker); no filled chips. The live interim tail ends with a blinking block cursor (`.cursor-block`).
+- Header = **terminal titlebar**: three fake window dots (red/orange/green, decorative), mono path-style title `jargonslayer — {engine}·{本地|云端} — {n} cards`, right-aligned ⌘K hint chip.
+- Footer = **vim status line** (`StatusLine.tsx`, 28px, mono 12px): inverted mode block `-- LISTENING -- / -- IDLE -- / -- STOPPED --` (green bg when listening), detect-mode text, privacy sentence (「音频未离开本机」 for local engines / 「音频经浏览器厂商云端」 for webspeech), card counter, and the mascot perch (`#mascot-perch`) at the far right.
+- **Hamburger consolidation** (user-requested): header keeps only [Start/Stop primary button] + engine pills + posture chip + detect-mode badge. Demo / History / Review / Settings / Help live inside one ≡ dropdown menu (mono-styled, icon + zh label, original data-testids preserved inside the menu, ESC/outside-click close, keyboard navigable).
+
+## v3.4 Pixel dragon mascot "Bit" (original character, interactive)
+
+**Copyright red lines** — must be clearly distinct from the reference characters (Genshin's A-Qiao: yellow body, green mohawk, sunglasses, bipedal; Chrome's offline T-rex: we borrow silhouette *language*, never the T-rex shape):
+- Body: charcoal `#3A3A3A` + phosphor-green `#4ADE80` dorsal fins / belly accents (a terminal ghost, not yellow-green).
+- Eyes: square **cursor-block pupils** that blink like a terminal caret — this is the signature. No sunglasses.
+- Form: quadruped, low-slung long body (not bipedal); tail tip is a half-block ▌ pixel.
+- Fire: exhaled flames are **multicolor ANSI pixel particles** using the five lab colors — the label system baked into the character.
+
+**Craft bar / 画质标准 (user addition 2026-07-06; reference the Chrome dino's silhouette language, not its shape):**
+- Pixel grid ≥32×24 (the Chrome dino carries ~44×47 worth of information; do not economize down to ~24×16).
+- The silhouette must read "dragon" at a glance: **thick neck** (near head-width), large head mass, **visible small forearms/claws** (even 2–3 cells, but they must exist), sturdy legs.
+- Acceptance: reads as a chunky, cute dragon at both 40px actual size and 4× zoom.
+
+**State machine** (all motion gated by reduced-motion; static awake pose as fallback):
+- idle: tail sway 6s loop; cursor-pupil pulse 1.2s; random blink every 5–9s.
+- listening (`status === "listening"`): dorsal fins light up cell-by-cell like a signal meter; gentle body bob.
+- card-burst (cards+terms count increases): mouth opens, 5–8 multicolor pixel particles arc toward the cards panel, 0.6s; bursts queue if rapid.
+- sleep: 30s with no events and not listening → lies down, eyes closed, mono `z Z` floats above; any event or click wakes it.
+- click: single = blink + small flame; triple within 800ms = big rainbow flame + 1s page-edge ANSI glow (easter egg); press-and-hold ≥600ms = rolls belly-up, legs paddling (easter egg).
+- Implementation: self-contained `PixelDragon.tsx` (SVG `shape-rendering: crispEdges`), subscribes to zustand (`status`, cards+terms length), zero business-logic intrusion; timers cleaned up on unmount; SSR-safe.
+
+## v3.5 Theme architecture (skins roadmap)
+
+- Every color/font token is a CSS variable; components reference tokens only. `<html data-theme="terminal">` is the default.
+- A future skin = a new `[data-theme="…"]` variable set + a small theme-level decoration layer (banner/watermark/mascot re-skin). Planned ids: `qinglv | shuimo | grimoire | noir | sketch | 8bit` — one per archived exploration. Settings page gets a theme picker when ≥2 themes exist.
+- The mascot re-skins per theme (terminal=Bit; qinglü=mineral-green dragon; shuimo=ink dragon; 8bit=retro palette). The skeleton/state machine is shared; the sprite layer is themed.
+- Exploration archive: seven preview HTMLs + generated art (`ink-dragon.png`, `qinglv-band.png`) live in `docs/design-explorations/`.
+
+## v3.6 Motion inventory (closed set)
+
+Cursor blink (steps), new-card `.diff-flash` (green wash → transparent, 0.8s), mascot state machine, menu open (80ms), button press scale(0.97). Forbidden: large-area breathing gradients, parallax, hover displacement >2px.
+
+---
+
+## Lineage (retired specs, kept for context)
+
+- **v1 (retired)**: dark product shell calibrated against Warp/Linear/Superhuman references — the blue-grey dev-tool family. Its lasting contributions were absorbed into Universal rules above (CJK typography standards, interaction hard standards, writing voice, gold-as-annotation single-signature discipline). Its palette is dead.
+- **v2 (retired)**: "illuminated manuscript × Swiss grid" (泥金手抄本 × 瑞士网格) — Cinzel/Songti display faces, double-line card chrome, ❖ ornaments, drop caps, heraldic red, dragon watermark, 8px baseline grid. The 8px baseline discipline and the Cornell-note parchment artifact survive; everything else lives on as the future `grimoire` skin. Full spec: git history of this file (commit cfeed9d and earlier).
+- **The seven explorations (2026-07-06)**: shuimo 水墨宣纸 / grimoire 羊皮纸 / 8bit / terminal / noir 黑金编辑部 / sketch 手绘便签 / qinglü 青绿焦点流. Terminal won as base; the qinglü exploration's "calm core, expressive edges" attention principle (spend boldness where attention is free: transitions, idle, post-meeting — never on the mid-meeting reading surface) is adopted as a universal design value even inside the terminal theme.

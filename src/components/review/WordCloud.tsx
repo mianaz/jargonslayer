@@ -47,18 +47,17 @@ function WordButton({
   onSelect: (label: string) => void;
 }) {
   const muted = word.count === 1;
-  // Color-by-kind rule: gold is the signature annotation layer and is
-  // never a button's own text color (docs/DESIGN.md color lock), so
-  // expressions get a gold underline accent around an `fg` label —
-  // mirroring the gold corner-ornament/badge chrome already used on
-  // interactive cards elsewhere (PracticeDeck, CardsPanel). `acc` blue
-  // IS used directly as clickable-element text elsewhere (CardsPanel's
-  // view-mode toggle), so terms use it as the label color itself.
+  // Color-by-kind rule (docs/DESIGN.md v3.1 lab-* label tokens): the
+  // count=1 tier stays neutral mut (a one-off mention isn't worth
+  // color-coding); everything above that is colored directly by kind —
+  // expressions in lab-orange (the same hue as the transcript's
+  // expression-highlight underline), terms in lab-cyan (the term
+  // underline hue).
   const colorClass = muted
     ? "text-mut"
     : word.kind === "expression"
-      ? "text-fg underline decoration-gold decoration-2 underline-offset-4"
-      : "text-acc";
+      ? "text-lab-orange"
+      : "text-lab-cyan";
 
   return (
     <button
@@ -67,7 +66,7 @@ function WordButton({
       aria-pressed={isSelected}
       aria-label={`${word.label}，出现 ${word.count} 次`}
       title={`${word.label} · ${word.count} 次`}
-      className={`btn-tactile rounded-lg px-1.5 py-0.5 font-medium leading-none transition-colors hover:bg-panel3 ${sizeClass} ${colorClass} ${
+      className={`btn-tactile rounded-sm px-1.5 py-0.5 font-mono font-medium leading-none transition-colors hover:bg-panel3 ${sizeClass} ${colorClass} ${
         isSelected ? "bg-panel3" : ""
       }`}
     >
@@ -78,7 +77,7 @@ function WordButton({
 
 function EmptyState() {
   return (
-    <div className="rounded-xl border border-edge bg-panel p-6 text-center">
+    <div className="rounded-none border border-edge bg-panel p-6 text-center">
       <div className="text-sm font-medium text-fg">词云还是空的</div>
       <div className="mt-2 text-xs leading-[1.7] text-mut">
         装备词典，出门屠龙。会议里检测到的表达和术语积累多了，这里会长出一片词云。
@@ -108,13 +107,8 @@ export default function WordCloud({
 
   return (
     <div>
-      <div className="flex items-center gap-2">
-        <span className="font-display text-lg font-semibold text-fg">
-          词云
-        </span>
-        <span className="text-xs text-gold/40" aria-hidden="true">
-          ❖
-        </span>
+      <div className="border-b border-edge pb-2">
+        <span className="text-lg font-medium text-fg">词云</span>
       </div>
 
       <div className="mt-3">
@@ -124,7 +118,7 @@ export default function WordCloud({
           <EmptyState />
         ) : (
           <div
-            className="scroll-thin max-h-72 overflow-y-auto rounded-xl border border-edge bg-panel p-4"
+            className="scroll-thin max-h-72 overflow-y-auto rounded-none border border-edge bg-panel p-4"
             data-testid="word-cloud"
           >
             <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1">

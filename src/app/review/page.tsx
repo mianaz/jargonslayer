@@ -27,14 +27,13 @@ export default function ReviewPage() {
         >
           ← 返回会议
         </a>
-        <span className="font-display font-semibold text-fg">学习中心</span>
+        <span className="font-medium text-fg">学习中心</span>
+        <span className="font-mono text-xs text-mut2">/review</span>
       </header>
 
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-6">
         <ReviewDashboard />
-        <div className="text-center text-sm text-edge2" aria-hidden="true">
-          ❖
-        </div>
+        <div className="border-t border-edge" aria-hidden="true" />
         <PracticeDeck />
       </main>
 

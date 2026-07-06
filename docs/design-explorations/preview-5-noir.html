@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer · 方向5 黑金编辑部 · 黑色大教堂×杂志排印</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500;1,600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --black:        #050505;
+    --panel:        #0C0C0C;
+    --panel-raise:  #101010;
+    --ivory:        #F3EFE6;
+    --ivory-dim:    #A89F8D;
+    --ivory-faint:  #5E594E;
+    --gold:         #B98A2E;
+    --gold-soft:    rgba(185,138,46,0.55);
+    --gold-faint:   rgba(185,138,46,0.24);
+    --wine:         #5A1F24;
+    --wine-bright:  #7A2C33;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0; padding:0;
+    background: var(--black);
+    color: var(--ivory);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Songti SC", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    font-weight: 300;
+  }
+
+  /* ============ 预览标签行(非产品 UI) ============ */
+  .preview-tag{
+    font-size:12px; line-height:1.6;
+    color: var(--ivory-dim);
+    text-align:center;
+    padding:6px 12px;
+    letter-spacing:0.02em;
+    background: var(--panel);
+    border-bottom: 1px solid var(--gold-faint);
+  }
+  .preview-tag b{ color: var(--gold); font-weight:600; }
+
+  /* ============ 页面容器 ============ */
+  .page{
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 40px 48px 56px;
+  }
+
+  /* ============ 金色发丝线(唯一的界定手法) ============ */
+  .hairline{
+    display:block; width:100%; height:1px;
+    background: linear-gradient(90deg, transparent 0%, var(--gold) 8%, var(--gold) 92%, transparent 100%);
+    opacity: 0.85;
+    transform-origin: center;
+  }
+  .hairline.grow{
+    animation: hairline-grow 1.1s cubic-bezier(.2,.6,.2,1) both;
+  }
+  @keyframes hairline-grow{
+    from{ transform: scaleX(0); opacity:0; }
+    to{ transform: scaleX(1); opacity:0.85; }
+  }
+  .hairline.faint{ opacity:0.35; }
+
+  /* ============ 顶栏:刊头 ============ */
+  .masthead{
+    display:flex; align-items:flex-end; justify-content:space-between;
+    padding: 6px 0 22px;
+    gap: 32px;
+    flex-wrap: wrap;
+  }
+
+  .masthead-left{ display:flex; align-items:center; gap:18px; }
+
+  .dragon-mark{ width:52px; height:40px; flex-shrink:0; opacity: 0.92; }
+  .dragon-mark path{
+    stroke-dasharray: 400;
+    stroke-dashoffset: 400;
+    animation: dragon-draw 1.6s ease-out 0.2s forwards;
+  }
+  @keyframes dragon-draw{ to{ stroke-dashoffset: 0; } }
+
+  .masthead-titles{ display:flex; flex-direction:column; gap:6px; }
+  .eyebrow{
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.22em;
+    color: var(--ivory-dim);
+    font-weight: 400;
+    opacity: 0;
+    animation: fade-track-in 0.9s ease-out 0.5s forwards;
+  }
+  .eyebrow .gold-dot{ color: var(--gold); margin: 0 2px; }
+  @keyframes fade-track-in{
+    from{ opacity:0; letter-spacing: 0.32em; }
+    to{ opacity:1; letter-spacing: 0.22em; }
+  }
+
+  .masthead-name{
+    font-family: "Cormorant Garamond", Georgia, "Songti SC", serif;
+    font-weight: 600;
+    font-size: 46px;
+    line-height: 1;
+    letter-spacing: 0.015em;
+    color: var(--ivory);
+    opacity: 0;
+    animation: fade-track-in 1s ease-out 0.3s forwards;
+  }
+
+  .masthead-sub{
+    font-size: 14px;
+    color: var(--ivory-dim);
+    letter-spacing: 0.04em;
+    margin-top: 2px;
+  }
+
+  .masthead-right{ display:flex; align-items:center; gap:26px; }
+
+  .engine-badge{
+    display:flex; align-items:center; gap:9px;
+    font-size:14px;
+    color: var(--ivory-dim);
+    letter-spacing: 0.02em;
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--gold-faint);
+  }
+  .engine-dot{
+    width:6px; height:6px; border-radius:50%;
+    background: var(--gold);
+    box-shadow: 0 0 0 3px var(--gold-faint);
+    flex-shrink:0;
+  }
+
+  .masthead-actions{ display:flex; align-items:center; gap:14px; }
+
+  .btn{
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 10px 22px;
+    cursor: pointer;
+    background: transparent;
+    color: var(--ivory);
+    border: 1px solid var(--gold-soft);
+    transition: border-color 0.3s ease, color 0.3s ease;
+  }
+  .btn-primary{
+    background: var(--wine);
+    border: 1px solid var(--wine);
+    color: var(--ivory);
+  }
+  .btn-primary:hover{ background: var(--wine-bright); border-color: var(--wine-bright); }
+  .btn-secondary:hover{ border-color: var(--gold); color: var(--gold); }
+
+  .icon-slot{
+    width:32px; height:32px;
+    display:flex; align-items:center; justify-content:center;
+    color: var(--ivory-dim);
+    border: 1px solid var(--gold-faint);
+    font-size:14px;
+    cursor:pointer;
+  }
+
+  /* ============ 主体不对称网格 ============ */
+  .main-grid{
+    display:grid;
+    grid-template-columns: 62fr 38fr;
+    gap: 48px;
+    margin-top: 30px;
+    align-items: start;
+  }
+
+  /* ============ 左:转录正文(季刊主文) ============ */
+  .transcript-col{ position:relative; padding-right: 4px; }
+
+  .col-heading{
+    display:flex; align-items:baseline; gap:14px;
+    margin-bottom: 24px;
+  }
+  .col-heading .folio-eyebrow{
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.2em;
+    color: var(--ivory-faint);
+  }
+  .col-heading .folio-title{
+    font-family: "Cormorant Garamond", Georgia, "Songti SC", serif;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--ivory);
+    letter-spacing: 0.01em;
+  }
+
+  .utterance{
+    display:grid;
+    grid-template-columns: 44px 1fr;
+    gap: 18px;
+    padding: 22px 0;
+    opacity: 0;
+    animation: article-in 0.8s ease-out forwards;
+  }
+  .utterance:nth-of-type(1){ animation-delay: 0.15s; }
+  .utterance:nth-of-type(2){ animation-delay: 0.5s; }
+  .utterance:nth-of-type(3){ animation-delay: 0.85s; }
+  .utterance + .utterance{ border-top: 1px solid rgba(185,138,46,0.16); }
+
+  @keyframes article-in{
+    from{ opacity:0; transform: translateY(6px); }
+    to{ opacity:1; transform: translateY(0); }
+  }
+
+  .folio-num{
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--gold);
+    line-height: 1;
+    padding-top: 3px;
+    text-align: right;
+  }
+
+  .utterance-body{ min-width:0; }
+
+  .utterance-meta{
+    display:flex; align-items:center; gap:10px;
+    margin-bottom: 10px;
+  }
+  .u-time{
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 11.5px;
+    color: var(--ivory-faint);
+    letter-spacing: 0.02em;
+  }
+  .u-gold-dot{ color: var(--gold); font-size: 11px; }
+  .u-speaker{
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ivory);
+  }
+
+  .u-text{
+    font-family: "Cormorant Garamond", Georgia, "Songti SC", serif;
+    font-size: 19px;
+    font-weight: 500;
+    line-height: 1.75;
+    color: var(--ivory);
+  }
+
+  /* 表达高亮 = 金色细下划线;术语 = 象牙白小号大写字距拉开 + 金点前缀 */
+  .hl-phrase{
+    color: var(--ivory);
+    font-style: italic;
+    font-weight: 600;
+    text-decoration: underline;
+    text-decoration-color: var(--gold);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 4px;
+  }
+  .hl-term{
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    font-size: 0.72em;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ivory);
+  }
+  .hl-term::before{
+    content: "●";
+    font-size: 0.5em;
+    color: var(--gold);
+    margin-right: 0.35em;
+    vertical-align: middle;
+  }
+
+  .u-interim{
+    padding: 18px 0 4px 62px;
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-style: italic;
+    color: var(--ivory-dim);
+    font-size: 16px;
+    display:flex; align-items:baseline; gap:10px;
+  }
+  .interim-cursor{
+    display:inline-block; width:2px; height:14px;
+    background: var(--gold);
+    animation: blink 1.1s step-end infinite;
+  }
+  @keyframes blink{ 50%{ opacity:0; } }
+
+  /* 龙:金线雕版龙,置于季刊页脚小尺寸 */
+  .dragon-footer{
+    display:flex; align-items:center; gap:14px;
+    margin-top: 8px;
+    padding-top: 20px;
+    opacity: 0.85;
+  }
+  .dragon-footer svg{ width:64px; height:44px; flex-shrink:0; }
+  .dragon-footer-caption{
+    font-family: "Cormorant Garamond", Georgia, "Songti SC", serif;
+    font-style: italic;
+    font-size: 14px;
+    color: var(--ivory-dim);
+    letter-spacing: 0.02em;
+  }
+
+  /* ============ 右:解释面板(杂志边栏专栏) ============ */
+  .sidebar-col{ position: relative; }
+
+  .sidebar-heading-row{
+    display:flex; align-items:center; gap: 14px;
+    margin-bottom: 6px;
+  }
+
+  .vertical-eyebrow{
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.28em;
+    color: var(--ivory-faint);
+    align-self: stretch;
+    padding: 2px 0;
+    border-right: 1px solid var(--gold-faint);
+    flex-shrink: 0;
+  }
+
+  .sidebar-heading{ flex: 1; min-width: 0; }
+
+  .sidebar-title-row{
+    display:flex; align-items:baseline; gap: 12px;
+    flex-wrap: wrap;
+  }
+  .sidebar-title{
+    font-family: "Cormorant Garamond", Georgia, "Songti SC", serif;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--ivory);
+  }
+  .sidebar-count{
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--gold);
+  }
+
+  .filter-row{
+    display:flex; gap: 22px;
+    margin: 16px 0 26px;
+    padding-left: 2px;
+  }
+  .filter-chip{
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ivory-dim);
+    cursor:pointer;
+    padding-bottom: 6px;
+    border-bottom: 1px solid transparent;
+  }
+  .filter-chip.active{
+    color: var(--gold);
+    border-bottom-color: var(--gold);
+  }
+
+  .card-list{ display:flex; flex-direction:column; }
+
+  .exp-card{
+    padding: 22px 0 26px;
+    opacity: 0;
+    animation: article-in 0.8s ease-out forwards;
+  }
+  .exp-card:nth-of-type(1){ animation-delay: 0.3s; }
+  .exp-card:nth-of-type(2){ animation-delay: 0.65s; }
+  .exp-card:nth-of-type(3){ animation-delay: 1.0s; }
+  .exp-card + .exp-card{ border-top: 1px solid rgba(185,138,46,0.16); }
+
+  .card-top-row{
+    display:flex; align-items:baseline; gap:12px; margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .card-folio{
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-size: 30px;
+    font-weight: 600;
+    color: var(--gold);
+    line-height: 1;
+  }
+  .card-headword-block{ display:flex; flex-direction:column; gap:3px; min-width:0; }
+  .card-headword{
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-style: italic;
+    font-weight: 600;
+    font-size: 26px;
+    color: var(--ivory);
+    line-height: 1.1;
+  }
+  .card-headword.term-word{
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+    font-style: normal;
+    font-size: 15px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .card-tag-row{
+    display:flex; align-items:center; gap:8px;
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ivory-dim);
+  }
+  .card-tag-row .gold-dot{ color: var(--gold); }
+  .card-freq{
+    margin-left:auto;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--ivory-faint);
+    align-self: flex-start;
+  }
+
+  .card-body{ padding-left: 42px; }
+
+  .zh-meaning{
+    font-size: 16px;
+    line-height: 1.75;
+    color: var(--ivory);
+    font-weight: 400;
+    margin: 2px 0 14px;
+    border-bottom: 1px solid var(--gold);
+    display: inline-block;
+    padding-bottom: 2px;
+  }
+
+  .meta-line{
+    display:flex; gap: 10px;
+    font-size: 14px;
+    line-height:1.65;
+    color: var(--ivory-dim);
+    margin-bottom: 8px;
+  }
+  .meta-label{
+    color: var(--ivory-dim);
+    flex-shrink:0;
+    min-width: 56px;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .meta-value{ color: var(--ivory); }
+  .meta-value.plain-en{
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-style: italic;
+    font-size: 16px;
+  }
+
+  .quote-block{
+    margin-top: 14px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(185,138,46,0.3);
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-style: italic;
+    font-size: 15px;
+    color: var(--ivory-dim);
+    line-height: 1.6;
+  }
+
+  /* 折叠卡 */
+  .exp-card.collapsed .card-body{ display:none; }
+  .exp-card.collapsed .card-top-row{ margin-bottom: 0; }
+  .collapse-caret{
+    width: 10px; height: 6px;
+    margin-left: 6px;
+    flex-shrink: 0;
+    color: var(--gold);
+  }
+  .card-count-inline{
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    color: var(--ivory-faint);
+    margin-left: 4px;
+  }
+  .collapsed-summary{
+    font-size: 14px;
+    color: var(--ivory-dim);
+    margin-top: 2px;
+    padding-left: 42px;
+  }
+
+  /* ============ 底部状态条 ============ */
+  .statusbar{
+    margin-top: 36px;
+    padding-top: 18px;
+    display:flex; align-items:center; justify-content:center;
+    gap: 12px;
+    font-size: 14px;
+    letter-spacing: 0.02em;
+    color: var(--ivory-dim);
+  }
+  .statusbar b{ color: var(--gold); font-weight:600; }
+  .status-sep{ color: var(--gold-faint); }
+  .status-lock{ color: var(--ivory-dim); }
+
+  /* ============ Reduced motion ============ */
+  @media (prefers-reduced-motion: reduce){
+    .utterance, .exp-card, .masthead-name, .eyebrow, .hairline.grow, .dragon-mark path{
+      animation: none !important;
+      opacity: 1 !important;
+      transform: none !important;
+      stroke-dashoffset: 0 !important;
+      letter-spacing: inherit !important;
+    }
+    .interim-cursor{ animation:none !important; }
+  }
+
+  @media (max-width: 1100px){
+    .main-grid{ grid-template-columns: 1fr; }
+    .vertical-eyebrow{ writing-mode: horizontal-tb; border-right:none; border-bottom: 1px solid var(--gold-faint); padding-bottom: 6px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="preview-tag">
+  方向 5 · <b>黑金编辑部 · 黑色大教堂×杂志排印</b> —— 奢华感来自排印与留白,金只做发丝线与文字,不做填充面。此行为预览标签,非产品界面内容。
+</div>
+
+<div class="page">
+
+  <!-- 顶栏:刊头 -->
+  <div class="masthead">
+    <div class="masthead-left">
+      <svg class="dragon-mark" viewBox="0 0 52 40" aria-hidden="true">
+        <!-- 金线雕版龙:单线 stroke,烫金书封纹章风格 -->
+        <path d="M4 30 C7 16, 15 8, 23 10 C29 12, 29 18, 24 20 C33 17, 42 21, 40 29 C38 35, 30 34, 28 28
+                 C26 34, 17 35, 13 30 C10 26, 12 22, 16 22"
+          fill="none" stroke="#B98A2E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="38.5" cy="24.5" r="1.1" fill="#B98A2E"/>
+        <path d="M40 29 C43 31, 47 30, 48 26" fill="none" stroke="#B98A2E" stroke-width="1.1" stroke-linecap="round"/>
+      </svg>
+      <div class="masthead-titles">
+        <span class="eyebrow">VOL. 22 <span class="gold-dot">·</span> 屠龙季刊</span>
+        <span class="masthead-name">JargonSlayer</span>
+        <span class="masthead-sub">英文会议实时理解</span>
+      </div>
+    </div>
+
+    <div class="masthead-right">
+      <div class="engine-badge">
+        <span class="engine-dot"></span>
+        本地 Whisper · 本地
+      </div>
+      <div class="masthead-actions">
+        <button class="btn btn-primary">开始监听</button>
+        <button class="btn btn-secondary">演示</button>
+        <span class="icon-slot" title="历史">☷</span>
+        <span class="icon-slot" title="设置">⚙</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="hairline grow"></div>
+
+  <!-- 主体不对称网格 -->
+  <div class="main-grid">
+
+    <!-- 左:转录正文 -->
+    <div class="transcript-col">
+      <div class="col-heading">
+        <span class="folio-eyebrow">Live Transcript</span>
+        <span class="folio-title">会议实录</span>
+      </div>
+
+      <div class="utterance">
+        <span class="folio-num">01</span>
+        <div class="utterance-body">
+          <div class="utterance-meta">
+            <span class="u-time">02:48:36</span>
+            <span class="u-gold-dot">·</span>
+            <span class="u-speaker">Sarah</span>
+          </div>
+          <div class="u-text">
+            "Okay everyone, let's <span class="hl-phrase">get the ball rolling</span>. Thanks for joining, I know Q3 planning snuck up on us fast."
+          </div>
+        </div>
+      </div>
+
+      <div class="utterance">
+        <span class="folio-num">02</span>
+        <div class="utterance-body">
+          <div class="utterance-meta">
+            <span class="u-time">02:48:44</span>
+            <span class="u-gold-dot">·</span>
+            <span class="u-speaker">Mike</span>
+          </div>
+          <div class="u-text">
+            "From engineering's side, we shipped the <span class="hl-term">MVP</span> of the onboarding flow, and a few <span class="hl-term">OKR</span> items are already tracking green."
+          </div>
+        </div>
+      </div>
+
+      <div class="utterance">
+        <span class="folio-num">03</span>
+        <div class="utterance-body">
+          <div class="utterance-meta">
+            <span class="u-time">02:48:52</span>
+            <span class="u-gold-dot">·</span>
+            <span class="u-speaker">Lily</span>
+          </div>
+          <div class="u-text">
+            "On the data side, <span class="hl-term">churn</span> ticked down two points, but it's not enough to <span class="hl-phrase">move the needle</span> on retention."
+          </div>
+        </div>
+      </div>
+
+      <div class="u-interim">
+        <span class="interim-cursor"></span>
+        "Right, and with our current runway we—"(识别中)
+      </div>
+
+      <!-- 签名元素:金线雕版龙,页脚小尺寸,呼应刊头纹章 -->
+      <div class="dragon-footer">
+        <svg viewBox="0 0 64 44" aria-hidden="true">
+          <path d="M5 34 C9 18, 18 9, 27 11 C34 13, 34 20, 28 23 C38 19, 49 24, 46 33 C44 40, 35 39, 32 32
+                   C30 39, 20 40, 15 34 C12 30, 14 25, 19 25"
+            fill="none" stroke="#B98A2E" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" opacity="0.7"/>
+          <circle cx="45" cy="27.5" r="1" fill="#B98A2E" opacity="0.7"/>
+        </svg>
+        <span class="dragon-footer-caption">Est. in the age of endless meetings —— 本刊持续更新</span>
+      </div>
+    </div>
+
+    <!-- 右:解释面板(杂志边栏专栏) -->
+    <div class="sidebar-col">
+      <div class="sidebar-heading-row">
+        <span class="vertical-eyebrow">Glossary Column</span>
+        <div class="sidebar-heading">
+          <div class="sidebar-title-row">
+            <span class="sidebar-title">实时解释</span>
+            <span class="sidebar-count">22</span>
+          </div>
+          <div class="filter-row">
+            <span class="filter-chip active">全部</span>
+            <span class="filter-chip">表达</span>
+            <span class="filter-chip">术语</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-list">
+
+        <!-- 卡1:展开,表达 -->
+        <div class="exp-card">
+          <div class="card-top-row">
+            <span class="card-folio">01</span>
+            <div class="card-headword-block">
+              <span class="card-headword">move the needle</span>
+              <span class="card-tag-row"><span class="gold-dot">●</span>习语</span>
+            </div>
+            <span class="card-freq">×1</span>
+          </div>
+          <div class="card-body">
+            <div class="zh-meaning">带来可见的改变,产生实质性影响</div>
+            <div class="meta-line">
+              <span class="meta-label">直白说法</span>
+              <span class="meta-value plain-en">make real progress</span>
+            </div>
+            <div class="meta-line">
+              <span class="meta-label">语气</span>
+              <span class="meta-value">中性,商务常用</span>
+            </div>
+            <div class="quote-block">
+              "…it's not enough to move the needle on retention."
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡2:折叠,表达 -->
+        <div class="exp-card collapsed">
+          <div class="card-top-row">
+            <span class="card-folio">02</span>
+            <div class="card-headword-block">
+              <span class="card-headword">circle back</span>
+              <span class="card-tag-row"><span class="gold-dot">●</span>短语</span>
+            </div>
+            <span class="card-count-inline">×2</span>
+            <svg class="collapse-caret" viewBox="0 0 10 6" aria-hidden="true">
+              <path d="M1 1 L5 5 L9 1" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <div class="collapsed-summary">回头再聊、之后再讨论</div>
+        </div>
+
+        <!-- 卡3:术语 -->
+        <div class="exp-card">
+          <div class="card-top-row">
+            <span class="card-folio">03</span>
+            <div class="card-headword-block">
+              <span class="card-headword term-word">OKR</span>
+              <span class="card-tag-row"><span class="gold-dot">●</span>缩写</span>
+            </div>
+            <span class="card-freq">×1</span>
+          </div>
+          <div class="card-body">
+            <div class="zh-meaning">目标与关键成果法(Objectives and Key Results)</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <div class="hairline faint"></div>
+
+  <!-- 底部状态条 -->
+  <div class="statusbar">
+    <span>本场收获 <b>22</b> 张卡片</span>
+    <span class="status-sep">·</span>
+    <span>词典模式</span>
+    <span class="status-sep">·</span>
+    <span class="status-lock">音频未离开本机</span>
+  </div>
+
+</div>
+
+</body>
+</html>

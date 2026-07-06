@@ -31,6 +31,9 @@ const PAPER_BORDER_INNER = "rgba(42, 38, 32, 0.1)";
 const PAPER_MUT = "rgba(42, 38, 32, 0.55)";
 const GOLD_HL = "rgba(229, 180, 85, 0.28)";
 const GOLD_HL_TEXT = "#8A6413";
+// The parchment sheet is a frozen v2-era artifact: its serif display face
+// is pinned inline (the global font-display utility was retired in v3).
+const PAPER_DISPLAY = '"Songti SC", "STSong", serif';
 const BLUE_HL = "rgba(91, 157, 255, 0.22)";
 const BLUE_HL_TEXT = "#2857A6";
 
@@ -172,13 +175,13 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
       {/* Toolbar: sticky top, outside the exported sheet. */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge bg-panel px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-medium text-fg">
-          <span className="text-gold">❖</span> 康奈尔笔记
+          康奈尔笔记
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => void handleExportPng()}
-            className="btn-tactile flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+            className="btn-tactile flex items-center gap-1.5 rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
           >
             <DownloadSimple size={14} weight="regular" />
             导出 PNG
@@ -186,7 +189,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
           <button
             type="button"
             onClick={handleExportMarkdown}
-            className="btn-tactile flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+            className="btn-tactile flex items-center gap-1.5 rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
           >
             <FileArrowDown size={14} weight="regular" />
             导出 Markdown
@@ -194,7 +197,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
           <button
             type="button"
             onClick={() => void handleCopyMarkdown()}
-            className="btn-tactile flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+            className="btn-tactile flex items-center gap-1.5 rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
           >
             <Copy size={14} weight="regular" />
             复制 Markdown
@@ -204,7 +207,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="btn-tactile flex h-8 w-8 items-center justify-center rounded-lg text-mut hover:bg-panel3 hover:text-fg"
+            className="btn-tactile flex h-8 w-8 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
           >
             <X size={18} weight="regular" />
           </button>
@@ -214,9 +217,8 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
       <div className="scroll-thin flex-1 overflow-y-auto px-4 py-8 sm:px-8">
         {model.empty ? (
           <div className="mx-auto flex max-w-md flex-col items-center gap-3 py-24 text-center">
-            <div className="text-lg font-display font-semibold text-fg">
-              <span className="text-gold/50">❖</span> 还没有可生成的笔记{" "}
-              <span className="text-gold/50">❖</span>
+            <div className="text-lg font-medium text-fg">
+              还没有可生成的笔记
             </div>
             <div className="text-sm leading-[26px] text-mut">
               开一场会议，留下转录之后，康奈尔笔记会自动整理高亮与批注。
@@ -245,10 +247,11 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
             <div className="relative">
               {/* header */}
               <div className="text-center">
-                <div className="text-gold" style={{ color: "#B4863A" }}>
-                  ❖
-                </div>
-                <div className="mt-2 font-display text-2xl font-semibold">
+                <div style={{ color: "#B4863A" }}>❖</div>
+                <div
+                  className="mt-2 text-2xl font-semibold"
+                  style={{ fontFamily: PAPER_DISPLAY }}
+                >
                   {model.title}
                 </div>
                 <div className="mt-1 text-xs font-mono tabular-nums" style={{ color: PAPER_MUT }}>
@@ -297,7 +300,12 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
 
               {/* summary block, full width */}
               <div className="mt-10 border-t pt-6" style={{ borderColor: PAPER_BORDER }}>
-                <div className="font-display text-lg font-semibold">小结</div>
+                <div
+                  className="text-lg font-semibold"
+                  style={{ fontFamily: PAPER_DISPLAY }}
+                >
+                  小结
+                </div>
                 {model.summary.hasSummary ? (
                   <div className="mt-3 space-y-3 text-[15px] leading-[26px]">
                     <div className="font-medium">{model.summary.topicZh}</div>

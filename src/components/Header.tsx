@@ -1,13 +1,19 @@
 "use client";
 
-// Top app bar: engine picker, detect-mode/elapsed status, primary
-// start/stop action, and icon buttons for history/settings/help.
+// Terminal titlebar (docs/DESIGN.md v3.3, preview-4-terminal.html):
+// top strip = three fake window dots + mono path-style title + ⌘K hint;
+// brand row = dragon mark + JargonSlayer wordmark + engine posture +
+// primary start/stop + engine pills + ≡ menu (演示/历史/学习中心/设置/帮助
+// moved inside per the v3 汉堡收纳 decision — every old data-testid is
+// preserved inside the dropdown so existing tests/QA flows still pass).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ClockCounterClockwise,
   GearSix,
   GraduationCap,
+  List,
+  Play,
   Question,
   Shield,
   ShieldCheck,
@@ -25,8 +31,8 @@ export interface HeaderProps {
 }
 
 // Real capture engines only — demo is a scripted preview, not a peer
-// engine, so it has exactly one affordance: the header 演示 button.
-// posture drives the 本地/云端 chip: local engines process audio on
+// engine, so it has exactly one affordance: the menu's 演示 item.
+// posture drives the 本地/云端 label: local engines process audio on
 // this machine; cloud engines send audio to a third-party service.
 const ENGINE_OPTIONS: {
   value: Exclude<STTEngineKind, "demo">;
@@ -57,14 +63,14 @@ function DetectModeBadge() {
 
   const config =
     detectMode === "llm"
-      ? { label: "AI 检测", cls: "text-acc2 border-acc2/30", Icon: ShieldCheck }
+      ? { label: "AI 检测", cls: "text-lab-green border-lab-green/30", Icon: ShieldCheck }
       : detectMode === "dictionary"
-        ? { label: "词典模式", cls: "text-gold border-gold/30", Icon: Shield }
+        ? { label: "词典模式", cls: "text-lab-orange border-lab-orange/30", Icon: Shield }
         : { label: "检测关闭", cls: "text-mut border-edge", Icon: null };
 
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs ${config.cls}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs ${config.cls}`}
     >
       {detectBusy && (
         <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent whitespace-nowrap" />
@@ -102,7 +108,7 @@ function EnginePillGroup() {
   const disabled = status === "connecting" || status === "listening";
 
   return (
-    <div className="hidden items-center gap-0.5 rounded-lg border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
+    <div className="hidden items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
       {ENGINE_OPTIONS.map((opt) => (
         <button
           key={opt.value}
@@ -110,7 +116,7 @@ function EnginePillGroup() {
           disabled={disabled}
           onClick={() => updateSettings({ engine: opt.value })}
           title={opt.posture === "local" ? "本地：音频不出本机" : "云端：音频会离开设备"}
-          className={`rounded-md px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+          className={`rounded-sm px-2.5 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             engine === opt.value
               ? "bg-panel3 text-fg"
               : "text-mut hover:text-fg"
@@ -125,7 +131,7 @@ function EnginePillGroup() {
 
 // Compact 本地/云端 posture chip for the ACTIVE engine, so at a glance
 // the user knows where their audio goes. demo has no audio at all, so
-// it renders nothing here (the demo button itself makes that obvious).
+// it renders nothing here (the demo menu item itself makes that obvious).
 function EnginePostureChip() {
   const engine = useApp((s) => s.settings.engine);
   const opt = ENGINE_OPTIONS.find((o) => o.value === engine);
@@ -136,11 +142,153 @@ function EnginePostureChip() {
     <span
       title={isLocal ? "音频只在本机处理，不出设备" : "音频会离开设备，经云端识别"}
       className={`hidden items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${
-        isLocal ? "border-gold/30 text-gold" : "border-warn-soft/30 text-warn-soft"
+        isLocal ? "border-lab-orange/30 text-lab-orange" : "border-warn-soft/30 text-warn-soft"
       }`}
     >
       {POSTURE_LABEL[opt.posture]}
     </span>
+  );
+}
+
+// ≡ 汉堡菜单 (v3.3 汉堡收纳): 演示/历史/学习中心/设置/帮助 live here now.
+// Old testids (btn-demo/btn-history/btn-review/btn-settings/btn-help)
+// are preserved unchanged on the items themselves — only their
+// container/visibility moved, not their identity.
+function HamburgerMenu({
+  onDemo,
+  onOpenHistory,
+  onOpenSettings,
+  onOpenHelp,
+}: Pick<HeaderProps, "onDemo" | "onOpenHistory" | "onOpenSettings" | "onOpenHelp">) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const status = useApp((s) => s.status);
+  const activeSessionId = useApp((s) => s.activeSessionId);
+  const newMeeting = useApp((s) => s.newMeeting);
+  const isConnectingOrListening = status === "connecting" || status === "listening";
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const handleMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [open]);
+
+  const itemCls =
+    "flex items-center gap-2.5 px-3 py-2 text-left font-mono text-xs text-fg hover:bg-panel3 whitespace-nowrap";
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        data-testid="btn-menu"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="菜单"
+        className="flex h-9 w-9 items-center justify-center border border-edge text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg"
+      >
+        <List size={18} weight="regular" />
+      </button>
+
+      {open && (
+        <div
+          role="menu"
+          className="absolute right-0 top-[calc(100%+4px)] z-30 flex w-56 flex-col border border-edge bg-panel2 py-1 shadow-lg"
+        >
+          {!isConnectingOrListening && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-demo"
+              onClick={() => {
+                setOpen(false);
+                onDemo();
+              }}
+              className={itemCls}
+            >
+              <Play size={16} weight="regular" />
+              演示
+            </button>
+          )}
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="btn-history"
+            onClick={() => {
+              setOpen(false);
+              onOpenHistory();
+            }}
+            className={itemCls}
+          >
+            <ClockCounterClockwise size={16} weight="regular" />
+            历史
+          </button>
+          <a
+            href="/review"
+            role="menuitem"
+            data-testid="btn-review"
+            onClick={() => setOpen(false)}
+            className={itemCls}
+          >
+            <GraduationCap size={16} weight="regular" />
+            学习中心
+          </a>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="btn-settings"
+            onClick={() => {
+              setOpen(false);
+              onOpenSettings();
+            }}
+            className={itemCls}
+          >
+            <GearSix size={16} weight="regular" />
+            设置
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="btn-help"
+            onClick={() => {
+              setOpen(false);
+              onOpenHelp();
+            }}
+            className={itemCls}
+          >
+            <Question size={16} weight="regular" />
+            帮助
+          </button>
+
+          {activeSessionId && status === "stopped" && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                newMeeting();
+              }}
+              className={`${itemCls} border-t border-edge mt-1 pt-2`}
+            >
+              <span className="text-lab-orange">●</span>
+              新会议
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -153,126 +301,107 @@ export default function Header({
   onOpenHelp,
 }: HeaderProps) {
   const status = useApp((s) => s.status);
+  const cards = useApp((s) => s.cards);
+  const terms = useApp((s) => s.terms);
+  const engine = useApp((s) => s.settings.engine);
   const activeSessionId = useApp((s) => s.activeSessionId);
-  const newMeeting = useApp((s) => s.newMeeting);
 
-  const isConnectingOrListening =
-    status === "connecting" || status === "listening";
+  const engineOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
+  const engineLabel = engineOpt?.value ?? "demo";
+  const postureLabel = engineOpt ? POSTURE_LABEL[engineOpt.posture] : "本地";
+  const cardCount = cards.length + terms.length;
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel/85 px-4 backdrop-blur">
-      <div className="flex items-center gap-2 whitespace-nowrap">
-        <img src="/icon-192.png" alt="" className="h-8 w-8 rounded-lg" />
-        <span className="font-display font-semibold tracking-wide text-fg">
-          JargonSlayer
-        </span>
-        <span className="hidden text-xs text-mut md:inline">
-          英文会议实时理解
-        </span>
+    <header className="sticky top-0 z-20 flex shrink-0 flex-col border-b border-edge bg-panel">
+      {/* 终端标题栏: 三个假窗口点 + 等宽路径式标题 + ⌘K 提示 */}
+      <div className="flex h-9 items-center gap-3 border-b border-edge bg-panel2 px-3">
+        <div className="flex shrink-0 items-center gap-1.5" aria-hidden="true">
+          <span className="inline-block h-[10px] w-[10px] rounded-full bg-lab-red" />
+          <span className="inline-block h-[10px] w-[10px] rounded-full bg-lab-orange" />
+          <span className="inline-block h-[10px] w-[10px] rounded-full bg-lab-green" />
+        </div>
+        <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-mono text-xs text-mut">
+          <span className="font-semibold text-fg">jargonslayer</span>
+          <span className="mx-1.5 text-mut2">—</span>
+          {engineLabel}·{postureLabel}
+          <span className="mx-1.5 text-mut2">—</span>
+          {cardCount} cards
+        </div>
+        <div
+          title="命令面板，即将推出"
+          className="hidden shrink-0 items-center gap-1 border border-edge px-2 py-0.5 font-mono text-[11px] text-mut sm:inline-flex"
+        >
+          <kbd className="font-mono">⌘K</kbd> 命令面板
+        </div>
       </div>
 
-      <EnginePillGroup />
-      <EnginePostureChip />
-
-      <div className="ml-auto flex items-center gap-2">
-        <DetectModeBadge />
-        <ElapsedTimer />
-
-        {activeSessionId && status === "stopped" && (
-          <>
-            <span className="rounded-full border border-gold/30 px-2.5 py-1 text-xs text-gold whitespace-nowrap">
-              历史会话
+      {/* 品牌 / 引擎 / 操作行 */}
+      <div className="flex h-14 items-center gap-3 px-4">
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <img src="/icon-192.png" alt="" className="h-7 w-7" />
+          <div className="flex flex-col leading-tight">
+            <span className="font-mono font-bold tracking-wide text-fg">
+              JargonSlayer
             </span>
+            <span className="hidden text-[11px] text-mut md:inline">
+              英文会议实时理解
+            </span>
+          </div>
+        </div>
+
+        <EnginePillGroup />
+        <EnginePostureChip />
+
+        <div className="ml-auto flex items-center gap-2">
+          <DetectModeBadge />
+          <ElapsedTimer />
+
+          {(status === "idle" || status === "stopped") && (
             <button
               type="button"
-              onClick={newMeeting}
-              className="btn-tactile h-9 rounded-lg border border-edge px-3 text-sm text-fg hover:bg-panel3 whitespace-nowrap"
+              data-testid="btn-start"
+              onClick={onStart}
+              className="btn-terminal h-9 rounded-none bg-act px-4 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8] whitespace-nowrap"
             >
-              新会议
+              开始监听
             </button>
-          </>
-        )}
+          )}
 
-        {(status === "idle" || status === "stopped") && (
-          <button
-            type="button"
-            data-testid="btn-start"
-            onClick={onStart}
-            className="btn-tactile h-9 rounded-lg bg-acc px-4 text-sm font-medium text-white hover:bg-acchover whitespace-nowrap"
-          >
-            开始监听
-          </button>
-        )}
+          {status === "connecting" && (
+            <button
+              type="button"
+              disabled
+              className="h-9 cursor-not-allowed rounded-none bg-act/60 px-4 font-mono text-sm font-semibold text-ink whitespace-nowrap"
+            >
+              连接中…
+            </button>
+          )}
 
-        {status === "connecting" && (
-          <button
-            type="button"
-            disabled
-            className="h-9 cursor-not-allowed rounded-lg bg-acc/60 px-4 text-sm font-medium text-white whitespace-nowrap"
-          >
-            连接中…
-          </button>
-        )}
+          {status === "listening" && (
+            <button
+              type="button"
+              data-testid="btn-stop"
+              onClick={onStop}
+              className="btn-terminal flex h-9 items-center gap-2 rounded-none border border-lab-red px-4 font-mono text-sm font-semibold text-lab-red hover:bg-lab-red/10 whitespace-nowrap"
+            >
+              <span className="dot-live h-2 w-2 rounded-full bg-lab-red whitespace-nowrap" />
+              停止
+            </button>
+          )}
 
-        {status === "listening" && (
-          <button
-            type="button"
-            data-testid="btn-stop"
-            onClick={onStop}
-            className="btn-tactile flex h-9 items-center gap-2 rounded-lg bg-warn/90 px-4 text-sm font-medium text-white hover:bg-warn whitespace-nowrap"
-          >
-            <span className="dot-live h-2 w-2 rounded-full bg-acc2 whitespace-nowrap" />
-            停止
-          </button>
-        )}
+          {activeSessionId && status === "stopped" && (
+            <span className="rounded-full border border-lab-orange/30 px-2.5 py-1 font-mono text-xs text-lab-orange whitespace-nowrap">
+              历史会话
+            </span>
+          )}
 
-        {!isConnectingOrListening && (
-          <button
-            type="button"
-            data-testid="btn-demo"
-            onClick={onDemo}
-            className="btn-tactile h-9 rounded-lg border border-edge px-3 text-sm text-fg hover:bg-panel3 whitespace-nowrap"
-          >
-            演示
-          </button>
-        )}
-
-        <button
-          type="button"
-          data-testid="btn-history"
-          onClick={onOpenHistory}
-          aria-label="历史"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
-        >
-          <ClockCounterClockwise size={20} weight="regular" />
-        </button>
-        <a
-          href="/review"
-          data-testid="btn-review"
-          title="学习中心"
-          aria-label="学习中心"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
-        >
-          <GraduationCap size={20} weight="regular" />
-        </a>
-        <button
-          type="button"
-          data-testid="btn-settings"
-          onClick={onOpenSettings}
-          aria-label="设置"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
-        >
-          <GearSix size={20} weight="regular" />
-        </button>
-        <button
-          type="button"
-          data-testid="btn-help"
-          onClick={onOpenHelp}
-          aria-label="帮助"
-          className="flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg whitespace-nowrap"
-        >
-          <Question size={20} weight="regular" />
-        </button>
+          <HamburgerMenu
+            onDemo={onDemo}
+            onOpenHistory={onOpenHistory}
+            onOpenSettings={onOpenSettings}
+            onOpenHelp={onOpenHelp}
+          />
+        </div>
       </div>
     </header>
   );

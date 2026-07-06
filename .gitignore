@@ -14,3 +14,6 @@ next-env.d.ts.bak
 sidecar/__pycache__/
 sidecar/.venv/
 sidecar/*.wav
+
+# local agent harness config
+.claude/

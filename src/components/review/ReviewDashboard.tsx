@@ -97,7 +97,7 @@ function useWordFrequency(cache: Record<string, MeetingSession>) {
 
 function StatCard({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-edge bg-panel p-4">
+    <div className="rounded-none border-l-2 border-edge2 border-b border-edge bg-panel p-4">
       <div className="font-mono text-4xl tabular-nums text-fg">{value}</div>
       <div className="mt-2 text-xs uppercase tracking-wide text-mut">
         {label}
@@ -167,7 +167,7 @@ function TopExpressions({
               key={item.label}
               type="button"
               onClick={() => onSelect(item.label)}
-              className={`flex w-full items-center gap-3 rounded-lg px-1 py-1 text-left transition-colors ${
+              className={`flex w-full items-center gap-3 rounded-sm px-1 py-1 text-left transition-colors ${
                 isSelected ? "bg-panel3" : "hover:bg-panel2"
               }`}
             >
@@ -176,13 +176,13 @@ function TopExpressions({
               </span>
               <span
                 className={`w-40 shrink-0 truncate text-sm ${
-                  isSelected ? "font-medium text-gold" : "text-fg"
+                  isSelected ? "font-medium text-lab-orange" : "text-fg"
                 }`}
               >
                 {item.label}
               </span>
               <span
-                className="inline-block h-1.5 rounded-full bg-gold/60"
+                className="inline-block h-1.5 rounded-none bg-lab-orange/60"
                 style={{
                   width: `${Math.max(6, (item.count / maxCount) * 100)}px`,
                 }}
@@ -200,7 +200,7 @@ function TopExpressions({
 
 function EmptyState() {
   return (
-    <div className="rounded-xl border border-edge bg-panel p-6 text-center">
+    <div className="rounded-none border border-edge bg-panel p-6 text-center">
       <div className="text-sm font-medium text-fg">还没有会议记录</div>
       <div className="mt-2 text-xs leading-[1.7] text-mut">
         装备词典，出门屠龙。开一场会议或点「演示」，结束后这里会显示你的学习统计。

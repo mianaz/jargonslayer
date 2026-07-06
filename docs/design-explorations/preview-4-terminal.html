@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer — 方向 4:暗黑科技 · 会议 REPL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* 底色阶梯 */
+    --bg-0:#0A0A0A;
+    --bg-panel:#121212;
+    --bg-raised:#1A1A1A;
+    --line:#262626;
+    --line-soft:#1E1E1E;
+
+    /* 三级中性灰文字,严禁带蓝 */
+    --fg-1:#EDEDED;
+    --fg-2:#9A9A9A;
+    --fg-3:#5C5C5C;
+
+    /* 状态/标签色,小面积使用 */
+    --red:#FF5F56;
+    --orange:#FFAA44;
+    --green:#4ADE80;
+    --purple:#C084FC;
+    --cyan:#22D3EE;
+    --white:#FFFFFF;
+
+    --mono: 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+    --zh: 'PingFang SC', 'Songti SC', 'Microsoft YaHei', sans-serif;
+  }
+
+  *{ box-sizing:border-box; }
+
+  html,body{
+    margin:0; padding:0;
+    background:var(--bg-0);
+    color:var(--fg-1);
+    font-family:var(--zh);
+    -webkit-font-smoothing:antialiased;
+  }
+
+  ::selection{ background:var(--fg-1); color:var(--bg-0); }
+
+  /* ============ 预览标签行(非产品 UI) ============ */
+  .preview-tag{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--fg-2);
+    background:var(--bg-0);
+    padding:6px 16px;
+    border-bottom:1px solid var(--line-soft);
+    letter-spacing:0.02em;
+  }
+  .preview-tag b{ color:var(--fg-2); font-weight:500; }
+
+  /* ============ 外壳 ============ */
+  .app-shell{
+    max-width:1360px;
+    margin:28px auto 60px;
+    background:var(--bg-panel);
+    border:1px solid var(--line);
+    display:flex;
+    flex-direction:column;
+    min-height:760px;
+  }
+
+  /* ============ 终端标题栏 ============ */
+  .titlebar{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    padding:0 14px;
+    height:42px;
+    background:var(--bg-raised);
+    border-bottom:1px solid var(--line);
+    font-family:var(--mono);
+  }
+  .tl-dots{ display:flex; gap:7px; flex-shrink:0; }
+  .tl-dot{
+    width:11px; height:11px; border-radius:50%;
+    display:inline-block;
+  }
+  .tl-dot.r{ background:var(--red); }
+  .tl-dot.y{ background:var(--orange); }
+  .tl-dot.g{ background:var(--green); }
+
+  .tl-path{
+    font-size:12px;
+    color:var(--fg-2);
+    letter-spacing:0.01em;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .tl-path .seg-strong{ color:var(--fg-1); font-weight:600; }
+  .tl-path .sep{ color:var(--fg-3); margin:0 2px; }
+
+  .tl-spacer{ flex:1; }
+
+  .tl-cmdk{
+    font-family:var(--zh);
+    font-size:12px;
+    color:var(--fg-2);
+    border:1px solid var(--line);
+    padding:3px 8px;
+    letter-spacing:0.02em;
+    white-space:nowrap;
+  }
+  .tl-cmdk kbd{
+    font-family:var(--mono);
+    color:var(--fg-2);
+  }
+
+  /* ============ 品牌行(产品顶栏,标题栏下方) ============ */
+  .brandbar{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    padding:16px 20px;
+    border-bottom:1px solid var(--line);
+    flex-wrap:wrap;
+  }
+  .brand{
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .brand-mark{
+    width:30px; height:30px;
+    flex-shrink:0;
+    color:var(--fg-1);
+  }
+  .brand-mark svg{ width:100%; height:100%; display:block; }
+  .brand-text{ display:flex; flex-direction:column; line-height:1.2; }
+  .brand-name{
+    font-family:var(--mono);
+    font-size:17px;
+    font-weight:700;
+    color:var(--fg-1);
+    letter-spacing:0.01em;
+  }
+  .brand-sub{
+    font-size:14px;
+    color:var(--fg-2);
+    margin-top:2px;
+  }
+
+  .engine-badge{
+    display:flex;
+    align-items:center;
+    gap:7px;
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--green);
+    border:1px solid var(--line);
+    padding:5px 10px 5px 8px;
+    letter-spacing:0.03em;
+    text-transform:uppercase;
+  }
+  .engine-dot{
+    width:6px; height:6px;
+    border-radius:50%;
+    background:var(--green);
+    box-shadow:0 0 0 3px rgba(74,222,128,0.12);
+    flex-shrink:0;
+  }
+  .engine-badge .zh-part{
+    font-family:var(--zh);
+    color:var(--fg-2);
+    text-transform:none;
+    font-size:12px;
+    letter-spacing:normal;
+  }
+
+  .brandbar-spacer{ flex:1; }
+
+  .btn-row{ display:flex; align-items:center; gap:10px; }
+
+  .btn{
+    font-family:var(--zh);
+    font-size:13.5px;
+    padding:9px 18px;
+    border-radius:2px;
+    border:1px solid var(--line);
+    background:transparent;
+    color:var(--fg-1);
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .btn:hover{ border-color:var(--fg-3); }
+  .btn-primary{
+    background:var(--white);
+    color:var(--bg-0);
+    border-color:var(--white);
+    font-weight:600;
+  }
+  .btn-primary:hover{ background:#E8E8E8; border-color:#E8E8E8; }
+  .btn-primary .rec-dot{
+    width:7px; height:7px;
+    border-radius:50%;
+    background:var(--red);
+    display:inline-block;
+    flex-shrink:0;
+  }
+  .btn-icon{
+    width:34px; height:34px;
+    padding:0;
+    justify-content:center;
+    color:var(--fg-2);
+    font-family:var(--mono);
+    font-size:14px;
+  }
+  .btn-icon:hover{ color:var(--fg-1); }
+
+  /* ============ 主体双栏 ============ */
+  .main-grid{
+    display:grid;
+    grid-template-columns:62% 38%;
+    flex:1;
+    min-height:0;
+  }
+  .col-divider{
+    border-left:1px solid var(--line);
+  }
+
+  /* ============ 左:转录区 ============ */
+  .transcript-col{
+    padding:18px 0 18px 0;
+    display:flex;
+    flex-direction:column;
+  }
+  .transcript-head{
+    display:flex;
+    align-items:baseline;
+    gap:10px;
+    padding:0 20px 14px;
+    border-bottom:1px solid var(--line-soft);
+    margin-bottom:4px;
+  }
+  .th-title{
+    font-family:var(--mono);
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--fg-2);
+  }
+  .th-meta{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--fg-3);
+  }
+
+  .block{
+    display:grid;
+    grid-template-columns:70px 1fr;
+    border-bottom:1px solid var(--line-soft);
+    padding:14px 20px;
+  }
+  .block:last-of-type{ border-bottom:none; }
+
+  .gutter{
+    font-family:var(--mono);
+    font-size:11px;
+    color:var(--fg-3);
+    line-height:1.6;
+    padding-top:2px;
+    user-select:none;
+  }
+  .gutter .glyph{
+    display:block;
+    font-size:14px;
+    font-weight:700;
+    margin-bottom:4px;
+  }
+  .glyph.sarah{ color:var(--cyan); }
+  .glyph.mike{ color:var(--purple); }
+  .glyph.lily{ color:var(--orange); }
+  .gutter .ts{
+    display:block;
+    white-space:nowrap;
+  }
+  .gutter .speaker-name{
+    display:block;
+    color:var(--fg-2);
+    margin-top:2px;
+  }
+
+  .block-body{
+    font-size:15px;
+    line-height:1.7;
+    color:var(--fg-1);
+  }
+
+  mark.term{
+    background:transparent;
+    color:var(--cyan);
+    font-weight:600;
+    border-bottom:1px solid rgba(34,211,238,0.45);
+    padding:0 1px;
+  }
+  mark.expr{
+    background:transparent;
+    color:var(--fg-1);
+    font-weight:600;
+    border-bottom:2px solid var(--orange);
+    padding:0 1px;
+  }
+
+  .block.pending{
+    color:var(--fg-3);
+  }
+  .pending .block-body{
+    color:var(--fg-3);
+    font-style:italic;
+  }
+  .cursor-blink{
+    display:inline-block;
+    width:8px;
+    height:15px;
+    background:var(--fg-2);
+    margin-left:2px;
+    vertical-align:text-bottom;
+    animation:blink-steps 1s steps(1) infinite;
+  }
+  @keyframes blink-steps{
+    0%,49%{ opacity:1; }
+    50%,100%{ opacity:0; }
+  }
+
+  /* ============ 右:解释面板 ============ */
+  .panel-col{
+    display:flex;
+    flex-direction:column;
+    background:var(--bg-0);
+  }
+  .panel-head{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:16px 20px 14px;
+    border-bottom:1px solid var(--line-soft);
+  }
+  .panel-title{
+    font-family:var(--mono);
+    font-size:12px;
+    text-transform:uppercase;
+    letter-spacing:0.08em;
+    color:var(--fg-2);
+  }
+  .panel-count{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--bg-0);
+    background:var(--fg-1);
+    padding:1px 7px;
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+  }
+  .panel-head-spacer{ flex:1; }
+
+  .filter-row{
+    display:flex;
+    gap:6px;
+    padding:12px 20px;
+    border-bottom:1px solid var(--line-soft);
+  }
+  .filter-chip{
+    font-family:var(--zh);
+    font-size:12.5px;
+    letter-spacing:0.02em;
+    padding:5px 11px;
+    border:1px solid var(--line);
+    color:var(--fg-2);
+    cursor:pointer;
+    background:transparent;
+  }
+  .filter-chip.active{
+    color:var(--fg-1);
+    border-color:var(--fg-1);
+  }
+
+  .card-list{
+    flex:1;
+    overflow-y:auto;
+    padding:6px 0;
+  }
+
+  /* ============ 卡 = 块,左侧状态色条 ============ */
+  .card{
+    position:relative;
+    padding:14px 20px 14px 18px;
+    border-bottom:1px solid var(--line-soft);
+    border-left:2px solid var(--fg-3);
+  }
+  .card.expr{ border-left-color:var(--orange); }
+  .card.term{ border-left-color:var(--cyan); }
+
+  .card-toprow{
+    display:flex;
+    align-items:center;
+    gap:9px;
+    flex-wrap:wrap;
+  }
+  .card-term{
+    font-family:var(--mono);
+    font-size:15px;
+    font-weight:700;
+    color:var(--fg-1);
+  }
+  .tag-chip{
+    font-family:var(--mono);
+    font-size:10px;
+    text-transform:uppercase;
+    letter-spacing:0.05em;
+    padding:2px 6px;
+    border:1px solid currentColor;
+  }
+  .tag-chip.expr{ color:var(--orange); }
+  .tag-chip.term{ color:var(--cyan); }
+
+  .card-count{
+    font-family:var(--mono);
+    font-size:11.5px;
+    color:var(--fg-3);
+    font-variant-numeric:tabular-nums;
+  }
+
+  .card-spacer{ flex:1; }
+  .card-chevron{
+    font-family:var(--mono);
+    font-size:12px;
+    color:var(--fg-3);
+  }
+
+  .card-body{
+    margin-top:11px;
+  }
+  .zh-primary{
+    font-size:15.5px;
+    line-height:1.65;
+    color:var(--fg-1);
+    font-weight:500;
+  }
+  .field-row{
+    display:flex;
+    gap:8px;
+    margin-top:10px;
+    font-size:14px;
+    line-height:1.65;
+  }
+  .field-label{
+    font-family:var(--zh);
+    font-size:13px;
+    letter-spacing:0.02em;
+    color:var(--fg-2);
+    flex-shrink:0;
+    padding-top:2px;
+    white-space:nowrap;
+  }
+  .field-value{ color:var(--fg-2); }
+  .field-value.plain-en{ font-family:var(--mono); color:var(--fg-1); font-size:13px; }
+
+  .card-quote{
+    margin-top:12px;
+    padding:9px 12px;
+    background:var(--bg-raised);
+    border-left:2px solid var(--line);
+    font-family:var(--mono);
+    font-size:12.5px;
+    color:var(--fg-2);
+    line-height:1.6;
+    font-style:italic;
+  }
+
+  /* 折叠卡 */
+  .card.collapsed .card-toprow{ cursor:pointer; }
+  .card-inline-summary{
+    font-size:14px;
+    color:var(--fg-2);
+    margin-left:auto;
+    margin-right:8px;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+
+  /* diff flash 新卡入场 */
+  .card.flash-in{
+    animation:diff-flash 1.8s ease-out forwards;
+  }
+  @keyframes diff-flash{
+    0%{ background:rgba(74,222,128,0.14); border-left-color:var(--green); }
+    100%{ background:transparent; }
+  }
+  .flash-in .card-term::before{
+    content:'+ ';
+    color:var(--green);
+    font-family:var(--mono);
+  }
+
+  /* ============ 底部 vim 状态线 ============ */
+  .statusline{
+    display:flex;
+    align-items:center;
+    gap:0;
+    font-family:var(--mono);
+    font-size:12px;
+    border-top:1px solid var(--line);
+    background:var(--bg-raised);
+    height:34px;
+    overflow:hidden;
+  }
+  .sl-seg{
+    display:flex;
+    align-items:center;
+    height:100%;
+    padding:0 14px;
+    white-space:nowrap;
+  }
+  .sl-mode{
+    background:var(--fg-1);
+    color:var(--bg-0);
+    font-weight:800;
+    letter-spacing:0.03em;
+  }
+  .sl-mode .rec-blink{
+    width:6px; height:6px;
+    border-radius:50%;
+    background:var(--red);
+    display:inline-block;
+    margin-right:8px;
+    animation:blink-steps 1.2s steps(1) infinite;
+  }
+  .sl-sep{ color:var(--fg-3); }
+  .sl-info{ color:var(--fg-2); }
+  .sl-info b{ color:var(--fg-1); font-weight:700; }
+  .statusline-spacer{ flex:1; }
+  .sl-count{
+    color:var(--bg-0);
+    background:var(--green);
+    font-weight:700;
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* ============ 动效关闭 ============ */
+  @media (prefers-reduced-motion: reduce){
+    .cursor-blink,
+    .sl-mode .rec-blink,
+    .card.flash-in{
+      animation:none !important;
+    }
+    .cursor-blink{ opacity:1; }
+    .card.flash-in{ background:transparent; }
+  }
+
+  @media (max-width:960px){
+    .main-grid{ grid-template-columns:1fr; }
+    .col-divider{ border-left:none; border-top:1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+
+<div class="preview-tag">方向 4 · 暗黑科技 · 会议 REPL — <b>会议是一个正在运行的进程,每句话是输出块,每张卡是被 lint 出来的诊断——黑白灰机器,唯标签有色。</b></div>
+
+<div class="app-shell">
+
+  <!-- 终端标题栏 -->
+  <div class="titlebar">
+    <div class="tl-dots">
+      <span class="tl-dot r"></span>
+      <span class="tl-dot y"></span>
+      <span class="tl-dot g"></span>
+    </div>
+    <div class="tl-path">
+      <span class="seg-strong">jargonslayer</span><span class="sep">—</span>whisper·local<span class="sep">—</span>22 cards
+    </div>
+    <div class="tl-spacer"></div>
+    <div class="tl-cmdk"><kbd>⌘K</kbd> 命令面板</div>
+  </div>
+
+  <!-- 品牌 / 引擎 / 操作行 -->
+  <div class="brandbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M3 18C5 12 9 8 14 8C15.5 8 16.5 9 16.5 10.3C16.5 11.6 15.6 12.2 14.5 12.6C17 12 19.5 12.6 21.5 14.4C22.6 12.8 24.3 11.8 26.2 11.6C26.7 11.55 27.1 11.95 27 12.45C26.6 14.3 25.3 15.7 23.6 16.3C25.4 17.6 26.6 19.6 26.9 21.9C27 22.5 26.4 23 25.8 22.75C23.8 21.95 22.3 20.3 21.6 18.3C20.4 20.6 18 22.2 15.2 22.2C11.5 22.2 8.3 19.9 7 16.6C6 18 4.5 18.9 3 18Z"
+            stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" stroke-linecap="round"/>
+          <circle cx="23.3" cy="14.6" r="0.9" fill="currentColor"/>
+        </svg>
+      </span>
+      <div class="brand-text">
+        <span class="brand-name">JargonSlayer</span>
+        <span class="brand-sub">英文会议实时理解</span>
+      </div>
+    </div>
+
+    <div class="engine-badge">
+      <span class="engine-dot"></span>
+      <span>local·whisper</span>
+      <span class="zh-part">本地引擎</span>
+    </div>
+
+    <div class="brandbar-spacer"></div>
+
+    <div class="btn-row">
+      <button class="btn btn-icon" title="历史">☰</button>
+      <button class="btn btn-icon" title="设置">⚙</button>
+      <button class="btn">演示</button>
+      <button class="btn btn-primary"><span class="rec-dot"></span>开始监听</button>
+    </div>
+  </div>
+
+  <!-- 主体双栏 -->
+  <div class="main-grid">
+
+    <!-- 左:转录区 -->
+    <div class="transcript-col">
+      <div class="transcript-head">
+        <span class="th-title">Transcript</span>
+        <span class="th-meta">stdout · en-US · live</span>
+      </div>
+
+      <div class="block">
+        <div class="gutter">
+          <span class="glyph sarah">$</span>
+          <span class="ts">02:48:36</span>
+          <span class="speaker-name">Sarah</span>
+        </div>
+        <div class="block-body">
+          Okay everyone, let's <mark class="expr">get the ball rolling</mark>. Thanks for joining, I know Q3 planning snuck up on us fast.
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="gutter">
+          <span class="glyph mike">&gt;</span>
+          <span class="ts">02:48:44</span>
+          <span class="speaker-name">Mike</span>
+        </div>
+        <div class="block-body">
+          From engineering's side, we shipped the <mark class="term">MVP</mark> of the onboarding flow, and a few <mark class="term">OKR</mark> items are already tracking green.
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="gutter">
+          <span class="glyph lily">#</span>
+          <span class="ts">02:48:52</span>
+          <span class="speaker-name">Lily</span>
+        </div>
+        <div class="block-body">
+          On the data side, <mark class="term">churn</mark> ticked down two points, but it's not enough to <mark class="expr">move the needle</mark> on retention.
+        </div>
+      </div>
+
+      <div class="block pending">
+        <div class="gutter">
+          <span class="glyph lily" style="color:var(--fg-3);">#</span>
+          <span class="ts">02:49:03</span>
+          <span class="speaker-name">识别中</span>
+        </div>
+        <div class="block-body">
+          Right, and with our current runway we—<span class="cursor-blink"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右:解释面板 -->
+    <div class="panel-col col-divider">
+      <div class="panel-head">
+        <span class="panel-title">实时解释</span>
+        <span class="panel-count">22</span>
+        <div class="panel-head-spacer"></div>
+      </div>
+
+      <div class="filter-row">
+        <button class="filter-chip active">全部</button>
+        <button class="filter-chip">表达</button>
+        <button class="filter-chip">术语</button>
+      </div>
+
+      <div class="card-list">
+
+        <!-- 卡1:展开,表达 -->
+        <div class="card expr flash-in">
+          <div class="card-toprow">
+            <span class="card-term">move the needle</span>
+            <span class="tag-chip expr">习语</span>
+            <span class="card-count">×1</span>
+            <span class="card-spacer"></span>
+            <span class="card-chevron">▾</span>
+          </div>
+          <div class="card-body">
+            <div class="zh-primary">带来可见的改变,产生实质性影响</div>
+            <div class="field-row">
+              <span class="field-label">直白说法</span>
+              <span class="field-value plain-en">make real progress</span>
+            </div>
+            <div class="field-row">
+              <span class="field-label">语气</span>
+              <span class="field-value">中性,商务常用</span>
+            </div>
+            <div class="card-quote">
+              "…it's not enough to move the needle on retention."
+            </div>
+          </div>
+        </div>
+
+        <!-- 卡2:折叠,表达 -->
+        <div class="card expr collapsed">
+          <div class="card-toprow">
+            <span class="card-term">circle back</span>
+            <span class="tag-chip expr">短语</span>
+            <span class="card-count">×2</span>
+            <span class="card-inline-summary">回头再聊、之后再讨论</span>
+            <span class="card-chevron">▸</span>
+          </div>
+        </div>
+
+        <!-- 卡3:术语 -->
+        <div class="card term collapsed">
+          <div class="card-toprow">
+            <span class="card-term">OKR</span>
+            <span class="tag-chip term">缩写</span>
+            <span class="card-inline-summary">目标与关键成果法(Objectives and Key Results)</span>
+            <span class="card-chevron">▸</span>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
+  <!-- 底部 vim 状态线 -->
+  <div class="statusline">
+    <div class="sl-seg sl-mode"><span class="rec-blink"></span>-- LISTENING --</div>
+    <div class="sl-seg sl-info">词典模式</div>
+    <div class="sl-seg sl-sep">|</div>
+    <div class="sl-seg sl-info">音频未离开本机</div>
+    <div class="statusline-spacer"></div>
+    <div class="sl-seg sl-info">本场收获 <b>22</b> 张卡片</div>
+    <div class="sl-seg sl-count">22</div>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -65,7 +65,7 @@ function normalizeUpstreamResponse(raw: VerboseJsonResponse): CloudTranscribeRes
 export async function POST(req: Request) {
   const contentLength = Number(req.headers.get("content-length"));
   if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
-    return errorBody({ error: "音频文件过大", code: "bad_request" }, 413);
+    return errorBody({ error: "音频文件过大，请压缩或裁短后重试", code: "bad_request" }, 413);
   }
 
   let form: FormData;
@@ -81,7 +81,7 @@ export async function POST(req: Request) {
   }
 
   if (file.size > MAX_UPLOAD_BYTES) {
-    return errorBody({ error: "音频文件过大", code: "bad_request" }, 413);
+    return errorBody({ error: "音频文件过大，请压缩或裁短后重试", code: "bad_request" }, 413);
   }
 
   const language = form.get("language");

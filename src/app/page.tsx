@@ -5,6 +5,7 @@ import { SidebarSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { useMeeting } from "@/hooks/useMeeting";
 import Header from "@/components/Header";
+import StatusLine from "@/components/StatusLine";
 import TranscriptPanel from "@/components/TranscriptPanel";
 import CardsPanel from "@/components/CardsPanel";
 import SummaryPanel from "@/components/SummaryPanel";
@@ -63,7 +64,7 @@ export default function Home() {
 
         {!focusMode && (
           <aside className="flex max-h-[55vh] w-full shrink-0 flex-col min-h-0 lg:max-h-none lg:w-[400px] xl:w-[440px]">
-            <div className="flex items-center gap-1 border-b border-edge px-3 pt-2">
+            <div className="flex items-center gap-1 border-b border-edge bg-panel2 px-3 pt-2">
               {(
                 [
                   ["cards", "实时解释"],
@@ -75,15 +76,15 @@ export default function Home() {
                   key={key}
                   data-testid={`tab-${key}`}
                   onClick={() => setTab(key)}
-                  className={`relative rounded-t-lg px-3 py-2 text-sm transition-colors ${
+                  className={`relative px-3 py-2 font-mono text-xs uppercase tracking-wide transition-colors ${
                     tab === key
-                      ? "bg-panel text-fg border border-b-0 border-edge"
+                      ? "border border-b-0 border-edge bg-panel text-fg"
                       : "text-mut hover:text-fg"
                   }`}
                 >
                   {label}
                   {key === "summary" && summaryReady && !summary && (
-                    <span className="absolute -right-0.5 top-1.5 h-1.5 w-1.5 rounded-full bg-gold" />
+                    <span className="absolute -right-0.5 top-1.5 h-1.5 w-1.5 rounded-full bg-lab-orange" />
                   )}
                 </button>
               ))}
@@ -91,12 +92,12 @@ export default function Home() {
                 data-testid="btn-focus-mode"
                 onClick={() => setFocusMode(true)}
                 title="专注模式：只看转录，悬停高亮表达即可查看释义"
-                className="btn-tactile ml-auto flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg"
+                className="btn-tactile ml-auto flex h-8 w-8 items-center justify-center border border-transparent text-mut hover:border-edge hover:bg-panel3 hover:text-fg"
               >
                 <SidebarSimple size={18} />
               </button>
             </div>
-            <div className="min-h-0 flex-1 bg-panel/40">
+            <div className="min-h-0 flex-1 bg-panel">
               {tab === "cards" ? (
                 <CardsPanel />
               ) : tab === "summary" ? (
@@ -109,12 +110,14 @@ export default function Home() {
         )}
       </main>
 
+      <StatusLine />
+
       {focusMode && (
         <button
           data-testid="btn-exit-focus"
           onClick={() => setFocusMode(false)}
           title="退出专注模式"
-          className="btn-tactile fixed right-4 top-16 z-40 flex h-9 w-9 items-center justify-center rounded-lg border border-edge bg-panel text-mut shadow-lg hover:bg-panel3 hover:text-fg"
+          className="btn-tactile fixed right-4 top-[100px] z-40 flex h-9 w-9 items-center justify-center border border-edge bg-panel text-mut shadow-lg hover:bg-panel3 hover:text-fg"
         >
           <SidebarSimple size={18} weight="fill" />
         </button>

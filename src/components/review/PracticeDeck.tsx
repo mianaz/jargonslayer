@@ -33,7 +33,7 @@ function shuffle<T>(arr: T[]): T[] {
 
 function EmptyState() {
   return (
-    <div className="rounded-xl border border-edge bg-panel p-6 text-center">
+    <div className="rounded-none border border-edge bg-panel p-6 text-center">
       <div className="text-sm font-medium text-fg">词库还是空的</div>
       <div className="mt-2 text-xs leading-[1.7] text-mut">
         在会议里划词收藏，或回到会议页的纪要里点「收藏本场卡片」。
@@ -51,6 +51,9 @@ function FlashCard({
   flipped: boolean;
   onFlip: () => void;
 }) {
+  const kindBorderCls =
+    entry.kind === "expression" ? "border-l-lab-orange" : "border-l-lab-cyan";
+
   return (
     <div
       role="button"
@@ -62,20 +65,14 @@ function FlashCard({
           onFlip();
         }
       }}
-      className="card-manuscript card-manuscript-gold relative mx-auto flex min-h-[220px] w-full max-w-md cursor-pointer flex-col justify-center rounded-xl border border-edge bg-panel p-6"
+      className={`relative mx-auto flex min-h-[220px] w-full max-w-md cursor-pointer flex-col justify-center rounded-none border-l-2 ${kindBorderCls} border-y border-r border-edge bg-panel p-6`}
     >
-      <span className="pointer-events-none absolute left-2 top-2 text-[10px] text-gold/40">
-        ❖
-      </span>
-      <span className="pointer-events-none absolute bottom-2 right-2 text-[10px] text-gold/40">
-        ❖
-      </span>
       {!flipped ? (
         <div className="text-center">
-          <span className="mb-3 inline-block rounded-full border border-edge px-2 py-0.5 text-[10px] text-mut">
+          <span className="mb-3 inline-block rounded-sm border border-edge px-2 py-0.5 text-[10px] text-mut">
             {KIND_LABELS[entry.kind]}
           </span>
-          <div className="font-display text-3xl font-semibold text-fg">
+          <div className="font-mono text-3xl font-semibold text-fg">
             {entry.headword}
           </div>
           <div className="mt-4 text-xs text-mut2">点击卡片查看解释</div>
@@ -161,13 +158,13 @@ export default function PracticeDeck() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1 rounded-lg border border-edge bg-panel2 p-0.5">
+        <div className="flex items-center gap-1 rounded-none border border-edge bg-panel2 p-0.5">
           {FILTER_OPTIONS.map((opt) => (
             <button
               key={opt.value}
               type="button"
               onClick={() => setFilter(opt.value)}
-              className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
+              className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
                 filter === opt.value
                   ? "bg-panel3 text-fg"
                   : "text-mut hover:text-fg"
@@ -180,7 +177,7 @@ export default function PracticeDeck() {
         <button
           type="button"
           onClick={handleReshuffle}
-          className="btn-tactile flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+          className="btn-tactile flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
         >
           <ArrowsClockwise size={16} weight="regular" />
           重新洗牌
@@ -189,7 +186,7 @@ export default function PracticeDeck() {
 
       {total === 0 || !current ? (
         filter === "unmastered" ? (
-          <div className="rounded-xl border border-edge bg-panel p-6 text-center">
+          <div className="rounded-none border border-edge bg-panel p-6 text-center">
             <div className="text-sm font-medium text-fg">
               本轮的龙都屠完了。
             </div>
@@ -199,14 +196,14 @@ export default function PracticeDeck() {
             <button
               type="button"
               onClick={handleReshuffle}
-              className="btn-tactile mt-4 inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+              className="btn-tactile mt-4 inline-flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
             >
               <ArrowsClockwise size={16} weight="regular" />
               重新洗牌
             </button>
           </div>
         ) : (
-          <div className="rounded-xl border border-edge bg-panel p-6 text-center">
+          <div className="rounded-none border border-edge bg-panel p-6 text-center">
             <div className="text-sm font-medium text-fg">这一类还没有词条</div>
             <div className="mt-2 text-xs leading-[26px] text-mut">
               换个筛选试试，或者继续在会议里收藏新表达。
@@ -225,14 +222,14 @@ export default function PracticeDeck() {
             <button
               type="button"
               onClick={() => void handleKnown(false)}
-              className="btn-tactile h-10 rounded-lg border border-warn/40 px-5 text-sm text-warn-soft hover:bg-panel3"
+              className="btn-tactile h-10 rounded-none border border-warn-soft/50 px-5 text-sm text-warn-soft hover:bg-panel3"
             >
               不认识
             </button>
             <button
               type="button"
               onClick={() => void handleKnown(true)}
-              className="btn-tactile h-10 rounded-lg bg-acc px-5 text-sm font-medium text-white hover:bg-acchover"
+              className="btn-tactile h-10 rounded-none border border-lab-green/50 px-5 text-sm font-medium text-lab-green hover:bg-panel3"
             >
               认识
             </button>

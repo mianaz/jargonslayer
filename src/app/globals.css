@@ -2,23 +2,36 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --ink: #07090e;
-  --panel: #10141d;
-  --panel2: #161b27;
-  --panel3: #1b2130;
-  --edge: #232b3a;
-  --edge2: #303a4d;
-  --fg: #e8ecf4;
-  --mut: #8b95a9;
-  --mut2: #667083;
-  --acc: #5b9dff;
-  --acc-hover: #7fb2ff;
-  --acc2: #3ed598;
-  --gold: #e5b455;
-  --warn: #a63d40; /* stop/destructive fills + borders */
-  --warn-soft: #e07a7d; /* warn text on dark panels — AA-safe (#a63d40 as text ≈ 3:1) */
-  --bl: 8px; /* baseline unit (v2.1 grid discipline) */
+/* v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.1) — terminal is
+   the default (and, for now, only) theme; [data-theme="terminal"] is
+   included so a future <html data-theme="..."> switch keeps working
+   the day a sibling skin ships (v3.5 roadmap). */
+:root,
+[data-theme="terminal"] {
+  --ink: #0a0a0a;
+  --panel: #121212;
+  --panel2: #1a1a1a;
+  --panel3: #202020;
+  --edge: #262626;
+  --edge2: #333333;
+  --fg: #ededed;
+  --mut: #9a9a9a;
+  --mut2: #5c5c5c;
+  --lab-red: #ff5f56;
+  --lab-orange: #ffaa44;
+  --lab-yellow: #f7d51d;
+  --lab-green: #4ade80;
+  --lab-purple: #c084fc;
+  --lab-cyan: #22d3ee;
+  --act: #ffffff;
+
+  /* warn *text* tier (docs/DESIGN.md v3.1 rule 3): fills use lab-red on
+     small elements only; warn-colored text uses this AA-safe softer red.
+     (The migration-era acc/acc2/gold/warn/font-display aliases are
+     retired — no component references remain as of 2026-07-06.) */
+  --warn-soft: #ff8a80;
+
+  --bl: 8px; /* baseline unit (v2.1 grid discipline, still honored) */
 }
 
 html,
@@ -41,42 +54,18 @@ body {
   border-radius: 3px;
 }
 .scroll-thin::-webkit-scrollbar-thumb:hover {
-  background: #2f3a4e;
+  background: var(--edge2);
 }
 .scroll-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* new-card highlight: gold glow that fades over ~4s */
-@keyframes cardGlow {
-  0% {
-    border-color: var(--gold);
-    box-shadow: 0 0 0 1px var(--gold), 0 4px 24px rgba(229, 180, 85, 0.25);
-    transform: translateY(4px);
-    opacity: 0.4;
-  }
-  12% {
-    transform: translateY(0);
-    opacity: 1;
-  }
-  70% {
-    border-color: var(--gold);
-    box-shadow: 0 0 0 1px var(--gold), 0 2px 12px rgba(229, 180, 85, 0.12);
-  }
-  100% {
-    border-color: var(--edge);
-    box-shadow: none;
-  }
-}
-.card-new {
-  animation: cardGlow 4s ease-out both;
-}
-
-/* re-detected card: brief gold pulse */
+/* re-detected card: brief pulse in the expression hue (v3: the v2-era
+   .card-new gold glow is deleted — new cards use .diff-flash below) */
 @keyframes cardPulse {
   0% {
-    border-color: var(--gold);
-    box-shadow: 0 0 0 1px var(--gold);
+    border-color: var(--lab-orange);
+    box-shadow: 0 0 0 1px var(--lab-orange);
   }
   100% {
     border-color: var(--edge);
@@ -118,54 +107,46 @@ body {
   animation: fadeUp 0.25s ease-out both;
 }
 
-/* highlighted expression inside transcript */
+/* highlighted expression inside transcript — recolored to the v3
+   lab-orange "expression" hue (docs/DESIGN.md v3.1: lab-orange is the
+   expression-highlight-underline token). */
 .hl-expr {
-  @apply rounded px-0.5 text-gold underline decoration-gold/50 decoration-dotted underline-offset-4 cursor-pointer;
-  background: rgba(229, 180, 85, 0.08);
+  @apply rounded px-0.5 text-lab-orange underline decoration-lab-orange/70 decoration-dotted underline-offset-4 cursor-pointer;
+  background: rgba(255, 170, 68, 0.08);
 }
 .hl-expr:hover {
-  background: rgba(229, 180, 85, 0.18);
+  background: rgba(255, 170, 68, 0.18);
 }
 
 /* keyboard focus baseline — every interactive element gets a visible ring */
 :focus-visible {
-  outline: 2px solid var(--acc);
+  outline: 2px solid var(--lab-cyan);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: 2px;
 }
 
-/* double-line manuscript card chrome (v2.3): a thin inset border that
-   reads as illuminated-manuscript inner ruling, not a glow. The outer
-   1px border (edge) is untouched; card-new/card-repulse continue to
-   animate that outer border-color only, so this ::before never
-   conflicts with them. */
-.card-manuscript {
-  position: relative;
-}
-.card-manuscript::before {
-  content: "";
-  position: absolute;
-  inset: 3px;
-  border-radius: 9px;
-  border: 1px solid transparent;
-  pointer-events: none;
-}
-.card-manuscript-gold::before {
-  border-color: rgba(229, 180, 85, 0.14);
-}
+/* card-manuscript* (v2.3 illuminated-manuscript double-line chrome):
+   RETIRED in v3 — the terminal theme's card shape is a flat "block"
+   (left status-color bar + hairline dividers, see v3.3), not an inset
+   ruling. Left as empty no-op selectors (rather than deleted) because
+   un-swept card components may still carry these classNames until
+   their own v3 pass lands; harmless once the ::before rule is gone. */
+.card-manuscript,
+.card-manuscript-gold::before,
 .card-manuscript-blue::before {
-  border-color: rgba(91, 157, 255, 0.14);
 }
 
-/* drop cap (v2.3): first letter of empty-state / tutorial-step-1 lead
-   paragraphs, display face for the illuminated-manuscript reference. */
+/* drop-cap (v2.3): RETIRED in v3 — no display serif to drop into.
+   Neutralized (not deleted) for the same graceful-migration reason as
+   card-manuscript above: any straggler renders as a normal first
+   letter instead of a broken oversized float. */
 .drop-cap::first-letter {
-  font-family: var(--font-display), "Songti SC", serif;
-  float: left;
-  font-size: 2.6em;
-  line-height: 0.9;
-  padding-right: 0.08em;
-  color: var(--gold);
+  font-family: inherit;
+  float: none;
+  font-size: inherit;
+  line-height: inherit;
+  padding-right: 0;
+  color: inherit;
 }
 
 /* tactile press feedback for buttons (taste: simulate physical push) */
@@ -180,20 +161,74 @@ body {
   transform: scale(0.97);
 }
 
+/* v3 terminal-theme press feedback for the primary white-on-black
+   action button (docs/DESIGN.md v3.6): same scale-down tactile as
+   .btn-tactile, kept as a distinct class so terminal-specific chrome
+   (sharp corners, act-token background) can live alongside it without
+   coupling to the v1/v2 button. */
+.btn-terminal {
+  transition:
+    transform 0.12s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.btn-terminal:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* blinking block cursor — terminal caret at the tail of a live
+     transcript block / interim segment (v3.3). */
+  @keyframes cursorBlinkSteps {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+  .cursor-block {
+    animation: cursorBlinkSteps 1s steps(1) infinite;
+  }
+
+  /* diff-flash — new-card affordance, v3 replacement for card-new's
+     gold glow: a green wash that settles to transparent (v3.6: "新卡
+     diff-flash(绿→灰 0.8s)"). */
+  @keyframes diffFlash {
+    0% {
+      background: rgba(74, 222, 128, 0.14);
+      border-left-color: var(--lab-green);
+    }
+    100% {
+      background: transparent;
+    }
+  }
+  .diff-flash {
+    animation: diffFlash 0.8s ease-out forwards;
+  }
+}
+
 /* accessibility: collapse all decorative motion when the user asks */
 @media (prefers-reduced-motion: reduce) {
-  .card-new,
   .card-repulse,
   .dot-live,
   .fade-up {
     animation: none !important;
   }
-  .card-new {
-    /* keep the "new" affordance without motion */
-    border-color: var(--gold) !important;
+  .cursor-block {
+    animation: none !important;
+    opacity: 1;
+  }
+  .diff-flash {
+    animation: none !important;
+    background: transparent !important;
   }
   .btn-tactile,
-  .btn-tactile:active {
+  .btn-tactile:active,
+  .btn-terminal,
+  .btn-terminal:active {
     transition: none;
     transform: none;
   }

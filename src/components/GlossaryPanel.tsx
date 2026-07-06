@@ -65,16 +65,16 @@ function EntryForm({
   onSave: () => void;
 }) {
   return (
-    <div className="space-y-2 rounded-xl border border-edge bg-panel2 p-3">
+    <div className="space-y-2 rounded-none border border-edge bg-panel2 p-3">
       <div className="flex items-center gap-2">
         {(["expression", "term"] as CustomEntryKind[]).map((k) => (
           <button
             key={k}
             type="button"
             onClick={() => onChange({ ...draft, kind: k })}
-            className={`btn-tactile rounded-full border px-2.5 py-0.5 text-xs ${
+            className={`btn-tactile rounded-sm border px-2.5 py-0.5 text-xs ${
               draft.kind === k
-                ? "border-gold/40 text-gold/90"
+                ? "border-lab-orange/40 text-lab-orange"
                 : "border-edge text-mut hover:text-fg"
             }`}
           >
@@ -89,7 +89,7 @@ function EntryForm({
           type="text"
           value={draft.headword}
           onChange={(e) => onChange({ ...draft, headword: e.target.value })}
-          className="mt-1 w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
+          className="mt-1 w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
         />
       </div>
 
@@ -102,7 +102,7 @@ function EntryForm({
           }
           placeholder="说明这词在会议里的意思…"
           rows={2}
-          className="mt-1 w-full resize-none rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm leading-[1.7] text-fg placeholder:text-mut2 focus:outline-none"
+          className="mt-1 w-full resize-none rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm leading-[1.7] text-fg placeholder:text-mut2 focus:outline-none"
         />
       </div>
 
@@ -113,7 +113,7 @@ function EntryForm({
           value={draft.example}
           onChange={(e) => onChange({ ...draft, example: e.target.value })}
           placeholder="可留空"
-          className="mt-1 w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+          className="mt-1 w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
         />
       </div>
 
@@ -124,7 +124,7 @@ function EntryForm({
           value={draft.note}
           onChange={(e) => onChange({ ...draft, note: e.target.value })}
           placeholder="自己的笔记，可留空"
-          className="mt-1 w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+          className="mt-1 w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
         />
       </div>
 
@@ -132,7 +132,7 @@ function EntryForm({
         <button
           type="button"
           onClick={onCancel}
-          className="btn-tactile rounded-lg px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+          className="btn-tactile rounded-sm px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
         >
           取消
         </button>
@@ -140,7 +140,7 @@ function EntryForm({
           type="button"
           onClick={onSave}
           disabled={!draft.chinese_explanation.trim()}
-          className="btn-tactile rounded-lg bg-acc px-3 py-1.5 text-xs font-medium text-white hover:bg-acchover disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-terminal rounded-none bg-act px-3 py-1.5 text-xs font-mono font-semibold text-ink hover:bg-[#E8E8E8] disabled:cursor-not-allowed disabled:opacity-50"
         >
           保存
         </button>
@@ -199,18 +199,23 @@ function EntryRow({ entry }: { entry: CustomEntry }) {
     );
   }
 
+  const kindBorderCls =
+    entry.kind === "expression" ? "border-l-lab-orange" : "border-l-lab-cyan";
+
   return (
-    <div className="rounded-xl border border-edge bg-panel p-3 transition-colors hover:bg-panel3">
+    <div
+      className={`rounded-none border-l-2 ${kindBorderCls} border-b border-edge bg-panel p-3 transition-colors hover:bg-panel3`}
+    >
       <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-fg">{entry.headword}</span>
-        <span className="rounded-full border border-edge px-1.5 py-0 text-[10px] text-mut">
+        <span className="font-mono font-semibold text-fg">{entry.headword}</span>
+        <span className="rounded-sm border border-edge px-1.5 py-0 text-[10px] text-mut">
           {KIND_LABELS[entry.kind]}
         </span>
-        <span className="rounded-full border border-gold/30 px-1.5 py-0 text-[10px] text-gold/80">
+        <span className="rounded-sm border border-edge2 px-1.5 py-0 text-[10px] text-mut">
           {SOURCE_LABELS[entry.source]}
         </span>
         {entry.mastered && (
-          <CheckCircle size={16} weight="regular" className="text-acc2" />
+          <CheckCircle size={16} weight="regular" className="text-lab-green" />
         )}
       </div>
 
@@ -336,7 +341,7 @@ export default function GlossaryPanel() {
           <button
             type="button"
             onClick={handleStartCreate}
-            className="btn-tactile rounded-lg border border-edge px-2.5 py-1 text-xs text-fg hover:bg-panel3"
+            className="btn-tactile rounded-sm border border-edge2 px-2.5 py-1 text-xs text-fg hover:bg-panel3"
           >
             ＋手动添加
           </button>
@@ -346,7 +351,7 @@ export default function GlossaryPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="搜索词条或中文解释…"
-          className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+          className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
         />
       </div>
 
@@ -372,7 +377,7 @@ export default function GlossaryPanel() {
           <button
             type="button"
             onClick={handleExportAnki}
-            className="btn-tactile w-full rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+            className="btn-tactile w-full rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
           >
             导出 Anki .tsv
           </button>
