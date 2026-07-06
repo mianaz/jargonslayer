@@ -7,7 +7,13 @@ import { useCallback, useEffect, useRef } from "react";
 import { useApp } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
+import { TranslateQueue } from "../lib/translate/queue";
 import type { STTEngine, STTEvents } from "../lib/types";
+
+// Live bilingual transcript (#42): how many of the most recent
+// finalized segments to catch up when the toggle flips OFF->ON
+// mid-meeting (see the backfill effect below).
+const BILINGUAL_BACKFILL_COUNT = 5;
 
 export interface UseMeetingResult {
   start: () => Promise<void>;
@@ -18,6 +24,7 @@ export interface UseMeetingResult {
 export function useMeeting(): UseMeetingResult {
   const engineRef = useRef<STTEngine | null>(null);
   const schedulerRef = useRef<DetectionScheduler | null>(null);
+  const translateQueueRef = useRef<TranslateQueue | null>(null);
 
   const start = useCallback(async () => {
     const { status } = useApp.getState();
@@ -42,6 +49,17 @@ export function useMeeting(): UseMeetingResult {
       onError: (msg) => useApp.getState().showToast(msg),
     });
     schedulerRef.current = scheduler;
+
+    // Replace any previous translate queue before wiring a fresh one —
+    // same lifecycle as the scheduler above.
+    translateQueueRef.current?.stop();
+    const translateQueue = new TranslateQueue({
+      getSettings: () => useApp.getState().settings,
+      getMeetingGen: () => useApp.getState().meetingGen,
+      onTranslations: (map, gen) => useApp.getState().applyTranslations(map, gen),
+      onError: (msg) => useApp.getState().showToast(msg),
+    });
+    translateQueueRef.current = translateQueue;
 
     const settings = useApp.getState().settings;
     const engine = createEngine(settings.engine);
@@ -68,6 +86,7 @@ export function useMeeting(): UseMeetingResult {
         const seg = useApp.getState().addFinal(text, opts);
         useApp.getState().setInterim(null);
         scheduler.pushSegment(seg);
+        translateQueue.pushSegment(seg);
       },
       onSpeakerUpdate: (assignments, speakers) => {
         useApp.getState().applySpeakerUpdate(assignments, speakers, sessionGen);
@@ -134,8 +153,57 @@ export function useMeeting(): UseMeetingResult {
     return () => {
       void engineRef.current?.stop();
       schedulerRef.current?.stop();
+      translateQueueRef.current?.stop();
     };
   }, []);
+
+  // Live bilingual transcript (#42): flipping the toggle OFF->ON
+  // mid-meeting shouldn't leave the just-elapsed minute untranslated —
+  // catch up the most recent finalized segments that don't have one
+  // yet. Gated to `listening` because the queue is only alive for a
+  // live meeting (stopped sessions have no TranslateQueue to backfill
+  // into; toggling the setting from a stopped session's view has no
+  // live effect here).
+  const bilingualTranscript = useApp((s) => s.settings.bilingualTranscript);
+  const status = useApp((s) => s.status);
+  const prevBilingualRef = useRef(bilingualTranscript);
+  useEffect(() => {
+    const wasOff = !prevBilingualRef.current;
+    prevBilingualRef.current = bilingualTranscript;
+    if (!(wasOff && bilingualTranscript && status === "listening")) return;
+
+    const { segments, translations } = useApp.getState();
+    const toBackfill = segments
+      .filter((s) => !translations[s.id])
+      .slice(-BILINGUAL_BACKFILL_COUNT);
+    translateQueueRef.current?.backfill(toBackfill);
+  }, [bilingualTranscript, status]);
+
+  // Re-translate a segment whose text was hand-corrected (store's
+  // updateSegmentText already dropped the stale translation entry —
+  // see store.ts) while the toggle is on. Tracks last-seen text per
+  // segment id so only genuine edits (not new arrivals) re-enqueue;
+  // cleared per meetingGen so it doesn't accumulate ids across every
+  // meeting held in one tab session.
+  const segments = useApp((s) => s.segments);
+  const meetingGen = useApp((s) => s.meetingGen);
+  const lastTextRef = useRef<Map<string, string>>(new Map());
+  const lastTextGenRef = useRef(meetingGen);
+  useEffect(() => {
+    if (lastTextGenRef.current !== meetingGen) {
+      lastTextGenRef.current = meetingGen;
+      lastTextRef.current = new Map();
+    }
+    const lastText = lastTextRef.current;
+    const settings = useApp.getState().settings;
+    for (const seg of segments) {
+      const prevText = lastText.get(seg.id);
+      if (prevText !== undefined && prevText !== seg.text && settings.bilingualTranscript) {
+        translateQueueRef.current?.pushSegment(seg);
+      }
+      lastText.set(seg.id, seg.text);
+    }
+  }, [segments, meetingGen]);
 
   return { start, stop, startDemo };
 }

@@ -291,6 +291,9 @@ export default function TranscriptPanel() {
   const setFocusCard = useApp((s) => s.setFocusCard);
   const setLookup = useApp((s) => s.setLookup);
   const updateSegmentText = useApp((s) => s.updateSegmentText);
+  // Live bilingual transcript (#42).
+  const bilingualTranscript = useApp((s) => s.settings.bilingualTranscript);
+  const translations = useApp((s) => s.translations);
 
   // Transcript editing only applies to sessions that are done being
   // recorded (finished / imported / loaded from history). No editing
@@ -603,7 +606,7 @@ export default function TranscriptPanel() {
                       />
                     </div>
                   ) : (
-                    <span
+                    <div
                       className="text-[15px] leading-relaxed"
                       onDoubleClick={
                         editable
@@ -621,7 +624,12 @@ export default function TranscriptPanel() {
                         onHitEnter={handleHitEnter}
                         onHitLeave={handleHitLeave}
                       />
-                    </span>
+                      {bilingualTranscript && translations[seg.id] && (
+                        <div className="mt-0.5 text-xs leading-[1.6] text-mut">
+                          {translations[seg.id]}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               );

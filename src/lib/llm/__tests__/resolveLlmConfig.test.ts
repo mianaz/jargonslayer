@@ -25,6 +25,7 @@ describe("resolveLlmConfig", () => {
       "JARGONSLAYER_BASE_URL",
       "JARGONSLAYER_DETECT_MODEL",
       "JARGONSLAYER_SUMMARY_MODEL",
+      "JARGONSLAYER_TRANSLATE_MODEL",
     ]) {
       vi.stubEnv(name, "");
     }
@@ -97,7 +98,38 @@ describe("resolveLlmConfig", () => {
     expect(ollama!.extraBody).toBeUndefined();
   });
 
-  it("server key: per-kind forced models; define falls back to the detect-class model", () => {
+  it("translate kind on server-key openrouter also disables reasoning (measured latency/cost win on the hosted reasoning model); other kinds are unaffected", () => {
+    for (const [name, value] of Object.entries(SERVER_ENV)) {
+      vi.stubEnv(name, value);
+    }
+    const req = reqWithHeaders({});
+
+    const translate = resolveLlmConfig(req, "translate");
+    expect(translate!.extraBody).toEqual({
+      provider: { data_collection: "allow" },
+      reasoning: { enabled: false },
+    });
+
+    const detect = resolveLlmConfig(req, "detect");
+    expect(detect!.extraBody).toEqual({ provider: { data_collection: "allow" } });
+  });
+
+  it("translate kind: BYOK never gets extraBody (reasoning-off included)", () => {
+    for (const [name, value] of Object.entries(SERVER_ENV)) {
+      vi.stubEnv(name, value);
+    }
+    const byok = resolveLlmConfig(
+      reqWithHeaders({
+        "x-jargonslayer-key": "user-key",
+        "x-jargonslayer-provider": "openai-compat",
+        "x-jargonslayer-base-url": "https://openrouter.ai/api/v1",
+      }),
+      "translate",
+    );
+    expect(byok!.extraBody).toBeUndefined();
+  });
+
+  it("server key: per-kind forced models; define and translate fall back to the detect-class model", () => {
     for (const [name, value] of Object.entries(SERVER_ENV)) {
       vi.stubEnv(name, value);
     }
@@ -105,6 +137,19 @@ describe("resolveLlmConfig", () => {
     expect(resolveLlmConfig(req, "detect")!.forcedModel).toBe("minimax/minimax-m2.5");
     expect(resolveLlmConfig(req, "summary")!.forcedModel).toBe("minimax/minimax-m3");
     expect(resolveLlmConfig(req, "define")!.forcedModel).toBe("minimax/minimax-m2.5");
+    expect(resolveLlmConfig(req, "translate")!.forcedModel).toBe("minimax/minimax-m2.5");
+  });
+
+  it("JARGONSLAYER_TRANSLATE_MODEL, when set, takes precedence over the detect-class model for translate only", () => {
+    for (const [name, value] of Object.entries(SERVER_ENV)) {
+      vi.stubEnv(name, value);
+    }
+    vi.stubEnv("JARGONSLAYER_TRANSLATE_MODEL", "minimax/minimax-m2.5-translate");
+    const req = reqWithHeaders({});
+    expect(resolveLlmConfig(req, "translate")!.forcedModel).toBe(
+      "minimax/minimax-m2.5-translate",
+    );
+    expect(resolveLlmConfig(req, "detect")!.forcedModel).toBe("minimax/minimax-m2.5");
   });
 
   it("legacy env shape (ANTHROPIC_API_KEY only) keeps anthropic provider and no forced model", () => {
@@ -117,6 +162,7 @@ describe("resolveLlmConfig", () => {
       forcedModel: null,
       isServerKey: true,
     });
+    expect(resolveLlmConfig(reqWithHeaders({}), "translate")!.forcedModel).toBeNull();
   });
 
   it("JARGONSLAYER_API_KEY takes precedence over the legacy env name", () => {

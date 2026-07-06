@@ -146,6 +146,22 @@ export interface TranslationPair {
   zh: string;
 }
 
+// ---------- live bilingual transcript (#42) ----------
+// Distinct from the post-meeting TranslationPair/SummarizeRequest
+// pair above: this translates individual finalized transcript
+// segments as they arrive, keyed by segment id rather than index,
+// into whatever language `settings.explainLanguage` names (not
+// always zh — see Settings.bilingualTranscript below).
+
+export interface TranslateRequest {
+  segments: { id: string; text: string }[];
+  lang: string;
+}
+
+export interface TranslateResponse {
+  translations: { id: string; text: string }[];
+}
+
 export interface BilingualLine {
   en: string;
   zh: string;
@@ -227,6 +243,12 @@ export interface Settings {
   // wsTransport.ts). Requires hfToken; default off (existing behavior
   // unchanged when off).
   realtimeDiarize: boolean;
+  // Live bilingual transcript (#42): translate each FINALIZED segment
+  // into explainLanguage and render it as a secondary line under the
+  // English text (see translate/queue.ts). Only meaningful when
+  // explainLanguage !== "en" (translating English into English is a
+  // no-op); default off (existing single-line transcript unchanged).
+  bilingualTranscript: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -250,6 +272,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enabledPacks: null,
   hfToken: "",
   realtimeDiarize: false,
+  bilingualTranscript: false,
 };
 
 /** Headers that carry LLM provider config from browser to routes.
@@ -279,6 +302,10 @@ export interface MeetingSession {
   // applySpeakerUpdate never clobbers a rename ("rename-wins", see
   // store.ts).
   speakerAliases?: Record<string, string>;
+  // Live bilingual transcript (#42): segment id -> translated text,
+  // for segments translated while the meeting was live. Absent when
+  // the feature was off or a segment's translation never landed.
+  translations?: Record<string, string>;
 }
 
 export interface SessionMeta {

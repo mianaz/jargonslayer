@@ -160,6 +160,9 @@ interface AppState {
   // display name, written only by renameSpeaker (see rename-wins in
   // applySpeakerUpdate/aliasesAfterRename above).
   speakerAliases: Record<string, string>;
+  // Live bilingual transcript (#42): segment id -> translated text,
+  // written by applyTranslations (see TranslateQueue.onTranslations).
+  translations: Record<string, string>;
 
   // detection results
   cards: ExpressionCard[];
@@ -212,6 +215,16 @@ interface AppState {
     speakers: string[],
     expectedGen: number,
   ) => void;
+  // Live bilingual transcript (#42): merges a translated-segment batch
+  // from TranslateQueue.onTranslations. `gen` is the meetingGen
+  // captured at that batch's dispatch time — a payload whose gen no
+  // longer matches the current one belongs to a PREVIOUS meeting and
+  // is silently dropped (same guard style as applyDetection/
+  // applySpeakerUpdate above).
+  applyTranslations: (map: Record<string, string>, gen: number) => void;
+  // Drop one segment's translation (e.g. after a text edit — the old
+  // translation no longer matches the corrected English).
+  invalidateTranslation: (segmentId: string) => void;
 
   applyDetection: (res: DetectResponse, source: DetectionSource) => void;
   setDetectBusy: (busy: boolean) => void;
@@ -251,6 +264,7 @@ export const useApp = create<AppState>((set, get) => ({
   segments: [],
   interim: null,
   speakerAliases: {},
+  translations: {},
 
   cards: [],
   terms: [],
@@ -311,6 +325,7 @@ export const useApp = create<AppState>((set, get) => ({
       segments: [],
       interim: null,
       speakerAliases: {},
+      translations: {},
       cards: [],
       terms: [],
       summary: null,
@@ -363,6 +378,29 @@ export const useApp = create<AppState>((set, get) => ({
         get().speakerAliases,
       ),
     });
+  },
+
+  applyTranslations: (map, gen) => {
+    // Meeting-boundary guard, same shape as applySpeakerUpdate above.
+    if (gen !== get().meetingGen) return;
+    set({ translations: { ...get().translations, ...map } });
+    // Same top-up as applyDetection above: a batch dispatched just
+    // before stop resolves after the session was saved — without a
+    // re-save those tail translations exist on screen but not in
+    // history.
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+
+  invalidateTranslation: (segmentId) => {
+    const rest = { ...get().translations };
+    delete rest[segmentId];
+    set({ translations: rest });
   },
 
   applyDetection: (res, source) => {
@@ -426,6 +464,10 @@ export const useApp = create<AppState>((set, get) => ({
         s.id === segmentId ? { ...s, text: cleaned } : s,
       ),
     });
+    // The old translation was for the pre-edit English text — stale
+    // now, so drop it (useMeeting.ts re-enqueues it for a fresh
+    // translation while the meeting is still live and the toggle is on).
+    get().invalidateTranslation(segmentId);
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(
         () => get().saveCurrentSession(),
@@ -455,6 +497,8 @@ export const useApp = create<AppState>((set, get) => ({
       summary: s.summary ?? undefined,
       speakerAliases:
         Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
+      translations:
+        Object.keys(s.translations).length > 0 ? s.translations : undefined,
     };
     await storage.saveSession(session);
     const metas = await storage.listSessions();
@@ -486,6 +530,7 @@ export const useApp = create<AppState>((set, get) => ({
       segments: session.segments,
       interim: null,
       speakerAliases: session.speakerAliases ?? {},
+      translations: session.translations ?? {},
       cards: session.cards,
       terms: session.terms,
       summary: session.summary ?? null,
@@ -532,6 +577,7 @@ export const useApp = create<AppState>((set, get) => ({
       segments: [],
       interim: null,
       speakerAliases: {},
+      translations: {},
       cards: [],
       terms: [],
       summary: null,
@@ -562,5 +608,7 @@ export function currentSessionSnapshot(): MeetingSession | null {
     summary: s.summary ?? undefined,
     speakerAliases:
       Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
+    translations:
+      Object.keys(s.translations).length > 0 ? s.translations : undefined,
   };
 }

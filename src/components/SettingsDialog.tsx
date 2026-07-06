@@ -383,6 +383,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // diarize truthy AND a token available).
   const realtimeDiarizeAvailable =
     (draft.engine === "whisper" || draft.engine === "tabaudio") && !!draft.hfToken;
+  // 双语转录 (#42): the translation target IS explainLanguage — "en"
+  // would mean translating English into English, so the toggle is
+  // disabled (zh-only for now; more languages later, see Settings.
+  // explainLanguage).
+  const bilingualTranscriptAvailable = draft.explainLanguage !== "en";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -742,6 +747,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 卡片解释的语言；English 模式给不需要中文的用户，界面文字仍为中文
               </div>
             </div>
+
+            <label className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className={`text-sm ${bilingualTranscriptAvailable ? "text-fg" : "text-mut2"}`}>
+                  双语转录
+                </div>
+                <div className="mt-0.5 text-xs leading-[1.7] text-mut2">
+                  {bilingualTranscriptAvailable
+                    ? "每段转录实时翻译为中文，显示在原文下方"
+                    : "解释语言为 English 时不可用"}
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.bilingualTranscript}
+                disabled={!bilingualTranscriptAvailable}
+                onChange={(e) => patch({ bilingualTranscript: e.target.checked })}
+                className="h-4 w-4 shrink-0 accent-act disabled:opacity-50"
+              />
+            </label>
 
             <div className="space-y-2 border-t border-edge pt-3">
               <div className="text-xs text-mut">词典主题包</div>

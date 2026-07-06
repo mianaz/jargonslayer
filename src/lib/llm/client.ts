@@ -10,6 +10,8 @@ import type {
   Settings,
   SummarizeRequest,
   SummaryResult,
+  TranslateRequest,
+  TranslateResponse,
 } from "../types";
 import { PROVIDER_HEADERS } from "../types";
 import { withBase } from "../basePath";
@@ -166,6 +168,37 @@ export async function defineApi(
   }
 
   return (await res.json()) as DefineResult;
+}
+
+export async function translateApi(
+  body: TranslateRequest,
+  settings: Settings,
+): Promise<TranslateResponse> {
+  let res: Response;
+  try {
+    res = await fetch(withBase("/api/translate"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(settings),
+      },
+      body: JSON.stringify(body satisfies TranslateRequest),
+      // Reasoning-model latency, same rationale as detect's 20s, but
+      // batches here carry up to 6 segments instead of one.
+      signal: AbortSignal.timeout(30000),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new UpstreamError("翻译请求超时");
+    }
+    throw new UpstreamError("翻译请求失败，请检查网络连接");
+  }
+
+  if (!res.ok) {
+    await throwForStatus(res);
+  }
+
+  return (await res.json()) as TranslateResponse;
 }
 
 /** Probe the configured provider/key/baseUrl with a trivial detect

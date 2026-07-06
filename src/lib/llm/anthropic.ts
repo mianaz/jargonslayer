@@ -15,6 +15,7 @@ import type {
   LlmProvider,
   MeetingSummary,
   TermType,
+  TranslateResponse,
 } from "../types";
 import { PROVIDER_HEADERS } from "../types";
 
@@ -50,7 +51,7 @@ export function resolveProvider(req: Request): {
   return { provider, baseUrl };
 }
 
-export type LlmCallKind = "detect" | "summary" | "define";
+export type LlmCallKind = "detect" | "summary" | "define" | "translate";
 
 export interface ResolvedLlmConfig {
   apiKey: string;
@@ -90,8 +91,9 @@ export interface ResolvedLlmConfig {
  *  Env contract: JARGONSLAYER_API_KEY (preferred; provider-neutral) or
  *  ANTHROPIC_API_KEY (legacy name, works for any provider), plus
  *  JARGONSLAYER_PROVIDER / JARGONSLAYER_BASE_URL and the per-kind
- *  models JARGONSLAYER_DETECT_MODEL / JARGONSLAYER_SUMMARY_MODEL
- *  ("define" uses the detect-class model). When no server model is
+ *  models JARGONSLAYER_DETECT_MODEL / JARGONSLAYER_SUMMARY_MODEL /
+ *  JARGONSLAYER_TRANSLATE_MODEL ("define" and "translate" both fall
+ *  back to the detect-class model). When no server model is
  *  configured (legacy Anthropic-key setups), forcedModel stays null
  *  and routes keep their existing body-model defaults.
  *
@@ -119,6 +121,7 @@ export function resolveLlmConfig(
 
   const detectClassModel = process.env.JARGONSLAYER_DETECT_MODEL || null;
   const baseUrl = process.env.JARGONSLAYER_BASE_URL || "";
+  const isOpenRouter = baseUrl.includes("openrouter.ai");
   return {
     apiKey: serverKey,
     provider:
@@ -126,13 +129,24 @@ export function resolveLlmConfig(
         ? "openai-compat"
         : "anthropic",
     baseUrl,
-    extraBody: baseUrl.includes("openrouter.ai")
-      ? { provider: { data_collection: "allow" } }
+    extraBody: isOpenRouter
+      ? {
+          provider: { data_collection: "allow" },
+          // Translation needs no chain-of-thought, and the hosted
+          // reasoning model (minimax-m3) pays for one by default —
+          // measured 2026-07-06: disabling it cut wall time 4.0s ->
+          // 1.7s and cost to ~1/4 (320 -> 0 reasoning tokens), with
+          // clean (unfenced) JSON output. Scoped to "translate" only:
+          // detect/summary/define still benefit from reasoning.
+          ...(kind === "translate" ? { reasoning: { enabled: false } } : {}),
+        }
       : undefined,
     forcedModel:
       kind === "summary"
         ? process.env.JARGONSLAYER_SUMMARY_MODEL || detectClassModel
-        : detectClassModel,
+        : kind === "translate"
+          ? process.env.JARGONSLAYER_TRANSLATE_MODEL || detectClassModel
+          : detectClassModel,
     isServerKey: true,
   };
 }
@@ -211,6 +225,17 @@ export const TranslationsSchema = z.object({
     }),
   ),
 });
+
+// Live bilingual transcript (#42) — id-keyed shape, distinct from the
+// index-keyed TranslationsSchema above (post-meeting summary stage).
+export const TranslateSegmentsSchema = z.object({
+  translations: z.array(
+    z.object({
+      id: z.string(),
+      text: z.string(),
+    }),
+  ),
+}) satisfies z.ZodType<TranslateResponse>;
 
 // ---------------------------------------------------------------
 // Confidence clamping — callers may also clamp again downstream;

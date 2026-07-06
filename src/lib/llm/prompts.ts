@@ -229,6 +229,41 @@ export function buildDefineUserMessage(
   return `PHRASE:\n${phrase}\n\nCONTEXT:\n${context || "(none)"}`;
 }
 
+// ---------------- live bilingual transcript (#42) ----------------
+// Distinct from TRANSLATE_SYSTEM_PROMPT above (post-meeting, index-
+// keyed, zh-only): this translates live-arriving segments, id-keyed,
+// into whatever target language the caller names.
+
+const TARGET_LANGUAGE_NAMES: Record<string, string> = {
+  zh: "简体中文",
+};
+
+/** Map a language code to its display name for the prompt; unknown
+ *  codes (anything besides "zh" for now) pass through unchanged. */
+function targetLanguageName(lang: string): string {
+  return TARGET_LANGUAGE_NAMES[lang] ?? lang;
+}
+
+export function buildTranslateSystemPrompt(lang: string): string {
+  return `You are a professional simultaneous interpreter for a live meeting transcript. Translate each input segment into ${targetLanguageName(lang)}.
+
+Input: a JSON array of {"id": "<segment id>", "text": "<English segment>"}.
+Return ONLY a JSON array: [{"id": "<same id>", "text": "<translation>"}]
+
+Rules:
+- Return one item per input id, echoing "id" unchanged. Never add, drop, merge, or reorder ids.
+- Natural, concise spoken register — how the speaker would actually say it, not a literal word-for-word rendering.
+- KEEP technical terms, acronyms, and product names in their original English.
+- No explanations, no annotations, no pinyin — the translation text only.
+- No markdown fences, no prose outside the JSON array.`;
+}
+
+export function buildTranslateUserMessage(
+  segments: { id: string; text: string }[],
+): string {
+  return JSON.stringify(segments);
+}
+
 export function buildDefineSystemPrompt(lang: ExplainLanguage): string {
   if (lang === "zh") return DEFINE_SYSTEM_PROMPT;
   return applyLangVariant(DEFINE_SYSTEM_PROMPT, [
