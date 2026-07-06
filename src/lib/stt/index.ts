@@ -11,6 +11,16 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       return new WebSpeechEngine();
     case "whisper":
       return new WhisperSocketEngine();
+    case "tabaudio":
+      // Placeholder until the getDisplayMedia tab-audio engine lands
+      // (phase 2). Not reachable from the UI before then.
+      return {
+        kind: "tabaudio",
+        async start(events) {
+          events.onStatus("error", "标签页音频引擎即将上线，请先使用其他引擎");
+        },
+        async stop() {},
+      };
     case "demo":
       return new DemoEngine();
   }
