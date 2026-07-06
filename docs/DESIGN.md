@@ -67,6 +67,17 @@
 - 主动语态、句首动词、无填充词；界面词汇表全程一致（引擎名、按钮名、面板名）；
 - 中文为主，关键术语保留英文原文（expression 原文永不翻译——它就是学习对象）。
 
+## 参考校准（awesome-design-md：Warp / Linear / Superhuman）
+
+对照三份真实产品的逆向 token 后的修订与确认：
+
+- **表面分层（采纳，来自 Linear）**：深色 UI 的深度感来自表面阶梯而非阴影。token 升级为 ink（页面画布，压深到 #07090E）→ panel → panel2（浮层）→ panel3（hover/激活态）+ 双档 hairline（edge / edge2）。层级规则：交互悬停 = 表面上移一档（bg-panel → bg-panel3），不加阴影。
+- **文字三级（采纳）**：fg（正文/中文解释）→ mut（次级/标签）→ mut2（时间戳、计数等元信息）。
+- **hover 变亮（采纳，来自 Linear）**：深色 UI 上主按钮 hover 用更亮的 acc-hover，不用变暗或加 glow。
+- **强调色纪律（获得印证）**：Linear 的原话规则"accent 出现在品牌标记、焦点环和少数刻意的 CTA 上，从不装饰性使用"——与本规范 Color Lock 一致，维持。
+- **圆角锁（获得印证）**：Linear 的 6/8/12px 与本规范 8/12px 锁一致；Warp 的 2–4px 终端风更紧但不换（我们的卡片承载双语长文本，需要更柔的容器）。
+- **拒绝**：Warp 的暖米色实心主按钮与 Instrument Serif 斜体点缀（营销页手法，且该字体在 taste-skill 禁用名单）；Superhuman 的浅色编辑部结构（与实时工具不同类）；Linear 的薰衣草紫强调色（那是它的签名，我们的签名是金色标注层）。
+
 ## AI 味清单（产品 UI 适用子集，polish pass 逐条过）
 
 - 零 em-dash（`—`）出现在任何可见字符串（中文破折号"——"属正常中文标点，不在此列；英文文案禁 em-dash）；

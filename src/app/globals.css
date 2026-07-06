@@ -3,13 +3,17 @@
 @tailwind utilities;
 
 :root {
-  --ink: #0a0d13;
+  --ink: #07090e;
   --panel: #10141d;
   --panel2: #161b27;
+  --panel3: #1b2130;
   --edge: #232b3a;
+  --edge2: #303a4d;
   --fg: #e8ecf4;
   --mut: #8b95a9;
+  --mut2: #667083;
   --acc: #5b9dff;
+  --acc-hover: #7fb2ff;
   --acc2: #3ed598;
   --gold: #e5b455;
   --warn: #e06c75;
