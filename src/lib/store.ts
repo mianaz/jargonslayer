@@ -29,10 +29,22 @@ import type { CustomEntry } from "./types";
 // transcript edits) — one timer, latest state wins.
 let postStopSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
-function scheduleSessionSave(save: () => Promise<unknown>): void {
+/** `scheduledGen`/`currentGen` guard against a meeting-boundary race:
+ * if the user starts a new meeting (bumping meetingGen) before this
+ * debounce fires, the save would otherwise persist the WRONG (new,
+ * current) live state under the OLD meeting's mutation. Skip silently
+ * when the gen has moved on. Exported (like the pure helpers below)
+ * so the debounce-vs-gen-bump race is directly unit-testable without
+ * driving the zustand store or mocking IndexedDB. */
+export function scheduleSessionSave(
+  save: () => Promise<unknown>,
+  scheduledGen: number,
+  currentGen: () => number,
+): void {
   if (postStopSaveTimer) clearTimeout(postStopSaveTimer);
   postStopSaveTimer = setTimeout(() => {
     postStopSaveTimer = null;
+    if (currentGen() !== scheduledGen) return;
     void save();
   }, 1500);
 }
@@ -44,6 +56,88 @@ export interface LookupRequest {
   y: number;
 }
 
+// ---------------------------------------------------------------
+// Realtime speaker diarization (beta) — pure helpers, exported so
+// they're unit-testable independent of zustand (see store.test.ts;
+// there's no pre-existing store test file to follow the pattern of,
+// so the store action bodies below are kept as thin wrappers around
+// these extracted pure functions, mirroring how detect/dedupe.ts's
+// mergeDetections is tested directly).
+// ---------------------------------------------------------------
+
+/** Apply one `speaker_update` (already-changed-only assignments from
+ * the sidecar) onto the current segment list: for each assignment,
+ * find the segment by `sttSeg`, set its raw stable id (`sttSpeaker`)
+ * and its DISPLAY `speaker` (alias-mapped, falling back to the stable
+ * id itself when unaliased). Pure — does not touch aliases; the alias
+ * map itself is only ever written by a user rename (see
+ * aliasesAfterRename), never by an auto-update — that's what makes
+ * "rename-wins" hold. */
+export function applySpeakerUpdateToSegments(
+  segments: TranscriptSegment[],
+  assignments: { segId: number; speaker: string }[],
+  aliases: Record<string, string>,
+): TranscriptSegment[] {
+  if (assignments.length === 0) return segments;
+  const bySegId = new Map(assignments.map((a) => [a.segId, a.speaker]));
+  return segments.map((s) => {
+    const stableId = bySegId.get(s.sttSeg ?? -1);
+    if (stableId === undefined) return s;
+    return { ...s, sttSpeaker: stableId, speaker: aliases[stableId] ?? stableId };
+  });
+}
+
+/** Existing rename behavior: every segment currently DISPLAYING
+ * `from` gets its `speaker` overwritten to the cleaned `to`. Segments
+ * with no `speaker` set, or a different one, are untouched. */
+export function renameSpeakerInSegments(
+  segments: TranscriptSegment[],
+  from: string,
+  to: string,
+): TranscriptSegment[] {
+  return segments.map((s) => (s.speaker === from ? { ...s, speaker: to } : s));
+}
+
+/** Meeting-boundary guard for realtime speaker diarization updates:
+ * a `speaker_update` from a PREVIOUS meeting's engine session
+ * (captured `expectedGen` at session start, see useMeeting.ts) must
+ * not be applied once the store has moved on to a new meeting/session
+ * context (`currentGen` bumped) — sttSeg numbering restarts per
+ * engine session, so a stale update could otherwise collide with an
+ * unrelated segment in the new meeting that happens to reuse the same
+ * small sttSeg number. */
+export function shouldApplySpeakerUpdate(
+  currentGen: number,
+  expectedGen: number,
+): boolean {
+  return currentGen === expectedGen;
+}
+
+/** Rename-wins: record `aliases[stableId] = to` for every distinct
+ * stable id currently displaying as `from` (stableId = the segment's
+ * `sttSpeaker ?? from` — falls back to `from` itself for
+ * non-diarized/demo speakers, so the same rename behavior as before
+ * realtime diarization existed still works unchanged). A later
+ * `applySpeakerUpdate` for that stable id then re-resolves `speaker`
+ * through this alias, so an auto-update can never clobber the rename.
+ * Usually all `from`-displaying segments share one stable id (that's
+ * why they display the same name); if they don't (a rare transition-
+ * window edge case), every one of them gets aliased to `to`. */
+export function aliasesAfterRename(
+  segments: TranscriptSegment[],
+  aliases: Record<string, string>,
+  from: string,
+  to: string,
+): Record<string, string> {
+  const next = { ...aliases };
+  for (const s of segments) {
+    if (s.speaker !== from) continue;
+    const stableId = s.sttSpeaker ?? from;
+    next[stableId] = to;
+  }
+  return next;
+}
+
 interface AppState {
   // settings
   settings: Settings;
@@ -53,8 +147,19 @@ interface AppState {
   status: MeetingStatus;
   statusDetail: string | null;
   startedAt: number | null;
+  // Monotonically increasing generation counter — bumped whenever a
+  // fresh meeting/session context begins (beginMeeting/newMeeting/
+  // loadSession, i.e. anywhere segments/cards are wiped for a new
+  // context). Used to silently drop stale async results (late detect
+  // responses, debounced saves) that belong to a PREVIOUS meeting —
+  // see the scheduler's gen capture and scheduleSessionSave above.
+  meetingGen: number;
   segments: TranscriptSegment[];
   interim: InterimState | null;
+  // realtime speaker diarization (beta): stable id -> user-chosen
+  // display name, written only by renameSpeaker (see rename-wins in
+  // applySpeakerUpdate/aliasesAfterRename above).
+  speakerAliases: Record<string, string>;
 
   // detection results
   cards: ExpressionCard[];
@@ -89,9 +194,24 @@ interface AppState {
   beginMeeting: () => void; // clears live state, stamps startedAt
   addFinal: (
     text: string,
-    opts?: { speaker?: string; startedAt?: number },
+    opts?: { speaker?: string; startedAt?: number; sttSeg?: number },
   ) => TranscriptSegment;
   setInterim: (interim: InterimState | null) => void;
+  // realtime speaker diarization (beta): back-labels already-sent
+  // segments by sttSeg. Works while status === "listening" (a plain
+  // set() — no status gating). See applySpeakerUpdateToSegments.
+  // `expectedGen` is the meetingGen captured when the engine session
+  // that produced this update was started (useMeeting.ts) — a late
+  // update from a PREVIOUS meeting's engine is silently dropped if
+  // the store has since moved to a new gen (meeting-boundary guard;
+  // sttSeg numbering restarts per engine session, so a stale update
+  // could otherwise collide with an unrelated segment in the new
+  // meeting that happens to reuse the same small sttSeg number).
+  applySpeakerUpdate: (
+    assignments: { segId: number; speaker: string }[],
+    speakers: string[],
+    expectedGen: number,
+  ) => void;
 
   applyDetection: (res: DetectResponse, source: DetectionSource) => void;
   setDetectBusy: (busy: boolean) => void;
@@ -127,8 +247,10 @@ export const useApp = create<AppState>((set, get) => ({
   status: "idle",
   statusDetail: null,
   startedAt: null,
+  meetingGen: 0,
   segments: [],
   interim: null,
+  speakerAliases: {},
 
   cards: [],
   terms: [],
@@ -181,19 +303,21 @@ export const useApp = create<AppState>((set, get) => ({
     set({ status, statusDetail: detail ?? null }),
 
   beginMeeting: () =>
-    set({
+    set((state) => ({
       status: "connecting",
       statusDetail: null,
       startedAt: Date.now(),
+      meetingGen: state.meetingGen + 1,
       segments: [],
       interim: null,
+      speakerAliases: {},
       cards: [],
       terms: [],
       summary: null,
       focusCardId: null,
       lookup: null,
       activeSessionId: null,
-    }),
+    })),
 
   addFinal: (text, opts) => {
     const { segments, settings } = get();
@@ -206,6 +330,7 @@ export const useApp = create<AppState>((set, get) => ({
       speaker: opts?.speaker,
       text: text.trim(),
       engine: settings.engine,
+      sttSeg: opts?.sttSeg,
     };
     set({ segments: [...segments, seg] });
     // Personal glossary matches ride on the segment funnel so every
@@ -222,6 +347,24 @@ export const useApp = create<AppState>((set, get) => ({
 
   setInterim: (interim) => set({ interim }),
 
+  applySpeakerUpdate: (assignments, _speakers, expectedGen) => {
+    // `_speakers` (the sidecar's full active-speaker list) isn't
+    // needed to update segments — display names are derived per-
+    // segment via aliases — but kept in the signature per the wire
+    // contract / STTEvents.onSpeakerUpdate shape for callers that may
+    // want it later (e.g. an active-speakers indicator).
+    // Meeting-boundary guard: drop updates from a previous gen (see
+    // AppState.applySpeakerUpdate doc comment above / shouldApplySpeakerUpdate).
+    if (!shouldApplySpeakerUpdate(get().meetingGen, expectedGen)) return;
+    set({
+      segments: applySpeakerUpdateToSegments(
+        get().segments,
+        assignments,
+        get().speakerAliases,
+      ),
+    });
+  },
+
   applyDetection: (res, source) => {
     const { cards, terms, settings } = get();
     const merged = mergeDetections(
@@ -236,7 +379,11 @@ export const useApp = create<AppState>((set, get) => ({
     // later). If results land after the session was already saved,
     // top up the saved copy so history isn't missing tail cards.
     if (get().status === "stopped" && get().segments.length > 0) {
-      scheduleSessionSave(() => get().saveCurrentSession());
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
     }
   },
 
@@ -251,13 +398,23 @@ export const useApp = create<AppState>((set, get) => ({
   renameSpeaker: (from, to) => {
     const cleaned = to.trim();
     if (!cleaned || from === cleaned) return;
+    const { segments } = get();
+    // Rename-wins: record the alias BEFORE overwriting `speaker` below
+    // (aliasesAfterRename reads segments' current `speaker`/`sttSpeaker`
+    // to find each affected stable id) — a later applySpeakerUpdate for
+    // that stable id then re-resolves through this alias, so it can
+    // never clobber the rename.
+    const speakerAliases = aliasesAfterRename(segments, get().speakerAliases, from, cleaned);
     set({
-      segments: get().segments.map((s) =>
-        s.speaker === from ? { ...s, speaker: cleaned } : s,
-      ),
+      segments: renameSpeakerInSegments(segments, from, cleaned),
+      speakerAliases,
     });
     if (get().status === "stopped" && get().segments.length > 0) {
-      scheduleSessionSave(() => get().saveCurrentSession());
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
     }
   },
 
@@ -270,7 +427,11 @@ export const useApp = create<AppState>((set, get) => ({
       ),
     });
     if (get().status === "stopped" && get().segments.length > 0) {
-      scheduleSessionSave(() => get().saveCurrentSession());
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
     }
   },
 
@@ -292,6 +453,8 @@ export const useApp = create<AppState>((set, get) => ({
       cards: s.cards,
       terms: s.terms,
       summary: s.summary ?? undefined,
+      speakerAliases:
+        Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
     };
     await storage.saveSession(session);
     const metas = await storage.listSessions();
@@ -315,19 +478,21 @@ export const useApp = create<AppState>((set, get) => ({
       get().showToast("会话不存在或已删除");
       return;
     }
-    set({
+    set((state) => ({
       status: "stopped",
       statusDetail: null,
       startedAt: session.startedAt,
+      meetingGen: state.meetingGen + 1,
       segments: session.segments,
       interim: null,
+      speakerAliases: session.speakerAliases ?? {},
       cards: session.cards,
       terms: session.terms,
       summary: session.summary ?? null,
       activeSessionId: session.id,
       focusCardId: null,
       lookup: null,
-    });
+    }));
   },
 
   deleteSession: async (id) => {
@@ -359,12 +524,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   newMeeting: () =>
-    set({
+    set((state) => ({
       status: "idle",
       statusDetail: null,
       startedAt: null,
+      meetingGen: state.meetingGen + 1,
       segments: [],
       interim: null,
+      speakerAliases: {},
       cards: [],
       terms: [],
       summary: null,
@@ -372,7 +539,7 @@ export const useApp = create<AppState>((set, get) => ({
       focusCardId: null,
       lookup: null,
       activeSessionId: null,
-    }),
+    })),
 
   showToast: (toast) => set({ toast }),
   clearToast: () => set({ toast: null }),
@@ -393,5 +560,7 @@ export function currentSessionSnapshot(): MeetingSession | null {
     cards: s.cards,
     terms: s.terms,
     summary: s.summary ?? undefined,
+    speakerAliases:
+      Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
   };
 }

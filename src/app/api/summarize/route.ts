@@ -72,6 +72,21 @@ function errorBody(body: ApiErrorBody, status: number) {
   return NextResponse.json(body, { status });
 }
 
+// ---------------------------------------------------------------
+// Request size caps — reject oversized bodies before any LLM dispatch
+// (chunking/translation/sweep all fan out into multiple provider
+// calls, so an unbounded transcript is effectively a cost/DoS vector).
+// ---------------------------------------------------------------
+
+const MAX_SEGMENTS = 2000;
+const MAX_TOTAL_SEGMENT_CHARS = 400_000;
+
+function totalSegmentChars(segments: SummarizeRequest["segments"]): number {
+  let total = 0;
+  for (const s of segments) total += s.text.length;
+  return total;
+}
+
 /** Provider/baseUrl pair threaded through every callJson call in
  *  this route so all three stages hit the same configured endpoint. */
 interface LlmConfig {
@@ -182,6 +197,7 @@ async function translateChunk(
     user: userPayload,
     schema: TranslationsSchema,
     maxTokens: 3000,
+    arrayKey: "translations",
     ...llm,
   });
 
@@ -343,6 +359,13 @@ export async function POST(req: Request) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
   const { segments, expressions, terms, model: requestedModel, lang } = parsedBody.data;
+
+  if (
+    segments.length > MAX_SEGMENTS ||
+    totalSegmentChars(segments) > MAX_TOTAL_SEGMENT_CHARS
+  ) {
+    return errorBody({ error: "请求体过大", code: "bad_request" }, 413);
+  }
 
   const apiKey = resolveKey(req);
   if (!apiKey) {

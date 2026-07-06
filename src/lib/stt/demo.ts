@@ -15,7 +15,7 @@ interface ScriptLine {
 const SCRIPT: ScriptLine[] = [
   {
     speaker: "Sarah",
-    text: "Okay everyone, let's get the ball rolling — thanks for joining, I know Q3 planning snuck up on us fast.",
+    text: "Okay everyone, let's get the ball rolling. Thanks for joining, I know Q3 planning snuck up on us fast.",
   },
   {
     speaker: "Sarah",
@@ -31,15 +31,15 @@ const SCRIPT: ScriptLine[] = [
   },
   {
     speaker: "Sarah",
-    text: "Right, and with our current runway, we can't afford another quarter of marginal wins — we need something bigger.",
+    text: "Right, and with our current runway, we can't afford another quarter of marginal wins. We need something bigger.",
   },
   {
     speaker: "Mike",
-    text: "There's some low-hanging fruit in the billing flow though — a couple of fixes could pay off fast with minimal cost.",
+    text: "There's some low-hanging fruit in the billing flow though, a couple of fixes could pay off fast with minimal cost.",
   },
   {
     speaker: "Lily",
-    text: "Agreed, but let's not boil the ocean trying to fix every edge case at once — we should scope this tightly.",
+    text: "Agreed, but let's not boil the ocean trying to fix every edge case at once. We should scope this tightly.",
   },
   {
     speaker: "Sarah",
@@ -51,7 +51,7 @@ const SCRIPT: ScriptLine[] = [
   },
   {
     speaker: "Sarah",
-    text: "That's the elephant in the room, isn't it — investor calls are eating half our engineering time this month.",
+    text: "That's the elephant in the room, isn't it. Investor calls are eating half our engineering time this month.",
   },
   {
     speaker: "Lily",
@@ -63,7 +63,7 @@ const SCRIPT: ScriptLine[] = [
   },
   {
     speaker: "Sarah",
-    text: "Let's take this offline, actually — Mike and Lily, grab fifteen minutes after this call to sort out the priority order.",
+    text: "Let's take this offline, actually. Mike and Lily, grab fifteen minutes after this call to sort out the priority order.",
   },
   {
     speaker: "Lily",
@@ -75,7 +75,7 @@ const SCRIPT: ScriptLine[] = [
   },
   {
     speaker: "Sarah",
-    text: "Great meeting — action items: Mike owns billing, Lily owns the churn dashboard, and I'll circle back with runway updates Friday.",
+    text: "Great meeting. Action items: Mike owns billing, Lily owns the churn dashboard, and I'll circle back with runway updates Friday.",
   },
 ];
 

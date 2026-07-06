@@ -18,8 +18,27 @@ interface FinalMessage {
   text: string;
   start?: number;
   end?: number;
+  seg_id?: number;
 }
-type ServerMessage = PartialMessage | FinalMessage | { type: string };
+// Realtime speaker diarization (beta) — see whisper_server.py's
+// run_realtime_diar / _maybe_trigger_realtime_diar.
+interface SpeakerUpdateMessage {
+  type: "speaker_update";
+  gen: number;
+  assignments: { seg_id: number; speaker: string }[];
+  speakers: string[];
+}
+interface DiarStatusMessage {
+  type: "diar_status";
+  state: "unavailable" | "error";
+  detail?: string;
+}
+type ServerMessage =
+  | PartialMessage
+  | FinalMessage
+  | SpeakerUpdateMessage
+  | DiarStatusMessage
+  | { type: string };
 
 export interface WsTransportCallbacks {
   events: STTEvents;
@@ -45,6 +64,14 @@ export class WsTransport {
   private userStopped = false;
   private reconnectAttempted = false;
   private stopping = false;
+
+  // Realtime speaker diarization (beta): drop any speaker_update whose
+  // gen is <= the last one we accepted (out-of-order delivery isn't
+  // expected over a single ws, but this also cleanly ignores a stray
+  // update from a connection we've since reconnected past). Reset to 0
+  // per connect() — the sidecar's ConnectionState.diar_gen also starts
+  // at 0 for a fresh connection.
+  private lastDiarGen = 0;
 
   constructor(cb: WsTransportCallbacks) {
     this.events = cb.events;
@@ -89,6 +116,7 @@ export class WsTransport {
     const events = this.events;
 
     events.onStatus("connecting");
+    this.lastDiarGen = 0; // fresh connection -> sidecar's diar_gen also starts at 0
 
     let ws: WebSocket;
     try {
@@ -102,11 +130,20 @@ export class WsTransport {
 
     ws.onopen = () => {
       if (this.stopping) return;
-      const config = {
+      const config: Record<string, unknown> = {
         type: "config",
         sampleRate: 16000,
         language: settings.language.split("-")[0],
       };
+      // Realtime speaker diarization (beta): only sent when enabled —
+      // the sidecar only arms it when BOTH diarize is truthy AND a
+      // token is available (config's or its own --hf-token default),
+      // so omitting hf_token here still lets the server-side default
+      // apply if the user relies on that instead.
+      if (settings.realtimeDiarize) {
+        config.diarize = true;
+        if (settings.hfToken) config.hf_token = settings.hfToken;
+      }
       ws.send(JSON.stringify(config));
       this.reconnectAttempted = false;
       events.onStatus("listening");
@@ -124,7 +161,18 @@ export class WsTransport {
         events.onInterim((msg as PartialMessage).text);
       } else if (msg.type === "final") {
         const final = msg as FinalMessage;
-        events.onFinal(final.text);
+        events.onFinal(final.text, { sttSeg: final.seg_id });
+      } else if (msg.type === "speaker_update") {
+        const update = msg as SpeakerUpdateMessage;
+        if (update.gen <= this.lastDiarGen) return; // stale/out-of-order — drop
+        this.lastDiarGen = update.gen;
+        events.onSpeakerUpdate?.(
+          update.assignments.map((a) => ({ segId: a.seg_id, speaker: a.speaker })),
+          update.speakers,
+        );
+      } else if (msg.type === "diar_status") {
+        const status = msg as DiarStatusMessage;
+        events.onDiarStatus?.(status.state, status.detail);
       }
     };
 

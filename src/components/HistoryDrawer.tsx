@@ -243,14 +243,14 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
               <button
                 type="button"
                 onClick={() => setImportPickerOpen((v) => !v)}
-                className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+                className="flex items-center gap-2 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
               >
                 <UploadSimple size={16} weight="regular" />
                 导入录音
               </button>
 
               {importPickerOpen && (
-                <div className="absolute right-0 top-full z-50 mt-1.5 w-64 rounded-xl border border-edge bg-panel2 p-1.5 shadow-xl">
+                <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-xl border border-edge bg-panel2 p-1.5 shadow-xl">
                   <button
                     type="button"
                     onClick={() => chooseImportMode("sidecar")}
@@ -278,10 +278,10 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                     onClick={() => chooseImportMode("cloud")}
                     className="w-full rounded-lg px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
                   >
-                    <div className="text-sm text-fg">云端转录（上传至你配置的兼容端点）</div>
+                    <div className="text-sm text-fg">云端转录（音频上传至你配置的服务地址）</div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
                       {canUseCloud
-                        ? "音频将上传至你在设置中配置的 OpenAI 兼容端点"
+                        ? "音频会上传到你配置的 OpenAI 兼容端点"
                         : "需先在设置→AI 检测中选择 OpenAI 兼容端点"}
                     </div>
                   </button>
@@ -326,8 +326,8 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                     </span>
                   </div>
                   {job.error ? (
-                    <div className="mt-1.5 text-xs text-warn">
-                      {job.error} — 确认 sidecar 已启动且 --http-port 开启
+                    <div className="mt-2 text-xs text-warn-soft">
+                      {job.error}，确认 sidecar 已启动且 --http-port 开启
                     </div>
                   ) : (
                     <div
@@ -375,17 +375,17 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                           e.stopPropagation();
                           handleDeleteClick(meta.id);
                         }}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-mut hover:bg-panel3 hover:text-warn"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-mut hover:bg-panel3 hover:text-warn-soft"
                       >
                         <Trash size={16} weight="regular" />
                       </button>
                     </div>
 
                     {confirmDeleteId === meta.id && (
-                      <div className="mt-1 text-xs text-warn">确认删除?</div>
+                      <div className="mt-2 text-xs text-warn-soft">确认删除?</div>
                     )}
 
-                    <div className="mt-1 font-mono text-xs tabular-nums text-mut2">
+                    <div className="mt-2 font-mono text-xs tabular-nums text-mut2">
                       {formatDateTime(meta.startedAt)} ·{" "}
                       {formatDurationMin(meta.startedAt, meta.endedAt)}
                     </div>
@@ -406,7 +406,7 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                     </div>
 
                     {hintExpr && (
-                      <div className="mt-1.5 text-xs text-gold/80">
+                      <div className="mt-2 text-xs text-gold/80">
                         含 &quot;{hintExpr}&quot;
                       </div>
                     )}

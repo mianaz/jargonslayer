@@ -51,7 +51,7 @@ export interface RemotePackExpression {
   plain_english?: string;
   tone?: string;
   confidence?: number;
-  pack?: string; // optional — defaults to the manifest's own id
+  pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateExpressions)
 }
 
 export interface RemotePackTerm {
@@ -59,7 +59,7 @@ export interface RemotePackTerm {
   type?: TermType;
   gloss_en?: string;
   gloss_zh: string;
-  pack?: string; // optional — defaults to the manifest's own id
+  pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateTerms)
 }
 
 export interface RemotePackManifest {
@@ -72,10 +72,13 @@ export interface RemotePackManifest {
 }
 
 /** A validated, normalized pack ready to feed into the dictionary
- *  registry — entries have `pack` filled in (= manifest.id when the
- *  entry itself omitted it) and match DictExpressionEntry/DictTermEntry
- *  exactly, so scanDictionary's matching logic can treat them
- *  identically to EXTRA_EXPRESSIONS/EXTRA_TERMS. */
+ *  registry — entries have `pack` forced to the manifest's own id
+ *  (an entry's own `pack` field, if any, is untrusted and discarded —
+ *  otherwise a remote entry could claim `pack: "core"` and become
+ *  permanently enabled, or impersonate a different installed pack)
+ *  and match DictExpressionEntry/DictTermEntry exactly, so
+ *  scanDictionary's matching logic can treat them identically to
+ *  EXTRA_EXPRESSIONS/EXTRA_TERMS. */
 export interface LoadedRemotePack {
   id: string;
   name: string;
@@ -142,7 +145,12 @@ function validateExpressions(
         : e.expression.trim(),
       tone: isNonEmptyString(e.tone) ? e.tone : "community pack entry",
       confidence,
-      pack: isNonEmptyString(e.pack) ? e.pack : packId,
+      // Always the manifest's own id — an entry's own `pack` field is
+      // untrusted input and is ignored, not merely defaulted, so a
+      // malicious/buggy remote entry can't claim `pack: "core"` (or
+      // any other id) to become permanently enabled or masquerade as
+      // a different installed pack.
+      pack: packId,
     });
   }
   return out;
@@ -170,7 +178,9 @@ function validateTerms(raw: unknown, packId: string): DictTermEntry[] {
       type,
       gloss_en: isNonEmptyString(t.gloss_en) ? t.gloss_en : "",
       gloss_zh: clampZh(t.gloss_zh.trim()),
-      pack: isNonEmptyString(t.pack) ? t.pack : packId,
+      // See validateExpressions above: always the manifest's own id,
+      // never trusts the entry's own `pack` field.
+      pack: packId,
     });
   }
   return out;
@@ -181,7 +191,7 @@ function validateTerms(raw: unknown, packId: string): DictTermEntry[] {
  *  id/name/version) — per-entry problems are dropped, not fatal. */
 function validateManifest(raw: unknown): LoadedRemotePack {
   if (!raw || typeof raw !== "object") {
-    throw new Error("词典包格式不正确：不是合法 JSON 对象");
+    throw new Error("词典包格式不正确：不是有效的 JSON 对象");
   }
   const m = raw as Record<string, unknown>;
   if (!isNonEmptyString(m.id)) {
@@ -257,7 +267,7 @@ async function fetchManifest(url: string): Promise<LoadedRemotePack> {
   try {
     json = await res.json();
   } catch {
-    throw new Error("词典包不是合法 JSON");
+    throw new Error("词典包 JSON 格式无效");
   }
   return validateManifest(json);
 }

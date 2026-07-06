@@ -16,34 +16,45 @@ function hasIndexedDb(): boolean {
 
 // One-time migration from the pre-rename "meetlingo:*" keys. Copies
 // (never deletes) legacy data so a rollback stays possible.
-let migrationStarted = false;
+//
+// hydrate() calls loadSettings() and listSessions() in parallel, both of
+// which call this function — a boolean latch would let the second caller
+// see "already started" and skip waiting, racing ahead to read the index
+// before migration finished writing it. A shared promise fixes that:
+// every caller (including the one that didn't create it) awaits the same
+// in-flight migration.
+let migrationPromise: Promise<void> | null = null;
 async function migrateLegacyOnce(): Promise<void> {
-  if (migrationStarted || !hasIndexedDb()) return;
-  migrationStarted = true;
-  try {
-    if (await get("jargonslayer:migrated")) return;
-    const legacyIdx = await get<SessionMeta[]>("meetlingo:sessions:index");
-    if (legacyIdx && legacyIdx.length > 0) {
-      const newIdx = (await get<SessionMeta[]>(SESSIONS_INDEX_KEY)) ?? [];
-      const existing = new Set(newIdx.map((m) => m.id));
-      for (const m of legacyIdx) {
-        if (existing.has(m.id)) continue;
-        const s = await get<MeetingSession>(`meetlingo:session:${m.id}`);
-        if (s) {
-          await set(sessionKey(m.id), s);
-          newIdx.push(m);
+  if (!hasIndexedDb()) return;
+  if (!migrationPromise) {
+    migrationPromise = (async () => {
+      try {
+        if (await get("jargonslayer:migrated")) return;
+        const legacyIdx = await get<SessionMeta[]>("meetlingo:sessions:index");
+        if (legacyIdx && legacyIdx.length > 0) {
+          const newIdx = (await get<SessionMeta[]>(SESSIONS_INDEX_KEY)) ?? [];
+          const existing = new Set(newIdx.map((m) => m.id));
+          for (const m of legacyIdx) {
+            if (existing.has(m.id)) continue;
+            const s = await get<MeetingSession>(`meetlingo:session:${m.id}`);
+            if (s) {
+              await set(sessionKey(m.id), s);
+              newIdx.push(m);
+            }
+          }
+          await set(SESSIONS_INDEX_KEY, newIdx);
         }
+        const legacySettings = await get<Settings>("meetlingo:settings");
+        if (legacySettings && !(await get(SETTINGS_KEY))) {
+          await set(SETTINGS_KEY, legacySettings);
+        }
+        await set("jargonslayer:migrated", 1);
+      } catch (err) {
+        console.warn("[storage] legacy migration failed", err);
       }
-      await set(SESSIONS_INDEX_KEY, newIdx);
-    }
-    const legacySettings = await get<Settings>("meetlingo:settings");
-    if (legacySettings && !(await get(SETTINGS_KEY))) {
-      await set(SETTINGS_KEY, legacySettings);
-    }
-    await set("jargonslayer:migrated", 1);
-  } catch (err) {
-    console.warn("[storage] legacy migration failed", err);
+    })();
   }
+  return migrationPromise;
 }
 
 export async function saveSettings(s: Settings): Promise<void> {

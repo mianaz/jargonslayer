@@ -62,19 +62,27 @@ function FlashCard({
           onFlip();
         }
       }}
-      className="mx-auto flex min-h-[220px] w-full max-w-md cursor-pointer flex-col justify-center rounded-xl border border-edge bg-panel p-6"
+      className="card-manuscript card-manuscript-gold relative mx-auto flex min-h-[220px] w-full max-w-md cursor-pointer flex-col justify-center rounded-xl border border-edge bg-panel p-6"
     >
+      <span className="pointer-events-none absolute left-2 top-2 text-[10px] text-gold/40">
+        ❖
+      </span>
+      <span className="pointer-events-none absolute bottom-2 right-2 text-[10px] text-gold/40">
+        ❖
+      </span>
       {!flipped ? (
         <div className="text-center">
           <span className="mb-3 inline-block rounded-full border border-edge px-2 py-0.5 text-[10px] text-mut">
             {KIND_LABELS[entry.kind]}
           </span>
-          <div className="text-2xl font-semibold text-fg">{entry.headword}</div>
+          <div className="font-display text-3xl font-semibold text-fg">
+            {entry.headword}
+          </div>
           <div className="mt-4 text-xs text-mut2">点击卡片查看解释</div>
         </div>
       ) : (
         <div className="space-y-2 text-center">
-          <div className="text-[15px] font-medium leading-[1.7] text-fg">
+          <div className="text-[15px] font-medium leading-[26px] text-fg">
             {entry.chinese_explanation}
           </div>
           {(entry.meaning || entry.gloss_en) && (
@@ -172,7 +180,7 @@ export default function PracticeDeck() {
         <button
           type="button"
           onClick={handleReshuffle}
-          className="btn-tactile flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+          className="btn-tactile flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
         >
           <ArrowsClockwise size={16} weight="regular" />
           重新洗牌
@@ -180,12 +188,31 @@ export default function PracticeDeck() {
       </div>
 
       {total === 0 || !current ? (
-        <div className="rounded-xl border border-edge bg-panel p-6 text-center">
-          <div className="text-sm font-medium text-fg">这一类还没有词条</div>
-          <div className="mt-2 text-xs leading-[1.7] text-mut">
-            换个筛选试试，或者继续在会议里收藏新表达。
+        filter === "unmastered" ? (
+          <div className="rounded-xl border border-edge bg-panel p-6 text-center">
+            <div className="text-sm font-medium text-fg">
+              本轮的龙都屠完了。
+            </div>
+            <div className="mt-2 text-xs leading-[26px] text-mut">
+              全部词条都已标记为掌握，换个筛选复习一遍，或者重新洗牌再来一轮。
+            </div>
+            <button
+              type="button"
+              onClick={handleReshuffle}
+              className="btn-tactile mt-4 inline-flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+            >
+              <ArrowsClockwise size={16} weight="regular" />
+              重新洗牌
+            </button>
           </div>
-        </div>
+        ) : (
+          <div className="rounded-xl border border-edge bg-panel p-6 text-center">
+            <div className="text-sm font-medium text-fg">这一类还没有词条</div>
+            <div className="mt-2 text-xs leading-[26px] text-mut">
+              换个筛选试试，或者继续在会议里收藏新表达。
+            </div>
+          </div>
+        )
       ) : (
         <>
           <FlashCard
@@ -198,7 +225,7 @@ export default function PracticeDeck() {
             <button
               type="button"
               onClick={() => void handleKnown(false)}
-              className="btn-tactile h-10 rounded-lg border border-warn/40 px-5 text-sm text-warn hover:bg-panel3"
+              className="btn-tactile h-10 rounded-lg border border-warn/40 px-5 text-sm text-warn-soft hover:bg-panel3"
             >
               不认识
             </button>

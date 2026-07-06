@@ -73,6 +73,7 @@ function deferred<T>() {
 
 describe("DetectionScheduler", () => {
   let settings: Settings;
+  let meetingGen: number;
   let onDetection: ReturnType<typeof vi.fn<(res: DetectResponse, source: DetectionSource) => void>>;
   let onBusyChange: ReturnType<typeof vi.fn<(busy: boolean) => void>>;
   let onModeChange: ReturnType<typeof vi.fn<(mode: DetectMode) => void>>;
@@ -83,6 +84,7 @@ describe("DetectionScheduler", () => {
     vi.useFakeTimers();
     segIndex = 0;
     settings = makeSettings();
+    meetingGen = 0;
     onDetection = vi.fn<(res: DetectResponse, source: DetectionSource) => void>();
     onBusyChange = vi.fn<(busy: boolean) => void>();
     onModeChange = vi.fn<(mode: DetectMode) => void>();
@@ -92,6 +94,7 @@ describe("DetectionScheduler", () => {
     mockScanDictionary.mockReturnValue(emptyRes());
     scheduler = new DetectionScheduler({
       getSettings: () => settings,
+      getMeetingGen: () => meetingGen,
       onDetection,
       onBusyChange,
       onModeChange,
@@ -185,34 +188,69 @@ describe("DetectionScheduler", () => {
     await vi.advanceTimersByTimeAsync(0);
   });
 
-  it("stale-drop: an older batch's response landing after a newer one was applied does NOT call onDetection", async () => {
-    const dOld = deferred<DetectResponse>();
-    const dNew = deferred<DetectResponse>();
-    mockDetectApi.mockImplementationOnce(() => dOld.promise).mockImplementationOnce(() => dNew.promise);
+  it("out-of-order batches: batch 2 resolving before batch 1 does NOT drop batch 1 — both get applied (bug fix)", async () => {
+    const d1 = deferred<DetectResponse>();
+    const d2 = deferred<DetectResponse>();
+    mockDetectApi.mockImplementationOnce(() => d1.promise).mockImplementationOnce(() => d2.promise);
 
-    // Old batch flushed first (offset advances as text is pushed).
+    // Batch 1 flushed first (smaller endOffset).
     scheduler.pushSegment(makeSegment("a".repeat(140)));
     await vi.advanceTimersByTimeAsync(0);
     expect(mockDetectApi).toHaveBeenCalledTimes(1);
 
-    // New batch flushed second (larger endOffset).
+    // Batch 2 flushed second (larger endOffset).
     scheduler.pushSegment(makeSegment("b".repeat(140)));
     await vi.advanceTimersByTimeAsync(0);
     expect(mockDetectApi).toHaveBeenCalledTimes(2);
 
-    // Resolve the NEW batch FIRST -> applied, lastAppliedEndOffset advances.
-    const newRes: DetectResponse = { expressions: [], terms: [{ term: "NEW", type: "other", gloss_en: "", gloss_zh: "" }] };
-    dNew.resolve(newRes);
+    // Batch 2 resolves FIRST (out of order).
+    const res2: DetectResponse = { expressions: [], terms: [{ term: "TWO", type: "other", gloss_en: "", gloss_zh: "" }] };
+    d2.resolve(res2);
     await vi.advanceTimersByTimeAsync(0);
     expect(onDetection).toHaveBeenCalledTimes(1);
-    expect(onDetection).toHaveBeenLastCalledWith(newRes, "llm");
+    expect(onDetection).toHaveBeenNthCalledWith(1, res2, "llm");
 
-    // Now resolve the OLD (stale) batch -> its endOffset <=
-    // lastAppliedEndOffset, so onDetection must NOT be called again.
-    const oldRes: DetectResponse = { expressions: [], terms: [{ term: "OLD", type: "other", gloss_en: "", gloss_zh: "" }] };
-    dOld.resolve(oldRes);
+    // Batch 1 resolves SECOND — must still be applied, not dropped as
+    // "stale": mergeDetections is additive/idempotent by normKey, so
+    // applying an older batch after a newer one is safe.
+    const res1: DetectResponse = { expressions: [], terms: [{ term: "ONE", type: "other", gloss_en: "", gloss_zh: "" }] };
+    d1.resolve(res1);
     await vi.advanceTimersByTimeAsync(0);
-    expect(onDetection).toHaveBeenCalledTimes(1); // still just the one call from the newer batch
+    expect(onDetection).toHaveBeenCalledTimes(2);
+    expect(onDetection).toHaveBeenNthCalledWith(2, res1, "llm");
+  });
+
+  it("meeting-boundary guard: a response whose gen no longer matches the current meetingGen is silently dropped", async () => {
+    const d1 = deferred<DetectResponse>();
+    mockDetectApi.mockImplementationOnce(() => d1.promise);
+
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+    // A new meeting begins while this request is in flight.
+    meetingGen += 1;
+
+    const res: DetectResponse = { expressions: [], terms: [{ term: "STALE", type: "other", gloss_en: "", gloss_zh: "" }] };
+    d1.resolve(res);
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Dropped silently: no onDetection call, and no onModeChange side
+    // effect landing on the new (unrelated) meeting either.
+    expect(onDetection).not.toHaveBeenCalled();
+    expect(onModeChange).not.toHaveBeenCalledWith("llm");
+  });
+
+  it("meeting-boundary guard also applies to the dictionary-fallback error path (NoKeyError for a stale-gen batch is dropped)", async () => {
+    mockDetectApi.mockRejectedValueOnce(new NoKeyError());
+
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+    meetingGen += 1; // new meeting begins before the rejection is even processed
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onDetection).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(mockScanDictionary).not.toHaveBeenCalled();
   });
 
   it("NoKeyError triggers dictionary fallback and a one-time onModeChange('dictionary') toast", async () => {

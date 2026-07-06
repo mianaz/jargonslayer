@@ -206,6 +206,79 @@ export function extractJsonObject(text: string): string {
 }
 
 // ---------------------------------------------------------------
+// Robust JSON-value extractor: unlike extractJsonObject above, this
+// tolerates the three real-world OpenAI-compat failure modes seen in
+// production —
+//   1. a bare top-level array (`[{...}, {...}]`) instead of an object,
+//   2. ```json ... ``` markdown fences around the payload,
+//   3. R1-style <think>...</think> reasoning preambles that may
+//      themselves contain stray braces.
+// Strips (1) think-blocks, then (2) prefers fenced content if present,
+// then does a balanced scan from the first "{" or "[" (whichever
+// comes first) tracking both brace/bracket depth and string/escape
+// state. Kept as a separate function so extractJsonObject's simpler,
+// object-only contract is undisturbed for existing callers.
+// ---------------------------------------------------------------
+
+const THINK_BLOCK_RE = /<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi;
+const FENCED_CODE_RE = /```(?:json)?\s*([\s\S]*?)```/i;
+
+export function extractJsonValue(text: string): string {
+  const withoutThink = text.replace(THINK_BLOCK_RE, "");
+
+  const fenceMatch = withoutThink.match(FENCED_CODE_RE);
+  const candidate = fenceMatch ? fenceMatch[1] : withoutThink;
+
+  const braceStart = candidate.indexOf("{");
+  const bracketStart = candidate.indexOf("[");
+  const start =
+    braceStart === -1
+      ? bracketStart
+      : bracketStart === -1
+        ? braceStart
+        : Math.min(braceStart, bracketStart);
+
+  if (start === -1) {
+    throw new BadOutputError("模型输出中未找到 JSON");
+  }
+
+  const opener = candidate[start];
+  const closer = opener === "{" ? "}" : "]";
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < candidate.length; i++) {
+    const ch = candidate[i];
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === "\\") {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === opener) {
+      depth++;
+    } else if (ch === closer) {
+      depth--;
+      if (depth === 0) {
+        return candidate.slice(start, i + 1);
+      }
+    }
+  }
+
+  throw new BadOutputError("模型输出的 JSON 未闭合");
+}
+
+// ---------------------------------------------------------------
 // callJson — structured-output call with a manual-extraction fallback.
 // ---------------------------------------------------------------
 
@@ -225,6 +298,21 @@ export interface CallJsonOptions<T> {
   /** Required when provider is "openai-compat", e.g.
    *  https://api.deepseek.com or http://localhost:11434/v1. */
   baseUrl?: string;
+  /** When set and the extracted JSON value parses to a top-level
+   *  array, wrap it as `{ [arrayKey]: parsed }` before schema
+   *  validation. Lets schemas shaped like `{ translations: [...] }`
+   *  tolerate a model that (incorrectly, but commonly) returns the
+   *  bare array instead of the wrapping object. */
+  arrayKey?: string;
+}
+
+/** If `parsed` is an array and `arrayKey` is set, wrap it as
+ *  `{ [arrayKey]: parsed }`; otherwise return `parsed` unchanged. */
+function applyArrayKey(parsed: unknown, arrayKey: string | undefined): unknown {
+  if (arrayKey && Array.isArray(parsed)) {
+    return { [arrayKey]: parsed };
+  }
+  return parsed;
 }
 
 /** Build the `system` param — either a plain string, or a single
@@ -260,7 +348,7 @@ async function callJsonViaFallback<T>(
     throw new BadOutputError("模型未返回文本内容");
   }
 
-  const jsonText = extractJsonObject(textBlock.text);
+  const jsonText = extractJsonValue(textBlock.text);
 
   let parsed: unknown;
   try {
@@ -269,7 +357,7 @@ async function callJsonViaFallback<T>(
     throw new BadOutputError("模型输出解析失败：JSON 格式错误", err);
   }
 
-  const result = opts.schema.safeParse(parsed);
+  const result = opts.schema.safeParse(applyArrayKey(parsed, opts.arrayKey));
   if (!result.success) {
     throw new BadOutputError(
       `模型输出解析失败：${result.error.issues[0]?.message ?? "schema mismatch"}`,
@@ -315,22 +403,30 @@ async function postChatCompletions(
   });
 }
 
-async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
-  if (!opts.baseUrl) {
-    throw new OpenAiCompatError("缺少 Base URL", 400);
-  }
+/** Extra instruction appended to `system` on the single repair retry
+ *  below, to steer a non-compliant model away from the three failure
+ *  modes extractJsonValue already tolerates but which are cheaper to
+ *  avoid outright: fences, <think> blocks, and stray commentary. */
+const OPENAI_COMPAT_JSON_REMINDER =
+  "\n\nCRITICAL: Respond with ONLY a raw JSON value that matches the required shape. No markdown code fences, no <think> blocks, no commentary before or after.";
 
+/** POST to `/chat/completions` (retrying once without `response_format`
+ *  if the server 400s on it) and return the message content string.
+ *  Non-2xx responses throw OpenAiCompatError — this must NOT be
+ *  retried as a parse failure, so callers should let it propagate
+ *  untouched rather than folding it into the repair-retry loop. */
+async function requestChatContent(opts: CallJsonOptions<unknown>, system: string): Promise<string> {
   const baseRequest = {
     model: opts.model,
     max_tokens: opts.maxTokens,
     messages: [
-      { role: "system", content: opts.system },
+      { role: "system", content: system },
       { role: "user", content: opts.user },
     ],
     // NOTE: never pass `temperature` here — keep sampling defaults.
   };
 
-  let res = await postChatCompletions(opts.baseUrl, opts.apiKey, {
+  let res = await postChatCompletions(opts.baseUrl!, opts.apiKey, {
     ...baseRequest,
     response_format: { type: "json_object" },
   });
@@ -338,7 +434,7 @@ async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
   // Some openai-compat servers reject response_format with a 400 —
   // retry once without it before treating the request as failed.
   if (res.status === 400) {
-    res = await postChatCompletions(opts.baseUrl, opts.apiKey, baseRequest);
+    res = await postChatCompletions(opts.baseUrl!, opts.apiKey, baseRequest);
   }
 
   if (!res.ok) {
@@ -361,7 +457,14 @@ async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
     throw new BadOutputError("模型未返回文本内容");
   }
 
-  const jsonText = extractJsonObject(content);
+  return content;
+}
+
+/** Extract + parse + schema-validate a chat-completion's content
+ *  string. Throws BadOutputError on any failure — callers use this to
+ *  decide whether the single repair retry applies. */
+function parseJsonContent<T>(content: string, opts: CallJsonOptions<T>): T {
+  const jsonText = extractJsonValue(content);
 
   let parsed: unknown;
   try {
@@ -370,7 +473,7 @@ async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
     throw new BadOutputError("模型输出解析失败：JSON 格式错误", err);
   }
 
-  const result = opts.schema.safeParse(parsed);
+  const result = opts.schema.safeParse(applyArrayKey(parsed, opts.arrayKey));
   if (!result.success) {
     throw new BadOutputError(
       `模型输出解析失败：${result.error.issues[0]?.message ?? "schema mismatch"}`,
@@ -379,6 +482,30 @@ async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
   }
 
   return result.data;
+}
+
+async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
+  if (!opts.baseUrl) {
+    throw new OpenAiCompatError("缺少 Base URL", 400);
+  }
+
+  const content = await requestChatContent(opts, opts.system);
+
+  try {
+    return parseJsonContent(content, opts);
+  } catch (err) {
+    if (!(err instanceof BadOutputError)) throw err;
+    // Extraction/parse/schema failure — give the model exactly one
+    // more chance with a hardened system-prompt reminder. Non-2xx
+    // HTTP responses never reach here: requestChatContent throws
+    // OpenAiCompatError for those, which propagates untouched above.
+  }
+
+  const retryContent = await requestChatContent(
+    opts,
+    opts.system + OPENAI_COMPAT_JSON_REMINDER,
+  );
+  return parseJsonContent(retryContent, opts);
 }
 
 /**

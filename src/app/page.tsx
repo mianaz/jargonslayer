@@ -122,7 +122,11 @@ export default function Home() {
 
       <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <TutorialOverlay open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <TutorialOverlay
+        open={helpOpen}
+        onClose={() => setHelpOpen(false)}
+        onStartDemo={() => void startDemo()}
+      />
       <LookupPopover />
       <Toast />
     </div>

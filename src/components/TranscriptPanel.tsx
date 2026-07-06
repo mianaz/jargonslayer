@@ -50,9 +50,13 @@ interface HighlightMatcher {
  * expression first so multi-word phrases win over their substrings.
  * The last word of each expression may carry an optional trailing
  * inflection (s|ed|ing|d), e.g. "raise eyebrows" also matches
- * "raised eyebrows". */
+ * "raised eyebrows". "Most recent" is by lastSeenAt, not insertion
+ * order — a card re-detected recently should stay eligible even if
+ * many other cards were newly inserted after it. */
 function buildMatcher(cards: ExpressionCard[]): HighlightMatcher {
-  const recent = cards.slice(-MAX_HIGHLIGHT_CARDS);
+  const recent = [...cards]
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .slice(0, MAX_HIGHLIGHT_CARDS);
   const byLower = new Map<string, string>();
   const parts: string[] = [];
 
@@ -255,7 +259,7 @@ function SpeakerRenamePopover({
         }}
         className="w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
       />
-      <div className="mt-1.5 text-xs leading-[1.7] text-mut">
+      <div className="mt-2 text-xs leading-[1.7] text-mut">
         重命名将应用到该说话人的所有 {request.segmentCount} 段发言
       </div>
       <div className="mt-2 flex justify-end gap-2">
@@ -319,7 +323,7 @@ function SegmentEditTextarea({
         }}
         className="w-full resize-none rounded-lg border border-edge bg-panel2 p-2 text-[15px] leading-relaxed text-fg focus:outline-none"
       />
-      <div className="mt-1.5 flex justify-end gap-2">
+      <div className="mt-2 flex justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
@@ -563,12 +567,23 @@ export default function TranscriptPanel() {
         onMouseUp={handleMouseUp}
       >
         {isEmpty ? (
-          <div className="flex h-full flex-col items-center justify-center text-center">
-            <div className="text-xl font-medium text-fg">准备好开会了</div>
-            <div className="mt-2 max-w-sm text-sm text-mut">
-              选择上方引擎并点「开始监听」，或点「演示」先看效果 —
-              演示无需麦克风与 API Key
+          <div className="relative flex h-full flex-col items-center justify-center text-center">
+            <div className="text-xl font-display font-semibold text-fg">
+              <span className="text-gold/50">❖</span> 准备好开会了{" "}
+              <span className="text-gold/50">❖</span>
             </div>
+            {/* No drop-cap here: on a centered two-line zh paragraph the
+                floated cap splits the word 「选择」 and reads as a bug;
+                the cap stays on the tutorial's left-aligned lead. */}
+            <div className="mt-2 max-w-sm text-[15px] leading-[26px] text-mut">
+              选择上方引擎并点「开始监听」，或点「演示」先看效果，演示无需麦克风与
+              API Key。
+            </div>
+            <img
+              src="/icon-192.png"
+              alt=""
+              className="pointer-events-none absolute bottom-6 right-6 h-56 w-56 select-none opacity-[0.05]"
+            />
           </div>
         ) : (
           <>

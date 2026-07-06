@@ -3,6 +3,8 @@
 // Post-meeting report: bilingual summary, action items, flashcards,
 // full bilingual transcript, and export actions.
 
+import { useState } from "react";
+import { Notebook, Star } from "@phosphor-icons/react";
 import { useApp, currentSessionSnapshot } from "@/lib/store";
 import { summarizeApi, NoKeyError } from "@/lib/llm/client";
 import {
@@ -14,8 +16,9 @@ import {
 } from "@/lib/history/export";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { cardToCustomEntry, termToCustomEntry } from "@/lib/types";
+import CornellNote from "./CornellNote";
 
-function ExportRow() {
+function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const cards = useApp((s) => s.cards);
   const showToast = useApp((s) => s.showToast);
 
@@ -91,6 +94,15 @@ function ExportRow() {
       </button>
       <button
         type="button"
+        data-testid="btn-cornell"
+        onClick={onOpenCornell}
+        className="btn-tactile flex items-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+      >
+        <Notebook size={14} weight="regular" />
+        康奈尔笔记
+      </button>
+      <button
+        type="button"
         onClick={() => void handleCopy()}
         className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3"
       >
@@ -100,9 +112,10 @@ function ExportRow() {
         <button
           type="button"
           onClick={() => void handleCollect()}
-          className="btn-tactile rounded-lg border border-gold/30 px-3 py-1.5 text-xs text-gold hover:bg-panel3"
+          className="btn-tactile flex items-center gap-2 rounded-lg border border-gold/30 px-3 py-1.5 text-xs text-gold hover:bg-panel3"
         >
-          ⭐ 收藏本场卡片
+          <Star size={14} weight="regular" />
+          收藏本场卡片
         </button>
       )}
     </div>
@@ -199,22 +212,22 @@ function SummaryContent() {
   );
 
   return (
-    <div className="scroll-thin flex-1 space-y-5 overflow-y-auto px-3 py-3">
+    <div className="scroll-thin flex-1 space-y-6 overflow-y-auto px-3 py-3">
       <section>
         <div className="text-xs uppercase tracking-wide text-mut">主题</div>
-        <div className="mt-1.5 text-sm text-fg">{summary.summary.topic.en}</div>
-        <div className="mt-1 text-[15px] font-medium leading-[1.7] text-fg">
+        <div className="mt-2 text-sm text-fg">{summary.summary.topic.en}</div>
+        <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
           {summary.summary.topic.zh}
         </div>
       </section>
 
       <section>
         <div className="text-xs uppercase tracking-wide text-mut">要点</div>
-        <ul className="mt-1.5 space-y-2">
+        <ul className="mt-2 space-y-2">
           {summary.summary.key_points.map((p, i) => (
             <li key={i} className="rounded-lg bg-panel2 px-3 py-2">
               <div className="text-sm text-fg/90">{p.en}</div>
-              <div className="mt-0.5 text-sm font-medium leading-[1.7] text-fg">
+              <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                 {p.zh}
               </div>
             </li>
@@ -225,13 +238,13 @@ function SummaryContent() {
       <section>
         <div className="text-xs uppercase tracking-wide text-mut">决定</div>
         {summary.summary.decisions.length === 0 ? (
-          <div className="mt-1.5 text-xs text-mut2">（无）</div>
+          <div className="mt-2 text-xs text-mut2">（无）</div>
         ) : (
-          <ul className="mt-1.5 space-y-2">
+          <ul className="mt-2 space-y-2">
             {summary.summary.decisions.map((d, i) => (
               <li key={i} className="rounded-lg bg-panel2 px-3 py-2">
                 <div className="text-sm text-fg/90">{d.en}</div>
-                <div className="mt-0.5 text-sm font-medium leading-[1.7] text-fg">
+                <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                   {d.zh}
                 </div>
               </li>
@@ -243,9 +256,9 @@ function SummaryContent() {
       <section>
         <div className="text-xs uppercase tracking-wide text-mut">行动项</div>
         {summary.summary.action_items.length === 0 ? (
-          <div className="mt-1.5 text-xs text-mut2">（无）</div>
+          <div className="mt-2 text-xs text-mut2">（无）</div>
         ) : (
-          <table className="mt-1.5 w-full text-sm">
+          <table className="mt-2 w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-mut2">
                 <th className="pb-1.5 font-normal">负责人</th>
@@ -258,7 +271,7 @@ function SummaryContent() {
                 <tr key={i} className="border-t border-edge align-top">
                   <td className="py-1.5 pr-2 text-fg/90">{item.owner || "未指定"}</td>
                   <td className="py-1.5 pr-2">
-                    <div className="font-medium leading-[1.7] text-fg">{item.zh}</div>
+                    <div className="font-medium leading-[26px] text-fg">{item.zh}</div>
                     <div className="text-xs text-mut">{item.en}</div>
                   </td>
                   <td className="py-1.5 font-mono text-xs tabular-nums text-mut">
@@ -273,15 +286,15 @@ function SummaryContent() {
 
       <section>
         <div className="text-xs uppercase tracking-wide text-mut">学习卡片</div>
-        <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           {summary.flashcards.map((f, i) => (
             <div key={i} className="rounded-xl border border-edge bg-panel2 p-3">
               <div className="font-semibold text-fg">{f.front}</div>
-              <div className="mt-1 text-sm font-medium leading-[1.7] text-fg">
+              <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                 {f.back_zh}
               </div>
-              <div className="mt-1 text-xs text-mut">{f.back_en}</div>
-              <div className="mt-1.5 line-clamp-1 text-xs italic text-mut">
+              <div className="mt-2 text-xs text-mut">{f.back_en}</div>
+              <div className="mt-2 line-clamp-1 text-xs italic text-mut">
                 {f.example}
               </div>
             </div>
@@ -298,7 +311,7 @@ function SummaryContent() {
             {segments.map((seg) => (
               <div key={seg.id} className="rounded-lg bg-panel2 px-3 py-2">
                 <div className="text-sm leading-relaxed text-fg/90">{seg.text}</div>
-                <div className="mt-1 text-sm font-medium leading-[1.7] text-fg">
+                <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                   {translationByIndex.get(seg.index) ?? ""}
                 </div>
               </div>
@@ -315,6 +328,7 @@ export default function SummaryPanel() {
   const summary = useApp((s) => s.summary);
   const summarizing = useApp((s) => s.summarizing);
   const segments = useApp((s) => s.segments);
+  const [cornellOpen, setCornellOpen] = useState(false);
 
   const showExportRow = segments.length > 0;
 
@@ -334,7 +348,8 @@ export default function SummaryPanel() {
   return (
     <div className="flex h-full flex-col">
       {body}
-      {showExportRow && <ExportRow />}
+      {showExportRow && <ExportRow onOpenCornell={() => setCornellOpen(true)} />}
+      <CornellNote open={cornellOpen} onClose={() => setCornellOpen(false)} />
     </div>
   );
 }

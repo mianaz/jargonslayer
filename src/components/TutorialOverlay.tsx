@@ -6,13 +6,18 @@
 // overlay on first load. OWNER: this worker (#21).
 
 import { useState } from "react";
-import { CheckCircle } from "@phosphor-icons/react";
+import { CaretRight, CheckCircle } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import type { STTEngineKind } from "@/lib/types";
 
 export interface TutorialOverlayProps {
   open: boolean;
   onClose: () => void;
+  /** Starts the scripted demo (same mechanism as the header's 演示
+   *  button) and closes the tutorial so the user lands on the live
+   *  transcript right away. Optional so this overlay still renders
+   *  standalone if a caller doesn't wire it up. */
+  onStartDemo?: () => void;
 }
 
 const TUTORIAL_DONE_KEY = "jargonslayer:tutorial_done";
@@ -37,50 +42,66 @@ function markTutorialDone(): void {
 const STEP_COUNT = 5;
 
 // ---------------------------------------------------------------
-// Step 2: engine picker card grid — Handy-app style. Privacy tags per
-// spec: 演示模式·无音频 / 浏览器识别·音频经浏览器厂商 / 本地 Whisper·
-// 音频不出本机 / 标签页音频·听懂对方，需本地 Whisper.
+// Step 2: engine picker card grid — Handy-app style. Demo is NOT a
+// capture engine (no audio, scripted preview) so it is not a card
+// peer here — it gets its own visually-separated "先看演示" row above
+// the grid, still driving the same settings.engine="demo" + onStart
+// demo mechanism as the header's 演示 button. posture drives the
+// 本地/云端 chip: 浏览器识别·云端（音频经浏览器厂商云端识别，会离开设
+// 备）/ 本地 Whisper·本地（音频不出本机）/ 标签页音频·本地（本地转录标
+// 签页声音）.
 // ---------------------------------------------------------------
 
 const ENGINE_OPTIONS: {
-  value: STTEngineKind;
+  value: Exclude<STTEngineKind, "demo">;
   label: string;
   hint: string;
-  privacyTag: string;
+  posture: "local" | "cloud";
 }[] = [
-  {
-    value: "demo",
-    label: "演示",
-    hint: "内置脚本，无需麦克风，先熟悉界面",
-    privacyTag: "演示模式·无音频",
-  },
   {
     value: "webspeech",
     label: "浏览器识别",
     hint: "零配置，Chrome/Edge 最佳，开箱即用",
-    privacyTag: "浏览器识别·音频经浏览器厂商",
+    posture: "cloud",
   },
   {
     value: "whisper",
     label: "本地 Whisper",
-    hint: "隐私最佳，需启动本地 sidecar",
-    privacyTag: "本地 Whisper·音频不出本机",
+    hint: "隐私保护最强，需启动本地 sidecar",
+    posture: "local",
   },
   {
     value: "tabaudio",
     label: "标签页音频",
-    hint: "共享标签页听懂对方声音",
-    privacyTag: "标签页音频·听懂对方，需本地 Whisper",
+    hint: "共享标签页，听懂对方声音",
+    posture: "local",
   },
 ];
 
-function EnginePickerStep() {
+const POSTURE_LABEL: Record<"local" | "cloud", string> = {
+  local: "本地",
+  cloud: "云端",
+};
+
+function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
   const engine = useApp((s) => s.settings.engine);
   const updateSettings = useApp((s) => s.updateSettings);
 
   return (
     <div>
-      <div className="text-lg font-semibold text-fg">选择转录引擎</div>
+      <div className="font-display text-lg font-semibold text-fg">
+        选择转录引擎
+      </div>
+
+      <button
+        type="button"
+        onClick={onStartDemo}
+        className="btn-tactile mt-3 flex w-full items-center justify-between gap-2 rounded-lg border border-dashed border-edge2 bg-panel2 px-3 py-2 text-left text-xs text-mut hover:border-gold/40 hover:text-fg"
+      >
+        <span>先看演示（无需麦克风/API Key）</span>
+        <CaretRight size={14} weight="regular" className="shrink-0 text-gold" />
+      </button>
+
       <div className="mt-3 grid grid-cols-2 gap-2">
         {ENGINE_OPTIONS.map((opt) => {
           const selected = engine === opt.value;
@@ -101,9 +122,15 @@ function EnginePickerStep() {
                   <CheckCircle size={18} weight="regular" className="shrink-0 text-acc" />
                 )}
               </div>
-              <div className="mt-1 text-xs leading-[1.7] text-mut">{opt.hint}</div>
-              <div className="mt-2 inline-block rounded-full border border-gold/30 px-2 py-0.5 text-[10px] text-gold">
-                {opt.privacyTag}
+              <div className="mt-2 text-xs leading-[1.7] text-mut">{opt.hint}</div>
+              <div
+                className={`mt-2 inline-block rounded-full border px-2 py-0.5 text-[10px] ${
+                  opt.posture === "local"
+                    ? "border-gold/30 text-gold"
+                    : "border-warn-soft/30 text-warn-soft"
+                }`}
+              >
+                {POSTURE_LABEL[opt.posture]}
               </div>
             </button>
           );
@@ -116,7 +143,11 @@ function EnginePickerStep() {
   );
 }
 
-export default function TutorialOverlay({ open, onClose }: TutorialOverlayProps) {
+export default function TutorialOverlay({
+  open,
+  onClose,
+  onStartDemo,
+}: TutorialOverlayProps) {
   const [step, setStep] = useState(0);
 
   if (!open) return null;
@@ -127,6 +158,11 @@ export default function TutorialOverlay({ open, onClose }: TutorialOverlayProps)
     markTutorialDone();
     setStep(0);
     onClose();
+  };
+
+  const handleStartDemo = () => {
+    finish();
+    onStartDemo?.();
   };
 
   return (
@@ -147,41 +183,43 @@ export default function TutorialOverlay({ open, onClose }: TutorialOverlayProps)
           {step === 0 && (
             <div>
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-acc to-acc2 text-xs font-bold text-white">
-                  ML
-                </div>
-                <span className="text-lg font-semibold text-fg">JargonSlayer</span>
+                <img src="/icon-192.png" alt="" className="h-8 w-8 rounded-lg" />
+                <span className="font-display text-lg font-semibold tracking-wide text-fg">
+                  JargonSlayer
+                </span>
               </div>
-              <div className="mt-4 text-base font-medium leading-[1.7] text-fg">
+              <div className="drop-cap mt-4 text-base font-medium leading-[26px] text-fg">
                 把听不懂的行话，一条条屠掉。
               </div>
-              <div className="mt-3 text-sm leading-[1.7] text-mut">
+              <div className="mt-3 text-sm leading-[26px] text-mut">
                 开会时它听英文，你看中文解释卡片。英文习语、俚语、缩写第一时间变成看得懂的解释，不用中途打断会议去查词典。
               </div>
             </div>
           )}
 
-          {step === 1 && <EnginePickerStep />}
+          {step === 1 && <EnginePickerStep onStartDemo={handleStartDemo} />}
 
           {step === 2 && (
             <div>
-              <div className="text-lg font-semibold text-fg">三种用法</div>
+              <div className="font-display text-lg font-semibold text-fg">
+                三种用法
+              </div>
               <div className="mt-4 space-y-3">
                 <div className="rounded-lg border border-edge p-3">
                   <div className="text-sm font-medium text-fg">免费词典模式</div>
-                  <div className="mt-1 text-xs leading-[1.7] text-mut">
+                  <div className="mt-2 text-xs leading-[1.7] text-mut">
                     开箱即用，371 条内置商务表达与术语，无需任何配置。
                   </div>
                 </div>
                 <div className="rounded-lg border border-edge p-3">
                   <div className="text-sm font-medium text-fg">填 API Key 解锁 AI 上下文检测</div>
-                  <div className="mt-1 text-xs leading-[1.7] text-mut">
+                  <div className="mt-2 text-xs leading-[1.7] text-mut">
                     设置→AI 检测，兼容 DeepSeek/Ollama，解释更贴合当前语境。
                   </div>
                 </div>
                 <div className="rounded-lg border border-edge p-3">
                   <div className="text-sm font-medium text-fg">全离线</div>
-                  <div className="mt-1 text-xs leading-[1.7] text-mut">
+                  <div className="mt-2 text-xs leading-[1.7] text-mut">
                     本地 Whisper + Ollama，音频和内容完全不出本机。
                   </div>
                 </div>
@@ -191,8 +229,10 @@ export default function TutorialOverlay({ open, onClose }: TutorialOverlayProps)
 
           {step === 3 && (
             <div>
-              <div className="text-lg font-semibold text-fg">实时体验</div>
-              <div className="mt-3 text-sm leading-[1.7] text-fg/90">
+              <div className="font-display text-lg font-semibold text-fg">
+                实时体验
+              </div>
+              <div className="mt-3 text-sm leading-[26px] text-fg/90">
                 新卡片到达有金色高亮提示；转录文本里的金色虚线下划线可以点击定位到对应卡片。最新几张卡片全展开，其余折叠为摘要，随手展开/折叠。选中任意英文文字即可划词收藏，直接存入个人词库。专注模式下折叠右栏，鼠标悬停在高亮上就能看到释义。
               </div>
             </div>
@@ -200,8 +240,10 @@ export default function TutorialOverlay({ open, onClose }: TutorialOverlayProps)
 
           {step === 4 && (
             <div>
-              <div className="text-lg font-semibold text-fg">会后</div>
-              <div className="mt-3 text-sm leading-[1.7] text-fg/90">
+              <div className="font-display text-lg font-semibold text-fg">
+                会后
+              </div>
+              <div className="mt-3 text-sm leading-[26px] text-fg/90">
                 结束会议后可以生成双语纪要、全文翻译和学习卡片，一键导出 Markdown 或 Anki。练习卡支持复习页反复巩固，所有历史记录自动落盘保存在本机，不上传任何服务器。
               </div>
             </div>

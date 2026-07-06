@@ -15,6 +15,14 @@ export type DetectMode = "llm" | "dictionary" | "off";
 
 export interface SchedulerOptions {
   getSettings: () => Settings;
+  // Meeting-boundary guard: read at batch-dispatch time and again
+  // when that batch's response lands. A response whose captured gen
+  // no longer matches the store's current gen belongs to a PREVIOUS
+  // meeting (that one stopped and a new one began while the request
+  // was in flight) and is silently dropped — the ONLY discard
+  // condition left in this scheduler (see attemptDetect below; the
+  // old stale-batch/out-of-order drop was removed as a bug fix).
+  getMeetingGen: () => number;
   onDetection: (res: DetectResponse, source: DetectionSource) => void;
   onBusyChange: (busy: boolean) => void;
   onModeChange: (mode: DetectMode) => void;
@@ -38,7 +46,8 @@ const RETRY_JITTER_MS = 300;
 interface Batch {
   context: string;
   new_text: string;
-  endOffset: number;
+  endOffset: number; // scheduling/telemetry only — never gates application
+  gen: number; // meetingGen captured at dispatch time — see attemptDetect
   retried: boolean;
 }
 
@@ -53,7 +62,6 @@ export class DetectionScheduler {
 
   private contextTail = "";
   private offset = 0; // running transcript char offset
-  private lastAppliedEndOffset = 0;
 
   private inflight = 0;
   private pendingForce = false;
@@ -159,6 +167,7 @@ export class DetectionScheduler {
       context: this.contextTail,
       new_text: newText,
       endOffset: this.offset,
+      gen: this.opts.getMeetingGen(),
       retried: false,
     };
 
@@ -205,12 +214,23 @@ export class DetectionScheduler {
 
       // Note: no `this.stopped` short-circuit here on purpose — a
       // late in-flight response landing after stop() is still
-      // applied (spec: "that's fine/desired").
-      if (batch.endOffset > this.lastAppliedEndOffset) {
-        this.opts.onDetection(res, "llm");
-        this.lastAppliedEndOffset = batch.endOffset;
+      // applied (spec: "that's fine/desired"). Out-of-order batches
+      // (e.g. batch 2 resolves before batch 1) are BOTH applied —
+      // mergeDetections is idempotent by normKey and additive
+      // (bumps counts), so applying an "older" batch after a newer
+      // one is safe and must not be dropped. `batch.endOffset` is
+      // kept only for scheduling/telemetry, never for gating.
+      //
+      // The ONE discard condition left: this batch belongs to a
+      // PREVIOUS meeting (a new one began — meetingGen bumped — while
+      // this request was in flight). Applying it now would land
+      // detections (or an "llm mode active" signal) on the wrong
+      // (current, unrelated) meeting — drop silently, no side effects.
+      if (batch.gen !== this.opts.getMeetingGen()) {
+        return;
       }
-      // else: a fresher batch already landed — drop this stale one.
+
+      this.opts.onDetection(res, "llm");
 
       this.opts.onModeChange("llm");
       this.consecutiveFailures = 0;
@@ -221,6 +241,12 @@ export class DetectionScheduler {
   }
 
   private async handleDetectError(err: unknown, batch: Batch): Promise<void> {
+    // Same meeting-boundary guard as the success path in attemptDetect
+    // — an error for a batch dispatched by a PREVIOUS meeting must not
+    // mutate the current (unrelated) meeting's dictionary-fallback
+    // detections, mode, or error toast.
+    if (batch.gen !== this.opts.getMeetingGen()) return;
+
     if (err instanceof NoKeyError) {
       this.fellBack = true;
       const dictRes = scanDictionary(batch.new_text);
@@ -229,7 +255,7 @@ export class DetectionScheduler {
       if (!this.noKeyToastFired) {
         this.noKeyToastFired = true;
         this.opts.onError(
-          "未配置 API Key — 已切换到内置词典模式，可在设置中填入 Key 启用 AI 检测",
+          "未配置 API Key，已切换到内置词典模式，可在设置中填入 Key 启用 AI 检测",
         );
       }
       return;
@@ -254,7 +280,7 @@ export class DetectionScheduler {
       const dictRes = scanDictionary(batch.new_text);
       this.opts.onDetection(dictRes, "dictionary");
       this.opts.onModeChange("dictionary");
-      this.opts.onError("AI 检测暂时不可用 — 已切换到词典模式");
+      this.opts.onError("AI 检测暂时不可用，已切换到词典模式");
     } else {
       console.warn("[DetectionScheduler] batch dropped after error", err);
     }

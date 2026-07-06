@@ -243,14 +243,19 @@ function ExpressionCardRow({
         data-testid="card"
         data-kind="expression"
         onClick={onToggle}
-        className={`cursor-pointer rounded-xl border border-edge bg-panel p-2.5 transition-colors hover:bg-panel3 ${
+        className={`card-manuscript card-manuscript-gold relative cursor-pointer rounded-xl border border-edge bg-panel p-2 transition-colors hover:bg-panel3 ${
           isNew ? "card-new" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${
           ring ? "ring-1 ring-gold" : ""
         }`}
       >
+        {isNew && (
+          <span className="pointer-events-none absolute right-2 top-2 text-[10px] text-gold/70">
+            ❖
+          </span>
+        )}
         {badgeRow}
-        <div className="mt-1 truncate text-sm text-mut">
+        <div className="mt-2 truncate text-sm text-mut">
           {card.chinese_explanation}
         </div>
       </div>
@@ -262,27 +267,32 @@ function ExpressionCardRow({
       ref={ref}
       data-testid="card"
       data-kind="expression"
-      className={`group relative rounded-xl border border-edge bg-panel p-3 transition-colors hover:bg-panel3 ${
+      className={`card-manuscript card-manuscript-gold group relative rounded-xl border border-edge bg-panel p-3 transition-colors hover:bg-panel3 ${
         isNew ? "card-new" : ""
       } ${isRepulsing ? "card-repulse" : ""} ${
         ring ? "ring-1 ring-gold" : ""
       }`}
     >
+      {isNew && (
+        <span className="pointer-events-none absolute right-9 top-2 text-[10px] text-gold/70">
+          ❖
+        </span>
+      )}
       <CollapseAffordance onCollapse={onToggle} />
       {badgeRow}
 
-      <div className="mt-1.5 text-sm text-fg/90">{card.meaning}</div>
+      <div className="mt-2 text-sm text-fg/90">{card.meaning}</div>
 
-      <div className="mt-1.5 text-[15px] font-medium leading-[1.7] text-fg">
+      <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
         {card.chinese_explanation}
       </div>
 
-      <div className="mt-1.5 flex items-baseline gap-1.5">
+      <div className="mt-2 flex items-baseline gap-2">
         <span className="text-xs text-mut2">直白说法</span>
         <span className="text-sm text-fg/90">{card.plain_english}</span>
       </div>
 
-      <div className="mt-1 text-xs italic text-mut">{card.tone}</div>
+      <div className="mt-2 text-xs italic text-mut">{card.tone}</div>
 
       <div
         className="mt-2 line-clamp-2 border-l-2 border-edge pl-2 text-xs text-mut"
@@ -328,12 +338,17 @@ function TermCardRow({
         data-testid="card"
         data-kind="term"
         onClick={onToggle}
-        className={`cursor-pointer rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-2.5 transition-colors hover:bg-panel3 ${
+        className={`card-manuscript card-manuscript-blue relative cursor-pointer rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-2 transition-colors hover:bg-panel3 ${
           isNew ? "card-new" : ""
         } ${isRepulsing ? "card-repulse" : ""}`}
       >
+        {isNew && (
+          <span className="pointer-events-none absolute right-2 top-2 text-[10px] text-gold/70">
+            ❖
+          </span>
+        )}
         {badgeRow}
-        <div className="mt-1 truncate text-sm text-mut">{term.gloss_zh}</div>
+        <div className="mt-2 truncate text-sm text-mut">{term.gloss_zh}</div>
       </div>
     );
   }
@@ -342,16 +357,21 @@ function TermCardRow({
     <div
       data-testid="card"
       data-kind="term"
-      className={`group relative rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-3 transition-colors hover:bg-panel3 ${
+      className={`card-manuscript card-manuscript-blue group relative rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-3 transition-colors hover:bg-panel3 ${
         isNew ? "card-new" : ""
       } ${isRepulsing ? "card-repulse" : ""}`}
     >
+      {isNew && (
+        <span className="pointer-events-none absolute right-9 top-2 text-[10px] text-gold/70">
+          ❖
+        </span>
+      )}
       <CollapseAffordance onCollapse={onToggle} />
       {badgeRow}
 
-      <div className="mt-1.5 text-sm text-fg/90">{term.gloss_en}</div>
+      <div className="mt-2 text-sm text-fg/90">{term.gloss_en}</div>
 
-      <div className="mt-1.5 text-[15px] font-medium leading-[1.7] text-fg">
+      <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
         {term.gloss_zh}
       </div>
     </div>
@@ -367,7 +387,7 @@ function EmptyState() {
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
         <div className="text-sm font-medium text-fg">还没有开始会议</div>
         <div className="mt-2 max-w-xs text-xs leading-[1.7] text-mut">
-          点击左上角「演示」立即体验，无需麦克风也无需配置 API Key。
+          点击右上角「演示」立即体验，无需麦克风也无需配置 API Key。
         </div>
       </div>
     );
@@ -390,7 +410,7 @@ function EmptyState() {
       <div className="mt-2 max-w-xs text-xs leading-[1.7] text-mut">
         {detectMode === "dictionary"
           ? "词典模式下，说到内置词典里的习语、缩写或术语会立刻出卡片，表达与术语都会出现在这里。"
-          : "AI 正在听会议内容，检测到值得解释的表达或术语会立刻出现在这里。"}
+          : "AI 正在听会议内容，遇到值得解释的术语或表达会立刻显示在这里。"}
       </div>
     </div>
   );
@@ -501,8 +521,8 @@ export default function CardsPanel() {
           className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
         />
 
-        <div className="flex items-center gap-1.5">
-          <div className="flex flex-1 flex-wrap gap-1.5">
+        <div className="flex items-center gap-2">
+          <div className="flex flex-1 flex-wrap gap-2">
             {FILTERS.map((f) => (
               <button
                 key={f.key}

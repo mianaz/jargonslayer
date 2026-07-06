@@ -214,12 +214,12 @@ function EntryRow({ entry }: { entry: CustomEntry }) {
         )}
       </div>
 
-      <div className="mt-1.5 text-[15px] font-medium leading-[1.7] text-fg">
+      <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
         {entry.chinese_explanation}
       </div>
 
       {entry.example && (
-        <div className="mt-1.5 text-xs italic text-mut">{entry.example}</div>
+        <div className="mt-2 text-xs italic text-mut">{entry.example}</div>
       )}
 
       {entry.context && (
@@ -249,7 +249,7 @@ function EntryRow({ entry }: { entry: CustomEntry }) {
         <button
           type="button"
           onClick={handleDeleteClick}
-          className={`btn-tactile ${confirmDelete ? "text-warn" : "text-mut hover:text-warn"}`}
+          className={`btn-tactile ${confirmDelete ? "text-warn-soft" : "text-mut hover:text-warn-soft"}`}
         >
           {confirmDelete ? "确认删除?" : "删除"}
         </button>

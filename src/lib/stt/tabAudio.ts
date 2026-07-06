@@ -54,7 +54,7 @@ export class TabAudioEngine implements STTEngine {
       stream.getTracks().forEach((t) => t.stop());
       events.onStatus(
         "error",
-        "没有捕获到音频 — 请选择「Chrome 标签页」并勾选左下角「分享标签页音频」",
+        "没有检测到音频，请选择「Chrome 标签页」并勾选左下角「分享标签页音频」",
       );
       return;
     }

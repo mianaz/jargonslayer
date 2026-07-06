@@ -38,6 +38,12 @@ function errorBody(body: ApiErrorBody, status: number) {
   return NextResponse.json(body, { status });
 }
 
+// Reject oversized uploads before doing any work: first cheaply via
+// the Content-Length header (before formData() buffers the body into
+// memory), then again on the parsed File in case the header was
+// absent/wrong.
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+
 /** Normalize an upstream verbose_json (or plain text) transcription
  *  payload into the wire shape this route promises callers. When the
  *  upstream only returned `text` (no segments array), the whole
@@ -57,16 +63,25 @@ function normalizeUpstreamResponse(raw: VerboseJsonResponse): CloudTranscribeRes
 }
 
 export async function POST(req: Request) {
+  const contentLength = Number(req.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_UPLOAD_BYTES) {
+    return errorBody({ error: "音频文件过大", code: "bad_request" }, 413);
+  }
+
   let form: FormData;
   try {
     form = await req.formData();
   } catch {
-    return errorBody({ error: "请求体不是合法 multipart/form-data", code: "bad_request" }, 400);
+    return errorBody({ error: "请求格式无效，需要 multipart/form-data", code: "bad_request" }, 400);
   }
 
   const file = form.get("file");
   if (!(file instanceof File)) {
     return errorBody({ error: "缺少音频文件", code: "bad_request" }, 400);
+  }
+
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return errorBody({ error: "音频文件过大", code: "bad_request" }, 413);
   }
 
   const language = form.get("language");

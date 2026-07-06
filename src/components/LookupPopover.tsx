@@ -271,7 +271,7 @@ export default function LookupPopover() {
         )}
 
         {!loading && error && (
-          <div className="text-xs text-warn">{error}</div>
+          <div className="text-xs text-warn-soft">{error}</div>
         )}
 
         {!loading && !error && result && (
@@ -279,16 +279,16 @@ export default function LookupPopover() {
             {result.expressions.map((e, i) => (
               <div key={i} className="rounded-lg bg-panel p-2">
                 <div className="font-medium text-fg">{e.expression}</div>
-                <div className="mt-1 text-sm font-medium leading-[1.7] text-fg">
+                <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                   {e.chinese_explanation}
                 </div>
-                <div className="mt-1 text-xs text-mut">{e.plain_english}</div>
+                <div className="mt-2 text-xs text-mut">{e.plain_english}</div>
               </div>
             ))}
             {result.terms.map((t, i) => (
               <div key={i} className="rounded-lg bg-panel p-2">
                 <div className="font-medium text-fg">{t.term}</div>
-                <div className="mt-1 text-sm text-mut">{t.gloss_zh}</div>
+                <div className="mt-2 text-sm text-mut">{t.gloss_zh}</div>
               </div>
             ))}
             {result.expressions.length === 0 && result.terms.length === 0 && (
@@ -315,7 +315,7 @@ export default function LookupPopover() {
               type="button"
               onClick={() => void handleAddToGlossary()}
               disabled={glossaryLoading}
-              className="btn-tactile flex w-full items-center justify-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+              className="btn-tactile flex w-full items-center justify-center gap-2 rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {glossaryLoading ? (
                 <>

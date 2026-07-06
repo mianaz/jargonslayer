@@ -24,11 +24,18 @@ export function useMeeting(): UseMeetingResult {
     if (status === "listening" || status === "connecting") return;
 
     useApp.getState().beginMeeting();
+    // Captured once, right after beginMeeting() bumps meetingGen —
+    // this is "this engine session's gen" for the meeting-boundary
+    // guards below (late scheduler results / late speaker updates
+    // from a previous meeting must not land on this one, and vice
+    // versa once a NEXT meeting starts and bumps the gen again).
+    const sessionGen = useApp.getState().meetingGen;
 
     // Replace any previous scheduler before wiring a fresh one.
     schedulerRef.current?.stop();
     const scheduler = new DetectionScheduler({
       getSettings: () => useApp.getState().settings,
+      getMeetingGen: () => useApp.getState().meetingGen,
       onDetection: (res, src) => useApp.getState().applyDetection(res, src),
       onBusyChange: (b) => useApp.getState().setDetectBusy(b),
       onModeChange: (m) => useApp.getState().setDetectMode(m),
@@ -62,6 +69,19 @@ export function useMeeting(): UseMeetingResult {
         useApp.getState().setInterim(null);
         scheduler.pushSegment(seg);
       },
+      onSpeakerUpdate: (assignments, speakers) => {
+        useApp.getState().applySpeakerUpdate(assignments, speakers, sessionGen);
+      },
+      onDiarStatus: (state, detail) => {
+        void detail; // shown in the sidecar's own logs; UI copy is fixed per spec
+        useApp
+          .getState()
+          .showToast(
+            state === "unavailable"
+              ? "实时说话人分离不可用，已回退到纯转录"
+              : "实时说话人分离出错，已停止本场自动标注",
+          );
+      },
       onStatus: (status, detail) => {
         if (status === "connecting") {
           useApp.getState().setStatus("connecting", detail);
@@ -77,7 +97,7 @@ export function useMeeting(): UseMeetingResult {
           const endToast =
             detail === "capture_ended"
               ? "共享已结束，会议已保存到历史记录"
-              : "演示结束 — 打开右侧「纪要」标签生成会后报告试试";
+              : "演示结束，打开右侧「纪要」标签生成会后报告试试";
           void runStopFlow().then(() => {
             useApp.getState().showToast(endToast);
           });

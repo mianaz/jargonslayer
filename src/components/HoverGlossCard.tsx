@@ -79,16 +79,16 @@ export default function HoverGlossCard({
         )}
       </div>
 
-      <div className="mt-1.5 text-[15px] font-medium leading-[1.7] text-fg">
+      <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
         {card.chinese_explanation}
       </div>
 
-      <div className="mt-1.5 flex items-baseline gap-1.5">
+      <div className="mt-2 flex items-baseline gap-2">
         <span className="text-xs text-mut2">直白说法</span>
         <span className="text-sm text-fg/90">{card.plain_english}</span>
       </div>
 
-      <div className="mt-1 text-xs italic text-mut">{card.tone}</div>
+      <div className="mt-2 text-xs italic text-mut">{card.tone}</div>
     </div>
   );
 }

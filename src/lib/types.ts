@@ -12,9 +12,18 @@ export interface TranscriptSegment {
   index: number; // 0-based arrival order
   startedAt: number; // epoch ms, approximate utterance start
   endedAt: number; // epoch ms, when finalized
-  speaker?: string; // demo mode now; diarization later
+  speaker?: string; // DISPLAY string — demo mode, upload diarization, or
+  // realtime diarization post-alias (see MeetingSession.speakerAliases)
   text: string;
   engine: STTEngineKind;
+  // realtime speaker diarization (beta): this segment's sidecar-
+  // assigned seg_id (from the `final` message), so a later
+  // `speaker_update` can back-label it; and the RAW stable id
+  // (SPEAKER_1/2/…) the sidecar last assigned, kept separate from
+  // `speaker` so a user rename doesn't get clobbered by a later
+  // auto-update (see store.ts renameSpeaker/applySpeakerUpdate).
+  sttSeg?: number;
+  sttSpeaker?: string;
 }
 
 export interface InterimState {
@@ -28,9 +37,17 @@ export interface STTEvents {
   onInterim: (text: string, speaker?: string) => void;
   onFinal: (
     text: string,
-    opts?: { speaker?: string; startedAt?: number },
+    opts?: { speaker?: string; startedAt?: number; sttSeg?: number },
   ) => void;
   onStatus: (status: STTStatus, detail?: string) => void;
+  // realtime speaker diarization (beta) — both optional, no-op unless
+  // wired up (only wsTransport.ts's config gates them on: whisper/
+  // tabaudio + realtimeDiarize + hfToken; see Settings.realtimeDiarize).
+  onSpeakerUpdate?: (
+    assignments: { segId: number; speaker: string }[],
+    speakers: string[],
+  ) => void;
+  onDiarStatus?: (state: "unavailable" | "error", detail?: string) => void;
 }
 
 export interface STTEngine {
@@ -204,6 +221,12 @@ export interface Settings {
   // diarization (pyannote); "" = disabled. Never leaves the browser
   // except over localhost to the sidecar (see upload.ts).
   hfToken: string;
+  // Realtime speaker diarization (beta, whisper/tabaudio only): labels
+  // live transcript segments with SPEAKER_1/2/… as the meeting
+  // progresses, via the sidecar's ws-side pyannote pass (see
+  // wsTransport.ts). Requires hfToken; default off (existing behavior
+  // unchanged when off).
+  realtimeDiarize: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -226,6 +249,7 @@ export const DEFAULT_SETTINGS: Settings = {
   explainLanguage: "zh",
   enabledPacks: null,
   hfToken: "",
+  realtimeDiarize: false,
 };
 
 /** Headers that carry LLM provider config from browser to routes.
@@ -250,6 +274,11 @@ export interface MeetingSession {
   cards: ExpressionCard[];
   terms: TermCard[];
   summary?: SummaryResult;
+  // realtime speaker diarization (beta): stable sidecar id (SPEAKER_1/
+  // 2/…) -> user-chosen display name, set by renameSpeaker so a later
+  // applySpeakerUpdate never clobbers a rename ("rename-wins", see
+  // store.ts).
+  speakerAliases?: Record<string, string>;
 }
 
 export interface SessionMeta {

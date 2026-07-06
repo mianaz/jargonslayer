@@ -189,5 +189,27 @@ describe("storage.ts", () => {
       const settings = await storage.loadSettings();
       expect(settings).toEqual(newSettings); // new key wins, legacy ignored
     });
+
+    it("race: two concurrent callers (loadSettings + listSessions, as hydrate() fires them) both wait for the SAME in-flight migration — the second caller does not read the index before migration finishes", async () => {
+      seedLegacyData();
+      const storage = await import("../storage");
+
+      // Both calls kick off migrateLegacyOnce() in the same microtask tick,
+      // mirroring hydrate()'s Promise.all([loadSettings(), listSessions()]).
+      // A boolean latch would let the second call see "already started" and
+      // read the (still unmigrated) index immediately; a shared promise
+      // makes it await the first call's in-flight migration instead.
+      const [settings, list] = await Promise.all([
+        storage.loadSettings(),
+        storage.listSessions(),
+      ]);
+
+      expect(settings).toEqual(sampleSettings);
+      expect(list.map((m) => m.id)).toEqual(["legacy-1"]);
+
+      // A third, later call sees the already-migrated data too.
+      const list2 = await storage.listSessions();
+      expect(list2.map((m) => m.id)).toEqual(["legacy-1"]);
+    });
   });
 });

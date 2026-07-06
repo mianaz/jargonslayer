@@ -16,7 +16,9 @@
   --acc-hover: #7fb2ff;
   --acc2: #3ed598;
   --gold: #e5b455;
-  --warn: #e06c75;
+  --warn: #a63d40; /* stop/destructive fills + borders */
+  --warn-soft: #e07a7d; /* warn text on dark panels — AA-safe (#a63d40 as text ≈ 3:1) */
+  --bl: 8px; /* baseline unit (v2.1 grid discipline) */
 }
 
 html,
@@ -130,6 +132,40 @@ body {
   outline: 2px solid var(--acc);
   outline-offset: 2px;
   border-radius: 4px;
+}
+
+/* double-line manuscript card chrome (v2.3): a thin inset border that
+   reads as illuminated-manuscript inner ruling, not a glow. The outer
+   1px border (edge) is untouched; card-new/card-repulse continue to
+   animate that outer border-color only, so this ::before never
+   conflicts with them. */
+.card-manuscript {
+  position: relative;
+}
+.card-manuscript::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  pointer-events: none;
+}
+.card-manuscript-gold::before {
+  border-color: rgba(229, 180, 85, 0.14);
+}
+.card-manuscript-blue::before {
+  border-color: rgba(91, 157, 255, 0.14);
+}
+
+/* drop cap (v2.3): first letter of empty-state / tutorial-step-1 lead
+   paragraphs, display face for the illuminated-manuscript reference. */
+.drop-cap::first-letter {
+  font-family: var(--font-display), "Songti SC", serif;
+  float: left;
+  font-size: 2.6em;
+  line-height: 0.9;
+  padding-right: 0.08em;
+  color: var(--gold);
 }
 
 /* tactile press feedback for buttons (taste: simulate physical push) */

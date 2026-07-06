@@ -9,6 +9,8 @@ import {
   GearSix,
   GraduationCap,
   Question,
+  Shield,
+  ShieldCheck,
 } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import type { STTEngineKind } from "@/lib/types";
@@ -22,12 +24,24 @@ export interface HeaderProps {
   onOpenHelp: () => void;
 }
 
-const ENGINE_OPTIONS: { value: STTEngineKind; label: string }[] = [
-  { value: "demo", label: "演示" },
-  { value: "webspeech", label: "浏览器识别" },
-  { value: "whisper", label: "本地 Whisper" },
-  { value: "tabaudio", label: "标签页音频" },
+// Real capture engines only — demo is a scripted preview, not a peer
+// engine, so it has exactly one affordance: the header 演示 button.
+// posture drives the 本地/云端 chip: local engines process audio on
+// this machine; cloud engines send audio to a third-party service.
+const ENGINE_OPTIONS: {
+  value: Exclude<STTEngineKind, "demo">;
+  label: string;
+  posture: "local" | "cloud";
+}[] = [
+  { value: "webspeech", label: "浏览器识别", posture: "cloud" },
+  { value: "whisper", label: "本地 Whisper", posture: "local" },
+  { value: "tabaudio", label: "标签页音频", posture: "local" },
 ];
+
+const POSTURE_LABEL: Record<"local" | "cloud", string> = {
+  local: "本地",
+  cloud: "云端",
+};
 
 function formatElapsed(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
@@ -43,10 +57,10 @@ function DetectModeBadge() {
 
   const config =
     detectMode === "llm"
-      ? { label: "AI 检测", cls: "text-acc2 border-acc2/30" }
+      ? { label: "AI 检测", cls: "text-acc2 border-acc2/30", Icon: ShieldCheck }
       : detectMode === "dictionary"
-        ? { label: "词典模式", cls: "text-gold border-gold/30" }
-        : { label: "检测关闭", cls: "text-mut border-edge" };
+        ? { label: "词典模式", cls: "text-gold border-gold/30", Icon: Shield }
+        : { label: "检测关闭", cls: "text-mut border-edge", Icon: null };
 
   return (
     <span
@@ -55,6 +69,7 @@ function DetectModeBadge() {
       {detectBusy && (
         <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent whitespace-nowrap" />
       )}
+      {!detectBusy && config.Icon && <config.Icon size={14} weight="regular" />}
       {config.label}
     </span>
   );
@@ -94,6 +109,7 @@ function EnginePillGroup() {
           type="button"
           disabled={disabled}
           onClick={() => updateSettings({ engine: opt.value })}
+          title={opt.posture === "local" ? "本地：音频不出本机" : "云端：音频会离开设备"}
           className={`rounded-md px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
             engine === opt.value
               ? "bg-panel3 text-fg"
@@ -104,6 +120,27 @@ function EnginePillGroup() {
         </button>
       ))}
     </div>
+  );
+}
+
+// Compact 本地/云端 posture chip for the ACTIVE engine, so at a glance
+// the user knows where their audio goes. demo has no audio at all, so
+// it renders nothing here (the demo button itself makes that obvious).
+function EnginePostureChip() {
+  const engine = useApp((s) => s.settings.engine);
+  const opt = ENGINE_OPTIONS.find((o) => o.value === engine);
+  if (!opt) return null;
+
+  const isLocal = opt.posture === "local";
+  return (
+    <span
+      title={isLocal ? "音频只在本机处理，不出设备" : "音频会离开设备，经云端识别"}
+      className={`hidden items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${
+        isLocal ? "border-gold/30 text-gold" : "border-warn-soft/30 text-warn-soft"
+      }`}
+    >
+      {POSTURE_LABEL[opt.posture]}
+    </span>
   );
 }
 
@@ -124,17 +161,18 @@ export default function Header({
 
   return (
     <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel/85 px-4 backdrop-blur">
-      <div className="flex items-center gap-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-acc to-acc2 text-xs font-bold text-white whitespace-nowrap">
-          ML
-        </div>
-        <span className="font-semibold text-fg">JargonSlayer</span>
+      <div className="flex items-center gap-2 whitespace-nowrap">
+        <img src="/icon-192.png" alt="" className="h-8 w-8 rounded-lg" />
+        <span className="font-display font-semibold tracking-wide text-fg">
+          JargonSlayer
+        </span>
         <span className="hidden text-xs text-mut md:inline">
           英文会议实时理解
         </span>
       </div>
 
       <EnginePillGroup />
+      <EnginePostureChip />
 
       <div className="ml-auto flex items-center gap-2">
         <DetectModeBadge />

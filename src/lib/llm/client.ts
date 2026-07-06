@@ -122,7 +122,7 @@ export async function summarizeApi(
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new UpstreamError("生成报告超时，请稍后重试");
     }
-    throw new UpstreamError("生成报告请求失败，请检查网络连接");
+    throw new UpstreamError("报告生成失败，请检查网络连接");
   }
 
   if (!res.ok) {

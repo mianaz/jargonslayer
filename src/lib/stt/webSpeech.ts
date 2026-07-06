@@ -149,7 +149,7 @@ export class WebSpeechEngine implements STTEngine {
       case "network":
         this.events.onStatus(
           "error",
-          "语音识别网络错误 — Web Speech 需要联网，可切换到本地 Whisper 引擎",
+          "语音识别网络错误，Web Speech 需要联网，可切换到本地 Whisper 引擎",
         );
         return;
       default:

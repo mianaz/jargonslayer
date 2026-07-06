@@ -31,34 +31,42 @@ export interface SettingsDialogProps {
   onClose: () => void;
 }
 
+// Real capture engines only — demo is a scripted preview, not a peer
+// engine (see Header.tsx's 演示 button, the app's single demo entry
+// point). posture drives the 本地/云端 chip: local engines never send
+// audio off this machine; cloud engines do.
 const ENGINE_CARDS: {
-  value: STTEngineKind;
+  value: Exclude<STTEngineKind, "demo">;
   label: string;
   hint: string;
+  posture: "local" | "cloud";
   disabled?: boolean;
 }[] = [
   {
-    value: "demo",
-    label: "演示",
-    hint: "内置脚本，无需麦克风",
-  },
-  {
     value: "webspeech",
     label: "浏览器识别",
-    hint: "零配置，Chrome/Edge 最佳",
+    hint: "由浏览器厂商云端识别（音频会离开设备）",
+    posture: "cloud",
   },
   {
     value: "whisper",
     label: "本地 Whisper",
-    hint: "音频经浏览器厂商/whisper 隐私最佳，需启动 sidecar",
+    hint: "音频只在本机处理，不出设备",
+    posture: "local",
   },
   {
     value: "tabaudio",
     label: "标签页音频",
-    hint: "共享标签页听懂对方，即将上线",
+    hint: "在本机转录标签页音频",
+    posture: "local",
     disabled: true,
   },
 ];
+
+const POSTURE_LABEL: Record<"local" | "cloud", string> = {
+  local: "本地",
+  cloud: "云端",
+};
 
 const LANGUAGE_OPTIONS = [
   { value: "en-US", label: "English (US)" },
@@ -182,7 +190,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [checkedPacks, setCheckedPacks] = useState<Set<string>>(
     new Set(settings.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
   );
-  // 包源 (remote dictionary packs, #20).
+  // 词典源 (remote dictionary packs, #20).
   const [packSources, setPackSources] = useState<RemotePackSource[]>([]);
   const [packSourceUrl, setPackSourceUrl] = useState("");
   const [addingPackSource, setAddingPackSource] = useState(false);
@@ -345,7 +353,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       } else {
         showToast(
           health.diarization_error
-            ? `说话人分离未就绪：${health.diarization_error}`
+            ? `说话人分离尚未就绪：${health.diarization_error}`
             : "说话人分离未就绪",
         );
       }
@@ -369,6 +377,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   };
 
   const activePreset = presetIdFor(draft);
+  // 实时说话人分离（beta）: only meaningful for the two local-audio
+  // engines that go through wsTransport.ts, and only runnable once a
+  // token is configured (mirrors the sidecar's own arming gate: config.
+  // diarize truthy AND a token available).
+  const realtimeDiarizeAvailable =
+    (draft.engine === "whisper" || draft.engine === "tabaudio") && !!draft.hfToken;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -392,7 +406,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       : "border-edge text-fg hover:bg-panel3"
                   }`}
                 >
-                  <div className="font-medium">{opt.label}</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{opt.label}</span>
+                    <span
+                      className={`shrink-0 rounded-full border px-1.5 py-0 text-[10px] ${
+                        opt.posture === "local"
+                          ? "border-gold/30 text-gold"
+                          : "border-warn-soft/30 text-warn-soft"
+                      }`}
+                    >
+                      {POSTURE_LABEL[opt.posture]}
+                    </span>
+                  </div>
                   <div className="mt-0.5 text-xs leading-[1.7] text-mut">
                     {opt.hint}
                   </div>
@@ -525,6 +550,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             >
               {checkingDiarization ? "检测中…" : "检测状态"}
             </button>
+
+            <label className="flex items-center justify-between gap-3 border-t border-edge pt-3 py-1">
+              <div>
+                <div className={`text-sm ${realtimeDiarizeAvailable ? "text-fg" : "text-mut2"}`}>
+                  实时说话人分离（beta）
+                </div>
+                <div className="mt-0.5 text-xs leading-[26px] text-mut2">
+                  {realtimeDiarizeAvailable
+                    ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
+                    : "需先配置 HF Token"}
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.realtimeDiarize}
+                disabled={!realtimeDiarizeAvailable}
+                onChange={(e) => patch({ realtimeDiarize: e.target.checked })}
+                className="h-4 w-4 shrink-0 accent-acc disabled:opacity-50"
+              />
+            </label>
           </section>
 
           {/* AI 检测 */}
@@ -740,12 +785,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               ))}
             </div>
 
-            {/* 包源 (#20): install community dictionary packs from a
+            {/* 词典源 (#20): install community dictionary packs from a
                URL. getAllPacks() above already folds loaded remote
                packs into the checkbox list; this subsection manages
                the underlying sources (add/remove/update-check). */}
             <div className="space-y-2 border-t border-edge pt-3">
-              <div className="text-xs text-mut">包源</div>
+              <div className="text-xs text-mut">词典源</div>
 
               <div className="flex items-center gap-2">
                 <input
@@ -795,7 +840,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           type="button"
                           onClick={() => void handleRemovePackSource(s.url)}
                           className={`btn-tactile rounded-lg px-2 py-1 text-xs hover:bg-panel3 ${
-                            confirmRemoveUrl === s.url ? "text-warn" : "text-mut hover:text-warn"
+                            confirmRemoveUrl === s.url ? "text-warn-soft" : "text-mut hover:text-warn-soft"
                           }`}
                         >
                           {confirmRemoveUrl === s.url ? "确认移除?" : "移除"}
@@ -849,7 +894,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <button
                       type="button"
                       onClick={() => void handleClearExportFolder()}
-                      className="btn-tactile text-xs text-mut hover:text-warn"
+                      className="btn-tactile text-xs text-mut hover:text-warn-soft"
                     >
                       清除
                     </button>
