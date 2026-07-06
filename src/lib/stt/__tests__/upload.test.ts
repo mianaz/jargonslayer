@@ -21,12 +21,32 @@ vi.mock("../../detect/dictionary", () => ({
   scanDictionary: vi.fn(() => ({ expressions: [], terms: [] })),
 }));
 
+// importUrlAndTrack (#43 phase 2c) touches the same
+// saveSession/loadSession side effects importAndTrack's sidecar branch
+// does — mocked here (neither is exercised by the rate-limit/
+// buildSessionFrom* suites above, which never reach these calls) so
+// the URL-import flow tests below can assert on the resulting session
+// without a real IndexedDB/zustand store.
+const mockSaveSession = vi.fn(async (_session: unknown) => {});
+vi.mock("../../history/storage", () => ({
+  saveSession: (session: unknown) => mockSaveSession(session),
+}));
+
+const mockLoadSession = vi.fn(async () => {});
+vi.mock("../../store", () => ({
+  useApp: {
+    getState: () => ({ loadSession: mockLoadSession }),
+  },
+}));
+
 import { detectApi, RateLimitApiError, NoKeyError } from "../../llm/client";
 import { scanDictionary } from "../../detect/dictionary";
 import {
   runDetectionPipeline,
   buildSessionFromSegments,
   buildSessionFromCloudSegments,
+  ingestUrl,
+  importUrlAndTrack,
   type CloudTranscriptSegment,
 } from "../upload";
 
@@ -298,5 +318,308 @@ describe("buildSessionFromSegments — reuse (#43 phase 2a)", () => {
     expect(viaCloudHelper.segments.map((s) => ({ text: s.text, engine: s.engine }))).toEqual(
       viaDirectCall.segments.map((s) => ({ text: s.text, engine: s.engine })),
     );
+  });
+});
+
+describe("ingestUrl — request shape (#43 phase 2c, LOCAL TIER ONLY)", () => {
+  let settings: Settings;
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    settings = makeSettings({ whisperUrl: "ws://localhost:8765" });
+    mockFetch = vi.fn(async () => ({
+      ok: true,
+      status: 202,
+      json: async () => ({ job_id: "job-123" }),
+    }));
+    global.fetch = mockFetch as unknown as typeof fetch;
+  });
+
+  it("POSTs JSON {url, language} to {httpBase}/ingest-url, with no diarize/hf_token when hfToken is unset", async () => {
+    const { jobId } = await ingestUrl("https://example.com/watch?v=abc", settings);
+
+    expect(jobId).toBe("job-123");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("http://localhost:8766/ingest-url");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "Content-Type": "application/json" });
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({
+      url: "https://example.com/watch?v=abc",
+      language: "en",
+    });
+  });
+
+  it("includes diarize + hf_token when settings.hfToken is present, mirroring uploadRecording's own gating", async () => {
+    settings = makeSettings({ whisperUrl: "ws://localhost:8765", hfToken: "hf_secret" });
+
+    await ingestUrl("https://example.com/watch?v=abc", settings, false);
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({
+      url: "https://example.com/watch?v=abc",
+      language: "en",
+      diarize: false,
+      hf_token: "hf_secret",
+    });
+  });
+
+  it("uses settings.language's primary subtag only (zh-CN -> zh), same as uploadRecording", async () => {
+    settings = makeSettings({ whisperUrl: "ws://localhost:8765", language: "zh-CN" });
+
+    await ingestUrl("https://example.com/watch?v=abc", settings);
+
+    const [, init] = mockFetch.mock.calls[0];
+    const body = JSON.parse(init.body as string);
+    expect(body.language).toBe("zh");
+  });
+
+  it("surfaces the sidecar's zh error message on a non-ok response", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "未检测到 yt-dlp，请先安装（brew install yt-dlp 或 pipx install yt-dlp）" }),
+    });
+
+    await expect(ingestUrl("https://example.com/watch?v=abc", settings)).rejects.toThrow(
+      "未检测到 yt-dlp，请先安装（brew install yt-dlp 或 pipx install yt-dlp）",
+    );
+  });
+
+  it("falls back to a generic message when the error response has no parseable JSON body", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: async () => {
+        throw new Error("not json");
+      },
+    });
+
+    await expect(ingestUrl("https://example.com/watch?v=abc", settings)).rejects.toThrow(
+      "导入失败（500）",
+    );
+  });
+});
+
+describe("importUrlAndTrack — poll/build/save flow (#43 phase 2c, LOCAL TIER ONLY)", () => {
+  let settings: Settings;
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    settings = makeSettings({ whisperUrl: "ws://localhost:8765" });
+    mockDetectApi.mockReset();
+    mockDetectApi.mockResolvedValue(emptyRes());
+    mockScanDictionary.mockReset();
+    mockScanDictionary.mockReturnValue(emptyRes());
+    mockSaveSession.mockClear();
+    mockLoadSession.mockClear();
+    mockFetch = vi.fn();
+    global.fetch = mockFetch as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reuses the SAME poll -> buildSessionFromJob -> save -> load flow as importAndTrack's sidecar branch, using the job's own display_name as the session title", async () => {
+    mockFetch
+      // ingestUrl's POST /ingest-url
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({ job_id: "job-url-1" }),
+      })
+      // first poll: still running, downloading
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "job-url-1",
+          status: "running",
+          progress: 0.1,
+          status_detail: "下载中",
+          segments: [],
+          error: null,
+          diarized: false,
+          warning: null,
+          display_name: null,
+        }),
+      })
+      // second poll: transcribing
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "job-url-1",
+          status: "running",
+          progress: 0.5,
+          status_detail: null,
+          segments: [],
+          error: null,
+          diarized: false,
+          warning: null,
+          display_name: "Me at the zoo",
+        }),
+      })
+      // third poll: done
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "job-url-1",
+          status: "done",
+          progress: 1.0,
+          status_detail: null,
+          segments: [{ start: 0, end: 2, text: "circle back on this" }],
+          error: null,
+          diarized: false,
+          warning: null,
+          display_name: "Me at the zoo",
+        }),
+      });
+
+    const onProgress = vi.fn();
+    const onDone = vi.fn();
+    const onError = vi.fn();
+
+    const promise = importUrlAndTrack(
+      "https://example.com/watch?v=abc",
+      settings,
+      { onProgress, onDone, onError },
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(1_500); // POLL_INTERVAL_MS, first -> second poll
+    await vi.advanceTimersByTimeAsync(1_500); // second -> third (done) poll
+    await promise;
+
+    expect(onError).not.toHaveBeenCalled();
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onProgress).toHaveBeenCalledWith(0, "下载中");
+    expect(onProgress).toHaveBeenCalledWith(0.1, "下载中");
+    expect(onProgress).toHaveBeenCalledWith(0.5, "转录中");
+
+    expect(mockSaveSession).toHaveBeenCalledTimes(1);
+    const savedSession = mockSaveSession.mock.calls[0][0] as unknown as {
+      title: string;
+      segments: unknown[];
+    };
+    // buildSessionFromJob's own title convention: `导入 ${filename}`,
+    // fed the job's display_name (server-resolved title) rather than a
+    // client-known File.name — the one behavioral difference from
+    // importAndTrack's uploaded-file branch, which always has a
+    // filename before the job even starts.
+    expect(savedSession.title).toBe("导入 Me at the zoo");
+    expect(savedSession.segments).toHaveLength(1);
+
+    expect(mockLoadSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to the URL itself as buildSessionFromJob's filename when the job never resolves a display_name", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({ job_id: "job-url-2" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "job-url-2",
+          status: "done",
+          progress: 1.0,
+          status_detail: null,
+          segments: [],
+          error: null,
+          diarized: false,
+          warning: null,
+          display_name: null,
+        }),
+      });
+
+    const onDone = vi.fn();
+    const onError = vi.fn();
+    const promise = importUrlAndTrack("https://example.com/clip", settings, {
+      onProgress: vi.fn(),
+      onDone,
+      onError,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await promise;
+
+    expect(onError).not.toHaveBeenCalled();
+    const savedSession = mockSaveSession.mock.calls[0][0] as unknown as { title: string };
+    expect(savedSession.title).toBe("导入 https://example.com/clip");
+  });
+
+  it("reports the job's error via onError without throwing, and never calls saveSession/loadSession", async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 202,
+        json: async () => ({ job_id: "job-url-3" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: "job-url-3",
+          status: "error",
+          progress: 0,
+          status_detail: "下载中",
+          segments: [],
+          error: "下载失败：ERROR: unable to resolve host",
+          diarized: false,
+          warning: null,
+          display_name: null,
+        }),
+      });
+
+    const onError = vi.fn();
+    const onDone = vi.fn();
+    const promise = importUrlAndTrack("https://not-a-real-site.invalid/x", settings, {
+      onProgress: vi.fn(),
+      onDone,
+      onError,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await promise;
+
+    expect(onError).toHaveBeenCalledWith("下载失败：ERROR: unable to resolve host");
+    expect(onDone).not.toHaveBeenCalled();
+    expect(mockSaveSession).not.toHaveBeenCalled();
+    expect(mockLoadSession).not.toHaveBeenCalled();
+  });
+
+  it("reports ingestUrl's own rejection (e.g. missing yt-dlp) via onError, never calling pollJob", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        error: "未检测到 yt-dlp，请先安装（brew install yt-dlp 或 pipx install yt-dlp）",
+      }),
+    });
+
+    const onError = vi.fn();
+    const promise = importUrlAndTrack("https://example.com/clip", settings, {
+      onProgress: vi.fn(),
+      onDone: vi.fn(),
+      onError,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+    await promise;
+
+    expect(onError).toHaveBeenCalledWith(
+      "未检测到 yt-dlp，请先安装（brew install yt-dlp 或 pipx install yt-dlp）",
+    );
+    // Only the ingestUrl POST — no poll GET was ever attempted.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });

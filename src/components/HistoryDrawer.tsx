@@ -4,11 +4,16 @@
 // lazy-loaded expression match) and delete-confirm.
 
 import { useEffect, useRef, useState } from "react";
-import { X, Trash, UploadSimple, FileText } from "@phosphor-icons/react";
+import { X, Trash, UploadSimple, FileText, LinkSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
-import { fetchSidecarHealth, importAndTrack, type ImportOptions } from "@/lib/stt/upload";
+import {
+  fetchSidecarHealth,
+  importAndTrack,
+  importUrlAndTrack,
+  type ImportOptions,
+} from "@/lib/stt/upload";
 import { importTranscriptText } from "@/lib/ingest/importText";
 import { importAudio } from "@/lib/ingest/importAudio";
 import ImportTranscriptDialog from "@/components/ImportTranscriptDialog";
@@ -93,6 +98,16 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   // since it's a full paste/upload + preview flow, not a one-click
   // file-picker shortcut.
   const [importTextOpen, setImportTextOpen] = useState(false);
+  // 从视频链接导入（本地）(#43 phase 2c, LOCAL TIER ONLY): inline URL
+  // input revealed within the popover entry itself (rather than a
+  // separate dialog like ImportTranscriptDialog) — a single text field
+  // doesn't warrant a whole modal. Gated on sidecar reachability via
+  // the SAME diarizationHealth fetch the 本地 Whisper entry already
+  // triggers on popover open (fetchSidecarHealth returns null on any
+  // unreachability/timeout, which doubles as "is the sidecar even
+  // there" — no separate probe needed).
+  const [urlImportOpen, setUrlImportOpen] = useState(false);
+  const [urlImportValue, setUrlImportValue] = useState("");
 
   useEffect(() => {
     if (!open) {
@@ -100,6 +115,8 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
       setConfirmDeleteId(null);
       setImportPickerOpen(false);
       setImportTextOpen(false);
+      setUrlImportOpen(false);
+      setUrlImportValue("");
     }
   }, [open]);
 
@@ -119,6 +136,16 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
       document.removeEventListener("keydown", handleKey);
       document.removeEventListener("mousedown", handleMouseDown);
     };
+  }, [importPickerOpen]);
+
+  // Collapse the inline URL input whenever the popover itself closes
+  // (Escape / click-outside / an unrelated entry picked) — otherwise
+  // reopening the popover would show a stale expanded input.
+  useEffect(() => {
+    if (!importPickerOpen) {
+      setUrlImportOpen(false);
+      setUrlImportValue("");
+    }
   }, [importPickerOpen]);
 
   useEffect(() => {
@@ -301,7 +328,53 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
     })();
   };
 
+  // 从视频链接导入（本地）(#43 phase 2c, LOCAL TIER ONLY): kind is left
+  // at its default ("recording") rather than getting its own value —
+  // this IS a sidecar job (yt-dlp download + the same job API the
+  // uploaded-file path uses), so the sidecar-unreachable error hint
+  // that "recording" rows already append is exactly appropriate here
+  // too, unlike "text"/"audio" which suppress it.
+  const handleImportUrl = (url: string) => {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    setUrlImportOpen(false);
+    setUrlImportValue("");
+    setImportPickerOpen(false);
+
+    const jobId = `${trimmed}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setJobs((prev) =>
+      new Map(prev).set(jobId, {
+        filename: trimmed,
+        progress: 0,
+        phase: "下载中",
+        error: null,
+      }),
+    );
+
+    void importUrlAndTrack(trimmed, settings, {
+      onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
+      onDone: async (sessionId) => {
+        await loadSession(sessionId);
+        await useApp.getState().hydrate();
+        showToast("已导入并打开会话");
+        setJobs((prev) => {
+          const next = new Map(prev);
+          next.delete(jobId);
+          return next;
+        });
+      },
+      onError: (msg) => patchJob(jobId, { error: msg, phase: "失败" }),
+    });
+  };
+
   const canUseCloud = settings.provider === "openai-compat";
+  // 从视频链接导入（本地）is gated on the SAME sidecar-reachability
+  // signal the 本地 Whisper entry's diarization status line already
+  // uses: undefined (not yet checked) treated as available so the
+  // entry doesn't flash disabled before the health check resolves;
+  // null (fetchSidecarHealth's explicit "unreachable" sentinel) is the
+  // only state that disables it.
+  const sidecarReachable = diarizationHealth !== null;
 
   const chooseImportMode = (mode: ImportModeChoice) => {
     importModeRef.current = mode;
@@ -459,6 +532,47 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                       文字记录不出本机，仅检测/翻译请求经 API
                     </div>
                   </button>
+                  <div>
+                    <button
+                      type="button"
+                      disabled={!sidecarReachable}
+                      onClick={() => setUrlImportOpen((v) => !v)}
+                      className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                    >
+                      <div className="flex items-center gap-2 text-sm text-fg">
+                        <LinkSimple size={16} weight="regular" />
+                        从视频链接导入（本地）
+                      </div>
+                      <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                        {sidecarReachable
+                          ? "通过本地 sidecar 下载并转录，仅限本地版·请确保你有权处理该内容"
+                          : "需本地 Whisper sidecar（体验版不提供）"}
+                      </div>
+                    </button>
+                    {urlImportOpen && sidecarReachable && (
+                      <div className="flex items-center gap-1.5 px-2.5 pb-2">
+                        <input
+                          type="text"
+                          autoFocus
+                          value={urlImportValue}
+                          onChange={(e) => setUrlImportValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleImportUrl(urlImportValue);
+                          }}
+                          placeholder="https://..."
+                          className="w-full min-w-0 rounded-sm border border-edge bg-panel2 px-2 py-1 text-xs text-fg placeholder:text-mut2 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          disabled={!urlImportValue.trim()}
+                          onClick={() => handleImportUrl(urlImportValue)}
+                          className="shrink-0 rounded-sm border border-edge px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+                        >
+                          确认
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

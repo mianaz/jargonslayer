@@ -57,6 +57,12 @@ export interface JobStatus {
   error: string | null;
   diarized: boolean;
   warning: string | null;
+  /** URL-import (#43 phase 2c) jobs only: the captured video title,
+   *  else the URL's last path segment — resolved server-side since the
+   *  client only has the URL upfront. undefined/null for upload-path
+   *  jobs (the client already knows file.name before the job starts,
+   *  so it never needs this echoed back). */
+  display_name?: string | null;
 }
 
 /** ws://host:port -> http://host:8766 — the sidecar's job API always
@@ -466,6 +472,49 @@ export interface ImportOptions {
   diarize?: boolean;
 }
 
+/** status_detail -> Chinese phase label for a sidecar job's polled
+ * status. The upload path's own detail values (`"diarizing"`,
+ * `null`); `importUrlAndTrack` passes a wider mapper that also covers
+ * URL-import's own `"下载中"` value (see JobStatus.status_detail /
+ * whisper_server.py's new_job doc). Kept as a plain function (not a
+ * lookup table) so the default case stays exactly today's `? :`
+ * one-liner for the existing upload call sites. */
+function phaseForStatusDetail(statusDetail: string | null): string {
+  if (statusDetail === "diarizing") return "说话人分离中";
+  if (statusDetail === "下载中") return "下载中";
+  return "转录中";
+}
+
+/** Poll a sidecar job to completion (status "done"), calling
+ * `onProgress` on every poll and reporting the phase label via
+ * `phaseForStatusDetail`. Throws the job's own error message on
+ * status "error" (caller's try/catch turns that into onError,
+ * mirroring importAndTrack's pre-extraction try/catch exactly) —
+ * shared by both importAndTrack (uploaded file) and importUrlAndTrack
+ * (#43 phase 2c, URL import), which otherwise differ only in how the
+ * job was started (uploadRecording vs ingestUrl) and what they pass to
+ * buildSessionFromJob as the display filename. */
+async function pollJobUntilDone(
+  jobId: string,
+  settings: Settings,
+  onProgress: (progress: number, phase: string) => void,
+): Promise<JobStatus> {
+  let job: JobStatus;
+  for (;;) {
+    job = await pollJob(jobId, settings);
+
+    if (job.status === "error") {
+      throw new Error(job.error ?? "转录失败");
+    }
+
+    onProgress(job.progress, phaseForStatusDetail(job.status_detail));
+
+    if (job.status === "done") break;
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+  }
+  return job;
+}
+
 /** Orchestrates the full upload -> poll -> detect -> save -> load
  * flow for one recording (sidecar mode), or upload -> detect -> save
  * -> load (cloud mode, no polling stage). Never throws — reports
@@ -499,25 +548,99 @@ export async function importAndTrack(
     onProgress(0, "转录中");
     const { jobId } = await uploadRecording(file, settings, opts.diarize ?? true);
 
-    let job: JobStatus;
-    for (;;) {
-      job = await pollJob(jobId, settings);
-
-      if (job.status === "error") {
-        onError(job.error ?? "转录失败");
-        return;
-      }
-
-      const phase =
-        job.status_detail === "diarizing" ? "说话人分离中" : "转录中";
-      onProgress(job.progress, phase);
-
-      if (job.status === "done") break;
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    }
+    const job = await pollJobUntilDone(jobId, settings, onProgress);
 
     onProgress(job.progress, "构建会话");
     const session = await buildSessionFromJob(job, settings, file.name);
+
+    await storage.saveSession(session);
+    await useApp.getState().loadSession(session.id);
+
+    onDone(session.id);
+  } catch (err) {
+    const msg =
+      err instanceof Error
+        ? err.message
+        : "导入失败，请确认 sidecar 已启动且 --http-port 开启";
+    onError(msg);
+  }
+}
+
+// ---------------------------------------------------------------
+// URL import (#43 phase 2c, LOCAL TIER ONLY) — the sidecar's own
+// yt-dlp download runs on the USER's machine/IP, so this path only
+// ever targets the local Whisper sidecar's job API (no "cloud" mode
+// counterpart, unlike importAndTrack above): the hosted demo can't
+// legally/technically run it (datacenter-side YouTube ripping is a
+// DMCA §1201 liability, and YouTube blocks datacenter IPs anyway).
+// ---------------------------------------------------------------
+
+/** POST {httpBase}/ingest-url — same language/diarize/hf_token
+ * semantics as uploadRecording (settings.language's primary subtag,
+ * diarize gated on settings.hfToken being present), but as a JSON
+ * body (matching the sidecar's POST /ingest-url contract) instead of
+ * uploadRecording's query-string + raw-body PUT. */
+export async function ingestUrl(
+  url: string,
+  settings: Settings,
+  diarize: boolean = true,
+): Promise<{ jobId: string }> {
+  const base = httpBaseFromWs(settings.whisperUrl);
+  const body: Record<string, unknown> = {
+    url,
+    language: settings.language.split("-")[0],
+  };
+  if (settings.hfToken) {
+    body.diarize = diarize;
+    body.hf_token = settings.hfToken;
+  }
+
+  const res = await fetch(`${base}/ingest-url`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    let message = `导入失败（${res.status}）`;
+    try {
+      const errBody = (await res.json()) as { error?: string };
+      if (errBody?.error) message = errBody.error;
+    } catch {
+      // keep the generic message
+    }
+    throw new Error(message);
+  }
+
+  const resBody = (await res.json()) as { job_id: string };
+  return { jobId: resBody.job_id };
+}
+
+/** Orchestrates the full ingest -> poll -> detect -> save -> load flow
+ * for one video/audio URL, reusing pollJobUntilDone/buildSessionFromJob
+ * exactly like importAndTrack's sidecar-mode branch — only the job's
+ * acquisition method (ingestUrl vs uploadRecording) and the display
+ * filename (the job's own display_name, resolved server-side from the
+ * video title/URL — the client never has a local filename to offer
+ * upfront) differ. Never throws — same callback-reporting contract as
+ * importAndTrack. */
+export async function importUrlAndTrack(
+  url: string,
+  settings: Settings,
+  callbacks: ImportCallbacks,
+  opts: { diarize?: boolean } = {},
+): Promise<void> {
+  const { onProgress, onDone, onError } = callbacks;
+
+  try {
+    onProgress(0, "下载中");
+    const { jobId } = await ingestUrl(url, settings, opts.diarize ?? true);
+
+    const job = await pollJobUntilDone(jobId, settings, onProgress);
+
+    onProgress(job.progress, "构建会话");
+    const filename = job.display_name ?? url;
+    const session = await buildSessionFromJob(job, settings, filename);
 
     await storage.saveSession(session);
     await useApp.getState().loadSession(session.id);

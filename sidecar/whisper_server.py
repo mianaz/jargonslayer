@@ -807,21 +807,125 @@ class WhisperServer:
 
 DIARIZE_HOLD_PROGRESS = 0.9  # progress shown while diarization runs
 
+# ---- URL import (#43 phase 2c, LOCAL TIER ONLY) tuning ----
+INGEST_URL_MAX_LEN = 2000
+INGEST_DOWNLOAD_MAX_FILESIZE = "500m"  # yt-dlp --max-filesize, mirrors MAX_UPLOAD_BYTES
+INGEST_DOWNLOAD_HOLD_PROGRESS = 0.3  # progress shown while the download phase runs
+INGEST_ERROR_DETAIL_CHARS = 200  # stderr-line truncation for a failed download
 
-def new_job(diarize_requested: bool) -> dict[str, Any]:
-    """Fresh job record — the exact shape returned by GET /jobs/{id}."""
+
+def new_job(diarize_requested: bool, display_name: Optional[str] = None) -> dict[str, Any]:
+    """Fresh job record — the exact shape returned by GET /jobs/{id}.
+
+    `display_name`: None for the upload path (the client already knows
+    file.name upfront and never needs it echoed back). URL-import jobs
+    (#43 phase 2c) set it once the video title/URL is known — the
+    client has only the URL until then, so it reads this field back
+    (rather than a client-supplied filename) for buildSessionFromJob's
+    title param."""
     return {
         "id": uuid.uuid4().hex,
         "status": "queued",  # queued | running | done | error
         "progress": 0.0,
-        "status_detail": None,  # e.g. "diarizing"
+        "status_detail": None,  # e.g. "diarizing", "下载中" (URL import)
         "segments": [],  # [{"start","end","text","speaker"?}]
         "error": None,
         "diarized": False,
         "diarize_requested": diarize_requested,
         "warning": None,  # non-fatal note (e.g. diarization unavailable)
+        "display_name": display_name,
         "created_at": time.time(),
     }
+
+
+# =================================================================
+# Pure, unit-testable URL-import (#43 phase 2c) helpers — no I/O, no
+# subprocess, no network. Covered by test_ingest_url.py.
+# =================================================================
+
+
+def validate_ingest_url(url: Any) -> Optional[str]:
+    """Returns a zh error message if `url` isn't an importable http(s)
+    URL, else None. Deliberately permissive beyond scheme/length — the
+    real validity check is yt-dlp's own extractor resolution at
+    download time, which produces a much more specific error."""
+    if not isinstance(url, str) or not url:
+        return "缺少视频链接"
+    if len(url) > INGEST_URL_MAX_LEN:
+        return f"链接过长（上限 {INGEST_URL_MAX_LEN} 字符）"
+    scheme = urlparse(url).scheme.lower()
+    if scheme not in ("http", "https"):
+        return "仅支持 http/https 链接"
+    return None
+
+
+def build_ytdlp_args(url: str, out_dir: str) -> list[str]:
+    """Construct the yt-dlp argv for one URL-import download: best
+    audio, extracted + re-encoded to 16kHz mono WAV (matching the
+    sidecar's own SAMPLE_RATE, so the downstream transcribe/diarize
+    path never has to care an import came from a URL rather than an
+    upload), filesize-capped, quiet (--print implies --quiet, which is
+    also why no --newline percent parsing is attempted — verified via
+    `yt-dlp --help`), printing the final filepath then the title after
+    the file has been moved to its destination."""
+    return [
+        "yt-dlp",
+        "--no-playlist",
+        "-f",
+        "bestaudio/best",
+        "-x",
+        "--audio-format",
+        "wav",
+        "--postprocessor-args",
+        f"ffmpeg:-ac 1 -ar {SAMPLE_RATE}",
+        "-o",
+        os.path.join(out_dir, "audio.%(ext)s"),
+        "--max-filesize",
+        INGEST_DOWNLOAD_MAX_FILESIZE,
+        "--no-progress",
+        "--print",
+        "after_move:filepath",
+        "--print",
+        "after_move:%(title)s",
+        url,
+    ]
+
+
+def parse_ytdlp_stdout(stdout: str) -> tuple[Optional[str], Optional[str]]:
+    """Parse `build_ytdlp_args`'s two `--print` lines out of a
+    completed yt-dlp run's captured stdout: (filepath, title), either
+    of which may be None if that line is missing (caller falls back to
+    globbing the job's tmpdir for filepath, and to the URL's last path
+    segment for title — see ingest_url_display_name). Verified live:
+    yt-dlp emits exactly one line per --print, in the order the flags
+    were given, with no other stdout noise (--print implies --quiet)."""
+    lines = [line for line in stdout.splitlines() if line.strip()]
+    filepath = lines[0].strip() if len(lines) >= 1 else None
+    title = lines[1].strip() if len(lines) >= 2 else None
+    return filepath, title
+
+
+def ingest_url_display_name(url: str, title: Optional[str]) -> str:
+    """Job display name: the captured video title if yt-dlp printed
+    one (non-empty, and not its own literal "NA" placeholder for a
+    missing field), else the URL's last non-empty path segment, else
+    the URL itself."""
+    if title and title != "NA":
+        return title
+    path = urlparse(url).path
+    segment = path.rstrip("/").rsplit("/", 1)[-1]
+    return segment or url
+
+
+def truncate_ytdlp_error(stderr: str) -> str:
+    """Last non-empty stderr line (yt-dlp's own `ERROR: ...` summary
+    lives there — verified live against both a bad-format and an
+    unreachable-host failure), truncated to
+    INGEST_ERROR_DETAIL_CHARS. Falls back to a generic message if
+    stderr was empty."""
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    last = lines[-1] if lines else "未知错误"
+    return last[:INGEST_ERROR_DETAIL_CHARS]
 
 
 class JobManager:
@@ -923,7 +1027,125 @@ class JobManager:
             except OSError:
                 pass
 
-    def _transcribe_job(self, job_id: str, file_path: str, language: str) -> None:
+    def start_url_job(
+        self,
+        url: str,
+        language: Optional[str],
+        diarize: Optional[bool] = None,
+        hf_token: Optional[str] = None,
+    ) -> str:
+        """Register a queued URL-import (#43 phase 2c, LOCAL TIER ONLY)
+        job and kick off its background worker thread. Returns the job
+        id immediately (non-blocking) — mirrors start_job's contract
+        exactly, only the acquisition method differs (yt-dlp download
+        instead of an already-uploaded file); everything downstream
+        (transcribe, diarize, cleanup) reuses _transcribe_job/
+        _diarize_job unchanged, called from _run_url_job below instead
+        of _run_job."""
+        effective_token = hf_token or self.hf_token
+        if hf_token:
+            self.last_request_token = hf_token
+        diarize_requested = bool(effective_token) if diarize is None else (diarize and bool(effective_token))
+        job = new_job(diarize_requested, display_name=ingest_url_display_name(url, None))
+        job_id = job["id"]
+        with self.lock:
+            self.jobs[job_id] = job
+
+        thread = threading.Thread(
+            target=self._run_url_job,
+            args=(job_id, url, language or self.default_language, effective_token),
+            daemon=True,
+        )
+        thread.start()
+        return job_id
+
+    def _run_url_job(
+        self, job_id: str, url: str, language: str, hf_token: Optional[str]
+    ) -> None:
+        """Download phase (yt-dlp) followed by the SAME transcribe/
+        diarize phases _run_job uses — progress 0-0.3 for the
+        download, 0.3-1.0 for transcription (DIARIZE_HOLD_PROGRESS
+        still governs the diarization hold within that range, exactly
+        as for an uploaded file)."""
+        tmp_dir = tempfile.mkdtemp(prefix="jargonslayer-ingest-")
+        try:
+            self._set(job_id, status="running", status_detail="下载中")
+            file_path, title = self._download_via_ytdlp(job_id, url, tmp_dir)
+            self._set(
+                job_id,
+                progress=INGEST_DOWNLOAD_HOLD_PROGRESS,
+                status_detail=None,
+                display_name=ingest_url_display_name(url, title),
+            )
+
+            self._transcribe_job(
+                job_id,
+                file_path,
+                language,
+                progress_floor=INGEST_DOWNLOAD_HOLD_PROGRESS,
+            )
+
+            job = self.get(job_id)
+            if job is not None and job["diarize_requested"]:
+                self._diarize_job(job_id, file_path, hf_token)
+
+            self._set(job_id, status="done", progress=1.0, status_detail=None)
+        except Exception as exc:  # noqa: BLE001 - report any failure to the client
+            self._set(job_id, status="error", error=str(exc))
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _download_via_ytdlp(self, job_id: str, url: str, tmp_dir: str) -> tuple[str, Optional[str]]:
+        """Run yt-dlp synchronously (this method itself runs inside the
+        job's background thread) to fetch+extract 16kHz mono WAV audio
+        for `url` into `tmp_dir`. Returns (file_path, title). Raises a
+        zh RuntimeError on any failure (missing binaries, non-zero
+        exit, unparseable/missing output file) — caught by the
+        _run_url_job caller exactly like any other job-phase
+        exception."""
+        if shutil.which("yt-dlp") is None:
+            raise RuntimeError(
+                "未检测到 yt-dlp，请先安装（brew install yt-dlp 或 pipx install yt-dlp）"
+            )
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError("未检测到 ffmpeg，请先安装（brew install ffmpeg）")
+
+        args = build_ytdlp_args(url, tmp_dir)
+        result = subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"下载失败：{truncate_ytdlp_error(result.stderr)}")
+
+        file_path, title = parse_ytdlp_stdout(result.stdout)
+        if not file_path or not os.path.isfile(file_path):
+            # Fallback: --print's stdout line was missing/unparseable —
+            # glob the tmpdir for whatever -o's template actually wrote.
+            candidates = sorted(Path(tmp_dir).glob("audio.*"))
+            if not candidates:
+                raise RuntimeError("下载失败：未找到音频文件")
+            file_path = str(candidates[0])
+        return file_path, title
+
+    def _transcribe_job(
+        self,
+        job_id: str,
+        file_path: str,
+        language: str,
+        progress_floor: float = 0.0,
+    ) -> None:
+        """`progress_floor`: for the upload path (default 0.0, the
+        only caller until #43 phase 2c) transcription progress maps
+        into [0, DIARIZE_HOLD_PROGRESS] exactly as before. The URL-
+        import path (_run_url_job) passes INGEST_DOWNLOAD_HOLD_PROGRESS
+        so the download phase's own [0, floor] range is never
+        overwritten — transcription then maps into
+        [floor, floor + (1 - floor) * DIARIZE_HOLD_PROGRESS], still
+        reserving its own tail for the diarization-hold phase exactly
+        as the plain floor=0.0 case does."""
         segments_gen, info = self.model.transcribe(
             file_path,
             language=language,
@@ -944,8 +1166,11 @@ class JobManager:
                 if job is not None:
                     job["segments"] = list(collected)
                     # Leave headroom for the diarization phase, which
-                    # (per spec) holds progress at DIARIZE_HOLD_PROGRESS.
-                    job["progress"] = progress * DIARIZE_HOLD_PROGRESS
+                    # (per spec) holds progress at DIARIZE_HOLD_PROGRESS
+                    # within whatever range remains above progress_floor.
+                    job["progress"] = progress_floor + progress * DIARIZE_HOLD_PROGRESS * (
+                        1 - progress_floor
+                    )
 
     def _load_diarize_pipeline(self, hf_token: Optional[str] = None) -> tuple[Any, Optional[str]]:
         """Returns (pipeline, error_message); error_message is None on
@@ -1106,7 +1331,7 @@ def make_job_http_handler(
         def _cors(self) -> None:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header(
-                "Access-Control-Allow-Methods", "PUT, GET, OPTIONS"
+                "Access-Control-Allow-Methods", "PUT, POST, GET, OPTIONS"
             )
             self.send_header(
                 "Access-Control-Allow-Headers", "Content-Type"
@@ -1185,6 +1410,66 @@ def make_job_http_handler(
 
             job_id = job_manager.start_job(
                 tmp_path, language, diarize=diarize, hf_token=hf_token
+            )
+            self._send_json(HTTPStatus.ACCEPTED, {"job_id": job_id})
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/ingest-url":
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+                return
+
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST, {"error": "empty request body"}
+                )
+                return
+            if length > MAX_UPLOAD_BYTES:
+                self._send_json(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    {"error": f"请求体过大（上限 {MAX_UPLOAD_BYTES // (1 << 20)}MB） / request too large"},
+                )
+                return
+
+            try:
+                raw = self.rfile.read(length)
+                payload = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST, {"error": f"请求体不是合法 JSON: {exc}"}
+                )
+                return
+
+            url = payload.get("url") if isinstance(payload, dict) else None
+            url_error = validate_ingest_url(url)
+            if url_error is not None:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": url_error})
+                return
+
+            if shutil.which("yt-dlp") is None:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {
+                        "error": "未检测到 yt-dlp，请先安装（brew install yt-dlp "
+                        "或 pipx install yt-dlp）"
+                    },
+                )
+                return
+            if shutil.which("ffmpeg") is None:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "未检测到 ffmpeg，请先安装（brew install ffmpeg）"},
+                )
+                return
+
+            language = payload.get("language") if isinstance(payload.get("language"), str) else None
+            diarize_raw = payload.get("diarize")
+            diarize = None if diarize_raw is None else bool(diarize_raw)
+            hf_token = payload.get("hf_token") if isinstance(payload.get("hf_token"), str) else None
+
+            job_id = job_manager.start_url_job(
+                url, language, diarize=diarize, hf_token=hf_token
             )
             self._send_json(HTTPStatus.ACCEPTED, {"job_id": job_id})
 
@@ -1346,7 +1631,7 @@ def print_banner(
     print(f"ws://{host}:{port} 等待连接 — 在 JargonSlayer 设置中选择「本地 Whisper」")
     print(
         f"http://{host}:{http_port} 录音上传任务 API — "
-        "PUT /transcribe, GET /jobs"
+        "PUT /transcribe, POST /ingest-url, GET /jobs"
     )
     print("=" * 60)
 
