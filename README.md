@@ -24,7 +24,7 @@
 ## 快速开始
 
 ```bash
-cd meetlingo
+cd jargonslayer
 npm install
 npm run dev
 # 打开 http://localhost:3000
