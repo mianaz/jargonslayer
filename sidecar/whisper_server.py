@@ -814,7 +814,11 @@ INGEST_DOWNLOAD_HOLD_PROGRESS = 0.3  # progress shown while the download phase r
 INGEST_ERROR_DETAIL_CHARS = 200  # stderr-line truncation for a failed download
 
 
-def new_job(diarize_requested: bool, display_name: Optional[str] = None) -> dict[str, Any]:
+def new_job(
+    diarize_requested: bool,
+    display_name: Optional[str] = None,
+    kind: str = "upload",
+) -> dict[str, Any]:
     """Fresh job record — the exact shape returned by GET /jobs/{id}.
 
     `display_name`: None for the upload path (the client already knows
@@ -822,7 +826,12 @@ def new_job(diarize_requested: bool, display_name: Optional[str] = None) -> dict
     (#43 phase 2c) set it once the video title/URL is known — the
     client has only the URL until then, so it reads this field back
     (rather than a client-supplied filename) for buildSessionFromJob's
-    title param."""
+    title param.
+
+    `kind`: "upload" (default) or "url" — lets count_active_url_jobs
+    cap concurrent yt-dlp downloads (a network-bound, longer-running
+    phase an unbounded upload job never has) without touching the
+    upload path's own concurrency (unlimited, same as before)."""
     return {
         "id": uuid.uuid4().hex,
         "status": "queued",  # queued | running | done | error
@@ -835,13 +844,65 @@ def new_job(diarize_requested: bool, display_name: Optional[str] = None) -> dict
         "warning": None,  # non-fatal note (e.g. diarization unavailable)
         "display_name": display_name,
         "created_at": time.time(),
+        "kind": kind,
     }
+
+
+MAX_ACTIVE_URL_JOBS = 2  # concurrent yt-dlp downloads this sidecar will run at once
+
+
+def count_active_url_jobs(jobs: dict[str, dict[str, Any]]) -> int:
+    """Number of URL-import jobs (kind=="url") still queued or running
+    — the population start_url_job's caller caps at
+    MAX_ACTIVE_URL_JOBS before starting one more. Pure (just counts a
+    dict) so it's callable under the same lock start_url_job's caller
+    already holds, without any extra I/O."""
+    return sum(
+        1
+        for job in jobs.values()
+        if job.get("kind") == "url" and job.get("status") in ("queued", "running")
+    )
 
 
 # =================================================================
 # Pure, unit-testable URL-import (#43 phase 2c) helpers — no I/O, no
 # subprocess, no network. Covered by test_ingest_url.py.
 # =================================================================
+
+# Loopback hostnames a same-origin JargonSlayer browser tab can
+# legitimately carry as Origin (localhost:3000 -> this sidecar's
+# localhost:8766 IS cross-origin, so the browser always sends one) —
+# anything else means some other page's script issued the request.
+INGEST_ALLOWED_ORIGIN_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def ingest_origin_allowed(origin: Optional[str]) -> bool:
+    """SSRF gate for POST /ingest-url: the CORS "*" everywhere else on
+    this sidecar is an accepted local-tool trust model, but /ingest-url
+    uniquely lets a caller turn this machine into an internal-network
+    fetch proxy (yt-dlp resolves attacker-supplied URLs, including
+    localhost/LAN targets, then the job's transcript is readable via
+    GET /jobs/{id}) — so any THIRD-PARTY WEB PAGE reaching this
+    endpoint (not this app, not curl/CLI) must be rejected.
+
+    None/empty Origin -> True: no Origin header at all means the
+    caller isn't a browser doing a cross-origin fetch (curl, a native
+    launcher, same-origin non-CORS contexts) — the drive-by vector
+    this gate defends against is specifically unsolicited cross-origin
+    browser JS, which always sends Origin.
+
+    Otherwise: True only if the Origin's hostname is a loopback
+    address per INGEST_ALLOWED_ORIGIN_HOSTS — this is what the
+    JargonSlayer web app itself sends (dev on localhost:3000, or any
+    other localhost port) and what "import a NAS/localhost URL"
+    legitimately looks like. Everything else (a real remote origin, or
+    a malformed Origin urlparse can't extract a hostname from) is
+    rejected — a malformed value is never given the benefit of the
+    doubt."""
+    if origin is None or origin == "":
+        return True
+    hostname = urlparse(origin).hostname
+    return hostname in INGEST_ALLOWED_ORIGIN_HOSTS
 
 
 def validate_ingest_url(url: Any) -> Optional[str]:
@@ -1046,7 +1107,11 @@ class JobManager:
         if hf_token:
             self.last_request_token = hf_token
         diarize_requested = bool(effective_token) if diarize is None else (diarize and bool(effective_token))
-        job = new_job(diarize_requested, display_name=ingest_url_display_name(url, None))
+        job = new_job(
+            diarize_requested,
+            display_name=ingest_url_display_name(url, None),
+            kind="url",
+        )
         job_id = job["id"]
         with self.lock:
             self.jobs[job_id] = job
@@ -1419,6 +1484,16 @@ def make_job_http_handler(
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
 
+            # SSRF gate (see ingest_origin_allowed docstring) — checked
+            # before reading the body at all, so a rejected drive-by
+            # request never even gets Content-Length/body handling.
+            if not ingest_origin_allowed(self.headers.get("Origin")):
+                self._send_json(
+                    HTTPStatus.FORBIDDEN,
+                    {"error": "仅限本机应用调用（浏览器跨站请求已拒绝）"},
+                )
+                return
+
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0:
                 self._send_json(
@@ -1460,6 +1535,22 @@ def make_job_http_handler(
                 self._send_json(
                     HTTPStatus.BAD_REQUEST,
                     {"error": "未检测到 ffmpeg，请先安装（brew install ffmpeg）"},
+                )
+                return
+
+            # Concurrency cap: yt-dlp downloads are network-bound and
+            # can run for minutes, so an unbounded number of concurrent
+            # URL-import jobs is a much easier DoS/self-inflicted-abuse
+            # vector than the upload path (which has no such external
+            # network phase). Checked under the lock immediately before
+            # starting one more, so two racing requests can't both pass
+            # the check before either job is recorded.
+            with job_manager.lock:
+                active = count_active_url_jobs(job_manager.jobs)
+            if active >= MAX_ACTIVE_URL_JOBS:
+                self._send_json(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    {"error": "已有下载任务进行中，请稍后再试"},
                 )
                 return
 

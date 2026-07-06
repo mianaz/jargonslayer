@@ -121,7 +121,17 @@ export function resolveLlmConfig(
 
   const detectClassModel = process.env.JARGONSLAYER_DETECT_MODEL || null;
   const baseUrl = process.env.JARGONSLAYER_BASE_URL || "";
-  const isOpenRouter = baseUrl.includes("openrouter.ai");
+  // Exact hostname match, not a substring check: baseUrl only ever
+  // comes from a server-side env var (no client attack surface here),
+  // so this is purely a typo/operator-error guard — a substring match
+  // would also fire on an unrelated host that merely contains
+  // "openrouter.ai" somewhere in its name (e.g. a lookalike domain).
+  let isOpenRouter = false;
+  try {
+    isOpenRouter = new URL(baseUrl).hostname === "openrouter.ai";
+  } catch {
+    isOpenRouter = false;
+  }
   return {
     apiKey: serverKey,
     provider:

@@ -59,7 +59,12 @@ import { detectApi, translateApi, NoKeyError, RateLimitApiError } from "../../ll
 import * as storage from "../../history/storage";
 import { transcribeInBrowser } from "../whisperBrowser";
 import { extractAudioFromVideo } from "../ffmpegExtract";
-import { importAudio, assertDurationWithinLimit, AudioTooLongError } from "../importAudio";
+import {
+  importAudio,
+  assertDurationWithinLimit,
+  AudioTooLongError,
+  AudioTooLargeError,
+} from "../importAudio";
 import { mapChunksToSegments } from "../whisper.worker";
 
 const mockDetectApi = vi.mocked(detectApi);
@@ -139,12 +144,13 @@ describe("importAudio", () => {
     vi.clearAllMocks();
   });
 
-  function fakeFile(name = "meeting.wav"): File {
+  function fakeFile(name = "meeting.wav", size = 8): File {
     return {
       name,
       // Real Files always carry a (possibly empty) .type — isVideoFile
       // (now called at the top of importAudio) reads it unconditionally.
       type: "",
+      size,
       arrayBuffer: async () => new ArrayBuffer(8),
     } as unknown as File;
   }
@@ -217,6 +223,27 @@ describe("importAudio", () => {
     });
 
     expect(mockExtractAudioFromVideo).not.toHaveBeenCalled();
+  });
+
+  it("throws AudioTooLargeError for a native audio file over 200MB WITHOUT ever calling decodeAudioData/transcribeInBrowser", async () => {
+    const file = fakeFile("huge.wav", 200 * 1024 * 1024 + 1);
+
+    await expect(
+      importAudio({ file, translate: false, settings: makeSettings(), onProgress: vi.fn() }),
+    ).rejects.toThrow(AudioTooLargeError);
+    await expect(
+      importAudio({ file, translate: false, settings: makeSettings(), onProgress: vi.fn() }),
+    ).rejects.toThrow("音频过大（超过 200 MB），请改用本地 Whisper sidecar 转录");
+
+    expect(mockTranscribeInBrowser).not.toHaveBeenCalled();
+  });
+
+  it("a native audio file exactly at the 200MB boundary is NOT rejected", async () => {
+    const file = fakeFile("boundary.wav", 200 * 1024 * 1024);
+
+    await expect(
+      importAudio({ file, translate: false, settings: makeSettings(), onProgress: vi.fn() }),
+    ).resolves.toMatchObject({ warnings: [] });
   });
 
   it("translate:false skips translateApi and leaves session.translations undefined", async () => {

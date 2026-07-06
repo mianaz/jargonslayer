@@ -2,9 +2,11 @@
 // segments and drives /api/translate (LLM) so each segment gets a
 // secondary translated line under the English text. Sibling to
 // detect/scheduler.ts but simpler — no dictionary fallback, no
-// consecutive-failure latch (a dropped batch here just means one
-// segment stays English-only, not a mode change the user needs to
-// know about). Public signature is contract — do not change it.
+// mode-changing latch (a dropped batch here just means one segment
+// stays English-only, not something the user needs to be told about
+// beyond the one-time NoKey toast — see MAX_CONSECUTIVE_RATE_LIMITS
+// for the one queue-management counter this DOES keep). Public
+// signature is contract — do not change it.
 
 import { translateApi, NoKeyError, RateLimitApiError } from "../llm/client";
 import type { Settings, TranscriptSegment } from "../types";
@@ -29,6 +31,17 @@ const BATCH_MAX = 6;
 const MAX_TEXT_CHARS = 1500;
 const RATE_LIMIT_PAUSE_MS = 30_000;
 const ERROR_COOLDOWN_MS = 5_000;
+// NoKeyError is thrown locally by the client (no network request at
+// all — see handleError below), so retrying every 60s costs nothing;
+// this turns "no key configured" from a permanent-for-the-meeting
+// latch into a self-healing pause that quietly recovers once the user
+// fills in a key, without them having to restart the meeting.
+const NO_KEY_PAUSE_MS = 60_000;
+// Persistent 429s would otherwise re-queue the SAME oldest batch
+// forever, starving every newer segment behind it — 5 consecutive
+// failures (~2.5min at the 30s pause above) gives up on that one
+// batch (segments stay English-only) so the queue can move on.
+const MAX_CONSECUTIVE_RATE_LIMITS = 5;
 
 interface PendingItem {
   id: string;
@@ -55,14 +68,15 @@ export class TranslateQueue {
   private resumeTimer: ReturnType<typeof setTimeout> | null = null;
 
   private stopped = false;
-  private noKeyLatched = false; // permanent for this meeting once seen
+  private noKeyToastShown = false; // NoKeyError toast fires at most once per meeting
+  private consecutiveRateLimits = 0; // reset on any successful batch
 
   constructor(private opts: TranslateQueueOptions) {}
 
   /** Feed one finalized segment. No-op (silent) when the toggle is
    *  off or the segment is too long to bother translating. */
   pushSegment(seg: TranscriptSegment): void {
-    if (this.stopped || this.noKeyLatched) return;
+    if (this.stopped) return;
     if (!this.opts.getSettings().bilingualTranscript) return;
     if (seg.text.length > MAX_TEXT_CHARS) return;
 
@@ -75,7 +89,7 @@ export class TranslateQueue {
    *  catch-up translation) — same filters as pushSegment, applied
    *  per-segment so a mixed batch doesn't lose the valid ones. */
   backfill(segs: TranscriptSegment[]): void {
-    if (this.stopped || this.noKeyLatched) return;
+    if (this.stopped) return;
     if (!this.opts.getSettings().bilingualTranscript) return;
 
     const items = segs
@@ -140,7 +154,6 @@ export class TranslateQueue {
     if (this.stopped) return;
     if (this.pending.length === 0) return;
     if (this.inflight) return;
-    if (this.noKeyLatched) return;
     if (Date.now() < this.pausedUntil) return;
     // The toggle is checked at enqueue time too, but re-check here so
     // flipping it OFF during the debounce window doesn't fire one last
@@ -182,6 +195,11 @@ export class TranslateQueue {
       // Meeting-boundary guard — see TranslateQueueOptions.getMeetingGen.
       if (batch.gen !== this.opts.getMeetingGen()) return;
 
+      // Any successful batch clears the consecutive-429 counter — only
+      // an unbroken run of failures should ever trigger the drop-batch
+      // escape hatch below.
+      this.consecutiveRateLimits = 0;
+
       if (res.translations.length > 0) {
         const map: Record<string, string> = {};
         for (const t of res.translations) map[t.id] = t.text;
@@ -202,19 +220,39 @@ export class TranslateQueue {
     if (batch.gen !== this.opts.getMeetingGen()) return;
 
     if (err instanceof NoKeyError) {
-      this.noKeyLatched = true;
-      // Drop pending and stop accepting new items (see pushSegment) —
-      // without a key nothing will ever drain the queue, and a long
-      // keyless meeting would otherwise grow it unbounded.
+      // Self-healing pause, not a permanent latch: drop pending (a
+      // long keyless meeting shouldn't grow the queue unbounded) and
+      // pause 60s. NoKeyError is thrown locally with no network round
+      // trip, so retrying on the next debounce tick after a key is
+      // filled in is free — the queue recovers on its own, no restart
+      // needed. The toast still only fires once per meeting so filling
+      // in a key mid-meeting isn't followed by a flood of repeats.
       this.pending = [];
-      this.opts.onError("未配置 API Key，双语转录已暂停。前往设置填入 Key 即可恢复");
+      this.pauseFor(NO_KEY_PAUSE_MS);
+      if (!this.noKeyToastShown) {
+        this.noKeyToastShown = true;
+        this.opts.onError(
+          "未配置 API Key，双语转录已暂停。前往设置填入 Key 即可自动恢复",
+        );
+      }
       return;
     }
 
     if (err instanceof RateLimitApiError) {
-      // Unlike the generic-error branch below, rate-limit is not a
-      // per-batch failure to give up on — re-queue this batch's items
-      // at the front so "pause then resume" has something to resume.
+      this.consecutiveRateLimits++;
+      if (this.consecutiveRateLimits >= MAX_CONSECUTIVE_RATE_LIMITS) {
+        // An unbroken run of 429s means re-queuing this same oldest
+        // batch keeps starving every newer segment behind it forever —
+        // give up on it (segments stay English-only, no retry) rather
+        // than reorder-block indefinitely. Still pause 30s so whatever
+        // batch runs next doesn't fire immediately into the same 429.
+        this.consecutiveRateLimits = 0;
+        this.pauseFor(RATE_LIMIT_PAUSE_MS);
+        return;
+      }
+      // Below the threshold: rate-limit is not a per-batch failure to
+      // give up on — re-queue this batch's items at the front so
+      // "pause then resume" has something to resume.
       this.pending = [...batch.items, ...this.pending];
       this.pauseFor(RATE_LIMIT_PAUSE_MS);
       return;

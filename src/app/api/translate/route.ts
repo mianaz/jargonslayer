@@ -19,7 +19,13 @@ const SegmentSchema = z.object({
 
 const BodySchema = z.object({
   segments: z.array(SegmentSchema).min(1).max(6),
-  lang: z.string().min(1),
+  // BCP47-shaped tag, not a free string: this field is spliced
+  // straight into the prompt (buildTranslateSystemPrompt/
+  // targetLanguageName), and on the shared server-key path that
+  // prompt is attacker-reachable — tighten past .min(1) to close off
+  // prompt injection / unbounded length. Client only ever sends "zh"
+  // or "en", both well inside this shape.
+  lang: z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,15}$/),
 });
 
 function errorBody(body: ApiErrorBody, status: number) {

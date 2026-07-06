@@ -43,6 +43,12 @@ void FALLBACK_MODEL_ID;
 
 const TARGET_SAMPLE_RATE = 16_000;
 const MAX_DURATION_S = 45 * 60;
+// Lower than ffmpegExtract.ts's 400MB video cap: decodeAudioData below
+// materializes the FULL decoded PCM in memory at once (no streaming),
+// and compressed audio (mp3/m4a/flac) commonly expands 10x+ once
+// decoded to float32 PCM — a size that's fine as a compressed video
+// container can still blow up the tab's memory once decoded here.
+const MAX_AUDIO_BYTES = 200 * 1024 * 1024;
 
 export class AudioDecodeError extends Error {
   constructor(message = "无法解码该音频，请转成 wav/mp3 后重试") {
@@ -55,6 +61,13 @@ export class AudioTooLongError extends Error {
   constructor(message = "音频过长（超过 45 分钟），请分段后再导入") {
     super(message);
     this.name = "AudioTooLongError";
+  }
+}
+
+export class AudioTooLargeError extends Error {
+  constructor(message = "音频过大（超过 200 MB），请改用本地 Whisper sidecar 转录") {
+    super(message);
+    this.name = "AudioTooLargeError";
   }
 }
 
@@ -113,8 +126,14 @@ async function decodeAndResample(arrayBuffer: ArrayBuffer): Promise<Float32Array
  *  before its refactor to take an ArrayBuffer directly — used by the
  *  native-audio branch in importAudio() below. The video branch skips
  *  this entirely, since extractAudioFromVideo already returns the wav
- *  ArrayBuffer decodeAndResample needs, with no extra File read. */
+ *  ArrayBuffer decodeAndResample needs (and applies its own size gate
+ *  before that). The MAX_AUDIO_BYTES check runs on file.size BEFORE
+ *  arrayBuffer() reads anything into memory — mirrors
+ *  extractAudioFromVideo's own size-check-before-work ordering. */
 async function readFileBytes(file: File): Promise<ArrayBuffer> {
+  if (file.size > MAX_AUDIO_BYTES) {
+    throw new AudioTooLargeError();
+  }
   return file.arrayBuffer();
 }
 

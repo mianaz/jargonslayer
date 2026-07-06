@@ -170,19 +170,54 @@ describe("TranslateQueue", () => {
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
   });
 
-  it("NoKeyError latches translation off for the rest of the meeting and fires onError exactly once", async () => {
+  it("NoKeyError pauses for 60s (self-healing, not a permanent latch) and fires onError exactly once for the meeting", async () => {
     mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
 
     queue.pushSegment(makeSegment("first"));
     await vi.advanceTimersByTimeAsync(1500);
+    expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledTimes(1);
-    expect(onError.mock.calls[0][0]).toContain("未配置 API Key");
+    expect(onError.mock.calls[0][0]).toBe(
+      "未配置 API Key，双语转录已暂停。前往设置填入 Key 即可自动恢复",
+    );
 
+    // A segment pushed during the 60s pause does not trigger a new
+    // attempt (still paused), and does NOT re-fire the toast.
     onError.mockClear();
-    queue.pushSegment(makeSegment("second, after latch"));
+    queue.pushSegment(makeSegment("second, during the pause"));
     await vi.advanceTimersByTimeAsync(5000);
-    expect(mockTranslateApi).toHaveBeenCalledTimes(1); // no further attempts
+    expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     expect(onError).not.toHaveBeenCalled();
+
+    // Still no key -> the 60s resume attempt throws NoKeyError again,
+    // pausing another 60s, but the toast still doesn't repeat.
+    mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
+    await vi.advanceTimersByTimeAsync(55_000); // total 60_000ms since the first failure
+    expect(mockTranslateApi).toHaveBeenCalledTimes(2);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("NoKeyError self-heals once a key is configured — the next 60s retry picks up any newly-pushed segment and translates normally", async () => {
+    mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
+
+    queue.pushSegment(makeSegment("first, no key yet"));
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(mockTranslateApi).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+
+    // User fills in a key mid-pause; a fresh segment arrives too.
+    mockTranslateApi.mockResolvedValueOnce(emptyRes());
+    queue.pushSegment(makeSegment("second, key now configured"));
+
+    // The 60s pause lifts on its own (no restart, no new pushSegment
+    // needed to re-arm) and the pending segment is translated.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(mockTranslateApi).toHaveBeenCalledTimes(2);
+    const body = mockTranslateApi.mock.calls[1][0];
+    expect(body.segments.map((s) => s.text)).toEqual(["second, key now configured"]);
+
+    // Recovery is quiet — no additional toast.
+    expect(onError).toHaveBeenCalledTimes(1);
   });
 
   it("RateLimitApiError pauses for 30s then resumes automatically without a new segment arriving", async () => {
@@ -201,6 +236,82 @@ describe("TranslateQueue", () => {
     // Resumes on its own at the 30s boundary — no new pushSegment call.
     await vi.advanceTimersByTimeAsync(1);
     expect(mockTranslateApi).toHaveBeenCalledTimes(2);
+  });
+
+  it("5 consecutive RateLimitApiErrors drop the batch instead of re-queuing it forever, and a new segment pushed afterward still gets translated", async () => {
+    // 4 consecutive 429s re-queue the same batch each time (existing
+    // behavior); the 5th consecutive 429 drops it instead.
+    for (let i = 0; i < 5; i++) {
+      mockTranslateApi.mockRejectedValueOnce(new RateLimitApiError());
+    }
+    mockTranslateApi.mockResolvedValueOnce(emptyRes());
+
+    queue.pushSegment(makeSegment("gets rate limited forever"));
+    await vi.advanceTimersByTimeAsync(1500); // attempt #1 (consecutiveRateLimits -> 1)
+    expect(mockTranslateApi).toHaveBeenCalledTimes(1);
+
+    for (let i = 0; i < 4; i++) {
+      // Each 30s pause resumes on its own and re-attempts the SAME
+      // re-queued batch (consecutiveRateLimits -> 2, 3, 4, then the
+      // 5th attempt here hits the >=5 threshold and drops it instead
+      // of re-queuing again).
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(mockTranslateApi).toHaveBeenCalledTimes(5);
+
+    // The queue is not stuck after the drop: a brand-new segment
+    // pushed now (nothing left in `pending` from the dropped batch)
+    // still gets translated — though it has to wait out the drop's
+    // OWN pauseFor(30s) first (the same "prevent an immediate re-429"
+    // guard the <5 branch already relies on), not just its own 1500ms
+    // debounce.
+    queue.pushSegment(makeSegment("new segment, after the drop"));
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(mockTranslateApi).toHaveBeenCalledTimes(5); // still paused from the drop
+    await vi.advanceTimersByTimeAsync(30_000 - 1500);
+    expect(mockTranslateApi).toHaveBeenCalledTimes(6);
+    const body = mockTranslateApi.mock.calls[5][0];
+    expect(body.segments.map((s) => s.text)).toEqual(["new segment, after the drop"]);
+  });
+
+  it("a successful batch resets the consecutive-rate-limit counter — 4 rate limits then a success then 4 more do NOT trigger the drop-batch threshold", async () => {
+    for (let i = 0; i < 4; i++) {
+      mockTranslateApi.mockRejectedValueOnce(new RateLimitApiError());
+    }
+    mockTranslateApi.mockResolvedValueOnce(emptyRes()); // resets the counter to 0
+    for (let i = 0; i < 4; i++) {
+      mockTranslateApi.mockRejectedValueOnce(new RateLimitApiError());
+    }
+    mockTranslateApi.mockResolvedValueOnce(emptyRes());
+
+    queue.pushSegment(makeSegment("survives interleaved rate limits"));
+    await vi.advanceTimersByTimeAsync(1500); // attempt #1
+
+    // 3 more retries (consecutiveRateLimits: 2, 3, 4) then the 5th
+    // attempt succeeds (resetting the counter) rather than dropping,
+    // since the previous run was only 4 consecutive, not 5.
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(mockTranslateApi).toHaveBeenCalledTimes(5);
+
+    // Push a fresh segment and run another run of 4 consecutive 429s —
+    // if the counter had NOT reset after the success above, this would
+    // hit the >=5 threshold on the 4th of these and drop early. It
+    // must instead behave exactly like a fresh run: re-queue each time.
+    queue.pushSegment(makeSegment("second run of rate limits"));
+    await vi.advanceTimersByTimeAsync(1500);
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(mockTranslateApi).toHaveBeenCalledTimes(9);
+
+    // The 5th attempt of this second run finally succeeds — same
+    // segment text still present (i.e. it was re-queued, not dropped).
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(mockTranslateApi).toHaveBeenCalledTimes(10);
+    const body = mockTranslateApi.mock.calls[9][0];
+    expect(body.segments.map((s) => s.text)).toEqual(["second run of rate limits"]);
   });
 
   it("a transient (non-NoKey, non-rate-limit) error drops that batch without retry, and the queue continues after a 5s cooldown", async () => {
@@ -245,7 +356,7 @@ describe("TranslateQueue", () => {
     expect(onTranslations).not.toHaveBeenCalled();
   });
 
-  it("meeting-boundary guard also applies to the error path (NoKeyError for a stale-gen batch is dropped, no latch/toast)", async () => {
+  it("meeting-boundary guard also applies to the error path (NoKeyError for a stale-gen batch is dropped, no pause/toast)", async () => {
     const d1 = deferred<{ translations: { id: string; text: string }[] }>();
     mockTranslateApi.mockImplementationOnce(() => d1.promise);
 
@@ -259,8 +370,9 @@ describe("TranslateQueue", () => {
 
     expect(onError).not.toHaveBeenCalled();
 
-    // Confirm the latch did NOT engage: a fresh segment on the new
-    // meeting should still attempt translation normally.
+    // Confirm no 60s pause was armed for the stale-gen error: a fresh
+    // segment on the new meeting should still attempt translation
+    // immediately, on its own ordinary debounce.
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
     queue.pushSegment(makeSegment("new meeting, should still translate"));
     await vi.advanceTimersByTimeAsync(1500);

@@ -98,6 +98,21 @@ describe("resolveLlmConfig", () => {
     expect(ollama!.extraBody).toBeUndefined();
   });
 
+  it("SECURITY/F6: the openrouter check is an exact hostname match, not a substring — a lookalike host containing 'openrouter.ai' does NOT get the data-policy extraBody", () => {
+    vi.stubEnv("JARGONSLAYER_API_KEY", "server-secret");
+    vi.stubEnv("JARGONSLAYER_PROVIDER", "openai-compat");
+    vi.stubEnv("JARGONSLAYER_BASE_URL", "https://openrouter.ai.evil.example.com/api/v1");
+    const cfg = resolveLlmConfig(reqWithHeaders({}), "detect");
+    expect(cfg!.extraBody).toBeUndefined();
+  });
+
+  it("F6: a malformed JARGONSLAYER_BASE_URL doesn't throw — resolveLlmConfig degrades to isOpenRouter=false", () => {
+    vi.stubEnv("JARGONSLAYER_API_KEY", "server-secret");
+    vi.stubEnv("JARGONSLAYER_BASE_URL", "not a valid url");
+    expect(() => resolveLlmConfig(reqWithHeaders({}), "detect")).not.toThrow();
+    expect(resolveLlmConfig(reqWithHeaders({}), "detect")!.extraBody).toBeUndefined();
+  });
+
   it("translate kind on server-key openrouter also disables reasoning (measured latency/cost win on the hosted reasoning model); other kinds are unaffected", () => {
     for (const [name, value] of Object.entries(SERVER_ENV)) {
       vi.stubEnv(name, value);

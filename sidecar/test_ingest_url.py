@@ -17,6 +17,10 @@ Covers:
     (both lines present, only one, neither)
   - ingest_url_display_name: title-or-URL-tail fallback chain
   - truncate_ytdlp_error: last-stderr-line + length cap
+  - ingest_origin_allowed: SSRF gate for POST /ingest-url (pre-release
+    review finding F1)
+  - count_active_url_jobs: concurrency cap for POST /ingest-url
+    (pre-release review finding F2)
 """
 
 from __future__ import annotations
@@ -31,6 +35,8 @@ from whisper_server import (  # noqa: E402
     INGEST_URL_MAX_LEN,
     SAMPLE_RATE,
     build_ytdlp_args,
+    count_active_url_jobs,
+    ingest_origin_allowed,
     ingest_url_display_name,
     parse_ytdlp_stdout,
     truncate_ytdlp_error,
@@ -273,6 +279,110 @@ check(
 check(
     "truncate_ytdlp_error: a short error line is returned unmodified (no padding)",
     truncate_ytdlp_error("ERROR: short") == "ERROR: short",
+)
+
+
+# =================================================================
+# ingest_origin_allowed (SSRF gate, pre-release review finding F1)
+# =================================================================
+
+check(
+    "ingest_origin_allowed: None (no Origin header — curl/CLI/native launcher) is allowed",
+    ingest_origin_allowed(None) is True,
+)
+check(
+    "ingest_origin_allowed: empty string is allowed (same no-Origin case)",
+    ingest_origin_allowed("") is True,
+)
+check(
+    "ingest_origin_allowed: http://localhost:3000 (the app's own dev origin) is allowed",
+    ingest_origin_allowed("http://localhost:3000") is True,
+)
+check(
+    "ingest_origin_allowed: localhost on an arbitrary other port is allowed",
+    ingest_origin_allowed("http://localhost:5173") is True,
+)
+check(
+    "ingest_origin_allowed: http://127.0.0.1 with an arbitrary port is allowed",
+    ingest_origin_allowed("http://127.0.0.1:41234") is True,
+)
+check(
+    "ingest_origin_allowed: https://127.0.0.1 (scheme shouldn't matter, only hostname) is allowed",
+    ingest_origin_allowed("https://127.0.0.1:8443") is True,
+)
+check(
+    "ingest_origin_allowed: IPv6 loopback [::1] with a port is allowed",
+    ingest_origin_allowed("http://[::1]:3000") is True,
+)
+check(
+    "ingest_origin_allowed: a real third-party origin is rejected (the drive-by SSRF vector)",
+    ingest_origin_allowed("https://evil.com") is False,
+)
+check(
+    "ingest_origin_allowed: a third-party origin masquerading with 'localhost' only in the path is still rejected",
+    ingest_origin_allowed("https://evil.com/localhost") is False,
+)
+check(
+    "ingest_origin_allowed: a malformed Origin urlparse can't extract a hostname from is rejected, not benefit-of-the-doubt allowed",
+    ingest_origin_allowed("not a url") is False,
+)
+check(
+    "ingest_origin_allowed: 'null' (the Origin browsers send for sandboxed/file:// contexts) is rejected",
+    ingest_origin_allowed("null") is False,
+)
+
+
+# =================================================================
+# count_active_url_jobs (concurrency cap, pre-release review finding F2)
+# =================================================================
+
+check(
+    "count_active_url_jobs: an empty jobs dict counts 0",
+    count_active_url_jobs({}) == 0,
+)
+check(
+    "count_active_url_jobs: counts only kind=='url' jobs, ignoring kind=='upload'",
+    count_active_url_jobs(
+        {
+            "a": {"kind": "url", "status": "running"},
+            "b": {"kind": "upload", "status": "running"},
+        }
+    )
+    == 1,
+)
+check(
+    "count_active_url_jobs: counts both queued and running url jobs",
+    count_active_url_jobs(
+        {
+            "a": {"kind": "url", "status": "queued"},
+            "b": {"kind": "url", "status": "running"},
+        }
+    )
+    == 2,
+)
+check(
+    "count_active_url_jobs: excludes done/error url jobs — only queued/running are 'active'",
+    count_active_url_jobs(
+        {
+            "a": {"kind": "url", "status": "done"},
+            "b": {"kind": "url", "status": "error"},
+            "c": {"kind": "url", "status": "running"},
+        }
+    )
+    == 1,
+)
+check(
+    "count_active_url_jobs: a mixed dict of many kinds/statuses counts exactly the active url ones",
+    count_active_url_jobs(
+        {
+            "a": {"kind": "url", "status": "queued"},
+            "b": {"kind": "url", "status": "running"},
+            "c": {"kind": "url", "status": "done"},
+            "d": {"kind": "upload", "status": "running"},
+            "e": {"kind": "upload", "status": "queued"},
+        }
+    )
+    == 2,
 )
 
 
