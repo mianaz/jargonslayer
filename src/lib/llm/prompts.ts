@@ -41,7 +41,7 @@ Rules:
 3. Exclude expressions any intermediate English speaker already knows: e.g. "sounds good", "let's get started", "no problem", "make sense". When unsure whether an item is basic, prefer excluding common ones and keeping genuinely confusing ones.
 4. Terms: include acronyms, company/product/tool names, technical jargon, named metrics (e.g. "ARR", "p95 latency", "SOC 2") that a non-native professional likely can't gloss instantly. Exclude everyday words and well-known giants everyone knows (e.g. "Google", "email").
 5. NEVER invent, complete, correct, or paraphrase transcript text. Every "expression", every "source_sentence" and every "term" must be a verbatim substring of NEW. If you cannot quote it from NEW, do not include it.
-6. chinese_explanation must read like a colleague explaining quickly in a meeting: idiomatic, specific, no dictionary tone, no restating the English word-for-word.
+6. chinese_explanation must read like a colleague explaining quickly in a meeting: idiomatic, specific, no dictionary tone, no restating the English word-for-word. In all Chinese output, put a half-width space between Chinese characters and any English words or digits (e.g. "把 ARR 拉起来", not "把ARR拉起来").
 7. Rank by how confusing/important the item is. Keep at most 6 expressions and at most 4 terms - the most confusing ones. Drop the rest.
 8. confidence reflects how sure you are the item is (a) genuinely non-literal/unfamiliar AND (b) worth surfacing. Be conservative.
 9. If nothing qualifies, return exactly {"expressions":[],"terms":[]}.
@@ -70,7 +70,7 @@ Return ONLY a JSON object, no markdown fences, no prose outside it:
 Guidelines:
 - Base everything on the transcript; do not invent facts, owners, or dates not present.
 - key_points: 3-8 items, the substance a participant would need. decisions: only things actually decided. action_items: only concrete commitments, with owner if identifiable.
-- Chinese must be natural business Chinese, not literal translation, no dictionary tone.
+- Chinese must be natural business Chinese, not literal translation, no dictionary tone. Put a half-width space between Chinese characters and any English words or digits.
 - If a section has nothing, return an empty array.
 Output the JSON now.`;
 
@@ -83,7 +83,7 @@ Return ONLY a JSON object: {"translations": [{"i": <same index>, "zh": "<中文�
 
 Rules:
 - Return EXACTLY one item per input index, echoing "i" unchanged. Never add, drop, merge, or reorder indices.
-- Natural spoken-style business Chinese; keep names, acronyms and product names in the original English.
+- Natural spoken-style business Chinese; keep names, acronyms and product names in the original English, with a half-width space between Chinese characters and any English words or digits.
 - Translate meaning, not word-by-word; keep it concise like real meeting speech.
 - No markdown fences, no prose outside the JSON object.`;
 
@@ -153,7 +153,7 @@ Schema (include the fields for the chosen kind; omit the other kind's fields):
 Rules:
 1. Explain the sense that fits CONTEXT when given; otherwise the most common business sense.
 2. "example" must be YOUR OWN new sentence, natural and specific — not copied from CONTEXT — and must contain the headword (or a listed variant).
-3. chinese_explanation reads like a colleague explaining quickly: idiomatic, specific, no dictionary tone.
+3. chinese_explanation reads like a colleague explaining quickly: idiomatic, specific, no dictionary tone. Put a half-width space between Chinese characters and any English words or digits.
 4. Keep it a single entry for exactly this PHRASE. Do not add unrelated items.
 Output the JSON object now.`;
 
