@@ -209,6 +209,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const nonCorePackIds = PACKS.filter((p) => p.id !== "core").map((p) => p.id);
   const allPacksChecked = nonCorePackIds.every((id) => checkedPacks.has(id));
+  const packEntryCounts = packCounts();
 
   const handleSave = () => {
     const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
@@ -482,6 +483,63 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 }
                 className="mt-1 w-full accent-acc"
               />
+            </div>
+
+            <div>
+              <label className="text-xs text-mut">解释语言</label>
+              <select
+                value={draft.explainLanguage}
+                onChange={(e) =>
+                  patch({ explainLanguage: e.target.value as ExplainLanguage })
+                }
+                className="mt-1 w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+              >
+                {EXPLAIN_LANGUAGE_OPTIONS.map((l) => (
+                  <option key={l.value} value={l.value}>
+                    {l.label}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                卡片解释的语言；English 模式给不需要中文的用户，界面文字仍为中文
+              </div>
+            </div>
+
+            <div className="space-y-2 border-t border-edge pt-3">
+              <div className="text-xs text-mut">词典主题包</div>
+              <label className="flex items-center justify-between gap-3 py-1">
+                <div>
+                  <div className="text-sm text-mut2">基础包·始终启用</div>
+                  <div className="text-xs text-mut2">
+                    内置必备表达与商务黑话（{packEntryCounts.core ?? 0} 条）
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked
+                  disabled
+                  className="h-4 w-4 accent-acc disabled:opacity-50"
+                />
+              </label>
+              {PACKS.filter((p) => p.id !== "core").map((p) => (
+                <label
+                  key={p.id}
+                  className="flex items-center justify-between gap-3 py-1"
+                >
+                  <div>
+                    <div className="text-sm text-fg">{p.name}</div>
+                    <div className="text-xs text-mut2">
+                      {p.description}（{packEntryCounts[p.id] ?? 0} 条）
+                    </div>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={checkedPacks.has(p.id)}
+                    onChange={(e) => togglePack(p.id, e.target.checked)}
+                    className="h-4 w-4 accent-acc"
+                  />
+                </label>
+              ))}
             </div>
           </section>
 

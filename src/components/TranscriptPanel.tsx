@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { PencilSimple } from "@phosphor-icons/react";
 import { useApp } from "../lib/store";
 import type { ExpressionCard } from "../lib/types";
 import HoverGlossCard from "./HoverGlossCard";
@@ -167,6 +168,177 @@ interface GlossState {
   pinned: boolean;
 }
 
+const RENAME_POPOVER_WIDTH = 256; // w-64
+const RENAME_POPOVER_MAX_HEIGHT = 160;
+const VIEWPORT_MARGIN = 8;
+
+interface RenameRequest {
+  speaker: string;
+  segmentCount: number;
+  x: number;
+  y: number;
+}
+
+/** Inline speaker-rename popover, anchored at the clicked chip. Same
+ *  viewport-clamp / outside-click / Escape pattern as LookupPopover. */
+function SpeakerRenamePopover({
+  request,
+  onClose,
+}: {
+  request: RenameRequest;
+  onClose: () => void;
+}) {
+  const renameSpeaker = useApp((s) => s.renameSpeaker);
+  const showToast = useApp((s) => s.showToast);
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState(request.speaker);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const maxLeft = window.innerWidth - RENAME_POPOVER_WIDTH - VIEWPORT_MARGIN;
+    const maxTop =
+      window.innerHeight - RENAME_POPOVER_MAX_HEIGHT - VIEWPORT_MARGIN;
+    const left = Math.min(
+      Math.max(VIEWPORT_MARGIN, request.x),
+      Math.max(VIEWPORT_MARGIN, maxLeft),
+    );
+    const top = Math.min(
+      Math.max(VIEWPORT_MARGIN, request.y + 6),
+      Math.max(VIEWPORT_MARGIN, maxTop),
+    );
+    setPos({ left, top });
+    inputRef.current?.select();
+  }, [request]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    const handleMouseDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [onClose]);
+
+  const handleConfirm = () => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === request.speaker) {
+      onClose();
+      return;
+    }
+    renameSpeaker(request.speaker, trimmed);
+    showToast("已重命名");
+    onClose();
+  };
+
+  if (!pos) return null;
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 w-64 rounded-xl border border-edge bg-panel2 p-3 shadow-xl"
+      style={{ left: pos.left, top: pos.top }}
+    >
+      <input
+        ref={inputRef}
+        type="text"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") handleConfirm();
+        }}
+        className="w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
+      />
+      <div className="mt-1.5 text-xs leading-[1.7] text-mut">
+        重命名将应用到该说话人的所有 {request.segmentCount} 段发言
+      </div>
+      <div className="mt-2 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="btn-tactile rounded-lg px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={handleConfirm}
+          className="btn-tactile rounded-lg bg-acc px-3 py-1.5 text-xs font-medium text-white hover:bg-acchover"
+        >
+          确定
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Auto-height textarea: grows with content, matches the transcript's
+ *  font metrics so the swap-in reads as "the same text, now editable". */
+function SegmentEditTextarea({
+  value,
+  onChange,
+  onSave,
+  onCancel,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [value]);
+
+  return (
+    <div>
+      <textarea
+        ref={ref}
+        autoFocus
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+          } else if (e.key === "Enter" && e.metaKey) {
+            e.preventDefault();
+            onSave();
+          }
+        }}
+        className="w-full resize-none rounded-lg border border-edge bg-panel2 p-2 text-[15px] leading-relaxed text-fg focus:outline-none"
+      />
+      <div className="mt-1.5 flex justify-end gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="btn-tactile rounded-lg px-3 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg"
+        >
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={onSave}
+          className="btn-tactile rounded-lg bg-acc px-3 py-1 text-xs font-medium text-white hover:bg-acchover"
+        >
+          保存
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function TranscriptPanel() {
   const segments = useApp((s) => s.segments);
   const interim = useApp((s) => s.interim);
@@ -175,9 +347,44 @@ export default function TranscriptPanel() {
   const focusMode = useApp((s) => s.focusMode);
   const setFocusCard = useApp((s) => s.setFocusCard);
   const setLookup = useApp((s) => s.setLookup);
+  const updateSegmentText = useApp((s) => s.updateSegmentText);
+
+  // Transcript editing only applies to sessions that are done being
+  // recorded (finished / imported / loaded from history). No editing
+  // affordances while live listening.
+  const editable = status === "stopped";
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
+
+  // Speaker rename popover, anchored at the clicked chip.
+  const [renameRequest, setRenameRequest] = useState<RenameRequest | null>(
+    null,
+  );
+
+  // Segment text correction: one segment editable at a time; starting
+  // another discards the previous unsaved edit.
+  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(
+    null,
+  );
+  const [editValue, setEditValue] = useState("");
+
+  const startEditingSegment = (segId: string, text: string) => {
+    setEditingSegmentId(segId);
+    setEditValue(text);
+  };
+
+  const cancelEditingSegment = () => {
+    setEditingSegmentId(null);
+    setEditValue("");
+  };
+
+  const saveEditingSegment = () => {
+    if (!editingSegmentId) return;
+    updateSegmentText(editingSegmentId, editValue);
+    setEditingSegmentId(null);
+    setEditValue("");
+  };
 
   const matcher = useMemo(() => buildMatcher(cards), [cards]);
   const cardsById = useMemo(() => {
@@ -185,6 +392,16 @@ export default function TranscriptPanel() {
     for (const c of cards) map.set(c.id, c);
     return map;
   }, [cards]);
+
+  // Segment count per speaker, for the rename popover's hint copy.
+  const speakerCounts = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const s of segments) {
+      if (!s.speaker) continue;
+      map.set(s.speaker, (map.get(s.speaker) ?? 0) + 1);
+    }
+    return map;
+  }, [segments]);
 
   // Focus-mode hover gloss: one card at a time, hover shows it after a
   // short delay, click pins it. Timers via refs so re-entering a span
@@ -294,7 +511,13 @@ export default function TranscriptPanel() {
     setStickToBottom(true);
   };
 
-  const handleMouseUp = () => {
+  const handleMouseUp = (e: React.MouseEvent) => {
+    // e.detail is the native click count: 2+ means this mouseup is part
+    // of a double-click, which starts a segment edit instead (see
+    // onDoubleClick below) and must not also open the selection-lookup
+    // popover for the word double-click just selected. Also skip while
+    // a segment is mid-edit.
+    if (e.detail >= 2 || editingSegmentId) return;
     const container = containerRef.current;
     if (!container) return;
     const selection = window.getSelection();
@@ -353,6 +576,7 @@ export default function TranscriptPanel() {
               const palette = seg.speaker
                 ? SPEAKER_PALETTE[hashSpeaker(seg.speaker)]
                 : null;
+              const isEditingThis = editingSegmentId === seg.id;
               return (
                 <div
                   key={seg.id}
@@ -364,20 +588,66 @@ export default function TranscriptPanel() {
                   </span>
                   {seg.speaker && palette && (
                     <span
-                      className={`mt-0.5 shrink-0 rounded border px-1.5 py-0.5 text-xs ${palette.text} ${palette.border} ${palette.bg}`}
+                      onClick={
+                        editable
+                          ? (e) => {
+                              const rect =
+                                e.currentTarget.getBoundingClientRect();
+                              setRenameRequest({
+                                speaker: seg.speaker!,
+                                segmentCount: speakerCounts.get(seg.speaker!) ?? 1,
+                                x: rect.left,
+                                y: rect.bottom,
+                              });
+                            }
+                          : undefined
+                      }
+                      className={`group/chip mt-0.5 flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-xs ${palette.text} ${palette.border} ${palette.bg} ${
+                        editable
+                          ? "cursor-pointer hover:ring-1 hover:ring-edge"
+                          : ""
+                      }`}
                     >
                       {seg.speaker}
+                      {editable && (
+                        <PencilSimple
+                          size={10}
+                          weight="regular"
+                          className="opacity-0 transition-opacity group-hover/chip:opacity-100"
+                        />
+                      )}
                     </span>
                   )}
-                  <span className="text-[15px] leading-relaxed">
-                    <HighlightedText
-                      text={seg.text}
-                      matcher={matcher}
-                      onExpr={handleExprClick}
-                      onExprEnter={handleExprEnter}
-                      onExprLeave={handleExprLeave}
-                    />
-                  </span>
+                  {isEditingThis ? (
+                    <div className="flex-1">
+                      <SegmentEditTextarea
+                        value={editValue}
+                        onChange={setEditValue}
+                        onSave={saveEditingSegment}
+                        onCancel={cancelEditingSegment}
+                      />
+                    </div>
+                  ) : (
+                    <span
+                      className="text-[15px] leading-relaxed"
+                      onDoubleClick={
+                        editable
+                          ? () => {
+                              window.getSelection()?.removeAllRanges();
+                              startEditingSegment(seg.id, seg.text);
+                            }
+                          : undefined
+                      }
+                    >
+                      <HighlightedText
+                        text={seg.text}
+                        matcher={matcher}
+                        onExpr={handleExprClick}
+                        onExprEnter={handleExprEnter}
+                        onExprLeave={handleExprLeave}
+                      />
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -428,6 +698,13 @@ export default function TranscriptPanel() {
             clearTimers();
             setGloss(null);
           }}
+        />
+      )}
+
+      {renameRequest && (
+        <SpeakerRenamePopover
+          request={renameRequest}
+          onClose={() => setRenameRequest(null)}
         />
       )}
     </div>

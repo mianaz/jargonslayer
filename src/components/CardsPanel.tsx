@@ -9,6 +9,7 @@
 // same card chrome otherwise (docs/DESIGN.md shape lock: rounded-xl).
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CaretUp, CaretUpDown } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import type {
   DetectionSource,
@@ -72,6 +73,43 @@ function toUnified(cards: ExpressionCard[], terms: TermCard[]): UnifiedItem[] {
   return [...fromCards, ...fromTerms].sort((a, b) => b.sortAt - a.sortAt);
 }
 
+// ---------- progressive disclosure ----------
+// Precedence (highest first): manual per-card override > all-expanded /
+// all-collapsed mode > auto rule (newest 3 by sortAt expanded, rest
+// collapsed). Clicking the expand-all toggle resets the manual map so
+// the new mode is a clean baseline; per-card clicks after that re-enter
+// the map and pin that card regardless of later arrivals or mode
+// changes.
+const AUTO_EXPANDED_COUNT = 3;
+
+type CardViewMode = "auto" | "all-expanded" | "all-collapsed";
+type ManualState = "expanded" | "collapsed";
+
+function nextViewMode(mode: CardViewMode): CardViewMode {
+  if (mode === "auto") return "all-expanded";
+  if (mode === "all-expanded") return "all-collapsed";
+  return "auto";
+}
+
+function viewModeTitle(mode: CardViewMode): string {
+  if (mode === "all-expanded") return "全部折叠";
+  if (mode === "all-collapsed") return "全部展开";
+  return "全部展开";
+}
+
+function resolveExpanded(
+  id: string,
+  autoIndex: number,
+  viewMode: CardViewMode,
+  manual: Map<string, ManualState>,
+): boolean {
+  const override = manual.get(id);
+  if (override) return override === "expanded";
+  if (viewMode === "all-expanded") return true;
+  if (viewMode === "all-collapsed") return false;
+  return autoIndex < AUTO_EXPANDED_COUNT;
+}
+
 function matchesQuery(item: UnifiedItem, q: string): boolean {
   if (item.kind === "expression" && item.expression) {
     const c = item.expression;
@@ -129,7 +167,30 @@ function useCardAnimation(firstSeenAt: number, lastSeenAt: number, count: number
   return { isNew, isRepulsing };
 }
 
-function ExpressionCardRow({ card }: { card: ExpressionCard }) {
+/** Small collapse-affordance button on an expanded card, revealed on
+ *  hover of the (group-tagged) card container. */
+function CollapseAffordance({ onCollapse }: { onCollapse: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onCollapse}
+      title="折叠"
+      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-md text-mut opacity-0 transition-opacity hover:bg-panel3 hover:text-fg group-hover:opacity-100"
+    >
+      <CaretUp size={14} weight="regular" />
+    </button>
+  );
+}
+
+function ExpressionCardRow({
+  card,
+  expanded,
+  onToggle,
+}: {
+  card: ExpressionCard;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const focusCardId = useApp((s) => s.focusCardId);
   const setFocusCard = useApp((s) => s.setFocusCard);
   const ref = useRef<HTMLDivElement>(null);
@@ -143,8 +204,12 @@ function ExpressionCardRow({ card }: { card: ExpressionCard }) {
   const isFocused = focusCardId === card.id;
   const [ring, setRing] = useState(false);
 
+  // Scroll+ring only ever run against the expanded layout: if this card
+  // is still collapsed when it becomes focused, the panel-level effect
+  // (CardsPanel) expands it first, which re-runs this effect once
+  // `expanded` flips true and the ref points at the real (expanded) row.
   useEffect(() => {
-    if (!isFocused) return;
+    if (!isFocused || !expanded) return;
     const el = ref.current;
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -156,29 +221,55 @@ function ExpressionCardRow({ card }: { card: ExpressionCard }) {
       return () => clearTimeout(t);
     }
     setFocusCard(null);
-  }, [isFocused, setFocusCard]);
+  }, [isFocused, expanded, setFocusCard]);
+
+  const badgeRow = (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="font-semibold text-fg">{card.expression}</span>
+      <span className="rounded-full border border-edge px-1.5 py-0 text-[10px] text-mut">
+        {CATEGORY_LABELS[card.category]}
+      </span>
+      {card.count > 1 && (
+        <span className="font-mono text-xs text-gold">×{card.count}</span>
+      )}
+      {sourceBadge(card.source)}
+    </div>
+  );
+
+  if (!expanded) {
+    return (
+      <div
+        ref={ref}
+        data-testid="card"
+        data-kind="expression"
+        onClick={onToggle}
+        className={`cursor-pointer rounded-xl border border-edge bg-panel p-2.5 transition-colors hover:bg-panel3 ${
+          isNew ? "card-new" : ""
+        } ${isRepulsing ? "card-repulse" : ""} ${
+          ring ? "ring-1 ring-gold" : ""
+        }`}
+      >
+        {badgeRow}
+        <div className="mt-1 truncate text-sm text-mut">
+          {card.chinese_explanation}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
       ref={ref}
       data-testid="card"
       data-kind="expression"
-      className={`rounded-xl border border-edge bg-panel p-3 transition-colors hover:bg-panel3 ${
+      className={`group relative rounded-xl border border-edge bg-panel p-3 transition-colors hover:bg-panel3 ${
         isNew ? "card-new" : ""
       } ${isRepulsing ? "card-repulse" : ""} ${
         ring ? "ring-1 ring-gold" : ""
       }`}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-fg">{card.expression}</span>
-        <span className="rounded-full border border-edge px-1.5 py-0 text-[10px] text-mut">
-          {CATEGORY_LABELS[card.category]}
-        </span>
-        {card.count > 1 && (
-          <span className="font-mono text-xs text-gold">×{card.count}</span>
-        )}
-        {sourceBadge(card.source)}
-      </div>
+      <CollapseAffordance onCollapse={onToggle} />
+      {badgeRow}
 
       <div className="mt-1.5 text-sm text-fg/90">{card.meaning}</div>
 
@@ -203,31 +294,60 @@ function ExpressionCardRow({ card }: { card: ExpressionCard }) {
   );
 }
 
-function TermCardRow({ term }: { term: TermCard }) {
+function TermCardRow({
+  term,
+  expanded,
+  onToggle,
+}: {
+  term: TermCard;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   const { isNew, isRepulsing } = useCardAnimation(
     term.firstSeenAt,
     term.lastSeenAt,
     term.count,
   );
 
+  const badgeRow = (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="font-semibold text-fg">{term.term}</span>
+      <span className="rounded-full border border-acc/30 px-1.5 py-0 text-[10px] text-acc">
+        术语 · {TERM_TYPE_LABELS[term.type]}
+      </span>
+      {term.count > 1 && (
+        <span className="font-mono text-xs text-gold">×{term.count}</span>
+      )}
+      {sourceBadge(term.source)}
+    </div>
+  );
+
+  if (!expanded) {
+    return (
+      <div
+        data-testid="card"
+        data-kind="term"
+        onClick={onToggle}
+        className={`cursor-pointer rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-2.5 transition-colors hover:bg-panel3 ${
+          isNew ? "card-new" : ""
+        } ${isRepulsing ? "card-repulse" : ""}`}
+      >
+        {badgeRow}
+        <div className="mt-1 truncate text-sm text-mut">{term.gloss_zh}</div>
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid="card"
       data-kind="term"
-      className={`rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-3 transition-colors hover:bg-panel3 ${
+      className={`group relative rounded-xl border border-edge border-l-2 border-l-acc/60 bg-panel p-3 transition-colors hover:bg-panel3 ${
         isNew ? "card-new" : ""
       } ${isRepulsing ? "card-repulse" : ""}`}
     >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-semibold text-fg">{term.term}</span>
-        <span className="rounded-full border border-acc/30 px-1.5 py-0 text-[10px] text-acc">
-          术语 · {TERM_TYPE_LABELS[term.type]}
-        </span>
-        {term.count > 1 && (
-          <span className="font-mono text-xs text-gold">×{term.count}</span>
-        )}
-        {sourceBadge(term.source)}
-      </div>
+      <CollapseAffordance onCollapse={onToggle} />
+      {badgeRow}
 
       <div className="mt-1.5 text-sm text-fg/90">{term.gloss_en}</div>
 
@@ -287,10 +407,28 @@ const FILTERS: { key: FilterKind; label: string }[] = [
 export default function CardsPanel() {
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
+  const focusCardId = useApp((s) => s.focusCardId);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKind>("all");
 
+  // Progressive disclosure: viewMode is the global cycle (auto → all
+  // expanded → all collapsed → auto); manualMap holds per-card user
+  // overrides that always win, see resolveExpanded() above.
+  const [viewMode, setViewMode] = useState<CardViewMode>("auto");
+  const [manualMap, setManualMap] = useState<Map<string, ManualState>>(
+    new Map(),
+  );
+
   const unified = useMemo(() => toUnified(cards, terms), [cards, terms]);
+
+  // Auto-rule index is computed against the full unwrapped list (sortAt
+  // order) so filtering/searching never changes which cards count as
+  // "the 3 newest".
+  const autoIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    unified.forEach((item, i) => map.set(item.id, i));
+    return map;
+  }, [unified]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -303,6 +441,48 @@ export default function CardsPanel() {
     }
     return list;
   }, [unified, query, filter]);
+
+  const setManualState = (id: string, state: ManualState) => {
+    setManualMap((prev) => {
+      const next = new Map(prev);
+      next.set(id, state);
+      return next;
+    });
+  };
+
+  const handleToggleCard = (id: string) => {
+    const expanded = resolveExpanded(
+      id,
+      autoIndexById.get(id) ?? Infinity,
+      viewMode,
+      manualMap,
+    );
+    setManualState(id, expanded ? "collapsed" : "expanded");
+  };
+
+  const handleCycleViewMode = () => {
+    setViewMode((prev) => nextViewMode(prev));
+    setManualMap(new Map());
+  };
+
+  // focusCardId scroll+ring: if the focused card is currently collapsed,
+  // expand it first so the scroll target and ring are visible.
+  useEffect(() => {
+    if (!focusCardId) return;
+    const expanded = resolveExpanded(
+      focusCardId,
+      autoIndexById.get(focusCardId) ?? Infinity,
+      viewMode,
+      manualMap,
+    );
+    if (!expanded) {
+      setManualState(focusCardId, "expanded");
+    }
+    // manualMap is intentionally excluded: this effect only reacts to a
+    // fresh focus request, not to every manual-map mutation (including
+    // the one it itself just made).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusCardId, viewMode, autoIndexById]);
 
   return (
     <div className="flex h-full flex-col" data-testid="cards-panel">
@@ -321,21 +501,33 @@ export default function CardsPanel() {
           className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
         />
 
-        <div className="flex flex-wrap gap-1.5">
-          {FILTERS.map((f) => (
-            <button
-              key={f.key}
-              type="button"
-              onClick={() => setFilter(f.key)}
-              className={`rounded-full border px-2.5 py-1 text-xs ${
-                filter === f.key
-                  ? "border-edge bg-panel3 text-fg"
-                  : "border-edge text-mut hover:bg-panel3"
-              }`}
-            >
-              {f.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5">
+          <div className="flex flex-1 flex-wrap gap-1.5">
+            {FILTERS.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setFilter(f.key)}
+                className={`rounded-full border px-2.5 py-1 text-xs ${
+                  filter === f.key
+                    ? "border-edge bg-panel3 text-fg"
+                    : "border-edge text-mut hover:bg-panel3"
+                }`}
+              >
+                {f.label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={handleCycleViewMode}
+            title={viewModeTitle(viewMode)}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-edge hover:bg-panel3 ${
+              viewMode === "auto" ? "text-mut" : "text-acc"
+            }`}
+          >
+            <CaretUpDown size={16} weight="regular" />
+          </button>
         </div>
       </div>
 
@@ -343,13 +535,29 @@ export default function CardsPanel() {
         <EmptyState />
       ) : (
         <div className="scroll-thin flex-1 space-y-2 overflow-y-auto px-3 pb-3 pt-2">
-          {filtered.map((item) =>
-            item.kind === "expression" && item.expression ? (
-              <ExpressionCardRow key={item.id} card={item.expression} />
+          {filtered.map((item) => {
+            const expanded = resolveExpanded(
+              item.id,
+              autoIndexById.get(item.id) ?? Infinity,
+              viewMode,
+              manualMap,
+            );
+            return item.kind === "expression" && item.expression ? (
+              <ExpressionCardRow
+                key={item.id}
+                card={item.expression}
+                expanded={expanded}
+                onToggle={() => handleToggleCard(item.id)}
+              />
             ) : item.term ? (
-              <TermCardRow key={item.id} term={item.term} />
-            ) : null,
-          )}
+              <TermCardRow
+                key={item.id}
+                term={item.term}
+                expanded={expanded}
+                onToggle={() => handleToggleCard(item.id)}
+              />
+            ) : null;
+          })}
         </div>
       )}
     </div>
