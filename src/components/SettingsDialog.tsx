@@ -663,8 +663,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   一键连接 OpenRouter 账号
                 </button>
                 <div className="text-xs leading-[1.7] text-mut2">
-                  跳转到 OpenRouter 授权后自动生成并填入 API Key，无需手动创建；也可以在下方手动粘贴已有的
-                  Key
+                  跳转 OpenRouter 完成授权，自动生成并填入 API Key；也可在下方手动粘贴已有 Key
                 </div>
               </div>
             )}

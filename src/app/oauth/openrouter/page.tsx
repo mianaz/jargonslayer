@@ -112,8 +112,8 @@ export default function OpenRouterOAuthCallbackPage() {
           <>
             <div className="text-sm font-medium text-fg">已成功连接 OpenRouter</div>
             <div className="mt-1 text-xs leading-[1.7] text-mut2">
-              API Key 已保存到本地设置。OAuth 颁发的 Key 可能带有额度上限或有效期，建议登录
-              OpenRouter 控制台确认。
+              API Key 已保存到本地。OAuth 签发的 Key 可能有额度上限或有效期，建议去 OpenRouter
+              控制台确认。
             </div>
             <a
               href={withBase("/")}
