@@ -10,10 +10,10 @@
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-246%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
+[![Tests](https://img.shields.io/badge/tests-257%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
 [![Local first](https://img.shields.io/badge/data-local--first-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
 
-**English** · [简体中文](README.zh-CN.md) · [Website](https://mianaz.github.io/jargonslayer/)
+**English** · [简体中文](README.zh-CN.md) · [**Try It Live**](https://apps.bioinfospace.com/jargonslayer) · [Website](https://mianaz.github.io/jargonslayer/)
 
 <img src="docs/assets/live.png" alt="JargonSlayer live meeting view: block-flow transcript with highlighted expressions on the left, real-time explanation cards on the right" width="920" />
 
