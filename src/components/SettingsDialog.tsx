@@ -7,6 +7,12 @@ import { useEffect, useState } from "react";
 import { Eye, EyeSlash } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
+import { testConnection } from "@/lib/llm/client";
+import {
+  chooseExportFolder,
+  clearExportFolder,
+  getExportFolderName,
+} from "@/lib/history/autoExport";
 import type { LlmProvider, STTEngineKind, Settings } from "@/lib/types";
 
 export interface SettingsDialogProps {
@@ -63,6 +69,78 @@ const SUMMARY_MODEL_OPTIONS = [
   "deepseek-chat",
 ];
 
+type ProviderPresetId =
+  | "anthropic"
+  | "deepseek"
+  | "qwen"
+  | "openrouter"
+  | "ollama"
+  | "custom";
+
+interface ProviderPreset {
+  id: ProviderPresetId;
+  label: string;
+  provider: LlmProvider;
+  baseUrl: string; // "" for custom — user fills it in
+  /** Applied to draft.detectModel/summaryModel when selected. */
+  suggestedModels?: { detectModel: string; summaryModel?: string };
+  /** Shown as a hint near the model inputs, not force-applied. */
+  modelHint?: string;
+}
+
+const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: "anthropic",
+    label: "Anthropic 官方 (api.anthropic.com)",
+    provider: "anthropic",
+    baseUrl: "",
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek (https://api.deepseek.com)",
+    provider: "openai-compat",
+    baseUrl: "https://api.deepseek.com",
+    suggestedModels: { detectModel: "deepseek-chat", summaryModel: "deepseek-chat" },
+  },
+  {
+    id: "qwen",
+    label: "通义千问 (https://dashscope.aliyuncs.com/compatible-mode/v1)",
+    provider: "openai-compat",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    suggestedModels: { detectModel: "qwen-plus" },
+  },
+  {
+    id: "openrouter",
+    label: "OpenRouter (https://openrouter.ai/api/v1)",
+    provider: "openai-compat",
+    baseUrl: "https://openrouter.ai/api/v1",
+  },
+  {
+    id: "ollama",
+    label: "Ollama 本地 (http://localhost:11434/v1)",
+    provider: "openai-compat",
+    baseUrl: "http://localhost:11434/v1",
+    modelHint: "qwen3:8b",
+  },
+  {
+    id: "custom",
+    label: "自定义…",
+    provider: "openai-compat",
+    baseUrl: "",
+  },
+];
+
+/** Reverse-match the current draft to a preset id for the select's
+ *  displayed value (falls back to "custom" for any openai-compat
+ *  baseUrl that doesn't match a known preset). */
+function presetIdFor(draft: Settings): ProviderPresetId {
+  if (draft.provider === "anthropic") return "anthropic";
+  const hit = PROVIDER_PRESETS.find(
+    (p) => p.provider === "openai-compat" && p.baseUrl && p.baseUrl === draft.baseUrl,
+  );
+  return hit?.id ?? "custom";
+}
+
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-xs uppercase tracking-wide text-mut">{children}</div>
@@ -77,11 +155,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [draft, setDraft] = useState<Settings>(settings);
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
   const [showKey, setShowKey] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [exportFolderName, setExportFolderName] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setDraft(settings);
       void listAudioInputs().then(setMics);
+      void getExportFolderName().then(setExportFolderName);
     }
     // Only reset the draft when the dialog is (re)opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -96,6 +177,48 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     showToast("设置已保存");
     onClose();
   };
+
+  const handleSelectPreset = (id: ProviderPresetId) => {
+    const preset = PROVIDER_PRESETS.find((p) => p.id === id);
+    if (!preset) return;
+    const patchValues: Partial<Settings> = {
+      provider: preset.provider,
+      baseUrl: preset.baseUrl,
+    };
+    if (preset.suggestedModels) {
+      patchValues.detectModel = preset.suggestedModels.detectModel;
+      if (preset.suggestedModels.summaryModel) {
+        patchValues.summaryModel = preset.suggestedModels.summaryModel;
+      }
+    }
+    patch(patchValues);
+  };
+
+  const handleTestConnection = async () => {
+    setTestingConnection(true);
+    try {
+      const res = await testConnection(draft);
+      showToast(res.message);
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleChooseExportFolder = async () => {
+    const name = await chooseExportFolder();
+    if (name) {
+      setExportFolderName(name);
+      showToast(`已选择导出文件夹：${name}`);
+    }
+  };
+
+  const handleClearExportFolder = async () => {
+    await clearExportFolder();
+    setExportFolderName(null);
+    showToast("已清除导出文件夹");
+  };
+
+  const activePreset = presetIdFor(draft);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -178,12 +301,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <div>
               <label className="text-xs text-mut">提供方</label>
               <select
-                value={draft.provider}
-                onChange={(e) => patch({ provider: e.target.value as LlmProvider })}
+                value={activePreset}
+                onChange={(e) => handleSelectPreset(e.target.value as ProviderPresetId)}
                 className="mt-1 w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
               >
-                <option value="anthropic">Anthropic 官方</option>
-                <option value="openai-compat">OpenAI 兼容端点</option>
+                {PROVIDER_PRESETS.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -197,11 +323,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   placeholder="https://api.deepseek.com"
                   className="mt-1 w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                 />
-                <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                  DeepSeek: https://api.deepseek.com · Ollama 本地:
-                  http://localhost:11434/v1 · OpenRouter:
-                  https://openrouter.ai/api/v1
-                </div>
               </div>
             )}
 
@@ -233,6 +354,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
 
+            <button
+              type="button"
+              onClick={() => void handleTestConnection()}
+              disabled={testingConnection}
+              className="btn-tactile w-full rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {testingConnection ? "测试中…" : "测试连接"}
+            </button>
+
             <div>
               <label className="text-xs text-mut">检测模型</label>
               <input
@@ -247,6 +377,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <option key={m} value={m} />
                 ))}
               </datalist>
+              {activePreset === "ollama" && (
+                <div className="mt-1 text-xs text-mut2">
+                  Ollama 常用模型：qwen3:8b
+                </div>
+              )}
             </div>
 
             <div>
@@ -307,6 +442,78 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="mt-1 w-full accent-acc"
               />
             </div>
+          </section>
+
+          {/* 数据与联动 */}
+          <section className="space-y-3 border-t border-edge pt-5">
+            <SectionHeading>数据与联动</SectionHeading>
+
+            <label className="flex items-center justify-between gap-3 py-1">
+              <span className="text-sm text-fg">自动导出</span>
+              <input
+                type="checkbox"
+                checked={draft.autoExport}
+                onChange={(e) => patch({ autoExport: e.target.checked })}
+                className="h-4 w-4 accent-acc"
+              />
+            </label>
+
+            <div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleChooseExportFolder()}
+                  className="btn-tactile rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                >
+                  选择导出文件夹
+                </button>
+                {exportFolderName && (
+                  <>
+                    <span className="text-xs text-mut">{exportFolderName}</span>
+                    <button
+                      type="button"
+                      onClick={() => void handleClearExportFolder()}
+                      className="btn-tactile text-xs text-mut hover:text-warn"
+                    >
+                      清除
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                每场会议结束后自动写入 .md + .json，适合 Obsidian vault / git
+                仓库 / 任意目录
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-mut">Webhook URL</label>
+              <input
+                type="text"
+                value={draft.webhookUrl}
+                onChange={(e) => patch({ webhookUrl: e.target.value })}
+                placeholder="https://…"
+                className="mt-1 w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+              />
+              <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                会后 POST 会议 JSON 到该地址（n8n/飞书机器人等）
+              </div>
+            </div>
+
+            <label className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className="text-sm text-fg">Frontmatter</div>
+                <div className="text-xs text-mut2">
+                  导出的 Markdown 带 YAML frontmatter
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.exportFrontmatter}
+                onChange={(e) => patch({ exportFrontmatter: e.target.checked })}
+                className="h-4 w-4 accent-acc"
+              />
+            </label>
           </section>
         </div>
 

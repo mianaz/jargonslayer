@@ -70,6 +70,7 @@ interface AppState {
 
   // ui
   toast: string | null;
+  focusMode: boolean; // 专注模式：折叠右栏，hover 看高亮释义
 
   // ---- actions ----
   hydrate: () => Promise<void>;
@@ -103,6 +104,7 @@ interface AppState {
 
   showToast: (msg: string) => void;
   clearToast: () => void;
+  setFocusMode: (v: boolean) => void;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -131,6 +133,7 @@ export const useApp = create<AppState>((set, get) => ({
   customEntries: [],
 
   toast: null,
+  focusMode: false,
 
   hydrate: async () => {
     const [saved, metas, entries] = await Promise.all([
@@ -338,6 +341,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   showToast: (toast) => set({ toast }),
   clearToast: () => set({ toast: null }),
+  setFocusMode: (focusMode) => set({ focusMode }),
 }));
 
 /** Meta helper kept here so UI code doesn't rebuild it. */
