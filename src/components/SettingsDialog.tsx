@@ -25,6 +25,14 @@ import {
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import type { ExplainLanguage, LlmProvider, STTEngineKind, Settings } from "@/lib/types";
+import { withBase } from "@/lib/basePath";
+import {
+  buildAuthUrl,
+  codeChallengeS256,
+  generateCodeVerifier,
+  OAUTH_STATE_STORAGE_KEY,
+  OAUTH_VERIFIER_STORAGE_KEY,
+} from "@/lib/oauth/openrouterPkce";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -98,6 +106,7 @@ type ProviderPresetId =
   | "deepseek"
   | "qwen"
   | "openrouter"
+  | "poe"
   | "ollama"
   | "custom";
 
@@ -138,6 +147,17 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
     label: "OpenRouter (https://openrouter.ai/api/v1)",
     provider: "openai-compat",
     baseUrl: "https://openrouter.ai/api/v1",
+  },
+  {
+    // Poe's OpenAI-compatible endpoint lets a Poe subscription drive
+    // any compatible client (officially sanctioned for non-coding
+    // apps, unlike the vendor coding plans). Key from poe.com/api/keys;
+    // models are Poe bot names (Claude-Sonnet-4.6, GPT-5.4, …).
+    id: "poe",
+    label: "Poe 订阅 (https://api.poe.com/v1)",
+    provider: "openai-compat",
+    baseUrl: "https://api.poe.com/v1",
+    modelHint: "Claude-Sonnet-4.6",
   },
   {
     id: "ollama",
@@ -328,6 +348,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }
     }
     patch(patchValues);
+  };
+
+  // "Connect with OpenRouter" — OAuth PKCE one-click key provisioning
+  // (https://openrouter.ai/docs/use-cases/oauth-pkce). Generates a
+  // fresh code_verifier + a random state, stashes both in
+  // sessionStorage (must survive the full-page redirect — see
+  // openrouterPkce.ts's module comment), then navigates the whole tab
+  // to OpenRouter's /auth. NOTE: the verified spec's /auth query params
+  // are only callback_url/code_challenge/code_challenge_method — no
+  // `state` param is documented, so it is NOT sent to OpenRouter (an
+  // undocumented param could be silently dropped or rejected). The
+  // stored state is still checked by the callback page IF OpenRouter
+  // happens to echo one back; the real replay protection here is PKCE
+  // itself — the code alone is useless without this verifier.
+  const handleConnectOpenRouter = async () => {
+    const verifier = generateCodeVerifier();
+    const state = generateCodeVerifier(43);
+    sessionStorage.setItem(OAUTH_VERIFIER_STORAGE_KEY, verifier);
+    sessionStorage.setItem(OAUTH_STATE_STORAGE_KEY, state);
+    const codeChallenge = await codeChallengeS256(verifier);
+    const callbackUrl = `${window.location.origin}${withBase("/oauth/openrouter")}`;
+    window.location.href = buildAuthUrl({ callbackUrl, codeChallenge });
   };
 
   const handleTestConnection = async () => {
@@ -608,6 +650,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   placeholder="https://api.deepseek.com"
                   className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                 />
+              </div>
+            )}
+
+            {activePreset === "openrouter" && (
+              <div className="space-y-1.5">
+                <button
+                  type="button"
+                  onClick={() => void handleConnectOpenRouter()}
+                  className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                >
+                  一键连接 OpenRouter 账号
+                </button>
+                <div className="text-xs leading-[1.7] text-mut2">
+                  跳转到 OpenRouter 授权后自动生成并填入 API Key，无需手动创建；也可以在下方手动粘贴已有的
+                  Key
+                </div>
               </div>
             )}
 
