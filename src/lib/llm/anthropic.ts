@@ -50,6 +50,82 @@ export function resolveProvider(req: Request): {
   return { provider, baseUrl };
 }
 
+export type LlmCallKind = "detect" | "summary" | "define";
+
+export interface ResolvedLlmConfig {
+  apiKey: string;
+  provider: LlmProvider;
+  baseUrl: string;
+  /** Non-null when the server credential is in play and a server-side
+   *  model is configured: routes MUST use this model and ignore the
+   *  client-requested one. */
+  forcedModel: string | null;
+  /** True when the shared server credential (env) serves the request —
+   *  callers apply per-IP rate limiting in that case. */
+  isServerKey: boolean;
+}
+
+/** Resolve the full LLM call config for a request.
+ *
+ *  Two mutually exclusive modes — credentials and routing config are
+ *  never mixed across them:
+ *
+ *  - User key (BYOK header): honor the client's provider/baseUrl
+ *    headers and requested model. Their key, their config.
+ *  - Server key (env, e.g. the hosted demo's shared OpenRouter
+ *    credential): use ONLY server-side env for provider/baseUrl/model
+ *    and ignore the client's headers entirely. Pairing the server
+ *    credential with a client-supplied baseUrl would let anyone
+ *    exfiltrate the key to their own endpoint; honoring a client-
+ *    chosen model would let anyone run expensive models on the shared
+ *    credential.
+ *
+ *  Env contract: JARGONSLAYER_API_KEY (preferred; provider-neutral) or
+ *  ANTHROPIC_API_KEY (legacy name, works for any provider), plus
+ *  JARGONSLAYER_PROVIDER / JARGONSLAYER_BASE_URL and the per-kind
+ *  models JARGONSLAYER_DETECT_MODEL / JARGONSLAYER_SUMMARY_MODEL
+ *  ("define" uses the detect-class model). When no server model is
+ *  configured (legacy Anthropic-key setups), forcedModel stays null
+ *  and routes keep their existing body-model defaults.
+ *
+ *  Returns null when neither credential exists (routes map to no_key).
+ */
+export function resolveLlmConfig(
+  req: Request,
+  kind: LlmCallKind,
+): ResolvedLlmConfig | null {
+  const userKey = req.headers.get(PROVIDER_HEADERS.key);
+  if (userKey) {
+    const headerProvider = req.headers.get(PROVIDER_HEADERS.provider);
+    return {
+      apiKey: userKey,
+      provider: headerProvider === "openai-compat" ? "openai-compat" : "anthropic",
+      baseUrl: req.headers.get(PROVIDER_HEADERS.baseUrl) || "",
+      forcedModel: null,
+      isServerKey: false,
+    };
+  }
+
+  const serverKey =
+    process.env.JARGONSLAYER_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!serverKey) return null;
+
+  const detectClassModel = process.env.JARGONSLAYER_DETECT_MODEL || null;
+  return {
+    apiKey: serverKey,
+    provider:
+      process.env.JARGONSLAYER_PROVIDER === "openai-compat"
+        ? "openai-compat"
+        : "anthropic",
+    baseUrl: process.env.JARGONSLAYER_BASE_URL || "",
+    forcedModel:
+      kind === "summary"
+        ? process.env.JARGONSLAYER_SUMMARY_MODEL || detectClassModel
+        : detectClassModel,
+    isServerKey: true,
+  };
+}
+
 // ---------------------------------------------------------------
 // Shared zod schemas — mirror the wire types in ../types.ts exactly.
 // Field names are part of the LLM JSON contract; do not rename.

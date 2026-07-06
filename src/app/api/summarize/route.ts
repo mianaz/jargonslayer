@@ -9,10 +9,10 @@ import {
   DetectResponseSchema,
   MeetingSummarySchema,
   mapLlmError,
-  resolveKey,
-  resolveProvider,
+  resolveLlmConfig,
   TranslationsSchema,
 } from "@/lib/llm/anthropic";
+import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import type { ExplainLanguage, LlmProvider } from "@/lib/types";
 import {
   buildSweepSystemPrompt,
@@ -367,18 +367,22 @@ export async function POST(req: Request) {
     return errorBody({ error: "会议内容过长，超出报告生成上限", code: "bad_request" }, 413);
   }
 
-  const apiKey = resolveKey(req);
-  if (!apiKey) {
+  const cfg = resolveLlmConfig(req, "summary");
+  if (!cfg) {
     return errorBody({ error: "未配置 API Key", code: "no_key" }, 401);
   }
-
-  const { provider, baseUrl } = resolveProvider(req);
-  if (provider === "openai-compat" && !baseUrl) {
+  if (cfg.provider === "openai-compat" && !cfg.baseUrl) {
     return errorBody({ error: "缺少 Base URL", code: "bad_request" }, 400);
   }
-  const llm: LlmConfig = { provider, baseUrl };
+  // Shared server credential: one summary spawns several upstream
+  // calls (summary + chunked translation + sweep), so keep this tight.
+  if (cfg.isServerKey && !allowRequest(`summarize:${clientIp(req)}`, 4)) {
+    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
+  }
+  const apiKey = cfg.apiKey;
+  const llm: LlmConfig = { provider: cfg.provider, baseUrl: cfg.baseUrl };
 
-  const model = requestedModel ?? "claude-sonnet-5";
+  const model = cfg.forcedModel ?? requestedModel ?? "claude-sonnet-5";
 
   try {
     const summary = await runSummaryStage(apiKey, model, segments, llm);

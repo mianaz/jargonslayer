@@ -5,9 +5,9 @@ import * as z from "zod";
 import {
   callJson,
   mapLlmError,
-  resolveKey,
-  resolveProvider,
+  resolveLlmConfig,
 } from "@/lib/llm/anthropic";
+import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { buildDefineSystemPrompt, buildDefineUserMessage } from "@/lib/llm/prompts";
 import type { ApiErrorBody, DefineResult } from "@/lib/types";
 
@@ -105,26 +105,27 @@ export async function POST(req: Request) {
   }
   const { phrase, context, model, lang } = parsedBody.data;
 
-  const apiKey = resolveKey(req);
-  if (!apiKey) {
+  const cfg = resolveLlmConfig(req, "define");
+  if (!cfg) {
     return errorBody({ error: "未配置 API Key", code: "no_key" }, 401);
   }
-
-  const { provider, baseUrl } = resolveProvider(req);
-  if (provider === "openai-compat" && !baseUrl) {
+  if (cfg.provider === "openai-compat" && !cfg.baseUrl) {
     return errorBody({ error: "缺少 Base URL", code: "bad_request" }, 400);
+  }
+  if (cfg.isServerKey && !allowRequest(`define:${clientIp(req)}`, 10)) {
+    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
   }
 
   try {
     const raw = await callJson({
-      apiKey,
-      model: model ?? "claude-haiku-4-5",
+      apiKey: cfg.apiKey,
+      model: cfg.forcedModel ?? model ?? "claude-haiku-4-5",
       system: buildDefineSystemPrompt(lang ?? "zh"),
       user: buildDefineUserMessage(phrase, context),
       schema: DefineResultSchema,
       maxTokens: 900,
-      provider,
-      baseUrl,
+      provider: cfg.provider,
+      baseUrl: cfg.baseUrl,
     });
 
     const result = finalizeDefineResult(raw, phrase);

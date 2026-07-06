@@ -8,7 +8,7 @@ export const maxDuration = 300;
 // key/provider/baseUrl resolution every other route uses.
 
 import { NextResponse } from "next/server";
-import { resolveKey, resolveProvider } from "@/lib/llm/anthropic";
+import { PROVIDER_HEADERS } from "@/lib/types";
 import type { ApiErrorBody } from "@/lib/types";
 
 const DEFAULT_MODEL = "whisper-large-v3-turbo";
@@ -88,12 +88,18 @@ export async function POST(req: Request) {
   const modelField = form.get("model");
   const model = typeof modelField === "string" && modelField.trim() ? modelField : DEFAULT_MODEL;
 
-  const apiKey = resolveKey(req);
+  // Cloud STT is strictly BYOK: the server credential is a chat-
+  // completions key and must never be spent here, nor paired with a
+  // client-supplied baseUrl (that combination would let a caller
+  // exfiltrate the shared key to their own endpoint).
+  const apiKey = req.headers.get(PROVIDER_HEADERS.key);
   if (!apiKey) {
     return errorBody({ error: "未配置 API Key", code: "no_key" }, 401);
   }
 
-  const { provider, baseUrl } = resolveProvider(req);
+  const headerProvider = req.headers.get(PROVIDER_HEADERS.provider);
+  const provider = headerProvider === "openai-compat" ? "openai-compat" : "anthropic";
+  const baseUrl = req.headers.get(PROVIDER_HEADERS.baseUrl) || "";
   if (provider === "anthropic") {
     return errorBody(
       { error: "云端转录需要 OpenAI 兼容端点（如 Groq），请在设置中配置", code: "bad_request" },

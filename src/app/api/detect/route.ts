@@ -7,9 +7,9 @@ import {
   clampConfidence,
   DetectResponseSchema,
   mapLlmError,
-  resolveKey,
-  resolveProvider,
+  resolveLlmConfig,
 } from "@/lib/llm/anthropic";
+import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { buildDetectSystemPrompt, buildDetectUserMessage } from "@/lib/llm/prompts";
 import type { ApiErrorBody, DetectResponse } from "@/lib/types";
 
@@ -57,27 +57,30 @@ export async function POST(req: Request) {
   }
   const { context, new_text, model, lang } = parsedBody.data;
 
-  const apiKey = resolveKey(req);
-  if (!apiKey) {
+  const cfg = resolveLlmConfig(req, "detect");
+  if (!cfg) {
     return errorBody({ error: "未配置 API Key", code: "no_key" }, 401);
   }
-
-  const { provider, baseUrl } = resolveProvider(req);
-  if (provider === "openai-compat" && !baseUrl) {
+  if (cfg.provider === "openai-compat" && !cfg.baseUrl) {
     return errorBody({ error: "缺少 Base URL", code: "bad_request" }, 400);
+  }
+  // Shared server credential: budget the caller (live detection fires
+  // every few seconds, so this is the most generous of the three).
+  if (cfg.isServerKey && !allowRequest(`detect:${clientIp(req)}`, 20)) {
+    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
   }
 
   try {
     const raw = await callJson({
-      apiKey,
-      model: model ?? "claude-haiku-4-5",
+      apiKey: cfg.apiKey,
+      model: cfg.forcedModel ?? model ?? "claude-haiku-4-5",
       system: buildDetectSystemPrompt(lang ?? "zh"),
       user: buildDetectUserMessage(context, new_text),
       schema: DetectResponseSchema,
       maxTokens: 1000,
       cacheSystem: true,
-      provider,
-      baseUrl,
+      provider: cfg.provider,
+      baseUrl: cfg.baseUrl,
     });
 
     const filtered = postFilter(raw, new_text);
