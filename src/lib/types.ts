@@ -5,7 +5,7 @@
 
 // ---------- transcription ----------
 
-export type STTEngineKind = "demo" | "webspeech" | "whisper";
+export type STTEngineKind = "demo" | "webspeech" | "whisper" | "tabaudio";
 
 export interface TranscriptSegment {
   id: string;
@@ -168,11 +168,19 @@ export interface ApiErrorBody {
 
 // ---------- settings ----------
 
+// LLM provider: first-party Anthropic, or any OpenAI-compatible
+// endpoint (DeepSeek / Qwen / Ollama / OpenRouter / ...). The
+// compat path unlocks mainland access, low cost, and fully-local
+// privacy (Ollama + local Whisper = nothing leaves the machine).
+export type LlmProvider = "anthropic" | "openai-compat";
+
 export interface Settings {
   engine: STTEngineKind;
   micId?: string;
   language: string; // BCP-47, for Web Speech API
   whisperUrl: string; // local sidecar websocket
+  provider: LlmProvider;
+  baseUrl: string; // openai-compat only, e.g. https://api.deepseek.com/v1
   apiKey: string; // "" = rely on server-side env ANTHROPIC_API_KEY
   detectModel: string;
   summaryModel: string;
@@ -185,6 +193,8 @@ export const DEFAULT_SETTINGS: Settings = {
   engine: "demo",
   language: "en-US",
   whisperUrl: "ws://localhost:8765",
+  provider: "anthropic",
+  baseUrl: "",
   apiKey: "",
   // Haiku for live detection: low latency + high call volume.
   // Both models are user-configurable in Settings.
@@ -194,6 +204,14 @@ export const DEFAULT_SETTINGS: Settings = {
   dictionaryOnly: false,
   minConfidence: 0.55,
 };
+
+/** Headers that carry LLM provider config from browser to routes.
+ *  Wire body types stay provider-agnostic. */
+export const PROVIDER_HEADERS = {
+  key: "x-meetlingo-key",
+  provider: "x-meetlingo-provider",
+  baseUrl: "x-meetlingo-base-url",
+} as const;
 
 // ---------- meeting session / history ----------
 

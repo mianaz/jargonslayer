@@ -1,0 +1,24 @@
+{
+  "name": "MeetLingo · 英文会议实时理解助手",
+  "short_name": "MeetLingo",
+  "description": "实时转录英文会议，即时解释商务俚语、隐喻和专有名词，为非母语者设计。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07090E",
+  "theme_color": "#07090E",
+  "lang": "zh-CN",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
