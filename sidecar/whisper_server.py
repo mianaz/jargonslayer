@@ -11,13 +11,31 @@ Usage:
 
 Protocol (per connection):
   Client -> Server:
-    - text frame: JSON {"type": "config", ...}  (may override language)
+    - text frame: JSON {"type": "config", ...}  (may override language;
+                        optional "diarize": bool + "hf_token": str arm
+                        realtime speaker diarization (beta), see below)
     - text frame: JSON {"type": "stop"}
     - binary frame: 16kHz mono int16 PCM chunks
   Server -> Client:
     - text frame: JSON {"type": "partial", "text": "..."}      (optional)
     - text frame: JSON {"type": "final", "text": "...",
-                         "start": <seconds>, "end": <seconds>}
+                         "start": <seconds>, "end": <seconds>,
+                         "seg_id": <int>}
+    - text frame: JSON {"type": "speaker_update", "gen": <int>,
+                         "assignments": [{"seg_id": <int>,
+                                           "speaker": "SPEAKER_2"}, ...],
+                         "speakers": ["SPEAKER_1", "SPEAKER_2", ...]}
+    - text frame: JSON {"type": "diar_status",
+                         "state": "unavailable" | "error",
+                         "detail": "..."}
+
+Realtime speaker diarization (beta): when armed (config.diarize truthy
++ a token available), every ~20s the connection runs the shared
+pyannote pipeline over a rolling window of its own buffered audio in a
+background thread (asyncio.to_thread) and emits a `speaker_update`
+that back-labels already-sent `final` segments by `seg_id`. It never
+blocks the transcription/VAD path and degrades to `diar_status` on any
+failure — transcription itself is unaffected.
 """
 
 from __future__ import annotations
@@ -25,6 +43,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import subprocess
 import tempfile
 import threading
 import time
@@ -56,6 +76,7 @@ NOISE_FLOOR_MULTIPLIER = 2.2
 SILENCE_HANG_MS = 550
 MIN_SPEECH_MS = 350
 MAX_SEGMENT_MS = 25_000
+MAX_UPLOAD_BYTES = 500 * (1 << 20)  # job-API upload cap (protects /tmp)
 NOISE_EMA_ALPHA = 0.05  # smoothing factor for the noise-floor EMA
 PARTIAL_INTERVAL_S = 2.0
 
@@ -63,12 +84,293 @@ PARTIAL_INTERVAL_S = 2.0
 # enough for responsive onset/offset detection.
 FRAME_SAMPLES = 512
 
+# ---- realtime speaker diarization (beta) tuning ----
+DIAR_INTERVAL_S = 20.0  # minimum gap between realtime diarization passes
+DIAR_WINDOW_S = 600.0  # max trailing-audio window fed to the pipeline
+DIAR_MIN_OVERLAP_S = 2.0  # min overlap to match a new cluster to a registry id
+DIAR_MIN_SPEECH_S = 3.0  # min total speech for an unmatched cluster to mint an id
+DIAR_MAX_SPEAKERS = 8  # registry cap; beyond this, fold into best-overlap anchor
+DIAR_ERROR_BACKOFF_S = 60.0  # cooldown after a pass raises, before retrying
+
 
 def rms(frame: np.ndarray) -> float:
     """Root-mean-square energy of a float32 [-1, 1] frame."""
     if frame.size == 0:
         return 0.0
     return float(np.sqrt(np.mean(np.square(frame))))
+
+
+# =================================================================
+# Pure, unit-testable diarization helpers — no I/O, no pipeline, no
+# asyncio. Shared by the realtime ws pass (run_realtime_diar) and
+# (for the segment/turn overlap assigner) the upload-a-recording job
+# path (JobManager._diarize_job). Covered by test_realtime_diar.py.
+# =================================================================
+
+Turn = tuple[float, float]  # (start, end) in absolute seconds
+
+
+def overlap_seconds(turns_a: list[Turn], turns_b: list[Turn]) -> float:
+    """Total overlap (seconds) between two sets of [start, end)
+    intervals — sum of every pairwise intersection. Intervals within
+    each list may themselves overlap (we don't assume non-overlapping,
+    coalesced input); the sum-of-pairwise-intersections definition
+    handles that correctly (if slightly redundantly) for our purposes,
+    since real speaker turns from one pass rarely self-overlap."""
+    total = 0.0
+    for a_start, a_end in turns_a:
+        for b_start, b_end in turns_b:
+            inter = min(a_end, b_end) - max(a_start, b_start)
+            if inter > 0:
+                total += inter
+    return total
+
+
+def match_clusters(
+    new_clusters: dict[str, list[Turn]],
+    registry: dict[str, list[Turn]],
+    *,
+    min_overlap: float = DIAR_MIN_OVERLAP_S,
+    min_speech: float = DIAR_MIN_SPEECH_S,
+    cap: int = DIAR_MAX_SPEAKERS,
+) -> dict[str, str]:
+    """Map this pass's local pyannote labels to stable cross-pass
+    speaker ids, via turn-overlap matching against the previous pass's
+    registry (NOT embeddings).
+
+    Returns {local_label: stable_id} for every local label that got a
+    stable id (unmatched short-blip clusters are simply absent from
+    the result — caller ignores them). Does not mutate `registry`;
+    caller is responsible for replacing matched/minted ids' turns with
+    this pass's turns afterward (see module docstring / spec: "a
+    speaker absent from this pass keeps their old turns until they age
+    out").
+
+    Algorithm: compute every (local_label, stable_id) overlap, greedily
+    take the highest-overlap pair first, one-to-one (each side used at
+    most once), for every pair meeting `min_overlap`. Remaining
+    unmatched local labels with total speech >= `min_speech` mint a
+    fresh `SPEAKER_{n+1}` (numbers only ever grow — minted off the
+    highest existing numeric suffix in the registry, not len(registry),
+    so ids never get reused after a speaker ages out). If registry is
+    already at `cap`, any would-be-minted cluster instead folds into
+    whichever existing stable_id it overlaps most (even below
+    `min_overlap`) — or is dropped if it has zero overlap with every
+    existing id. Clusters under `min_speech` are ignored (no id)."""
+    pairs: list[tuple[float, str, str]] = []
+    for local_label, local_turns in new_clusters.items():
+        for stable_id, stable_turns in registry.items():
+            ov = overlap_seconds(local_turns, stable_turns)
+            if ov > 0:
+                pairs.append((ov, local_label, stable_id))
+    # Highest overlap first; stable tie-break by (local_label, stable_id)
+    # so results are deterministic regardless of dict iteration order.
+    pairs.sort(key=lambda p: (-p[0], p[1], p[2]))
+
+    result: dict[str, str] = {}
+    used_stable: set[str] = set()
+    for ov, local_label, stable_id in pairs:
+        if local_label in result or stable_id in used_stable:
+            continue
+        if ov < min_overlap:
+            continue
+        result[local_label] = stable_id
+        used_stable.add(stable_id)
+
+    # Highest existing numeric suffix, so minted ids only ever grow —
+    # even if the registry's most recent id fell out of `new_clusters`
+    # (a speaker who briefly stopped talking).
+    next_n = 0
+    for stable_id in registry:
+        try:
+            n = int(stable_id.rsplit("_", 1)[-1])
+        except ValueError:
+            continue
+        next_n = max(next_n, n)
+
+    unmatched = [
+        label for label in new_clusters if label not in result
+    ]
+    for local_label in unmatched:
+        total_speech = sum(
+            end - start for start, end in new_clusters[local_label]
+        )
+        if total_speech < min_speech:
+            continue  # short blip — no id
+
+        if len(registry) >= cap:
+            # At capacity: fold into the highest-overlap existing
+            # anchor regardless of threshold (ignore if it overlaps
+            # nothing at all — nowhere sensible to fold it).
+            best_stable: Optional[str] = None
+            best_ov = 0.0
+            for stable_id, stable_turns in registry.items():
+                ov = overlap_seconds(new_clusters[local_label], stable_turns)
+                if ov > best_ov:
+                    best_ov = ov
+                    best_stable = stable_id
+            if best_stable is not None:
+                result[local_label] = best_stable
+            continue
+
+        next_n += 1
+        result[local_label] = f"SPEAKER_{next_n}"
+
+    return result
+
+
+def speaker_for_turns(
+    span: Turn,
+    turns: list[tuple[float, float, str]],
+) -> Optional[str]:
+    """Assign the label with maximum time-overlap against `span`
+    ([start, end) seconds). Shared pure core of both diarization
+    label-assignment paths:
+      - JobManager._speaker_for_segment (upload job path): span is a
+        whisper segment's (start, end); turns/labels come straight
+        from one pyannote pass, mapped through label_map by the caller.
+      - the realtime ws path's segment_log back-assignment: span is a
+        segment_log entry's (start, end); turns/labels are already the
+        stable ids for the current pass.
+    Returns None if there's no positive overlap with anything."""
+    span_start, span_end = span
+    best_label: Optional[str] = None
+    best_overlap = 0.0
+    for t_start, t_end, label in turns:
+        overlap = min(span_end, t_end) - max(span_start, t_start)
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_label = label
+    return best_label
+
+
+# =================================================================
+# Shared diarization-pipeline singleton — one pyannote Pipeline loaded
+# lazily and reused by both the upload-a-recording HTTP job path
+# (JobManager) and the realtime ws path (WhisperServer). Loading it is
+# slow (model download/init) and it's read-only once loaded, so a
+# module-level singleton (rather than one per JobManager/WhisperServer
+# instance) avoids loading it twice within the same process.
+# =================================================================
+
+
+class _SharedDiarizePipeline:
+    """Lazy, cached, process-wide pyannote Pipeline. See
+    `_load_diarize_pipeline` for the token precedence / failure-mode
+    contract (unchanged from before this was module-level)."""
+
+    def __init__(self) -> None:
+        self._loaded = False
+        self._pipeline: Any = None
+        self._error: Optional[str] = None
+        # Load-time lock: the ws event loop (via to_thread) and HTTP job
+        # threads can race first touch. Without it a reader could see
+        # _loaded=True mid-load with _pipeline still None and falsely
+        # degrade to "unavailable" (which permanently disarms realtime
+        # diar for that connection).
+        self._load_lock = threading.Lock()
+
+    def get(self, hf_token: Optional[str]) -> tuple[Any, Optional[str]]:
+        """Returns (pipeline, error_message); error_message is None on
+        success. Loading pyannote can fail in more ways than a plain
+        ImportError (missing package) — broken/incompatible transitive
+        dependencies (seen in practice: pyarrow version mismatches
+        raising AttributeError deep inside the import), model download
+        failures, etc. Any failure here degrades to "undiarized" per
+        spec — it must never take down transcription (job or realtime).
+
+        The pipeline is loaded (and cached) once, with whichever token
+        is available on first load — `hf_token` (a caller-supplied
+        override) takes precedence over whatever was passed by whoever
+        loads it first. A later caller supplying a *different* token
+        won't force a reload; that's an accepted edge case for a
+        local, single-user sidecar (mirrors the in-memory-only job
+        store tradeoff noted on JobManager)."""
+        if self._loaded:
+            return self._pipeline, self._error
+        with self._load_lock:
+            if self._loaded:  # double-checked: another thread finished the load
+                return self._pipeline, self._error
+            try:
+                from pyannote.audio import Pipeline  # type: ignore[import-not-found]
+
+                # pyannote 4.x renamed use_auth_token= to token=; support both.
+                try:
+                    self._pipeline = Pipeline.from_pretrained(
+                        "pyannote/speaker-diarization-3.1",
+                        token=hf_token,
+                    )
+                except TypeError:
+                    self._pipeline = Pipeline.from_pretrained(
+                        "pyannote/speaker-diarization-3.1",
+                        use_auth_token=hf_token,
+                    )
+                self._error = None
+            except Exception as exc:  # noqa: BLE001 - see docstring
+                self._pipeline = None
+                self._error = f"{type(exc).__name__}: {exc}"
+            # Set the latch LAST so no reader ever observes loaded-but-empty.
+            self._loaded = True
+            return self._pipeline, self._error
+
+
+_shared_diarize_pipeline = _SharedDiarizePipeline()
+
+# pyannote pipelines are not documented thread-safe, and the realtime ws
+# path (asyncio.to_thread) and HTTP job threads share the one instance —
+# serialize inference. Both are heavy CPU jobs anyway, so queueing them
+# costs little beyond what core contention would.
+_pipeline_call_lock = threading.Lock()
+
+
+def _run_diar_pipeline_sync(
+    pipeline: Any, window_pcm16: bytes, window_offset: float
+) -> list[tuple[float, float, str]]:
+    """Blocking work for one realtime diarization pass — run entirely
+    inside asyncio.to_thread so it never stalls the event loop (and
+    thus never blocks incoming audio / VAD / transcription). `window_
+    pcm16` is already 16kHz mono int16 (the connection's own buffer),
+    so — unlike the upload-a-recording job path — no ffmpeg re-encode
+    is needed; we just wrap it in a WAV header via the `wave` module.
+
+    Returns turns as (start, end, local_label) in ABSOLUTE connection-
+    elapsed seconds (window_offset already added), so callers never
+    have to remember to re-add it."""
+    fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="jargonslayer-rtdiar-")
+    os.close(fd)
+    try:
+        with wave.open(wav_path, "wb") as writer:
+            writer.setnchannels(1)
+            writer.setsampwidth(BYTES_PER_SAMPLE)
+            writer.setframerate(SAMPLE_RATE)
+            writer.writeframes(window_pcm16)
+
+        with _pipeline_call_lock:
+            result = pipeline(wav_path)
+        # pyannote 4.x returns a DiarizeOutput wrapper whose
+        # .speaker_diarization is the Annotation; 3.x returns the
+        # Annotation directly. Accept both.
+        diarization = getattr(result, "speaker_diarization", result)
+        return [
+            (turn.start + window_offset, turn.end + window_offset, label)
+            for turn, _track, label in diarization.itertracks(yield_label=True)
+        ]
+    finally:
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
+
+@dataclass
+class SegmentLogEntry:
+    """One finalized segment's identity + absolute timing, kept per
+    connection so a later realtime diarization pass can back-assign a
+    stable speaker label to it by seg_id."""
+
+    seg_id: int
+    start: float
+    end: float
 
 
 @dataclass
@@ -87,6 +389,22 @@ class ConnectionState:
     last_partial_at: float = 0.0
     leftover: bytes = b""  # undersized tail of a binary frame, held for next frame
     wav_writer: Optional[wave.Wave_write] = None
+
+    # ---- realtime speaker diarization (beta) ----
+    diar_armed: bool = False  # config.diarize truthy AND a token is available
+    diar_hf_token: Optional[str] = None
+    diar_audio_buf: bytearray = field(default_factory=bytearray)  # ALL audio, 16k mono int16
+    diar_buf_offset_s: float = 0.0  # seconds trimmed off the front of diar_audio_buf so far
+    next_seg_id: int = 0
+    segment_log: list[SegmentLogEntry] = field(default_factory=list)
+    last_diar_at: float = float("-inf")
+    diar_in_flight: bool = False
+    diar_gen: int = 0  # monotonic counter for outgoing speaker_update.gen
+    diar_registry: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
+    # seg_id -> last speaker label sent to the client, so speaker_update
+    # only includes segments whose label actually changed.
+    diar_last_sent: dict[int, str] = field(default_factory=dict)
+    diar_status_sent: bool = False  # "unavailable"/"error" is sent at most once
 
     def elapsed(self) -> float:
         return time.monotonic() - self.connected_at
@@ -123,11 +441,16 @@ class WhisperServer:
         default_language: str,
         emit_partials: bool,
         save_audio_path: Optional[str],
+        default_hf_token: Optional[str] = None,
     ) -> None:
         self.model = model
         self.default_language = default_language
         self.emit_partials = emit_partials
         self.save_audio_path = save_audio_path
+        # CLI/env --hf-token — the fallback when a connection's config
+        # message doesn't carry its own hf_token (mirrors JobManager's
+        # hf_token fallback for the upload-a-recording path).
+        self.default_hf_token = default_hf_token
 
     async def handle(self, ws: WebSocketServerProtocol) -> None:
         state = ConnectionState(language=self.default_language)
@@ -161,6 +484,19 @@ class WhisperServer:
             language = msg.get("language")
             if isinstance(language, str) and language:
                 state.language = language
+
+            # Realtime speaker diarization (beta) gate: only arms when
+            # the client asked for it AND a token is available (config's
+            # own hf_token, or this process's --hf-token/$HF_TOKEN
+            # default). Per spec, arming itself never fails loudly here
+            # — if pyannote turns out to be unavailable, the first
+            # background pass reports that once via diar_status.
+            diarize = msg.get("diarize")
+            hf_token = msg.get("hf_token")
+            token = hf_token if isinstance(hf_token, str) and hf_token else self.default_hf_token
+            if diarize and token:
+                state.diar_armed = True
+                state.diar_hf_token = token
         elif msg_type == "stop":
             await self._finalize_segment(ws, state, force=True)
 
@@ -169,6 +505,13 @@ class WhisperServer:
     ) -> None:
         if state.wav_writer is not None:
             state.wav_writer.writeframes(data)
+
+        if state.diar_armed:
+            # ALL audio (not just VAD-detected speech) — pyannote needs
+            # the full stream, silence included, to place turn
+            # boundaries correctly. Trimmed to a rolling window inside
+            # run_realtime_diar; here we only append.
+            state.diar_audio_buf.extend(data)
 
         buf = state.leftover + data
         usable_len = (len(buf) // (FRAME_SAMPLES * BYTES_PER_SAMPLE)) * (
@@ -261,9 +604,180 @@ class WhisperServer:
 
         text = await asyncio.to_thread(self._transcribe, audio, state.language)
         if text:
+            seg_id = state.next_seg_id
+            state.next_seg_id += 1
+            state.segment_log.append(SegmentLogEntry(seg_id=seg_id, start=t0, end=t1))
+
             await self._safe_send(
-                ws, {"type": "final", "text": text, "start": t0, "end": t1}
+                ws,
+                {
+                    "type": "final",
+                    "text": text,
+                    "start": t0,
+                    "end": t1,
+                    "seg_id": seg_id,
+                },
             )
+
+            self._maybe_trigger_realtime_diar(ws, state)
+
+    def _maybe_trigger_realtime_diar(
+        self, ws: WebSocketServerProtocol, state: ConnectionState
+    ) -> None:
+        """After emitting a `final`: if realtime diarization is armed,
+        the interval has elapsed, and no pass is already in flight for
+        this connection, kick off a background pass. Single-flight per
+        connection via `diar_in_flight` — never overlaps a running pass
+        with a new one. Fire-and-forget: the task manages its own
+        completion/error reporting (see run_realtime_diar)."""
+        if not state.diar_armed or state.diar_in_flight:
+            return
+        if state.elapsed() - state.last_diar_at < DIAR_INTERVAL_S:
+            return
+        state.diar_in_flight = True
+        asyncio.create_task(self.run_realtime_diar(ws, state))
+
+    async def run_realtime_diar(
+        self, ws: WebSocketServerProtocol, state: ConnectionState
+    ) -> None:
+        """One realtime diarization (beta) pass: snapshot the trailing
+        audio window, run the shared pyannote pipeline on it in a
+        worker thread (never blocking the audio/VAD path), turn-overlap
+        match its clusters against the connection's speaker registry,
+        back-assign segment_log entries, and send a `speaker_update`
+        with only the segments whose label changed. Single-flight per
+        connection (see _maybe_trigger_realtime_diar); on any exception
+        sends `diar_status` (state=error) once and backs off 60s —
+        never crashes the connection or affects transcription."""
+        state.last_diar_at = state.elapsed()
+        try:
+            pipeline, load_error = _shared_diarize_pipeline.get(state.diar_hf_token)
+            if pipeline is None:
+                state.diar_armed = False  # stop retrying every interval
+                if not state.diar_status_sent:
+                    state.diar_status_sent = True
+                    await self._safe_send(
+                        ws,
+                        {
+                            "type": "diar_status",
+                            "state": "unavailable",
+                            "detail": load_error or "pyannote unavailable",
+                        },
+                    )
+                return
+
+            # Snapshot + trim the rolling window under the connection's
+            # own async context (no lock needed — this coroutine and
+            # _handle_binary both run on the single event-loop thread;
+            # only the pipeline() call itself moves to a worker thread).
+            window_bytes, window_offset = self._snapshot_diar_window(state)
+            if len(window_bytes) < BYTES_PER_SAMPLE:
+                return  # nothing to diarize yet
+
+            turns = await asyncio.to_thread(
+                _run_diar_pipeline_sync, pipeline, window_bytes, window_offset
+            )
+
+            new_clusters: dict[str, list[Turn]] = {}
+            for start, end, local_label in turns:
+                new_clusters.setdefault(local_label, []).append((start, end))
+
+            local_to_stable = match_clusters(new_clusters, state.diar_registry)
+
+            # Replace matched/minted stable ids' registry turns with
+            # this pass's turns; ids absent from this pass keep their
+            # old turns until they age out of every future window.
+            for local_label, stable_id in local_to_stable.items():
+                state.diar_registry[stable_id] = list(new_clusters[local_label])
+
+            stable_turns = [
+                (start, end, local_to_stable[local_label])
+                for start, end, local_label in turns
+                if local_label in local_to_stable
+            ]
+
+            # Prune entries that have aged out of every future window —
+            # their labels are final and they'd only be skipped forever.
+            # Safe here: this coroutine and _finalize_segment (the only
+            # appender) both run on the single event-loop thread.
+            if window_offset > 0:
+                aged = [e.seg_id for e in state.segment_log if e.end < window_offset]
+                if aged:
+                    state.segment_log = [
+                        e for e in state.segment_log if e.end >= window_offset
+                    ]
+                    for seg_id in aged:
+                        state.diar_last_sent.pop(seg_id, None)
+
+            assignments: list[dict[str, Any]] = []
+            for entry in state.segment_log:
+                if entry.end < window_offset:
+                    continue  # entirely before this window — unaffected
+                label = speaker_for_turns((entry.start, entry.end), stable_turns)
+                if label is None:
+                    continue
+                if state.diar_last_sent.get(entry.seg_id) == label:
+                    continue  # unchanged — omit per spec
+                state.diar_last_sent[entry.seg_id] = label
+                assignments.append({"seg_id": entry.seg_id, "speaker": label})
+
+            if assignments:
+                state.diar_gen += 1
+                await self._safe_send(
+                    ws,
+                    {
+                        "type": "speaker_update",
+                        "gen": state.diar_gen,
+                        "assignments": assignments,
+                        "speakers": list(state.diar_registry.keys()),
+                    },
+                )
+        except Exception as exc:  # noqa: BLE001 - realtime diar is best-effort
+            state.diar_armed = False  # stop retrying immediately; see backoff below
+            if not state.diar_status_sent:
+                state.diar_status_sent = True
+                await self._safe_send(
+                    ws,
+                    {
+                        "type": "diar_status",
+                        "state": "error",
+                        "detail": str(exc)[:200],
+                    },
+                )
+            # Re-arm after a cooldown rather than permanently — a
+            # transient failure (e.g. one bad window) shouldn't
+            # permanently disable diarization for the rest of a long
+            # meeting. diar_status is still sent at most once (above).
+            asyncio.get_event_loop().call_later(
+                DIAR_ERROR_BACKOFF_S, self._rearm_after_backoff, state
+            )
+        finally:
+            state.diar_in_flight = False
+
+    @staticmethod
+    def _rearm_after_backoff(state: ConnectionState) -> None:
+        state.diar_armed = True
+
+    @staticmethod
+    def _snapshot_diar_window(state: ConnectionState) -> tuple[bytes, float]:
+        """Trim `diar_audio_buf` to at most DIAR_WINDOW_S from the
+        front (advancing `diar_buf_offset_s` accordingly) and return a
+        snapshot of the (now-bounded) buffer plus its window_offset —
+        the absolute connection-elapsed seconds its first sample
+        corresponds to, so turns decoded from this window can be
+        mapped back to absolute time by adding window_offset."""
+        bytes_per_second = SAMPLE_RATE * BYTES_PER_SAMPLE
+        max_bytes = int(DIAR_WINDOW_S * bytes_per_second)
+        buf = state.diar_audio_buf
+        if len(buf) > max_bytes:
+            trim = len(buf) - max_bytes
+            # Keep trims sample-aligned (int16 = 2 bytes/sample) so we
+            # never split a sample across the cut.
+            trim -= trim % BYTES_PER_SAMPLE
+            if trim > 0:
+                del buf[:trim]
+                state.diar_buf_offset_s += trim / bytes_per_second
+        return bytes(buf), state.diar_buf_offset_s
 
     def _transcribe(self, audio: np.ndarray, language: str) -> str:
         segments, _info = self.model.transcribe(
@@ -335,9 +849,6 @@ class JobManager:
         # "a token is available" even when the CLI/env token is unset and
         # the browser is the one carrying it (Settings' HF Token field).
         self.last_request_token: Optional[str] = None
-        self._diarize_pipeline: Any = None
-        self._diarize_pipeline_loaded = False
-        self._diarize_pipeline_error: Optional[str] = None
         self.jobs: dict[str, dict[str, Any]] = {}
         self.lock = threading.Lock()
 
@@ -437,44 +948,15 @@ class JobManager:
                     job["progress"] = progress * DIARIZE_HOLD_PROGRESS
 
     def _load_diarize_pipeline(self, hf_token: Optional[str] = None) -> tuple[Any, Optional[str]]:
-        """Returns (pipeline, error_message). error_message is None on
-        success. Loading pyannote can fail in more ways than a plain
-        ImportError (missing package) — broken/incompatible transitive
-        dependencies (seen in practice: pyarrow version mismatches
-        raising AttributeError deep inside the import), model download
-        failures, etc. Any failure here degrades to "undiarized" per
-        spec — it must never take down the transcription job.
-
-        The pipeline is loaded (and cached) once, with whichever token
-        is available on first load — `hf_token` (a per-job override, see
-        start_job) takes precedence over the CLI/env one that day. A
-        second job supplying a *different* token after the pipeline is
-        already cached won't force a reload; that's an accepted edge
-        case for a local, single-user sidecar (mirrors the in-memory-
-        only job store tradeoff noted on JobManager)."""
-        if self._diarize_pipeline_loaded:
-            return self._diarize_pipeline, self._diarize_pipeline_error
-        self._diarize_pipeline_loaded = True
+        """Returns (pipeline, error_message); error_message is None on
+        success. Thin wrapper over the module-level
+        `_shared_diarize_pipeline` singleton (shared with the realtime
+        ws path so the model is only ever loaded once per process) —
+        `hf_token` (a per-job override, see start_job) takes precedence
+        over the CLI/env one on first load, whichever caller loads it
+        first. See _SharedDiarizePipeline.get for the full contract."""
         token = hf_token or self.hf_token
-        try:
-            from pyannote.audio import Pipeline  # type: ignore[import-not-found]
-
-            # pyannote 4.x renamed use_auth_token= to token=; support both.
-            try:
-                self._diarize_pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1",
-                    token=token,
-                )
-            except TypeError:
-                self._diarize_pipeline = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1",
-                    use_auth_token=token,
-                )
-            self._diarize_pipeline_error = None
-        except Exception as exc:  # noqa: BLE001 - see docstring
-            self._diarize_pipeline = None
-            self._diarize_pipeline_error = f"{type(exc).__name__}: {exc}"
-        return self._diarize_pipeline, self._diarize_pipeline_error
+        return _shared_diarize_pipeline.get(token)
 
     def diarization_probe(self) -> tuple[bool, Optional[str]]:
         """Lightweight readiness check for GET /health: does pyannote
@@ -490,6 +972,35 @@ class JobManager:
         except Exception as exc:  # noqa: BLE001 - see _load_diarize_pipeline docstring
             return False, f"{type(exc).__name__}: {exc}"
         return True, None
+
+    @staticmethod
+    def _to_wav_for_diarization(file_path: str) -> tuple[str, bool]:
+        """Re-encode audio to a clean 16 kHz mono WAV for pyannote.
+
+        Returns (path, is_temp). Best-effort: if ffmpeg is missing or the
+        conversion fails, returns the original path with is_temp=False so
+        diarization still attempts (and degrades gracefully) on it.
+        """
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
+            return file_path, False
+        fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="jargonslayer-diar-")
+        os.close(fd)
+        try:
+            subprocess.run(
+                [ffmpeg, "-nostdin", "-y", "-i", file_path,
+                 "-ac", "1", "-ar", "16000", "-f", "wav", wav_path],
+                check=True,
+                capture_output=True,
+                timeout=600,
+            )
+            return wav_path, True
+        except Exception:  # noqa: BLE001 - fall back to the original file
+            try:
+                os.remove(wav_path)
+            except OSError:
+                pass
+            return file_path, False
 
     def _diarize_job(
         self, job_id: str, file_path: str, hf_token: Optional[str] = None
@@ -513,8 +1024,19 @@ class JobManager:
             )
             return
 
+        # pyannote 4.x crops fixed-length windows and rejects a chunk
+        # whose decoded sample count is even slightly off (e.g. AAC/m4a
+        # encoder padding yields 477888 vs the expected 480000 samples).
+        # Re-encode to a clean 16 kHz mono WAV first so sample counts are
+        # exact; fall back to the original path if ffmpeg is unavailable.
+        diar_path, diar_is_temp = self._to_wav_for_diarization(file_path)
         try:
-            diarization = pipeline(file_path)
+            with _pipeline_call_lock:
+                result = pipeline(diar_path)
+            # pyannote 4.x returns a DiarizeOutput wrapper whose
+            # .speaker_diarization is the Annotation; 3.x returns the
+            # Annotation directly. Accept both.
+            diarization = getattr(result, "speaker_diarization", result)
             turns = [
                 (turn.start, turn.end, label)
                 for turn, _track, label in diarization.itertracks(yield_label=True)
@@ -528,6 +1050,12 @@ class JobManager:
                 ),
             )
             return
+        finally:
+            if diar_is_temp:
+                try:
+                    os.remove(diar_path)
+                except OSError:
+                    pass
 
         # Remap pyannote's native labels (SPEAKER_00, SPEAKER_01, ...)
         # to the spec's SPEAKER_1/2/... in first-seen order.
@@ -555,14 +1083,10 @@ class JobManager:
         label_map: dict[str, str],
     ) -> Optional[str]:
         """Assign the diarization label with maximum time-overlap
-        against this whisper segment's [start, end) span."""
-        best_label: Optional[str] = None
-        best_overlap = 0.0
-        for t_start, t_end, label in turns:
-            overlap = min(seg["end"], t_end) - max(seg["start"], t_start)
-            if overlap > best_overlap:
-                best_overlap = overlap
-                best_label = label
+        against this whisper segment's [start, end) span. Thin wrapper
+        over the shared `speaker_for_turns` pure function (also used
+        by the realtime ws path's segment_log back-assignment)."""
+        best_label = speaker_for_turns((seg["start"], seg["end"]), turns)
         return label_map.get(best_label) if best_label is not None else None
 
 
@@ -625,6 +1149,14 @@ def make_job_http_handler(
             if length <= 0:
                 self._send_json(
                     HTTPStatus.BAD_REQUEST, {"error": "empty request body"}
+                )
+                return
+            # ~3h of 16-bit 48kHz stereo WAV ≈ 2GB; audio meetings live
+            # far below this. Reject before buffering to protect /tmp.
+            if length > MAX_UPLOAD_BYTES:
+                self._send_json(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                    {"error": f"文件过大（上限 {MAX_UPLOAD_BYTES // (1 << 20)}MB） / file too large"},
                 )
                 return
 
@@ -838,6 +1370,7 @@ async def main() -> None:
         default_language=args.language,
         emit_partials=args.partials,
         save_audio_path=args.save_audio,
+        default_hf_token=args.hf_token,
     )
 
     job_manager = JobManager(
