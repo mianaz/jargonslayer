@@ -1,67 +1,69 @@
-# JargonSlayer × Agent 工作流
+# JargonSlayer × Agent Workflows
 
-**设计立场**：JargonSlayer 不内置第三方 OAuth connector。它把数据用 agent 友好的格式送到**文件系统**和 **webhook**，编排发生在你自己的 harness 里（Claude Code、n8n、cron、任意 MCP 客户端）。内置 N 家 connector 意味着维护 N 套 API 和 token 生命周期，而 power user 的编排层本来就比我们做得好。数据格式契约见 [SCHEMA.md](SCHEMA.md)。
+**Design stance**: JargonSlayer does not bundle third-party OAuth connectors. It delivers data in agent-friendly formats to the **filesystem** and **webhooks**; orchestration happens in your own harness (Claude Code, n8n, cron, any MCP client). Bundling N vendor connectors means maintaining N sets of APIs and token lifecycles, and a power user's own orchestration layer is already better at this than we could be. Data format contracts are in [SCHEMA.md](SCHEMA.md).
 
-## 数据出口（四个，全部无账号）
+## Data exits (four, all account-free)
 
-| 出口 | 触发 | 形态 |
+| Exit | Trigger | Form |
 |---|---|---|
-| 自动落盘 | 每次会话保存 | 指定文件夹里的 `{date}-jargonslayer.md`（frontmatter）+ `.json` |
-| Webhook | 每次会话保存 | POST `{event: "meeting.saved", session}` 到自定义 URL |
-| 手动导出 | 按钮 | Markdown 报告 / Anki TSV / JSON / 剪贴板 |
-| 全量备份 | 设置页 | 单 JSON（sessions + 词库 + 设置） |
+| Auto-save to disk | Every session save | `{date}-jargonslayer.md` (frontmatter) + `.json` in a designated folder |
+| Webhook | Every session save | POST `{event: "meeting.saved", session}` to a custom URL |
+| Manual export | Button | Markdown report / Anki TSV / JSON / clipboard |
+| Full backup | Settings page | A single JSON (sessions + glossary + settings) |
 
-## 配方
+## Recipes
 
-### 1. Claude Code：会议纪要 → 周会 PPT
+### 1. Claude Code: meeting summary → weekly-sync slides
 
-自动落盘目录设为某个仓库/文件夹后：
+With the auto-save-to-disk directory set to a repo/folder:
 
 ```bash
 cd ~/meetings
-claude "用 pptx skill 把 2026-07-06-1430-jargonslayer.md 做成 5 页周会汇报：
-主题页、要点、决定、行动项（按负责人分组）、下周计划占位"
+claude "Use the pptx skill to turn 2026-07-06-1430-jargonslayer.md into a 5-slide
+weekly sync deck: topic slide, key points, decisions, action items (grouped by owner),
+next-week placeholder"
 ```
 
-同理可做：多场会议横向对比（"这三场会里 action items 的完成闭环情况"）、给导师的月度进展摘要。
+Similarly you can do: cross-meeting comparison ("across these three meetings, how are action items tracking to closure"), or a monthly progress digest for your advisor.
 
-### 2. Obsidian：vault 即收件箱
+### 2. Obsidian: the vault as an inbox
 
-自动落盘目录直接选 vault 子目录（如 `vault/Meetings/`）。frontmatter 天然可被 Dataview 查询：
+Point the auto-save-to-disk directory straight at a vault subfolder (e.g. `vault/Meetings/`). The frontmatter is naturally queryable by Dataview:
 
 ```dataview
-TABLE duration_min AS "分钟", length(expressions) AS "新表达"
+TABLE duration_min AS "Minutes", length(expressions) AS "New expressions"
 FROM "Meetings" WHERE source = "jargonslayer" SORT date DESC
 ```
 
-### 3. n8n / 自动化平台：webhook 分发
+### 3. n8n / automation platforms: webhook fan-out
 
-Webhook URL 指向 n8n 的 Webhook 节点，典型流：`Webhook → 提取 session.summary → Notion API 建页面 + 飞书机器人发卡片`。payload 结构见 SCHEMA.md §3；接收端应立即 200、异步处理（客户端 8s 超时不重试）。
+Point the webhook URL at n8n's Webhook node; a typical flow: `Webhook → extract session.summary → create a Notion page via API + post a card to a Feishu bot`. Payload structure is in SCHEMA.md §3; the receiving end should return 200 immediately and process asynchronously (the client has an 8s timeout with no retry).
 
-### 4. 命令行批分析
+### 4. Command-line batch analysis
 
 ```bash
-# 跨会议高频表达 Top 20
+# Top 20 most frequent expressions across meetings
 jq -r '.session.cards[].expression' *.json | sort | uniq -c | sort -rn | head -20
 
-# 某说话人的全部行动项
+# All action items for a given speaker
 jq -r '.session.summary.summary.action_items[] | select(.owner=="Mike") | .en' *.json
 ```
 
-### 5. Anki 重度复习
+### 5. Heavy-duty review in Anki
 
-纪要页导出 TSV → Anki 文件-导入（Tab 分隔，字段 1=正面 2=背面，允许 HTML）。应用内练习模式只做轻量翻卡，间隔重复的正确工具是 Anki。
+Export TSV from the summary page → Anki File → Import (tab-separated, field 1 = front, field 2 = back, HTML allowed). The in-app practice mode is lightweight flashcard flipping only; the right tool for spaced repetition is Anki.
 
-## Connector 设计蓝图（未实现，接口已备好）
+## Connector design blueprint (not implemented, interface already in place)
 
-给想扩展的人（或未来的我们）的施工图：
+A build guide for anyone who wants to extend this (or for us, later):
 
-1. **MCP server（`jargonslayer-mcp`）**：一个 stdio MCP 读自动落盘目录——resources 暴露每场会议，tools 提供 `search_expressions(query)` / `get_summary(date)`。因为数据就是磁盘上的 JSON，全程无需碰应用本体；~150 行可成。Claude Desktop/Code 即插即用。
-2. **实时云端 STT 适配器**：`STTEngine` 接口（src/lib/types.ts）就是扩展点——实现 `start(events, settings)/stop()`，把 Deepgram/AssemblyAI 的 ws 流映射到 `onInterim/onFinal` 即可注册进引擎工厂。上传路径的云端转录（OpenAI 兼容 `/audio/transcriptions`）已内置，可作参考实现。
-3. **推送编排**：webhook → 飞书/钉钉/Slack 机器人。建议模板：卡片标题=会议主题 zh，字段=行动项列表，按钮=打开落盘的 .md。全部逻辑活在接收端。
-4. **日历联动（roadmap）**：会前从 CalDAV/Google Calendar 取会议标题预填 session title；属于"读外部"而非"写外部"，若做进本体也不违反无账号原则（本地 ICS 文件即可起步）。
-5. **社区词典包仓库**：按 SCHEMA.md §5 发布 JSON 到 GitHub，用户在设置 → 包源粘贴 raw 链接安装；版本号变更即可推送更新。建议仓库结构：`packs/<id>/pack.json` + PR 收录流程。
+1. **MCP server (`jargonslayer-mcp`)**: a stdio MCP that reads the auto-save-to-disk directory — resources expose each meeting, tools provide `search_expressions(query)` / `get_summary(date)`. Since the data is just JSON on disk, this needs zero contact with the app itself; achievable in ~150 lines. Drop-in with Claude Desktop/Code.
+2. **Real-time cloud STT adapter**: the `STTEngine` interface (`src/lib/types.ts`) is the extension point — implement `start(events, settings)/stop()`, map Deepgram/AssemblyAI's ws stream onto `onInterim/onFinal`, and register it into the engine factory. Cloud transcription for the upload path (OpenAI-compatible `/audio/transcriptions`) is already built in and can serve as a reference implementation.
+3. **Push orchestration**: webhook → Feishu/DingTalk/Slack bot. Suggested template: card title = meeting topic (zh), fields = action item list, button = open the saved `.md` file. All logic lives on the receiving end.
+4. **Calendar integration (roadmap)**: pre-fill the session title from a meeting title pulled from CalDAV/Google Calendar before the meeting; this is "reading external data" rather than "writing external data", so even building it into the app itself wouldn't violate the no-account principle (a local ICS file is enough to start).
+5. **Community dictionary pack repository**: publish JSON to GitHub per SCHEMA.md §5; users paste the raw link into Settings → Pack Sources to install. A version bump alone triggers an update. Suggested repo layout: `packs/<id>/pack.json` + a PR intake process.
 
-## 隐私提醒
+## Privacy reminder
 
-自动落盘和 webhook 都会把会议内容送出浏览器沙箱（前者到本地磁盘，后者到你指定的服务器）。启用即视为知情；「仅词典模式 + 不配出口」= 数据永不离开浏览器。
+Both auto-save-to-disk and webhooks send meeting content out of the browser sandbox (the former to local disk, the latter to a server you specify). Enabling either is treated as informed consent; "dictionary-only mode + no configured exit" = data never leaves the browser.
+</content>

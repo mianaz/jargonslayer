@@ -1,8 +1,8 @@
-# JargonSlayer 数据 Schema（agent-native 输出契约）
+# JargonSlayer Data Schema (agent-native output contract)
 
-所有对外数据带 `schemaVersion` 字段；同一大版本内只做加法（新增字段），破坏性变更升版本号。当前 **schemaVersion: 1**。
+Every external data payload carries a `schemaVersion` field; additive changes only within a major version; breaking changes bump the version. Current **schemaVersion: 1**.
 
-## 1. 会话 JSON（自动落盘 `.json` / 手动导出）
+## 1. Session JSON (auto-saved `.json` / manual export)
 
 ```jsonc
 {
@@ -17,13 +17,13 @@
     "segments": [{
       "id": "uuid", "index": 0,
       "startedAt": 1751790000300, "endedAt": 1751790002300,
-      "speaker": "SPEAKER_1",         // 可选；diarization 或演示模式提供（用户重命名后为显示名）
+      "speaker": "SPEAKER_1",         // optional; provided by diarization or demo mode (becomes the display name after user renames it)
       "text": "…", "engine": "whisper"
     }],
-    "speakerAliases": {                // 可选；实时分离（beta）下用户重命名映射
-      "SPEAKER_1": "Elena"             // 键 = 稳定说话人 id，值 = 用户改的显示名
+    "speakerAliases": {                // optional; user-rename mapping under real-time diarization (beta)
+      "SPEAKER_1": "Elena"             // key = stable speaker id, value = user-renamed display name
     },
-    "cards": [{                        // 检测到的表达（含书签字段）
+    "cards": [{                        // detected expressions (includes bookmark fields)
       "expression": "move the needle",
       "category": "idiom",            // idiom|slang|phrase|metaphor|indirect|other
       "meaning": "…", "chinese_explanation": "…",
@@ -39,7 +39,7 @@
       "id": "uuid", "normKey": "ARR",
       "firstSeenAt": 0, "lastSeenAt": 0, "count": 3, "source": "llm"
     }],
-    "summary": {                       // 可选；生成报告后存在
+    "summary": {                       // optional; present after report generation
       "summary": {
         "topic": {"en": "…", "zh": "…"},
         "key_points": [{"en": "…", "zh": "…"}],
@@ -54,7 +54,7 @@
 }
 ```
 
-## 2. Markdown frontmatter（落盘 `.md`，Obsidian/Dataview 友好）
+## 2. Markdown frontmatter (saved to `.md`, Obsidian/Dataview friendly)
 
 ```yaml
 ---
@@ -69,48 +69,48 @@ schemaVersion: 1
 ---
 ```
 
-## 3. Webhook payload（会后 POST）
+## 3. Webhook payload (post-meeting POST)
 
 ```jsonc
 {
   "schemaVersion": 1,
   "event": "meeting.saved",
   "exportedAt": 1751800000000,
-  "session": { /* 同上 session 对象 */ }
+  "session": { /* same session object as above */ }
 }
 ```
 
-超时 8s、fire-and-forget、无重试；接收端应快速 200 并异步处理。
+8s timeout, fire-and-forget, no retry; the receiving end should return 200 quickly and process asynchronously.
 
-## 4. 全量备份
+## 4. Full backup
 
 ```jsonc
 {
   "schemaVersion": 1,
-  "kind": "jargonslayer-backup",      // 导入端同时接受旧 "meetlingo-backup"
+  "kind": "jargonslayer-backup",      // the importer also accepts the legacy "meetlingo-backup"
   "exportedAt": 0,
   "sessions": [ /* MeetingSession[] */ ],
   "glossary": [ /* CustomEntry[] */ ],
-  "settings": { /* 导入时跳过，不静默覆盖 */ }
+  "settings": { /* skipped on import, never silently overwritten */ }
 }
 ```
 
-## 5. 远程词典包（社区包格式）
+## 5. Remote dictionary pack (community pack format)
 
-发布为可公开访问的 JSON（GitHub raw / jsDelivr）：
+Published as publicly accessible JSON (GitHub raw / jsDelivr):
 
 ```jsonc
 {
-  "id": "biotech-terms",              // 全局唯一，小写-连字符
+  "id": "biotech-terms",              // globally unique, lowercase-hyphenated
   "name": "生物医药术语包",
-  "description": "…",                 // 可选
-  "version": "1.2.0",                 // 字符串或数字；变更即触发更新
+  "description": "…",                 // optional
+  "version": "1.2.0",                 // string or number; any change triggers an update
   "expressions": [{
     "expression": "de-risk the asset",
-    "variants": ["de-risk"],          // 可选
+    "variants": ["de-risk"],          // optional
     "category": "phrase",
     "meaning": "reduce the risk profile of a drug program",
-    "chinese_explanation": "降低这条管线的风险敞口",   // ≤40 字、自然商务中文、中英文间半角空格
+    "chinese_explanation": "降低这条管线的风险敞口",   // ≤40 characters, natural business Chinese, half-width space between Chinese and English
     "plain_english": "make it less risky",
     "tone": "neutral, biotech jargon",
     "confidence": 0.9
@@ -123,10 +123,11 @@ schemaVersion: 1
 }
 ```
 
-条目未带 `pack` 字段时自动归属包 id；不合规条目在导入时丢弃并告警。质量规范同内置词典：无词典腔、长度上限、盘古之白。
+Entries without a `pack` field are auto-assigned the pack's id; non-conforming entries are dropped with a warning at import time. Same quality standard as the built-in dictionary: no dictionary-speak, length caps, Pangu spacing.
 
-## 6. 兼容承诺
+## 6. Compatibility commitments
 
-- 旧 `meetlingo:*` IndexedDB key 在启动时单向复制迁移（不删除原数据）。
-- 旧 `meetlingo-backup` 备份文件永久可导入。
-- `chinese_explanation` / `gloss_zh` 字段名是 wire 契约；`explainLanguage: "en"` 模式下其内容为简明英文（字段名不变）。
+- Legacy `meetlingo:*` IndexedDB keys are copy-migrated one-way at startup (original data is not deleted).
+- Legacy `meetlingo-backup` backup files remain importable indefinitely.
+- The `chinese_explanation` / `gloss_zh` field names are a wire contract; under `explainLanguage: "en"` mode their content is plain English (the field name stays unchanged).
+</content>

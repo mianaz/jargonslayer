@@ -1,95 +1,96 @@
-# JargonSlayer 技术架构
+# JargonSlayer Technical Architecture
 
-## 总览
+## Overview
 
 ```
-浏览器（Next.js 客户端）
+Browser (Next.js client)
 │
-│  ┌─ 音频/转录层 ────────────────────────────┐
-│  │ demo.ts        内置脚本回放（无音频）      │
-│  │ webSpeech.ts   Web Speech API            │
-│  │ whisperSocket  麦克风→AudioWorklet(16k    │
-│  │                int16)→ ws://localhost:8765│──► sidecar/whisper_server.py
-│  └──────────────┬───────────────────────────┘    (faster-whisper + 能量VAD)
+│  ┌─ Audio/Transcription layer ─────────────────────────┐
+│  │ demo.ts        built-in scripted playback (no audio)│
+│  │ webSpeech.ts   Web Speech API                       │
+│  │ whisperSocket  mic→AudioWorklet(16k                 │
+│  │                int16)→ ws://localhost:8765          │──► sidecar/whisper_server.py
+│  └──────────────┬──────────────────────────────────────┘    (faster-whisper + energy-based VAD)
 │                 │ onInterim / onFinal
 │                 ▼
-│        zustand store（唯一总线）
+│        zustand store (the single bus)
 │   segments · interim · cards · terms
 │   summary · settings · sessions
 │                 │ pushSegment(seg)
 │                 ▼
-│  ┌─ 检测层 ────────────────────────────────┐
-│  │ scheduler.ts  批量凑批(140字符/3.5s/句末) │
-│  │               ≤2并发 · 乱序丢弃 · 降级    │──► POST /api/detect ──► Anthropic
-│  │ dictionary.ts 离线词典兜底                │      (Haiku, 结构化输出)
-│  │ dedupe.ts     8分钟TTL去重 · 计数合并     │
-│  └─────────────────────────────────────────┘
+│  ┌─ Detection layer ─────────────────────────────────────────┐
+│  │ scheduler.ts  batch triggers(140 chars/3.5s/sentence end) │
+│  │               ≤2 concurrent · drop out-of-order · fallback│──► POST /api/detect ──► Anthropic
+│  │ dictionary.ts offline dictionary fallback                 │      (Haiku, structured output)
+│  │ dedupe.ts     8-min TTL dedup · count merge               │
+│  └───────────────────────────────────────────────────────────┘
 │                 │ applyDetection
 │                 ▼
-│        UI（TranscriptPanel / CardsPanel / SummaryPanel / …）
+│        UI (TranscriptPanel / CardsPanel / SummaryPanel / …)
 │
-└─ 会后: POST /api/summarize ──► 纪要1次 + 翻译分块并行(≤4) + 查漏1次 ──► SummaryResult
-        历史: IndexedDB (idb-keyval)          导出: Markdown / Anki TSV / JSON
+└─ Post-meeting: POST /api/summarize ──► summary×1 + chunked parallel translation(≤4) + gap-fill×1 ──► SummaryResult
+        History: IndexedDB (idb-keyval)          Export: Markdown / Anki TSV / JSON
 ```
 
-## 模块边界（文件所有权）
+## Module boundaries (file ownership)
 
-| 层 | 文件 | 职责 |
+| Layer | File | Responsibility |
 |---|---|---|
-| 契约 | `src/lib/types.ts` | 全部跨模块类型；LLM JSON 字段名是 wire 契约 |
-| 契约 | `src/lib/store.ts` | zustand 总线；STT 层与检测层互不 import，只经 store |
-| 契约 | `src/lib/llm/prompts.ts` | 4 个系统提示词（检测/纪要/翻译/查漏）集中管理 |
-| 转录 | `src/lib/stt/*`, `src/lib/audio/*`, `public/worklets/*` | 三引擎统一实现 `STTEngine` 接口 |
-| 转录 | `src/hooks/useMeeting.ts` | 引擎与调度器的生命周期编排 |
-| 检测 | `src/lib/detect/scheduler.ts` | 实时凑批与降级状态机（详下） |
-| 检测 | `src/lib/detect/dedupe.ts` | 纯函数合并：TTL 去重、计数、词典→LLM 内容升级 |
-| 检测 | `src/lib/detect/dictionary.ts` | 离线词典（371 条：10 主题包，含学术会议包；支持远程社区包） |
-| 服务端 | `src/app/api/detect/route.ts` | 校验→调用 Haiku→反幻觉过滤（表达必须逐字出现在原文）→限幅 |
-| 服务端 | `src/app/api/summarize/route.ts` | 三阶段编排：纪要 → 分块翻译（索引对齐+缺失重试）→ 查漏 |
-| 存储 | `src/lib/history/*` | IndexedDB 会话持久化；Markdown/Anki/JSON 导出 |
-| UI | `src/components/*`, `src/app/page.tsx` | 深色主题；page.tsx 只做布局与弹层编排 |
-| 本地 STT | `sidecar/whisper_server.py` | ws 实时（16k int16→能量 VAD→faster-whisper）+ HTTP 任务接口（录音上传批转录 + pyannote 说话人分离） |
-| 词库/复习 | `src/lib/history/glossary.ts`, `src/app/review/*` | 个人词库（跨会议高亮、掌握状态）与学习中心 |
-| Agent 出口 | `src/lib/history/autoExport.ts` | 自动落盘（File System Access）、webhook、全量备份 |
+| Contract | `src/lib/types.ts` | All cross-module types; LLM JSON field names are a wire contract |
+| Contract | `src/lib/store.ts` | zustand bus; the STT layer and detection layer never import each other, only via the store |
+| Contract | `src/lib/llm/prompts.ts` | 4 system prompts (detection/summary/translation/gap-fill) managed centrally |
+| Transcription | `src/lib/stt/*`, `src/lib/audio/*`, `public/worklets/*` | All three engines implement the unified `STTEngine` interface |
+| Transcription | `src/hooks/useMeeting.ts` | Lifecycle orchestration between engines and the scheduler |
+| Detection | `src/lib/detect/scheduler.ts` | Real-time batching and fallback state machine (details below) |
+| Detection | `src/lib/detect/dedupe.ts` | Pure-function merging: TTL dedup, counting, dictionary→LLM content upgrade |
+| Detection | `src/lib/detect/dictionary.ts` | Offline dictionary (371 entries across 10 topic packs, including an academic-meeting pack; supports remote community packs) |
+| Server | `src/app/api/detect/route.ts` | Validate → call Haiku → anti-hallucination filter (expression must appear verbatim in the source text) → cap output |
+| Server | `src/app/api/summarize/route.ts` | Three-stage orchestration: summary → chunked translation (index-aligned + retry on gaps) → gap-fill |
+| Storage | `src/lib/history/*` | IndexedDB session persistence; Markdown/Anki/JSON export |
+| UI | `src/components/*`, `src/app/page.tsx` | Dark theme; page.tsx handles only layout and overlay orchestration |
+| Local STT | `sidecar/whisper_server.py` | Real-time ws (16k int16→energy-based VAD→faster-whisper) + HTTP job endpoint (recording upload for batch transcription + pyannote speaker diarization) |
+| Glossary/Review | `src/lib/history/glossary.ts`, `src/app/review/*` | Personal glossary (cross-meeting highlighting, mastery state) and learning center |
+| Agent export | `src/lib/history/autoExport.ts` | Auto-save to disk (File System Access), webhook, full backup |
 
-## 实时检测管线的关键决策
+## Key decisions in the real-time detection pipeline
 
-1. **凑批触发**：未分析文本 ≥140 字符，或距首个未分析分段 3.5s，或句末（`.?!`）且 ≥60 字符 —— 三者先到先触发。硬上限 1200 字符防长独白撑爆。实测大多数卡片在说完后 2–5 秒内出现。
-2. **并发与乱序**：最多 2 个请求在途；每批记录转录流的字符偏移，响应回来时若其覆盖区间已被更新的批次应用过则整批丢弃。卡片顺序由检测时间决定，与响应到达顺序无关。
-3. **后台节流**：浏览器把后台标签页定时器节流到分钟级，因此 flush 由「分段到达事件」驱动，`visibilitychange` 时强制刷一次，定时器只兜底。
-4. **降级链**：无 Key（401）→ 词典模式；连续 2 次上游失败 → 词典模式；429 → 单次抖动重试。降级只 toast 一次，UI 常驻「词典模式」徽标。
-5. **去重语义**：表达按规范化 key（小写、去边缘标点、末词轻词形还原）去重，8 分钟 TTL 内重复 → 原卡计数 +1 并脉冲提示；词典卡片后续被 LLM 命中时**就地升级**内容（语境化解释替换模板解释），计数保留。
-6. **反幻觉**：服务端丢弃任何未逐字出现在 `new_text` 里的 expression；提示词要求 `source_sentence` 必须原样引用。
-7. **结构化输出**：优先 `messages.parse` + `zodOutputFormat` 强制 schema；模型不支持时回退到普通调用 + 括号平衡扫描解析。两条路都过 zod 校验。
-8. **成本控制**：系统提示词打 `cache_control` 缓存（每次调用省约 65% 输入 token）；60 分钟会议约 300 次调用 ≈ $0.5。
+1. **Batch trigger**: unanalyzed text ≥140 characters, or 3.5s since the first unanalyzed segment, or sentence end (`.?!`) with ≥60 characters — whichever fires first. Hard cap of 1200 characters to prevent long monologues from overloading a batch. In practice most cards appear 2–5 seconds after the speaker finishes.
+2. **Concurrency and out-of-order handling**: at most 2 requests in flight; each batch records the character offset range of the transcript stream, and if that range has already been superseded by a later batch's response by the time a response comes back, the whole response is dropped. Card order is determined by detection time, not response arrival order.
+3. **Background throttling**: browsers throttle background-tab timers down to once-a-minute granularity, so flushing is driven by "segment arrival" events, forced on `visibilitychange`, with the timer only as a fallback.
+4. **Fallback chain**: no Key (401) → dictionary mode; 2 consecutive upstream failures → dictionary mode; 429 → single jittered retry. Fallback only toasts once; the UI persistently shows a "Dictionary Mode" badge.
+5. **Dedup semantics**: expressions are deduplicated by a normalized key (lowercased, edge punctuation stripped, light lemmatization on the last word); a repeat within an 8-minute TTL → the original card's count +1 with a brief pulse; when a dictionary card is later matched by the LLM, its content is **upgraded in place** (contextual explanation replaces the template explanation), count is preserved.
+6. **Anti-hallucination**: the server drops any expression that doesn't appear verbatim in `new_text`; the prompt requires `source_sentence` to quote the original text exactly.
+7. **Structured output**: prefers `messages.parse` + `zodOutputFormat` to enforce the schema; falls back to a plain call + bracket-balance scanning when the model doesn't support it. Both paths go through zod validation.
+8. **Cost control**: the system prompt uses `cache_control` caching (saves about 65% of input tokens per call); a 60-minute meeting makes about 300 calls ≈ $0.5.
 
-## 会后管线
+## Post-meeting pipeline
 
-单击「生成会议报告」→ 一个 `/api/summarize` 请求，服务端内部编排：
+Clicking "生成会议报告" (Generate Meeting Report) fires a single `/api/summarize` request; the server orchestrates internally:
 
-1. **纪要**（1 次，Sonnet）：全文 → `{topic, key_points, decisions, action_items}` 双语 JSON。
-2. **翻译**（分块并行）：每块 ≤25 段且 ≤500 词，并发 4；输入输出都带段索引 `i`，逐索引校验；缺失索引汇总做一次修补调用，仍缺的填占位符 —— 单块失败不拖垮整体。
-3. **查漏**（1 次）：全文 + 已捕获表达排除清单 → 补充漏检项（≤10 表达/≤6 术语）。
-4. **闪卡**：代码拼装（不让 LLM 排版）—— 实时卡片 + 查漏结果去重合并。
+1. **Summary** (1 call, Sonnet): full transcript → bilingual JSON `{topic, key_points, decisions, action_items}`.
+2. **Translation** (parallel chunks): each chunk ≤25 segments and ≤500 words, concurrency 4; both input and output carry segment index `i`, validated index-by-index; missing indices are batched into one repair call, any still missing get a placeholder — a single chunk failing doesn't take down the whole job.
+3. **Gap-fill** (1 call): full transcript + an exclusion list of already-captured expressions → supplements missed items (≤10 expressions/≤6 terms).
+4. **Flashcards**: assembled in code (not left to the LLM to format) — real-time cards + gap-fill results, deduplicated and merged.
 
-## 隐私设计
+## Privacy design
 
-- 音频路径：本地 Whisper 全程 127.0.0.1；Web Speech 走浏览器厂商服务（UI 与教程明示）。
-- 文本路径：AI 检测/纪要经 Next.js 路由代理到 Anthropic；「仅词典模式」下零外发。
-- 持久化：全部在浏览器 IndexedDB；API Key 存本机，请求时经 `x-jargonslayer-key` 头直传路由，服务端不落盘。
-- 服务端路由无状态，可整机离线运行（词典模式）。
+- Audio path: local Whisper stays entirely on 127.0.0.1; Web Speech goes through the browser vendor's service (disclosed in the UI and docs).
+- Text path: AI detection/summarization is proxied through a Next.js route to Anthropic; under "dictionary-only mode", zero data leaves the machine.
+- Persistence: everything lives in browser IndexedDB; the API Key is stored locally and sent directly with each request via the `x-jargonslayer-key` header, never persisted server-side.
+- The server route is stateless and can run entirely offline (dictionary mode).
 
-## 实时说话人分离（beta）
+## Real-time speaker diarization (beta)
 
-对「pyannote 流式延迟不可接受」的解法不是流式模型，而是**尾窗批量再分离**：ws 连接把全部 16k PCM 存入连接内缓冲，每 ~20s（且有新 final 时）在后台线程对最近 ≤600s 的窗口跑一次完整 pyannote 管线，再按时间重叠把稳定标签回写到已发送的 `final`（`speaker_update` 消息，按 `seg_id` 定位、只发变化项）。关键设计：
+The answer to "pyannote's streaming latency is unacceptable" isn't a streaming model — it's **tail-window batch re-diarization**: the ws connection buffers all 16k PCM audio in a per-connection buffer, and roughly every ~20s (when new finals exist) runs a full pyannote pipeline pass on the most recent ≤600s window on a background thread, then writes stable labels back onto already-sent `final`s by time overlap (`speaker_update` message, addressed by `seg_id`, only sending changed items). Key design points:
 
-- **标签稳定性**：连接维护说话人注册表（stable id → 上一轮 turns），新一轮聚类与注册表按 turn 重叠秒数贪心一对一匹配（阈值 2s），匹配即沿用 id，不匹配且语音 ≥3s 才铸新 id——id 只增不换，pyannote 每轮内部编号的随机置换不会泄漏到 UI。
-- **重命名必胜**：前端 store 维护 `speakerAliases`（stable id → 用户显示名），自动回写永远先过 alias 映射，用户改名后后续每轮更新都重新套用改名。
-- **降级**：单飞锁（跑不过来就跳轮，标签晚到但转录零阻塞）；pyannote 不可用发一次 `diar_status` 后彻底闭嘴；共享管线单例加载与推理均有锁（ws 线程与 HTTP job 线程互斥）。
-- 时间轴以墙钟为准，与音频缓冲在 1x 实时下天然对齐；快于实时的重放请走 HTTP 任务接口（那条路按音频时间戳分离）。
+- **Label stability**: the connection maintains a speaker registry (stable id → previous round's turns); each new clustering round is greedily one-to-one matched against the registry by turn overlap seconds (threshold 2s) — a match reuses the id, and only unmatched speech ≥3s mints a new id. IDs only increase, never swap, so pyannote's internal per-round numbering shuffle never leaks into the UI.
+- **Rename always wins**: the frontend store maintains `speakerAliases` (stable id → user display name); auto-write-back always applies the alias mapping first, so after a user renames a speaker, every subsequent round's update re-applies the rename.
+- **Fallback**: a single-flight lock (skip a round if it can't keep up — labels arrive late but transcription is never blocked); if pyannote is unavailable, it sends one `diar_status` message then goes silent for good; the shared pipeline singleton's loading and inference are both locked (mutual exclusion between the ws thread and the HTTP job thread).
+- The timeline is wall-clock based, which naturally aligns with the audio buffer at 1x real-time; replay faster than real-time should go through the HTTP job endpoint (which diarizes by audio timestamp instead).
 
-## 已知边界
+## Known limitations
 
-- Web Speech API 的 final 结果偶发修订（Safari 尤甚），v1 视 final 为不可变——检测偏移以首次 final 为准。
-- 实时分离为 beta：首轮要付管线加载成本（标签迟 5-15s），说话人静默超出 600s 窗口后再开口可能获得新编号。
-- 浏览器识别引擎不支持选麦克风设备（API 限制），虚拟声卡方案需配本地 Whisper。
+- Web Speech API final results occasionally get revised (especially on Safari) — v1 treats finals as immutable, so detection offsets are anchored to the first final.
+- Real-time diarization is beta: the first round pays the pipeline-loading cost (labels arrive 5-15s late), and a speaker who's been silent longer than the 600s window may get a new id when they speak again.
+- The browser recognition engine doesn't support selecting a microphone device (an API limitation); the virtual-sound-card approach requires local Whisper.
+</content>

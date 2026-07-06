@@ -1,73 +1,74 @@
-# JargonSlayer 产品设计
+# JargonSlayer Product Design
 
-**一句话**：给非英语母语者的英文会议实时理解助手 —— 边开会边转录，俚语、商务黑话、隐喻表达和专有名词即时出卡片解释，会后自动生成双语纪要和学习卡片。
+**One line**: a real-time English meeting comprehension assistant for non-native speakers — transcribes as the meeting happens, and instantly surfaces cards explaining slang, business jargon, metaphorical expressions, and proper nouns; a bilingual summary and study cards are auto-generated after the meeting.
 
-## 目标用户与场景
+## Target users and scenarios
 
-中国及其他非英语母语的职场人 / 研究者，英语读写没问题，但在线上英文会议里经常被两类东西卡住：
+Chinese and other non-native-English-speaking professionals/researchers who read and write English fine, but often get stuck on two things in live English meetings:
 
-1. **非字面表达**："move the needle"、"boil the ocean"、"table this" —— 每个词都认识，连起来不知道在说什么，等反应过来会议已经往下走了。
-2. **专有名词和缩写**：ARR、OKR、Series B、内部产品代号 —— 母语者一秒带过，非母语者要花几秒检索记忆。
+1. **Non-literal expressions**: "move the needle", "boil the ocean", "table this" — every word is familiar, but strung together the meaning is unclear, and by the time you catch up the meeting has moved on.
+2. **Proper nouns and acronyms**: ARR, OKR, Series B, internal product codenames — native speakers parse these instantly, while non-native speakers need a few seconds to search their memory.
 
-JargonSlayer 的定位是**旁听的同事**：不打断会议，在侧边栏用最短的话告诉你"这句话实际是什么意思"。
+JargonSlayer's positioning is **the colleague listening in beside you**: it doesn't interrupt the meeting, and tells you "what this sentence actually means" in the sidebar with the fewest possible words.
 
-## 核心功能
+## Core features
 
-### 1. 实时转录（多引擎，本地/云端标识）
+### 1. Real-time transcription (multi-engine, local/cloud labeling)
 
-| 引擎 | 数据去向 | 适用场景 |
+| Engine | Audio destination | Best for |
 |---|---|---|
-| 浏览器识别 (Web Speech API) | 云端（浏览器厂商服务器） | 日常快速使用，零配置，Chrome/Edge 最佳 |
-| 本地 Whisper | 本地 | 隐私敏感会议，faster-whisper sidecar |
-| 标签页音频 | 本地 | 线上会议转录对方声音，免虚拟声卡 |
+| Browser recognition (Web Speech API) | Cloud (browser vendor's servers) | Everyday quick use, zero config, best on Chrome/Edge |
+| Local Whisper | Local | Privacy-sensitive meetings, faster-whisper sidecar |
+| Tab audio | Local | Transcribing the other party's audio in online meetings, no virtual sound card needed |
 
-「演示」是右上角的独立按钮（内置商务会议脚本，模拟真实语速），不作为引擎并列。每个引擎的本地/云端属性在选择界面与顶栏均有标识。转录按说话片段分段展示，附时间戳与说话人：上传录音走 pyannote 批量分离；实时会议可开实时分离（beta，标签逐步修正）；标签点击可改名。未定稿的识别中间结果以灰色斜体尾随显示。
+"演示" (Demo) is a standalone button in the top-right corner (a built-in scripted business-meeting recording that simulates realistic speaking pace), not listed alongside the engines. Each engine's local/cloud attribute is labeled both in the selection UI and in the top bar. Transcription is displayed segmented by speech turn, with timestamps and speaker labels: uploaded recordings go through pyannote batch diarization; live meetings can enable real-time diarization (beta, labels progressively corrected); labels are clickable to rename. Unfinalized interim recognition results trail behind in gray italics.
 
-### 2. 实时表达检测与解释
+### 2. Real-time expression detection and explanation
 
-- 上下文感知：把最近约 800 字符作为语境送给 LLM，只对新增文本做抽取，能区分 "table this"（搁置议题）和字面意义的 table。
-- 卡片字段：原表达、类别、语境含义（英）、中文解释、直白英文改写、语气标注、置信度、出处句子。
-- 专有名词/缩写走独立的 terms 通道，与表达卡同规格卡牌展示（蓝色系区分，金色系为表达）。
-- 新卡片金色高亮约 4 秒；同一表达 8 分钟内重复出现只在原卡片上计数 +1 并轻微脉冲，不刷屏。
-- 转录文本中被检测到的表达以金色虚线下划线标出，点击可定位到对应卡片。
-- 选中转录里任意一段文字可以主动"查一下"，即席解释。
-- 无 API Key 时自动降级到内置词典（370+ 条、10 个主题包，商务/学术等可按需启用；支持从 GitHub 安装社区包），带"词典模式"标识，开箱即用。
+- Context-aware: the most recent ~800 characters are sent to the LLM as context, extraction runs only on newly added text, able to distinguish "table this" (shelve the topic) from the literal meaning of "table".
+- Card fields: original expression, category, contextual meaning (English), Chinese explanation, plain-English rewrite, tone annotation, confidence, source sentence.
+- Proper nouns/acronyms go through a separate terms channel, displayed as the same card format as expression cards (blue color scheme to distinguish them, gold is for expressions).
+- New cards get a gold highlight for about 4 seconds; a repeat of the same expression within 8 minutes only increments +1 on the original card with a light pulse, no feed flooding.
+- Expressions detected in the transcript are marked with a gold dashed underline, clickable to jump to the corresponding card.
+- Selecting any span of text in the transcript triggers an ad-hoc "look it up" explanation.
+- Without an API Key, automatically falls back to the built-in dictionary (370+ entries, 10 topic packs, business/academic etc. enabled as needed; supports installing community packs from GitHub), shown with a "Dictionary Mode" label, works out of the box.
 
-### 3. 会后产物（一键生成）
+### 3. Post-meeting artifacts (one-click generation)
 
-- **双语纪要**：主题 / 要点 / 决定 / 行动项，中英对照。
-- **全文翻译**：逐段英中对照 transcript。
-- **学习卡片**：实时检测到的表达 + 一次全文"查漏"扫描，合并去重，按出现次数排序；可导出 Anki TSV。
-- **康奈尔笔记**：转录正文高亮 jargon + 右栏编号批注 + 底部小结的羊皮纸风笔记，可导出 PNG 图片 / Markdown，适合复盘与分享。
-- 导出格式：Markdown 报告、Anki TSV、JSON 完整数据；可配自动落盘文件夹与 webhook（agent-native，见 AGENT-WORKFLOWS.md）。
+- **Bilingual summary**: topic / key points / decisions / action items, Chinese-English side by side.
+- **Full transcript translation**: paragraph-by-paragraph English-Chinese aligned transcript.
+- **Study cards**: expressions detected in real time + one full-transcript "gap-fill" scan, merged and deduplicated, sorted by occurrence count; exportable as Anki TSV.
+- **Cornell notes**: parchment-style notes with jargon highlighted in the transcript body + numbered annotations in the right column + a summary at the bottom, exportable as a PNG image / Markdown, suited for review and sharing.
+- Export formats: Markdown report, Anki TSV, full JSON data; can be configured with an auto-save-to-disk folder and webhook (agent-native, see AGENT-WORKFLOWS.md).
 
-### 4. 会议历史
+### 4. Meeting history
 
-- 所有会话存浏览器 IndexedDB，不上传任何服务器。
-- 历史列表可重新打开、删除、搜索（按标题或曾出现过的表达检索）。
+- All sessions are stored in browser IndexedDB, never uploaded to any server.
+- The history list supports reopening, deleting, and searching (by title or by expressions that have appeared).
 
-### 5. 个人词库与复习（/review）
+### 5. Personal glossary and review (/review)
 
-- **个人词库**：划词「加入我的词典」（AI 强制解释 + 自造例句 + 保留会议原句），或纯手动新增；词条跨会议参与实时检测，优先于内置词典，内容不被 AI 覆盖。
-- **复习页**：数据总览（会议数/累计表达/Top 高频/本周新增）+ 频率词云（点击与 Top 10 联动）+ 卡片练习模式（翻卡、标「掌握/再看」）。
-- **领域模型**：复习对象 = 个人词库；掌握状态只存在词库条目上；会议记录是不可变档案，经「一键收藏本场卡片」进入学习流。重度间隔重复交给 Anki（TSV 导出），应用内只做轻量练习。
+- **Personal glossary**: select text and "加入我的词典" (Add to My Glossary) (AI forces an explanation + writes an original example + keeps the original meeting sentence), or add manually; entries participate in real-time detection across future meetings, taking priority over the built-in dictionary, and their content is never overwritten by the AI.
+- **Review page**: data overview (meeting count / cumulative expressions / Top frequency / new this week) + frequency word cloud (clicking links to the Top 10) + flashcard practice mode (flip cards, mark "mastered/review again").
+- **Domain model**: the review object is the personal glossary; mastery state exists only on glossary entries; meeting records are an immutable archive, entering the learning flow via "one-click bookmark this meeting's cards". Heavy-duty spaced repetition is left to Anki (TSV export); the in-app practice is lightweight only.
 
-## 数据与账户策略（明确决策）
+## Data and account strategy (explicit decisions)
 
-- **无登录、无账户**：单人工具，账号只在变成多人产品时才有意义。Next 服务端是无状态代理，不存任何用户数据。
-- **存储**：会议/词库/设置全在浏览器 IndexedDB（每场会约 100–200KB，几百场无压力）；API Key 本机保存、随请求直发；教程标记在 localStorage。
-- **持久性防护**：启动时申请 `navigator.storage.persist()`（防 Safari 7 天回收与配额清理）；提供全量备份导出/导入（JSON 单文件），同时覆盖换机迁移场景。
-- **导出通用优先**：Markdown / Anki TSV / JSON / 复制到剪贴板为主干；Obsidian 仅是 Markdown 导出的「含 frontmatter」开关，非独立依赖。
+- **No login, no account**: a single-user tool — an account only makes sense once this becomes a multi-user product. The Next.js server is a stateless proxy, storing no user data.
+- **Storage**: meetings/glossary/settings all live in browser IndexedDB (about 100–200KB per meeting, no strain at hundreds of meetings); the API Key is stored locally and sent directly with each request; tutorial state is marked in localStorage.
+- **Persistence safeguards**: requests `navigator.storage.persist()` on launch (guards against Safari's 7-day eviction and quota cleanup); provides full backup export/import (a single JSON file), which also covers the device-migration scenario.
+- **Export-portability first**: Markdown / Anki TSV / JSON / copy-to-clipboard are the primary paths; Obsidian is just a "with frontmatter" toggle on Markdown export, not a standalone dependency.
 
-## 差异化取舍
+## Differentiation trade-offs
 
-- **不做**逐词词典查询（浏览器插件已够好），只做"字面意思 ≠ 实际意思"的表达。
-- **不做**通用会议机器人（加入会议的 bot），麦克风采集 + 回环采集已覆盖个人使用场景，且隐私可控。
-- 解释文案刻意压短：中文解释 ≤40 字、直白改写 ≤10 词 —— 会议进行中没时间读段落。
-- 实时检测默认用 Haiku（延迟与成本），会后报告用 Sonnet（质量），两处模型都可在设置里换。
+- **Does not** do word-by-word dictionary lookups (browser extensions already do this well) — only handles "literal meaning ≠ actual meaning" expressions.
+- **Does not** build a general-purpose meeting bot (a bot that joins the meeting) — microphone capture + loopback capture already covers the personal-use scenario, with better privacy control.
+- Explanation copy is deliberately kept short: Chinese explanation ≤40 characters, plain-English rewrite ≤10 words — there's no time to read paragraphs during a live meeting.
+- Real-time detection defaults to Haiku (latency and cost), post-meeting reports use Sonnet (quality); both models are configurable in Settings.
 
-## 成本预估（60 分钟、约 9000 词会议）
+## Cost estimate (60-minute, ~9000-word meeting)
 
-- 实时检测（Haiku 4.5，含系统提示词缓存）：≈ $0.5
-- 会后纪要 + 全文翻译 + 查漏（Sonnet 5）：≈ $0.3–0.55
-- 合计约 **$1 / 场**；纯词典模式 $0。
+- Real-time detection (Haiku 4.5, with system-prompt caching): ≈ $0.5
+- Post-meeting summary + full-transcript translation + gap-fill (Sonnet 5): ≈ $0.3–0.55
+- Total about **$1/meeting**; dictionary-only mode is $0.
+</content>
