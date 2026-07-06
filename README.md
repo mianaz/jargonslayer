@@ -10,7 +10,7 @@
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-364%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
+[![Tests](https://img.shields.io/badge/tests-383%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
 [![Local first](https://img.shields.io/badge/data-local--first-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
 
 **English** · [简体中文](README.zh-CN.md) · [**Try It Live**](https://apps.bioinfospace.com/jargonslayer) · [Website](https://mianaz.github.io/jargonslayer/)
@@ -42,6 +42,7 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
 - **Card experience** — expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup and one-click save to your glossary.
 - **Speakers** — import a recording for offline transcription + speaker diarization (background job, auto-loads when done), or turn on realtime diarization (beta, local, labels refine as the meeting proceeds). Click a speaker label to rename it.
 - **Import a transcript** — already have the text? Paste it or upload a `.txt` / `.srt` / `.vtt` export (Zoom, Otter, …) and get the full experience on it: speakers and timestamps parsed when present, jargon detection cards, optional Chinese translation lines, saved straight to history as an editable stopped session.
+- **Import an audio file, transcribed entirely in-browser** — upload a `.wav` / `.mp3` / `.m4a` / `.flac` recording and Whisper runs locally in a Web Worker (WebGPU when available, WASM otherwise); the audio never uploads anywhere, works out of the box on the hosted demo, and the transcript flows into the same detection/translation pipeline as every other import.
 - **Post-meeting artifacts** — bilingual summary (topic / key points / decisions / action items), paragraph-aligned translation, study cards, and a **Cornell-note sheet** (highlighted body + margin annotations, exportable as PNG or Markdown); plus Markdown / Anki TSV / JSON export, auto-save to a folder, and a webhook.
 - **Learning center** — `/review` has stats, a frequency Top 10, a word cloud, and a flashcard practice deck; your personal glossary feeds back into detection in later meetings.
 - **BYOK, multi-model** — Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); or connect an OpenRouter account in one click. The key lives only in your local browser.

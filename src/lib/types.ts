@@ -11,7 +11,23 @@
 // meeting makes. Never selectable in Settings/Header's engine picker
 // (see createEngine in stt/index.ts, which throws on it) and never
 // appears in the ENGINE_CARDS/ENGINE_OPTIONS arrays there.
-export type STTEngineKind = "demo" | "webspeech" | "whisper" | "tabaudio" | "import";
+//
+// "browser-whisper" (#43 phase 2a): also not a live capture engine —
+// an uploaded audio file is transcribed entirely in-browser (a Web
+// Worker running @huggingface/transformers, see
+// ingest/whisperBrowser.ts) and built into a session by
+// ingest/importAudio.ts. Data path: 本地 — the audio never leaves the
+// browser (no upload, unlike "whisper" which is the local Whisper
+// sidecar reached over websocket). Never selectable in Settings/
+// Header's engine picker and never appears in ENGINE_CARDS/
+// ENGINE_OPTIONS there, same as "import".
+export type STTEngineKind =
+  | "demo"
+  | "webspeech"
+  | "whisper"
+  | "tabaudio"
+  | "import"
+  | "browser-whisper";
 
 export interface TranscriptSegment {
   id: string;

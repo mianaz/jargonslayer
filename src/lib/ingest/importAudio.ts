@@ -1,0 +1,162 @@
+// Audio-file import orchestration (#43 phase 2a) — the browser-side
+// counterpart to stt/upload.ts's sidecar/cloud recording import and
+// importText.ts's transcript import: decode + resample a user-picked
+// audio file on the MAIN thread (AudioContext isn't available inside
+// a Worker in every target browser, and decode is fast enough it
+// doesn't need to be off-thread), hand the raw samples to a Worker
+// for the actual (heavy, model-driven) transcription, then converge
+// on the exact same buildSessionFromSegments + runTranslation stages
+// importText.ts/upload.ts already use. No ffmpeg anywhere — wav/mp3/
+// m4a/flac all decode natively via the browser's own AudioContext
+// (ffmpeg-in-wasm is out of scope for this phase, tracked separately
+// as #43 phase 2b for formats a browser genuinely can't decode).
+//
+// Never touches the store and never throws to its caller in
+// practice — every awaited step already produces zh-ready Error
+// messages, and the caller (HistoryDrawer) wraps the call in try/
+// catch as a last-resort net anyway, mirroring importTranscriptText's
+// own division of labor.
+
+import { type MeetingSession, type Settings } from "../types";
+import { buildSessionFromSegments, type CloudTranscriptSegment } from "../stt/upload";
+import { runTranslation } from "./importText";
+import * as storage from "../history/storage";
+import { transcribeInBrowser, type TranscribedSegment } from "./whisperBrowser";
+
+export { mapChunksToSegments } from "./whisperBrowser";
+
+// onnx-community/whisper-base (#43 settled decision): good enough
+// accuracy for meeting speech, small enough to be a reasonable first-
+// visit download over HTTP. whisper-tiny is kept only as an internal
+// fallback constant — never surfaced as a user-facing model choice.
+const DEFAULT_MODEL_ID = "onnx-community/whisper-base";
+// Not wired to a call site in this phase — kept only as the settled,
+// documented fallback should whisper-base prove too slow/heavy on a
+// given device in a future revision.
+const FALLBACK_MODEL_ID = "onnx-community/whisper-tiny";
+void FALLBACK_MODEL_ID;
+
+const TARGET_SAMPLE_RATE = 16_000;
+const MAX_DURATION_S = 45 * 60;
+
+export class AudioDecodeError extends Error {
+  constructor(message = "无法解码该音频，请转成 wav/mp3 后重试") {
+    super(message);
+    this.name = "AudioDecodeError";
+  }
+}
+
+export class AudioTooLongError extends Error {
+  constructor(message = "音频过长（超过 45 分钟），请分段后再导入") {
+    super(message);
+    this.name = "AudioTooLongError";
+  }
+}
+
+/** Hard duration cap so a multi-hour recording doesn't spend minutes
+ *  decoding/transcribing before the user learns it won't work —
+ *  checked right after decode (duration is known then), before the
+ *  Worker (and its model download) is ever spawned. Pure/exported so
+ *  tests can hit the 45-minute boundary without a real AudioContext
+ *  (unavailable under vitest's node environment). */
+export function assertDurationWithinLimit(durationS: number): void {
+  if (durationS > MAX_DURATION_S) {
+    throw new AudioTooLongError();
+  }
+}
+
+/** Decode `file` via (Offline)AudioContext and resample to 16kHz mono
+ *  Float32 — the sample rate/channel layout Whisper's feature
+ *  extractor expects. Wraps any decode failure (unsupported codec,
+ *  corrupt file) into AudioDecodeError with the single zh message the
+ *  spec calls for, rather than surfacing the browser's own
+ *  (English, codec-specific) DOMException text. */
+async function decodeAndResample(file: File): Promise<Float32Array> {
+  const arrayBuffer = await file.arrayBuffer();
+  // Safari lacks a global OfflineAudioContext-agnostic decode; a
+  // throwaway AudioContext is the most broadly-supported way to
+  // decode without also playing the audio.
+  const AudioContextCtor =
+    window.AudioContext ||
+    (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  const decodeCtx = new AudioContextCtor();
+  let decoded: AudioBuffer;
+  try {
+    decoded = await decodeCtx.decodeAudioData(arrayBuffer);
+  } catch {
+    throw new AudioDecodeError();
+  } finally {
+    void decodeCtx.close();
+  }
+
+  assertDurationWithinLimit(decoded.duration);
+
+  const targetLength = Math.ceil(decoded.duration * TARGET_SAMPLE_RATE);
+  const offlineCtx = new OfflineAudioContext(1, targetLength, TARGET_SAMPLE_RATE);
+  const source = offlineCtx.createBufferSource();
+  source.buffer = decoded;
+  source.connect(offlineCtx.destination);
+  source.start(0);
+  const rendered = await offlineCtx.startRendering();
+  return rendered.getChannelData(0);
+}
+
+export interface ImportAudioOptions {
+  file: File;
+  translate: boolean;
+  settings: Settings;
+  onProgress: (progress: number, phase: string) => void;
+}
+
+export interface ImportAudioResult {
+  sessionId: string;
+  warnings: string[];
+}
+
+/** Orchestrates decode -> resample -> in-browser transcribe -> build
+ *  session -> (optional) translate -> save, entirely client-side. The
+ *  audio itself never leaves the browser at any step — only the
+ *  transcribed TEXT reaches the detect/translate API calls, same
+ *  privacy boundary as every other import path. */
+export async function importAudio(opts: ImportAudioOptions): Promise<ImportAudioResult> {
+  const { file, translate, settings, onProgress } = opts;
+
+  onProgress(0, "读取音频");
+  const audio = await decodeAndResample(file);
+
+  const rawSegments: TranscribedSegment[] = await transcribeInBrowser(
+    audio,
+    DEFAULT_MODEL_ID,
+    (progress) => {
+      const phaseLabel = progress.phase === "download" ? "下载模型" : "转录";
+      onProgress(progress.ratio, phaseLabel);
+    },
+  );
+
+  onProgress(1, "构建会话");
+  const segments: CloudTranscriptSegment[] = rawSegments.map((s) => ({
+    start: s.start,
+    end: s.end,
+    text: s.text,
+  }));
+
+  const session: MeetingSession = await buildSessionFromSegments(segments, settings, {
+    title: `导入 ${file.name}`,
+    engine: "browser-whisper",
+  });
+
+  const warnings: string[] = [];
+  if (translate && session.segments.length > 0) {
+    const translations = await runTranslation(
+      session.segments,
+      settings,
+      warnings,
+      (_phase, done, total) => onProgress(total > 0 ? done / total : 0, "翻译"),
+    );
+    session.translations = translations;
+  }
+
+  await storage.saveSession(session);
+
+  return { sessionId: session.id, warnings };
+}

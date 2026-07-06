@@ -10,7 +10,15 @@ import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
 import { fetchSidecarHealth, importAndTrack, type ImportOptions } from "@/lib/stt/upload";
 import { importTranscriptText } from "@/lib/ingest/importText";
+import { importAudio } from "@/lib/ingest/importAudio";
 import ImportTranscriptDialog from "@/components/ImportTranscriptDialog";
+
+// 本地 Whisper（浏览器）(#43 phase 2a) is a THIRD import-mode choice
+// alongside importAndTrack's own "sidecar"/"cloud" — it never reaches
+// importAndTrack at all (importAudio.ts is a separate, fully in-
+// browser pipeline), so it's a plain local union rather than widening
+// ImportOptions["mode"] itself.
+type ImportModeChoice = NonNullable<ImportOptions["mode"]> | "browser";
 
 // Upload-a-recording job tracking is intentionally component-local
 // (not in the global store) — it's ephemeral UI progress, and a page
@@ -25,7 +33,10 @@ interface ImportJobState {
   // error row appends a sidecar-specific hint. "text": #43 transcript
   // import — errors are parse/detect/translate failures, so that hint
   // would be actively misleading and is suppressed for these rows.
-  kind?: "recording" | "text";
+  // "audio" (#43 phase 2a): in-browser Whisper transcription —
+  // decode/model/detect/translate failures, same reasoning as "text",
+  // no sidecar involved at all.
+  kind?: "recording" | "text" | "audio";
 }
 
 export interface HistoryDrawerProps {
@@ -66,7 +77,7 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   // survive the synchronous "click row -> open native file picker"
   // round trip, read once when the file input's onChange fires.
   const [importPickerOpen, setImportPickerOpen] = useState(false);
-  const importModeRef = useRef<ImportOptions["mode"]>("sidecar");
+  const importModeRef = useRef<ImportModeChoice>("sidecar");
   const importPickerRef = useRef<HTMLDivElement>(null);
   // 本地 Whisper row's diarization status line — fetched lazily each
   // time the popover opens (not on mount) since it's a network call
@@ -132,7 +143,8 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
 
   const handleImportFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const mode = importModeRef.current ?? "sidecar";
+    const mode: NonNullable<ImportOptions["mode"]> =
+      importModeRef.current === "cloud" ? "cloud" : "sidecar";
     for (const file of Array.from(files)) {
       const jobId = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setJobs((prev) =>
@@ -166,6 +178,62 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
         },
         { mode },
       );
+    }
+  };
+
+  // 本地 Whisper（浏览器）(#43 phase 2a): same job-row tracking shape as
+  // handleImportFiles above, but calling importAudio.ts directly
+  // instead of importAndTrack — this path never touches the sidecar
+  // job API or the cloud route at all, so kind:"audio" suppresses the
+  // sidecar-specific error hint exactly like kind:"text" does for
+  // 导入文稿. importAudio never throws in practice (every awaited step
+  // already produces a zh-ready Error), but wrapped in try/catch
+  // anyway as the same last-resort net every other import path here
+  // uses.
+  const handleImportAudio = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    for (const file of Array.from(files)) {
+      const jobId = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      setJobs((prev) =>
+        new Map(prev).set(jobId, {
+          filename: file.name,
+          progress: 0,
+          phase: "读取音频",
+          error: null,
+          kind: "audio",
+        }),
+      );
+
+      void (async () => {
+        try {
+          const { sessionId, warnings } = await importAudio({
+            file,
+            // No dialog step in this one-click flow to ask explicitly
+            // (unlike 导入文稿's ImportTranscriptDialog checkbox) — same
+            // settings.bilingualTranscript default that dialog itself
+            // seeds its checkbox from.
+            translate: settings.bilingualTranscript,
+            settings,
+            onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
+          });
+
+          await loadSession(sessionId);
+          await useApp.getState().hydrate();
+          showToast(
+            warnings.length > 0
+              ? `音频已转录，分析完成，${warnings[0]}`
+              : "音频已转录，分析完成",
+          );
+          setJobs((prev) => {
+            const next = new Map(prev);
+            next.delete(jobId);
+            return next;
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : "音频导入失败";
+          patchJob(jobId, { error: msg, phase: "失败" });
+        }
+      })();
     }
   };
 
@@ -230,7 +298,7 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
 
   const canUseCloud = settings.provider === "openai-compat";
 
-  const chooseImportMode = (mode: NonNullable<ImportOptions["mode"]>) => {
+  const chooseImportMode = (mode: ImportModeChoice) => {
     importModeRef.current = mode;
     setImportPickerOpen(false);
     fileInputRef.current?.click();
@@ -302,11 +370,15 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
             <input
               ref={fileInputRef}
               type="file"
-              accept="audio/*,.m4a,.mp3,.wav"
+              accept="audio/*,.m4a,.mp3,.wav,.flac"
               multiple
               className="hidden"
               onChange={(e) => {
-                handleImportFiles(e.target.files);
+                if (importModeRef.current === "browser") {
+                  handleImportAudio(e.target.files);
+                } else {
+                  handleImportFiles(e.target.files);
+                }
                 e.target.value = "";
               }}
             />
@@ -322,6 +394,16 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
 
               {importPickerOpen && (
                 <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-none border border-edge2 bg-panel2 p-1.5 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={() => chooseImportMode("browser")}
+                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3"
+                  >
+                    <div className="text-sm text-fg">本地 Whisper（浏览器·不出本机）</div>
+                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                      在浏览器内转录，音频不上传·首次需下载模型（约几十 MB，仅一次）
+                    </div>
+                  </button>
                   <button
                     type="button"
                     onClick={() => chooseImportMode("sidecar")}
@@ -415,7 +497,9 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                   {job.error ? (
                     <div className="mt-2 text-xs text-warn-soft">
                       {job.error}
-                      {job.kind !== "text" && "，确认 sidecar 已启动且 --http-port 开启"}
+                      {job.kind !== "text" &&
+                        job.kind !== "audio" &&
+                        "，确认 sidecar 已启动且 --http-port 开启"}
                     </div>
                   ) : (
                     <div className="mt-2 flex items-center gap-2">

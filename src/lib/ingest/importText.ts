@@ -117,8 +117,10 @@ function buildSegments(
  *  specifically, translation stops for every remaining batch (keeping
  *  whatever already translated) with one zh warning. NoKeyError stops
  *  translating silently (its own warning, no retry). Any other error
- *  skips just that batch and continues. */
-async function runTranslation(
+ *  skips just that batch and continues. Exported so importAudio.ts
+ *  (#43 phase 2a) reuses the identical translate pacing rather than
+ *  duplicating it. */
+export async function runTranslation(
   segments: TranscriptSegment[],
   settings: Settings,
   warnings: string[],

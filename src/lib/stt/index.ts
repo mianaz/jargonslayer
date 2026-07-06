@@ -21,5 +21,11 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // sessions are built fully offline by importText.ts and never
       // go through settings.engine/createEngine at all.
       throw new Error('createEngine: "import" is not a live capture engine');
+    case "browser-whisper":
+      // "browser-whisper" (#43 phase 2a) is never a live capture
+      // engine either — sessions are built by importAudio.ts from an
+      // uploaded file, transcribed entirely in-browser, and never go
+      // through settings.engine/createEngine at all.
+      throw new Error('createEngine: "browser-whisper" is not a live capture engine');
   }
 }

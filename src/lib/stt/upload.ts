@@ -12,6 +12,7 @@ import {
   type ExpressionCard,
   type MeetingSession,
   type Settings,
+  type STTEngineKind,
   type TermCard,
   type TranscriptSegment,
 } from "../types";
@@ -394,14 +395,16 @@ export async function transcribeViaCloud(
   return body.segments;
 }
 
-/** Build a full session (transcript + detected cards/terms) from cloud-
- * transcribed segments. Shares runDetectionPipeline with
- * buildSessionFromJob so both import paths get identical LLM/dictionary
- * fallback + personal-glossary behavior. */
-export async function buildSessionFromCloudSegments(
+/** Build a full session (transcript + detected cards/terms) from
+ * already-transcribed {start,end,text} segments, parameterized on
+ * `engine`/`title` so both the cloud path (#22) and the in-browser
+ * Whisper path (#43 phase 2a, importAudio.ts) share one
+ * implementation — only the acquisition method differs, everything
+ * downstream (timeline synthesis, runDetectionPipeline) is identical. */
+export async function buildSessionFromSegments(
   segments: CloudTranscriptSegment[],
   settings: Settings,
-  filename: string,
+  opts: { title: string; engine: STTEngineKind },
 ): Promise<MeetingSession> {
   const base = Date.now();
   const finalSegments: TranscriptSegment[] = segments.map((s, i) => ({
@@ -410,7 +413,7 @@ export async function buildSessionFromCloudSegments(
     startedAt: base + Math.round(s.start * 1000),
     endedAt: base + Math.round(s.end * 1000),
     text: s.text.trim(),
-    engine: "whisper",
+    engine: opts.engine,
   }));
 
   const { cards, terms } = await runDetectionPipeline(segments, finalSegments, settings);
@@ -421,14 +424,29 @@ export async function buildSessionFromCloudSegments(
 
   return {
     id: newId(),
-    title: `导入 ${filename}`,
+    title: opts.title,
     startedAt,
     endedAt,
-    engine: "whisper",
+    engine: opts.engine,
     segments: finalSegments,
     cards,
     terms,
   };
+}
+
+/** Build a full session (transcript + detected cards/terms) from cloud-
+ * transcribed segments. Shares runDetectionPipeline with
+ * buildSessionFromJob so both import paths get identical LLM/dictionary
+ * fallback + personal-glossary behavior. */
+export async function buildSessionFromCloudSegments(
+  segments: CloudTranscriptSegment[],
+  settings: Settings,
+  filename: string,
+): Promise<MeetingSession> {
+  return buildSessionFromSegments(segments, settings, {
+    title: `导入 ${filename}`,
+    engine: "whisper",
+  });
 }
 
 export interface ImportCallbacks {

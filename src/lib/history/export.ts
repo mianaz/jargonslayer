@@ -17,6 +17,7 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   whisper: "本地 Whisper",
   tabaudio: "标签页音频",
   import: "导入",
+  "browser-whisper": "浏览器 Whisper",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {

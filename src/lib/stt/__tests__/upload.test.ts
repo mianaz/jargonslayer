@@ -23,7 +23,12 @@ vi.mock("../../detect/dictionary", () => ({
 
 import { detectApi, RateLimitApiError, NoKeyError } from "../../llm/client";
 import { scanDictionary } from "../../detect/dictionary";
-import { runDetectionPipeline } from "../upload";
+import {
+  runDetectionPipeline,
+  buildSessionFromSegments,
+  buildSessionFromCloudSegments,
+  type CloudTranscriptSegment,
+} from "../upload";
 
 const mockDetectApi = vi.mocked(detectApi);
 const mockScanDictionary = vi.mocked(scanDictionary);
@@ -220,5 +225,78 @@ describe("runDetectionPipeline — rate-limit pacing", () => {
 
     expect(mockDetectApi).toHaveBeenCalledTimes(2);
     expect(mockScanDictionary).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("buildSessionFromSegments — reuse (#43 phase 2a)", () => {
+  let settings: Settings;
+
+  beforeEach(() => {
+    settings = makeSettings();
+    mockDetectApi.mockReset();
+    mockDetectApi.mockResolvedValue(emptyRes());
+    mockScanDictionary.mockReset();
+    mockScanDictionary.mockReturnValue(emptyRes());
+  });
+
+  const segments: CloudTranscriptSegment[] = [
+    { start: 0, end: 2, text: "circle back on this" },
+    { start: 2, end: 4, text: "let's move the needle" },
+  ];
+
+  it("honors the passed engine/title rather than hardcoding whisper/导入 <filename>", async () => {
+    const session = await buildSessionFromSegments(segments, settings, {
+      title: "自定义会话标题",
+      engine: "browser-whisper",
+    });
+
+    expect(session.engine).toBe("browser-whisper");
+    expect(session.title).toBe("自定义会话标题");
+    expect(session.segments).toHaveLength(2);
+    expect(session.segments[0].engine).toBe("browser-whisper");
+    expect(session.segments[0].text).toBe("circle back on this");
+  });
+
+  it("buildSessionFromCloudSegments (cloud path, #22) is byte-identical to calling buildSessionFromSegments directly with {title: 导入 <filename>, engine: 'whisper'} — same cards/terms/segment shape", async () => {
+    mockDetectApi.mockResolvedValue({
+      expressions: [
+        {
+          expression: "move the needle",
+          category: "idiom",
+          meaning: "make meaningful progress",
+          chinese_explanation: "取得实质性进展",
+          plain_english: "make progress",
+          tone: "neutral",
+          confidence: 0.9,
+          source_sentence: "let's move the needle",
+        },
+      ],
+      terms: [],
+    });
+
+    const viaCloudHelper = await buildSessionFromCloudSegments(segments, settings, "meeting.wav");
+    const viaDirectCall = await buildSessionFromSegments(segments, settings, {
+      title: "导入 meeting.wav",
+      engine: "whisper",
+    });
+
+    expect(viaCloudHelper.engine).toBe("whisper");
+    expect(viaCloudHelper.title).toBe("导入 meeting.wav");
+    expect(viaCloudHelper.engine).toBe(viaDirectCall.engine);
+    expect(viaCloudHelper.title).toBe(viaDirectCall.title);
+    // Compare content fields only — id/firstSeenAt/lastSeenAt are
+    // freshly generated per call (newId()/Date.now()) by design, not
+    // part of the "same behavior" claim.
+    const cardContent = (c: (typeof viaCloudHelper.cards)[number]) => ({
+      expression: c.expression,
+      chinese_explanation: c.chinese_explanation,
+      source: c.source,
+      count: c.count,
+    });
+    expect(viaCloudHelper.cards.map(cardContent)).toEqual(viaDirectCall.cards.map(cardContent));
+    expect(viaCloudHelper.terms).toEqual(viaDirectCall.terms);
+    expect(viaCloudHelper.segments.map((s) => ({ text: s.text, engine: s.engine }))).toEqual(
+      viaDirectCall.segments.map((s) => ({ text: s.text, engine: s.engine })),
+    );
   });
 });
