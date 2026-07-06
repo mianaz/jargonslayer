@@ -6,6 +6,20 @@ vi.mock("../whisperBrowser", () => ({
   transcribeInBrowser: vi.fn(),
 }));
 
+// ---- ffmpegExtract (#43 phase 2b): isVideoFile stays REAL (it's pure
+// and cheap — the whole point of one test below is exercising
+// importAudio's actual routing decision against it), only
+// extractAudioFromVideo is mocked so no real ffmpeg.wasm ever loads
+// here (that module's own suite, ffmpegExtract.test.ts, covers ffmpeg
+// call shape/terminate discipline directly). ----
+vi.mock("../ffmpegExtract", async () => {
+  const actual = await vi.importActual<typeof import("../ffmpegExtract")>("../ffmpegExtract");
+  return {
+    ...actual,
+    extractAudioFromVideo: vi.fn(),
+  };
+});
+
 // ---- detection: same shape as upload.test.ts/importText.test.ts's
 // own mocks, so buildSessionFromSegments (real, imported from
 // ../../stt/upload below) runs for real but never calls a live LLM. ----
@@ -44,12 +58,14 @@ vi.mock("idb-keyval", () => ({
 import { detectApi, translateApi, NoKeyError, RateLimitApiError } from "../../llm/client";
 import * as storage from "../../history/storage";
 import { transcribeInBrowser } from "../whisperBrowser";
+import { extractAudioFromVideo } from "../ffmpegExtract";
 import { importAudio, assertDurationWithinLimit, AudioTooLongError } from "../importAudio";
 import { mapChunksToSegments } from "../whisper.worker";
 
 const mockDetectApi = vi.mocked(detectApi);
 const mockTranslateApi = vi.mocked(translateApi);
 const mockTranscribeInBrowser = vi.mocked(transcribeInBrowser);
+const mockExtractAudioFromVideo = vi.mocked(extractAudioFromVideo);
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return { ...DEFAULT_SETTINGS, ...overrides };
@@ -115,6 +131,8 @@ describe("importAudio", () => {
       { start: 0, end: 2, text: "circle back on this" },
       { start: 2, end: 4, text: "let's move the needle" },
     ]);
+    mockExtractAudioFromVideo.mockReset();
+    mockExtractAudioFromVideo.mockResolvedValue(new ArrayBuffer(8));
   });
 
   afterEach(() => {
@@ -124,6 +142,21 @@ describe("importAudio", () => {
   function fakeFile(name = "meeting.wav"): File {
     return {
       name,
+      // Real Files always carry a (possibly empty) .type — isVideoFile
+      // (now called at the top of importAudio) reads it unconditionally.
+      type: "",
+      arrayBuffer: async () => new ArrayBuffer(8),
+    } as unknown as File;
+  }
+
+  // #43 phase 2b: a video File — MIME + extension both signal "video"
+  // so isVideoFile's routing branch fires deterministically regardless
+  // of which check it happens to short-circuit on.
+  function fakeVideoFile(name = "meeting.mp4"): File {
+    return {
+      name,
+      type: "video/mp4",
+      size: 1024,
       arrayBuffer: async () => new ArrayBuffer(8),
     } as unknown as File;
   }
@@ -143,6 +176,47 @@ describe("importAudio", () => {
     expect(session!.segments).toHaveLength(2);
     expect(session!.segments[0].text).toBe("circle back on this");
     expect(session!.segments[0].engine).toBe("browser-whisper");
+  });
+
+  it("routes a video file through extractAudioFromVideo (with a 提取音频 progress phase) then the normal pipeline, title still 导入 <filename>", async () => {
+    mockExtractAudioFromVideo.mockImplementation(async (_file, onProgress) => {
+      onProgress?.(0.5);
+      onProgress?.(1);
+      return new ArrayBuffer(8);
+    });
+    const onProgress = vi.fn();
+
+    const { sessionId } = await importAudio({
+      file: fakeVideoFile("clip.mp4"),
+      translate: false,
+      settings: makeSettings(),
+      onProgress,
+    });
+
+    expect(mockExtractAudioFromVideo).toHaveBeenCalledTimes(1);
+    const [fileArg] = mockExtractAudioFromVideo.mock.calls[0];
+    expect(fileArg.name).toBe("clip.mp4");
+
+    const phases = onProgress.mock.calls.map((c) => c[1]);
+    expect(phases).toContain("提取音频");
+    expect(phases).not.toContain("读取音频"); // video path skips the audio-only phase label
+
+    const session = await storage.getSession(sessionId);
+    expect(session).not.toBeNull();
+    expect(session!.title).toBe("导入 clip.mp4");
+    expect(session!.engine).toBe("browser-whisper");
+    expect(session!.segments).toHaveLength(2);
+  });
+
+  it("an audio file bypasses extraction entirely — extractAudioFromVideo is never called", async () => {
+    await importAudio({
+      file: fakeFile("meeting.wav"),
+      translate: false,
+      settings: makeSettings(),
+      onProgress: vi.fn(),
+    });
+
+    expect(mockExtractAudioFromVideo).not.toHaveBeenCalled();
   });
 
   it("translate:false skips translateApi and leaves session.translations undefined", async () => {

@@ -13,11 +13,12 @@ import { importTranscriptText } from "@/lib/ingest/importText";
 import { importAudio } from "@/lib/ingest/importAudio";
 import ImportTranscriptDialog from "@/components/ImportTranscriptDialog";
 
-// 本地 Whisper（浏览器）(#43 phase 2a) is a THIRD import-mode choice
-// alongside importAndTrack's own "sidecar"/"cloud" — it never reaches
-// importAndTrack at all (importAudio.ts is a separate, fully in-
-// browser pipeline), so it's a plain local union rather than widening
-// ImportOptions["mode"] itself.
+// 本地转录（浏览器）(#43 phase 2a, video added in phase 2b) is a THIRD
+// import-mode choice alongside importAndTrack's own "sidecar"/
+// "cloud" — it never reaches importAndTrack at all (importAudio.ts is
+// a separate, fully in-browser pipeline that also handles video files
+// via ffmpegExtract.ts), so it's a plain local union rather than
+// widening ImportOptions["mode"] itself.
 type ImportModeChoice = NonNullable<ImportOptions["mode"]> | "browser";
 
 // Upload-a-recording job tracking is intentionally component-local
@@ -33,9 +34,10 @@ interface ImportJobState {
   // error row appends a sidecar-specific hint. "text": #43 transcript
   // import — errors are parse/detect/translate failures, so that hint
   // would be actively misleading and is suppressed for these rows.
-  // "audio" (#43 phase 2a): in-browser Whisper transcription —
-  // decode/model/detect/translate failures, same reasoning as "text",
-  // no sidecar involved at all.
+  // "audio" (#43 phase 2a, video added in phase 2b): in-browser
+  // Whisper transcription of an audio OR video file — decode/extract/
+  // model/detect/translate failures, same reasoning as "text", no
+  // sidecar involved at all.
   kind?: "recording" | "text" | "audio";
 }
 
@@ -181,15 +183,18 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
     }
   };
 
-  // 本地 Whisper（浏览器）(#43 phase 2a): same job-row tracking shape as
-  // handleImportFiles above, but calling importAudio.ts directly
-  // instead of importAndTrack — this path never touches the sidecar
-  // job API or the cloud route at all, so kind:"audio" suppresses the
-  // sidecar-specific error hint exactly like kind:"text" does for
-  // 导入文稿. importAudio never throws in practice (every awaited step
-  // already produces a zh-ready Error), but wrapped in try/catch
-  // anyway as the same last-resort net every other import path here
-  // uses.
+  // 本地转录（浏览器）(#43 phase 2a, video added in phase 2b): same
+  // job-row tracking shape as handleImportFiles above, but calling
+  // importAudio.ts directly instead of importAndTrack — this path
+  // never touches the sidecar job API or the cloud route at all, so
+  // kind:"audio" suppresses the sidecar-specific error hint exactly
+  // like kind:"text" does for 导入文稿. A video file (mp4/webm/mov/
+  // mkv/m4v) is routed the same way — importAudio.ts itself detects
+  // and extracts the audio track via ffmpeg.wasm before transcribing,
+  // this handler stays unaware of that distinction. importAudio never
+  // throws in practice (every awaited step already produces a
+  // zh-ready Error), but wrapped in try/catch anyway as the same
+  // last-resort net every other import path here uses.
   const handleImportAudio = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     for (const file of Array.from(files)) {
@@ -370,7 +375,7 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
             <input
               ref={fileInputRef}
               type="file"
-              accept="audio/*,.m4a,.mp3,.wav,.flac"
+              accept="audio/*,.m4a,.mp3,.wav,.flac,.mp4,.webm,.mov,.mkv,.m4v,video/*"
               multiple
               className="hidden"
               onChange={(e) => {
@@ -399,9 +404,9 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                     onClick={() => chooseImportMode("browser")}
                     className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3"
                   >
-                    <div className="text-sm text-fg">本地 Whisper（浏览器·不出本机）</div>
+                    <div className="text-sm text-fg">本地转录（浏览器·音频/视频·不出本机）</div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      在浏览器内转录，音频不上传·首次需下载模型（约几十 MB，仅一次）
+                      在浏览器内转录，文件不上传·支持音频与视频（自动提取音轨）·首次需下载模型
                     </div>
                   </button>
                   <button

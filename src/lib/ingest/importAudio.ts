@@ -1,15 +1,18 @@
-// Audio-file import orchestration (#43 phase 2a) — the browser-side
-// counterpart to stt/upload.ts's sidecar/cloud recording import and
-// importText.ts's transcript import: decode + resample a user-picked
-// audio file on the MAIN thread (AudioContext isn't available inside
-// a Worker in every target browser, and decode is fast enough it
-// doesn't need to be off-thread), hand the raw samples to a Worker
-// for the actual (heavy, model-driven) transcription, then converge
-// on the exact same buildSessionFromSegments + runTranslation stages
-// importText.ts/upload.ts already use. No ffmpeg anywhere — wav/mp3/
-// m4a/flac all decode natively via the browser's own AudioContext
-// (ffmpeg-in-wasm is out of scope for this phase, tracked separately
-// as #43 phase 2b for formats a browser genuinely can't decode).
+// Audio-file import orchestration (#43 phase 2a, video routing added
+// in phase 2b) — the browser-side counterpart to stt/upload.ts's
+// sidecar/cloud recording import and importText.ts's transcript
+// import: decode + resample a user-picked audio file on the MAIN
+// thread (AudioContext isn't available inside a Worker in every
+// target browser, and decode is fast enough it doesn't need to be
+// off-thread), hand the raw samples to a Worker for the actual
+// (heavy, model-driven) transcription, then converge on the exact
+// same buildSessionFromSegments + runTranslation stages importText.ts/
+// upload.ts already use. wav/mp3/m4a/flac all decode natively via the
+// browser's own AudioContext — no ffmpeg involved for those. Video
+// files (mp4/webm/mov/mkv/m4v, a browser's AudioContext genuinely
+// can't decode a container) are routed through ffmpegExtract.ts FIRST
+// to pull out a 16kHz mono wav track, then rejoin this exact same
+// flow — see isVideoFile/extractAudioFromVideo below.
 //
 // Never touches the store and never throws to its caller in
 // practice — every awaited step already produces zh-ready Error
@@ -22,8 +25,10 @@ import { buildSessionFromSegments, type CloudTranscriptSegment } from "../stt/up
 import { runTranslation } from "./importText";
 import * as storage from "../history/storage";
 import { transcribeInBrowser, type TranscribedSegment } from "./whisperBrowser";
+import { isVideoFile, extractAudioFromVideo } from "./ffmpegExtract";
 
 export { mapChunksToSegments } from "./whisperBrowser";
+export { isVideoFile } from "./ffmpegExtract";
 
 // onnx-community/whisper-base (#43 settled decision): good enough
 // accuracy for meeting speech, small enough to be a reasonable first-
@@ -65,14 +70,17 @@ export function assertDurationWithinLimit(durationS: number): void {
   }
 }
 
-/** Decode `file` via (Offline)AudioContext and resample to 16kHz mono
- *  Float32 — the sample rate/channel layout Whisper's feature
- *  extractor expects. Wraps any decode failure (unsupported codec,
- *  corrupt file) into AudioDecodeError with the single zh message the
- *  spec calls for, rather than surfacing the browser's own
- *  (English, codec-specific) DOMException text. */
-async function decodeAndResample(file: File): Promise<Float32Array> {
-  const arrayBuffer = await file.arrayBuffer();
+/** Decode `arrayBuffer` via (Offline)AudioContext and resample to
+ *  16kHz mono Float32 — the sample rate/channel layout Whisper's
+ *  feature extractor expects. Wraps any decode failure (unsupported
+ *  codec, corrupt file) into AudioDecodeError with the single zh
+ *  message the spec calls for, rather than surfacing the browser's
+ *  own (English, codec-specific) DOMException text. Takes the raw
+ *  bytes rather than a File so a video's ffmpeg-extracted wav
+ *  ArrayBuffer can feed the same decode path as a native audio File
+ *  (see readFileBytes below for the thin File->ArrayBuffer step this
+ *  used to do inline). */
+async function decodeAndResample(arrayBuffer: ArrayBuffer): Promise<Float32Array> {
   // Safari lacks a global OfflineAudioContext-agnostic decode; a
   // throwaway AudioContext is the most broadly-supported way to
   // decode without also playing the audio.
@@ -101,6 +109,15 @@ async function decodeAndResample(file: File): Promise<Float32Array> {
   return rendered.getChannelData(0);
 }
 
+/** Thin File->ArrayBuffer step decodeAndResample used to do inline
+ *  before its refactor to take an ArrayBuffer directly — used by the
+ *  native-audio branch in importAudio() below. The video branch skips
+ *  this entirely, since extractAudioFromVideo already returns the wav
+ *  ArrayBuffer decodeAndResample needs, with no extra File read. */
+async function readFileBytes(file: File): Promise<ArrayBuffer> {
+  return file.arrayBuffer();
+}
+
 export interface ImportAudioOptions {
   file: File;
   translate: boolean;
@@ -121,8 +138,23 @@ export interface ImportAudioResult {
 export async function importAudio(opts: ImportAudioOptions): Promise<ImportAudioResult> {
   const { file, translate, settings, onProgress } = opts;
 
-  onProgress(0, "读取音频");
-  const audio = await decodeAndResample(file);
+  // Video routing (#43 phase 2b): a browser's AudioContext can't
+  // decode a video container directly, so extract the audio track to
+  // a 16kHz mono wav via ffmpeg.wasm FIRST, then rejoin the exact same
+  // decode->transcribe->build->translate flow below with those bytes.
+  // The extracted wav is already 16k mono, so decodeAndResample's own
+  // resample pass is a near-no-op for it — kept anyway for uniformity
+  // (one decode path, not two divergent ones). AudioTooLongError still
+  // applies after decode, same as any native audio file.
+  let audioBytes: ArrayBuffer;
+  if (isVideoFile(file)) {
+    audioBytes = await extractAudioFromVideo(file, (ratio) => onProgress(ratio, "提取音频"));
+  } else {
+    onProgress(0, "读取音频");
+    audioBytes = await readFileBytes(file);
+  }
+
+  const audio = await decodeAndResample(audioBytes);
 
   const rawSegments: TranscribedSegment[] = await transcribeInBrowser(
     audio,

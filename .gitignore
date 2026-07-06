@@ -17,3 +17,6 @@ sidecar/*.wav
 
 # local agent harness config
 .claude/
+
+# ffmpeg.wasm runtime copied from node_modules on postinstall
+/public/ffmpeg/
