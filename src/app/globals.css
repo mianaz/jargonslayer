@@ -120,3 +120,44 @@ body {
 .hl-expr:hover {
   background: rgba(229, 180, 85, 0.18);
 }
+
+/* keyboard focus baseline — every interactive element gets a visible ring */
+:focus-visible {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* tactile press feedback for buttons (taste: simulate physical push) */
+.btn-tactile {
+  transition:
+    transform 0.12s ease,
+    filter 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+.btn-tactile:active {
+  transform: scale(0.97);
+}
+
+/* accessibility: collapse all decorative motion when the user asks */
+@media (prefers-reduced-motion: reduce) {
+  .card-new,
+  .card-repulse,
+  .dot-live,
+  .fade-up {
+    animation: none !important;
+  }
+  .card-new {
+    /* keep the "new" affordance without motion */
+    border-color: var(--gold) !important;
+  }
+  .btn-tactile,
+  .btn-tactile:active {
+    transition: none;
+    transform: none;
+  }
+  * {
+    scroll-behavior: auto !important;
+  }
+}
