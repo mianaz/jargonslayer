@@ -143,6 +143,15 @@ export const useApp = create<AppState>((set, get) => ({
       customEntries: entries,
       hydrated: true,
     });
+    // Ask the browser not to evict IndexedDB under storage pressure
+    // (Safari's 7-day eviction, Chrome quota GC). Best-effort.
+    try {
+      if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+        void navigator.storage.persist();
+      }
+    } catch {
+      // non-fatal
+    }
   },
 
   updateSettings: (patch) => {

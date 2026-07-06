@@ -273,7 +273,12 @@ export interface CustomEntry {
   note: string; // user's own note
   createdAt: number;
   updatedAt: number;
-  source: "ai" | "manual"; // how the entry was authored
+  source: "ai" | "manual" | "session"; // authored by AI, by hand, or collected from a meeting's cards
+  // review/practice state (the glossary is the single learning home;
+  // sessions stay immutable archives)
+  mastered?: boolean;
+  reviewCount?: number;
+  lastReviewedAt?: number;
   // expression-only
   category?: ExpressionCategory;
   meaning?: string; // in-context English
