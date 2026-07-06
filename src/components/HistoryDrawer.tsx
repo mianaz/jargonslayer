@@ -4,11 +4,13 @@
 // lazy-loaded expression match) and delete-confirm.
 
 import { useEffect, useRef, useState } from "react";
-import { X, Trash, UploadSimple } from "@phosphor-icons/react";
+import { X, Trash, UploadSimple, FileText } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
 import { fetchSidecarHealth, importAndTrack, type ImportOptions } from "@/lib/stt/upload";
+import { importTranscriptText } from "@/lib/ingest/importText";
+import ImportTranscriptDialog from "@/components/ImportTranscriptDialog";
 
 // Upload-a-recording job tracking is intentionally component-local
 // (not in the global store) — it's ephemeral UI progress, and a page
@@ -19,6 +21,11 @@ interface ImportJobState {
   progress: number;
   phase: string;
   error: string | null;
+  // "recording" (default, omitted): sidecar/cloud audio import — its
+  // error row appends a sidecar-specific hint. "text": #43 transcript
+  // import — errors are parse/detect/translate failures, so that hint
+  // would be actively misleading and is suppressed for these rows.
+  kind?: "recording" | "text";
 }
 
 export interface HistoryDrawerProps {
@@ -69,12 +76,17 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   const [diarizationHealth, setDiarizationHealth] = useState<
     { diarization_ready: boolean } | null | undefined
   >(undefined);
+  // 导入文稿 (#43) dialog — separate from the 导入录音 popover above
+  // since it's a full paste/upload + preview flow, not a one-click
+  // file-picker shortcut.
+  const [importTextOpen, setImportTextOpen] = useState(false);
 
   useEffect(() => {
     if (!open) {
       setQuery("");
       setConfirmDeleteId(null);
       setImportPickerOpen(false);
+      setImportTextOpen(false);
     }
   }, [open]);
 
@@ -155,6 +167,65 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
         { mode },
       );
     }
+  };
+
+  // 导入文稿 (#43): same job-row tracking + error-containment shape as
+  // handleImportFiles above — importTranscriptText never throws to
+  // React, but wrapped in try/catch anyway as a last-resort net,
+  // mirroring importAndTrack's own belt-and-suspenders callback
+  // design.
+  const handleImportTranscriptText = (opts: {
+    raw: string;
+    filename?: string;
+    translate: boolean;
+  }) => {
+    setImportTextOpen(false);
+    const label = opts.filename ?? "粘贴的文稿";
+    const jobId = `${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setJobs((prev) =>
+      new Map(prev).set(jobId, {
+        filename: label,
+        progress: 0,
+        phase: "解析中",
+        error: null,
+        kind: "text",
+      }),
+    );
+
+    const phaseLabel: Record<"parse" | "detect" | "translate", string> = {
+      parse: "解析",
+      detect: "检测",
+      translate: "翻译",
+    };
+
+    void (async () => {
+      try {
+        const { sessionId, warnings } = await importTranscriptText({
+          raw: opts.raw,
+          filename: opts.filename,
+          translate: opts.translate,
+          settings,
+          onProgress: (phase, done, total) => {
+            patchJob(jobId, {
+              progress: total > 0 ? done / total : 0,
+              phase: `${phaseLabel[phase]} ${done}/${total}`,
+            });
+          },
+        });
+
+        await loadSession(sessionId);
+        await useApp.getState().hydrate();
+        showToast(warnings.length > 0 ? `文稿已导入，分析完成，${warnings[0]}` : "文稿已导入，分析完成");
+        setJobs((prev) => {
+          const next = new Map(prev);
+          next.delete(jobId);
+          return next;
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "文稿导入失败";
+        patchJob(jobId, { error: msg, phase: "失败" });
+      }
+    })();
   };
 
   const canUseCloud = settings.provider === "openai-compat";
@@ -285,6 +356,22 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                         : "需先在设置→AI 检测中选择 OpenAI 兼容端点"}
                     </div>
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setImportPickerOpen(false);
+                      setImportTextOpen(true);
+                    }}
+                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3"
+                  >
+                    <div className="flex items-center gap-2 text-sm text-fg">
+                      <FileText size={16} weight="regular" />
+                      导入文稿（粘贴或上传 .txt/.srt/.vtt）
+                    </div>
+                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                      文字记录不出本机，仅检测/翻译请求经 API
+                    </div>
+                  </button>
                 </div>
               )}
             </div>
@@ -327,7 +414,8 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                   </div>
                   {job.error ? (
                     <div className="mt-2 text-xs text-warn-soft">
-                      {job.error}，确认 sidecar 已启动且 --http-port 开启
+                      {job.error}
+                      {job.kind !== "text" && "，确认 sidecar 已启动且 --http-port 开启"}
                     </div>
                   ) : (
                     <div className="mt-2 flex items-center gap-2">
@@ -424,6 +512,12 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
           )}
         </div>
       </div>
+
+      <ImportTranscriptDialog
+        open={importTextOpen}
+        onClose={() => setImportTextOpen(false)}
+        onConfirm={handleImportTranscriptText}
+      />
     </>
   );
 }

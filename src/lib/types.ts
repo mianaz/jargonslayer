@@ -5,7 +5,13 @@
 
 // ---------- transcription ----------
 
-export type STTEngineKind = "demo" | "webspeech" | "whisper" | "tabaudio";
+// "import" (#43): not a live capture engine — segments come from a
+// parsed transcript file/paste, processed fully offline in-browser
+// except for the same /api/detect + /api/translate calls a live
+// meeting makes. Never selectable in Settings/Header's engine picker
+// (see createEngine in stt/index.ts, which throws on it) and never
+// appears in the ENGINE_CARDS/ENGINE_OPTIONS arrays there.
+export type STTEngineKind = "demo" | "webspeech" | "whisper" | "tabaudio" | "import";
 
 export interface TranscriptSegment {
   id: string;

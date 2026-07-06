@@ -16,5 +16,10 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       return new TabAudioEngine();
     case "demo":
       return new DemoEngine();
+    case "import":
+      // "import" (#43) is never a live capture engine — imported
+      // sessions are built fully offline by importText.ts and never
+      // go through settings.engine/createEngine at all.
+      throw new Error('createEngine: "import" is not a live capture engine');
   }
 }

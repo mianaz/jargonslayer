@@ -16,7 +16,7 @@ import {
   type TranscriptSegment,
 } from "../types";
 import { PROVIDER_HEADERS } from "../types";
-import { detectApi } from "../llm/client";
+import { detectApi, RateLimitApiError } from "../llm/client";
 import { scanDictionary } from "../detect/dictionary";
 import { scanCustomEntries } from "../history/glossary";
 import { mergeDetections } from "../detect/dedupe";
@@ -27,6 +27,17 @@ import { withBase } from "../basePath";
 const BATCH_CHARS = 1200;
 const CONTEXT_TAIL_CHARS = 800;
 const POLL_INTERVAL_MS = 1500;
+// Rate-limit pacing (#43): the server enforces a fixed 60s window, so
+// a 429 mid-import is worth waiting out rather than immediately
+// falling back to the offline dictionary for the rest of a long
+// transcript. Caps keep a persistently-limited run from hanging
+// forever — beyond either, remaining batches go straight to the
+// dictionary (today's existing no-key/failure behavior), and the
+// caller learns about it via the optional onProgress-sibling callback
+// (see runDetectionPipeline below).
+const RATE_LIMIT_WAIT_MS = 65_000;
+const MAX_WAITS_PER_BATCH = 2;
+const MAX_WAITS_PER_RUN = 5;
 
 export interface JobSegment {
   start: number;
@@ -156,15 +167,34 @@ export interface DetectionPipelineResult {
 }
 
 /** Shared detection/merge stage for every import path (sidecar job,
- * cloud transcription): runs LLM detection per ~1200-char batch
- * (falling back to the offline dictionary on no-key/failure), plus a
- * per-segment personal-glossary scan — mirroring the live meeting
- * detection mix. Takes plain `{text}` items rather than JobSegment so
- * cloud segments (which carry no `speaker`) can feed it identically. */
-async function runDetectionPipeline(
+ * cloud transcription, text import #43): runs LLM detection per
+ * ~1200-char batch (falling back to the offline dictionary on
+ * no-key/failure), plus a per-segment personal-glossary scan —
+ * mirroring the live meeting detection mix. Takes plain `{text}`
+ * items rather than JobSegment so cloud segments (which carry no
+ * `speaker`) can feed it identically.
+ *
+ * Rate-limit pacing (#43): a 429 is retried in place after a 65s wait
+ * (the server's fixed window) rather than immediately giving up on
+ * that batch, up to MAX_WAITS_PER_BATCH per batch. A separate,
+ * run-wide MAX_WAITS_PER_RUN budget also caps total waits across every
+ * batch — a lone batch merely exhausting its OWN per-batch cap falls
+ * back to the dictionary for that batch alone (the next batch still
+ * gets a fresh attempt), but once the RUN-level budget itself is
+ * spent, the endpoint has proven persistently rate-limited and every
+ * remaining batch (including the one that tripped it) falls back to
+ * the dictionary directly with no further detectApi attempts;
+ * `onRateLimitFallback` fires once at that point so the caller can
+ * surface a warning. `onProgress` is called after each batch completes
+ * (success, dictionary fallback, or rate-limit fallback all count as
+ * "done"). Both new params are optional and trailing so the existing
+ * sidecar-job/cloud call sites keep compiling unchanged. */
+export async function runDetectionPipeline(
   segmentTexts: { text: string }[],
   finalSegments: TranscriptSegment[],
   settings: Settings,
+  onProgress?: (done: number, total: number) => void,
+  onRateLimitFallback?: () => void,
 ): Promise<DetectionPipelineResult> {
   let cards: ExpressionCard[] = [];
   let terms: TermCard[] = [];
@@ -173,20 +203,59 @@ async function runDetectionPipeline(
   // ---- batched LLM/dictionary detection over the joined text ----
   const batches = chunkSegmentTexts(segmentTexts);
   let tail = "";
-  for (const batch of batches) {
-    let res: DetectResponse;
-    try {
-      res = await detectApi(
-        { context: tail.slice(-CONTEXT_TAIL_CHARS), new_text: batch },
-        settings,
-      );
+  let runWaits = 0;
+  let rateLimitLatched = false;
+  let rateLimitFallbackFired = false;
+
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const context = tail.slice(-CONTEXT_TAIL_CHARS);
+    let batchWaits = 0;
+    let res: DetectResponse | null = null;
+
+    if (!rateLimitLatched) {
+      for (;;) {
+        try {
+          res = await detectApi({ context, new_text: batch }, settings);
+          break;
+        } catch (err) {
+          if (
+            err instanceof RateLimitApiError &&
+            batchWaits < MAX_WAITS_PER_BATCH &&
+            runWaits < MAX_WAITS_PER_RUN
+          ) {
+            batchWaits++;
+            runWaits++;
+            await new Promise((resolve) => setTimeout(resolve, RATE_LIMIT_WAIT_MS));
+            continue;
+          }
+          if (err instanceof RateLimitApiError && runWaits >= MAX_WAITS_PER_RUN) {
+            // The RUN-level cap (not just this batch's own cap) is
+            // what stopped the retry — the endpoint has now proven
+            // persistently rate-limited across multiple batches, so
+            // stop attempting the LLM for every remaining batch too
+            // (a lone batch exhausting only its own per-batch cap does
+            // NOT latch — the next batch still gets a fresh attempt).
+            rateLimitLatched = true;
+            if (!rateLimitFallbackFired) {
+              rateLimitFallbackFired = true;
+              onRateLimitFallback?.();
+            }
+          }
+          // NoKeyError, a lone batch's own per-batch cap exhausted, or
+          // any other failure (network, non-rate-limit upstream) —
+          // fall back to the offline dictionary for this batch only,
+          // exactly like today.
+          break;
+        }
+      }
+    }
+
+    if (res) {
       const merged = mergeDetections(cards, terms, res, "llm", settings.minConfidence, now);
       cards = merged.cards;
       terms = merged.terms;
-    } catch (err) {
-      // NoKeyError or any other failure (network, rate limit, upstream)
-      // — fall back to the offline dictionary for this batch.
-      void err;
+    } else {
       const fallback = scanDictionary(batch);
       const merged = mergeDetections(
         cards,
@@ -199,7 +268,9 @@ async function runDetectionPipeline(
       cards = merged.cards;
       terms = merged.terms;
     }
+
     tail = `${tail} ${batch}`.slice(-CONTEXT_TAIL_CHARS);
+    onProgress?.(i + 1, batches.length);
   }
 
   // ---- per-segment personal glossary scan ----
