@@ -21,6 +21,11 @@ Covers (per the v0.2.2 design doc's test-plan section):
     2026-07-06 against codex-cli 0.133.0's actual output)
   - _map_codex_error / ERROR_CODE_STATUS: error-code -> HTTP status map
   - generate_connection_token / token uniqueness
+  - build_codex_argv: asserts the prompt-injection lockdown flags
+    (--sandbox read-only, approval_policy=never) are always present —
+    added post-adversarial-review (Codex), see build_codex_argv's own
+    docstring for the live sandbox-escape smoke-test transcripts this
+    guards against regressing
 """
 
 from __future__ import annotations
@@ -330,6 +335,56 @@ check(
 check(
     "codex_available: returns a plain bool",
     isinstance(s.codex_available(), bool),
+)
+
+# =================================================================
+# build_codex_argv (prompt-injection lockdown — post-adversarial-review
+# fix). Asserts the security-critical flags are always present in the
+# real argv codex exec is spawned with — see build_codex_argv's own
+# docstring for the live sandbox-escape smoke-test transcripts (network
+# DNS resolution blocked, file write denied, real injection payloads
+# built from the actual production prompts produced clean detect JSON
+# with zero leaked file contents and no command_execution attempted).
+# =================================================================
+
+_argv = s.build_codex_argv("system prompt text", "untrusted user text", "/tmp/some-empty-dir")
+
+check(
+    "build_codex_argv: invokes the codex binary with the exec subcommand",
+    _argv[0] == "codex" and _argv[1] == "exec",
+)
+check(
+    "build_codex_argv: --sandbox read-only is present (blocks filesystem "
+    "writes and network access — the prompt-injection blast-radius lockdown)",
+    "--sandbox" in _argv and _argv[_argv.index("--sandbox") + 1] == "read-only",
+)
+check(
+    "build_codex_argv: -c approval_policy=never is present (forecloses any "
+    "mid-run approval escalation — this is a non-interactive server with no "
+    "human to ever answer a prompt)",
+    "approval_policy=never" in _argv,
+)
+check(
+    "build_codex_argv: -c model_reasoning_effort=low is present (latency fix, "
+    "preserved alongside the new sandbox flags, not replaced by them)",
+    "model_reasoning_effort=low" in _argv,
+)
+check(
+    "build_codex_argv: --skip-git-repo-check is still present (unrelated to "
+    "the sandbox lockdown, must not have been dropped by the refactor)",
+    "--skip-git-repo-check" in _argv,
+)
+check(
+    "build_codex_argv: -C points at the caller's tmp_dir, never a hardcoded path",
+    "-C" in _argv and _argv[_argv.index("-C") + 1] == "/tmp/some-empty-dir",
+)
+check(
+    "build_codex_argv: the folded prompt (system+user text) is the final argv element",
+    _argv[-1] == s.build_codex_prompt("system prompt text", "untrusted user text"),
+)
+check(
+    "build_codex_argv: --json is present (NDJSON output contract parse_codex_ndjson depends on)",
+    "--json" in _argv,
 )
 
 

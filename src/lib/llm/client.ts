@@ -211,7 +211,23 @@ async function defineViaNext(
 //      cross-module inlining heuristics for a re-exported const — see
 //      task report for the full empirical investigation.
 //   2. settings.subscriptionDirect — the user's own on/off switch.
-//   3. agentHealth() probe — is the sidecar actually reachable RIGHT
+//   3. store.subscriptionKillCheckSettled — closes a real startup race
+//      (found in adversarial review): store.ts's hydrate() sets
+//      `hydrated: true` (with the persisted subscriptionDirect:true
+//      already live) SYNCHRONOUSLY, then fires the remote-kill check
+//      (isRemotelyKilled) fire-and-forget so it never delays app
+//      startup. Without this check, a detect/define call landing in
+//      that brief window — before the remote check has had a chance
+//      to resolve — would use subscription-direct even if a same-
+//      session remote kill would have disabled it, defeating "an
+//      already-shipped build can be remotely killed within one page
+//      load." Fail CLOSED for this specific race window only (not
+//      isRemotelyKilled's own fail-open contract, which still governs
+//      once the fetch actually settles) — see the AppState field's own
+//      doc in store.ts for the full rationale. In practice this window
+//      is usually sub-second and detect rarely fires that early, but
+//      the guard removes the "usually" entirely.
+//   4. agentHealth() probe — is the sidecar actually reachable RIGHT
 //      NOW? Only attempt the real call if so; if unreachable, fall
 //      through to the existing Next.js path exactly as if this whole
 //      feature didn't exist (no error, no toast — see the design
@@ -236,7 +252,11 @@ export function resetSubscriptionToastLatch(): void {
 }
 
 function shouldAttemptSubscriptionDirect(settings: Settings): boolean {
-  return SUBSCRIPTION_DIRECT_BUILT && settings.subscriptionDirect;
+  return (
+    SUBSCRIPTION_DIRECT_BUILT &&
+    settings.subscriptionDirect &&
+    useApp.getState().subscriptionKillCheckSettled
+  );
 }
 
 /** Shared pre-branch for detectApi/defineApi: probes reachability,

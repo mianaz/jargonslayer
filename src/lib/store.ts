@@ -193,6 +193,25 @@ interface AppState {
   toast: string | null;
   focusMode: boolean; // 专注模式：折叠右栏，hover 看高亮释义
 
+  // Subscription-direct (v0.2.2, experimental) kill-switch layer 3
+  // race guard: true once hydrate()'s isRemotelyKilled() check has
+  // resolved (success OR failure — isRemotelyKilled itself never
+  // rejects, always resolving to a fail-open boolean; "resolved" here
+  // just means "we've had our one chance to hear from flags.json").
+  // Starts false on every fresh app load. client.ts's routing branch
+  // treats "not yet settled" as "subscription-direct not currently
+  // usable" (fail CLOSED for this specific startup race window only —
+  // NOT the same posture as isRemotelyKilled's own fail-open contract,
+  // which still governs what happens once the fetch actually settles)
+  // — otherwise a detect/define call landing in the brief window
+  // between hydrated:true and the remote check resolving would use
+  // subscription-direct even though a same-session remote kill would
+  // have disabled it, defeating the "already-shipped builds can be
+  // remotely killed within one page load" guarantee. See Codex's
+  // adversarial-review finding (store.ts hydrate() vs client.ts
+  // shouldAttemptSubscriptionDirect) this was added to close.
+  subscriptionKillCheckSettled: boolean;
+
   // ---- actions ----
   hydrate: () => Promise<void>;
   updateSettings: (patch: Partial<Settings>) => void;
@@ -288,6 +307,8 @@ export const useApp = create<AppState>((set, get) => ({
   toast: null,
   focusMode: false,
 
+  subscriptionKillCheckSettled: false,
+
   hydrate: async () => {
     const [saved, metas, entries] = await Promise.all([
       storage.loadSettings(),
@@ -338,10 +359,26 @@ export const useApp = create<AppState>((set, get) => ({
     // layer 2), so this fetch never fires in a build that didn't set
     // the flag — see localHost.ts's SUBSCRIPTION_DIRECT_BUILT doc for
     // the runtime-vs-build-time-elimination distinction.
+    //
+    // subscriptionKillCheckSettled: when there's actually a remote
+    // check in flight (the if-branch below), it stays false until that
+    // .then() fires — closing the startup race window client.ts's
+    // routing branch checks (see the AppState field's own doc for the
+    // full rationale). When there's NO check to wait for (this whole
+    // if-branch is skipped — either the build doesn't have the
+    // feature, or the user's own toggle is off), there's no race to
+    // guard against, so it's set true immediately in the else branch —
+    // otherwise a build/user-config that never even attempts
+    // subscription-direct would be stuck permanently "unsettled" and
+    // that flag would end up meaning nothing.
     if (SUBSCRIPTION_DIRECT_BUILT && settings.subscriptionDirect) {
-      void isRemotelyKilled().then((killed) => {
-        if (killed) get().updateSettings({ subscriptionDirect: false });
-      });
+      void isRemotelyKilled()
+        .then((killed) => {
+          if (killed) get().updateSettings({ subscriptionDirect: false });
+        })
+        .finally(() => set({ subscriptionKillCheckSettled: true }));
+    } else {
+      set({ subscriptionKillCheckSettled: true });
     }
   },
 

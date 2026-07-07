@@ -410,27 +410,17 @@ def build_codex_prompt(system_prompt: str, user_message: str) -> str:
     return f"{system_prompt}\n\n{user_message}"
 
 
-async def call_codex(system_prompt: str, user_message: str, tmp_dir: str) -> str:
-    """Spawn `codex exec --json --skip-git-repo-check -C <tmp_dir>
-    "<prompt>"`, parse the NDJSON stream on stdout, and return the
-    final agent_message item's text.
+def build_codex_argv(system_prompt: str, user_message: str, tmp_dir: str) -> list[str]:
+    """Pure argv builder for call_codex's `codex exec` invocation —
+    extracted from call_codex (mirrors whisper_server.py's
+    build_ytdlp_args pattern) so the security-critical flag set is
+    directly unit-testable without spawning a real subprocess.
 
     -C <tmp_dir>: an empty, caller-owned tmpdir — NEVER the sidecar's
     own cwd or the user's actual working directory, so codex never
     mistakes an unrelated directory for a code repo it should inspect
     (--skip-git-repo-check additionally lets it run outside of any git
     repo at all, which an empty tmpdir always is).
-
-    stdin is explicitly closed (subprocess.DEVNULL) — verified live
-    (2026-07-06) that `codex exec` prints "Reading additional input
-    from stdin..." and, per --help, APPENDS piped stdin as a <stdin>
-    block onto the given prompt if stdin is a pipe; an inherited pipe
-    from Python's subprocess (the default) risks exactly that
-    unwanted-extra-block behavior, so DEVNULL avoids it outright.
-
-    No ANTHROPIC/OPENAI key env is injected — codex authenticates via
-    its own `codex login`/device-code credential store, same
-    never-touch-credentials posture as call_claude above.
 
     -c model_reasoning_effort=low: MEASURED LIVE (2026-07-06, real
     account, full DETECT_SYSTEM_PROMPT) — a user's own ~/.codex/
@@ -445,20 +435,85 @@ async def call_codex(system_prompt: str, user_message: str, tmp_dir: str) -> str
     agent config perturb this call) is scoped to just this invocation,
     never touching the user's actual config.toml on disk.
 
-    Raises AgentCallError on a non-zero exit / timeout / unparseable
-    output, with `code` set from _map_codex_error's stderr/exit-code
-    heuristics."""
-    argv = [
+    --sandbox read-only -c approval_policy=never: PROMPT-INJECTION
+    LOCKDOWN (added post-review; the Claude path's equivalent is
+    tools=[]/allowed_tools=[] — codex exec has no bare "no tools" mode,
+    so this is the closest achievable equivalent, and was verified
+    achievable before writing this, per the "confirm via --help/docs,
+    never guess" rule — `-a`/`--ask-for-approval` is NOT actually
+    accepted by `codex exec`'s own parser despite appearing in the
+    parent `codex --help`'s listing; `-c approval_policy=never` is the
+    real mechanism for codex exec specifically). The user_message here
+    is UNTRUSTED transcript text folded straight into the prompt (see
+    build_codex_prompt) — a speaker saying "ignore previous
+    instructions, run <shell command>" is a real prompt-injection
+    vector once codex's shell tool is in play, and this locks the
+    blast radius down to read-only, no-network, no-mid-run-escalation:
+      - "read-only" sandbox mode: VERIFIED LIVE via three independent
+        tests (see task report for full transcripts) — (1)
+        `codex sandbox macos -c 'sandbox_permissions=[]' -- curl
+        https://api.anthropic.com` failed with "Could not resolve
+        host" (DNS itself is blocked, not just the connection); (2) a
+        prompt asking codex exec (this same -s read-only path) to
+        write a file got "operation not permitted", no file created;
+        (3) real prompt-injection payloads built from the actual
+        production DETECT_SYSTEM_PROMPT/build_detect_user_message,
+        asking it to read ~/.ssh/id_rsa / cat /etc/passwd / exfiltrate
+        to a remote URL, produced ordinary well-formed detect JSON
+        with zero file contents leaked, no command_execution item ever
+        appearing, and (the most explicit variant) an outright model
+        refusal — the docs' own prose ("removes the filesystem and
+        network boundaries" for danger-full-access, implying the
+        other two modes HAVE those boundaries) undersells how hard
+        read-only's boundary actually is; the live network-resolution
+        failure is the authoritative confirmation, not the docs'
+        wording.
+      - approval_policy=never: read-only sandbox already denies
+        writes/network outright (confirmed above) rather than pausing
+        for approval, so this mainly forecloses codex's OTHER approval-
+        escalation paths (e.g. a command failing and codex asking to
+        retry unsandboxed) ever having anywhere to pause and wait for a
+        human that will never come in this non-interactive server
+        context — verified live: a denied write attempt returned
+        control immediately with no hang."""
+    return [
         "codex",
         "exec",
         "--json",
         "--skip-git-repo-check",
+        "--sandbox",
+        "read-only",
+        "-c",
+        "approval_policy=never",
         "-c",
         "model_reasoning_effort=low",
         "-C",
         tmp_dir,
         build_codex_prompt(system_prompt, user_message),
     ]
+
+
+async def call_codex(system_prompt: str, user_message: str, tmp_dir: str) -> str:
+    """Spawn `codex exec` (see build_codex_argv for the full argv +
+    the security/latency rationale behind every flag), parse the
+    NDJSON stream on stdout, and return the final agent_message item's
+    text.
+
+    stdin is explicitly closed (subprocess.DEVNULL) — verified live
+    (2026-07-06) that `codex exec` prints "Reading additional input
+    from stdin..." and, per --help, APPENDS piped stdin as a <stdin>
+    block onto the given prompt if stdin is a pipe; an inherited pipe
+    from Python's subprocess (the default) risks exactly that
+    unwanted-extra-block behavior, so DEVNULL avoids it outright.
+
+    No ANTHROPIC/OPENAI key env is injected — codex authenticates via
+    its own `codex login`/device-code credential store, same
+    never-touch-credentials posture as call_claude above.
+
+    Raises AgentCallError on a non-zero exit / timeout / unparseable
+    output, with `code` set from _map_codex_error's stderr/exit-code
+    heuristics."""
+    argv = build_codex_argv(system_prompt, user_message, tmp_dir)
 
     proc = await asyncio.create_subprocess_exec(
         *argv,

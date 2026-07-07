@@ -23,6 +23,8 @@ const {
   AgentUpstreamError,
   getFeatureBuilt,
   setFeatureBuilt,
+  getKillCheckSettled,
+  setKillCheckSettled,
 } = vi.hoisted(() => {
   class AgentNoKeyError extends Error {
     constructor(message = "未登录或凭据无效") {
@@ -49,6 +51,12 @@ const {
     }
   }
   let featureBuilt = true;
+  // Defaults to true (settled) so every EXISTING test — which cares
+  // about the build-flag/subscriptionDirect/reachability decisions,
+  // not this specific race window — keeps its already-correct
+  // behavior unchanged; the race-guard-specific tests below flip this
+  // to false explicitly.
+  let killCheckSettled = true;
   return {
     mockAgentHealth: vi.fn(),
     mockAgentDetect: vi.fn(),
@@ -61,6 +69,10 @@ const {
     getFeatureBuilt: () => featureBuilt,
     setFeatureBuilt: (v: boolean) => {
       featureBuilt = v;
+    },
+    getKillCheckSettled: () => killCheckSettled,
+    setKillCheckSettled: (v: boolean) => {
+      killCheckSettled = v;
     },
   };
 });
@@ -86,7 +98,15 @@ vi.mock("../../agent/localHost", () => ({
 
 vi.mock("../../store", () => ({
   useApp: {
-    getState: () => ({ showToast: mockShowToast }),
+    getState: () => ({
+      showToast: mockShowToast,
+      // subscriptionKillCheckSettled — see the race-guard tests below
+      // (kill-switch race, adversarial-review finding) for why this
+      // exists and defaults true.
+      get subscriptionKillCheckSettled() {
+        return getKillCheckSettled();
+      },
+    }),
   },
 }));
 
@@ -110,6 +130,7 @@ function detectResponseJson(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   setFeatureBuilt(true);
+  setKillCheckSettled(true);
   resetSubscriptionToastLatch();
   mockAgentHealth.mockReset();
   mockAgentDetect.mockReset();
