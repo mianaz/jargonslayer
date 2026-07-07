@@ -256,7 +256,7 @@ describe("detectApi — subscription quota/auth failure", () => {
       detectApi({ context: "", new_text: "hi" }, makeSettings({ subscriptionDirect: true })),
     ).rejects.toBeInstanceOf(NoKeyError);
 
-    expect(mockShowToast).toHaveBeenCalledWith("订阅额度暂不可用，已切换离线词典");
+    expect(mockShowToast).toHaveBeenCalledWith("订阅额度暂不可用，已回退至词典检测");
     expect(mockFetch).not.toHaveBeenCalled(); // NEVER silently falls back to BYOK/Next
   });
 
@@ -268,7 +268,7 @@ describe("detectApi — subscription quota/auth failure", () => {
       detectApi({ context: "", new_text: "hi" }, makeSettings({ subscriptionDirect: true })),
     ).rejects.toBeInstanceOf(NoKeyError);
 
-    expect(mockShowToast).toHaveBeenCalledWith("订阅额度暂不可用，已切换离线词典");
+    expect(mockShowToast).toHaveBeenCalledWith("订阅额度暂不可用，已回退至词典检测");
   });
 
   it("fires the toast only ONCE across consecutive failures, then again after a success resets the latch", async () => {
@@ -351,7 +351,7 @@ describe("defineApi — subscription-direct routing", () => {
       defineApi({ phrase: "x", context: "" }, makeSettings({ subscriptionDirect: true })),
     ).rejects.toBeInstanceOf(NoKeyError);
 
-    expect(mockShowToast).toHaveBeenCalledWith("订阅额度暂不可用，已切换离线词典");
+    expect(mockShowToast).toHaveBeenCalledWith("订阅额度暂不可用，已回退至词典检测");
     expect(mockFetch).not.toHaveBeenCalled();
   });
 });

@@ -296,7 +296,7 @@ async function attemptSubscriptionDirect<T>(
     if (err instanceof AgentNoKeyError || err instanceof AgentRateLimitError) {
       if (!subscriptionToastFired) {
         subscriptionToastFired = true;
-        useApp.getState().showToast("订阅额度暂不可用，已切换离线词典");
+        useApp.getState().showToast("订阅额度暂不可用，已回退至词典检测");
       }
       return null; // caller falls back to dictionary mode
     }

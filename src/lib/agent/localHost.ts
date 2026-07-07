@@ -154,7 +154,7 @@ async function parseAgentErrorBody(res: Response): Promise<AgentErrorBody | unde
  *  rather than reusing NoKeyError/RateLimitApiError/UpstreamError
  *  directly: client.ts's routing branch (see detectApi/defineApi)
  *  needs to distinguish "the sidecar itself rejected this call" (map
- *  to the required "订阅额度暂不可用，已切换离线词典" toast + dictionary
+ *  to the required "订阅额度暂不可用，已回退至词典检测" toast + dictionary
  *  fallback, never silently to BYOK) from "the existing Next.js path
  *  failed" (its own, already-existing NoKeyError/RateLimitApiError
  *  handling) — reusing the same classes would make the two

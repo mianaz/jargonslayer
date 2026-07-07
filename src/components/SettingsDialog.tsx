@@ -1232,7 +1232,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
 
               <label className="flex items-center justify-between gap-3 py-1">
-                <span className="text-sm text-fg">启用订阅直连（仅 detect/define，本地档）</span>
+                <span className="text-sm text-fg">启用订阅直连（仅 detect/define，限本地版）</span>
                 <input
                   type="checkbox"
                   checked={draft.subscriptionDirect}

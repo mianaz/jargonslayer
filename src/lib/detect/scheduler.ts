@@ -278,7 +278,7 @@ export class DetectionScheduler {
       if (!this.noKeyToastFired) {
         this.noKeyToastFired = true;
         this.opts.onError(
-          "未配置 API Key，AI 升级已停用；词典检测持续可用，可在设置中填入 Key 启用 AI",
+          "未配置 API Key，AI 升级已停用；词典检测仍可用，可在设置中填入 Key 启用 AI",
         );
       }
       return;

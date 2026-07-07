@@ -428,7 +428,7 @@ function EmptyState() {
       <div className="text-sm font-medium text-fg">还没有检测到内容</div>
       <div className="mt-2 max-w-xs text-xs leading-[1.7] text-mut">
         {detectMode === "dictionary"
-          ? "说到内置词典里的习语、缩写或术语会立刻出卡片，表达与术语都会出现在这里。"
+          ? "说到内置词典里的习语、缩写或术语会立刻出卡片，命中内容显示在这里。"
           : "内置词典即时出卡，AI 同步分析语境并升级解释，值得解释的术语或表达会显示在这里。"}
       </div>
     </div>
