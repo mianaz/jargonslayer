@@ -2,6 +2,17 @@ faster-whisper>=1.0,<2.0
 websockets>=12,<14
 numpy>=1.24,<3.0
 
+# Subscription-direct agent sidecar (v0.2.2, experimental, LOCAL DEV
+# ONLY — see agent_server.py's module docstring). Pinned exact (not a
+# range) since this wraps an in-development SDK whose ClaudeAgentOptions/
+# query() shape this project verified against types.py at this exact
+# version — do not bump without re-reading the installed SDK's types.py
+# and re-running sidecar/test_agent_server.py + a real smoke call.
+# Requires ONLY the `claude` CLI to already be installed + logged in
+# on this machine (subscription OAuth) — this package itself never
+# handles login; see agent_server.py.
+claude-agent-sdk==0.2.111
+
 # Optional: speaker diarization for uploaded recordings.
 # Not required for live transcription (mic/tab audio) or basic
 # upload transcription — only needed if you pass --hf-token / set
