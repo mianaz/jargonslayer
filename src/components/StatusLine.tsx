@@ -17,8 +17,8 @@ const ENGINE_POSTURE: Record<string, "local" | "cloud"> = {
 };
 
 const DETECT_MODE_LABEL: Record<string, string> = {
-  llm: "AI 检测",
-  dictionary: "词典模式",
+  llm: "词典+AI 检测",
+  dictionary: "词典检测",
   off: "检测关闭",
 };
 

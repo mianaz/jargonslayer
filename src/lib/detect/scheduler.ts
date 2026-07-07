@@ -1,5 +1,11 @@
-// Real-time detection scheduler: batches finalized transcript
-// segments and drives /api/detect (LLM) with dictionary fallback.
+// Real-time detection scheduler (#54 layered model): the built-in
+// dictionary is the INSTANT FLOOR — every finalized segment is
+// scanned synchronously at push time and hits surface immediately.
+// When settings.aiDetect is on, the LLM additionally runs in parallel
+// batches and its results upgrade dictionary cards in place (see
+// dedupe.ts) — it never retracts a floor hit. LLM failures only lose
+// the upgrade layer; the floor has already covered that text, so
+// error paths must NOT re-scan it (double count).
 // OWNER: worker B. Public signature is contract — do not change it.
 
 import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
@@ -23,7 +29,15 @@ export interface SchedulerOptions {
   // condition left in this scheduler (see attemptDetect below; the
   // old stale-batch/out-of-order drop was removed as a bug fix).
   getMeetingGen: () => number;
-  onDetection: (res: DetectResponse, source: DetectionSource) => void;
+  // meta.batchWindowStart (llm responses only): when this batch began
+  // accumulating — forwarded to mergeDetections as
+  // llmCountSuppressSince so floor-counted occurrences aren't counted
+  // twice (see dedupe.ts MergeOptions).
+  onDetection: (
+    res: DetectResponse,
+    source: DetectionSource,
+    meta?: { batchWindowStart?: number },
+  ) => void;
   onBusyChange: (busy: boolean) => void;
   onModeChange: (mode: DetectMode) => void;
   onError: (msg: string) => void;
@@ -48,6 +62,7 @@ interface Batch {
   new_text: string;
   endOffset: number; // scheduling/telemetry only — never gates application
   gen: number; // meetingGen captured at dispatch time — see attemptDetect
+  windowStart: number; // when this batch began accumulating (firstPendingAt)
   retried: boolean;
 }
 
@@ -92,11 +107,16 @@ export class DetectionScheduler {
       return;
     }
 
-    if (settings.dictionaryOnly || this.fellBack) {
-      const res = scanDictionary(seg.text);
-      if (res.expressions.length > 0 || res.terms.length > 0) {
-        this.opts.onDetection(res, "dictionary");
-      }
+    // Instant floor (#54): dictionary scan runs synchronously on EVERY
+    // segment, whether or not the LLM layer is on. This is the
+    // perceived-latency fix — hits render now, not after a ~20s LLM
+    // round trip.
+    const res = scanDictionary(seg.text);
+    if (res.expressions.length > 0 || res.terms.length > 0) {
+      this.opts.onDetection(res, "dictionary");
+    }
+
+    if (!settings.aiDetect || this.fellBack) {
       this.opts.onModeChange("dictionary");
       return;
     }
@@ -168,6 +188,7 @@ export class DetectionScheduler {
       new_text: newText,
       endOffset: this.offset,
       gen: this.opts.getMeetingGen(),
+      windowStart: this.firstPendingAt ?? Date.now(),
       retried: false,
     };
 
@@ -230,7 +251,7 @@ export class DetectionScheduler {
         return;
       }
 
-      this.opts.onDetection(res, "llm");
+      this.opts.onDetection(res, "llm", { batchWindowStart: batch.windowStart });
 
       this.opts.onModeChange("llm");
       this.consecutiveFailures = 0;
@@ -247,15 +268,17 @@ export class DetectionScheduler {
     // detections, mode, or error toast.
     if (batch.gen !== this.opts.getMeetingGen()) return;
 
+    // NOTE (#54): no dictionary re-scan on any error path below — the
+    // instant floor already scanned (and counted) this batch's text at
+    // segment-push time; re-scanning here would double count. Failure
+    // only loses the LLM upgrade layer.
     if (err instanceof NoKeyError) {
       this.fellBack = true;
-      const dictRes = scanDictionary(batch.new_text);
-      this.opts.onDetection(dictRes, "dictionary");
       this.opts.onModeChange("dictionary");
       if (!this.noKeyToastFired) {
         this.noKeyToastFired = true;
         this.opts.onError(
-          "未配置 API Key，已切换到内置词典模式，可在设置中填入 Key 启用 AI 检测",
+          "未配置 API Key，AI 升级已停用；词典检测持续可用，可在设置中填入 Key 启用 AI",
         );
       }
       return;
@@ -277,10 +300,8 @@ export class DetectionScheduler {
     this.consecutiveFailures++;
     if (this.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       this.fellBack = true;
-      const dictRes = scanDictionary(batch.new_text);
-      this.opts.onDetection(dictRes, "dictionary");
       this.opts.onModeChange("dictionary");
-      this.opts.onError("AI 检测暂时不可用，已切换到词典模式");
+      this.opts.onError("AI 检测暂时不可用，词典检测继续运行");
     } else {
       console.warn("[DetectionScheduler] batch dropped after error", err);
     }

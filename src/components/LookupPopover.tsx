@@ -91,10 +91,10 @@ export default function LookupPopover() {
     setGlossaryLoading(false);
 
     const run = async () => {
-      const source: DetectionSource = settings.dictionaryOnly ? "dictionary" : "llm";
+      const source: DetectionSource = settings.aiDetect ? "llm" : "dictionary";
       try {
         let res: DetectResponse;
-        if (settings.dictionaryOnly) {
+        if (!settings.aiDetect) {
           res = scanDictionary(lookup.text);
         } else {
           res = await detectApi(
@@ -182,7 +182,7 @@ export default function LookupPopover() {
 
   const handleAddToGlossary = async () => {
     if (!lookup) return;
-    if (settings.dictionaryOnly) {
+    if (!settings.aiDetect) {
       setDraft(emptyDraft(lookup.text));
       return;
     }

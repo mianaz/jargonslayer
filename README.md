@@ -183,7 +183,7 @@ The Settings section shows host status and each provider's own login status; on 
 | Transcript text (dictionary mode) | Local only |
 | History, settings, API key | Local browser only (IndexedDB / localStorage) |
 
-To keep all text on the machine: Settings → 「仅词典模式」 (dictionary-only mode). The vim-style status line always shows the current audio path (「音频未离开本机」 / 「音频经浏览器厂商云端识别」).
+To keep all text on the machine: Settings → turn off 「AI 检测」 (the built-in dictionary keeps detecting instantly, fully offline). The vim-style status line always shows the current audio path (「音频未离开本机」 / 「音频经浏览器厂商云端识别」).
 
 ## Meet Bit 🐉
 

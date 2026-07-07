@@ -66,9 +66,9 @@ function DetectModeBadge() {
 
   const config =
     detectMode === "llm"
-      ? { label: "AI 检测", cls: "text-lab-green border-lab-green/30", Icon: ShieldCheck }
+      ? { label: "词典+AI 检测", cls: "text-lab-green border-lab-green/30", Icon: ShieldCheck }
       : detectMode === "dictionary"
-        ? { label: "词典模式", cls: "text-lab-orange border-lab-orange/30", Icon: Shield }
+        ? { label: "词典检测", cls: "text-lab-orange border-lab-orange/30", Icon: Shield }
         : { label: "检测关闭", cls: "text-mut border-edge", Icon: null };
 
   return (

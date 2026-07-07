@@ -817,13 +817,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <label className="flex items-center justify-between gap-3 py-1">
               <div>
-                <div className="text-sm text-fg">仅词典模式</div>
-                <div className="text-xs text-mut2">完全离线，不调用任何 API</div>
+                <div className="text-sm text-fg">AI 检测</div>
+                <div className="text-xs text-mut2">
+                  内置词典始终即时检测；开启后 AI 并行分析并就地升级词典结果。关闭则完全离线，不调用任何 API
+                </div>
               </div>
               <input
                 type="checkbox"
-                checked={draft.dictionaryOnly}
-                onChange={(e) => patch({ dictionaryOnly: e.target.checked })}
+                checked={draft.aiDetect}
+                onChange={(e) => patch({ aiDetect: e.target.checked })}
                 className="h-4 w-4 accent-act"
               />
             </label>

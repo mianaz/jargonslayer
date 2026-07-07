@@ -43,7 +43,7 @@ export function useMeeting(): UseMeetingResult {
     const scheduler = new DetectionScheduler({
       getSettings: () => useApp.getState().settings,
       getMeetingGen: () => useApp.getState().meetingGen,
-      onDetection: (res, src) => useApp.getState().applyDetection(res, src),
+      onDetection: (res, src, meta) => useApp.getState().applyDetection(res, src, meta),
       onBusyChange: (b) => useApp.getState().setDetectBusy(b),
       onModeChange: (m) => useApp.getState().setDetectMode(m),
       onError: (msg) => useApp.getState().showToast(msg),

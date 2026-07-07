@@ -76,6 +76,29 @@ describe("runDetectionPipeline — rate-limit pacing", () => {
     vi.useRealTimers();
   });
 
+  it("aiDetect off (#54): fully offline — zero detectApi calls, every batch goes straight to the dictionary", async () => {
+    settings = makeSettings({ aiDetect: false });
+    const dictRes = {
+      expressions: [],
+      terms: [{ term: "ARR", type: "metric" as const, gloss_en: "e", gloss_zh: "z" }],
+    };
+    mockScanDictionary.mockReturnValue(dictRes);
+
+    const onProgress = vi.fn();
+    const result = await runDetectionPipeline(
+      [{ text: "circle back on our ARR" }],
+      [],
+      settings,
+      onProgress,
+    );
+
+    expect(mockDetectApi).not.toHaveBeenCalled();
+    expect(mockScanDictionary).toHaveBeenCalledTimes(1);
+    expect(result.terms).toHaveLength(1);
+    expect(result.terms[0].source).toBe("dictionary");
+    expect(onProgress).toHaveBeenCalledWith(1, 1);
+  });
+
   it("a RateLimitApiError sleeps 65s then retries the same batch, succeeding without falling back to the dictionary", async () => {
     mockDetectApi.mockRejectedValueOnce(new RateLimitApiError()).mockResolvedValueOnce(emptyRes());
 

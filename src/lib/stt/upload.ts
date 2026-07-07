@@ -222,7 +222,10 @@ export async function runDetectionPipeline(
     let transientRetried = false;
     let res: DetectResponse | null = null;
 
-    if (!rateLimitLatched) {
+    // settings.aiDetect off (#54) = the user chose fully offline — the
+    // import paths honor it the same way the live scheduler does:
+    // dictionary only, zero API calls.
+    if (settings.aiDetect && !rateLimitLatched) {
       for (;;) {
         try {
           res = await detectApi({ context, new_text: batch }, settings);

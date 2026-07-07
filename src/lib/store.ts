@@ -249,7 +249,11 @@ interface AppState {
   // translation no longer matches the corrected English).
   invalidateTranslation: (segmentId: string) => void;
 
-  applyDetection: (res: DetectResponse, source: DetectionSource) => void;
+  applyDetection: (
+    res: DetectResponse,
+    source: DetectionSource,
+    meta?: { batchWindowStart?: number },
+  ) => void;
   setDetectBusy: (busy: boolean) => void;
   setDetectMode: (mode: DetectMode) => void;
   setFocusCard: (id: string | null) => void;
@@ -274,6 +278,21 @@ interface AppState {
   showToast: (msg: string) => void;
   clearToast: () => void;
   setFocusMode: (v: boolean) => void;
+}
+
+/** Fold persisted settings over defaults, migrating legacy field
+ *  shapes. #54: pre-v0.2.2 settings had dictionaryOnly (force
+ *  offline) instead of aiDetect (opt into the LLM upgrade layer) —
+ *  a user who chose offline-only stays offline-only. The legacy key
+ *  is stripped so it doesn't get re-persisted forever. */
+export function migrateSettings(saved: Partial<Settings> | null | undefined): Settings {
+  const legacy = (saved ?? {}) as Partial<Settings> & { dictionaryOnly?: boolean };
+  const settings: Settings = { ...DEFAULT_SETTINGS, ...legacy };
+  if (legacy.aiDetect === undefined && typeof legacy.dictionaryOnly === "boolean") {
+    settings.aiDetect = !legacy.dictionaryOnly;
+  }
+  delete (settings as { dictionaryOnly?: boolean }).dictionaryOnly;
+  return settings;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -315,7 +334,7 @@ export const useApp = create<AppState>((set, get) => ({
       storage.listSessions(),
       glossary.loadCustomEntries(),
     ]);
-    const settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
+    const settings = migrateSettings(saved);
     set({
       settings,
       sessions: metas,
@@ -495,7 +514,7 @@ export const useApp = create<AppState>((set, get) => ({
     set({ translations: rest });
   },
 
-  applyDetection: (res, source) => {
+  applyDetection: (res, source, meta) => {
     const { cards, terms, settings } = get();
     const merged = mergeDetections(
       cards,
@@ -503,6 +522,10 @@ export const useApp = create<AppState>((set, get) => ({
       res,
       source,
       settings.minConfidence,
+      Date.now(),
+      meta?.batchWindowStart !== undefined
+        ? { llmCountSuppressSince: meta.batchWindowStart }
+        : undefined,
     );
     set({ cards: merged.cards, terms: merged.terms });
     // The final flush on stop resolves asynchronously (up to ~8s

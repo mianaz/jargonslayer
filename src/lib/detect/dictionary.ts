@@ -1,7 +1,9 @@
 // Built-in offline dictionary of business idioms + terms.
 // OWNER: worker B (fills DICTIONARY/TERM_DICTIONARY + scan logic).
-// Used when: no API key (server returns code "no_key"), the user
-// forces dictionaryOnly, or /api/detect fails.
+// #54: this is the INSTANT FLOOR — scanned synchronously on every
+// finalized segment (see scheduler.ts). The LLM layer (settings.
+// aiDetect) only upgrades these hits in place; when it's off or
+// failing, this dictionary is the whole detection story.
 
 import type {
   DetectedExpression,

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aliasesAfterRename,
   applySpeakerUpdateToSegments,
+  migrateSettings,
   renameSpeakerInSegments,
   scheduleSessionSave,
   shouldApplySpeakerUpdate,
@@ -268,5 +269,36 @@ describe("scheduleSessionSave — debounced post-stop save vs. meeting-boundary 
     await vi.advanceTimersByTimeAsync(1500);
 
     expect(save).toHaveBeenCalledTimes(1); // only the latest timer fired, once
+  });
+});
+
+describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
+  it("legacy dictionaryOnly:true becomes aiDetect:false (offline-only stays offline-only)", () => {
+    const s = migrateSettings({ dictionaryOnly: true } as never);
+    expect(s.aiDetect).toBe(false);
+    expect("dictionaryOnly" in s).toBe(false);
+  });
+
+  it("legacy dictionaryOnly:false becomes aiDetect:true", () => {
+    const s = migrateSettings({ dictionaryOnly: false } as never);
+    expect(s.aiDetect).toBe(true);
+    expect("dictionaryOnly" in s).toBe(false);
+  });
+
+  it("an explicit saved aiDetect wins over a lingering legacy key", () => {
+    const s = migrateSettings({ aiDetect: false, dictionaryOnly: false } as never);
+    expect(s.aiDetect).toBe(false);
+  });
+
+  it("fresh install (null saved) gets the default aiDetect:true", () => {
+    expect(migrateSettings(null).aiDetect).toBe(true);
+    expect(migrateSettings(undefined).aiDetect).toBe(true);
+  });
+
+  it("other saved fields still fold over defaults untouched", () => {
+    const s = migrateSettings({ language: "en-GB", dictionaryOnly: true } as never);
+    expect(s.language).toBe("en-GB");
+    expect(s.aiDetect).toBe(false);
+    expect(s.engine).toBe("demo"); // default preserved
   });
 });

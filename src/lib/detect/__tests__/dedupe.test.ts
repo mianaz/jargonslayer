@@ -560,3 +560,106 @@ describe("mergeDetections — immutability", () => {
     expect(cards[0]).toEqual(card);
   });
 });
+
+describe("mergeDetections — #54 floor count dedup (llmCountSuppressSince)", () => {
+  function dictCard(overrides: Partial<ExpressionCard> = {}): ExpressionCard {
+    return {
+      ...makeExpression({ meaning: "dict meaning" }),
+      id: "card-dict",
+      normKey: "circle back",
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      count: 1,
+      source: "dictionary",
+      lastDictSeenAt: 1000,
+      ...overrides,
+    };
+  }
+
+  it("dictionary merges stamp lastDictSeenAt on create and on bump", () => {
+    const res = makeDetectResponse({ expressions: [makeExpression()] });
+    const { cards } = mergeDetections([], [], res, "dictionary", 0.5, 5000);
+    expect(cards[0].lastDictSeenAt).toBe(5000);
+
+    const { cards: cards2 } = mergeDetections(cards, [], res, "dictionary", 0.5, 9000);
+    expect(cards2[0].lastDictSeenAt).toBe(9000);
+    expect(cards2[0].count).toBe(2);
+  });
+
+  it("llm/custom-born cards have NO lastDictSeenAt", () => {
+    const res = makeDetectResponse({ expressions: [makeExpression()] });
+    const { cards } = mergeDetections([], [], res, "llm", 0.5, 5000);
+    expect(cards[0].lastDictSeenAt).toBeUndefined();
+  });
+
+  it("suppresses the llm count bump when the floor already counted this occurrence (lastDictSeenAt >= suppressSince) — content upgrade still applies", () => {
+    // Floor counted at t=2000; the llm batch began accumulating at t=1500.
+    const existing = [dictCard({ lastDictSeenAt: 2000, lastSeenAt: 2000 })];
+    const res = makeDetectResponse({
+      expressions: [makeExpression({ meaning: "llm meaning" })],
+    });
+    const { cards } = mergeDetections(existing, [], res, "llm", 0.5, 25_000, {
+      llmCountSuppressSince: 1500,
+    });
+
+    expect(cards[0].count).toBe(1); // NOT double counted
+    expect(cards[0].lastSeenAt).toBe(25_000); // freshness still updated
+    expect(cards[0].meaning).toBe("llm meaning"); // upgrade-in-place still happened
+    expect(cards[0].source).toBe("llm");
+  });
+
+  it("does NOT suppress when the dictionary sighting predates the batch window (a genuinely new llm-only occurrence)", () => {
+    const existing = [dictCard({ lastDictSeenAt: 1000 })];
+    const res = makeDetectResponse({ expressions: [makeExpression()] });
+    const { cards } = mergeDetections(existing, [], res, "llm", 0.5, 25_000, {
+      llmCountSuppressSince: 20_000,
+    });
+    expect(cards[0].count).toBe(2);
+  });
+
+  it("never suppresses cards the dictionary has never seen (llm-only expressions keep counting per batch)", () => {
+    const llmCard: ExpressionCard = {
+      ...makeExpression({ expression: "boil the ocean" }),
+      id: "card-llm",
+      normKey: "boil the ocean",
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      count: 1,
+      source: "llm",
+    };
+    const res = makeDetectResponse({
+      expressions: [makeExpression({ expression: "boil the ocean" })],
+    });
+    const { cards } = mergeDetections([llmCard], [], res, "llm", 0.5, 25_000, {
+      llmCountSuppressSince: 0,
+    });
+    expect(cards[0].count).toBe(2);
+  });
+
+  it("without opts (dictionary merges, popover lookups, imports) behavior is unchanged — always bumps", () => {
+    const existing = [dictCard({ lastDictSeenAt: 2000 })];
+    const res = makeDetectResponse({ expressions: [makeExpression()] });
+    const { cards } = mergeDetections(existing, [], res, "llm", 0.5, 25_000);
+    expect(cards[0].count).toBe(2);
+  });
+
+  it("suppression applies to terms symmetrically", () => {
+    const dictTerm: TermCard = {
+      ...makeTerm(),
+      id: "term-dict",
+      normKey: "ARR",
+      firstSeenAt: 1000,
+      lastSeenAt: 2000,
+      count: 1,
+      source: "dictionary",
+      lastDictSeenAt: 2000,
+    };
+    const res = makeDetectResponse({ terms: [makeTerm({ gloss_en: "upgraded" })] });
+    const { terms } = mergeDetections([], [dictTerm], res, "llm", 0.5, 25_000, {
+      llmCountSuppressSince: 1500,
+    });
+    expect(terms[0].count).toBe(1);
+    expect(terms[0].gloss_en).toBe("upgraded");
+    expect(terms[0].source).toBe("llm");
+  });
+});

@@ -127,6 +127,12 @@ export interface ExpressionCard extends DetectedExpression {
   lastSeenAt: number;
   count: number; // times re-detected
   source: DetectionSource;
+  // Last time the DICTIONARY floor bumped this card (#54). Lets the
+  // llm merge skip the count bump when the same occurrence was
+  // already counted by the instant floor scan (see mergeDetections'
+  // llmCountSuppressSince). Optional: absent on pre-#54 persisted
+  // cards and on llm/custom-born cards — absent = never suppress.
+  lastDictSeenAt?: number;
 }
 
 export interface TermCard extends DetectedTerm {
@@ -136,6 +142,7 @@ export interface TermCard extends DetectedTerm {
   lastSeenAt: number;
   count: number;
   source: DetectionSource;
+  lastDictSeenAt?: number; // see ExpressionCard.lastDictSeenAt
 }
 
 // ---------- API contracts ----------
@@ -244,7 +251,15 @@ export interface Settings {
   detectModel: string;
   summaryModel: string;
   autoDetect: boolean; // live detection on/off
-  dictionaryOnly: boolean; // force offline dictionary mode
+  // AI detection layer (#54). The built-in dictionary is ALWAYS the
+  // instant floor — every finalized segment is scanned synchronously
+  // and hits surface immediately. This toggle only controls whether
+  // the LLM additionally runs in parallel batches and upgrades
+  // dictionary cards in place (see dedupe.ts mergeDetections: content
+  // swap by normKey, never retracts a dictionary hit). Off = fully
+  // offline, no API calls (the old dictionaryOnly:true posture; that
+  // legacy field migrates to !aiDetect in store.hydrate).
+  aiDetect: boolean;
   minConfidence: number;
   // agent-native output layer
   autoExport: boolean; // write session .md/.json to a chosen folder on save
@@ -338,7 +353,7 @@ export const DEFAULT_SETTINGS: Settings = {
   detectModel: "claude-haiku-4-5",
   summaryModel: "claude-sonnet-5",
   autoDetect: true,
-  dictionaryOnly: false,
+  aiDetect: true,
   minConfidence: 0.55,
   autoExport: false,
   webhookUrl: "",

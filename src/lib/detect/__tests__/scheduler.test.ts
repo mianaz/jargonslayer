@@ -74,7 +74,7 @@ function deferred<T>() {
 describe("DetectionScheduler", () => {
   let settings: Settings;
   let meetingGen: number;
-  let onDetection: ReturnType<typeof vi.fn<(res: DetectResponse, source: DetectionSource) => void>>;
+  let onDetection: ReturnType<typeof vi.fn<(res: DetectResponse, source: DetectionSource, meta?: { batchWindowStart?: number }) => void>>;
   let onBusyChange: ReturnType<typeof vi.fn<(busy: boolean) => void>>;
   let onModeChange: ReturnType<typeof vi.fn<(mode: DetectMode) => void>>;
   let onError: ReturnType<typeof vi.fn<(msg: string) => void>>;
@@ -85,7 +85,7 @@ describe("DetectionScheduler", () => {
     segIndex = 0;
     settings = makeSettings();
     meetingGen = 0;
-    onDetection = vi.fn<(res: DetectResponse, source: DetectionSource) => void>();
+    onDetection = vi.fn<(res: DetectResponse, source: DetectionSource, meta?: { batchWindowStart?: number }) => void>();
     onBusyChange = vi.fn<(busy: boolean) => void>();
     onModeChange = vi.fn<(mode: DetectMode) => void>();
     onError = vi.fn<(msg: string) => void>();
@@ -208,7 +208,7 @@ describe("DetectionScheduler", () => {
     d2.resolve(res2);
     await vi.advanceTimersByTimeAsync(0);
     expect(onDetection).toHaveBeenCalledTimes(1);
-    expect(onDetection).toHaveBeenNthCalledWith(1, res2, "llm");
+    expect(onDetection).toHaveBeenNthCalledWith(1, res2, "llm", { batchWindowStart: expect.any(Number) });
 
     // Batch 1 resolves SECOND — must still be applied, not dropped as
     // "stale": mergeDetections is additive/idempotent by normKey, so
@@ -217,7 +217,7 @@ describe("DetectionScheduler", () => {
     d1.resolve(res1);
     await vi.advanceTimersByTimeAsync(0);
     expect(onDetection).toHaveBeenCalledTimes(2);
-    expect(onDetection).toHaveBeenNthCalledWith(2, res1, "llm");
+    expect(onDetection).toHaveBeenNthCalledWith(2, res1, "llm", { batchWindowStart: expect.any(Number) });
   });
 
   it("meeting-boundary guard: a response whose gen no longer matches the current meetingGen is silently dropped", async () => {
@@ -241,19 +241,22 @@ describe("DetectionScheduler", () => {
     expect(onModeChange).not.toHaveBeenCalledWith("llm");
   });
 
-  it("meeting-boundary guard also applies to the dictionary-fallback error path (NoKeyError for a stale-gen batch is dropped)", async () => {
+  it("meeting-boundary guard also applies to the error path (NoKeyError for a stale-gen batch mutates nothing)", async () => {
     mockDetectApi.mockRejectedValueOnce(new NoKeyError());
 
     scheduler.pushSegment(makeSegment("a".repeat(140)));
+    // The floor scan at push time is the only scanDictionary call.
+    expect(mockScanDictionary).toHaveBeenCalledTimes(1);
+
     meetingGen += 1; // new meeting begins before the rejection is even processed
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(onDetection).not.toHaveBeenCalled();
+    expect(onDetection).not.toHaveBeenCalled(); // floor found nothing (empty mock)
     expect(onError).not.toHaveBeenCalled();
-    expect(mockScanDictionary).not.toHaveBeenCalled();
+    expect(mockScanDictionary).toHaveBeenCalledTimes(1); // no error-path re-scan
   });
 
-  it("NoKeyError triggers dictionary fallback and a one-time onModeChange('dictionary') toast", async () => {
+  it("NoKeyError: floor result stands (no re-scan/re-emit), one-time toast, mode → dictionary", async () => {
     mockDetectApi.mockRejectedValueOnce(new NoKeyError());
     const dictRes: DetectResponse = {
       expressions: [{ expression: "circle back", category: "phrase", meaning: "m", chinese_explanation: "z", plain_english: "p", tone: "t", confidence: 0.9, source_sentence: "s" }],
@@ -262,18 +265,28 @@ describe("DetectionScheduler", () => {
     mockScanDictionary.mockReturnValue(dictRes);
 
     scheduler.pushSegment(makeSegment("a".repeat(140)));
+    // Instant floor: the dictionary hit surfaced synchronously at push
+    // time, before the LLM batch even resolved.
+    expect(onDetection).toHaveBeenCalledTimes(1);
+    expect(onDetection).toHaveBeenCalledWith(dictRes, "dictionary");
+
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(onDetection).toHaveBeenCalledWith(dictRes, "dictionary");
+    // The NoKey rejection must NOT re-emit the same text's hits (the
+    // floor already counted them) — still exactly one detection.
+    expect(onDetection).toHaveBeenCalledTimes(1);
     expect(onModeChange).toHaveBeenCalledWith("dictionary");
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toContain("未配置 API Key");
 
-    // Subsequent segments now go straight to dictionary mode (fellBack=true)
-    // and must NOT fire the toast again.
+    // Subsequent segments: floor keeps scanning (fellBack=true), no
+    // further detectApi calls, no repeat toast.
     onError.mockClear();
+    mockDetectApi.mockClear();
     scheduler.pushSegment(makeSegment("More text to scan for dictionary hits."));
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(onDetection).toHaveBeenCalledTimes(2); // floor scan of the new segment
+    expect(mockDetectApi).not.toHaveBeenCalled();
     expect(onError).not.toHaveBeenCalled();
   });
 
@@ -288,8 +301,8 @@ describe("DetectionScheduler", () => {
     expect(onDetection).not.toHaveBeenCalled();
   });
 
-  it("dictionaryOnly forced: scans dictionary synchronously per segment, bypasses detectApi entirely", async () => {
-    settings = makeSettings({ dictionaryOnly: true });
+  it("aiDetect off: scans dictionary synchronously per segment, bypasses detectApi entirely", async () => {
+    settings = makeSettings({ aiDetect: false });
     const dictRes: DetectResponse = {
       expressions: [],
       terms: [{ term: "ARR", type: "metric", gloss_en: "e", gloss_zh: "z" }],
@@ -297,9 +310,56 @@ describe("DetectionScheduler", () => {
     mockScanDictionary.mockReturnValue(dictRes);
 
     scheduler.pushSegment(makeSegment("Our ARR grew."));
+    await vi.advanceTimersByTimeAsync(5000);
 
     expect(mockDetectApi).not.toHaveBeenCalled();
     expect(onDetection).toHaveBeenCalledWith(dictRes, "dictionary");
     expect(onModeChange).toHaveBeenCalledWith("dictionary");
+  });
+
+  it("instant floor (#54): dictionary hits surface synchronously at push time even when the LLM layer is armed", async () => {
+    const d1 = deferred<DetectResponse>();
+    mockDetectApi.mockImplementationOnce(() => d1.promise);
+    const dictRes: DetectResponse = {
+      expressions: [],
+      terms: [{ term: "ARR", type: "metric", gloss_en: "e", gloss_zh: "z" }],
+    };
+    mockScanDictionary.mockReturnValue(dictRes);
+
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+
+    // Floor hit emitted BEFORE the LLM batch resolves — this is the
+    // whole perceived-latency fix.
+    expect(onDetection).toHaveBeenCalledTimes(1);
+    expect(onDetection).toHaveBeenCalledWith(dictRes, "dictionary");
+
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mockDetectApi).toHaveBeenCalledTimes(1); // LLM still dispatched in parallel
+
+    const llmRes: DetectResponse = { expressions: [], terms: [{ term: "TWO", type: "other", gloss_en: "", gloss_zh: "" }] };
+    d1.resolve(llmRes);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onDetection).toHaveBeenCalledTimes(2);
+    expect(onDetection).toHaveBeenNthCalledWith(2, llmRes, "llm", {
+      batchWindowStart: expect.any(Number),
+    });
+    expect(onModeChange).toHaveBeenCalledWith("llm");
+  });
+
+  it("llm responses carry batchWindowStart = when the batch began accumulating (for floor count dedup)", async () => {
+    mockDetectApi.mockResolvedValue(emptyRes());
+    const before = Date.now();
+
+    scheduler.pushSegment(makeSegment("short piece, waits for the idle timer"));
+    await vi.advanceTimersByTimeAsync(3500); // idle-timer flush
+
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    const meta = onDetection.mock.calls.find((c) => c[1] === "llm")?.[2] as
+      | { batchWindowStart?: number }
+      | undefined;
+    expect(meta?.batchWindowStart).toBeGreaterThanOrEqual(before);
+    // Window START, not dispatch time: must be <= before + a little
+    // slack, NOT the flush time 3.5s later.
+    expect(meta?.batchWindowStart).toBeLessThan(before + 1000);
   });
 });
