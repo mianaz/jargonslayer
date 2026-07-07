@@ -1369,7 +1369,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div>
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
-                    取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token /
+                    取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Webhook /
                     连接码），请妥善保管
                   </div>
                 </div>

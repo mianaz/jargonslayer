@@ -4,7 +4,7 @@
 // these; do not change them.
 
 import { del, get, set } from "idb-keyval";
-import type { MeetingSession, Settings } from "../types";
+import { DEFAULT_SETTINGS, type MeetingSession, type Settings } from "../types";
 import { buildMarkdownReport, buildObsidianFrontmatter } from "./export";
 import * as storage from "./storage";
 import * as glossary from "./glossary";
@@ -201,6 +201,10 @@ function stripKeyMaterial(settings: Settings): Settings {
     apiKey: "",
     hfToken: "",
     agentToken: "",
+    // Webhook URLs routinely embed capability tokens in the path
+    // (n8n/飞书 style) — credential-like, stripped with the rest
+    // (Codex v0.2.3 review, LOW).
+    webhookUrl: "",
     taskLlm: strippedTaskLlm,
   };
 }
@@ -316,10 +320,39 @@ export async function restoreFullBackup(
   }
 
   let settingsRestored = false;
-  if (parsed.settings) {
-    await storage.saveSettings(parsed.settings);
+  if (parsed.settings && typeof parsed.settings === "object") {
+    // Cast: the sanitizer returns a Partial (unknown keys dropped),
+    // and the caller immediately re-hydrates, whose migrateSettings
+    // fold fills every missing field from DEFAULT_SETTINGS.
+    await storage.saveSettings(sanitizeRestoredSettings(parsed.settings) as Settings);
     settingsRestored = true;
   }
 
   return { sessions: sessions.length, entries: entries.length, settingsRestored };
+}
+
+/** Restored settings are UNTRUSTED input (Codex v0.2.3 review,
+ *  MEDIUM): a hand-crafted backup could otherwise smuggle
+ *  subscriptionDirect:true plus an attacker agentUrl/agentToken, and
+ *  every later detect/define call would ship meeting text to that
+ *  host. Two defenses, exported for direct tests:
+ *  1. allow-list keys — only fields the current Settings shape knows
+ *     (DEFAULT_SETTINGS keys + the deliberately-optional taskLlm)
+ *     survive; unknown/attacker-added keys are dropped rather than
+ *     persisted forever by the hydrate spread.
+ *  2. machine-local pairing/kill-switch fields are force-reset:
+ *     subscriptionDirect off, agentUrl back to default, agentToken
+ *     cleared. This is semantically right even for honest backups —
+ *     the connection code is per-sidecar-RUN (printed on each start),
+ *     so a restored token is stale on this machine by definition. */
+export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settings> {
+  const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), "taskLlm"]);
+  const picked: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (allowed.has(k)) picked[k] = v;
+  }
+  picked.subscriptionDirect = false;
+  picked.agentUrl = DEFAULT_SETTINGS.agentUrl;
+  picked.agentToken = "";
+  return picked as Partial<Settings>;
 }

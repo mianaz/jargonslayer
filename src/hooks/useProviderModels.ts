@@ -191,29 +191,38 @@ export function useProviderModels(opts: {
     [enabled, provider, baseUrl, apiKey, runFetch],
   );
 
-  // Lazy-on-enable + debounced-on-change: this single effect covers
-  // both triggers from the design (they're the same code path — the
-  // only difference is whether `enabled` just flipped true or
-  // provider/baseUrl changed while already enabled). Debounced
-  // uniformly so typing a Base URL doesn't fire on every keystroke.
+  // Lazy-on-enable ONLY (Codex v0.2.3 review, HIGH finding): the
+  // design's original debounced-on-endpoint-change auto-fetch was a
+  // credential leak — switching the provider preset (or typing a new
+  // Base URL) re-fired the fetch with whatever key was ALREADY in the
+  // field, sending the old endpoint's Bearer key to the NEW origin.
+  // Now the only automatic fetch is the enable transition (block
+  // expand), where provider/baseUrl/key are still the coherent pair
+  // loaded from saved settings. Any endpoint edit afterwards drops to
+  // idle with a hint — the user confirms the new credential pair
+  // explicitly via 刷新模型列表 (refresh()).
+  const prevEnabledRef = useRef(false);
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    const justEnabled = enabled && !prevEnabledRef.current;
+    prevEnabledRef.current = enabled;
     if (!enabled) {
       setStatus("idle");
       setMessage("");
       return;
     }
-    debounceRef.current = setTimeout(() => {
-      fetchNow(false);
-    }, DEBOUNCE_MS);
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-    // apiKey deliberately excluded from the debounce trigger list per
-    // the design ("debounced (~400ms) on provider/baseUrl change") —
-    // a key edit alone doesn't refire; the user hits 刷新模型列表
-    // (refresh()) once they've pasted a key, same as testConnection's
-    // existing manual-trigger pattern elsewhere in Settings.
+    if (justEnabled) {
+      debounceRef.current = setTimeout(() => {
+        fetchNow(false);
+      }, DEBOUNCE_MS);
+      return () => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+      };
+    }
+    // provider/baseUrl changed while enabled: never auto-send the key
+    // to the new endpoint — reset and wait for an explicit refresh.
+    setStatus("idle");
+    setMessage("端点已更改，点「刷新模型列表」重新获取");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, provider, baseUrl]);
 

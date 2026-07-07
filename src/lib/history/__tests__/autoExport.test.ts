@@ -98,7 +98,15 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       expect(restoredGlossary).toHaveLength(1);
       expect(restoredGlossary[0]).toMatchObject({ id: "e1", headword: "circle back" });
 
-      expect(await storage.loadSettings()).toEqual(keyedSettings);
+      // sanitizeRestoredSettings force-resets the machine-local
+      // pairing/kill-switch trio on every restore (Codex v0.2.3
+      // MEDIUM) — everything else round-trips exactly.
+      expect(await storage.loadSettings()).toEqual({
+        ...keyedSettings,
+        subscriptionDirect: false,
+        agentUrl: DEFAULT_SETTINGS.agentUrl,
+        agentToken: "",
+      });
     });
 
     it("restoring twice does not duplicate sessions or glossary entries (upsert-by-id)", async () => {
@@ -276,5 +284,61 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       const parsed = JSON.parse(json) as { settings: Settings | null };
       expect(parsed.settings).toBeNull();
     });
+  });
+});
+
+describe("sanitizeRestoredSettings — Codex v0.2.3 MEDIUM (untrusted backup settings)", () => {
+  it("force-resets the subscription-direct pairing fields regardless of what the backup claims", async () => {
+    const autoExport = await import("../autoExport");
+    const hostile = {
+      ...DEFAULT_SETTINGS,
+      subscriptionDirect: true,
+      agentUrl: "https://evil.example.com",
+      agentToken: "stolen-token",
+    };
+    const out = autoExport.sanitizeRestoredSettings(hostile);
+    expect(out.subscriptionDirect).toBe(false);
+    expect(out.agentUrl).toBe(DEFAULT_SETTINGS.agentUrl);
+    expect(out.agentToken).toBe("");
+  });
+
+  it("drops unknown/attacker-added keys instead of persisting them", async () => {
+    const autoExport = await import("../autoExport");
+    const hostile = { language: "en-US", __proto_pollution: "x", evilFlag: true } as never;
+    const out = autoExport.sanitizeRestoredSettings(hostile) as Record<string, unknown>;
+    expect(out.language).toBe("en-US");
+    expect("__proto_pollution" in out).toBe(false);
+    expect("evilFlag" in out).toBe(false);
+  });
+
+  it("keeps taskLlm (deliberately absent from DEFAULT_SETTINGS) and ordinary fields", async () => {
+    const autoExport = await import("../autoExport");
+    const honest = {
+      language: "en-GB",
+      taskLlm: { detect: { enabled: true, model: "m" } },
+    } as never;
+    const out = autoExport.sanitizeRestoredSettings(honest);
+    expect(out.language).toBe("en-GB");
+    expect(out.taskLlm?.detect?.model).toBe("m");
+  });
+});
+
+describe("stripKeyMaterial — Codex v0.2.3 LOW (webhookUrl is credential-like)", () => {
+  it("strips webhookUrl along with the key fields", async () => {
+    // this describe sits outside the main block's beforeEach — shim
+    // indexedDB the same way so storage.saveSettings doesn't no-op
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+    const autoExport = await import("../autoExport");
+    const storage = await import("../storage");
+    memStore.clear();
+    await storage.saveSettings({
+      ...DEFAULT_SETTINGS,
+      webhookUrl: "https://hooks.example.com/secret-token-path",
+      apiKey: "sk-x",
+    });
+    const json = await autoExport.buildFullBackup({ includeKeys: false });
+    const backup = JSON.parse(json) as { settings: { webhookUrl: string; apiKey: string } };
+    expect(backup.settings.webhookUrl).toBe("");
+    expect(backup.settings.apiKey).toBe("");
   });
 });
