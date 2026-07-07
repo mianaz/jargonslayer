@@ -11,7 +11,7 @@
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-474%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
-[![Local first](https://img.shields.io/badge/data-local--first-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
+[![Data paths](https://img.shields.io/badge/data-transparent%20paths-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
 
 **English** · [简体中文](README.zh-CN.md) · [**Try It Live**](https://apps.bioinfospace.com/jargonslayer) · [Website](https://mianaz.github.io/jargonslayer/)
 
@@ -21,7 +21,7 @@
 
 ---
 
-It sits beside your English meetings and turns **business slang, idioms, metaphors, indirect phrasing, and jargon** into short Chinese cards in real time. When the meeting ends, one click produces a **bilingual summary, a full transcript translation, and study cards**. Everything stays on your machine.
+It sits beside your English meetings and turns **business slang, idioms, metaphors, indirect phrasing, and jargon** into short Chinese cards in real time. When the meeting ends, one click produces a **bilingual summary, a full transcript translation, and study cards**. Data handling is **transparent by default, fully local when you choose**: every engine and every tier states exactly where audio and text go (see [Privacy boundaries](#privacy-boundaries-stated-explicitly)), and a dictionary-only, zero-API mode is always one toggle away.
 
 > The product UI is Simplified Chinese — it is built for non-native English speakers (Chinese-speaking professionals and researchers first).
 
@@ -172,15 +172,35 @@ The Settings section shows host status and each provider's own login status; on 
 
 > Requires `NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1` at build time — unset, this section's UI and call code are entirely absent from the build (the hosted demo's build never sets it, so it never appears there).
 
+## Versions
+
+The same product ships in tiers that differ in **form factor, not payment** — everything is free and open source:
+
+| Capability | Chrome extension (Lite, planned) | Preview ([hosted](https://apps.bioinfospace.com/jargonslayer)) | Local / Desktop |
+|---|---|---|---|
+| Dictionary detection (instant, offline) | ✓ | ✓ | ✓ |
+| Transcription | Web Speech | Web Speech | Web Speech · local Whisper · tab audio |
+| AI detection / translation / summary | — | ✓ built-in demo key (rate-limited, fixed model list) | ✓ your own key (BYOK) |
+| Import text / audio / video (in-browser) | — | ✓ | ✓ |
+| Import from URL (yt-dlp) | — | shown, needs local sidecar | ✓ |
+| Speaker diarization | — | shown, needs local sidecar | ✓ |
+| BYOK / OAuth connect | — | shown, disabled | ✓ |
+
+In the preview, features that need the local sidecar or your own credentials are visible but greyed with a 「本地版功能」 badge — what you see is the full product, not a cut-down one.
+
 ## Privacy boundaries (stated explicitly)
+
+**Positioning: transparent by default, fully local when you choose.** Each tier's data paths:
 
 | Data | Destination |
 |---|---|
 | Audio (local Whisper / tab audio) | Local only, websocket on 127.0.0.1 |
-| Audio (browser recognition) | Browser vendor's speech service |
-| Transcript text (AI detection on) | Anthropic API (or your OpenAI-compatible endpoint) for detection/summaries |
+| Audio (browser recognition / Web Speech) | Browser vendor's speech service (e.g. Google) — in **every** tier that uses Web Speech, including the extension |
+| Audio/video file imports | Local only — transcribed in-browser (Whisper via WebGPU/WASM, ffmpeg.wasm), never uploaded |
+| Transcript text (preview tier, AI on) | Transits our server **in memory only** (never stored) → forwarded to OpenRouter **with `provider.data_collection="allow"`** (required for the demo key's model routing — treat preview text as shareable with model providers) |
+| Transcript text (local tier, BYOK AI on) | Directly to the endpoint **you** configure; the `data_collection` flag is **not** set — your provider's own privacy terms apply |
 | Transcript text (subscription-direct on, detect/define only) | Your own machine's `claude`/`codex` CLI, never through any server |
-| Transcript text (dictionary mode) | Local only |
+| Transcript text (AI off / dictionary mode) | Local only |
 | History, settings, API key | Local browser only (IndexedDB / localStorage) |
 
 To keep all text on the machine: Settings → turn off 「AI 检测」 (the built-in dictionary keeps detecting instantly, fully offline). The vim-style status line always shows the current audio path (「音频未离开本机」 / 「音频经浏览器厂商云端识别」).

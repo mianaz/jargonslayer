@@ -11,7 +11,7 @@
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-474%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
-[![本地优先](https://img.shields.io/badge/data-local--first-FFAA44?style=flat-square&labelColor=121212)](#隐私边界明确说清楚)
+[![数据路径](https://img.shields.io/badge/data-transparent%20paths-FFAA44?style=flat-square&labelColor=121212)](#隐私边界明确说清楚)
 
 [English](README.md) · **简体中文** · [**立即体验**](https://apps.bioinfospace.com/jargonslayer) · [网站](https://mianaz.github.io/jargonslayer/)
 
@@ -21,7 +21,7 @@
 
 ---
 
-开英文会时它在旁边听，把**商务俚语、习语、隐喻、委婉说法、行业术语**实时变成简短的中文卡片；会议结束一键生成**双语纪要 + 全文翻译 + 学习卡片**。数据全部留在本机。
+开英文会时它在旁边听，把**商务俚语、习语、隐喻、委婉说法、行业术语**实时变成简短的中文卡片；会议结束一键生成**双语纪要 + 全文翻译 + 学习卡片**。数据处理**默认透明，想全本地随时可选**：每个引擎、每个版本都写明音频和文本去哪（见[隐私边界](#隐私边界明确说清楚)），纯词典零 API 模式永远只差一个开关。
 
 > 产品界面为简体中文，面向非英语母语者（中文职场人士与研究者优先）。
 
@@ -172,15 +172,35 @@ python -m sidecar.agent_server --port 8767
 
 > 需要构建时设置 `NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1` 才会出现该功能——不设时，这段 UI 与调用代码完全不出现在构建产物里（体验版构建不设，因此体验版永远没有这个入口）。
 
+## 版本
+
+同一个产品按**形态**分层（不是按付费分层——全部免费开源）：
+
+| 能力 | Chrome 插件（Lite，规划中） | 体验版（[在线](https://apps.bioinfospace.com/jargonslayer)） | 本地版 / 桌面版 |
+|---|---|---|---|
+| 词典检测（即时、离线） | ✓ | ✓ | ✓ |
+| 转录 | Web Speech | Web Speech | Web Speech · 本地 Whisper · 标签页音频 |
+| AI 检测 / 翻译 / 纪要 | — | ✓ 内置演示 Key（限流、固定模型列表） | ✓ 自己的 Key（BYOK） |
+| 导入文稿 / 音频 / 视频（浏览器内处理） | — | ✓ | ✓ |
+| URL 导入（yt-dlp） | — | 可见，需本地 sidecar | ✓ |
+| 说话人分离 | — | 可见，需本地 sidecar | ✓ |
+| BYOK / OAuth 一键连接 | — | 可见但置灰 | ✓ |
+
+体验版里需要本地 sidecar 或自有凭据的功能不隐藏、只置灰并标「本地版功能」——你看到的就是完整产品，不是阉割版。
+
 ## 隐私边界（明确说清楚）
+
+**定位：默认透明，想全本地随时可选。**各版本数据去向：
 
 | 数据 | 去向 |
 |---|---|
 | 音频（本地 Whisper / 标签页音频） | 仅本机，websocket 走 127.0.0.1 |
-| 音频（浏览器识别） | 浏览器厂商的语音服务 |
-| 转录文本（AI 检测开启时） | Anthropic API（或你配置的 OpenAI 兼容端点）用于检测/纪要 |
+| 音频（浏览器识别 / Web Speech） | 浏览器厂商的语音服务（如 Google）——**所有**用 Web Speech 的版本都一样，包括插件 |
+| 音频/视频文件导入 | 仅本机——浏览器内转录（Whisper WebGPU/WASM、ffmpeg.wasm），不上传 |
+| 转录文本（体验版，AI 开启） | 经我们服务器**内存中转（不存储）**→ 转发 OpenRouter，**带 `provider.data_collection="allow"`**（演示 Key 的模型路由所需——体验版文本请当作可能被模型提供方留存） |
+| 转录文本（本地版，BYOK AI 开启） | 直连**你自己**配置的端点；**不带** `data_collection` 标志，适用你所选提供方的隐私条款 |
 | 转录文本（订阅直连开启时，仅 detect/define） | 你自己机器上的 `claude`/`codex` CLI，不经过任何服务器 |
-| 转录文本（词典模式） | 仅本机 |
+| 转录文本（AI 关闭 / 词典模式） | 仅本机 |
 | 会议历史、设置、API Key | 仅本机浏览器（IndexedDB / localStorage） |
 
 不想让任何文本出本机：设置里关掉「AI 检测」，内置词典照常即时检测，完全离线。vim 风格状态栏始终显示当前音频去向（「音频未离开本机」/「音频经浏览器厂商云端识别」）。

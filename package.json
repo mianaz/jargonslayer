@@ -2,7 +2,7 @@
   "name": "jargonslayer",
   "version": "0.2.1",
   "private": true,
-  "description": "Local-first real-time English-meeting comprehension assistant for non-native speakers (英文会议实时理解助手)",
+  "description": "Real-time English-meeting comprehension assistant for non-native speakers — transparent by default, fully local when you choose (英文会议实时理解助手)",
   "license": "MIT",
   "author": "Miana Zeng",
   "repository": {
