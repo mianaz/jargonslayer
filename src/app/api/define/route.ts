@@ -3,8 +3,9 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import * as z from "zod";
 import {
-  callJson,
+  callJsonWithFallback,
   mapLlmError,
+  pickModel,
   resolveLlmConfig,
 } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
@@ -117,17 +118,22 @@ export async function POST(req: Request) {
   }
 
   try {
-    const raw = await callJson({
-      apiKey: cfg.apiKey,
-      model: cfg.forcedModel ?? model ?? "claude-haiku-4-5",
-      system: buildDefineSystemPrompt(lang ?? "zh"),
-      user: buildDefineUserMessage(phrase, context),
-      schema: DefineResultSchema,
-      maxTokens: 900,
-      provider: cfg.provider,
-      baseUrl: cfg.baseUrl,
-      extraBody: cfg.extraBody,
-    });
+    // pickModel (#61): client model honored only inside the server-side
+    // allowlist when the shared key serves the request; BYOK unchanged.
+    const raw = await callJsonWithFallback(
+      {
+        apiKey: cfg.apiKey,
+        model: pickModel(cfg, model, "claude-haiku-4-5"),
+        system: buildDefineSystemPrompt(lang ?? "zh"),
+        user: buildDefineUserMessage(phrase, context),
+        schema: DefineResultSchema,
+        maxTokens: 900,
+        provider: cfg.provider,
+        baseUrl: cfg.baseUrl,
+        extraBody: cfg.extraBody,
+      },
+      cfg.fallbackModel,
+    );
 
     const result = finalizeDefineResult(raw, phrase);
     return NextResponse.json(result satisfies DefineResult);

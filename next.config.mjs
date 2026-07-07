@@ -29,6 +29,13 @@ const nextConfig = {
   env: {
     NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT:
       process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT ?? "",
+    // Preview tier (#61) — hosted showroom build (apps.bioinfospace.
+    // com/jargonslayer): full UI visible, AI runs on OUR server key,
+    // BYOK/sidecar-only affordances greyed with a 「本地版功能」 badge
+    // instead of hidden. Same explicit-default-via-`env` requirement as
+    // NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT above (an unset var isn't
+    // reliably inlined by DefinePlugin) — see src/lib/deployTier.ts.
+    NEXT_PUBLIC_DEPLOY_TIER: process.env.NEXT_PUBLIC_DEPLOY_TIER ?? "",
   },
 };
 

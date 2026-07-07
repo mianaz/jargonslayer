@@ -15,6 +15,7 @@ import type {
 } from "../types";
 import { PROVIDER_HEADERS } from "../types";
 import { withBase } from "../basePath";
+import { PREVIEW_TIER } from "../deployTier";
 import {
   agentDetect,
   agentDefine,
@@ -106,7 +107,10 @@ async function detectViaNext(
       // out and tripped the scheduler's consecutive-failure fallback
       // latch. Detection is async and additive, so a slow batch is
       // still useful — cards just land a moment later.
-      signal: AbortSignal.timeout(20000),
+      // Preview tier (#61): PREVIEW_LIVE_MODELS' minimax-m3 measures a
+      // ~19.7s detect median — 25s covers p75 + headroom without
+      // ballooning the full-tier (Haiku-tuned) budget.
+      signal: AbortSignal.timeout(PREVIEW_TIER ? 25000 : 20000),
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {

@@ -53,14 +53,38 @@ export function resolveProvider(req: Request): {
 
 export type LlmCallKind = "detect" | "summary" | "define" | "translate";
 
+/** Parse a comma-separated model-id env var. Unset/empty → []. */
+function parseModelList(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 export interface ResolvedLlmConfig {
   apiKey: string;
   provider: LlmProvider;
   baseUrl: string;
   /** Non-null when the server credential is in play and a server-side
    *  model is configured: routes MUST use this model and ignore the
-   *  client-requested one. */
+   *  client-requested one — UNLESS the client's model is inside
+   *  allowedModels (see pickModel). */
   forcedModel: string | null;
+  /** #61 preview tier: the ONLY client-chosen models the server key
+   *  may be paired with, from JARGONSLAYER_MODEL_ALLOWLIST (+ the
+   *  summary-only extras for kind "summary"). Empty = client model
+   *  never honored in server-key mode (the pre-#61 posture, and the
+   *  posture of every deployment that doesn't set the env). Free-form
+   *  provider/baseUrl with the server key stays forbidden regardless —
+   *  this list relaxes MODEL choice only. Always [] for BYOK (their
+   *  key, their model — no list needed). */
+  allowedModels: string[];
+  /** #61 preview tier: server-side one-shot model fallback for
+   *  upstream failures (JARGONSLAYER_FALLBACK_MODEL, e.g. minimax →
+   *  deepseek-v4-flash when minimax 502s or hits a model guardrail).
+   *  null = no fallback (BYOK always; server key without the env). */
+  fallbackModel: string | null;
   /** True when the shared server credential (env) serves the request —
    *  callers apply per-IP rate limiting in that case. */
   isServerKey: boolean;
@@ -111,6 +135,8 @@ export function resolveLlmConfig(
       provider: headerProvider === "openai-compat" ? "openai-compat" : "anthropic",
       baseUrl: req.headers.get(PROVIDER_HEADERS.baseUrl) || "",
       forcedModel: null,
+      allowedModels: [],
+      fallbackModel: null,
       isServerKey: false,
     };
   }
@@ -121,6 +147,15 @@ export function resolveLlmConfig(
 
   const detectClassModel = process.env.JARGONSLAYER_DETECT_MODEL || null;
   const baseUrl = process.env.JARGONSLAYER_BASE_URL || "";
+  // #61 allowlists. Comma-separated model ids. The base list applies
+  // to every kind; the SUMMARY list adds models only summary may use
+  // (measured: deepseek-v4-pro detect median 69.4s — hopeless before
+  // the live path's 25s client timeout, fine for the async summary).
+  const baseAllowlist = parseModelList(process.env.JARGONSLAYER_MODEL_ALLOWLIST);
+  const summaryExtra =
+    kind === "summary"
+      ? parseModelList(process.env.JARGONSLAYER_MODEL_ALLOWLIST_SUMMARY)
+      : [];
   // Exact hostname match, not a substring check: baseUrl only ever
   // comes from a server-side env var (no client attack surface here),
   // so this is purely a typo/operator-error guard — a substring match
@@ -157,8 +192,37 @@ export function resolveLlmConfig(
         : kind === "translate"
           ? process.env.JARGONSLAYER_TRANSLATE_MODEL || detectClassModel
           : detectClassModel,
+    allowedModels: [...baseAllowlist, ...summaryExtra],
+    fallbackModel: process.env.JARGONSLAYER_FALLBACK_MODEL || null,
     isServerKey: true,
   };
+}
+
+/** #61 model choice under the amended iron law.
+ *
+ *  BYOK: the client's requested model, always (their key, their
+ *  config) — exactly the pre-#61 behavior.
+ *
+ *  Server key: the client's requested model is honored ONLY when it
+ *  appears in the server-side allowlist for this kind; anything else
+ *  (off-list, or no allowlist configured at all) falls back to the
+ *  env-forced model exactly as before. The client can therefore never
+ *  spend the shared credential on a model the operator didn't budget
+ *  for — and provider/baseUrl remain server-env-only regardless (see
+ *  resolveLlmConfig; this function relaxes MODEL choice, nothing
+ *  else). */
+export function pickModel(
+  cfg: ResolvedLlmConfig,
+  requestedModel: string | undefined,
+  fallbackDefault: string,
+): string {
+  if (!cfg.isServerKey) {
+    return requestedModel ?? fallbackDefault;
+  }
+  if (requestedModel && cfg.allowedModels.includes(requestedModel)) {
+    return requestedModel;
+  }
+  return cfg.forcedModel ?? fallbackDefault;
 }
 
 // ---------------------------------------------------------------
@@ -688,6 +752,34 @@ export async function callJson<T>(opts: CallJsonOptions<T>): Promise<T> {
   }
 
   return callJsonViaFallback(client, opts);
+}
+
+// ---------------------------------------------------------------
+// callJsonWithFallback — #61 server-side model fallback.
+// ---------------------------------------------------------------
+
+/** callJson, retrying ONCE on `fallbackModel` when the primary model
+ *  fails in a way a different model could plausibly survive:
+ *  upstream 5xx/model-guardrail 4xx, per-model 429 capacity, or
+ *  unparseable output (BadOutputError). Auth failures (401/403) never
+ *  retry — the key is the problem, not the model. No-op when
+ *  fallbackModel is null (BYOK always) or equals the primary. This
+ *  covers ERROR cases only — a slow-but-alive primary is governed by
+ *  the client's own request timeout, not raced here. */
+export async function callJsonWithFallback<T>(
+  opts: CallJsonOptions<T>,
+  fallbackModel: string | null,
+): Promise<T> {
+  try {
+    return await callJson(opts);
+  } catch (err) {
+    if (!fallbackModel || fallbackModel === opts.model) throw err;
+    const retryable =
+      err instanceof BadOutputError ||
+      (err instanceof OpenAiCompatError && err.status !== 401 && err.status !== 403);
+    if (!retryable) throw err;
+    return callJson({ ...opts, model: fallbackModel });
+  }
 }
 
 // ---------------------------------------------------------------

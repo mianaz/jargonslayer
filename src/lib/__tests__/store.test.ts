@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aliasesAfterRename,
   applySpeakerUpdateToSegments,
+  applyTierDefaults,
   migrateSettings,
   renameSpeakerInSegments,
   scheduleSessionSave,
   shouldApplySpeakerUpdate,
 } from "../store";
-import type { TranscriptSegment } from "../types";
+import { DEFAULT_SETTINGS, type Settings, type TranscriptSegment } from "../types";
 
 function makeSegment(overrides: Partial<TranscriptSegment> = {}): TranscriptSegment {
   return {
@@ -300,5 +301,68 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
     expect(s.language).toBe("en-GB");
     expect(s.aiDetect).toBe(false);
     expect(s.engine).toBe("demo"); // default preserved
+  });
+});
+
+describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
+  function withEngine(engine: Settings["engine"]): Settings {
+    return { ...DEFAULT_SETTINGS, engine };
+  }
+
+  it("full tier (isPreview:false) never coerces, regardless of engine or hadSavedEngine", () => {
+    expect(applyTierDefaults(withEngine("whisper"), false, true).engine).toBe("whisper");
+    expect(applyTierDefaults(withEngine("tabaudio"), false, true).engine).toBe("tabaudio");
+    expect(applyTierDefaults(withEngine("demo"), false, false).engine).toBe("demo");
+  });
+
+  it("preview tier coerces a saved sidecar-only engine (whisper) to webspeech", () => {
+    const s = applyTierDefaults(withEngine("whisper"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier coerces a saved sidecar-only engine (tabaudio) to webspeech", () => {
+    const s = applyTierDefaults(withEngine("tabaudio"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier + true first run (no saved engine key, default demo) coerces to webspeech", () => {
+    const s = applyTierDefaults(withEngine("demo"), true, false);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier does NOT coerce a returning user's persisted engine:demo (reachable via ≡ 演示)", () => {
+    const s = applyTierDefaults(withEngine("demo"), true, true);
+    expect(s.engine).toBe("demo");
+  });
+
+  it("preview tier leaves webspeech untouched", () => {
+    const s = applyTierDefaults(withEngine("webspeech"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier leaves other settings fields untouched", () => {
+    const base = { ...withEngine("whisper"), language: "en-GB" };
+    const s = applyTierDefaults(base, true, true);
+    expect(s.language).toBe("en-GB");
+  });
+
+  it("hadSavedEngine derivation ('engine' in saved) — the exact expression migrateSettings feeds this helper", () => {
+    // migrateSettings itself calls applyTierDefaults with
+    // `!!saved && "engine" in saved` (see store.ts) rather than passing
+    // a real saved object through here — kept as a standalone
+    // assertion on that exact expression (typed the same as
+    // migrateSettings' own `saved` parameter, so a real null/undefined
+    // case is meaningfully falsy rather than a tautological object
+    // literal) so this test's correctness doesn't depend on the
+    // ambient PREVIEW_TIER value of whatever environment runs it;
+    // migrateSettings itself is exercised end-to-end by the untouched
+    // #54 describe block above, which fully covers the non-preview
+    // (PREVIEW_TIER:false) path already.
+    const withEngineKey: Partial<Settings> | null | undefined = { engine: "whisper" };
+    const withoutEngineKey: Partial<Settings> | null | undefined = { language: "en-GB" };
+    const noSavedObject: Partial<Settings> | null | undefined = null;
+    expect(!!withEngineKey && "engine" in withEngineKey).toBe(true);
+    expect(!!withoutEngineKey && "engine" in withoutEngineKey).toBe(false);
+    expect(!!noSavedObject && "engine" in noSavedObject).toBe(false);
   });
 });

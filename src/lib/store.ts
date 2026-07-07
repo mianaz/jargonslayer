@@ -28,6 +28,7 @@ import { activateTheme } from "./theme/apply";
 import { writeDisplayMirror } from "./theme/displayStorage";
 import { getBuiltinTheme } from "./theme/themes";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
+import { PREVIEW_TIER } from "./deployTier";
 
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
@@ -280,6 +281,40 @@ interface AppState {
   setFocusMode: (v: boolean) => void;
 }
 
+/** Preview tier (#61) engine defaults — pure so it's unit-testable
+ *  without depending on the PREVIEW_TIER build-time env const (tests
+ *  pass `isPreview` directly; migrateSettings below is the only real
+ *  caller, feeding it the actual PREVIEW_TIER). Two independent
+ *  coercions, both no-ops when `isPreview` is false (full tier
+ *  unaffected):
+ *   1. A saved engine of "whisper"/"tabaudio" (sidecar-only, greyed in
+ *      preview — see Header.tsx's ENGINE_OPTIONS) is coerced to
+ *      "webspeech" so a returning preview user's start button still
+ *      does real transcription instead of silently trying a disabled
+ *      engine.
+ *   2. True first run only — `hadSavedEngine` is false — is coerced
+ *      from the default "demo" to "webspeech" so the start button does
+ *      real transcription out of the box, without a trip to Settings.
+ *      `demo` stays reachable via the ≡ menu at any time (see
+ *      useMeeting.ts's startDemo, which persists engine:"demo" itself)
+ *      — this coercion only fires when there was NO saved engine key
+ *      at all, never when a returning user's own saved value happens
+ *      to equal "demo" (e.g. they last quit mid-demo). */
+export function applyTierDefaults(
+  settings: Settings,
+  isPreview: boolean,
+  hadSavedEngine: boolean,
+): Settings {
+  if (!isPreview) return settings;
+  if (settings.engine === "whisper" || settings.engine === "tabaudio") {
+    return { ...settings, engine: "webspeech" };
+  }
+  if (!hadSavedEngine && settings.engine === "demo") {
+    return { ...settings, engine: "webspeech" };
+  }
+  return settings;
+}
+
 /** Fold persisted settings over defaults, migrating legacy field
  *  shapes. #54: pre-v0.2.2 settings had dictionaryOnly (force
  *  offline) instead of aiDetect (opt into the LLM upgrade layer) —
@@ -292,7 +327,11 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
     settings.aiDetect = !legacy.dictionaryOnly;
   }
   delete (settings as { dictionaryOnly?: boolean }).dictionaryOnly;
-  return settings;
+  // Preview tier (#61) — see applyTierDefaults' own doc for the two
+  // coercions and why "first run" is `saved`'s own engine key, not the
+  // post-fold value (a returning user's persisted engine:"demo", from
+  // running the ≡ menu's 演示, must NOT be re-coerced).
+  return applyTierDefaults(settings, PREVIEW_TIER, !!saved && "engine" in saved);
 }
 
 export const useApp = create<AppState>((set, get) => ({

@@ -9,6 +9,7 @@ import {
   DetectResponseSchema,
   MeetingSummarySchema,
   mapLlmError,
+  pickModel,
   resolveLlmConfig,
   TranslationsSchema,
 } from "@/lib/llm/anthropic";
@@ -387,7 +388,12 @@ export async function POST(req: Request) {
     extraBody: cfg.extraBody,
   };
 
-  const model = cfg.forcedModel ?? requestedModel ?? "claude-sonnet-5";
+  // pickModel (#61): client model honored only inside the server-side
+  // allowlist (summary additionally admits JARGONSLAYER_MODEL_ALLOWLIST_
+  // SUMMARY entries — the pro-class models too slow for live paths).
+  // No callJsonWithFallback here: a summary spans several sequential
+  // stages and silently mixing models mid-report isn't worth the save.
+  const model = pickModel(cfg, requestedModel, "claude-sonnet-5");
 
   try {
     const summary = await runSummaryStage(apiKey, model, segments, llm);

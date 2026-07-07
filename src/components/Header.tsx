@@ -23,6 +23,7 @@ import {
 import { useApp } from "@/lib/store";
 import type { STTEngineKind } from "@/lib/types";
 import { withBase } from "@/lib/basePath";
+import { PREVIEW_TIER } from "@/lib/deployTier";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -37,15 +38,22 @@ export interface HeaderProps {
 // engine, so it has exactly one affordance: the menu's 演示 item.
 // posture drives the 本地/云端 label: local engines process audio on
 // this machine; cloud engines send audio to a third-party service.
+// sidecarOnly (#61 preview tier): whisper/tabaudio require the local
+// sidecar process, which the hosted preview build never has — greyed
+// out there rather than removed (showroom posture: show everything,
+// no dead ends).
 const ENGINE_OPTIONS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   posture: "local" | "cloud";
+  sidecarOnly?: boolean;
 }[] = [
   { value: "webspeech", label: "浏览器识别", posture: "cloud" },
-  { value: "whisper", label: "本地 Whisper", posture: "local" },
-  { value: "tabaudio", label: "标签页音频", posture: "local" },
+  { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true },
+  { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
 ];
+
+const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 sidecar";
 
 const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",
@@ -110,26 +118,38 @@ function EnginePillGroup() {
   const engine = useApp((s) => s.settings.engine);
   const status = useApp((s) => s.status);
   const updateSettings = useApp((s) => s.updateSettings);
-  const disabled = status === "connecting" || status === "listening";
+  const busy = status === "connecting" || status === "listening";
 
   return (
     <div className="hidden items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
-      {ENGINE_OPTIONS.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          disabled={disabled}
-          onClick={() => updateSettings({ engine: opt.value })}
-          title={opt.posture === "local" ? "本地：音频不出本机" : "云端：音频会离开设备"}
-          className={`rounded-sm px-2.5 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-            engine === opt.value
-              ? "bg-panel3 text-fg"
-              : "text-mut hover:text-fg"
-          }`}
-        >
-          {opt.label}
-        </button>
-      ))}
+      {ENGINE_OPTIONS.map((opt) => {
+        // Preview tier (#61): sidecar-only pills stay visible but
+        // disabled — never removed (showroom posture).
+        const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
+        const disabled = busy || previewLocked;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            disabled={disabled}
+            onClick={() => updateSettings({ engine: opt.value })}
+            title={
+              previewLocked
+                ? PREVIEW_SIDECAR_TITLE
+                : opt.posture === "local"
+                  ? "本地：音频不出本机"
+                  : "云端：音频会离开设备"
+            }
+            className={`rounded-sm px-2.5 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+              engine === opt.value
+                ? "bg-panel3 text-fg"
+                : "text-mut hover:text-fg"
+            }`}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
     </div>
   );
 }
@@ -163,11 +183,23 @@ function MobileEngineSelect() {
           选择引擎
         </option>
       )}
-      {ENGINE_OPTIONS.map((opt) => (
-        <option key={opt.value} value={opt.value}>
-          {opt.label}
-        </option>
-      ))}
+      {ENGINE_OPTIONS.map((opt) => {
+        // Preview tier (#61): same sidecar-only lock as the pill group
+        // above, applied per-<option> since a native <select> can't
+        // grey a single option's styling — disabled + title is the
+        // full affordance a native option supports.
+        const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
+        return (
+          <option
+            key={opt.value}
+            value={opt.value}
+            disabled={previewLocked}
+            title={previewLocked ? PREVIEW_SIDECAR_TITLE : undefined}
+          >
+            {opt.label}
+          </option>
+        );
+      })}
     </select>
   );
 }

@@ -3,10 +3,11 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import * as z from "zod";
 import {
-  callJson,
+  callJsonWithFallback,
   clampConfidence,
   DetectResponseSchema,
   mapLlmError,
+  pickModel,
   resolveLlmConfig,
 } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
@@ -71,18 +72,23 @@ export async function POST(req: Request) {
   }
 
   try {
-    const raw = await callJson({
-      apiKey: cfg.apiKey,
-      model: cfg.forcedModel ?? model ?? "claude-haiku-4-5",
-      system: buildDetectSystemPrompt(lang ?? "zh"),
-      user: buildDetectUserMessage(context, new_text),
-      schema: DetectResponseSchema,
-      maxTokens: 1000,
-      cacheSystem: true,
-      provider: cfg.provider,
-      baseUrl: cfg.baseUrl,
-      extraBody: cfg.extraBody,
-    });
+    // pickModel (#61): client model honored only inside the server-side
+    // allowlist when the shared key serves the request; BYOK unchanged.
+    const raw = await callJsonWithFallback(
+      {
+        apiKey: cfg.apiKey,
+        model: pickModel(cfg, model, "claude-haiku-4-5"),
+        system: buildDetectSystemPrompt(lang ?? "zh"),
+        user: buildDetectUserMessage(context, new_text),
+        schema: DetectResponseSchema,
+        maxTokens: 1000,
+        cacheSystem: true,
+        provider: cfg.provider,
+        baseUrl: cfg.baseUrl,
+        extraBody: cfg.extraBody,
+      },
+      cfg.fallbackModel,
+    );
 
     const filtered = postFilter(raw, new_text);
     return NextResponse.json(filtered satisfies DetectResponse);

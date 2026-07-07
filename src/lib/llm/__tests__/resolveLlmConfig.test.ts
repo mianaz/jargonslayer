@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resolveLlmConfig } from "../anthropic";
+import {
+  callJsonWithFallback,
+  pickModel,
+  resolveLlmConfig,
+  type ResolvedLlmConfig,
+} from "../anthropic";
 import { allowRequest, clientIp, resetRateLimiter } from "../rateLimit";
+import { DetectResponseSchema } from "../anthropic";
 
 const SERVER_ENV = {
   JARGONSLAYER_API_KEY: "server-secret",
@@ -26,6 +32,9 @@ describe("resolveLlmConfig", () => {
       "JARGONSLAYER_DETECT_MODEL",
       "JARGONSLAYER_SUMMARY_MODEL",
       "JARGONSLAYER_TRANSLATE_MODEL",
+      "JARGONSLAYER_MODEL_ALLOWLIST",
+      "JARGONSLAYER_MODEL_ALLOWLIST_SUMMARY",
+      "JARGONSLAYER_FALLBACK_MODEL",
     ]) {
       vi.stubEnv(name, "");
     }
@@ -53,6 +62,8 @@ describe("resolveLlmConfig", () => {
       provider: "openai-compat",
       baseUrl: "https://api.deepseek.com/v1",
       forcedModel: null,
+      allowedModels: [],
+      fallbackModel: null,
       isServerKey: false,
     });
   });
@@ -175,6 +186,8 @@ describe("resolveLlmConfig", () => {
       provider: "anthropic",
       baseUrl: "",
       forcedModel: null,
+      allowedModels: [],
+      fallbackModel: null,
       isServerKey: true,
     });
     expect(resolveLlmConfig(reqWithHeaders({}), "translate")!.forcedModel).toBeNull();
@@ -240,5 +253,219 @@ describe("rateLimit", () => {
       ),
     ).toBe("1.1.1.1");
     expect(clientIp(new Request("http://x/"))).toBe("unknown");
+  });
+});
+
+// ---------------------------------------------------------------
+// #61 preview tier: model allowlist + pickModel + server fallback
+// ---------------------------------------------------------------
+
+describe("resolveLlmConfig — #61 model allowlist envs", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    for (const name of [
+      "JARGONSLAYER_API_KEY",
+      "ANTHROPIC_API_KEY",
+      "JARGONSLAYER_PROVIDER",
+      "JARGONSLAYER_BASE_URL",
+      "JARGONSLAYER_DETECT_MODEL",
+      "JARGONSLAYER_SUMMARY_MODEL",
+      "JARGONSLAYER_TRANSLATE_MODEL",
+      "JARGONSLAYER_MODEL_ALLOWLIST",
+      "JARGONSLAYER_MODEL_ALLOWLIST_SUMMARY",
+      "JARGONSLAYER_FALLBACK_MODEL",
+    ]) {
+      vi.stubEnv(name, "");
+    }
+    vi.stubEnv("JARGONSLAYER_API_KEY", "server-secret");
+    vi.stubEnv(
+      "JARGONSLAYER_MODEL_ALLOWLIST",
+      "minimax/minimax-m3, deepseek/deepseek-v4-flash",
+    );
+    vi.stubEnv("JARGONSLAYER_MODEL_ALLOWLIST_SUMMARY", "deepseek/deepseek-v4-pro");
+    vi.stubEnv("JARGONSLAYER_FALLBACK_MODEL", "deepseek/deepseek-v4-flash");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function req(headers: Record<string, string> = {}): Request {
+    return new Request("http://localhost/api/detect", { headers });
+  }
+
+  it("server key: live kinds get the base allowlist (whitespace-tolerant), summary gets base + summary extras", () => {
+    const detect = resolveLlmConfig(req(), "detect")!;
+    expect(detect.allowedModels).toEqual([
+      "minimax/minimax-m3",
+      "deepseek/deepseek-v4-flash",
+    ]);
+    const translate = resolveLlmConfig(req(), "translate")!;
+    expect(translate.allowedModels).toEqual(detect.allowedModels);
+
+    const summary = resolveLlmConfig(req(), "summary")!;
+    expect(summary.allowedModels).toEqual([
+      "minimax/minimax-m3",
+      "deepseek/deepseek-v4-flash",
+      "deepseek/deepseek-v4-pro",
+    ]);
+  });
+
+  it("SECURITY: BYOK never carries the allowlist or fallback — a user key means client config, no server machinery", () => {
+    const cfg = resolveLlmConfig(req({ "x-jargonslayer-key": "user-key" }), "detect")!;
+    expect(cfg.allowedModels).toEqual([]);
+    expect(cfg.fallbackModel).toBeNull();
+  });
+
+  it("SECURITY: the allowlist does NOT relax provider/baseUrl — server-key requests still ignore client headers entirely", () => {
+    vi.stubEnv("JARGONSLAYER_PROVIDER", "openai-compat");
+    vi.stubEnv("JARGONSLAYER_BASE_URL", "https://openrouter.ai/api/v1");
+    const cfg = resolveLlmConfig(
+      req({
+        "x-jargonslayer-provider": "openai-compat",
+        "x-jargonslayer-base-url": "https://evil.example.com/v1",
+      }),
+      "detect",
+    )!;
+    expect(cfg.baseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(cfg.isServerKey).toBe(true);
+  });
+
+  it("fallbackModel comes from env in server-key mode", () => {
+    const cfg = resolveLlmConfig(req(), "detect")!;
+    expect(cfg.fallbackModel).toBe("deepseek/deepseek-v4-flash");
+  });
+});
+
+describe("pickModel — #61 amended iron law", () => {
+  function cfg(overrides: Partial<ResolvedLlmConfig> = {}): ResolvedLlmConfig {
+    return {
+      apiKey: "k",
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      forcedModel: "minimax/minimax-m3",
+      allowedModels: [],
+      fallbackModel: null,
+      isServerKey: true,
+      ...overrides,
+    };
+  }
+
+  it("BYOK: requested model always honored; default only when absent", () => {
+    const byok = cfg({ isServerKey: false, forcedModel: null });
+    expect(pickModel(byok, "anything/i-want", "claude-haiku-4-5")).toBe("anything/i-want");
+    expect(pickModel(byok, undefined, "claude-haiku-4-5")).toBe("claude-haiku-4-5");
+  });
+
+  it("SECURITY (pre-#61 regression): server key with NO allowlist never honors a client model — forced model wins", () => {
+    expect(pickModel(cfg(), "openai/o5-preview", "claude-haiku-4-5")).toBe(
+      "minimax/minimax-m3",
+    );
+  });
+
+  it("server key + allowlist: on-list client model is honored", () => {
+    const c = cfg({ allowedModels: ["minimax/minimax-m3", "deepseek/deepseek-v4-flash"] });
+    expect(pickModel(c, "deepseek/deepseek-v4-flash", "claude-haiku-4-5")).toBe(
+      "deepseek/deepseek-v4-flash",
+    );
+  });
+
+  it("SECURITY: server key + allowlist: off-list client model falls back to the forced model, never honored", () => {
+    const c = cfg({ allowedModels: ["minimax/minimax-m3", "deepseek/deepseek-v4-flash"] });
+    expect(pickModel(c, "anthropic/claude-opus-4-8", "claude-haiku-4-5")).toBe(
+      "minimax/minimax-m3",
+    );
+    // Exact string membership — prefix/superstring tricks don't pass.
+    expect(pickModel(c, "minimax/minimax-m3-extended", "x")).toBe("minimax/minimax-m3");
+    expect(pickModel(c, "minimax/minimax-m", "x")).toBe("minimax/minimax-m3");
+  });
+
+  it("server key, off-list model, no forced model configured: falls to the route default", () => {
+    const c = cfg({ forcedModel: null, allowedModels: ["a/b"] });
+    expect(pickModel(c, "not/allowed", "claude-haiku-4-5")).toBe("claude-haiku-4-5");
+  });
+});
+
+describe("callJsonWithFallback — #61 server-side model fallback (openai-compat path)", () => {
+  const okBody = JSON.stringify({
+    choices: [
+      {
+        message: {
+          content: JSON.stringify({ expressions: [], terms: [] }),
+        },
+      },
+    ],
+  });
+
+  function baseOpts(model: string) {
+    return {
+      apiKey: "k",
+      model,
+      system: "s",
+      user: "u",
+      schema: DetectResponseSchema,
+      maxTokens: 100,
+      provider: "openai-compat" as const,
+      baseUrl: "https://example.test/v1",
+    };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("upstream 502 on the primary model retries once on the fallback model and succeeds", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { model: string };
+        calls.push(body.model);
+        if (body.model === "primary/model") {
+          return new Response("bad gateway", { status: 502 });
+        }
+        return new Response(okBody, { status: 200 });
+      }),
+    );
+
+    const res = await callJsonWithFallback(baseOpts("primary/model"), "fallback/model");
+    expect(res).toEqual({ expressions: [], terms: [] });
+    expect(calls).toEqual(["primary/model", "fallback/model"]);
+  });
+
+  it("SECURITY: 401 on the primary does NOT retry on the fallback — the key is the problem, not the model", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as { model: string };
+        calls.push(body.model);
+        return new Response("unauthorized", { status: 401 });
+      }),
+    );
+
+    await expect(
+      callJsonWithFallback(baseOpts("primary/model"), "fallback/model"),
+    ).rejects.toMatchObject({ status: 401 });
+    expect(calls).toEqual(["primary/model"]);
+  });
+
+  it("no fallback model (BYOK posture): the primary's error propagates untouched", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("bad gateway", { status: 502 })),
+    );
+    await expect(callJsonWithFallback(baseOpts("primary/model"), null)).rejects.toMatchObject(
+      { status: 502 },
+    );
+  });
+
+  it("fallback equal to the primary never double-calls", async () => {
+    const fetchMock = vi.fn(async () => new Response("bad gateway", { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(
+      callJsonWithFallback(baseOpts("same/model"), "same/model"),
+    ).rejects.toMatchObject({ status: 502 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

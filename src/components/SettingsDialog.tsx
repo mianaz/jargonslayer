@@ -28,6 +28,8 @@ import type { ExplainLanguage, LlmProvider, STTEngineKind, Settings } from "@/li
 import { withBase } from "@/lib/basePath";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
+import { PREVIEW_LIVE_MODELS, PREVIEW_SUMMARY_MODELS, PREVIEW_TIER } from "@/lib/deployTier";
+import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import {
   buildAuthUrl,
   codeChallengeS256,
@@ -51,6 +53,12 @@ const ENGINE_CARDS: {
   hint: string;
   posture: "local" | "cloud";
   disabled?: boolean;
+  // #61 preview tier: needs the local sidecar — greyed there (same
+  // lock as Header.tsx's ENGINE_OPTIONS.sidecarOnly; without it a
+  // preview user could still save engine:"whisper" from THIS dialog
+  // and dead-end on ws://localhost until the next reload's
+  // applyTierDefaults coercion).
+  sidecarOnly?: boolean;
 }[] = [
   {
     value: "webspeech",
@@ -63,6 +71,7 @@ const ENGINE_CARDS: {
     label: "本地 Whisper",
     hint: "音频只在本机处理，不出设备",
     posture: "local",
+    sidecarOnly: true,
   },
   {
     value: "tabaudio",
@@ -70,6 +79,7 @@ const ENGINE_CARDS: {
     hint: "在本机转录标签页音频",
     posture: "local",
     disabled: true,
+    sidecarOnly: true,
   },
 ];
 
@@ -207,6 +217,26 @@ function presetIdFor(draft: Settings): ProviderPresetId {
   return hit?.id ?? "custom";
 }
 
+// Preview tier (#61): the detectModel/summaryModel <select>s only ever
+// offer PREVIEW_LIVE_MODELS/PREVIEW_SUMMARY_MODELS — a persisted value
+// from BEFORE the build switched to preview (or from a full-tier
+// export) that isn't in the relevant list would otherwise render as a
+// blank/mismatched <select> and could get silently submitted on 保存.
+// Coerced to the list's first entry once, when the draft is seeded
+// (dialog open) — never overwrites a value the user picks from the
+// select afterward.
+function coercePreviewModels(draft: Settings): Settings {
+  if (!PREVIEW_TIER) return draft;
+  const patch: Partial<Settings> = {};
+  if (!(PREVIEW_LIVE_MODELS as readonly string[]).includes(draft.detectModel)) {
+    patch.detectModel = PREVIEW_LIVE_MODELS[0];
+  }
+  if (!(PREVIEW_SUMMARY_MODELS as readonly string[]).includes(draft.summaryModel)) {
+    patch.summaryModel = PREVIEW_SUMMARY_MODELS[0];
+  }
+  return Object.keys(patch).length > 0 ? { ...draft, ...patch } : draft;
+}
+
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-xs uppercase tracking-wide text-mut">{children}</div>
@@ -218,7 +248,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const updateSettings = useApp((s) => s.updateSettings);
   const showToast = useApp((s) => s.showToast);
 
-  const [draft, setDraft] = useState<Settings>(settings);
+  const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
   const [showKey, setShowKey] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
@@ -273,7 +303,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   useEffect(() => {
     if (open) {
-      setDraft(settings);
+      // Preview tier (#61): coerce an off-list persisted detectModel/
+      // summaryModel to the first allowed option as soon as the dialog
+      // (re)opens — see coercePreviewModels' own doc comment.
+      setDraft(coercePreviewModels(settings));
       setCheckedPacks(
         new Set(settings.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
       );
@@ -485,9 +518,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 实时说话人分离（beta）: only meaningful for the two local-audio
   // engines that go through wsTransport.ts, and only runnable once a
   // token is configured (mirrors the sidecar's own arming gate: config.
-  // diarize truthy AND a token available).
+  // diarize truthy AND a token available). Preview tier (#61): always
+  // unavailable — the whole 说话人分离 section's inputs are disabled
+  // there, but this also guards against a persisted hfToken +
+  // whisper/tabaudio engine surviving into a preview build (e.g. an
+  // imported full-tier settings export) from evaluating true and
+  // enabling the checkbox despite the section's greyed-out fields.
   const realtimeDiarizeAvailable =
-    (draft.engine === "whisper" || draft.engine === "tabaudio") && !!draft.hfToken;
+    !PREVIEW_TIER &&
+    (draft.engine === "whisper" || draft.engine === "tabaudio") &&
+    !!draft.hfToken;
   // 双语转录 (#42): the translation target IS explainLanguage — "en"
   // would mean translating English into English, so the toggle is
   // disabled (zh-only for now; more languages later, see Settings.
@@ -504,35 +544,42 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <section className="space-y-3">
             <SectionHeading>转录引擎</SectionHeading>
             <div className="grid grid-cols-2 gap-2">
-              {ENGINE_CARDS.map((opt) => (
-                <button
-                  key={opt.value}
-                  type="button"
-                  disabled={opt.disabled}
-                  onClick={() => patch({ engine: opt.value })}
-                  className={`rounded-sm border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    draft.engine === opt.value
-                      ? "border-act bg-panel3 text-fg"
-                      : "border-edge text-fg hover:bg-panel3"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium">{opt.label}</span>
-                    <span
-                      className={`shrink-0 rounded-sm border px-1.5 py-0 text-[10px] ${
-                        opt.posture === "local"
-                          ? "border-lab-green/30 text-lab-green"
-                          : "border-warn-soft/30 text-warn-soft"
-                      }`}
-                    >
-                      {POSTURE_LABEL[opt.posture]}
-                    </span>
-                  </div>
-                  <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                    {opt.hint}
-                  </div>
-                </button>
-              ))}
+              {ENGINE_CARDS.map((opt) => {
+                const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    disabled={opt.disabled || previewLocked}
+                    onClick={() => patch({ engine: opt.value })}
+                    title={previewLocked ? "本地版功能：需要本地 sidecar" : undefined}
+                    className={`rounded-sm border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                      draft.engine === opt.value
+                        ? "border-act bg-panel3 text-fg"
+                        : "border-edge text-fg hover:bg-panel3"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium">{opt.label}</span>
+                      <span className="flex shrink-0 items-center gap-1.5">
+                        {previewLocked && <PreviewLockedBadge />}
+                        <span
+                          className={`shrink-0 rounded-sm border px-1.5 py-0 text-[10px] ${
+                            opt.posture === "local"
+                              ? "border-lab-green/30 text-lab-green"
+                              : "border-warn-soft/30 text-warn-soft"
+                          }`}
+                        >
+                          {POSTURE_LABEL[opt.posture]}
+                        </span>
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                      {opt.hint}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
 
             <div>
@@ -568,20 +615,32 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
 
             <div>
-              <label className="text-xs text-mut">Whisper 地址</label>
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-mut">Whisper 地址</label>
+                {PREVIEW_TIER && <PreviewLockedBadge />}
+              </div>
               <input
                 type="text"
                 value={draft.whisperUrl}
+                disabled={PREVIEW_TIER}
                 onChange={(e) => patch({ whisperUrl: e.target.value })}
                 placeholder="ws://localhost:8765"
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
           </section>
 
-          {/* 说话人分离 */}
+          {/* 说话人分离 — preview tier (#61): the entire section needs
+             the local sidecar (HF Token pairs with sidecar-side
+             pyannote, 检测状态 probes the sidecar, 实时说话人分离 only runs
+             through the sidecar's ws pass), so it's disabled as ONE
+             group with a single badge on the heading rather than
+             per-field. */}
           <section className="space-y-3 border-t border-edge pt-5">
-            <SectionHeading>说话人分离</SectionHeading>
+            <div className="flex items-center gap-2">
+              <SectionHeading>说话人分离</SectionHeading>
+              {PREVIEW_TIER && <PreviewLockedBadge />}
+            </div>
 
             <div>
               <label className="text-xs text-mut">HF Token</label>
@@ -589,15 +648,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <input
                   type={showHfToken ? "text" : "password"}
                   value={draft.hfToken}
+                  disabled={PREVIEW_TIER}
                   onChange={(e) => patch({ hfToken: e.target.value })}
                   placeholder="hf_…"
-                  className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                  className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 <button
                   type="button"
+                  disabled={PREVIEW_TIER}
                   onClick={() => setShowHfToken((v) => !v)}
                   aria-label={showHfToken ? "隐藏" : "显示"}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {showHfToken ? (
                     <EyeSlash size={18} weight="regular" />
@@ -611,7 +672,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
 
-            {!draft.hfToken && (
+            {!PREVIEW_TIER && !draft.hfToken && (
               <div className="space-y-2 rounded-sm border border-edge bg-panel2 p-3">
                 <ol className="space-y-2 text-xs leading-[1.7] text-mut">
                   <li>
@@ -657,7 +718,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <button
               type="button"
               onClick={() => void handleCheckDiarizationStatus()}
-              disabled={checkingDiarization}
+              disabled={PREVIEW_TIER || checkingDiarization}
               className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {checkingDiarization ? "检测中…" : "检测状态"}
@@ -669,9 +730,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   实时说话人分离（beta）
                 </div>
                 <div className="mt-0.5 text-xs leading-[26px] text-mut2">
-                  {realtimeDiarizeAvailable
-                    ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
-                    : "需先配置 HF Token"}
+                  {PREVIEW_TIER
+                    ? "需要本地版 + 本地 sidecar"
+                    : realtimeDiarizeAvailable
+                      ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
+                      : "需先配置 HF Token"}
                 </div>
               </div>
               <input
@@ -688,12 +751,38 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <section className="space-y-3 border-t border-edge pt-5">
             <SectionHeading>AI 检测</SectionHeading>
 
+            {/* Preview tier (#61): every credential-related field below
+               (provider/Poe preset, Base URL, OpenRouter OAuth connect,
+               API Key) renders disabled — greyed showroom, never
+               unmounted — because the hosted build's detect/summarize
+               calls run on OUR server key, not the visitor's own. */}
+            {PREVIEW_TIER && (
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <PreviewLockedBadge />
+                  <span className="text-xs leading-[1.7] text-mut2">
+                    体验版由内置演示 Key 提供 AI，本地版可接入自己的 Key
+                  </span>
+                </div>
+                {/* #63 privacy disclosure at the point of use: the
+                   preview's AI text path differs materially from BYOK
+                   (transits our proxy in memory, and the demo key's
+                   OpenRouter routing carries data_collection=allow). */}
+                <div className="text-xs leading-[1.7] text-mut2">
+                  数据路径：体验版的 AI 文本经我们的服务器内存中转（不存储）后转发
+                  OpenRouter，带 data_collection=allow 标志（可能被模型提供方留存）；本地版
+                  BYOK 直连你自己的端点、不带该标志。音频永远不经过我们的服务器。
+                </div>
+              </div>
+            )}
+
             <div>
               <label className="text-xs text-mut">提供方</label>
               <select
                 value={activePreset}
+                disabled={PREVIEW_TIER}
                 onChange={(e) => handleSelectPreset(e.target.value as ProviderPresetId)}
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {PROVIDER_PRESETS.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -709,9 +798,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <input
                   type="text"
                   value={draft.baseUrl}
+                  disabled={PREVIEW_TIER}
                   onChange={(e) => patch({ baseUrl: e.target.value })}
                   placeholder="https://api.deepseek.com"
-                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </div>
             )}
@@ -720,8 +810,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <div className="space-y-1.5">
                 <button
                   type="button"
+                  disabled={PREVIEW_TIER}
                   onClick={() => void handleConnectOpenRouter()}
-                  className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                  className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   一键连接 OpenRouter 账号
                 </button>
@@ -737,9 +828,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <input
                   type={showKey ? "text" : "password"}
                   value={draft.apiKey}
+                  disabled={PREVIEW_TIER}
                   onChange={(e) => patch({ apiKey: e.target.value })}
                   placeholder="sk-…"
-                  className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                  className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 <button
                   type="button"
@@ -770,34 +862,68 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div>
               <label className="text-xs text-mut">检测模型</label>
-              <input
-                list="detect-model-options"
-                type="text"
-                value={draft.detectModel}
-                onChange={(e) => patch({ detectModel: e.target.value })}
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
-              />
+              {PREVIEW_TIER ? (
+                <select
+                  value={draft.detectModel}
+                  onChange={(e) => patch({ detectModel: e.target.value })}
+                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                >
+                  {PREVIEW_LIVE_MODELS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  list="detect-model-options"
+                  type="text"
+                  value={draft.detectModel}
+                  onChange={(e) => patch({ detectModel: e.target.value })}
+                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                />
+              )}
               <datalist id="detect-model-options">
                 {DETECT_MODEL_OPTIONS.map((m) => (
                   <option key={m} value={m} />
                 ))}
               </datalist>
-              {activePreset === "ollama" && (
-                <div className="mt-1 text-xs text-mut2">
-                  Ollama 常用模型：qwen3:8b
+              {PREVIEW_TIER ? (
+                <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                  检测用轻量模型（更快），报告可用更强模型
                 </div>
+              ) : (
+                activePreset === "ollama" && (
+                  <div className="mt-1 text-xs text-mut2">
+                    Ollama 常用模型：qwen3:8b
+                  </div>
+                )
               )}
             </div>
 
             <div>
               <label className="text-xs text-mut">报告模型</label>
-              <input
-                list="summary-model-options"
-                type="text"
-                value={draft.summaryModel}
-                onChange={(e) => patch({ summaryModel: e.target.value })}
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
-              />
+              {PREVIEW_TIER ? (
+                <select
+                  value={draft.summaryModel}
+                  onChange={(e) => patch({ summaryModel: e.target.value })}
+                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                >
+                  {PREVIEW_SUMMARY_MODELS.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  list="summary-model-options"
+                  type="text"
+                  value={draft.summaryModel}
+                  onChange={(e) => patch({ summaryModel: e.target.value })}
+                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                />
+              )}
               <datalist id="summary-model-options">
                 {SUMMARY_MODEL_OPTIONS.map((m) => (
                   <option key={m} value={m} />

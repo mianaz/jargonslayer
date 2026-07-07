@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import * as z from "zod";
 import {
-  callJson,
+  callJsonWithFallback,
   mapLlmError,
   resolveLlmConfig,
   TranslateSegmentsSchema,
@@ -73,21 +73,26 @@ export async function POST(req: Request) {
   }
 
   try {
-    const raw = await callJson({
-      apiKey: cfg.apiKey,
-      model: cfg.forcedModel ?? "claude-haiku-4-5",
-      system: buildTranslateSystemPrompt(lang),
-      user: buildTranslateUserMessage(segments),
-      schema: TranslateSegmentsSchema,
-      maxTokens: 2000,
-      provider: cfg.provider,
-      baseUrl: cfg.baseUrl,
-      // The hosted model wraps output in ```json fences and/or a bare
-      // top-level array; extractJsonValue + arrayKey already tolerate
-      // both (see anthropic.ts).
-      arrayKey: "translations",
-      extraBody: cfg.extraBody,
-    });
+    // No client model here (translate has no user-facing model field);
+    // the env-forced model stands, with the #61 server-side fallback.
+    const raw = await callJsonWithFallback(
+      {
+        apiKey: cfg.apiKey,
+        model: cfg.forcedModel ?? "claude-haiku-4-5",
+        system: buildTranslateSystemPrompt(lang),
+        user: buildTranslateUserMessage(segments),
+        schema: TranslateSegmentsSchema,
+        maxTokens: 2000,
+        provider: cfg.provider,
+        baseUrl: cfg.baseUrl,
+        // The hosted model wraps output in ```json fences and/or a bare
+        // top-level array; extractJsonValue + arrayKey already tolerate
+        // both (see anthropic.ts).
+        arrayKey: "translations",
+        extraBody: cfg.extraBody,
+      },
+      cfg.fallbackModel,
+    );
 
     const filtered = postFilter(raw, new Set(segments.map((s) => s.id)));
     return NextResponse.json(filtered satisfies TranslateResponse);

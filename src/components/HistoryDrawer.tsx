@@ -18,6 +18,10 @@ import {
 import { importTranscriptText } from "@/lib/ingest/importText";
 import { importAudio } from "@/lib/ingest/importAudio";
 import ImportTranscriptDialog from "@/components/ImportTranscriptDialog";
+import PreviewLockedBadge from "@/components/PreviewLockedBadge";
+import { PREVIEW_TIER } from "@/lib/deployTier";
+
+const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 sidecar";
 
 // 本地转录（浏览器）(#43 phase 2a, video added in phase 2b) is a THIRD
 // import-mode choice alongside importAndTrack's own "sidecar"/
@@ -150,7 +154,12 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   }, [importPickerOpen]);
 
   useEffect(() => {
-    if (!importPickerOpen) return;
+    // Preview tier (#61): sidecar-only rows are unconditionally
+    // disabled below (see previewLocked) — no probe is ever fired,
+    // per the showroom's "no sidecar probing to unlock" posture (a
+    // preview visitor could never have a reachable local sidecar
+    // anyway, but the point is this build never asks).
+    if (!importPickerOpen || PREVIEW_TIER) return;
     setDiarizationHealth(undefined);
     let cancelled = false;
     void fetchSidecarHealth(settings).then((health) => {
@@ -374,8 +383,17 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   // uses: undefined (not yet checked) treated as available so the
   // entry doesn't flash disabled before the health check resolves;
   // null (fetchSidecarHealth's explicit "unreachable" sentinel) is the
-  // only state that disables it.
+  // only state that disables it. Preview tier (#61): irrelevant — the
+  // probe above never fires there, diarizationHealth stays undefined
+  // forever, so this alone would incorrectly read "reachable"; every
+  // sidecar-only row below also ORs in previewLocked to force disabled.
   const sidecarReachable = diarizationHealth !== null;
+  // Preview tier (#61): sidecar-only rows (本地 Whisper upload, 从视频
+  // 链接导入) are unconditionally disabled+badged — never probe-gated —
+  // per the showroom posture (see the diarizationHealth useEffect
+  // above). Full tier is untouched: sidecarReachable's real probe
+  // result still governs everything below exactly as before.
+  const previewLocked = PREVIEW_TIER;
 
   const chooseImportMode = (mode: ImportModeChoice) => {
     importModeRef.current = mode;
@@ -485,14 +503,19 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                   </button>
                   <button
                     type="button"
+                    disabled={previewLocked}
+                    title={previewLocked ? PREVIEW_SIDECAR_TITLE : undefined}
                     onClick={() => chooseImportMode("sidecar")}
-                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3"
+                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
                   >
-                    <div className="text-sm text-fg">本地 Whisper（推荐·不出本机）</div>
+                    <div className="flex items-center gap-2 text-sm text-fg">
+                      本地 Whisper（推荐·不出本机）
+                      {previewLocked && <PreviewLockedBadge />}
+                    </div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
                       需启动本地 sidecar
                     </div>
-                    {diarizationHealth !== undefined && (
+                    {!previewLocked && diarizationHealth !== undefined && (
                       <div className="mt-0.5 text-[10px] leading-[1.7]">
                         {diarizationHealth?.diarization_ready ? (
                           <span className="text-lab-cyan">说话人分离已就绪</span>
@@ -536,21 +559,23 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                   <div>
                     <button
                       type="button"
-                      disabled={!sidecarReachable}
+                      disabled={previewLocked || !sidecarReachable}
+                      title={previewLocked ? PREVIEW_SIDECAR_TITLE : undefined}
                       onClick={() => setUrlImportOpen((v) => !v)}
                       className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
                     >
                       <div className="flex items-center gap-2 text-sm text-fg">
                         <LinkSimple size={16} weight="regular" />
                         从视频链接导入（本地）
+                        {previewLocked && <PreviewLockedBadge />}
                       </div>
                       <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                        {sidecarReachable
+                        {!previewLocked && sidecarReachable
                           ? "通过本地 sidecar 下载并转录，仅限本地版·请确保你有权处理该内容"
                           : "需本地 Whisper sidecar（体验版不提供）"}
                       </div>
                     </button>
-                    {urlImportOpen && sidecarReachable && (
+                    {urlImportOpen && !previewLocked && sidecarReachable && (
                       <div className="flex items-center gap-1.5 px-2.5 pb-2">
                         <input
                           type="text"
