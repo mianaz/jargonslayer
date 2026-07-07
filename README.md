@@ -149,6 +149,29 @@ Both paths are built into the UI. One-time shared setup:
 
 > Note: the sidecar `.venv` contains absolute paths — after moving/renaming the project directory, rebuild it (`rm -rf .venv && python3 -m venv .venv && pip install -r requirements.txt`).
 
+## Subscription-direct (experimental, local dev build only)
+
+**This is NOT "we connect your subscription for you" — it's your own local JargonSlayer asking the `claude`/`codex` CLI you're ALREADY logged into on this machine to answer one question.** Exactly what running `claude -p '...'` / `codex exec '...'` yourself would do, just with a local process typing the command for you. Credentials always stay in your own `claude`/`codex` login state — this project never reads, never persists a copy, and never routes it through any server (including the hosted demo's Vercel backend). Only **detect** (live detection) and **define** (on-demand explanation) use this path; translate/summarize always use the existing route, unchanged. Subject to change under Anthropic/OpenAI's third-party developer policy at any time — three independent kill switches (local toggle / build flag / remote kill) let you (or the maintainer) turn it off instantly.
+
+One-time setup:
+
+1. In a terminal, run `claude` (or `claude setup-token`) to complete Claude subscription login, or `codex login` for ChatGPT — JargonSlayer never provides a login button, only detects whether you're logged in and tells you which command to run yourself;
+2. `cd sidecar && pip install -r requirements.txt` (adds `claude-agent-sdk`, installed into the sidecar's `.venv`);
+3. Start this agent sidecar on its own (a separate process from the whisper transcription sidecar — neither depends on the other):
+
+```bash
+cd sidecar
+python -m sidecar.agent_server --port 8767
+# the startup banner prints a one-time "connection code", e.g.:
+#   连接码（复制到 设置 → 订阅直连（实验性）→ 连接码）：xxxxxxxx
+```
+
+4. In the web app: Settings → 「订阅直连（实验性）」 → check enable → pick a Provider (Claude / ChatGPT) → paste the connection code from step 3.
+
+The Settings section shows host status and each provider's own login status; on quota exhaustion or a missing login it automatically falls back to the built-in offline dictionary with a one-time toast — it never silently switches to your configured BYOK key instead.
+
+> Requires `NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1` at build time — unset, this section's UI and call code are entirely absent from the build (the hosted demo's build never sets it, so it never appears there).
+
 ## Privacy boundaries (stated explicitly)
 
 | Data | Destination |
@@ -156,6 +179,7 @@ Both paths are built into the UI. One-time shared setup:
 | Audio (local Whisper / tab audio) | Local only, websocket on 127.0.0.1 |
 | Audio (browser recognition) | Browser vendor's speech service |
 | Transcript text (AI detection on) | Anthropic API (or your OpenAI-compatible endpoint) for detection/summaries |
+| Transcript text (subscription-direct on, detect/define only) | Your own machine's `claude`/`codex` CLI, never through any server |
 | Transcript text (dictionary mode) | Local only |
 | History, settings, API key | Local browser only (IndexedDB / localStorage) |
 

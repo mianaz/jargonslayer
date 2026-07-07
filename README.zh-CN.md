@@ -149,6 +149,29 @@ python whisper_server.py --model small
 
 > 注意：sidecar 的 `.venv` 内是绝对路径，移动或重命名项目目录后需要删掉重建（`rm -rf .venv && python3 -m venv .venv && pip install -r requirements.txt`）。
 
+## 订阅直连（实验性，仅本地开发档）
+
+**这不是"我们帮你接通订阅"，而是让本机的 JargonSlayer 用你自己已经登录的 `claude` / `codex` CLI 回答一个问题**——与你自己在终端跑 `claude -p '...'` / `codex exec '...'` 完全同一件事，只是由本机的一个进程替你敲了这行命令。凭据始终留在你自己的 `claude`/`codex` 登录态里，本项目永不读取、永不落盘任何副本，也不经过任何服务器（包括体验版的 Vercel 服务端）。仅 **detect**（实时检测）与 **define**（即席解释）两个场景接入，翻译/纪要生成永远走现有路径不受影响。依官方第三方开发者政策可能随时变化，三层开关随时可关（本地开关 / 构建旗标 / 远程熔断）。
+
+一次性准备工作：
+
+1. 终端跑 `claude`（或 `claude setup-token`）完成 Claude 订阅登录，或 `codex login` 完成 ChatGPT 登录——JargonSlayer 不提供登录入口，只会检测你是否已登录并告诉你该在终端敲哪个命令；
+2. `cd sidecar && pip install -r requirements.txt`（新增依赖 `claude-agent-sdk`，装进 sidecar 的 `.venv`）；
+3. 单独起这个 agent sidecar（与转录用的 whisper sidecar 是两个独立进程，互不依赖）：
+
+```bash
+cd sidecar
+python -m sidecar.agent_server --port 8767
+# 启动日志会打印一次性「连接码」，例如：
+#   连接码（复制到 设置 → 订阅直连（实验性）→ 连接码）：xxxxxxxx
+```
+
+4. 网页：设置 → 「订阅直连（实验性）」→ 勾选启用 → 选择 Provider（Claude / ChatGPT）→ 把上一步的连接码粘贴进去。
+
+宿主状态、Claude/ChatGPT 各自的登录状态都会在设置区块里显示；额度用尽或未登录时会自动切换到内置离线词典并弹一次提示，不会静默改用你配置的 BYOK Key。
+
+> 需要构建时设置 `NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1` 才会出现该功能——不设时，这段 UI 与调用代码完全不出现在构建产物里（体验版构建不设，因此体验版永远没有这个入口）。
+
 ## 隐私边界（明确说清楚）
 
 | 数据 | 去向 |
@@ -156,6 +179,7 @@ python whisper_server.py --model small
 | 音频（本地 Whisper / 标签页音频） | 仅本机，websocket 走 127.0.0.1 |
 | 音频（浏览器识别） | 浏览器厂商的语音服务 |
 | 转录文本（AI 检测开启时） | Anthropic API（或你配置的 OpenAI 兼容端点）用于检测/纪要 |
+| 转录文本（订阅直连开启时，仅 detect/define） | 你自己机器上的 `claude`/`codex` CLI，不经过任何服务器 |
 | 转录文本（词典模式） | 仅本机 |
 | 会议历史、设置、API Key | 仅本机浏览器（IndexedDB / localStorage） |
 
