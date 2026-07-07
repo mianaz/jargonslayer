@@ -19,7 +19,10 @@ export default {
         // Text hierarchy (3 levels)
         fg: "#EDEDED",
         mut: "#9A9A9A",
-        mut2: "#5C5C5C", // decorative/numeric micro-elements only — never carries Chinese (v3.1)
+        // v0.2.1 contrast fix: raised from #5C5C5C (2.8:1, failing AA)
+        // to #8C8C8C (>=4.5:1 against every panel level) — see
+        // globals.css's --mut2 comment and lib/theme/themes.ts.
+        mut2: "#8C8C8C",
         // Label colors (v3.1) — the ONLY source of non-neutral hue,
         // confined to ≤24px elements (tags/underlines/status dots/glyphs).
         "lab-red": "#FF5F56", // 俚语/危险/错误

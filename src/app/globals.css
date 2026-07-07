@@ -16,7 +16,15 @@
   --edge2: #333333;
   --fg: #ededed;
   --mut: #9a9a9a;
-  --mut2: #5c5c5c;
+  /* v0.2.1 contrast fix: raised from #5c5c5c (2.8:1 vs panel, failing
+     WCAG AA) to #8c8c8c, which clears >=4.5:1 against every panel
+     level (ink/panel/panel2/panel3) while staying visibly darker than
+     --mut (see docs/DESIGN.md v3.1 and lib/theme/themes.ts's
+     TERMINAL_THEME, which mirrors this value 1:1). mut2 carries real
+     Chinese content text in several components (hint copy, disabled-
+     state labels, table headers), not just decoration, so it must
+     clear AA body-text contrast. */
+  --mut2: #8c8c8c;
   --lab-red: #ff5f56;
   --lab-orange: #ffaa44;
   --lab-yellow: #f7d51d;
