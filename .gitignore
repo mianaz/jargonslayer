@@ -20,3 +20,6 @@ sidecar/*.wav
 
 # ffmpeg.wasm runtime copied from node_modules on postinstall
 /public/ffmpeg/
+
+# internal working docs (strategy/research/spec drafts) — private nested repo, never public
+/docs/

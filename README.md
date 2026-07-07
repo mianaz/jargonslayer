@@ -15,7 +15,7 @@
 
 **English** · [简体中文](README.zh-CN.md) · [**Try It Live**](https://apps.bioinfospace.com/jargonslayer) · [Website](https://mianaz.github.io/jargonslayer/)
 
-<img src="docs/assets/live.png" alt="JargonSlayer live meeting view: block-flow transcript with highlighted expressions on the left, real-time explanation cards on the right" width="920" />
+<img src="assets/live.png" alt="JargonSlayer live meeting view: block-flow transcript with highlighted expressions on the left, real-time explanation cards on the right" width="920" />
 
 </div>
 
@@ -23,7 +23,7 @@
 
 It sits beside your English meetings and turns **business slang, idioms, metaphors, indirect phrasing, and jargon** into short Chinese cards in real time. When the meeting ends, one click produces a **bilingual summary, a full transcript translation, and study cards**. Everything stays on your machine.
 
-> The product UI is Simplified Chinese — it is built for non-native English speakers (Chinese-speaking professionals and researchers first). Docs are bilingual: English here, [中文文档](docs/zh/) there.
+> The product UI is Simplified Chinese — it is built for non-native English speakers (Chinese-speaking professionals and researchers first).
 
 ## Why
 
@@ -52,8 +52,8 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
 <div align="center">
 <table>
   <tr>
-    <td><img src="docs/assets/home.png" alt="Idle home screen with terminal-style empty state" /></td>
-    <td><img src="docs/assets/summary.png" alt="Summary and export panel after a meeting" /></td>
+    <td><img src="assets/home.png" alt="Idle home screen with terminal-style empty state" /></td>
+    <td><img src="assets/summary.png" alt="Summary and export panel after a meeting" /></td>
   </tr>
   <tr>
     <td align="center"><sub>the REPL at rest</sub></td>
@@ -163,7 +163,7 @@ To keep all text on the machine: Settings → 「仅词典模式」 (dictionary-
 
 ## Meet Bit 🐉
 
-<img src="docs/assets/bit.png" align="right" width="220" alt="Bit, the pixel dragon mascot" />
+<img src="assets/bit.png" align="right" width="220" alt="Bit, the pixel dragon mascot" />
 
 The pixel dragon perched on the status line is **Bit** — cursor-block pupils that blink like a caret, dorsal fins that light up like a signal meter while listening, and ANSI-colored pixel fire when a new card lands. It sleeps 30 seconds after a meeting ends.
 
@@ -179,20 +179,9 @@ It is also interactive. Try clicking it. Try clicking it three times fast. Try h
 - **Detection slows when the tab is backgrounded** — browsers throttle background timers; switching back triggers an immediate catch-up. Mitigated with event-driven flushing.
 - **Report generation is slow** — long-meeting translation runs in parallel chunks; 1–2 minutes is normal. Cards can be exported without generating a report.
 
-## Architecture & docs
+## Architecture
 
 Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB; LLM calls go through server-side route proxies (Anthropic Messages API or OpenAI-compatible, structured output with repair-retry); local transcription is a faster-whisper sidecar over websocket with energy-based VAD; diarization via pyannote 4.x.
-
-| Doc | What's inside | 中文 |
-|---|---|---|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Layers, data flow, sidecar protocol | [中文版](docs/zh/ARCHITECTURE.md) |
-| [PRODUCT.md](docs/PRODUCT.md) | Positioning, users, product decisions | [中文版](docs/zh/PRODUCT.md) |
-| [SCHEMA.md](docs/SCHEMA.md) | Agent-native output contracts (JSON/frontmatter) | [中文版](docs/zh/SCHEMA.md) |
-| [AGENT-WORKFLOWS.md](docs/AGENT-WORKFLOWS.md) | File/webhook outputs, orchestration recipes | [中文版](docs/zh/AGENT-WORKFLOWS.md) |
-| [PACKAGING.md](docs/PACKAGING.md) | PWA today, Tauri roadmap | [中文版](docs/zh/PACKAGING.md) |
-| [DESIGN.md](docs/DESIGN.md) | Design constitution (v3 terminal theme, mascot spec) | [中文版](docs/zh/DESIGN.md) |
-
-Design lineage: seven full explorations (ink-wash, grimoire, 8-bit, noir, sketch, qinglü, terminal) live in [docs/design-explorations/](docs/design-explorations/) — the terminal direction shipped as default; the others are the future skin roadmap.
 
 ## License
 
