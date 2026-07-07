@@ -85,10 +85,22 @@ export async function POST(req: Request) {
     // server-side allowlist when the shared key serves the request;
     // BYOK unchanged. Absent/"" falls through to the env-forced model
     // exactly as before #56 existed.
+    const chosenModel = pickModel(cfg, model, "claude-haiku-4-5");
+    // Reasoning-off is a MINIMAX-specific translate optimization
+    // (measured 2026-07-06: 4.0s → 1.7s, ~1/4 cost) — other models
+    // hard-fail on the param upstream (deepseek-v4-flash 502'd through
+    // OpenRouter's edge the moment #56 let translate reach it, v0.2.3
+    // live E2E). Applied after pickModel so it keys off the model that
+    // will actually serve the call, server-key mode only (BYOK never
+    // gets extraBody).
+    const extraBody =
+      cfg.isServerKey && cfg.extraBody && chosenModel.startsWith("minimax/")
+        ? { ...cfg.extraBody, reasoning: { enabled: false } }
+        : cfg.extraBody;
     const raw = await callJsonWithFallback(
       {
         apiKey: cfg.apiKey,
-        model: pickModel(cfg, model, "claude-haiku-4-5"),
+        model: chosenModel,
         system: buildTranslateSystemPrompt(lang),
         user: buildTranslateUserMessage(segments),
         schema: TranslateSegmentsSchema,
@@ -99,7 +111,7 @@ export async function POST(req: Request) {
         // top-level array; extractJsonValue + arrayKey already tolerate
         // both (see anthropic.ts).
         arrayKey: "translations",
-        extraBody: cfg.extraBody,
+        extraBody,
       },
       cfg.fallbackModel,
     );

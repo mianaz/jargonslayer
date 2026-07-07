@@ -174,18 +174,15 @@ export function resolveLlmConfig(
         ? "openai-compat"
         : "anthropic",
     baseUrl,
-    extraBody: isOpenRouter
-      ? {
-          provider: { data_collection: "allow" },
-          // Translation needs no chain-of-thought, and the hosted
-          // reasoning model (minimax-m3) pays for one by default —
-          // measured 2026-07-06: disabling it cut wall time 4.0s ->
-          // 1.7s and cost to ~1/4 (320 -> 0 reasoning tokens), with
-          // clean (unfenced) JSON output. Scoped to "translate" only:
-          // detect/summary/define still benefit from reasoning.
-          ...(kind === "translate" ? { reasoning: { enabled: false } } : {}),
-        }
-      : undefined,
+    // NOTE: the translate-only `reasoning:{enabled:false}` override
+    // used to be injected HERE, keyed on kind alone. That broke the
+    // moment #56 let translate reach non-minimax models — deepseek-
+    // v4-flash's upstream hard-fails on the param (live 502 through
+    // OpenRouter's edge, v0.2.3 E2E). It now lives in the translate
+    // route, applied AFTER pickModel decides the actual model and
+    // only for minimax/* (where the 2026-07-06 measurement — 4.0s →
+    // 1.7s, ~1/4 cost — was taken).
+    extraBody: isOpenRouter ? { provider: { data_collection: "allow" } } : undefined,
     forcedModel:
       kind === "summary"
         ? process.env.JARGONSLAYER_SUMMARY_MODEL || detectClassModel

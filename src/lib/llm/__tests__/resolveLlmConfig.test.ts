@@ -124,20 +124,16 @@ describe("resolveLlmConfig", () => {
     expect(resolveLlmConfig(reqWithHeaders({}), "detect")!.extraBody).toBeUndefined();
   });
 
-  it("translate kind on server-key openrouter also disables reasoning (measured latency/cost win on the hosted reasoning model); other kinds are unaffected", () => {
+  it("no kind gets reasoning-off at the RESOLVER level — it moved to the translate route, post-pickModel, minimax-only (v0.2.3 fix: deepseek-v4-flash 502s on the param)", () => {
     for (const [name, value] of Object.entries(SERVER_ENV)) {
       vi.stubEnv(name, value);
     }
     const req = reqWithHeaders({});
-
-    const translate = resolveLlmConfig(req, "translate");
-    expect(translate!.extraBody).toEqual({
-      provider: { data_collection: "allow" },
-      reasoning: { enabled: false },
-    });
-
-    const detect = resolveLlmConfig(req, "detect");
-    expect(detect!.extraBody).toEqual({ provider: { data_collection: "allow" } });
+    for (const kind of ["translate", "detect", "define", "summary"] as const) {
+      expect(resolveLlmConfig(req, kind)!.extraBody).toEqual({
+        provider: { data_collection: "allow" },
+      });
+    }
   });
 
   it("translate kind: BYOK never gets extraBody (reasoning-off included)", () => {
