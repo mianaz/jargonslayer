@@ -62,6 +62,11 @@ export const PACKS: DictPack[] = [
     name: "技术术语",
     description: "研发、运维相关的技术缩写与术语",
   },
+  {
+    id: "pharma-biotech",
+    name: "医药与生物科技",
+    description: "新药研发、临床试验、监管申报相关的术语",
+  },
 ];
 
 /** null enabled-list = everything on. "core" (the base tables) is

@@ -215,7 +215,7 @@ export default function TutorialOverlay({
                 <div className="rounded-none border border-edge p-3">
                   <div className="text-sm font-medium text-fg">免费词典模式</div>
                   <div className="mt-2 text-xs leading-[1.7] text-mut">
-                    开箱即用，371 条内置商务表达与术语，无需任何配置。
+                    开箱即用，428 条内置商务表达与术语，无需任何配置。
                   </div>
                 </div>
                 <div className="rounded-none border border-edge p-3">
