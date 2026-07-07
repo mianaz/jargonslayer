@@ -1088,7 +1088,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 ))}
               </div>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                整个界面的文字大小，效果类似浏览器缩放
+                整体文字大小，类似浏览器缩放
               </div>
             </div>
 
