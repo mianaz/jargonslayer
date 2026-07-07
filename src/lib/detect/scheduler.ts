@@ -9,6 +9,7 @@
 // OWNER: worker B. Public signature is contract — do not change it.
 
 import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
+import { resolveTaskCreds } from "../llm/taskConfig";
 import type {
   DetectResponse,
   DetectionSource,
@@ -229,7 +230,7 @@ export class DetectionScheduler {
     const settings = this.opts.getSettings();
     try {
       const res = await detectApi(
-        { context: batch.context, new_text: batch.new_text, model: settings.detectModel },
+        { context: batch.context, new_text: batch.new_text, model: resolveTaskCreds(settings, "detect").model },
         settings,
       );
 

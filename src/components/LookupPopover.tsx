@@ -10,6 +10,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { detectApi, defineApi, NoKeyError } from "@/lib/llm/client";
+import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 import { scanDictionary } from "@/lib/detect/dictionary";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { newId } from "@/lib/types";
@@ -101,7 +102,7 @@ export default function LookupPopover() {
             {
               context: lookup.contextText,
               new_text: lookup.text,
-              model: settings.detectModel,
+              model: resolveTaskCreds(settings, "detect").model,
             },
             settings,
           );

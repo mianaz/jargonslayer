@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Notebook, Star } from "@phosphor-icons/react";
 import { useApp, currentSessionSnapshot } from "@/lib/store";
 import { summarizeApi, NoKeyError } from "@/lib/llm/client";
+import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 import {
   buildAnkiTSV,
   buildMarkdownReport,
@@ -144,7 +145,7 @@ function GenerateCta() {
           })),
           expressions: cards,
           terms,
-          model: settings.summaryModel,
+          model: resolveTaskCreds(settings, "summary").model,
         },
         settings,
       );

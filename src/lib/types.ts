@@ -185,6 +185,10 @@ export interface TranslationPair {
 export interface TranslateRequest {
   segments: { id: string; text: string }[];
   lang: string;
+  // #56 per-task model override, additive. "" / absent = today's
+  // behavior (server-side env-forced model + #61 fallback stands
+  // unchanged — see the translate route's pickModel call).
+  model?: string;
 }
 
 export interface TranslateResponse {
@@ -240,6 +244,25 @@ export interface ApiErrorBody {
 // privacy (Ollama + local Whisper = nothing leaves the machine).
 export type LlmProvider = "anthropic" | "openai-compat";
 
+// ---------- per-task provider/model (#56, BYOK-only) ----------
+// The three LLM task domains this feature covers. NOT LlmCallKind
+// (lib/llm/anthropic.ts) — that has "define"; define always rides
+// detect's config (see lib/llm/taskConfig.ts's resolveTaskCreds).
+export type LlmTaskDomain = "translate" | "detect" | "summary";
+
+// A per-domain override. Every field optional — an absent field
+// inherits the primary (top-level Settings.provider/baseUrl/apiKey +
+// the domain's legacy model field). enabled:false (or no entry at
+// all) means the domain uses the primary entirely, exactly as before
+// this feature existed.
+export interface TaskLlmConfig {
+  enabled: boolean;
+  provider?: LlmProvider;
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+}
+
 export interface Settings {
   engine: STTEngineKind;
   micId?: string;
@@ -250,6 +273,14 @@ export interface Settings {
   apiKey: string; // "" = rely on server-side env ANTHROPIC_API_KEY
   detectModel: string;
   summaryModel: string;
+  // Per-task provider/model overrides (#56, BYOK-only — never affects
+  // the server-key/allowlist path (#61) or subscription-direct). Keyed
+  // by LlmTaskDomain; a domain absent from the map (or present with
+  // enabled:false) inherits provider/baseUrl/apiKey above and the
+  // matching legacy model field entirely — see lib/llm/taskConfig.ts's
+  // resolveTaskCreds, the single source of truth for this inheritance.
+  // undefined (the default) is byte-identical to pre-#56 behavior.
+  taskLlm?: Partial<Record<LlmTaskDomain, TaskLlmConfig>>;
   autoDetect: boolean; // live detection on/off
   // AI detection layer (#54). The built-in dictionary is ALWAYS the
   // instant floor — every finalized segment is scanned synchronously

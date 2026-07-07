@@ -8,6 +8,7 @@ import { Eye, EyeSlash } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
+import { resolveTaskCreds, type ResolvedTaskCreds } from "@/lib/llm/taskConfig";
 import { packCounts, setEnabledPacks } from "@/lib/detect/dictionary";
 import { getAllPacks } from "@/lib/detect/packs";
 import {
@@ -24,12 +25,23 @@ import {
   getExportFolderName,
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
-import type { ExplainLanguage, LlmProvider, STTEngineKind, Settings } from "@/lib/types";
+import type {
+  ExplainLanguage,
+  LlmTaskDomain,
+  STTEngineKind,
+  Settings,
+  TaskLlmConfig,
+} from "@/lib/types";
 import { withBase } from "@/lib/basePath";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
 import { PREVIEW_LIVE_MODELS, PREVIEW_SUMMARY_MODELS, PREVIEW_TIER } from "@/lib/deployTier";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
+import CredentialFields, {
+  presetIdFor,
+  type ProviderPreset,
+  type ProviderPresetId,
+} from "@/components/CredentialFields";
 import {
   buildAuthUrl,
   codeChallengeS256,
@@ -108,6 +120,17 @@ const SUMMARY_MODEL_OPTIONS = [
   "deepseek-chat",
 ];
 
+// #56: translate has no PRIMARY top-level model field (see
+// resolveTaskCreds — inherited default is the server's own
+// pickModel fallback, "claude-haiku-4-5"), so this list — unlike
+// DETECT_MODEL_OPTIONS/SUMMARY_MODEL_OPTIONS above — only exists for
+// the 分任务模型（高级） translate block's datalist seed.
+const TRANSLATE_MODEL_OPTIONS = [
+  "claude-haiku-4-5",
+  "claude-sonnet-5",
+  "deepseek-chat",
+];
+
 const EXPLAIN_LANGUAGE_OPTIONS: { value: ExplainLanguage; label: string }[] = [
   { value: "zh", label: "中文（默认）" },
   { value: "en", label: "English" },
@@ -133,27 +156,18 @@ const TRANSCRIPT_LEADING_OPTIONS: { value: Settings["transcriptLeading"]; label:
   { value: "relaxed", label: "宽松" },
 ];
 
-type ProviderPresetId =
-  | "anthropic"
-  | "deepseek"
-  | "qwen"
-  | "openrouter"
-  | "poe"
-  | "ollama"
-  | "custom";
-
-interface ProviderPreset {
-  id: ProviderPresetId;
-  label: string;
-  provider: LlmProvider;
-  baseUrl: string; // "" for custom — user fills it in
-  /** Applied to draft.detectModel/summaryModel when selected. */
+// Primary-only preset extras: applied to draft.detectModel/
+// summaryModel on selection (handleSelectPreset below) — CredentialFields
+// itself (shared with the #56 domain blocks) knows nothing about these,
+// since a domain override has no "suggested defaults" behavior (design
+// Q5 lists no such affordance for domain blocks).
+interface SettingsProviderPreset extends ProviderPreset {
   suggestedModels?: { detectModel: string; summaryModel?: string };
   /** Shown as a hint near the model inputs, not force-applied. */
   modelHint?: string;
 }
 
-const PROVIDER_PRESETS: ProviderPreset[] = [
+const PROVIDER_PRESETS: SettingsProviderPreset[] = [
   {
     id: "anthropic",
     label: "Anthropic 官方 (api.anthropic.com)",
@@ -206,17 +220,6 @@ const PROVIDER_PRESETS: ProviderPreset[] = [
   },
 ];
 
-/** Reverse-match the current draft to a preset id for the select's
- *  displayed value (falls back to "custom" for any openai-compat
- *  baseUrl that doesn't match a known preset). */
-function presetIdFor(draft: Settings): ProviderPresetId {
-  if (draft.provider === "anthropic") return "anthropic";
-  const hit = PROVIDER_PRESETS.find(
-    (p) => p.provider === "openai-compat" && p.baseUrl && p.baseUrl === draft.baseUrl,
-  );
-  return hit?.id ?? "custom";
-}
-
 // Preview tier (#61): the detectModel/summaryModel <select>s only ever
 // offer PREVIEW_LIVE_MODELS/PREVIEW_SUMMARY_MODELS — a persisted value
 // from BEFORE the build switched to preview (or from a full-tier
@@ -243,6 +246,115 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
+// #56 分任务模型（高级）: display metadata for the three domain blocks,
+// in the design's exact order/labels (Q5). "detect" covers define too
+// (LlmTaskDomain deliberately excludes a separate "define" domain —
+// see types.ts's own comment — define always rides detect's
+// resolution), hence the hint text below.
+const TASK_DOMAIN_META: { domain: LlmTaskDomain; label: string; hint?: string; staticModelOptions: string[] }[] = [
+  { domain: "translate", label: "选区翻译 / 双语转录", staticModelOptions: TRANSLATE_MODEL_OPTIONS },
+  { domain: "detect", label: "检测与解释", hint: "选中文字解释也用这份配置", staticModelOptions: DETECT_MODEL_OPTIONS },
+  { domain: "summary", label: "会议报告", staticModelOptions: SUMMARY_MODEL_OPTIONS },
+];
+
+/** Human-readable provider label for the muted "跟随上方主配置" line —
+ *  Anthropic has no user-facing baseUrl (see types.ts), so it's named
+ *  directly; openai-compat shows its actual endpoint (the thing that
+ *  actually varies and matters to the reader). */
+function providerLabel(resolved: ResolvedTaskCreds): string {
+  return resolved.provider === "anthropic" ? "Anthropic" : resolved.baseUrl || "自定义端点";
+}
+
+/** One 分任务模型（高级） domain block: 使用独立配置 toggle + either a
+ *  muted "inherits primary" line (off) or a full <CredentialFields>
+ *  (on) — design Q5. Local component so useProviderModels' lazy-on-
+ *  mount fetch only ever fires once THIS domain's toggle is actually
+ *  on (never for the other two, and never just because the outer
+ *  分任务模型 disclosure itself is open). */
+function TaskDomainBlock({
+  domain,
+  label,
+  hint,
+  staticModelOptions,
+  config,
+  primary,
+  onChange,
+  disabled,
+}: {
+  domain: LlmTaskDomain;
+  label: string;
+  hint?: string;
+  staticModelOptions: string[];
+  config: TaskLlmConfig | undefined;
+  primary: Settings;
+  onChange: (next: TaskLlmConfig | undefined) => void;
+  disabled: boolean;
+}) {
+  const enabled = !!config?.enabled;
+  const resolved = resolveTaskCreds(primary, domain);
+
+  const patchConfig = (p: Partial<TaskLlmConfig>) => {
+    onChange({ enabled, provider: config?.provider, baseUrl: config?.baseUrl, apiKey: config?.apiKey, model: config?.model, ...p });
+  };
+
+  return (
+    <div className="space-y-2 rounded-sm border border-edge bg-panel2 p-3">
+      <label className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm text-fg">{label}</div>
+          {hint && <div className="text-xs text-mut2">{hint}</div>}
+        </div>
+        <input
+          type="checkbox"
+          checked={enabled}
+          disabled={disabled}
+          onChange={(e) => patchConfig({ enabled: e.target.checked })}
+          className="h-4 w-4 shrink-0 accent-act disabled:opacity-50"
+        />
+      </label>
+
+      {enabled ? (
+        <div className="space-y-3 border-t border-edge pt-3">
+          <CredentialFields
+            idPrefix={`task-${domain}`}
+            provider={config?.provider ?? primary.provider}
+            baseUrl={config?.baseUrl ?? primary.baseUrl}
+            apiKey={config?.apiKey ?? ""}
+            onSelectPreset={(id) => {
+              const preset = PROVIDER_PRESETS.find((p) => p.id === id);
+              if (!preset) return;
+              patchConfig({ provider: preset.provider, baseUrl: preset.baseUrl });
+            }}
+            onBaseUrlChange={(baseUrl) => patchConfig({ baseUrl })}
+            onApiKeyChange={(apiKey) => patchConfig({ apiKey })}
+            apiKeyPlaceholder="留空则用主配置的 Key"
+            presets={PROVIDER_PRESETS}
+            disabled={disabled}
+            models={[
+              {
+                key: domain,
+                label: "模型",
+                value: config?.model ?? "",
+                onChange: (v) => patchConfig({ model: v }),
+                staticOptions: staticModelOptions,
+                hint: (
+                  <div className="mt-1 text-xs text-mut2">
+                    留空则用主配置的模型（{resolved.model || "服务端默认"}）
+                  </div>
+                ),
+              },
+            ]}
+          />
+        </div>
+      ) : (
+        <div className="border-t border-edge pt-2 text-xs leading-[1.7] text-mut2">
+          跟随上方主配置（{providerLabel(resolved)} · {resolved.model || "服务端默认"}）
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -250,7 +362,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
-  const [showKey, setShowKey] = useState(false);
   const [testingConnection, setTestingConnection] = useState(false);
   const [exportFolderName, setExportFolderName] = useState<string | null>(null);
   // 说话人分离 (speaker diarization, HF token) section.
@@ -268,6 +379,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [addingPackSource, setAddingPackSource] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [confirmRemoveUrl, setConfirmRemoveUrl] = useState<string | null>(null);
+  // 分任务模型（高级）(#56): collapsed by default — the per-domain
+  // blocks below only mount (and only start fetching model lists) once
+  // this is open, see TaskDomainBlock's own doc comment.
+  const [taskLlmExpanded, setTaskLlmExpanded] = useState(false);
   // 订阅直连（实验性，v0.2.2）: kill-switch layer 2 — this whole section
   // renders nothing when the build didn't set
   // NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT (see SUBSCRIPTION_DIRECT_
@@ -428,6 +543,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     patch(patchValues);
   };
 
+  // #56 分任务模型（高级）: one domain's TaskLlmConfig changed — fold it
+  // into draft.taskLlm, preserving the other two domains untouched.
+  const handleTaskLlmChange = (domain: LlmTaskDomain, next: TaskLlmConfig | undefined) => {
+    patch({ taskLlm: { ...draft.taskLlm, [domain]: next } });
+  };
+
   // "Connect with OpenRouter" — OAuth PKCE one-click key provisioning
   // (https://openrouter.ai/docs/use-cases/oauth-pkce). Generates a
   // fresh code_verifier + a random state, stashes both in
@@ -514,7 +635,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     showToast("已清除导出文件夹");
   };
 
-  const activePreset = presetIdFor(draft);
+  const activePreset = presetIdFor(PROVIDER_PRESETS, draft);
   // 实时说话人分离（beta）: only meaningful for the two local-audio
   // engines that go through wsTransport.ts, and only runnable once a
   // token is configured (mirrors the sidecar's own arming gate: config.
@@ -776,80 +897,47 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            <div>
-              <label className="text-xs text-mut">提供方</label>
-              <select
-                value={activePreset}
-                disabled={PREVIEW_TIER}
-                onChange={(e) => handleSelectPreset(e.target.value as ProviderPresetId)}
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {PROVIDER_PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {draft.provider === "openai-compat" && (
-              <div>
-                <label className="text-xs text-mut">Base URL</label>
-                <input
-                  type="text"
-                  value={draft.baseUrl}
-                  disabled={PREVIEW_TIER}
-                  onChange={(e) => patch({ baseUrl: e.target.value })}
-                  placeholder="https://api.deepseek.com"
-                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                />
-              </div>
-            )}
-
-            {activePreset === "openrouter" && (
-              <div className="space-y-1.5">
-                <button
-                  type="button"
-                  disabled={PREVIEW_TIER}
-                  onClick={() => void handleConnectOpenRouter()}
-                  className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  一键连接 OpenRouter 账号
-                </button>
-                <div className="text-xs leading-[1.7] text-mut2">
-                  跳转 OpenRouter 完成授权，自动生成并填入 API Key；也可在下方手动粘贴已有 Key
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label className="text-xs text-mut">API Key</label>
-              <div className="mt-1 flex items-center gap-2">
-                <input
-                  type={showKey ? "text" : "password"}
-                  value={draft.apiKey}
-                  disabled={PREVIEW_TIER}
-                  onChange={(e) => patch({ apiKey: e.target.value })}
-                  placeholder="sk-…"
-                  className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowKey((v) => !v)}
-                  aria-label={showKey ? "隐藏" : "显示"}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
-                >
-                  {showKey ? (
-                    <EyeSlash size={18} weight="regular" />
+            <CredentialFields
+              idPrefix="primary"
+              provider={draft.provider}
+              baseUrl={draft.baseUrl}
+              apiKey={draft.apiKey}
+              onSelectPreset={handleSelectPreset}
+              onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
+              onApiKeyChange={(apiKey) => patch({ apiKey })}
+              apiKeyPlaceholder="sk-…"
+              apiKeyHint="仅存本机浏览器，随请求直发"
+              presets={PROVIDER_PRESETS}
+              disabled={PREVIEW_TIER}
+              onConnectOpenRouter={() => void handleConnectOpenRouter()}
+              models={[
+                {
+                  key: "detect",
+                  label: "检测模型",
+                  value: draft.detectModel,
+                  onChange: (v) => patch({ detectModel: v }),
+                  staticOptions: DETECT_MODEL_OPTIONS,
+                  previewOptions: PREVIEW_TIER ? PREVIEW_LIVE_MODELS : undefined,
+                  hint: PREVIEW_TIER ? (
+                    <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                      检测用轻量模型（更快），报告可用更强模型
+                    </div>
                   ) : (
-                    <Eye size={18} weight="regular" />
-                  )}
-                </button>
-              </div>
-              <div className="mt-1 text-xs text-mut2">
-                仅存本机浏览器，随请求直发
-              </div>
-            </div>
+                    activePreset === "ollama" && (
+                      <div className="mt-1 text-xs text-mut2">Ollama 常用模型：qwen3:8b</div>
+                    )
+                  ),
+                },
+                {
+                  key: "summary",
+                  label: "报告模型",
+                  value: draft.summaryModel,
+                  onChange: (v) => patch({ summaryModel: v }),
+                  staticOptions: SUMMARY_MODEL_OPTIONS,
+                  previewOptions: PREVIEW_TIER ? PREVIEW_SUMMARY_MODELS : undefined,
+                },
+              ]}
+            />
 
             <button
               type="button"
@@ -859,77 +947,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             >
               {testingConnection ? "测试中…" : "测试连接"}
             </button>
-
-            <div>
-              <label className="text-xs text-mut">检测模型</label>
-              {PREVIEW_TIER ? (
-                <select
-                  value={draft.detectModel}
-                  onChange={(e) => patch({ detectModel: e.target.value })}
-                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
-                >
-                  {PREVIEW_LIVE_MODELS.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  list="detect-model-options"
-                  type="text"
-                  value={draft.detectModel}
-                  onChange={(e) => patch({ detectModel: e.target.value })}
-                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
-                />
-              )}
-              <datalist id="detect-model-options">
-                {DETECT_MODEL_OPTIONS.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-              {PREVIEW_TIER ? (
-                <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                  检测用轻量模型（更快），报告可用更强模型
-                </div>
-              ) : (
-                activePreset === "ollama" && (
-                  <div className="mt-1 text-xs text-mut2">
-                    Ollama 常用模型：qwen3:8b
-                  </div>
-                )
-              )}
-            </div>
-
-            <div>
-              <label className="text-xs text-mut">报告模型</label>
-              {PREVIEW_TIER ? (
-                <select
-                  value={draft.summaryModel}
-                  onChange={(e) => patch({ summaryModel: e.target.value })}
-                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
-                >
-                  {PREVIEW_SUMMARY_MODELS.map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  list="summary-model-options"
-                  type="text"
-                  value={draft.summaryModel}
-                  onChange={(e) => patch({ summaryModel: e.target.value })}
-                  className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
-                />
-              )}
-              <datalist id="summary-model-options">
-                {SUMMARY_MODEL_OPTIONS.map((m) => (
-                  <option key={m} value={m} />
-                ))}
-              </datalist>
-            </div>
 
             <label className="flex items-center justify-between gap-3 py-1">
               <span className="text-sm text-fg">实时检测</span>
@@ -1138,6 +1155,54 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 从 GitHub raw / jsDelivr 链接安装社区词典包，JSON 格式见文档
               </div>
             </div>
+          </section>
+
+          {/* 分任务模型（高级）(#56, BYOK-only): a self-contained section
+             (design Q5's #62 fit note — advanced-mode visibility gating
+             later is a one-line change here) so translate/detect/
+             summary can each optionally point at a different provider/
+             model, inheriting the primary "AI 检测" credential above by
+             default. Preview tier: disabled as ONE group + one
+             PreviewLockedBadge, same grouping pattern as 说话人分离
+             above — BYOK has no meaning when the hosted build's calls
+             run on our own server key. */}
+          <section className="space-y-3 border-t border-edge pt-5">
+            <button
+              type="button"
+              onClick={() => setTaskLlmExpanded((v) => !v)}
+              disabled={PREVIEW_TIER}
+              className="flex w-full items-center justify-between gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <span className="flex items-center gap-2">
+                <SectionHeading>分任务模型（高级）</SectionHeading>
+                {PREVIEW_TIER && <PreviewLockedBadge />}
+              </span>
+              <span className="text-xs text-mut2">{taskLlmExpanded ? "收起" : "展开"}</span>
+            </button>
+
+            {!PREVIEW_TIER && (
+              <div className="text-xs leading-[1.7] text-mut2">
+                为翻译 / 检测与解释 / 会议报告分别指定不同的提供方或模型；未单独配置的场景使用上方主配置
+              </div>
+            )}
+
+            {!PREVIEW_TIER && taskLlmExpanded && (
+              <div className="space-y-2">
+                {TASK_DOMAIN_META.map((meta) => (
+                  <TaskDomainBlock
+                    key={meta.domain}
+                    domain={meta.domain}
+                    label={meta.label}
+                    hint={meta.hint}
+                    staticModelOptions={meta.staticModelOptions}
+                    config={draft.taskLlm?.[meta.domain]}
+                    primary={draft}
+                    onChange={(next) => handleTaskLlmChange(meta.domain, next)}
+                    disabled={PREVIEW_TIER}
+                  />
+                ))}
+              </div>
+            )}
           </section>
 
           {/* 数据与联动 */}

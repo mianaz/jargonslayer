@@ -5,6 +5,7 @@ import * as z from "zod";
 import {
   callJsonWithFallback,
   mapLlmError,
+  pickModel,
   resolveLlmConfig,
   TranslateSegmentsSchema,
 } from "@/lib/llm/anthropic";
@@ -26,6 +27,12 @@ const BodySchema = z.object({
   // prompt injection / unbounded length. Client only ever sends "zh"
   // or "en", both well inside this shape.
   lang: z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,15}$/),
+  // #56 per-task model (additive, optional): pickModel below applies
+  // the same BYOK-honored/server-key-allowlisted rule every other
+  // route already uses. Absent/"" (today's behavior — translate has
+  // no user-facing model field) falls through to the existing
+  // env-forced model exactly as before.
+  model: z.string().optional(),
 });
 
 function errorBody(body: ApiErrorBody, status: number) {
@@ -56,7 +63,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { segments, lang } = parsedBody.data;
+  const { segments, lang, model } = parsedBody.data;
 
   const cfg = resolveLlmConfig(req, "translate");
   if (!cfg) {
@@ -73,12 +80,15 @@ export async function POST(req: Request) {
   }
 
   try {
-    // No client model here (translate has no user-facing model field);
-    // the env-forced model stands, with the #61 server-side fallback.
+    // pickModel (#56/#61): client model (now optionally settable via
+    // #56's per-task translate override) honored only inside the
+    // server-side allowlist when the shared key serves the request;
+    // BYOK unchanged. Absent/"" falls through to the env-forced model
+    // exactly as before #56 existed.
     const raw = await callJsonWithFallback(
       {
         apiKey: cfg.apiKey,
-        model: cfg.forcedModel ?? "claude-haiku-4-5",
+        model: pickModel(cfg, model, "claude-haiku-4-5"),
         system: buildTranslateSystemPrompt(lang),
         user: buildTranslateUserMessage(segments),
         schema: TranslateSegmentsSchema,

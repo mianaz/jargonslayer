@@ -7,6 +7,7 @@ import type {
   DefineResult,
   DetectRequest,
   DetectResponse,
+  LlmTaskDomain,
   Settings,
   SummarizeRequest,
   SummaryResult,
@@ -16,6 +17,7 @@ import type {
 import { PROVIDER_HEADERS } from "../types";
 import { withBase } from "../basePath";
 import { PREVIEW_TIER } from "../deployTier";
+import { resolveTaskCreds } from "./taskConfig";
 import {
   agentDetect,
   agentDefine,
@@ -49,16 +51,23 @@ export class UpstreamError extends Error {
 }
 
 /** Every header the routes need to resolve key + provider + endpoint
- *  for a request, built from the current settings. */
-function authHeaders(settings: Settings): Record<string, string> {
+ *  for a request, resolved per-domain (#56): an unconfigured/disabled
+ *  domain inherits the primary credential fields, so this is
+ *  byte-identical to the old global authHeaders(settings) for every
+ *  pre-#56 user (see resolveTaskCreds's own round-trip test). Exported
+ *  so upload.ts's cloud-transcription path can reuse the exact same
+ *  builder instead of hand-rolling a second copy (design Q3 — two
+ *  header builders is a drift bug factory). */
+export function taskHeaders(settings: Settings, domain: LlmTaskDomain): Record<string, string> {
+  const creds = resolveTaskCreds(settings, domain);
   const headers: Record<string, string> = {
-    [PROVIDER_HEADERS.provider]: settings.provider,
+    [PROVIDER_HEADERS.provider]: creds.provider,
   };
-  if (settings.apiKey) {
-    headers[PROVIDER_HEADERS.key] = settings.apiKey;
+  if (creds.apiKey) {
+    headers[PROVIDER_HEADERS.key] = creds.apiKey;
   }
-  if (settings.provider === "openai-compat" && settings.baseUrl) {
-    headers[PROVIDER_HEADERS.baseUrl] = settings.baseUrl;
+  if (creds.provider === "openai-compat" && creds.baseUrl) {
+    headers[PROVIDER_HEADERS.baseUrl] = creds.baseUrl;
   }
   return headers;
 }
@@ -98,7 +107,7 @@ async function detectViaNext(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders(settings),
+        ...taskHeaders(settings, "detect"),
       },
       body: JSON.stringify({ ...body, lang: settings.explainLanguage } satisfies DetectRequest),
       // Reasoning models behind openai-compat endpoints (e.g. the
@@ -136,7 +145,7 @@ export async function summarizeApi(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders(settings),
+        ...taskHeaders(settings, "summary"),
       },
       body: JSON.stringify({
         ...body,
@@ -170,7 +179,7 @@ async function defineViaNext(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders(settings),
+        ...taskHeaders(settings, "detect"),
       },
       body: JSON.stringify({ ...body, lang: settings.explainLanguage } satisfies DefineRequest),
       signal: AbortSignal.timeout(20000),
@@ -354,15 +363,24 @@ export async function translateApi(
   body: TranslateRequest,
   settings: Settings,
 ): Promise<TranslateResponse> {
+  // #56: translate's resolved model is "" when inherited (no top-level
+  // model field for this domain — see resolveTaskCreds), which must
+  // send NO body model at all (today's server-default behavior),
+  // never a literal empty-string model. Callers (translate/queue.ts,
+  // ingest/importText.ts) never set body.model themselves — resolved
+  // here, once, same as headers.
+  const resolvedModel = resolveTaskCreds(settings, "translate").model;
+  const outBody: TranslateRequest = resolvedModel ? { ...body, model: resolvedModel } : body;
+
   let res: Response;
   try {
     res = await fetch(withBase("/api/translate"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...authHeaders(settings),
+        ...taskHeaders(settings, "translate"),
       },
-      body: JSON.stringify(body satisfies TranslateRequest),
+      body: JSON.stringify(outBody satisfies TranslateRequest),
       // Reasoning-model latency, same rationale as detect's 20s, but
       // batches here carry up to 6 segments instead of one.
       signal: AbortSignal.timeout(30000),

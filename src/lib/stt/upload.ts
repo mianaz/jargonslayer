@@ -16,8 +16,7 @@ import {
   type TermCard,
   type TranscriptSegment,
 } from "../types";
-import { PROVIDER_HEADERS } from "../types";
-import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
+import { detectApi, NoKeyError, RateLimitApiError, taskHeaders } from "../llm/client";
 import { scanDictionary } from "../detect/dictionary";
 import { scanCustomEntries } from "../history/glossary";
 import { mergeDetections } from "../detect/dedupe";
@@ -375,17 +374,15 @@ export async function transcribeViaCloud(
   form.set("file", file, file.name);
   form.set("language", settings.language.split("-")[0]);
 
-  const headers: Record<string, string> = {
-    [PROVIDER_HEADERS.provider]: settings.provider,
-  };
-  if (settings.apiKey) headers[PROVIDER_HEADERS.key] = settings.apiKey;
-  if (settings.provider === "openai-compat" && settings.baseUrl) {
-    headers[PROVIDER_HEADERS.baseUrl] = settings.baseUrl;
-  }
-
+  // #56: reuses client.ts's exported taskHeaders instead of a second,
+  // inlined header builder (this file used to hand-roll its own copy
+  // — two builders is a drift bug factory). This route isn't one of
+  // the three #56 task domains itself, but "detect" is the closest
+  // credential this upload/import pipeline already resolves, so a
+  // per-domain detect override transparently carries through here too.
   const res = await fetch(withBase("/api/transcribe-cloud"), {
     method: "POST",
-    headers,
+    headers: taskHeaders(settings, "detect"),
     body: form,
   });
 
