@@ -1,7 +1,9 @@
 "use client";
 
 // Terminal titlebar (docs/DESIGN.md v3.3, preview-4-terminal.html):
-// top strip = three fake window dots + mono path-style title + ⌘K hint;
+// top strip = mono path-style title + ⌘K hint (the v3.3-era three fake
+// window dots were removed in v0.2.1 — decorative macOS chrome that
+// didn't earn its place, see 可读性与主题机制 polish pass);
 // brand row = dragon mark + JargonSlayer wordmark + engine posture +
 // primary start/stop + engine pills + ≡ menu (演示/历史/学习中心/设置/帮助
 // moved inside per the v3 汉堡收纳 decision — every old data-testid is
@@ -314,13 +316,8 @@ export default function Header({
 
   return (
     <header className="sticky top-0 z-20 flex shrink-0 flex-col border-b border-edge bg-panel">
-      {/* 终端标题栏: 三个假窗口点 + 等宽路径式标题 + ⌘K 提示 */}
+      {/* 终端标题栏: 等宽路径式标题 + ⌘K 提示 */}
       <div className="flex h-9 items-center gap-3 border-b border-edge bg-panel2 px-3">
-        <div className="flex shrink-0 items-center gap-1.5" aria-hidden="true">
-          <span className="inline-block h-[10px] w-[10px] rounded-full bg-lab-red" />
-          <span className="inline-block h-[10px] w-[10px] rounded-full bg-lab-orange" />
-          <span className="inline-block h-[10px] w-[10px] rounded-full bg-lab-green" />
-        </div>
         <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-mono text-xs text-mut">
           <span className="font-semibold text-fg">jargonslayer</span>
           <span className="mx-1.5 text-mut2">—</span>

@@ -279,6 +279,15 @@ html[data-fs="xl"] {
   .fade-up {
     animation: none !important;
   }
+  /* v0.2.1 audit: Tailwind's animate-spin utility (busy/loading
+     indicators — SummaryPanel, LookupPopover x2, Header's
+     DetectModeBadge) ships with no built-in reduced-motion guard, so
+     it was the one animation left uncovered by the app's own audit.
+     Freezing it still communicates "busy" via its static ring shape;
+     the spinning motion is the only part that's purely decorative. */
+  .animate-spin {
+    animation: none !important;
+  }
   .cursor-block {
     animation: none !important;
     opacity: 1;
