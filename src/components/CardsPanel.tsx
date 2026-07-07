@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { CaretUp, CaretUpDown } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
+import { handleButtonKeyDown } from "@/lib/a11y";
 import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import type {
   DetectionSource,
@@ -180,7 +181,9 @@ function CollapseAffordance({ onCollapse }: { onCollapse: () => void }) {
       type="button"
       onClick={onCollapse}
       title="折叠"
-      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-mut opacity-0 transition-opacity hover:bg-panel3 hover:text-fg group-hover:opacity-100"
+      aria-label="折叠"
+      aria-expanded
+      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-mut opacity-0 transition-opacity hover:bg-panel3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
     >
       <CaretUp size={14} weight="regular" />
     </button>
@@ -262,7 +265,11 @@ function ExpressionCardRow({
         ref={ref}
         data-testid="card"
         data-kind="expression"
+        role="button"
+        tabIndex={0}
+        aria-expanded={false}
         onClick={onToggle}
+        onKeyDown={(e) => handleButtonKeyDown(e, onToggle)}
         className={`relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${hue.bar} ${
           isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${
@@ -350,7 +357,11 @@ function TermCardRow({
         ref={ref}
         data-testid="card"
         data-kind="term"
+        role="button"
+        tabIndex={0}
+        aria-expanded={false}
         onClick={onToggle}
+        onKeyDown={(e) => handleButtonKeyDown(e, onToggle)}
         className={`relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
           isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${

@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import { X, Trash, UploadSimple, FileText, LinkSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
+import { handleButtonKeyDown } from "@/lib/a11y";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
 import {
@@ -656,19 +657,24 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
             <div className="space-y-2">
               {filtered.map((meta) => {
                 const hintExpr = matchesExpr(meta.id);
+                const openSession = () => {
+                  void loadSession(meta.id);
+                  onClose();
+                };
                 return (
                   <div
                     key={meta.id}
-                    onClick={() => {
-                      void loadSession(meta.id);
-                      onClose();
-                    }}
+                    role="button"
+                    tabIndex={0}
+                    onClick={openSession}
+                    onKeyDown={(e) => handleButtonKeyDown(e, openSession)}
                     className="cursor-pointer rounded-none border-l-2 border-edge2 border-b border-b-edge bg-panel2 p-3 hover:bg-panel3"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <span className="font-medium text-fg">{meta.title}</span>
                       <button
                         type="button"
+                        aria-label="删除会议"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleDeleteClick(meta.id);
