@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="public/icon-192.png" width="88" alt="JargonSlayer icon" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/icon-ui-dark.png" />
+  <img src="public/icon-ui-light.png" width="96" alt="JargonSlayer icon" />
+</picture>
 
 # JargonSlayer
 
@@ -10,7 +13,7 @@
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-617%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
+[![Tests](https://img.shields.io/badge/tests-642%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
 [![Data paths](https://img.shields.io/badge/data-transparent%20paths-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
 
 **English** · [简体中文](README.zh-CN.md) · [**Try It Live**](https://apps.bioinfospace.com/jargonslayer) · [Website](https://mianaz.github.io/jargonslayer/)
@@ -47,6 +50,7 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
 - **Post-meeting artifacts** — bilingual summary (topic / key points / decisions / action items), paragraph-aligned translation, study cards, and a **Cornell-note sheet** (highlighted body + margin annotations, exportable as PNG or Markdown); plus Markdown / Anki TSV / JSON export, auto-save to a folder, and a webhook.
 - **Learning center** — `/review` has stats, a frequency Top 10, a word cloud, and a flashcard practice deck; your personal glossary feeds back into detection in later meetings.
 - **BYOK, multi-model** — Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); or connect an OpenRouter account in one click. The key lives in your local browser and is relayed in memory (never persisted) through this app's own API routes when it calls out — or skip the browser entirely with an env var.
+- **Themes, light and dark** — three built-in themes on a strict 17-token engine: the terminal dark default, a light "paper" counterpart, and a high-contrast dark variant. Every theme (including light) is contrast-checked against WCAG AA in the test suite; native controls, scrollbars, and the app icon follow the active scheme. Plus global and transcript-only font-size controls.
 - **History without accounts** — everything in IndexedDB; search old meetings by expression; export a full backup / import to restore, from Settings.
 
 <div align="center">
@@ -58,6 +62,14 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
   <tr>
     <td align="center"><sub>the REPL at rest</sub></td>
     <td align="center"><sub>minutes &amp; export</sub></td>
+  </tr>
+  <tr>
+    <td><img src="assets/live-light.png" alt="Live meeting view in the built-in light theme" /></td>
+    <td><img src="assets/review.png" alt="Learning center at /review: stats, word cloud, frequency top 10" /></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>the same meeting, light theme</sub></td>
+    <td align="center"><sub>learning center</sub></td>
   </tr>
 </table>
 </div>
