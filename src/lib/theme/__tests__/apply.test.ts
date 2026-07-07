@@ -10,7 +10,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { activateTheme, applyTheme, hexToRgbTriplet, resetToDefaultTheme } from "../apply";
 import { THEME_TOKEN_KEYS, type ThemeTokens } from "../schema";
-import { CLARITY_THEME, TERMINAL_THEME } from "../themes";
+import { CLARITY_THEME, TERMINAL_LIGHT_THEME, TERMINAL_THEME } from "../themes";
 
 function cssVar(name: string): string {
   return document.documentElement.style.getPropertyValue(`--${name}`);
@@ -28,6 +28,8 @@ beforeEach(() => {
     document.documentElement.style.removeProperty(`--${key}-rgb`);
   }
   delete document.documentElement.dataset.theme;
+  delete document.documentElement.dataset.scheme;
+  document.querySelector('meta[name="theme-color"]')?.remove();
 });
 
 describe("hexToRgbTriplet", () => {
@@ -51,7 +53,7 @@ describe("hexToRgbTriplet", () => {
 
 describe("applyTheme", () => {
   it("sets every token's hex variable via CSSOM setProperty, not a <style> string", () => {
-    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens);
+    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens, CLARITY_THEME.scheme);
     for (const key of THEME_TOKEN_KEYS) {
       expect(cssVar(key)).toBe(CLARITY_THEME.tokens[key]);
     }
@@ -65,23 +67,23 @@ describe("applyTheme", () => {
   // on the previous theme's dead colors while only hand-written CSS
   // recolors. This is the regression the ship-blocking review caught.
   it("ALSO sets every token's -rgb triplet variable, derived from the same hex value", () => {
-    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens);
+    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens, CLARITY_THEME.scheme);
     for (const key of THEME_TOKEN_KEYS) {
       expect(cssRgbVar(key)).toBe(hexToRgbTriplet(CLARITY_THEME.tokens[key]));
     }
   });
 
   it("stamps dataset.theme with the given theme id", () => {
-    applyTheme("clarity", CLARITY_THEME.tokens);
+    applyTheme("clarity", CLARITY_THEME.tokens, "dark");
     expect(document.documentElement.dataset.theme).toBe("clarity");
   });
 
   it("overwrites a previously-applied theme's tokens (both hex and -rgb)", () => {
-    applyTheme("clarity", CLARITY_THEME.tokens);
+    applyTheme("clarity", CLARITY_THEME.tokens, "dark");
     expect(cssVar("panel")).toBe(CLARITY_THEME.tokens.panel);
 
     const other: ThemeTokens = { ...CLARITY_THEME.tokens, panel: "#ff00ff" };
-    applyTheme("custom", other);
+    applyTheme("custom", other, "dark");
     expect(cssVar("panel")).toBe("#ff00ff");
     expect(cssRgbVar("panel")).toBe("255 0 255");
     expect(document.documentElement.dataset.theme).toBe("custom");
@@ -92,7 +94,7 @@ describe("applyTheme", () => {
     // @ts-expect-error — simulating an SSR environment for this assertion only
     delete globalThis.document;
     try {
-      expect(() => applyTheme("clarity", CLARITY_THEME.tokens)).not.toThrow();
+      expect(() => applyTheme("clarity", CLARITY_THEME.tokens, "dark")).not.toThrow();
     } finally {
       globalThis.document = realDocument;
     }
@@ -101,7 +103,7 @@ describe("applyTheme", () => {
 
 describe("resetToDefaultTheme", () => {
   it("removes every inline token override via removeProperty (both hex and -rgb)", () => {
-    applyTheme("clarity", CLARITY_THEME.tokens);
+    applyTheme("clarity", CLARITY_THEME.tokens, "dark");
     for (const key of THEME_TOKEN_KEYS) {
       expect(cssVar(key)).not.toBe("");
       expect(cssRgbVar(key)).not.toBe("");
@@ -115,7 +117,7 @@ describe("resetToDefaultTheme", () => {
   });
 
   it("resets dataset.theme back to terminal", () => {
-    applyTheme("clarity", CLARITY_THEME.tokens);
+    applyTheme("clarity", CLARITY_THEME.tokens, "dark");
     resetToDefaultTheme();
     expect(document.documentElement.dataset.theme).toBe("terminal");
   });
@@ -128,8 +130,8 @@ describe("resetToDefaultTheme", () => {
 
 describe("activateTheme", () => {
   it("routes 'terminal' through resetToDefaultTheme (clears overrides, no injection)", () => {
-    applyTheme("clarity", CLARITY_THEME.tokens);
-    activateTheme("terminal", TERMINAL_THEME.tokens);
+    applyTheme("clarity", CLARITY_THEME.tokens, "dark");
+    activateTheme("terminal", TERMINAL_THEME.tokens, "dark");
     for (const key of THEME_TOKEN_KEYS) {
       expect(cssVar(key)).toBe("");
       expect(cssRgbVar(key)).toBe("");
@@ -138,9 +140,53 @@ describe("activateTheme", () => {
   });
 
   it("routes any non-terminal id through applyTheme, setting both hex and -rgb", () => {
-    activateTheme("clarity", CLARITY_THEME.tokens);
+    activateTheme("clarity", CLARITY_THEME.tokens, "dark");
     expect(cssVar("fg")).toBe(CLARITY_THEME.tokens.fg);
     expect(cssRgbVar("fg")).toBe(hexToRgbTriplet(CLARITY_THEME.tokens.fg));
     expect(document.documentElement.dataset.theme).toBe("clarity");
+  });
+});
+
+// v0.2.4 light mode: `data-scheme` drives CSS `color-scheme` (native
+// form controls/scrollbars) and the scheme-aware icon swap in
+// globals.css — a theme applying without it would render light tokens
+// under dark UA chrome and the wrong header icon.
+describe("scheme stamping (v0.2.4 light mode)", () => {
+  it("applyTheme stamps dataset.scheme with the theme's scheme", () => {
+    applyTheme(TERMINAL_LIGHT_THEME.id, TERMINAL_LIGHT_THEME.tokens, "light");
+    expect(document.documentElement.dataset.scheme).toBe("light");
+  });
+
+  it("resetToDefaultTheme restores dataset.scheme to dark", () => {
+    applyTheme(TERMINAL_LIGHT_THEME.id, TERMINAL_LIGHT_THEME.tokens, "light");
+    resetToDefaultTheme();
+    expect(document.documentElement.dataset.scheme).toBe("dark");
+  });
+
+  it("activateTheme threads the scheme through to applyTheme", () => {
+    activateTheme(TERMINAL_LIGHT_THEME.id, TERMINAL_LIGHT_THEME.tokens, "light");
+    expect(document.documentElement.dataset.scheme).toBe("light");
+    activateTheme("terminal", TERMINAL_THEME.tokens, "dark");
+    expect(document.documentElement.dataset.scheme).toBe("dark");
+  });
+
+  it("keeps <meta name=theme-color> in step with the active theme's ink", () => {
+    const meta = document.createElement("meta");
+    meta.setAttribute("name", "theme-color");
+    meta.setAttribute("content", "#0A0A0A");
+    document.head.appendChild(meta);
+
+    applyTheme(TERMINAL_LIGHT_THEME.id, TERMINAL_LIGHT_THEME.tokens, "light");
+    expect(meta.getAttribute("content")).toBe(TERMINAL_LIGHT_THEME.tokens.ink);
+
+    resetToDefaultTheme();
+    expect(meta.getAttribute("content")).toBe("#0a0a0a");
+  });
+
+  it("syncing is a silent no-op when the meta tag is absent", () => {
+    expect(document.querySelector('meta[name="theme-color"]')).toBeNull();
+    expect(() =>
+      applyTheme(TERMINAL_LIGHT_THEME.id, TERMINAL_LIGHT_THEME.tokens, "light"),
+    ).not.toThrow();
   });
 });

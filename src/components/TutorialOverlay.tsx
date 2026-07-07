@@ -280,7 +280,7 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={finish}
-                className="btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8]"
+                className="btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-act/85"
               >
                 开始使用
               </button>
@@ -288,7 +288,7 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={() => setStep((s) => Math.min(STEP_COUNT - 1, s + 1))}
-                className="btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8]"
+                className="btn-terminal rounded-none bg-act px-3 py-1.5 font-mono text-sm font-semibold text-ink hover:bg-act/85"
               >
                 下一步
               </button>

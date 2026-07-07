@@ -195,7 +195,7 @@ export default function ImportTranscriptDialog({
             type="button"
             disabled={!canConfirm}
             onClick={handleConfirm}
-            className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8] disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
           >
             导入并分析
           </button>

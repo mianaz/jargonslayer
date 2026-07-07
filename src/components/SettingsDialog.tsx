@@ -1700,7 +1700,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <button
             type="button"
             onClick={handleSave}
-            className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8]"
+            className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
           >
             保存
           </button>

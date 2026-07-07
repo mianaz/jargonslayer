@@ -78,3 +78,81 @@ for (const [size, out] of jobs) {
   await master.clone().resize(size, size).png().toFile(join(ROOT, out));
   console.log("wrote", out, size);
 }
+
+// ── in-UI icon variants (v0.2.4) ────────────────────────────────────
+// The header (Header.tsx) shows the icon INSIDE the app, where the
+// baked ink-dark square clashes with any non-dark theme. Two extra
+// outputs, both with the background removed, one per scheme (the
+// globals.css .scheme-*-only classes swap them by <html data-scheme>):
+//   icon-ui-dark.png  — the palette-matched art as-is, transparent bg.
+//   icon-ui-light.png — neutrals luminance-inverted (silver dragon ->
+//     charcoal, white bubble -> ink block with light glyphs) and the
+//     phosphor greens deepened toward the light theme's lab-green
+//     family; a pale mark would vanish on paper, and the flipped mark
+//     keeps the brand hue while reading like Bit's own charcoal+green.
+// The app-store/PWA icons above keep their opaque background on
+// purpose (maskable-icon rules); only the in-UI pair is transparent.
+
+// Background removal: BFS flood fill from the four corners across
+// dark, unsaturated pixels. Interior dark strokes (#%@ glyphs, the
+// eye) are enclosed by the bubble/body and stay untouched; the gaps
+// between fire droplets connect to the outer field and clear as they
+// should. Antialiased boundary pixels blend toward the body's own
+// colors and fall outside the fill criterion — at the 28px display
+// size the surviving 1px blend reads as a soft outline, not a halo.
+function removeBackground(px, width, height) {
+  const isBg = (i) => {
+    if (px[i + 3] === 0) return false; // already cleared
+    const [, s, l] = rgbToHsl(px[i], px[i + 1], px[i + 2]);
+    return s < 0.35 && l < 0.17;
+  };
+  const queue = [];
+  const seen = new Uint8Array(width * height);
+  const push = (x, y) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    const p = y * width + x;
+    if (seen[p]) return;
+    seen[p] = 1;
+    if (isBg(p * 4)) queue.push(p);
+  };
+  push(0, 0); push(width - 1, 0); push(0, height - 1); push(width - 1, height - 1);
+  while (queue.length) {
+    const p = queue.pop();
+    px[p * 4 + 3] = 0;
+    const x = p % width, y = (p / width) | 0;
+    push(x + 1, y); push(x - 1, y); push(x, y + 1); push(x, y - 1);
+  }
+}
+
+const uiDark = Buffer.from(data);
+removeBackground(uiDark, info.width, info.height);
+
+const uiLight = Buffer.from(uiDark);
+for (let i = 0; i < uiLight.length; i += 4) {
+  if (uiLight[i + 3] === 0) continue;
+  const [h, s, l] = rgbToHsl(uiLight[i], uiLight[i + 1], uiLight[i + 2]);
+  let out = null;
+  if (h >= 120 && h <= 170 && s > 0.3) {
+    // phosphor greens -> deep green, shading order preserved (plain
+    // scale, not inversion — inverting would turn the bright flame
+    // core into the darkest region and hollow the fire out)
+    out = hslToRgb(PHOS_HUE, Math.min(1, s * 1.05), Math.min(0.36, l * 0.42));
+  } else if (s < 0.3) {
+    // neutrals -> luminance-inverted into the light theme's ink-on-
+    // paper weight band: white bubble ~0.96 -> ~0.11 (the fg #191919
+    // family), silver body -> charcoal, dark glyph strokes -> pale
+    out = hslToRgb(0, 0, 0.08 + (1 - l) * 0.78);
+  }
+  if (out) { uiLight[i] = out[0]; uiLight[i + 1] = out[1]; uiLight[i + 2] = out[2]; }
+}
+
+for (const [buf, out] of [
+  [uiDark, "public/icon-ui-dark.png"],
+  [uiLight, "public/icon-ui-light.png"],
+]) {
+  await sharp(buf, { raw: { width: info.width, height: info.height, channels: 4 } })
+    .resize(192, 192)
+    .png()
+    .toFile(join(ROOT, out));
+  console.log("wrote", out, 192);
+}

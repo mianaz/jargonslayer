@@ -226,7 +226,7 @@ function SpeakerRenamePopover({
         <button
           type="button"
           onClick={handleConfirm}
-          className="btn-terminal rounded-sm bg-act px-3 py-1.5 text-xs font-medium text-ink hover:bg-[#E8E8E8]"
+          className="btn-terminal rounded-sm bg-act px-3 py-1.5 text-xs font-medium text-ink hover:bg-act/85"
         >
           确定
         </button>
@@ -287,7 +287,7 @@ function SegmentEditTextarea({
         <button
           type="button"
           onClick={onSave}
-          className="btn-terminal rounded-sm bg-act px-3 py-1 text-xs font-medium text-ink hover:bg-[#E8E8E8]"
+          className="btn-terminal rounded-sm bg-act px-3 py-1 text-xs font-medium text-ink hover:bg-act/85"
         >
           保存
         </button>

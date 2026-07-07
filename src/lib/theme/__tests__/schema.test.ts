@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { HEX_COLOR_RE, parseTheme, THEME_TOKEN_KEYS } from "../schema";
-import { CLARITY_THEME, TERMINAL_THEME } from "../themes";
+import { CLARITY_THEME, TERMINAL_LIGHT_THEME, TERMINAL_THEME } from "../themes";
 
 // Baseline: a fully-valid theme built from every required token, so
 // individual malicious-input tests below can start from a known-good
@@ -45,64 +45,89 @@ describe("parseTheme", () => {
     const result = parseTheme({
       id: "custom",
       label: "自定义",
+      scheme: "dark",
       tokens: validThemeTokens(),
     });
     expect(result.ok).toBe(true);
   });
 
-  it("accepts the two built-in themes", () => {
+  it("accepts every built-in theme", () => {
     expect(parseTheme(TERMINAL_THEME).ok).toBe(true);
+    expect(parseTheme(TERMINAL_LIGHT_THEME).ok).toBe(true);
     expect(parseTheme(CLARITY_THEME).ok).toBe(true);
+  });
+
+  // v0.2.4: `scheme` is a required structural field — an external
+  // theme that omits it would silently inherit the wrong UA chrome
+  // (color-scheme) and header-icon rendition, so absence is a hard
+  // reject rather than a defaulted "dark".
+  it("rejects a theme without a scheme", () => {
+    const result = parseTheme({
+      id: "custom",
+      label: "自定义",
+      tokens: validThemeTokens(),
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects a scheme outside dark|light", () => {
+    const result = parseTheme({
+      id: "custom",
+      label: "自定义",
+      scheme: "sepia",
+      tokens: validThemeTokens(),
+    });
+    expect(result.ok).toBe(false);
   });
 
   it("rejects a token with a CSS injection payload", () => {
     const tokens = validThemeTokens();
     tokens.fg = "#fff;background:url(//evil)";
-    const result = parseTheme({ id: "evil", label: "evil", tokens });
+    const result = parseTheme({ id: "evil", label: "evil", scheme: "dark", tokens });
     expect(result.ok).toBe(false);
   });
 
   it("rejects a token using url()", () => {
     const tokens = validThemeTokens();
     tokens.ink = "url(x)";
-    const result = parseTheme({ id: "evil", label: "evil", tokens });
+    const result = parseTheme({ id: "evil", label: "evil", scheme: "dark", tokens });
     expect(result.ok).toBe(false);
   });
 
   it("rejects a token using expression()", () => {
     const tokens = validThemeTokens();
     tokens.panel = "expression(alert(document.cookie))";
-    const result = parseTheme({ id: "evil", label: "evil", tokens });
+    const result = parseTheme({ id: "evil", label: "evil", scheme: "dark", tokens });
     expect(result.ok).toBe(false);
   });
 
   it("rejects a token using rgb()/hsl() (any non-hex CSS color form)", () => {
     const rgbTokens = validThemeTokens();
     rgbTokens.mut = "rgb(154, 154, 154)";
-    expect(parseTheme({ id: "x", label: "x", tokens: rgbTokens }).ok).toBe(false);
+    expect(parseTheme({ id: "x", label: "x", scheme: "dark", tokens: rgbTokens }).ok).toBe(false);
 
     const hslTokens = validThemeTokens();
     hslTokens.mut = "hsl(0, 0%, 60%)";
-    expect(parseTheme({ id: "x", label: "x", tokens: hslTokens }).ok).toBe(false);
+    expect(parseTheme({ id: "x", label: "x", scheme: "dark", tokens: hslTokens }).ok).toBe(false);
   });
 
   it("rejects an empty-string token", () => {
     const tokens = validThemeTokens();
     tokens.act = "";
-    const result = parseTheme({ id: "x", label: "x", tokens });
+    const result = parseTheme({ id: "x", label: "x", scheme: "dark", tokens });
     expect(result.ok).toBe(false);
   });
 
   it("rejects a theme missing a required token", () => {
     const tokens = validThemeTokens();
     delete tokens["lab-cyan"];
-    const result = parseTheme({ id: "x", label: "x", tokens });
+    const result = parseTheme({ id: "x", label: "x", scheme: "dark", tokens });
     expect(result.ok).toBe(false);
   });
 
   it("rejects a theme missing id/label", () => {
-    expect(parseTheme({ label: "x", tokens: validThemeTokens() }).ok).toBe(false);
-    expect(parseTheme({ id: "x", tokens: validThemeTokens() }).ok).toBe(false);
+    expect(parseTheme({ label: "x", scheme: "dark", tokens: validThemeTokens() }).ok).toBe(false);
+    expect(parseTheme({ id: "x", scheme: "dark", tokens: validThemeTokens() }).ok).toBe(false);
   });
 
   it("rejects non-object input (null, array, string, number)", () => {
@@ -116,17 +141,17 @@ describe("parseTheme", () => {
   it("rejects a token carrying a data: URI", () => {
     const tokens = validThemeTokens();
     tokens.edge2 = "data:text/html,<script>alert(1)</script>";
-    const result = parseTheme({ id: "x", label: "x", tokens });
+    const result = parseTheme({ id: "x", label: "x", scheme: "dark", tokens });
     expect(result.ok).toBe(false);
   });
 
   it("rejects a token using the 4- or 8-digit alpha hex form (v0.2.1: alpha belongs to Tailwind's utility-class modifier, not the token value — see schema.ts's HEX_COLOR_RE comment)", () => {
     const shortAlpha = validThemeTokens();
     shortAlpha.fg = "#ffff";
-    expect(parseTheme({ id: "x", label: "x", tokens: shortAlpha }).ok).toBe(false);
+    expect(parseTheme({ id: "x", label: "x", scheme: "dark", tokens: shortAlpha }).ok).toBe(false);
 
     const longAlpha = validThemeTokens();
     longAlpha.fg = "#ffffffff";
-    expect(parseTheme({ id: "x", label: "x", tokens: longAlpha }).ok).toBe(false);
+    expect(parseTheme({ id: "x", label: "x", scheme: "dark", tokens: longAlpha }).ok).toBe(false);
   });
 });

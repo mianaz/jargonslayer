@@ -387,7 +387,22 @@ export default function Header({
     // row below is now the whole header. docs/DESIGN.md updated.)
     <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel px-4">
         <div className="flex items-center gap-2 whitespace-nowrap">
-          <img src={withBase("/icon-192.png")} alt="" className="h-7 w-7" />
+          {/* Scheme-aware brand mark (v0.2.4): transparent-background
+              renditions per scheme — the old opaque icon-192 left a
+              baked ink-dark square floating on light themes. Both are
+              rendered and CSS picks one via <html data-scheme> (the
+              .scheme-*-only rules in globals.css), so the right
+              variant shows from the first paint with zero JS. */}
+          <img
+            src={withBase("/icon-ui-dark.png")}
+            alt=""
+            className="scheme-dark-only h-7 w-7"
+          />
+          <img
+            src={withBase("/icon-ui-light.png")}
+            alt=""
+            className="scheme-light-only h-7 w-7"
+          />
           {/* wordmark hidden <sm (#55): the phone-width row needs the
               space for the engine select + start button; the icon (now
               Bit himself) carries the brand there. */}
@@ -414,7 +429,7 @@ export default function Header({
               type="button"
               data-testid="btn-start"
               onClick={onStart}
-              className="btn-terminal h-9 rounded-none bg-act px-4 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8] whitespace-nowrap"
+              className="btn-terminal h-9 rounded-none bg-act px-4 font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap"
             >
               开始监听
             </button>

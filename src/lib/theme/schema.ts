@@ -86,15 +86,26 @@ const ThemeTokensSchema = z.object({
   "warn-soft": HexColor,
 }) satisfies z.ZodType<ThemeTokens>;
 
+// A theme's overall lightness family. Drives `data-scheme` on <html>
+// (CSS `color-scheme` for UA form controls/scrollbars + the scheme-
+// aware in-UI icon swap — see globals.css) — orthogonal to the token
+// values themselves, which is why it's a structural field beside
+// `label`, not an 18th color token. Required (no default): an external
+// theme that forgot to declare it would silently get dark-scheme
+// chrome around light colors.
+export type ThemeScheme = "dark" | "light";
+
 export interface ThemeDefinition {
   id: string;
   label: string; // zh display name for the settings picker
+  scheme: ThemeScheme;
   tokens: ThemeTokens;
 }
 
 export const ThemeSchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
+  scheme: z.enum(["dark", "light"]),
   tokens: ThemeTokensSchema,
 }) satisfies z.ZodType<ThemeDefinition>;
 

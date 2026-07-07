@@ -170,7 +170,7 @@ function GenerateCta() {
         type="button"
         data-testid="btn-generate-summary"
         onClick={() => void handleGenerate()}
-        className="btn-terminal h-10 rounded-none bg-act px-5 font-mono text-sm font-semibold text-ink hover:bg-[#E8E8E8]"
+        className="btn-terminal h-10 rounded-none bg-act px-5 font-mono text-sm font-semibold text-ink hover:bg-act/85"
       >
         生成会议报告
       </button>

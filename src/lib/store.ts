@@ -388,7 +388,7 @@ export const useApp = create<AppState>((set, get) => ({
     // different browser) and mirroring it forward for next time.
     writeDisplayMirror({ themeId: settings.themeId, fontSize: settings.fontSize });
     const theme = getBuiltinTheme(settings.themeId);
-    if (theme) activateTheme(theme.id, theme.tokens);
+    if (theme) activateTheme(theme.id, theme.tokens, theme.scheme);
     if (typeof document !== "undefined") {
       document.documentElement.dataset.fs = settings.fontSize;
     }
@@ -456,7 +456,7 @@ export const useApp = create<AppState>((set, get) => ({
     }
     if ("themeId" in patch) {
       const theme = getBuiltinTheme(settings.themeId);
-      if (theme) activateTheme(theme.id, theme.tokens);
+      if (theme) activateTheme(theme.id, theme.tokens, theme.scheme);
     }
     if ("fontSize" in patch && typeof document !== "undefined") {
       document.documentElement.dataset.fs = settings.fontSize;

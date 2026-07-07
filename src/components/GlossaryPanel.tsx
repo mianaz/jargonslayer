@@ -140,7 +140,7 @@ function EntryForm({
           type="button"
           onClick={onSave}
           disabled={!draft.chinese_explanation.trim()}
-          className="btn-terminal rounded-none bg-act px-3 py-1.5 text-xs font-mono font-semibold text-ink hover:bg-[#E8E8E8] disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-terminal rounded-none bg-act px-3 py-1.5 text-xs font-mono font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
         >
           保存
         </button>

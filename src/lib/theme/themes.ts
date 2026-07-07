@@ -21,6 +21,7 @@ import type { ThemeDefinition } from "./schema";
 export const TERMINAL_THEME: ThemeDefinition = {
   id: "terminal",
   label: "终端（默认）",
+  scheme: "dark",
   tokens: {
     ink: "#0a0a0a",
     panel: "#121212",
@@ -56,6 +57,7 @@ export const TERMINAL_THEME: ThemeDefinition = {
 export const CLARITY_THEME: ThemeDefinition = {
   id: "clarity",
   label: "清晰（高对比深色）",
+  scheme: "dark",
   tokens: {
     ink: "#0a0a0a",
     panel: "#141414",
@@ -80,8 +82,50 @@ export const CLARITY_THEME: ThemeDefinition = {
   },
 };
 
+// Light counterpart of the terminal default (v0.2.4 "light mode"):
+// the same neutral-ladder grammar mirrored onto warm paper. Every
+// value was tuned programmatically against WCAG before landing here —
+// see themes.test.ts's contrast suite, which now enforces the same
+// bars on every builtin: fg/mut/mut2 and ALL lab-* + warn-soft >=4.5:1
+// against every panel level (panel3, the darkest light surface, is the
+// binding constraint that forced the lab-* hues this dark), edge2 and
+// the lab-cyan focus ring >=3:1 (WCAG 1.4.11), and the chip pairings
+// (`text-ink` on bg-act / bg-lab-green / bg-mut, StatusLine.tsx) >=
+// 4.5:1. lab-* stay the SAME HUE FAMILIES as terminal (red/amber/
+// gold/green/purple/cyan label contract) but drop to their AA-dark
+// cousins — the bright phosphor originals sit at ~1.3-2.5:1 on paper
+// and are unusable as text. `act` inverts to near-black (white is the
+// dark themes' sanctioned large-area accent; its mirror here is ink-
+// black), which is why primary buttons must never hardcode a hover
+// hex — they use `hover:bg-act/85` (see the v0.2.4 sweep).
+export const TERMINAL_LIGHT_THEME: ThemeDefinition = {
+  id: "terminal-light",
+  label: "终端（浅色）",
+  scheme: "light",
+  tokens: {
+    ink: "#f2f0eb",
+    panel: "#faf9f6",
+    panel2: "#efede8",
+    panel3: "#e7e4dd",
+    edge: "#d6d3ca",
+    edge2: "#8e8a7f",
+    fg: "#191919",
+    mut: "#45443f",
+    mut2: "#63615a",
+    "lab-red": "#b0302a",
+    "lab-orange": "#964b00",
+    "lab-yellow": "#7c6200",
+    "lab-green": "#137038",
+    "lab-purple": "#8440cf",
+    "lab-cyan": "#076d82",
+    act: "#191919",
+    "warn-soft": "#b23a30",
+  },
+};
+
 export const BUILTIN_THEMES: readonly ThemeDefinition[] = [
   TERMINAL_THEME,
+  TERMINAL_LIGHT_THEME,
   CLARITY_THEME,
 ];
 

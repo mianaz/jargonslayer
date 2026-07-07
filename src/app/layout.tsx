@@ -43,9 +43,7 @@ export const viewport: Viewport = {
 // setProperty calls, not worth a dependency). Built at module scope
 // (not per-request) since BUILTIN_THEMES is a static compile-time
 // registry.
-const foucScript = buildFoucScript(
-  Object.fromEntries(BUILTIN_THEMES.map((t) => [t.id, t.tokens])),
-);
+const foucScript = buildFoucScript(BUILTIN_THEMES);
 
 export default function RootLayout({
   children,
@@ -59,6 +57,7 @@ export default function RootLayout({
     <html
       lang="zh-CN"
       data-theme="terminal"
+      data-scheme="dark"
       className={jetbrainsMono.variable}
       suppressHydrationWarning
     >

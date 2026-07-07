@@ -70,6 +70,28 @@
   --bl: 8px; /* baseline unit (v2.1 grid discipline, still honored) */
 }
 
+/* Scheme plumbing (v0.2.4 light mode): `data-scheme` is stamped on
+   <html> by apply.ts / the FOUC script from the active theme's
+   `scheme` field (schema.ts). `color-scheme` hands the scheme to the
+   UA so native form controls, overlay scrollbars, and the selection
+   color match the theme instead of staying dark. The .scheme-*-only
+   helpers drive asset swaps (Header's in-UI icon has a light and a
+   dark rendition) purely in CSS, so the correct variant shows from
+   the very first paint — no JS involved, no hydration flash. */
+:root,
+[data-scheme="dark"] {
+  color-scheme: dark;
+}
+[data-scheme="light"] {
+  color-scheme: light;
+}
+[data-scheme="light"] .scheme-dark-only {
+  display: none;
+}
+:root:not([data-scheme="light"]) .scheme-light-only {
+  display: none;
+}
+
 html,
 body {
   height: 100%;
@@ -192,20 +214,22 @@ html[data-fs="xl"] {
    expression-highlight-underline token). */
 .hl-expr {
   @apply rounded px-0.5 text-lab-orange underline decoration-lab-orange/70 decoration-dotted underline-offset-4 cursor-pointer;
-  background: rgba(255, 170, 68, 0.08);
+  /* token-driven tint (was a hardcoded rgba of terminal's #FFAA44 —
+     a light theme's darker lab-orange must tint with ITS OWN hue) */
+  background: rgb(var(--lab-orange-rgb) / 0.08);
 }
 .hl-expr:hover {
-  background: rgba(255, 170, 68, 0.18);
+  background: rgb(var(--lab-orange-rgb) / 0.18);
 }
 
 /* highlighted term inside transcript — lab-cyan is the reserved
    term-highlight-underline token (tailwind.config.ts / DESIGN.md). */
 .hl-term {
   @apply rounded px-0.5 text-lab-cyan underline decoration-lab-cyan/70 decoration-dotted underline-offset-4 cursor-pointer;
-  background: rgba(34, 211, 238, 0.08);
+  background: rgb(var(--lab-cyan-rgb) / 0.08);
 }
 .hl-term:hover {
-  background: rgba(34, 211, 238, 0.18);
+  background: rgb(var(--lab-cyan-rgb) / 0.18);
 }
 
 /* keyboard focus baseline — every interactive element gets a visible ring */
@@ -288,7 +312,7 @@ html[data-fs="xl"] {
      diff-flash(绿→灰 0.8s)"). */
   @keyframes diffFlash {
     0% {
-      background: rgba(74, 222, 128, 0.14);
+      background: rgb(var(--lab-green-rgb) / 0.14);
       border-left-color: var(--lab-green);
     }
     100% {

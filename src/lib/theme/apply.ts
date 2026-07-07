@@ -25,7 +25,7 @@
 // `--bl` is deliberately never touched here (see schema.ts) — it stays
 // pinned to the CSS-authored value.
 
-import { THEME_TOKEN_KEYS, type ThemeTokens } from "./schema";
+import { THEME_TOKEN_KEYS, type ThemeScheme, type ThemeTokens } from "./schema";
 
 const CSS_VAR_PREFIX = "--";
 
@@ -68,7 +68,7 @@ export function hexToRgbTriplet(hex: string): string {
  *  ThemeDefinition) so callers that already have a validated
  *  ThemeTokens map — e.g. the FOUC inline script's own copy — don't
  *  need to reconstruct one. No-ops outside a browser (SSR safety). */
-export function applyTheme(themeId: string, tokens: ThemeTokens): void {
+export function applyTheme(themeId: string, tokens: ThemeTokens, scheme: ThemeScheme): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   for (const key of THEME_TOKEN_KEYS) {
@@ -77,6 +77,20 @@ export function applyTheme(themeId: string, tokens: ThemeTokens): void {
     root.style.setProperty(rgbVarName(key), hexToRgbTriplet(value));
   }
   root.dataset.theme = themeId;
+  root.dataset.scheme = scheme;
+  syncThemeColorMeta(tokens.ink);
+}
+
+/** Keep the mobile browser-chrome color (<meta name="theme-color">,
+ *  emitted by layout.tsx's viewport export) in step with the active
+ *  theme's page background — without this, a light theme renders under
+ *  a stranded dark address bar on mobile. setAttribute with a schema-
+ *  validated hex only (never interpolated into markup); silently a
+ *  no-op if the tag is absent. */
+function syncThemeColorMeta(ink: string): void {
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", ink);
 }
 
 /** Revert to the terminal default: remove every inline token override
@@ -93,16 +107,25 @@ export function resetToDefaultTheme(): void {
     root.style.removeProperty(rgbVarName(key));
   }
   root.dataset.theme = "terminal";
+  root.dataset.scheme = "dark";
+  // Terminal's ink is CSS-authored in globals.css, never injected —
+  // mirror that one value here (same 1:1 posture as themes.ts's
+  // TERMINAL_THEME declaration) so the meta tag can follow the reset.
+  syncThemeColorMeta("#0a0a0a");
 }
 
 /** Convenience dispatcher: applying "terminal" always goes through
  *  resetToDefaultTheme() (clears any prior overrides rather than
  *  re-injecting values CSS already provides); any other theme id goes
- *  through applyTheme() with its tokens. */
-export function activateTheme(themeId: string, tokens: ThemeTokens): void {
+ *  through applyTheme() with its tokens + scheme. */
+export function activateTheme(
+  themeId: string,
+  tokens: ThemeTokens,
+  scheme: ThemeScheme,
+): void {
   if (themeId === "terminal") {
     resetToDefaultTheme();
     return;
   }
-  applyTheme(themeId, tokens);
+  applyTheme(themeId, tokens, scheme);
 }

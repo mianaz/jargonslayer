@@ -14,6 +14,7 @@
 // back to the built-in default rather than crashing the app.
 
 import { hexToRgbTriplet } from "./apply";
+import type { ThemeDefinition } from "./schema";
 
 const DISPLAY_STORAGE_KEY = "js-display";
 
@@ -76,6 +77,7 @@ export function writeDisplayMirror(mirror: DisplayMirror): void {
 interface FoucThemePayload {
   hex: Record<string, string>;
   rgb: Record<string, string>;
+  scheme: ThemeDefinition["scheme"];
 }
 
 /** Source string for the inline pre-hydration <script> in layout.tsx.
@@ -84,18 +86,28 @@ interface FoucThemePayload {
  *  see layout.tsx for how this is embedded via dangerouslySetInnerHTML.
  *  Re-implements the same read-key/parse/try-catch logic as
  *  readDisplayMirror() above (can't import a TS module into a raw
- *  inline script) and additionally embeds the two built-in themes'
- *  token maps (hex + pre-derived rgb triplets, see FoucThemePayload)
- *  inline so it can call setProperty before paint without waiting for
- *  the app bundle. */
-export function buildFoucScript(themeTokensById: Record<string, Record<string, string>>): string {
+ *  inline script) and additionally embeds every built-in theme's
+ *  token map (hex + pre-derived rgb triplets + scheme, see
+ *  FoucThemePayload) inline so it can call setProperty and stamp
+ *  data-theme/data-scheme before paint without waiting for the app
+ *  bundle. */
+export function buildFoucScript(
+  // Structurally just id + scheme + a token map (not Pick<ThemeDefinition>,
+  // whose `tokens` would demand every key): the builder iterates whatever
+  // tokens it's handed, which also keeps tests free to pass minimal maps.
+  themes: ReadonlyArray<{
+    id: string;
+    scheme: ThemeDefinition["scheme"];
+    tokens: Record<string, string>;
+  }>,
+): string {
   const payload: Record<string, FoucThemePayload> = {};
-  for (const [themeId, tokens] of Object.entries(themeTokensById)) {
+  for (const { id, scheme, tokens } of themes) {
     const rgb: Record<string, string> = {};
     for (const [key, hex] of Object.entries(tokens)) {
       rgb[key] = hexToRgbTriplet(hex);
     }
-    payload[themeId] = { hex: tokens, rgb };
+    payload[id] = { hex: tokens, rgb, scheme };
   }
   const themesJson = JSON.stringify(payload);
   return `(function(){try{
@@ -116,8 +128,10 @@ export function buildFoucScript(themeTokensById: Record<string, Record<string, s
         }
       }
       root.dataset.theme = themeId;
+      root.dataset.scheme = theme.scheme === "light" ? "light" : "dark";
     } else {
       root.dataset.theme = "terminal";
+      root.dataset.scheme = "dark";
     }
   }catch(e){}})();`;
 }

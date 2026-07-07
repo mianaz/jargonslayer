@@ -96,7 +96,7 @@ describe("readDisplayMirror — fallback safety", () => {
 
 describe("buildFoucScript", () => {
   it("embeds the given theme token maps as inline JSON, hex AND pre-derived rgb", () => {
-    const script = buildFoucScript({ clarity: { fg: "#ffffff" } });
+    const script = buildFoucScript([{ id: "clarity", scheme: "dark", tokens: { fg: "#ffffff" } }]);
     expect(script).toContain('"clarity"');
     expect(script).toContain('"#ffffff"');
     // v0.2.1: the rgb triplet must be pre-computed into the embedded
@@ -107,7 +107,7 @@ describe("buildFoucScript", () => {
 
   it("produces a script that reads the mirror and sets data-fs / data-theme without throwing", () => {
     writeDisplayMirror({ themeId: "clarity", fontSize: "lg" });
-    const script = buildFoucScript({ clarity: { ink: "#0a0a0a", fg: "#ffffff" } });
+    const script = buildFoucScript([{ id: "clarity", scheme: "dark", tokens: { ink: "#0a0a0a", fg: "#ffffff" } }]);
 
     // eslint-disable-next-line no-new-func -- exercising the exact
     // script string that gets embedded via dangerouslySetInnerHTML in
@@ -116,7 +116,21 @@ describe("buildFoucScript", () => {
 
     expect(document.documentElement.dataset.fs).toBe("lg");
     expect(document.documentElement.dataset.theme).toBe("clarity");
+    expect(document.documentElement.dataset.scheme).toBe("dark");
     expect(document.documentElement.style.getPropertyValue("--fg")).toBe("#ffffff");
+  });
+
+  // v0.2.4 light mode: the scheme must be stamped pre-paint too — it
+  // gates CSS `color-scheme` and the scheme-aware header icon, so a
+  // light-theme user would otherwise flash dark UA chrome + the dark
+  // icon rendition on every load.
+  it("stamps data-scheme from the mirrored theme's scheme before paint", () => {
+    writeDisplayMirror({ themeId: "terminal-light", fontSize: "md" });
+    const script = buildFoucScript([
+      { id: "terminal-light", scheme: "light", tokens: { fg: "#191919" } },
+    ]);
+    new Function(script)();
+    expect(document.documentElement.dataset.scheme).toBe("light");
   });
 
   // v0.2.1 ship-blocking fix: the FOUC script must ALSO set the "-rgb"
@@ -128,18 +142,22 @@ describe("buildFoucScript", () => {
   // the previous Playwright verification missed).
   it("ALSO sets the -rgb triplet variable for every token, derived at build time", () => {
     writeDisplayMirror({ themeId: "clarity", fontSize: "md" });
-    const script = buildFoucScript({ clarity: { ink: "#0a0a0a", fg: "#ffffff" } });
+    const script = buildFoucScript([{ id: "clarity", scheme: "dark", tokens: { ink: "#0a0a0a", fg: "#ffffff" } }]);
     new Function(script)();
 
     expect(document.documentElement.style.getPropertyValue("--ink-rgb")).toBe("10 10 10");
     expect(document.documentElement.style.getPropertyValue("--fg-rgb")).toBe("255 255 255");
   });
 
-  it("falls back to terminal/md when localStorage has nothing", () => {
-    const script = buildFoucScript({ clarity: { fg: "#ffffff" } });
+  it("falls back to terminal/md/dark when localStorage has nothing", () => {
+    // Poison dataset.scheme first: the fallback branch must actively
+    // stamp "dark", not just leave whatever a previous load set.
+    document.documentElement.dataset.scheme = "light";
+    const script = buildFoucScript([{ id: "clarity", scheme: "dark", tokens: { fg: "#ffffff" } }]);
     new Function(script)();
     expect(document.documentElement.dataset.fs).toBe("md");
     expect(document.documentElement.dataset.theme).toBe("terminal");
+    expect(document.documentElement.dataset.scheme).toBe("dark");
   });
 
   it("never throws even if localStorage access fails inside the script", () => {
@@ -148,7 +166,7 @@ describe("buildFoucScript", () => {
       throw new Error("blocked");
     };
     try {
-      const script = buildFoucScript({ clarity: { fg: "#ffffff" } });
+      const script = buildFoucScript([{ id: "clarity", scheme: "dark", tokens: { fg: "#ffffff" } }]);
       expect(() => new Function(script)()).not.toThrow();
     } finally {
       window.localStorage.getItem = original;
