@@ -72,8 +72,10 @@ function DetectModeBadge() {
         : { label: "检测关闭", cls: "text-mut border-edge", Icon: null };
 
   return (
+    // hidden <md (#55): the bottom StatusLine shows the same mode text,
+    // and the mobile header row needs the width for the engine select.
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs ${config.cls}`}
+      className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs md:inline-flex ${config.cls}`}
     >
       {detectBusy && (
         <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent whitespace-nowrap" />
@@ -129,6 +131,44 @@ function EnginePillGroup() {
         </button>
       ))}
     </div>
+  );
+}
+
+// #55: below md the pill group above is hidden — without this select,
+// mobile had NO way to pick a realtime engine at all (Settings has no
+// engine field either), so the default demo engine stuck and 开始监听
+// could only ever replay the demo script. A native <select> keeps the
+// row narrow enough for 375px. While the engine is still the default
+// "demo" it shows a disabled 选择引擎 placeholder — demo isn't a pill
+// on desktop either (it lives in the ≡ menu as 演示).
+function MobileEngineSelect() {
+  const engine = useApp((s) => s.settings.engine);
+  const status = useApp((s) => s.status);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const disabled = status === "connecting" || status === "listening";
+
+  return (
+    <select
+      aria-label="转录引擎"
+      disabled={disabled}
+      value={engine === "demo" || engine === "import" ? "" : engine}
+      onChange={(e) => {
+        const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
+        if (v) updateSettings({ engine: v });
+      }}
+      className="h-8 max-w-[8.5rem] rounded border border-edge bg-panel2 px-1.5 font-mono text-xs text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
+    >
+      {(engine === "demo" || engine === "import") && (
+        <option value="" disabled>
+          选择引擎
+        </option>
+      )}
+      {ENGINE_OPTIONS.map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </select>
   );
 }
 
@@ -337,7 +377,10 @@ export default function Header({
       <div className="flex h-14 items-center gap-3 px-4">
         <div className="flex items-center gap-2 whitespace-nowrap">
           <img src={withBase("/icon-192.png")} alt="" className="h-7 w-7" />
-          <div className="flex flex-col leading-tight">
+          {/* wordmark hidden <sm (#55): the terminal title bar above
+              already reads "jargonslayer", and the phone-width row
+              needs the space for the engine select + start button. */}
+          <div className="hidden flex-col leading-tight sm:flex">
             <span className="font-mono font-bold tracking-wide text-fg">
               JargonSlayer
             </span>
@@ -348,6 +391,7 @@ export default function Header({
         </div>
 
         <EnginePillGroup />
+        <MobileEngineSelect />
         <EnginePostureChip />
 
         <div className="ml-auto flex items-center gap-2">
