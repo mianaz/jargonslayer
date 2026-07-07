@@ -26,6 +26,7 @@ import {
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import type { ExplainLanguage, LlmProvider, STTEngineKind, Settings } from "@/lib/types";
 import { withBase } from "@/lib/basePath";
+import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
 import {
   buildAuthUrl,
@@ -237,6 +238,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [addingPackSource, setAddingPackSource] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
   const [confirmRemoveUrl, setConfirmRemoveUrl] = useState<string | null>(null);
+  // 订阅直连（实验性，v0.2.2）: kill-switch layer 2 — this whole section
+  // renders nothing when the build didn't set
+  // NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT (see SUBSCRIPTION_DIRECT_
+  // BUILT), so the experience-tier build never shows it at all, not
+  // even disabled.
+  const [agentHealthState, setAgentHealthState] = useState<AgentHealth | null>(null);
+  const [checkingAgentHealth, setCheckingAgentHealth] = useState(false);
 
   // App-mount-once (not open-gated): SettingsDialog is always mounted
   // by page.tsx, so this applies the persisted pack selection to the
@@ -272,6 +280,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       void listAudioInputs().then(setMics);
       void getExportFolderName().then(setExportFolderName);
       void listPackSources().then(setPackSources);
+      // 订阅直连（实验性）: kill-switch layer 2 — never even probes when
+      // this build didn't set NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT
+      // (the section itself doesn't render either — see below). Reads
+      // process.env.NEXT_PUBLIC_X directly rather than the
+      // SUBSCRIPTION_DIRECT_BUILT const re-exported from localHost.ts
+      // — verified empirically 2026-07-06 that webpack's getter-based
+      // re-export for a cross-module const defeats Terser's ability
+      // to constant-fold the USAGE site (even though the const's own
+      // definition correctly folds to a literal `false`), leaving this
+      // branch — and more importantly the JSX section below — reachable
+      // in an unflagged `npm run build` despite always evaluating to
+      // false at runtime. A direct inline reference has no such
+      // cross-module indirection and reliably eliminates both.
+      if (process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1") {
+        void agentHealth(settings).then(setAgentHealthState);
+      }
     }
     // Only reset the draft when the dialog is (re)opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -422,6 +446,24 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }
     } finally {
       setCheckingDiarization(false);
+    }
+  };
+
+  // 订阅直连（实验性）: probes GET /agent/health, mirroring
+  // handleCheckDiarizationStatus's "no toast on open, explicit button
+  // for a manual re-check" UX — but ALSO run once automatically when
+  // the dialog opens (see the useEffect above) so the status dot
+  // reflects reality without the user having to click anything first,
+  // same as how the diarization section itself doesn't auto-probe but
+  // this newer section's state-machine design (Q6) calls for an
+  // upfront read.
+  const handleCheckAgentHealth = async () => {
+    setCheckingAgentHealth(true);
+    try {
+      const health = await agentHealth(draft);
+      setAgentHealthState(health);
+    } finally {
+      setCheckingAgentHealth(false);
     }
   };
 
@@ -1041,6 +1083,154 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
           </section>
+
+          {/* 订阅直连（实验性，v0.2.2）— kill-switch layer 2: this whole
+             section (markup, state, calls) is compiled out of the
+             bundle entirely when NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT
+             is unset (verified via `npm run build` — see task report),
+             not merely hidden by a runtime check. It is DELIBERATELY
+             its own independent block, NOT a PROVIDER_PRESETS entry —
+             it doesn't route through Next's provider/baseUrl header
+             model at all (a separate local sidecar port instead), and
+             folding it into that dropdown would blur resolveLlmConfig's
+             BYOK-vs-shared-key architecture (see anthropic.ts's own
+             comment on that boundary). */}
+          {process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" && (
+            <section className="space-y-3 border-t border-edge pt-5">
+              <SectionHeading>订阅直连（实验性）</SectionHeading>
+              <div className="text-xs leading-[1.7] text-mut2">
+                用你自己机器上已登录的 Claude / ChatGPT，通过本机 sidecar 直接调用
+                ——凭据不经过任何服务器，仅 detect / define 两个场景生效；依官方政策可能变化，随时可关闭。
+              </div>
+
+              <label className="flex items-center justify-between gap-3 py-1">
+                <span className="text-sm text-fg">启用订阅直连（仅 detect/define，本地档）</span>
+                <input
+                  type="checkbox"
+                  checked={draft.subscriptionDirect}
+                  onChange={(e) => patch({ subscriptionDirect: e.target.checked })}
+                  className="h-4 w-4 accent-act"
+                />
+              </label>
+
+              {draft.subscriptionDirect && (
+                <>
+                  <div className="flex items-center justify-between gap-3 rounded-sm border border-edge bg-panel2 px-3 py-2">
+                    <div className="text-sm text-fg">
+                      宿主状态：
+                      {agentHealthState ? (
+                        <span className="text-lab-green">● 已连接（{draft.agentUrl}）</span>
+                      ) : (
+                        <span className="text-mut2">○ 未检测到</span>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleCheckAgentHealth()}
+                      disabled={checkingAgentHealth}
+                      className="btn-tactile shrink-0 rounded-sm border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {checkingAgentHealth ? "检测中…" : "重新检测"}
+                    </button>
+                  </div>
+
+                  {!agentHealthState && (
+                    <div className="text-xs leading-[1.7] text-mut2">
+                      未检测到宿主，请先启动 sidecar（
+                      <code className="rounded-sm bg-panel2 px-1 font-mono">
+                        python -m sidecar.agent_server --port 8767
+                      </code>
+                      ），详见 README「订阅直连」章节
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="text-xs text-mut">宿主地址</label>
+                    <input
+                      type="text"
+                      value={draft.agentUrl}
+                      onChange={(e) => patch({ agentUrl: e.target.value })}
+                      placeholder="http://127.0.0.1:8767"
+                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-mut">Provider</label>
+                    <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => patch({ subscriptionProvider: "claude-sub" })}
+                        className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                          draft.subscriptionProvider === "claude-sub"
+                            ? "bg-panel3 text-fg"
+                            : "text-mut hover:text-fg"
+                        }`}
+                      >
+                        Claude 订阅
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => patch({ subscriptionProvider: "chatgpt-sub" })}
+                        className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                          draft.subscriptionProvider === "chatgpt-sub"
+                            ? "bg-panel3 text-fg"
+                            : "text-mut hover:text-fg"
+                        }`}
+                      >
+                        ChatGPT 订阅
+                      </button>
+                    </div>
+                    {agentHealthState && (
+                      <div className="mt-1.5 space-y-1 text-xs leading-[1.7] text-mut2">
+                        <div>
+                          Claude：
+                          {agentHealthState.claude_logged_in ? (
+                            <span className="text-lab-green">● 已登录</span>
+                          ) : (
+                            <span className="text-warn-soft">
+                              ⚠ 未登录 → 请在终端运行 <code className="font-mono">claude</code>
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          ChatGPT：
+                          {agentHealthState.codex_logged_in ? (
+                            <span className="text-lab-green">● 已登录</span>
+                          ) : (
+                            <span className="text-warn-soft">
+                              ⚠ 未登录 → 请在终端运行{" "}
+                              <code className="font-mono">codex login</code>
+                            </span>
+                          )}
+                        </div>
+                        {agentHealthState.warns.length > 0 &&
+                          agentHealthState.warns.map((w) => (
+                            <div key={w} className="text-warn-soft">
+                              ⚠ {w}
+                            </div>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-mut">连接码</label>
+                    <input
+                      type="text"
+                      value={draft.agentToken}
+                      onChange={(e) => patch({ agentToken: e.target.value })}
+                      placeholder="从 sidecar 启动日志复制粘贴"
+                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                    <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                      仅存本机浏览器；sidecar 每次启动会打印一个新连接码，粘贴到这里才能调用
+                    </div>
+                  </div>
+                </>
+              )}
+            </section>
+          )}
 
           {/* 显示 (v0.2.1: 主题 + 字号/行距，独立于其他设置，切主题不丢) */}
           <section className="space-y-3 border-t border-edge pt-5">

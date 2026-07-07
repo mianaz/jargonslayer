@@ -295,6 +295,35 @@ export interface Settings {
   transcriptScale: "follow" | "lg" | "xl";
   // Transcript-only line-height tier — multiplies `--ts-leading`.
   transcriptLeading: "compact" | "standard" | "relaxed";
+
+  // ---- subscription-direct (v0.2.2, experimental, LOCAL DEV BUILD
+  // ONLY) — lets detect/define call Claude/ChatGPT via YOUR OWN local
+  // `claude`/`codex` CLI login, reached through a separate local
+  // sidecar process (sidecar/agent_server.py), never through any
+  // server this project runs. This is NOT "we connect your
+  // subscription for you" — it's "a tool on your machine asks the CLI
+  // you already logged into, the same way running `claude -p` /
+  // `codex exec` yourself would." Gated end-to-end behind THREE
+  // independent kill switches (see src/lib/agent/localHost.ts): this
+  // flag (default false), the NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT
+  // build flag (unset = the whole UI section + call branch don't
+  // exist in the built bundle), and a remote flags.json fetch (see
+  // checkRemoteKillSwitch). Only detect/define ever use this path;
+  // translate/summarize always use the existing Next.js /api/* routes
+  // in every build, unconditionally. ----
+  subscriptionDirect: boolean;
+  subscriptionProvider: "claude-sub" | "chatgpt-sub";
+  // sidecar/agent_server.py's HTTP base, default matches its own
+  // --port 8767 default (whisper_server.py's ws/job-API ports are
+  // 8765/8766 — 8767 is this feature's own, separate port).
+  agentUrl: string;
+  // Connection code (X-JS-Agent-Token): copied by hand from the
+  // sidecar's own startup stdout banner into Settings, once per
+  // sidecar run — proves this browser tab is one the person who
+  // started the sidecar authorized, not a drive-by page. Never a
+  // provider credential itself (see agent_server.py's Origin-gate
+  // comment for the full threat model this closes).
+  agentToken: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -323,6 +352,10 @@ export const DEFAULT_SETTINGS: Settings = {
   fontSize: "md",
   transcriptScale: "follow",
   transcriptLeading: "standard",
+  subscriptionDirect: false,
+  subscriptionProvider: "claude-sub",
+  agentUrl: "http://127.0.0.1:8767",
+  agentToken: "",
 };
 
 /** Headers that carry LLM provider config from browser to routes.

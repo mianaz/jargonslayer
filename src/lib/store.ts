@@ -27,6 +27,7 @@ import type { CustomEntry } from "./types";
 import { activateTheme } from "./theme/apply";
 import { writeDisplayMirror } from "./theme/displayStorage";
 import { getBuiltinTheme } from "./theme/themes";
+import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
 
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
@@ -320,6 +321,27 @@ export const useApp = create<AppState>((set, get) => ({
       }
     } catch {
       // non-fatal
+    }
+
+    // Subscription-direct (v0.2.2, experimental) kill-switch layer 3:
+    // an emergency remote hide for already-shipped builds — see
+    // agent/localHost.ts's isRemotelyKilled for the fail-open contract
+    // (fetch failure/timeout/404/malformed = allowed; only an explicit
+    // {"subscriptionDirect": false} response disables it). Fire-and-
+    // forget, AFTER the synchronous `set` above already marked
+    // hydrated: true — this must never delay app startup waiting on a
+    // network fetch. If killed and the user's own settings currently
+    // have it on, force it back off (persisting the flip so it stays
+    // off across reloads) and drop the toggle back into Settings'
+    // default posture; SUBSCRIPTION_DIRECT_BUILT is always false when
+    // NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT is unset (kill switch
+    // layer 2), so this fetch never fires in a build that didn't set
+    // the flag — see localHost.ts's SUBSCRIPTION_DIRECT_BUILT doc for
+    // the runtime-vs-build-time-elimination distinction.
+    if (SUBSCRIPTION_DIRECT_BUILT && settings.subscriptionDirect) {
+      void isRemotelyKilled().then((killed) => {
+        if (killed) get().updateSettings({ subscriptionDirect: false });
+      });
     }
   },
 
