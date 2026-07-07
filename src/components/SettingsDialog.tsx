@@ -701,7 +701,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setRestorePreview(null);
       showToast(
         `已恢复 ${sessions} 场会议、${entries} 条词典` +
-          (settingsRestored ? "，设置已覆盖为备份中的设置" : ""),
+          (settingsRestored ? "，设置已替换为备份版本" : ""),
       );
       // draft is a local snapshot taken when the dialog opened — resync
       // it to the just-restored (and now re-hydrated) live settings so
@@ -985,7 +985,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
               onApiKeyChange={(apiKey) => patch({ apiKey })}
               apiKeyPlaceholder="sk-…"
-              apiKeyHint="存在本机浏览器；调用时经本应用接口内存转发，不落盘（env-first 见 README）"
+              apiKeyHint="仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
               presets={PROVIDER_PRESETS}
               disabled={PREVIEW_TIER}
               onConnectOpenRouter={() => void handleConnectOpenRouter()}
@@ -1369,8 +1369,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div>
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
-                    备份文件默认包含你的 API Key（AI 检测 / 分任务模型 / HF Token /
-                    连接码），请妥善保管；勾选后导出的备份不含这些字段
+                    取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token /
+                    连接码），请妥善保管
                   </div>
                 </div>
                 <input
@@ -1412,7 +1412,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="space-y-2 rounded-sm border border-warn-soft/40 bg-panel2 p-3">
                   <div className="text-sm text-fg">确认恢复备份？</div>
                   <ul className="space-y-0.5 text-xs leading-[1.7] text-mut2">
-                    <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，已有会议会被同 ID 的备份覆盖）</li>
+                    <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，同 ID 的已有会议将被覆盖）</li>
                     <li>个人词典：{restorePreview.entries} 条（按 ID 合并，规则同上）</li>
                     <li>
                       设置：
