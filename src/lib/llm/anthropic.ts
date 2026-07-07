@@ -765,7 +765,16 @@ export async function callJson<T>(opts: CallJsonOptions<T>): Promise<T> {
  *  retry — the key is the problem, not the model. No-op when
  *  fallbackModel is null (BYOK always) or equals the primary. This
  *  covers ERROR cases only — a slow-but-alive primary is governed by
- *  the client's own request timeout, not raced here. */
+ *  the client's own request timeout, not raced here.
+ *
+ *  429 stays in the retryable set DELIBERATELY (Codex review flagged
+ *  the 2x-upstream-calls-per-request amplification): a per-model
+ *  capacity 429 is the single most common failure this fallback
+ *  exists for (primary at peak → fallback serves the user), a 429'd
+ *  call is rejected before inference so it doesn't bill, the
+ *  amplification is bounded at 2x of an already per-IP-rate-limited
+ *  route, and in the account-cap-exhausted case both calls 429 and
+ *  the client degrades to the #54 dictionary floor anyway. */
 export async function callJsonWithFallback<T>(
   opts: CallJsonOptions<T>,
   fallbackModel: string | null,
