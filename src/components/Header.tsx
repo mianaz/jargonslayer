@@ -376,42 +376,21 @@ export default function Header({
   onOpenHelp,
 }: HeaderProps) {
   const status = useApp((s) => s.status);
-  const cards = useApp((s) => s.cards);
-  const terms = useApp((s) => s.terms);
-  const engine = useApp((s) => s.settings.engine);
   const activeSessionId = useApp((s) => s.activeSessionId);
 
-  const engineOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
-  const engineLabel = engineOpt?.value ?? "demo";
-  const postureLabel = engineOpt ? POSTURE_LABEL[engineOpt.posture] : "本地";
-  const cardCount = cards.length + terms.length;
-
   return (
-    <header className="sticky top-0 z-20 flex shrink-0 flex-col border-b border-edge bg-panel">
-      {/* 终端标题栏: 等宽路径式标题 + ⌘K 提示 */}
-      <div className="flex h-9 items-center gap-3 border-b border-edge bg-panel2 px-3">
-        <div className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-mono text-xs text-mut">
-          <span className="font-semibold text-fg">jargonslayer</span>
-          <span className="mx-1.5 text-mut2">—</span>
-          {engineLabel}·{postureLabel}
-          <span className="mx-1.5 text-mut2">—</span>
-          {cardCount} cards
-        </div>
-        <div
-          title="命令面板，即将推出"
-          className="hidden shrink-0 items-center gap-1 border border-edge px-2 py-0.5 font-mono text-[11px] text-mut sm:inline-flex"
-        >
-          <kbd className="font-mono">⌘K</kbd> 命令面板
-        </div>
-      </div>
-
-      {/* 品牌 / 引擎 / 操作行 */}
-      <div className="flex h-14 items-center gap-3 px-4">
+    // Single-row header (Miana's v0.2.2 E2E feedback: the old h-9
+    // terminal title strip above this row duplicated every piece of
+    // information on screen — "jargonslayer" (wordmark), engine·posture
+    // (pills + chip), "N cards" (StatusLine) — and made the frame feel
+    // heavy. The strip and its ⌘K placeholder chip are gone; the brand
+    // row below is now the whole header. docs/DESIGN.md updated.)
+    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel px-4">
         <div className="flex items-center gap-2 whitespace-nowrap">
           <img src={withBase("/icon-192.png")} alt="" className="h-7 w-7" />
-          {/* wordmark hidden <sm (#55): the terminal title bar above
-              already reads "jargonslayer", and the phone-width row
-              needs the space for the engine select + start button. */}
+          {/* wordmark hidden <sm (#55): the phone-width row needs the
+              space for the engine select + start button; the icon (now
+              Bit himself) carries the brand there. */}
           <div className="hidden flex-col leading-tight sm:flex">
             <span className="font-mono font-bold tracking-wide text-fg">
               JargonSlayer
@@ -476,7 +455,6 @@ export default function Header({
             onOpenHelp={onOpenHelp}
           />
         </div>
-      </div>
     </header>
   );
 }

@@ -38,10 +38,23 @@ export default function StatusLine() {
         : status === "connecting"
           ? "-- CONNECTING --"
           : "-- IDLE --";
+  // Short vim-token variant for phone widths — the full form plus the
+  // privacy sentence pushed Bit's perch clear off a 375px screen
+  // (Miana's v0.2.2 E2E finding: mascot missing, "N cards" clipped).
+  const modeLabelShort =
+    status === "listening"
+      ? "--LIVE--"
+      : status === "stopped"
+        ? "--STOP--"
+        : status === "connecting"
+          ? "--CONN--"
+          : "--IDLE--";
 
   const posture = ENGINE_POSTURE[engine] ?? "local";
   const privacyLabel =
     posture === "local" ? "音频未离开本机" : "音频经浏览器厂商云端识别";
+  const privacyLabelShort =
+    posture === "local" ? "音频未离开本机" : "音频经厂商云端";
 
   const count = cards.length + terms.length;
 
@@ -51,24 +64,30 @@ export default function StatusLine() {
       className="flex h-7 shrink-0 items-center border-t border-edge bg-panel2 font-mono text-xs text-mut"
     >
       <span
-        className={`flex h-full items-center whitespace-nowrap px-3 font-bold tracking-wide ${
+        className={`flex h-full items-center whitespace-nowrap px-2 font-bold tracking-wide sm:px-3 ${
           isListening ? "bg-lab-green text-ink" : "bg-mut text-ink"
         }`}
       >
-        {modeLabel}
+        <span className="hidden sm:inline">{modeLabel}</span>
+        <span className="sm:hidden">{modeLabelShort}</span>
       </span>
-      <span className="whitespace-nowrap px-3">
+      <span className="whitespace-nowrap px-2 sm:px-3">
         {DETECT_MODE_LABEL[detectMode] ?? DETECT_MODE_LABEL.off}
       </span>
       <span className="text-mut2">|</span>
-      <span className="whitespace-nowrap px-3">{privacyLabel}</span>
-      <span className="ml-auto whitespace-nowrap px-3 tabular-nums">
+      <span className="min-w-0 truncate px-2 sm:px-3">
+        <span className="hidden sm:inline">{privacyLabel}</span>
+        <span className="sm:hidden">{privacyLabelShort}</span>
+      </span>
+      {/* count hidden <sm: it also lives in the cards tab header, and
+          Bit outranks it for the remaining phone-width pixels. */}
+      <span className="ml-auto hidden whitespace-nowrap px-3 tabular-nums sm:inline">
         {count} cards
       </span>
       <span
         id="mascot-perch"
         data-slot="mascot"
-        className="relative flex h-10 items-end self-end overflow-visible pr-2"
+        className="relative ml-auto flex h-10 shrink-0 items-end self-end overflow-visible pr-2 sm:ml-0"
       >
         <PixelDragon />
       </span>

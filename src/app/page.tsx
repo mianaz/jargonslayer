@@ -18,6 +18,38 @@ import Toast from "@/components/Toast";
 
 type RightTab = "cards" | "summary" | "glossary";
 
+// Mobile bottom-panel height (Miana's v0.2.2 E2E request: the bottom
+// bar must be user-resizable on phones). Persisted per device — this
+// is an ergonomic viewport preference like display scale, so it lives
+// in plain localStorage (displayStorage mirror pattern), not Settings.
+const PANEL_H_KEY = "js-mobile-panel-h";
+const PANEL_MIN_PX = 120;
+const PANEL_MAX_VH = 0.8;
+
+function clampPanelH(h: number): number {
+  const max = Math.round(window.innerHeight * PANEL_MAX_VH);
+  return Math.min(max, Math.max(PANEL_MIN_PX, Math.round(h)));
+}
+
+function loadPanelH(): number | null {
+  try {
+    const raw = localStorage.getItem(PANEL_H_KEY);
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+function savePanelH(h: number): void {
+  try {
+    localStorage.setItem(PANEL_H_KEY, String(h));
+  } catch {
+    // storage unavailable (private mode) — resize still works for the session
+  }
+}
+
 export default function Home() {
   const { start, stop, startDemo } = useMeeting();
   const hydrate = useApp((s) => s.hydrate);
@@ -31,6 +63,69 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+
+  // Mobile bottom-panel resize state. null = never dragged on this
+  // device → the default content-driven max-h-[55vh] behavior. Only
+  // applied below lg (the panel is a right sidebar on desktop, where
+  // its width is fixed by design).
+  const [panelH, setPanelH] = useState<number | null>(null);
+  const [isMobileLayout, setIsMobileLayout] = useState(false);
+  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+
+  useEffect(() => {
+    setPanelH(loadPanelH());
+    const mq = window.matchMedia("(max-width: 1023.5px)");
+    const apply = () => setIsMobileLayout(mq.matches);
+    apply();
+    // Both listeners on purpose: MQL "change" is the semantic signal,
+    // but some environments (DevTools device emulation, some zoom
+    // paths) update mq.matches without firing it — the plain resize
+    // fallback re-reads it so the inline height can never stick to
+    // the desktop layout.
+    mq.addEventListener("change", apply);
+    window.addEventListener("resize", apply);
+    return () => {
+      mq.removeEventListener("change", apply);
+      window.removeEventListener("resize", apply);
+    };
+  }, []);
+
+  const beginPanelDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    const aside = e.currentTarget.parentElement;
+    if (!aside) return;
+    dragRef.current = { startY: e.clientY, startH: aside.getBoundingClientRect().height };
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // capture unsupported for this pointer type — move/up on the
+      // handle itself still resize, just without off-element tracking
+    }
+  };
+  const movePanelDrag = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragRef.current) return;
+    // Panel is bottom-docked: dragging the handle UP grows it.
+    setPanelH(clampPanelH(dragRef.current.startH + (dragRef.current.startY - e.clientY)));
+  };
+  const endPanelDrag = () => {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    setPanelH((h) => {
+      if (h != null) savePanelH(h);
+      return h;
+    });
+  };
+  const nudgePanel = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const current =
+      panelH ?? Math.round(window.innerHeight * 0.4); // ≈ the default posture
+    let next: number | null = null;
+    if (e.key === "ArrowUp") next = clampPanelH(current + 24);
+    else if (e.key === "ArrowDown") next = clampPanelH(current - 24);
+    if (next != null) {
+      e.preventDefault();
+      setPanelH(next);
+      savePanelH(next);
+    }
+  };
 
   useEffect(() => {
     void hydrate();
@@ -63,7 +158,29 @@ export default function Home() {
         </section>
 
         {!focusMode && (
-          <aside className="flex max-h-[55vh] w-full shrink-0 flex-col min-h-0 lg:max-h-none lg:w-[400px] xl:w-[440px]">
+          <aside
+            className="flex max-h-[55vh] w-full shrink-0 flex-col min-h-0 lg:max-h-none lg:w-[400px] xl:w-[440px]"
+            style={
+              isMobileLayout && panelH != null
+                ? { height: panelH, maxHeight: `${PANEL_MAX_VH * 100}vh` }
+                : undefined
+            }
+          >
+            {/* Drag handle — phones only (bottom-sheet grab bar). */}
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="拖动调整解释面板高度"
+              tabIndex={0}
+              onPointerDown={beginPanelDrag}
+              onPointerMove={movePanelDrag}
+              onPointerUp={endPanelDrag}
+              onPointerCancel={endPanelDrag}
+              onKeyDown={nudgePanel}
+              className="flex h-4 shrink-0 cursor-row-resize touch-none items-center justify-center border-b border-edge bg-panel2 focus:outline-none focus-visible:bg-panel3 lg:hidden"
+            >
+              <span className="h-1 w-10 rounded-full bg-mut2/60" aria-hidden />
+            </div>
             <div className="flex items-center gap-1 border-b border-edge bg-panel2 px-3 pt-2">
               {(
                 [
