@@ -1,10 +1,11 @@
-// Upload-a-recording transcription: two acquisition paths — (1) PUT a
-// recording file to the local Whisper sidecar's HTTP job API and poll
-// progress, or (2) POST it straight to the cloud transcription API
-// route (#22, requires an openai-compat provider). Both paths converge
-// on the same detection/merge stage (runDetectionPipeline below) to
+// Upload-a-recording transcription: PUT a recording file to the local
+// Whisper sidecar's HTTP job API and poll progress, then converge on
+// the shared detection/merge stage (runDetectionPipeline below) to
 // build a full MeetingSession — LLM with dictionary fallback, plus the
-// personal glossary, mirroring live meeting detection.
+// personal glossary, mirroring live meeting detection. (#66 removed
+// the second acquisition path that lived here — POST to the #22 cloud
+// transcription route — per the "BYOK is LLM-only" decision; keyless
+// batch transcription is importAudio.ts's in-browser Whisper.)
 
 import {
   newId,
@@ -174,11 +175,11 @@ export interface DetectionPipelineResult {
 }
 
 /** Shared detection/merge stage for every import path (sidecar job,
- * cloud transcription, text import #43): runs LLM detection per
+ * browser-Whisper import, text import #43): runs LLM detection per
  * ~1200-char batch (falling back to the offline dictionary on
  * no-key/failure), plus a per-segment personal-glossary scan —
  * mirroring the live meeting detection mix. Takes plain `{text}`
- * items rather than JobSegment so cloud segments (which carry no
+ * items rather than JobSegment so plain segments (which carry no
  * `speaker`) can feed it identically.
  *
  * Rate-limit pacing (#43): a 429 is retried in place after a 65s wait
@@ -354,51 +355,17 @@ export async function buildSessionFromJob(
 }
 
 // ---------------------------------------------------------------
-// Cloud transcription path (#22) — POST straight to /api/transcribe-
-// cloud (requires an openai-compat provider; the route 400s otherwise)
-// instead of the local sidecar's job API, then converges on the same
-// runDetectionPipeline stage above.
+// Plain already-transcribed segments (#66: the cloud transcription
+// path that used to live here — POST /api/transcribe-cloud — was
+// sunset with the "BYOK is LLM-only" decision; the in-browser Whisper
+// import (importAudio.ts) is the keyless batch-transcription story
+// now. This shape is what every acquisition method converges on.)
 // ---------------------------------------------------------------
 
-export interface CloudTranscriptSegment {
+export interface PlainTranscriptSegment {
   start: number;
   end: number;
   text: string;
-}
-
-export async function transcribeViaCloud(
-  file: File,
-  settings: Settings,
-): Promise<CloudTranscriptSegment[]> {
-  const form = new FormData();
-  form.set("file", file, file.name);
-  form.set("language", settings.language.split("-")[0]);
-
-  // #56: reuses client.ts's exported taskHeaders instead of a second,
-  // inlined header builder (this file used to hand-roll its own copy
-  // — two builders is a drift bug factory). This route isn't one of
-  // the three #56 task domains itself, but "detect" is the closest
-  // credential this upload/import pipeline already resolves, so a
-  // per-domain detect override transparently carries through here too.
-  const res = await fetch(withBase("/api/transcribe-cloud"), {
-    method: "POST",
-    headers: taskHeaders(settings, "detect"),
-    body: form,
-  });
-
-  if (!res.ok) {
-    let message = `云端转录失败（${res.status}）`;
-    try {
-      const body = (await res.json()) as { error?: string };
-      if (body?.error) message = body.error;
-    } catch {
-      // keep the generic message
-    }
-    throw new Error(message);
-  }
-
-  const body = (await res.json()) as { segments: CloudTranscriptSegment[] };
-  return body.segments;
 }
 
 /** Build a full session (transcript + detected cards/terms) from
@@ -408,7 +375,7 @@ export async function transcribeViaCloud(
  * implementation — only the acquisition method differs, everything
  * downstream (timeline synthesis, runDetectionPipeline) is identical. */
 export async function buildSessionFromSegments(
-  segments: CloudTranscriptSegment[],
+  segments: PlainTranscriptSegment[],
   settings: Settings,
   opts: { title: string; engine: STTEngineKind },
 ): Promise<MeetingSession> {
@@ -440,21 +407,6 @@ export async function buildSessionFromSegments(
   };
 }
 
-/** Build a full session (transcript + detected cards/terms) from cloud-
- * transcribed segments. Shares runDetectionPipeline with
- * buildSessionFromJob so both import paths get identical LLM/dictionary
- * fallback + personal-glossary behavior. */
-export async function buildSessionFromCloudSegments(
-  segments: CloudTranscriptSegment[],
-  settings: Settings,
-  filename: string,
-): Promise<MeetingSession> {
-  return buildSessionFromSegments(segments, settings, {
-    title: `导入 ${filename}`,
-    engine: "whisper",
-  });
-}
-
 export interface ImportCallbacks {
   onProgress: (progress: number, phase: string) => void;
   onDone: (sessionId: string) => void;
@@ -462,13 +414,12 @@ export interface ImportCallbacks {
 }
 
 export interface ImportOptions {
-  /** "sidecar" (default): PUT to the local Whisper sidecar's job API
-   *  and poll progress. "cloud" (#22): single POST to
-   *  /api/transcribe-cloud, no polling — the route itself blocks
-   *  until the upstream transcription completes. */
-  mode?: "sidecar" | "cloud";
-  /** Sidecar mode only: request speaker diarization for this upload
-   *  (still requires settings.hfToken to actually run). Default true. */
+  // #66: the "cloud" mode variant (POST /api/transcribe-cloud, #22)
+  // was sunset — BYOK is LLM-only by product decision; the sidecar is
+  // the only recorded-audio path here (browser-Whisper imports live in
+  // importAudio.ts and never used this options shape).
+  /** Request speaker diarization for this upload (still requires
+   *  settings.hfToken to actually run). Default true. */
   diarize?: boolean;
 }
 
@@ -516,11 +467,10 @@ async function pollJobUntilDone(
 }
 
 /** Orchestrates the full upload -> poll -> detect -> save -> load
- * flow for one recording (sidecar mode), or upload -> detect -> save
- * -> load (cloud mode, no polling stage). Never throws — reports
- * outcomes via the provided callbacks so a caller (e.g. HistoryDrawer)
- * can track many concurrent imports without try/catch plumbing per
- * call site. */
+ * flow for one recording via the local sidecar's job API. Never
+ * throws — reports outcomes via the provided callbacks so a caller
+ * (e.g. HistoryDrawer) can track many concurrent imports without
+ * try/catch plumbing per call site. */
 export async function importAndTrack(
   file: File,
   settings: Settings,
@@ -528,23 +478,8 @@ export async function importAndTrack(
   opts: ImportOptions = {},
 ): Promise<void> {
   const { onProgress, onDone, onError } = callbacks;
-  const mode = opts.mode ?? "sidecar";
 
   try {
-    if (mode === "cloud") {
-      onProgress(0.5, "云端转录中");
-      const segments = await transcribeViaCloud(file, settings);
-
-      onProgress(0.9, "构建会话");
-      const session = await buildSessionFromCloudSegments(segments, settings, file.name);
-
-      await storage.saveSession(session);
-      await useApp.getState().loadSession(session.id);
-
-      onDone(session.id);
-      return;
-    }
-
     onProgress(0, "转录中");
     const { jobId } = await uploadRecording(file, settings, opts.diarize ?? true);
 

@@ -44,10 +44,9 @@ import { scanDictionary } from "../../detect/dictionary";
 import {
   runDetectionPipeline,
   buildSessionFromSegments,
-  buildSessionFromCloudSegments,
   ingestUrl,
   importUrlAndTrack,
-  type CloudTranscriptSegment,
+  type PlainTranscriptSegment,
 } from "../upload";
 
 const mockDetectApi = vi.mocked(detectApi);
@@ -282,7 +281,7 @@ describe("buildSessionFromSegments — reuse (#43 phase 2a)", () => {
     mockScanDictionary.mockReturnValue(emptyRes());
   });
 
-  const segments: CloudTranscriptSegment[] = [
+  const segments: PlainTranscriptSegment[] = [
     { start: 0, end: 2, text: "circle back on this" },
     { start: 2, end: 4, text: "let's move the needle" },
   ];
@@ -300,47 +299,17 @@ describe("buildSessionFromSegments — reuse (#43 phase 2a)", () => {
     expect(session.segments[0].text).toBe("circle back on this");
   });
 
-  it("buildSessionFromCloudSegments (cloud path, #22) is byte-identical to calling buildSessionFromSegments directly with {title: 导入 <filename>, engine: 'whisper'} — same cards/terms/segment shape", async () => {
-    mockDetectApi.mockResolvedValue({
-      expressions: [
-        {
-          expression: "move the needle",
-          category: "idiom",
-          meaning: "make meaningful progress",
-          chinese_explanation: "取得实质性进展",
-          plain_english: "make progress",
-          tone: "neutral",
-          confidence: 0.9,
-          source_sentence: "let's move the needle",
-        },
-      ],
-      terms: [],
-    });
-
-    const viaCloudHelper = await buildSessionFromCloudSegments(segments, settings, "meeting.wav");
-    const viaDirectCall = await buildSessionFromSegments(segments, settings, {
+  it("导入 <filename> title + whisper engine shape (what the sunset #22 cloud helper used to wrap) still holds via direct call", async () => {
+    const session = await buildSessionFromSegments(segments, settings, {
       title: "导入 meeting.wav",
       engine: "whisper",
     });
-
-    expect(viaCloudHelper.engine).toBe("whisper");
-    expect(viaCloudHelper.title).toBe("导入 meeting.wav");
-    expect(viaCloudHelper.engine).toBe(viaDirectCall.engine);
-    expect(viaCloudHelper.title).toBe(viaDirectCall.title);
-    // Compare content fields only — id/firstSeenAt/lastSeenAt are
-    // freshly generated per call (newId()/Date.now()) by design, not
-    // part of the "same behavior" claim.
-    const cardContent = (c: (typeof viaCloudHelper.cards)[number]) => ({
-      expression: c.expression,
-      chinese_explanation: c.chinese_explanation,
-      source: c.source,
-      count: c.count,
-    });
-    expect(viaCloudHelper.cards.map(cardContent)).toEqual(viaDirectCall.cards.map(cardContent));
-    expect(viaCloudHelper.terms).toEqual(viaDirectCall.terms);
-    expect(viaCloudHelper.segments.map((s) => ({ text: s.text, engine: s.engine }))).toEqual(
-      viaDirectCall.segments.map((s) => ({ text: s.text, engine: s.engine })),
-    );
+    expect(session.engine).toBe("whisper");
+    expect(session.title).toBe("导入 meeting.wav");
+    expect(session.segments.map((s) => ({ text: s.text, engine: s.engine }))).toEqual([
+      { text: "circle back on this", engine: "whisper" },
+      { text: "let's move the needle", engine: "whisper" },
+    ]);
   });
 });
 

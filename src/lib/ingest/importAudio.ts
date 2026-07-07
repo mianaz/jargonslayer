@@ -21,7 +21,7 @@
 // own division of labor.
 
 import { type MeetingSession, type Settings } from "../types";
-import { buildSessionFromSegments, type CloudTranscriptSegment } from "../stt/upload";
+import { buildSessionFromSegments, type PlainTranscriptSegment } from "../stt/upload";
 import { runTranslation } from "./importText";
 import * as storage from "../history/storage";
 import { transcribeInBrowser, type TranscribedSegment } from "./whisperBrowser";
@@ -185,7 +185,7 @@ export async function importAudio(opts: ImportAudioOptions): Promise<ImportAudio
   );
 
   onProgress(1, "构建会话");
-  const segments: CloudTranscriptSegment[] = rawSegments.map((s) => ({
+  const segments: PlainTranscriptSegment[] = rawSegments.map((s) => ({
     start: s.start,
     end: s.end,
     text: s.text,

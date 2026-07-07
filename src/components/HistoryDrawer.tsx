@@ -13,7 +13,6 @@ import {
   fetchSidecarHealth,
   importAndTrack,
   importUrlAndTrack,
-  type ImportOptions,
 } from "@/lib/stt/upload";
 import { importTranscriptText } from "@/lib/ingest/importText";
 import { importAudio } from "@/lib/ingest/importAudio";
@@ -28,8 +27,10 @@ const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 sidecar";
 // "cloud" — it never reaches importAndTrack at all (importAudio.ts is
 // a separate, fully in-browser pipeline that also handles video files
 // via ffmpegExtract.ts), so it's a plain local union rather than
-// widening ImportOptions["mode"] itself.
-type ImportModeChoice = NonNullable<ImportOptions["mode"]> | "browser";
+// "browser" is HistoryDrawer-local (in-browser Whisper via
+// importAudio.ts); "sidecar" is upload.ts's importAndTrack path.
+// (#66 removed the third "cloud" choice along with its route.)
+type ImportModeChoice = "sidecar" | "browser";
 
 // Upload-a-recording job tracking is intentionally component-local
 // (not in the global store) — it's ephemeral UI progress, and a page
@@ -182,15 +183,13 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
 
   const handleImportFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    const mode: NonNullable<ImportOptions["mode"]> =
-      importModeRef.current === "cloud" ? "cloud" : "sidecar";
     for (const file of Array.from(files)) {
       const jobId = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       setJobs((prev) =>
         new Map(prev).set(jobId, {
           filename: file.name,
           progress: 0,
-          phase: mode === "cloud" ? "云端转录中" : "转录中",
+          phase: "转录中",
           error: null,
         }),
       );
@@ -215,7 +214,6 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
           },
           onError: (msg) => patchJob(jobId, { error: msg, phase: "失败" }),
         },
-        { mode },
       );
     }
   };
@@ -377,7 +375,6 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
     });
   };
 
-  const canUseCloud = settings.provider === "openai-compat";
   // 从视频链接导入（本地）is gated on the SAME sidecar-reachability
   // signal the 本地 Whisper entry's diarization status line already
   // uses: undefined (not yet checked) treated as available so the
@@ -529,19 +526,6 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                         )}
                       </div>
                     )}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!canUseCloud}
-                    onClick={() => chooseImportMode("cloud")}
-                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-                  >
-                    <div className="text-sm text-fg">云端转录（音频上传至你配置的服务地址）</div>
-                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      {canUseCloud
-                        ? "音频会上传到你配置的 OpenAI 兼容端点"
-                        : "需先在设置→AI 检测中选择 OpenAI 兼容端点"}
-                    </div>
                   </button>
                   <button
                     type="button"
