@@ -26,6 +26,7 @@ import {
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import type { ExplainLanguage, LlmProvider, STTEngineKind, Settings } from "@/lib/types";
 import { withBase } from "@/lib/basePath";
+import { BUILTIN_THEMES } from "@/lib/theme/themes";
 import {
   buildAuthUrl,
   codeChallengeS256,
@@ -99,6 +100,26 @@ const SUMMARY_MODEL_OPTIONS = [
 const EXPLAIN_LANGUAGE_OPTIONS: { value: ExplainLanguage; label: string }[] = [
   { value: "zh", label: "中文（默认）" },
   { value: "en", label: "English" },
+];
+
+// 显示设置 (v0.2.1): 全局字号 4 档 + 转录字号/行距各 3 档。
+const FONT_SIZE_OPTIONS: { value: Settings["fontSize"]; label: string }[] = [
+  { value: "sm", label: "小" },
+  { value: "md", label: "标准" },
+  { value: "lg", label: "大" },
+  { value: "xl", label: "特大" },
+];
+
+const TRANSCRIPT_SCALE_OPTIONS: { value: Settings["transcriptScale"]; label: string }[] = [
+  { value: "follow", label: "跟随" },
+  { value: "lg", label: "大" },
+  { value: "xl", label: "特大" },
+];
+
+const TRANSCRIPT_LEADING_OPTIONS: { value: Settings["transcriptLeading"]; label: string }[] = [
+  { value: "compact", label: "紧凑" },
+  { value: "standard", label: "标准" },
+  { value: "relaxed", label: "宽松" },
 ];
 
 type ProviderPresetId =
@@ -1019,6 +1040,100 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="h-4 w-4 accent-act"
               />
             </label>
+          </section>
+
+          {/* 显示 (v0.2.1: 主题 + 字号/行距，独立于其他设置，切主题不丢) */}
+          <section className="space-y-3 border-t border-edge pt-5">
+            <SectionHeading>显示</SectionHeading>
+
+            <div>
+              <label className="text-xs text-mut">主题</label>
+              <div className="mt-1 grid grid-cols-2 gap-2">
+                {BUILTIN_THEMES.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => patch({ themeId: t.id })}
+                    className={`rounded-sm border p-3 text-left text-sm transition-colors ${
+                      draft.themeId === t.id
+                        ? "border-act bg-panel3 text-fg"
+                        : "border-edge text-fg hover:bg-panel3"
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 text-xs text-mut2">
+                更多主题（社区包）将在后续版本开放
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-mut">全局字号</label>
+              <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+                {FONT_SIZE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => patch({ fontSize: opt.value })}
+                    className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                      draft.fontSize === opt.value
+                        ? "bg-panel3 text-fg"
+                        : "text-mut hover:text-fg"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                整个界面的文字大小，效果类似浏览器缩放
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-mut">转录字号</label>
+              <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+                {TRANSCRIPT_SCALE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => patch({ transcriptScale: opt.value })}
+                    className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                      draft.transcriptScale === opt.value
+                        ? "bg-panel3 text-fg"
+                        : "text-mut hover:text-fg"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                只放大转录区文字，独立于全局字号
+              </div>
+            </div>
+
+            <div>
+              <label className="text-xs text-mut">转录行距</label>
+              <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+                {TRANSCRIPT_LEADING_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => patch({ transcriptLeading: opt.value })}
+                    className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                      draft.transcriptLeading === opt.value
+                        ? "bg-panel3 text-fg"
+                        : "text-mut hover:text-fg"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </section>
         </div>
 

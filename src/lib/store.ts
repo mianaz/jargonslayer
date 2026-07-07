@@ -24,6 +24,9 @@ import * as storage from "./history/storage";
 import * as glossary from "./history/glossary";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "./types";
+import { activateTheme } from "./theme/apply";
+import { writeDisplayMirror } from "./theme/displayStorage";
+import { getBuiltinTheme } from "./theme/themes";
 
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
@@ -290,12 +293,25 @@ export const useApp = create<AppState>((set, get) => ({
       storage.listSessions(),
       glossary.loadCustomEntries(),
     ]);
+    const settings = { ...DEFAULT_SETTINGS, ...(saved ?? {}) };
     set({
-      settings: { ...DEFAULT_SETTINGS, ...(saved ?? {}) },
+      settings,
       sessions: metas,
       customEntries: entries,
       hydrated: true,
     });
+    // The FOUC inline script (layout.tsx) already applied best-effort
+    // theme/data-fs from its localStorage mirror before this resolved
+    // — this re-applies from the authoritative IndexedDB-backed
+    // Settings once hydration finishes, correcting any mismatch (e.g.
+    // first load ever, a stale/absent mirror, or a value set on a
+    // different browser) and mirroring it forward for next time.
+    writeDisplayMirror({ themeId: settings.themeId, fontSize: settings.fontSize });
+    const theme = getBuiltinTheme(settings.themeId);
+    if (theme) activateTheme(theme.id, theme.tokens);
+    if (typeof document !== "undefined") {
+      document.documentElement.dataset.fs = settings.fontSize;
+    }
     // Ask the browser not to evict IndexedDB under storage pressure
     // (Safari's 7-day eviction, Chrome quota GC). Best-effort.
     try {
@@ -311,6 +327,23 @@ export const useApp = create<AppState>((set, get) => ({
     const settings = { ...get().settings, ...patch };
     set({ settings });
     void storage.saveSettings(settings);
+    // Display settings (v0.2.1): live-apply a theme change immediately
+    // (rather than waiting for a reload) and mirror themeId/fontSize
+    // to localStorage so the FOUC script can read them synchronously
+    // on the next load — see lib/theme/displayStorage.ts. Only fires
+    // when this patch actually touches one of the two mirrored fields,
+    // so every other settings save (API key, engine, …) stays a no-op
+    // here.
+    if ("themeId" in patch || "fontSize" in patch) {
+      writeDisplayMirror({ themeId: settings.themeId, fontSize: settings.fontSize });
+    }
+    if ("themeId" in patch) {
+      const theme = getBuiltinTheme(settings.themeId);
+      if (theme) activateTheme(theme.id, theme.tokens);
+    }
+    if ("fontSize" in patch && typeof document !== "undefined") {
+      document.documentElement.dataset.fs = settings.fontSize;
+    }
   },
 
   setStatus: (status, detail = null) =>

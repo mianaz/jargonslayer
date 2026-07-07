@@ -44,6 +44,50 @@ body {
   font-feature-settings: "cv02", "cv03";
 }
 
+/* v0.2.1 global font-size tiers (Settings → 显示 → 全局字号). A plain
+   rem-relative scale on <html> — every rem-sized element downstream
+   scales together, same predictable behavior as the browser's own
+   zoom. "md" (100%) needs no rule: it's the unscaled default. Applied
+   by store.ts's updateSettings via <html data-fs="…"> (and mirrored
+   for the FOUC script — see lib/theme/displayStorage.ts). */
+html[data-fs="sm"] {
+  font-size: 90%;
+}
+html[data-fs="lg"] {
+  font-size: 112.5%;
+}
+html[data-fs="xl"] {
+  font-size: 125%;
+}
+
+/* v0.2.1 transcript-only display settings (Settings → 显示 → 转录字号 /
+   转录行距) — independent of the global tier above. These custom
+   properties default to "no change from today" (scale 1, the
+   existing 1.7 leading) and are overridden on <html> by
+   TranscriptPanel's semantic classes reading settings.transcriptScale/
+   transcriptLeading. Declared on :root (not per-component) so nested
+   elements inherit without each needing its own default. */
+:root {
+  --ts-scale: 1;
+  --ts-leading: 1.7;
+}
+
+/* Transcript reading-text classes (TranscriptPanel.tsx): rem alone
+   would NOT respond to a parent's font-size, and this scale is a
+   multiplier applied at the html root — so these use calc() against
+   --ts-scale explicitly rather than relying on inherited font-size.
+   .ts-body = the finalized/interim English segment line (previously a
+   plain text-[15px] leading-relaxed utility); .ts-translation = the
+   secondary Chinese line under it (previously text-xs leading-[1.6]). */
+.ts-body {
+  font-size: calc(0.9375rem * var(--ts-scale, 1)); /* 15px base */
+  line-height: var(--ts-leading, 1.7);
+}
+.ts-translation {
+  font-size: calc(0.75rem * var(--ts-scale, 1)); /* 12px base (text-xs) */
+  line-height: var(--ts-leading, 1.7);
+}
+
 /* thin scrollbars */
 .scroll-thin::-webkit-scrollbar {
   width: 6px;

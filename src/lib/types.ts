@@ -271,6 +271,30 @@ export interface Settings {
   // explainLanguage !== "en" (translating English into English is a
   // no-op); default off (existing single-line transcript unchanged).
   bilingualTranscript: boolean;
+
+  // ---- display settings (v0.2.1) — independent of theme; surviving a
+  // theme switch is the whole point, so these live as their own
+  // fields rather than inside a theme's token set. Persisted through
+  // the same settings store as everything else above, AND mirrored to
+  // a small localStorage key (see lib/theme/displayStorage.ts) so the
+  // pre-hydration FOUC script in layout.tsx can read them
+  // synchronously before IndexedDB (async) resolves. ----
+
+  // Built-in theme id (lib/theme/themes.ts registry). "terminal" is
+  // the CSS-authored default; any other id goes through the engine's
+  // applyTheme() pipeline.
+  themeId: string;
+  // Global font-size tier — applied as `<html data-fs="…">` +
+  // globals.css `html[data-fs="…"]{font-size:…%}`, an all-rem-relative
+  // scale (same effect as the browser's own zoom, just theme-portable
+  // and persisted).
+  fontSize: "sm" | "md" | "lg" | "xl";
+  // Transcript-only font scale, independent of the global tier above —
+  // multiplies the transcript's own `--ts-scale` custom property
+  // (TranscriptPanel.tsx), never the global rem base.
+  transcriptScale: "follow" | "lg" | "xl";
+  // Transcript-only line-height tier — multiplies `--ts-leading`.
+  transcriptLeading: "compact" | "standard" | "relaxed";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -295,6 +319,10 @@ export const DEFAULT_SETTINGS: Settings = {
   hfToken: "",
   realtimeDiarize: false,
   bilingualTranscript: false,
+  themeId: "terminal",
+  fontSize: "md",
+  transcriptScale: "follow",
+  transcriptLeading: "standard",
 };
 
 /** Headers that carry LLM provider config from browser to routes.

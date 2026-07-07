@@ -11,6 +11,21 @@ const SCROLL_STICKY_THRESHOLD = 80;
 const HOVER_ENTER_DELAY_MS = 150;
 const HOVER_LEAVE_DELAY_MS = 200;
 
+// v0.2.1 transcript-only display settings (Settings → 显示): numeric
+// multipliers for the --ts-scale / --ts-leading custom properties
+// consumed by globals.css's .ts-body / .ts-translation classes.
+// "follow"/"standard" map to 1 / 1.7 — i.e. today's unchanged look.
+const TRANSCRIPT_SCALE_VALUE: Record<string, number> = {
+  follow: 1,
+  lg: 1.15,
+  xl: 1.3,
+};
+const TRANSCRIPT_LEADING_VALUE: Record<string, number> = {
+  compact: 1.5,
+  standard: 1.7,
+  relaxed: 1.9,
+};
+
 // Terminal speaker set (docs/DESIGN.md v3.3: "说话人 glyph($ / > / # 三色)").
 // Six deterministic glyph+hue pairs (spec calls out 6: $ > # % @ &) picked
 // by a stable hash of the speaker name — glyph and speaker-name text share
@@ -298,6 +313,17 @@ export default function TranscriptPanel() {
   // toggle, and hiding paid-for lines behind an unrelated setting
   // would strand them invisibly.
   const translations = useApp((s) => s.translations);
+  // v0.2.1 transcript-only font scale / line-height (independent of
+  // the global font-size tier) — set as inline CSS custom properties
+  // on this panel's own root so .ts-body/.ts-translation (globals.css)
+  // pick them up via calc(); rem alone wouldn't respond to a settings
+  // change the way these var()-based classes do.
+  const transcriptScale = useApp((s) => s.settings.transcriptScale);
+  const transcriptLeading = useApp((s) => s.settings.transcriptLeading);
+  const transcriptStyle = {
+    "--ts-scale": TRANSCRIPT_SCALE_VALUE[transcriptScale] ?? 1,
+    "--ts-leading": TRANSCRIPT_LEADING_VALUE[transcriptLeading] ?? 1.7,
+  } as React.CSSProperties;
 
   // Transcript editing only applies to sessions that are done being
   // recorded (finished / imported / loaded from history). No editing
@@ -524,7 +550,11 @@ export default function TranscriptPanel() {
   };
 
   return (
-    <div className="relative flex h-full flex-col" data-testid="transcript-panel">
+    <div
+      className="relative flex h-full flex-col"
+      data-testid="transcript-panel"
+      style={transcriptStyle}
+    >
       <div
         ref={containerRef}
         className="scroll-thin flex-1 overflow-y-auto"
@@ -611,7 +641,7 @@ export default function TranscriptPanel() {
                     </div>
                   ) : (
                     <div
-                      className="text-[15px] leading-relaxed"
+                      className="ts-body"
                       onDoubleClick={
                         editable
                           ? () => {
@@ -629,7 +659,7 @@ export default function TranscriptPanel() {
                         onHitLeave={handleHitLeave}
                       />
                       {translations[seg.id] && (
-                        <div className="mt-0.5 text-xs leading-[1.6] text-mut">
+                        <div className="ts-translation mt-0.5 text-mut">
                           {translations[seg.id]}
                         </div>
                       )}
@@ -658,7 +688,7 @@ export default function TranscriptPanel() {
                       );
                     })()}
                 </div>
-                <span className="text-[15px] italic leading-relaxed text-mut">
+                <span className="ts-body italic text-mut">
                   {interim.text}
                   <span className="cursor-block ml-0.5 inline-block h-[1em] w-[0.6em] translate-y-[0.15em] bg-mut align-baseline" />
                 </span>
