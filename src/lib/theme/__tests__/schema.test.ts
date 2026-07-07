@@ -12,12 +12,15 @@ function validThemeTokens(): Record<string, string> {
 }
 
 describe("HEX_COLOR_RE", () => {
-  it("accepts every strict hex form", () => {
+  it("accepts every strict hex form (3- and 6-digit only)", () => {
     expect(HEX_COLOR_RE.test("#fff")).toBe(true);
-    expect(HEX_COLOR_RE.test("#ffff")).toBe(true);
     expect(HEX_COLOR_RE.test("#ffffff")).toBe(true);
-    expect(HEX_COLOR_RE.test("#ffffffff")).toBe(true);
     expect(HEX_COLOR_RE.test("#0a0A1B")).toBe(true); // mixed case is fine
+  });
+
+  it("rejects the 4- and 8-digit alpha hex forms (v0.2.1: alpha is a Tailwind modifier, not part of a token's own value)", () => {
+    expect(HEX_COLOR_RE.test("#ffff")).toBe(false);
+    expect(HEX_COLOR_RE.test("#ffffffff")).toBe(false);
   });
 
   it("rejects non-hex color syntax and injection attempts", () => {
@@ -115,5 +118,15 @@ describe("parseTheme", () => {
     tokens.edge2 = "data:text/html,<script>alert(1)</script>";
     const result = parseTheme({ id: "x", label: "x", tokens });
     expect(result.ok).toBe(false);
+  });
+
+  it("rejects a token using the 4- or 8-digit alpha hex form (v0.2.1: alpha belongs to Tailwind's utility-class modifier, not the token value — see schema.ts's HEX_COLOR_RE comment)", () => {
+    const shortAlpha = validThemeTokens();
+    shortAlpha.fg = "#ffff";
+    expect(parseTheme({ id: "x", label: "x", tokens: shortAlpha }).ok).toBe(false);
+
+    const longAlpha = validThemeTokens();
+    longAlpha.fg = "#ffffffff";
+    expect(parseTheme({ id: "x", label: "x", tokens: longAlpha }).ok).toBe(false);
   });
 });

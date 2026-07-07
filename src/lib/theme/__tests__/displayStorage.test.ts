@@ -95,10 +95,14 @@ describe("readDisplayMirror — fallback safety", () => {
 });
 
 describe("buildFoucScript", () => {
-  it("embeds the given theme token maps as inline JSON", () => {
+  it("embeds the given theme token maps as inline JSON, hex AND pre-derived rgb", () => {
     const script = buildFoucScript({ clarity: { fg: "#ffffff" } });
     expect(script).toContain('"clarity"');
     expect(script).toContain('"#ffffff"');
+    // v0.2.1: the rgb triplet must be pre-computed into the embedded
+    // JSON at build time — the inline script itself does no hex
+    // parsing (see module comment on FoucThemePayload).
+    expect(script).toContain('"255 255 255"');
   });
 
   it("produces a script that reads the mirror and sets data-fs / data-theme without throwing", () => {
@@ -113,6 +117,22 @@ describe("buildFoucScript", () => {
     expect(document.documentElement.dataset.fs).toBe("lg");
     expect(document.documentElement.dataset.theme).toBe("clarity");
     expect(document.documentElement.style.getPropertyValue("--fg")).toBe("#ffffff");
+  });
+
+  // v0.2.1 ship-blocking fix: the FOUC script must ALSO set the "-rgb"
+  // triplet variable for every token — Tailwind's generated utilities
+  // (text-fg, bg-panel, ...) resolve through that variable, not the
+  // hex one, so skipping it would leave the whole Tailwind-classed UI
+  // on the default theme's colors even though dataset.theme/the hex
+  // variables correctly show the new theme (exactly the blind spot
+  // the previous Playwright verification missed).
+  it("ALSO sets the -rgb triplet variable for every token, derived at build time", () => {
+    writeDisplayMirror({ themeId: "clarity", fontSize: "md" });
+    const script = buildFoucScript({ clarity: { ink: "#0a0a0a", fg: "#ffffff" } });
+    new Function(script)();
+
+    expect(document.documentElement.style.getPropertyValue("--ink-rgb")).toBe("10 10 10");
+    expect(document.documentElement.style.getPropertyValue("--fg-rgb")).toBe("255 255 255");
   });
 
   it("falls back to terminal/md when localStorage has nothing", () => {

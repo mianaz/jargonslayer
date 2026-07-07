@@ -7,36 +7,56 @@ export default {
       colors: {
         // v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.1) — pure
         // neutral-black surface ladder, R=G=B outside of the lab-*
-        // label tokens. Mirrors the CSS variables in globals.css
-        // `:root, [data-theme="terminal"]` 1:1, so a future JS-driven
-        // theme switch stays in sync without touching this file.
-        ink: "#0A0A0A", // page canvas (pure neutral black)
-        panel: "#121212", // primary panels
-        panel2: "#1A1A1A", // raised: dialogs, popovers, chips
-        panel3: "#202020", // hover/active surface step
-        edge: "#262626", // default hairline
-        edge2: "#333333", // strong hairline (major zone dividers)
+        // label tokens.
+        //
+        // v0.2.1 INTEGRATION FIX: these are NOT literal hex — every
+        // value is `rgb(var(--*-rgb) / <alpha-value>)`, so Tailwind's
+        // generated utilities (text-fg, bg-panel, border-edge, ...,
+        // the vast majority of the UI) resolve through the "-rgb"
+        // triplet CSS variables declared in globals.css's `:root,
+        // [data-theme="terminal"]` block, NOT a compiled-in constant.
+        // `<alpha-value>` is Tailwind's placeholder token — it lets
+        // opacity modifiers (text-fg/90, border-lab-orange/30, bg-
+        // panel/85, ...; ~40+ call sites across the app) keep working
+        // by substituting the modifier's alpha into the rgb() alpha
+        // slot at build time; Tailwind statically detects this exact
+        // `rgb(var(--x) / <alpha-value>)` shape to enable that.
+        // lib/theme/apply.ts's applyTheme() setProperty's BOTH the hex
+        // and the "-rgb" variable for every token in one pass (see
+        // that file), so switching themes recolors every Tailwind
+        // utility class in the app, not just hand-written CSS
+        // selectors that happen to reference the hex variable
+        // directly. The hex value in each comment below is for
+        // readability only — it plays no role in what actually
+        // compiles; the real source of truth is globals.css's "-rgb"
+        // declarations, which this file's values point at by name.
+        ink: "rgb(var(--ink-rgb) / <alpha-value>)", // #0A0A0A — page canvas (pure neutral black)
+        panel: "rgb(var(--panel-rgb) / <alpha-value>)", // #121212 — primary panels
+        panel2: "rgb(var(--panel2-rgb) / <alpha-value>)", // #1A1A1A — raised: dialogs, popovers, chips
+        panel3: "rgb(var(--panel3-rgb) / <alpha-value>)", // #202020 — hover/active surface step
+        edge: "rgb(var(--edge-rgb) / <alpha-value>)", // #262626 — default hairline
+        edge2: "rgb(var(--edge2-rgb) / <alpha-value>)", // #333333 — strong hairline (major zone dividers)
         // Text hierarchy (3 levels)
-        fg: "#EDEDED",
-        mut: "#9A9A9A",
+        fg: "rgb(var(--fg-rgb) / <alpha-value>)", // #EDEDED
+        mut: "rgb(var(--mut-rgb) / <alpha-value>)", // #9A9A9A
         // v0.2.1 contrast fix: raised from #5C5C5C (2.8:1, failing AA)
         // to #8C8C8C (>=4.5:1 against every panel level) — see
         // globals.css's --mut2 comment and lib/theme/themes.ts.
-        mut2: "#8C8C8C",
+        mut2: "rgb(var(--mut2-rgb) / <alpha-value>)", // #8C8C8C
         // Label colors (v3.1) — the ONLY source of non-neutral hue,
         // confined to ≤24px elements (tags/underlines/status dots/glyphs).
-        "lab-red": "#FF5F56", // 俚语/危险/错误
-        "lab-orange": "#FFAA44", // 习语；表达高亮下划线
-        "lab-yellow": "#F7D51D", // 委婉/警示
-        "lab-green": "#4ADE80", // 聆听态/成功/diff-flash
-        "lab-purple": "#C084FC", // 隐喻
-        "lab-cyan": "#22D3EE", // 术语；术语高亮下划线
-        act: "#FFFFFF", // sole accent: primary button, white-bg/black-text
+        "lab-red": "rgb(var(--lab-red-rgb) / <alpha-value>)", // #FF5F56 — 俚语/危险/错误
+        "lab-orange": "rgb(var(--lab-orange-rgb) / <alpha-value>)", // #FFAA44 — 习语；表达高亮下划线
+        "lab-yellow": "rgb(var(--lab-yellow-rgb) / <alpha-value>)", // #F7D51D — 委婉/警示
+        "lab-green": "rgb(var(--lab-green-rgb) / <alpha-value>)", // #4ADE80 — 聆听态/成功/diff-flash
+        "lab-purple": "rgb(var(--lab-purple-rgb) / <alpha-value>)", // #C084FC — 隐喻
+        "lab-cyan": "rgb(var(--lab-cyan-rgb) / <alpha-value>)", // #22D3EE — 术语；术语高亮下划线
+        act: "rgb(var(--act-rgb) / <alpha-value>)", // #FFFFFF — sole accent: primary button, white-bg/black-text
         // warn *text* tier (docs/DESIGN.md v3.1 rule 3): fills use
         // lab-red on small elements only; warn-colored text uses this
         // AA-safe softer red. (Migration-era acc/acc2/gold/warn aliases
         // are retired — no component references remain.)
-        "warn-soft": "#FF8A80",
+        "warn-soft": "rgb(var(--warn-soft-rgb) / <alpha-value>)", // #FF8A80
       },
       fontFamily: {
         sans: [

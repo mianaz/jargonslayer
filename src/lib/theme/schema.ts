@@ -17,13 +17,24 @@
 
 import * as z from "zod";
 
-// Strict hex-only pattern: #RGB, #RGBA, #RRGGBB, #RRGGBBAA. Deliberately
-// excludes every other CSS color syntax (rgb()/rgba()/hsl()/hsla()/
-// named colors/CSS variables) — those are exactly the shapes a
-// malicious "theme" would need to smuggle in url()/expression()/other
-// unsafe constructs, so the regex simply never matches them.
-export const HEX_COLOR_RE =
-  /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+// Strict hex-only pattern: #RGB or #RRGGBB. Deliberately excludes
+// every other CSS color syntax (rgb()/rgba()/hsl()/hsla()/named
+// colors/CSS variables) — those are exactly the shapes a malicious
+// "theme" would need to smuggle in url()/expression()/other unsafe
+// constructs, so the regex simply never matches them.
+//
+// v0.2.1: also deliberately excludes the 4- and 8-digit alpha forms
+// (#RGBA/#RRGGBBAA) that a strictly-hex reading of CSS Color Module 4
+// would otherwise allow. Alpha is a Tailwind utility-class MODIFIER
+// (text-fg/50, bg-panel/80, ...), not part of a theme token's own
+// value — apply.ts derives each token's "-rgb" triplet straight from
+// its hex digits (see hexToRgbTriplet), and an alpha suffix baked into
+// the token itself would make that derivation ambiguous (is the 4th
+// hex pair alpha, or would it silently corrupt the RGB triplet?).
+// Rejecting alpha-bearing hex at the schema boundary is a free
+// tightening now (no existing theme has ever used one) and a
+// backwards-compatible loosening later if a real need appears.
+export const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 const HexColor = z.string().regex(HEX_COLOR_RE, "必须是严格的 hex 颜色值");
 

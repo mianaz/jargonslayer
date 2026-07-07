@@ -5,17 +5,36 @@
 /* v3 主题基座:暗黑科技 · 会议 REPL (docs/DESIGN.md v3.1) — terminal is
    the default (and, for now, only) theme; [data-theme="terminal"] is
    included so a future <html data-theme="..."> switch keeps working
-   the day a sibling skin ships (v3.5 roadmap). */
+   the day a sibling skin ships (v3.5 roadmap).
+
+   v0.2.1 integration fix: every token below now ALSO gets an "-rgb"
+   sibling variable holding a bare "R G B" triplet (no #, no commas) —
+   tailwind.config.ts's colors reference `rgb(var(--*-rgb) / <alpha-
+   value>)`, NOT the hex variable directly. Tailwind utility classes
+   (text-fg, bg-panel, border-edge, ...) compile against these triplet
+   variables; the hex variables above are kept for hand-written CSS in
+   this file (.hl-expr, .btn-terminal, etc.) and for readability. Both
+   are written by the SAME setProperty pass in lib/theme/apply.ts, so
+   a theme switch recolors the entire app — not just hand-authored
+   selectors — in one step. `--bl` has no -rgb sibling (not a color). */
 :root,
 [data-theme="terminal"] {
   --ink: #0a0a0a;
+  --ink-rgb: 10 10 10;
   --panel: #121212;
+  --panel-rgb: 18 18 18;
   --panel2: #1a1a1a;
+  --panel2-rgb: 26 26 26;
   --panel3: #202020;
+  --panel3-rgb: 32 32 32;
   --edge: #262626;
+  --edge-rgb: 38 38 38;
   --edge2: #333333;
+  --edge2-rgb: 51 51 51;
   --fg: #ededed;
+  --fg-rgb: 237 237 237;
   --mut: #9a9a9a;
+  --mut-rgb: 154 154 154;
   /* v0.2.1 contrast fix: raised from #5c5c5c (2.8:1 vs panel, failing
      WCAG AA) to #8c8c8c, which clears >=4.5:1 against every panel
      level (ink/panel/panel2/panel3) while staying visibly darker than
@@ -25,19 +44,28 @@
      state labels, table headers), not just decoration, so it must
      clear AA body-text contrast. */
   --mut2: #8c8c8c;
+  --mut2-rgb: 140 140 140;
   --lab-red: #ff5f56;
+  --lab-red-rgb: 255 95 86;
   --lab-orange: #ffaa44;
+  --lab-orange-rgb: 255 170 68;
   --lab-yellow: #f7d51d;
+  --lab-yellow-rgb: 247 213 29;
   --lab-green: #4ade80;
+  --lab-green-rgb: 74 222 128;
   --lab-purple: #c084fc;
+  --lab-purple-rgb: 192 132 252;
   --lab-cyan: #22d3ee;
+  --lab-cyan-rgb: 34 211 238;
   --act: #ffffff;
+  --act-rgb: 255 255 255;
 
   /* warn *text* tier (docs/DESIGN.md v3.1 rule 3): fills use lab-red on
      small elements only; warn-colored text uses this AA-safe softer red.
      (The migration-era acc/acc2/gold/warn/font-display aliases are
      retired — no component references remain as of 2026-07-06.) */
   --warn-soft: #ff8a80;
+  --warn-soft-rgb: 255 138 128;
 
   --bl: 8px; /* baseline unit (v2.1 grid discipline, still honored) */
 }

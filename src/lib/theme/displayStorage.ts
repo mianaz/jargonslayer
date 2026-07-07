@@ -13,6 +13,8 @@
 // disabled storage, quota) — every read/write here fails silently
 // back to the built-in default rather than crashing the app.
 
+import { hexToRgbTriplet } from "./apply";
+
 const DISPLAY_STORAGE_KEY = "js-display";
 
 export interface DisplayMirror {
@@ -60,17 +62,42 @@ export function writeDisplayMirror(mirror: DisplayMirror): void {
   }
 }
 
+/** Per-theme payload embedded in the FOUC script: the original hex
+ *  token map (for the "--token" variables hand-written CSS reads) plus
+ *  its pre-derived "-rgb" triplet sibling map (for the "--token-rgb"
+ *  variables tailwind.config.ts's `rgb(var(--*-rgb) / <alpha-value>)`
+ *  colors resolve through — see apply.ts's module comment for why
+ *  BOTH must be set). Computed once at buildFoucScript() call time
+ *  (module scope in layout.tsx, i.e. build/server-render time, not
+ *  inside the emitted browser script) so the inline <script> itself
+ *  only ever does property lookups + setProperty calls — no hex
+ *  parsing/arithmetic at runtime, keeping it as small and "dumb" as
+ *  possible for something that must run before first paint. */
+interface FoucThemePayload {
+  hex: Record<string, string>;
+  rgb: Record<string, string>;
+}
+
 /** Source string for the inline pre-hydration <script> in layout.tsx.
  *  Kept as a template string (not a bundled module import) because it
  *  must run synchronously in <head>, before any JS bundle loads —
  *  see layout.tsx for how this is embedded via dangerouslySetInnerHTML.
  *  Re-implements the same read-key/parse/try-catch logic as
  *  readDisplayMirror() above (can't import a TS module into a raw
- *  inline script) and additionally imports the two built-in themes'
- *  token maps inline so it can call setProperty before paint without
- *  waiting for the app bundle. */
+ *  inline script) and additionally embeds the two built-in themes'
+ *  token maps (hex + pre-derived rgb triplets, see FoucThemePayload)
+ *  inline so it can call setProperty before paint without waiting for
+ *  the app bundle. */
 export function buildFoucScript(themeTokensById: Record<string, Record<string, string>>): string {
-  const themesJson = JSON.stringify(themeTokensById);
+  const payload: Record<string, FoucThemePayload> = {};
+  for (const [themeId, tokens] of Object.entries(themeTokensById)) {
+    const rgb: Record<string, string> = {};
+    for (const [key, hex] of Object.entries(tokens)) {
+      rgb[key] = hexToRgbTriplet(hex);
+    }
+    payload[themeId] = { hex: tokens, rgb };
+  }
+  const themesJson = JSON.stringify(payload);
   return `(function(){try{
     var raw = window.localStorage.getItem(${JSON.stringify(DISPLAY_STORAGE_KEY)});
     var mirror = raw ? JSON.parse(raw) : null;
@@ -80,10 +107,12 @@ export function buildFoucScript(themeTokensById: Record<string, Record<string, s
     root.dataset.fs = fontSize;
     var themes = ${themesJson};
     if (themeId !== "terminal" && themes[themeId]) {
-      var tokens = themes[themeId];
-      for (var key in tokens) {
-        if (Object.prototype.hasOwnProperty.call(tokens, key)) {
-          root.style.setProperty("--" + key, tokens[key]);
+      var theme = themes[themeId];
+      var hex = theme.hex, rgb = theme.rgb;
+      for (var key in hex) {
+        if (Object.prototype.hasOwnProperty.call(hex, key)) {
+          root.style.setProperty("--" + key, hex[key]);
+          root.style.setProperty("--" + key + "-rgb", rgb[key]);
         }
       }
       root.dataset.theme = themeId;
