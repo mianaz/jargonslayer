@@ -1,6 +1,6 @@
 {
   "name": "jargonslayer",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "description": "Real-time English-meeting comprehension assistant for non-native speakers — transparent by default, fully local when you choose (英文会议实时理解助手)",
   "license": "MIT",
