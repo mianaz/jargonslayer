@@ -46,8 +46,8 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
 - **Import from a video URL** (local Whisper sidecar only) — paste a link and the sidecar's `yt-dlp` downloads + transcribes it through the same job pipeline as an uploaded recording; **local-tier only, not on the hosted demo** — a datacenter fetching third-party video is both a platform-terms and (per *Cordova v. Huneault*, 2026) a DMCA §1201 problem the moment it's server-side, so this runs on your machine, under your account, at your own risk.
 - **Post-meeting artifacts** — bilingual summary (topic / key points / decisions / action items), paragraph-aligned translation, study cards, and a **Cornell-note sheet** (highlighted body + margin annotations, exportable as PNG or Markdown); plus Markdown / Anki TSV / JSON export, auto-save to a folder, and a webhook.
 - **Learning center** — `/review` has stats, a frequency Top 10, a word cloud, and a flashcard practice deck; your personal glossary feeds back into detection in later meetings.
-- **BYOK, multi-model** — Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); or connect an OpenRouter account in one click. The key lives only in your local browser.
-- **History without accounts** — everything in IndexedDB; search old meetings by expression; one-click full backup and restore.
+- **BYOK, multi-model** — Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); or connect an OpenRouter account in one click. The key lives in your local browser and is relayed in memory (never persisted) through this app's own API routes when it calls out — or skip the browser entirely with an env var.
+- **History without accounts** — everything in IndexedDB; search old meetings by expression; export a full backup / import to restore, from Settings.
 
 <div align="center">
 <table>
@@ -78,8 +78,8 @@ On first launch an onboarding tour appears. **Open the ≡ menu (top right) and 
 
 The built-in dictionary only matches fixed phrases. An Anthropic API key adds context-aware detection plus post-meeting summaries and translation. Two ways:
 
-1. **In the UI** (recommended): ≡ menu → 「设置」 (Settings) → AI 检测 → API Key. Stored only in your local browser, sent directly with each request.
-2. **Environment variable**: create `.env.local` in the project root:
+1. **In the UI**: ≡ menu → 「设置」 (Settings) → AI 检测 → API Key. Stored in your local browser (IndexedDB); each call is relayed once, in memory, through this app's own `/api/*` routes before reaching the model provider — never written to disk or logged, but it does pass through that server's memory, which is not the same claim as "never touches a server." If you're self-hosting, that server is your own machine.
+2. **Environment variable** (recommended — the hardened, zero-browser-storage posture): the key never enters the browser at all, it only ever lives in the server process. Create `.env.local` in the project root:
    ```
    ANTHROPIC_API_KEY=sk-ant-...
    ```

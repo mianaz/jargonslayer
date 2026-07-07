@@ -182,14 +182,50 @@ export async function postWebhook(
   }
 }
 
-/** Serialize sessions + glossary + settings into one backup JSON. */
-export async function buildFullBackup(): Promise<string> {
+/** Every field on Settings that can hold BYOK key material — kept in
+ *  one place so the export-time strip below and any future audit stay
+ *  in sync (see #57's plaintext-key audit). taskLlm's per-domain
+ *  overrides (#56) each carry their own optional apiKey too. */
+function stripKeyMaterial(settings: Settings): Settings {
+  const { taskLlm, ...rest } = settings;
+  const strippedTaskLlm = taskLlm
+    ? (Object.fromEntries(
+        Object.entries(taskLlm).map(([domain, cfg]) => [
+          domain,
+          cfg ? { ...cfg, apiKey: undefined } : cfg,
+        ]),
+      ) as Settings["taskLlm"])
+    : taskLlm;
+  return {
+    ...rest,
+    apiKey: "",
+    hfToken: "",
+    agentToken: "",
+    taskLlm: strippedTaskLlm,
+  };
+}
+
+/** Serialize sessions + glossary + settings into one backup JSON.
+ *  `includeKeys: false` (the Settings dialog's default-checked "不包含
+ *  API Key" option) strips apiKey/taskLlm[*].apiKey/hfToken/agentToken
+ *  from the embedded settings — everything else round-trips as-is.
+ *
+ *  Extension note for #48 (learning loop, not yet landed): once
+ *  `src/lib/learn/store.ts`'s learn-set store exists (see
+ *  docs/design-explorations/48-learning-loop.md Q1), add its
+ *  `Record<string, LearnRecord>` here as a fourth top-level field and
+ *  restore it the same dedupe-by-key way glossary is restored below. */
+export async function buildFullBackup(
+  opts: { includeKeys?: boolean } = {},
+): Promise<string> {
+  const { includeKeys = true } = opts;
   const metas = await storage.listSessions();
   const sessions = (
     await Promise.all(metas.map((m) => storage.getSession(m.id)))
   ).filter((s): s is MeetingSession => s !== null);
   const glossaryEntries = await glossary.loadCustomEntries();
-  const settings = await storage.loadSettings();
+  const rawSettings = await storage.loadSettings();
+  const settings = rawSettings && !includeKeys ? stripKeyMaterial(rawSettings) : rawSettings;
   return JSON.stringify(
     {
       schemaVersion: 1,
@@ -212,10 +248,12 @@ interface BackupShape {
   settings?: Settings;
 }
 
-/** Merge a backup file back in (dedupe by id). Returns counts. */
-export async function restoreFullBackup(
-  json: string,
-): Promise<{ sessions: number; entries: number }> {
+/** Parse-and-validate a backup JSON string, throwing the same zh-ready
+ *  errors both call sites (the confirmation-step preview and the real
+ *  restore below) need to surface identically. Not exported — callers
+ *  that only need counts (no writes) use previewBackup below instead,
+ *  so the shape check lives in exactly one place either way. */
+function parseBackup(json: string): BackupShape {
   let parsed: BackupShape;
   try {
     parsed = JSON.parse(json) as BackupShape;
@@ -225,6 +263,47 @@ export async function restoreFullBackup(
   if (parsed.kind !== "jargonslayer-backup" && parsed.kind !== "meetlingo-backup") {
     throw new Error("不是有效的 JargonSlayer 备份文件");
   }
+  return parsed;
+}
+
+/** Parse-and-validate only — no writes. Used by the Settings dialog's
+ *  import confirmation step to show counts ("N 场会议 / N 条词典 /
+ *  是否包含设置/Key") before the user commits to restoring. hasApiKey
+ *  inspects the file's OWN settings.apiKey rather than trusting
+ *  whatever the exporter's "不包含 API Key" checkbox happened to be set
+ *  to at export time (a file could have been hand-edited, or exported
+ *  by an older build) — the confirm copy should describe what this
+ *  FILE actually contains, not what a checkbox once claimed. */
+export function previewBackup(json: string): {
+  sessions: number;
+  entries: number;
+  hasSettings: boolean;
+  hasApiKey: boolean;
+} {
+  const parsed = parseBackup(json);
+  const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
+  const entries = Array.isArray(parsed.glossary) ? parsed.glossary : [];
+  return {
+    sessions: sessions.length,
+    entries: entries.length,
+    hasSettings: !!parsed.settings,
+    hasApiKey: !!parsed.settings?.apiKey,
+  };
+}
+
+/** Merge a backup file back in: sessions and glossary entries are
+ *  upserted by id (dedupe — an id already present locally is
+ *  overwritten by the backup's copy, everything else local is kept),
+ *  settings (if present in the file) REPLACE the current settings
+ *  wholesale via storage.saveSettings — the caller is expected to
+ *  re-hydrate the live store afterward (store.hydrate() already runs
+ *  the restored blob through migrateSettings, so a backup taken on an
+ *  older schema still comes out with every current field populated).
+ *  Returns counts for the caller's toast/confirmation copy. */
+export async function restoreFullBackup(
+  json: string,
+): Promise<{ sessions: number; entries: number; settingsRestored: boolean }> {
+  const parsed = parseBackup(json);
 
   const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
   for (const session of sessions) {
@@ -236,8 +315,11 @@ export async function restoreFullBackup(
     await glossary.upsertCustomEntry(entry as Parameters<typeof glossary.upsertCustomEntry>[0]);
   }
 
-  // Settings are intentionally not restored silently — the user's
-  // current provider/key/engine choices stay untouched. Caller may
-  // surface this in its toast copy.
-  return { sessions: sessions.length, entries: entries.length };
+  let settingsRestored = false;
+  if (parsed.settings) {
+    await storage.saveSettings(parsed.settings);
+    settingsRestored = true;
+  }
+
+  return { sessions: sessions.length, entries: entries.length, settingsRestored };
 }

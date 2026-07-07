@@ -20,9 +20,12 @@ import {
   type RemotePackSource,
 } from "@/lib/detect/remotePacks";
 import {
+  buildFullBackup,
   chooseExportFolder,
   clearExportFolder,
   getExportFolderName,
+  previewBackup,
+  restoreFullBackup,
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import type {
@@ -364,6 +367,21 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
   const [testingConnection, setTestingConnection] = useState(false);
   const [exportFolderName, setExportFolderName] = useState<string | null>(null);
+  // 全量备份/恢复 (#57): 「不包含 API Key」defaults to CHECKED (safe
+  // default — a backup file is meant to be shareable/storable without
+  // automatically also being a key leak). restorePreview holds the
+  // picked file's raw text + previewBackup() counts while the user
+  // reviews the confirmation step; null = no pending import.
+  const [exportStripKeys, setExportStripKeys] = useState(true);
+  const [restorePreview, setRestorePreview] = useState<{
+    text: string;
+    sessions: number;
+    entries: number;
+    hasSettings: boolean;
+    hasApiKey: boolean;
+  } | null>(null);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
+  const [restoring, setRestoring] = useState(false);
   // 说话人分离 (speaker diarization, HF token) section.
   const [showHfToken, setShowHfToken] = useState(false);
   const [checkingDiarization, setCheckingDiarization] = useState(false);
@@ -633,6 +651,67 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     await clearExportFolder();
     setExportFolderName(null);
     showToast("已清除导出文件夹");
+  };
+
+  // 全量备份 (#57): downloads sessions + 词典 + settings as one JSON via
+  // a throwaway <a download> blob link — no server round-trip, matches
+  // this app's local-first storage model. exportStripKeys (default
+  // checked) strips key material before it ever leaves buildFullBackup.
+  const handleExportBackup = async () => {
+    const json = await buildFullBackup({ includeKeys: !exportStripKeys });
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const date = new Date().toISOString().slice(0, 10);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `jargonslayer-backup-${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    showToast(exportStripKeys ? "已导出备份（不含 API Key）" : "已导出备份（含 API Key，请妥善保管）");
+  };
+
+  // 导入备份 step 1: read the picked file and show a confirmation step
+  // (counts + what will be merged/overwritten) BEFORE writing anything —
+  // restore is destructive-ish (settings are replaced wholesale, see
+  // restoreFullBackup's own doc comment), so nothing happens on file
+  // pick alone.
+  const handlePickBackupFile = async (file: File) => {
+    setRestoreError(null);
+    const text = await file.text();
+    try {
+      const { sessions, entries, hasSettings, hasApiKey } = previewBackup(text);
+      setRestorePreview({ text, sessions, entries, hasSettings, hasApiKey });
+    } catch (err) {
+      setRestorePreview(null);
+      setRestoreError(err instanceof Error ? err.message : "备份文件解析失败");
+    }
+  };
+
+  // 导入备份 step 2: user confirmed — actually merge sessions/词典
+  // (upsert by id) and replace settings wholesale (if present), then
+  // re-hydrate the live store from storage (mirrors HistoryDrawer's
+  // post-import pattern) so the rest of the app reflects the restored
+  // data without a full page reload.
+  const handleConfirmRestore = async () => {
+    if (!restorePreview) return;
+    setRestoring(true);
+    try {
+      const { sessions, entries, settingsRestored } = await restoreFullBackup(restorePreview.text);
+      await useApp.getState().hydrate();
+      setRestorePreview(null);
+      showToast(
+        `已恢复 ${sessions} 场会议、${entries} 条词典` +
+          (settingsRestored ? "，设置已覆盖为备份中的设置" : ""),
+      );
+      // draft is a local snapshot taken when the dialog opened — resync
+      // it to the just-restored (and now re-hydrated) live settings so
+      // 保存 doesn't stomp the restore with the stale pre-restore draft.
+      setDraft(coercePreviewModels(useApp.getState().settings));
+    } catch (err) {
+      setRestoreError(err instanceof Error ? err.message : "恢复失败");
+    } finally {
+      setRestoring(false);
+    }
   };
 
   const activePreset = presetIdFor(PROVIDER_PRESETS, draft);
@@ -906,7 +985,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
               onApiKeyChange={(apiKey) => patch({ apiKey })}
               apiKeyPlaceholder="sk-…"
-              apiKeyHint="仅存本机浏览器，随请求直发"
+              apiKeyHint="存在本机浏览器；调用时经本应用接口内存转发，不落盘（env-first 见 README）"
               presets={PROVIDER_PRESETS}
               disabled={PREVIEW_TIER}
               onConnectOpenRouter={() => void handleConnectOpenRouter()}
@@ -1275,6 +1354,96 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="h-4 w-4 accent-act"
               />
             </label>
+
+            {/* 全量备份/恢复 (#57): sessions + 词典 + settings as one JSON
+               file — download/upload, no server round-trip (matches the
+               app's local-first IndexedDB storage). Not "一键" in the
+               strict sense (import needs an explicit confirm step,
+               deliberately — restore replaces settings wholesale), so
+               the copy below and the README describe it as two buttons,
+               not a single click. */}
+            <div className="space-y-2 border-t border-edge pt-3">
+              <div className="text-xs text-mut">全量备份</div>
+
+              <label className="flex items-center justify-between gap-3 py-1">
+                <div>
+                  <div className="text-sm text-fg">不包含 API Key</div>
+                  <div className="text-xs text-mut2">
+                    备份文件默认包含你的 API Key（AI 检测 / 分任务模型 / HF Token /
+                    连接码），请妥善保管；勾选后导出的备份不含这些字段
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={exportStripKeys}
+                  onChange={(e) => setExportStripKeys(e.target.checked)}
+                  className="h-4 w-4 shrink-0 accent-act"
+                />
+              </label>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleExportBackup()}
+                  className="btn-tactile rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                >
+                  导出全量备份
+                </button>
+                <label className="btn-tactile cursor-pointer rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3">
+                  导入备份
+                  <input
+                    type="file"
+                    accept="application/json,.json"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = ""; // allow re-picking the same file
+                      if (file) void handlePickBackupFile(file);
+                    }}
+                  />
+                </label>
+              </div>
+
+              {restoreError && (
+                <div className="text-xs leading-[1.7] text-warn-soft">{restoreError}</div>
+              )}
+
+              {restorePreview && (
+                <div className="space-y-2 rounded-sm border border-warn-soft/40 bg-panel2 p-3">
+                  <div className="text-sm text-fg">确认恢复备份？</div>
+                  <ul className="space-y-0.5 text-xs leading-[1.7] text-mut2">
+                    <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，已有会议会被同 ID 的备份覆盖）</li>
+                    <li>个人词典：{restorePreview.entries} 条（按 ID 合并，规则同上）</li>
+                    <li>
+                      设置：
+                      {restorePreview.hasSettings
+                        ? restorePreview.hasApiKey
+                          ? "备份中包含设置（含 API Key），将完全覆盖当前设置"
+                          : "备份中包含设置（不含 API Key），将完全覆盖当前设置"
+                        : "备份中不含设置，当前设置保持不变"}
+                    </li>
+                  </ul>
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setRestorePreview(null)}
+                      disabled={restoring}
+                      className="btn-tactile rounded-sm px-3 py-1.5 text-sm text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      取消
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleConfirmRestore()}
+                      disabled={restoring}
+                      className="btn-tactile rounded-sm border border-warn-soft/50 px-3 py-1.5 text-sm text-warn-soft hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {restoring ? "恢复中…" : "确认恢复"}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </section>
 
           {/* 订阅直连（实验性，v0.2.2）— kill-switch layer 2: this whole
