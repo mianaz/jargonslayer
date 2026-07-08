@@ -70,6 +70,11 @@ export class TranslateQueue {
   private stopped = false;
   private noKeyToastShown = false; // NoKeyError toast fires at most once per meeting
   private consecutiveRateLimits = 0; // reset on any successful batch
+  // Segment ids that already burned their one generic-error retry —
+  // a transient 5xx (the flaky-endpoint case, e.g. upstream 502s)
+  // used to drop a whole 6-segment batch permanently; now each item
+  // gets exactly one second chance before staying English-only.
+  private failedOnce = new Set<string>();
 
   constructor(private opts: TranslateQueueOptions) {}
 
@@ -258,10 +263,20 @@ export class TranslateQueue {
       return;
     }
 
-    // Any other error: the batch is NOT retried (its segments stay
-    // English-only), but a short cooldown avoids hammering a flaky
-    // endpoint on every subsequent debounce tick.
-    console.warn("[TranslateQueue] batch dropped after error", err);
+    // Any other error: re-queue each item ONCE (transient 5xx / flaky
+    // endpoint should not silently strip translations from six
+    // segments at a time); an item that fails its retry too is dropped
+    // for good (stays English-only). The cooldown still spaces the
+    // retry so a down endpoint isn't hammered on every debounce tick.
+    const retriable = batch.items.filter((it) => !this.failedOnce.has(it.id));
+    for (const it of retriable) this.failedOnce.add(it.id);
+    if (retriable.length > 0) {
+      this.pending = [...retriable, ...this.pending];
+    }
+    console.warn(
+      `[TranslateQueue] batch error — retrying ${retriable.length}/${batch.items.length} once`,
+      err,
+    );
     this.pauseFor(ERROR_COOLDOWN_MS);
   }
 }

@@ -78,7 +78,12 @@ const ENGINE_CARDS: {
   {
     value: "webspeech",
     label: "浏览器识别",
-    hint: "由浏览器厂商云端识别（音频会离开设备）",
+    // The Web Speech capture chain (echo cancellation etc.) is fixed
+    // by the browser and tuned for near-field voice — speaker-played
+    // meeting audio comes through weak, and that is not fixable from
+    // our side (the local engines are: whisperSocket.ts acquires its
+    // own stream with raw-capture constraints).
+    hint: "由浏览器厂商云端识别（音频会离开设备）；拾取扬声器外放较弱，线上会议建议标签页音频或本地 Whisper",
     posture: "cloud",
   },
   {

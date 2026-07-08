@@ -49,8 +49,16 @@ export class WhisperSocketEngine implements STTEngine {
   private async acquireStream(settings: Settings): Promise<MediaStream> {
     const audioConstraints: MediaTrackConstraints = {
       channelCount: 1,
-      echoCancellation: true,
-      noiseSuppression: true,
+      // This is a transcription capture, not a call: echo cancellation
+      // exists to stop the far side hearing themselves and works by
+      // REMOVING audio that correlates with system output — i.e. it
+      // actively cancels exactly the "meeting playing on my speakers"
+      // audio users point the mic at. Noise suppression is tuned for
+      // near-field voice and garbles far-field speech (Whisper is
+      // noise-robust anyway). Auto gain lifts quiet/distant sources.
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: true,
     };
     if (settings.micId) {
       audioConstraints.deviceId = { exact: settings.micId };

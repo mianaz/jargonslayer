@@ -314,30 +314,56 @@ describe("TranslateQueue", () => {
     expect(body.segments.map((s) => s.text)).toEqual(["second run of rate limits"]);
   });
 
-  it("a transient (non-NoKey, non-rate-limit) error drops that batch without retry, and the queue continues after a 5s cooldown", async () => {
+  it("a transient (non-NoKey, non-rate-limit) error re-queues the batch for ONE retry after the 5s cooldown", async () => {
     mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502"));
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
 
-    queue.pushSegment(makeSegment("dropped on failure"));
+    queue.pushSegment(makeSegment("fails once, then retried"));
     await vi.advanceTimersByTimeAsync(1500);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
-    // A distinct segment arrives while the queue is in its post-error
-    // cooldown — it must NOT be sent immediately, and must NOT include
-    // the dropped batch's segment (no retry).
-    queue.pushSegment(makeSegment("should still translate later"));
+    // A distinct segment arrives during the post-error cooldown — the
+    // cooldown still gates everything (no immediate hammering).
+    queue.pushSegment(makeSegment("arrives during cooldown"));
     await vi.advanceTimersByTimeAsync(1500); // its own debounce elapses…
-    expect(mockTranslateApi).toHaveBeenCalledTimes(1); // …but cooldown still gates it
+    expect(mockTranslateApi).toHaveBeenCalledTimes(1); // …but cooldown gates it
 
     await vi.advanceTimersByTimeAsync(3_499); // total 4999ms since the failure
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1); // 5000ms — cooldown lifts
     expect(mockTranslateApi).toHaveBeenCalledTimes(2);
-    // The failed batch's segment is never retried — only the second
-    // (distinct) segment appears in the follow-up call.
+    // The failed item is retried at the FRONT of the follow-up batch,
+    // ahead of the newer segment (transient 5xx must not silently
+    // strip translations from a whole batch).
     const body = mockTranslateApi.mock.calls[1][0];
-    expect(body.segments.map((s) => s.text)).toEqual(["should still translate later"]);
+    expect(body.segments.map((s) => s.text)).toEqual([
+      "fails once, then retried",
+      "arrives during cooldown",
+    ]);
+  });
+
+  it("an item that fails its retry too is dropped for good — no infinite retry loop", async () => {
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 again"));
+    mockTranslateApi.mockResolvedValueOnce(emptyRes());
+
+    queue.pushSegment(makeSegment("fails twice, dropped"));
+    await vi.advanceTimersByTimeAsync(1500); // attempt #1 fails -> retry queued
+    expect(mockTranslateApi).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5_000); // cooldown lifts -> attempt #2 fails
+    expect(mockTranslateApi).toHaveBeenCalledTimes(2);
+
+    // After the second failure the item must NOT be re-queued again: a
+    // fresh segment pushed after the second cooldown translates alone.
+    queue.pushSegment(makeSegment("fresh segment, after the drop"));
+    await vi.advanceTimersByTimeAsync(5_000); // second cooldown lifts
+    expect(mockTranslateApi).toHaveBeenCalledTimes(3);
+    const body = mockTranslateApi.mock.calls[2][0];
+    expect(body.segments.map((s) => s.text)).toEqual([
+      "fresh segment, after the drop",
+    ]);
   });
 
   it("meeting-boundary guard: a response whose gen no longer matches the current meetingGen is silently dropped", async () => {
