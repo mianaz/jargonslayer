@@ -91,6 +91,15 @@
 :root:not([data-scheme="light"]) .scheme-light-only {
   display: none;
 }
+/* Bit's phosphor green per scheme (PixelDragon.tsx reads these with
+   dark-value fallbacks): the dark-bar mint #4ADE80 washes out on a
+   light StatusLine — the 0.42-alpha wing membrane in particular turns
+   into a pale blob and the winged silhouette stops reading. Deepened
+   greens keep the same phosphor identity at light-surface contrast. */
+[data-scheme="light"] {
+  --bit-phos: #15803d;
+  --bit-phos-dim: #86b598;
+}
 
 html,
 body {

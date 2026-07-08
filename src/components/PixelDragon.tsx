@@ -39,8 +39,15 @@ const BODY_DK = "#2E2E2E";
 const BODY_HL = "#454545";
 const FOOT_SHADOW = "#333333"; // sole shading under the two planted feet
 const TOE_SHADOW = "#2C2C2C"; // individual toe gaps
-const PHOS = "#4ADE80"; // phosphor-green fins / belly / eye / tail tip
-const PHOS_DIM = "#2A5F3F"; // closed-eyelid line
+// Phosphor green rides a CSS variable so light schemes can deepen it:
+// #4ADE80 belongs to a dark bar — on a light StatusLine the 0.42-alpha
+// wing membrane turns into a pale mint blob and the fins/eye wash out
+// (Miana's v0.2.4 bug report: "light mode has the old, ugly Bit" —
+// the wing became invisible-ish and the silhouette read wingless).
+// The hex fallbacks keep the widget self-contained; the light values
+// live under [data-scheme="light"] in globals.css.
+const PHOS = "var(--bit-phos, #4ADE80)"; // phosphor fins / belly / eye / tail
+const PHOS_DIM = "var(--bit-phos-dim, #2A5F3F)"; // closed-eyelid line
 const EYE_OFF = "#333333";
 const WB = "#2E2E2E"; // wing-bone / membrane-edge stroke (= BODY_DK family)
 const MEM = 0.42; // wing membrane fill opacity

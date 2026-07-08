@@ -85,11 +85,18 @@ for (const [size, out] of jobs) {
 // outputs, both with the background removed, one per scheme (the
 // globals.css .scheme-*-only classes swap them by <html data-scheme>):
 //   icon-ui-dark.png  — the palette-matched art as-is, transparent bg.
-//   icon-ui-light.png — neutrals luminance-inverted (silver dragon ->
-//     charcoal, white bubble -> ink block with light glyphs) and the
-//     phosphor greens deepened toward the light theme's lab-green
-//     family; a pale mark would vanish on paper, and the flipped mark
-//     keeps the brand hue while reading like Bit's own charcoal+green.
+//   icon-ui-light.png — SAME dragon, silver rendition: neutrals scaled
+//     down in luminance (white body -> light silver, ramp/ordering
+//     preserved, outlines stay dark) and the phosphor greens deepened
+//     toward the light theme's lab-green weight. v1 luminance-INVERTED
+//     the neutrals instead (white dragon -> black); Miana read that as
+//     the old rejected pixel-Bit icon ("old, more ugly version") — the
+//     brand mark must stay the same white/silver dragon in both
+//     schemes, only contrast-adapted.
+// Both UI variants are cropped to the artwork's alpha bounding box —
+// the source frame carries generous margins, which at header size
+// (h-9) made the glyph read ~30% smaller than its box ("logo too
+// small to be seen clearly").
 // The app-store/PWA icons above keep their opaque background on
 // purpose (maskable-icon rules); only the in-UI pair is transparent.
 
@@ -104,7 +111,10 @@ function removeBackground(px, width, height) {
   const isBg = (i) => {
     if (px[i + 3] === 0) return false; // already cleared
     const [, s, l] = rgbToHsl(px[i], px[i + 1], px[i + 2]);
-    return s < 0.35 && l < 0.17;
+    // Near-black always counts: compression noise like rgb(1,0,0) has
+    // a mathematical saturation of 1.0 at l≈0.002 and was surviving
+    // the s-gate as opaque specks along the frame edges.
+    return l < 0.05 || (s < 0.35 && l < 0.17);
   };
   const queue = [];
   const seen = new Uint8Array(width * height);
@@ -136,23 +146,59 @@ for (let i = 0; i < uiLight.length; i += 4) {
     // phosphor greens -> deep green, shading order preserved (plain
     // scale, not inversion — inverting would turn the bright flame
     // core into the darkest region and hollow the fire out)
-    out = hslToRgb(PHOS_HUE, Math.min(1, s * 1.05), Math.min(0.36, l * 0.42));
+    out = hslToRgb(PHOS_HUE, Math.min(1, s * 1.05), Math.min(0.42, l * 0.5));
   } else if (s < 0.3) {
-    // neutrals -> luminance-inverted into the light theme's ink-on-
-    // paper weight band: white bubble ~0.96 -> ~0.11 (the fg #191919
-    // family), silver body -> charcoal, dark glyph strokes -> pale
-    out = hslToRgb(0, 0, 0.08 + (1 - l) * 0.78);
+    // neutrals -> single downward luminance scale: ordering preserved,
+    // so the white dragon becomes a light-SILVER dragon (not charcoal)
+    // whose dark outlines carry the silhouette on paper surfaces.
+    out = hslToRgb(0, 0, l * 0.74);
   }
   if (out) { uiLight[i] = out[0]; uiLight[i + 1] = out[1]; uiLight[i + 2] = out[2]; }
 }
 
+// Alpha bounding box (shared: uiLight derives from uiDark's mask),
+// padded ~3% so antialiased edges don't kiss the frame. Robust form:
+// a row/column only counts as occupied with ≥3 near-opaque pixels —
+// the navy field carries a few isolated specks that survive the
+// flood-fill criterion, and a min/max bbox over raw alpha>0 was
+// getting stretched to the full frame by them (the extract below then
+// simply cuts them away along with the margins).
+const rowHits = new Uint32Array(info.height);
+const colHits = new Uint32Array(info.width);
+for (let y = 0; y < info.height; y++) {
+  for (let x = 0; x < info.width; x++) {
+    if (uiDark[(y * info.width + x) * 4 + 3] >= 200) {
+      rowHits[y]++;
+      colHits[x]++;
+    }
+  }
+}
+const MIN_HITS = 3;
+let minX = 0, maxX = info.width - 1, minY = 0, maxY = info.height - 1;
+while (minY < maxY && rowHits[minY] < MIN_HITS) minY++;
+while (maxY > minY && rowHits[maxY] < MIN_HITS) maxY--;
+while (minX < maxX && colHits[minX] < MIN_HITS) minX++;
+while (maxX > minX && colHits[maxX] < MIN_HITS) maxX--;
+const pad = Math.round(Math.max(maxX - minX, maxY - minY) * 0.03);
+const crop = {
+  left: Math.max(0, minX - pad),
+  top: Math.max(0, minY - pad),
+};
+crop.width = Math.min(info.width, maxX + pad + 1) - crop.left;
+crop.height = Math.min(info.height, maxY + pad + 1) - crop.top;
+
+// The artwork is naturally WIDE (dragon + jargon bubble side by side,
+// ~1.75:1) — keep that aspect instead of re-padding into a square, and
+// let the header render it h-9 w-auto. Fixed height 192, width by
+// aspect ratio.
 for (const [buf, out] of [
   [uiDark, "public/icon-ui-dark.png"],
   [uiLight, "public/icon-ui-light.png"],
 ]) {
   await sharp(buf, { raw: { width: info.width, height: info.height, channels: 4 } })
-    .resize(192, 192)
+    .extract(crop)
+    .resize({ height: 192 })
     .png()
     .toFile(join(ROOT, out));
-  console.log("wrote", out, 192);
+  console.log("wrote", out, `h192 (crop ${crop.width}x${crop.height}@${crop.left},${crop.top})`);
 }

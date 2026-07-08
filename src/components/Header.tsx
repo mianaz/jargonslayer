@@ -396,12 +396,12 @@ export default function Header({
           <img
             src={withBase("/icon-ui-dark.png")}
             alt=""
-            className="scheme-dark-only h-7 w-7"
+            className="scheme-dark-only h-9 w-auto"
           />
           <img
             src={withBase("/icon-ui-light.png")}
             alt=""
-            className="scheme-light-only h-7 w-7"
+            className="scheme-light-only h-9 w-auto"
           />
           {/* wordmark hidden <sm (#55): the phone-width row needs the
               space for the engine select + start button; the icon (now

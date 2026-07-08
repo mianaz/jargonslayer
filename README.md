@@ -2,7 +2,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="public/icon-ui-dark.png" />
-  <img src="public/icon-ui-light.png" width="96" alt="JargonSlayer icon" />
+  <img src="public/icon-ui-light.png" width="150" alt="JargonSlayer icon" />
 </picture>
 
 # JargonSlayer
