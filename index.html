@@ -610,7 +610,7 @@
     <span class="tl-dot g"></span>
   </div>
   <div class="tl-path">
-    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>v0.2.0
+    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>v0.2.3+
   </div>
   <div class="tl-spacer"></div>
   <button class="lang-toggle" id="langToggle" type="button" aria-label="切换语言 / switch language">中 / EN</button>
@@ -775,8 +775,8 @@
       <div class="feat c-green reveal">
         <div class="feat-key">BYOK, multi-model</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek / Qwen / OpenRouter / Ollama），Key 只存本机浏览器；OpenRouter 支持一键 OAuth 登录自动生成 Key，Poe 订阅用户有内置预设，接入零配置。</span>
-          <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama). The key lives only in your local browser. OpenRouter users can connect with one-click OAuth — the key is generated automatically; Poe subscribers get a built-in preset with zero configuration.</span>
+          <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek / Qwen / OpenRouter / Ollama）；OpenRouter 支持一键 OAuth 生成 Key，Poe 订阅有内置预设。Key 存本机浏览器，调用时经本应用接口内存转发（不落盘）；也可用环境变量让 Key 完全不进浏览器。</span>
+          <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); OpenRouter OAuth can provision a key in one click, and Poe has a built-in preset. A UI-entered key lives in your browser and is relayed in memory through this app's API routes, never persisted; env keys skip browser storage entirely.</span>
         </div>
       </div>
 
@@ -881,15 +881,39 @@
           </tr>
           <tr>
             <td class="data-col">
-              <span class="lang-zh">转录文本（AI 检测开启时）</span><span class="lang-en">Transcript text (AI detection on)</span>
+              <span class="lang-zh">音频/视频文件导入</span><span class="lang-en">Audio/video file imports</span>
             </td>
-            <td class="dest-col"><span class="dot cloud"></span>
-              <span class="lang-zh">发送到 Anthropic API（或你的 OpenAI 兼容端点）用于检测/纪要</span><span class="lang-en">Anthropic API (or your OpenAI-compatible endpoint) for detection/summaries</span>
+            <td class="dest-col"><span class="dot local"></span>
+              <span class="lang-zh">浏览器内转录，文件不上传</span><span class="lang-en">Transcribed in-browser; files are never uploaded</span>
             </td>
           </tr>
           <tr>
             <td class="data-col">
-              <span class="lang-zh">转录文本（词典模式）</span><span class="lang-en">Transcript text (dictionary mode)</span>
+              <span class="lang-zh">转录文本（体验版，AI 开启）</span><span class="lang-en">Transcript text (preview tier, AI on)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">经我们的服务器内存中转（不存储）→ OpenRouter，带 data_collection=allow</span><span class="lang-en">Transits our server in memory only → OpenRouter with data_collection=allow</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">转录文本（本地版，BYOK AI 开启）</span><span class="lang-en">Transcript text (local tier, BYOK AI on)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">转发到你配置的模型端点，不带 data_collection 标志</span><span class="lang-en">Forwarded to your configured model endpoint; no data_collection flag is set</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">转录文本（订阅直连 detect/define）</span><span class="lang-en">Transcript text (subscription-direct detect/define)</span>
+            </td>
+            <td class="dest-col"><span class="dot local"></span>
+              <span class="lang-zh">你自己机器上的 claude/codex CLI，不经过本项目服务器</span><span class="lang-en">Your own machine's claude/codex CLI; never through this project's server</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">转录文本（AI 关闭 / 词典模式）</span><span class="lang-en">Transcript text (AI off / dictionary mode)</span>
             </td>
             <td class="dest-col"><span class="dot local"></span>
               <span class="lang-zh">仅本机</span><span class="lang-en">Local only</span>
@@ -913,8 +937,8 @@
     </div>
 
     <p class="quickstart-note">
-      <span class="lang-zh">不想让任何文本出本机：设置里开「仅词典模式」。</span>
-      <span class="lang-en">To keep all text on the machine: Settings → 「仅词典模式」 (dictionary-only mode).</span>
+      <span class="lang-zh">不想让任何文本出本机：设置里关掉「AI 检测」，内置词典仍会即时检测。</span>
+      <span class="lang-en">To keep all text on the machine: turn off 「AI 检测」 in Settings; the built-in dictionary still detects instantly.</span>
     </p>
   </div>
 </section>
