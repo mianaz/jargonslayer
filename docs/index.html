@@ -284,6 +284,7 @@
   <div class="path"><strong>mianaz/jargonslayer</strong> / docs / v0.2.3+</div>
   <div class="spacer"></div>
   <a href="../">Landing</a>
+  <a href="zh/">中文</a>
   <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
   <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
 </header>
@@ -292,6 +293,7 @@
   <nav aria-label="Documentation sections">
     <div class="label">Start</div>
     <a href="#overview">Overview</a>
+    <a href="#reader-topics">Topic Index</a>
     <a href="#quickstart">Quickstart</a>
     <a href="#workflow">Meeting Workflow</a>
     <a href="#transcription">Transcription Engines</a>
@@ -306,6 +308,8 @@
     <a href="#faq">FAQ</a>
 
     <div class="label">Operate</div>
+    <a href="#deep-specs">Deep Specs</a>
+    <a href="#async-delegation">Async Delegation</a>
     <a href="#architecture">Architecture</a>
     <a href="#storage">Data and Storage</a>
     <a href="#local-dev">Local Development</a>
@@ -339,6 +343,52 @@
           <figcaption>Post-meeting summary and export</figcaption>
         </figure>
       </div>
+    </section>
+
+    <section id="reader-topics">
+      <h2>Topics Readers Usually Care About</h2>
+      <p>This page is organized around the questions a real user or operator is likely to ask before trusting the tool in a meeting.</p>
+      <div class="cards">
+        <div class="card">
+          <h3>Which mode should I use?</h3>
+          <p>Choose between hosted preview, local web app, dictionary-only, BYOK AI, local Whisper, and sidecar-based features based on privacy and setup cost.</p>
+        </div>
+        <div class="card">
+          <h3>What leaves my machine?</h3>
+          <p>Audio and text have separate paths. Browser recognition sends audio to the browser vendor; AI modes send text to the configured provider; dictionary mode keeps text local.</p>
+        </div>
+        <div class="card">
+          <h3>Why did a card appear late?</h3>
+          <p>Dictionary hits are immediate. LLM detection, translation, search, and diarization are background tasks that can land later and patch the session.</p>
+        </div>
+        <div class="card">
+          <h3>Can text be lost?</h3>
+          <p>The transcript is foreground state. Background outputs can fail or arrive late, so the roadmap uses a per-segment task ledger to make coverage explicit.</p>
+        </div>
+        <div class="card">
+          <h3>How do imports differ?</h3>
+          <p>Transcript import is parse-first. Browser audio/video import runs Whisper in-browser. Sidecar import can add local jobs and diarization. URL import is local-only.</p>
+        </div>
+        <div class="card">
+          <h3>How do I extend the dictionary?</h3>
+          <p>Use the personal glossary for your own terms and remote packs for curated shared data. Large acronym sources should be filtered before import.</p>
+        </div>
+      </div>
+      <h3>Full topic list</h3>
+      <ul>
+        <li>Mode choice and deployment tier: hosted preview, local web, PWA, future Tauri.</li>
+        <li>Transcription path: browser recognition, local Whisper, tab audio, demo, imported transcript, browser Whisper import.</li>
+        <li>Audio capture for online meetings: microphone, tab audio, virtual devices, loopback.</li>
+        <li>Detection behavior: dictionary floor, LLM upgrade, confidence threshold, dedupe, custom glossary priority.</li>
+        <li>Translation behavior: live bilingual transcript, import-time translation, post-meeting full translation.</li>
+        <li>AI provider setup: Anthropic, OpenAI-compatible endpoints, OpenRouter, Poe, Ollama, per-task models.</li>
+        <li>Privacy boundary: audio, transcript text, API keys, history, auto-export, webhooks.</li>
+        <li>Import limits: file types, browser model download, 45-minute browser audio cap, 200 MB browser audio cap, video extraction.</li>
+        <li>Speaker labels: batch diarization, realtime diarization beta, rename-wins behavior.</li>
+        <li>Exports and automation: Markdown, JSON, Anki TSV, Cornell notes, folder auto-save, webhook payloads.</li>
+        <li>Failure modes: no key, rate limits, sidecar unreachable, background tab throttling, stale async results.</li>
+        <li>Future realtime search: background enrichment that never steals focus from the live meeting.</li>
+      </ul>
     </section>
 
     <section id="quickstart">
@@ -544,6 +594,142 @@ python whisper_server.py --model small</code></pre>
       <p>Long meetings are chunked and translated in parallel; one to two minutes is normal for substantial transcripts. Cards can be exported without a report.</p>
       <h3>My project directory moved and the sidecar broke</h3>
       <p>Python virtual environments contain absolute paths. Rebuild the sidecar venv after moving or renaming the repo.</p>
+    </section>
+
+    <section id="deep-specs">
+      <h2>Deep Specs</h2>
+      <p>These sections describe the behavior users usually need when deciding whether to trust JargonSlayer in a real meeting, when debugging a setup, or when extending the tool.</p>
+
+      <h3>Mode Decision Matrix</h3>
+      <table>
+        <thead><tr><th>Use Case</th><th>Recommended Setup</th><th>Trade-off</th></tr></thead>
+        <tbody>
+          <tr><td>Try the product in 30 seconds</td><td>Hosted preview + Demo</td><td>No setup, but preview AI text follows the preview provider path.</td></tr>
+          <tr><td>Daily low-sensitivity meetings</td><td>Browser recognition + BYOK AI</td><td>Fastest live setup; browser vendor receives audio.</td></tr>
+          <tr><td>Privacy-sensitive meetings</td><td>Local Whisper + dictionary-only</td><td>Audio and text stay local, but explanations are limited to dictionary/custom entries.</td></tr>
+          <tr><td>Private but context-aware detection</td><td>Local Whisper + Ollama OpenAI-compatible endpoint</td><td>Can stay local, but model quality depends on the local model.</td></tr>
+          <tr><td>Understanding the other side of an online call</td><td>Tab audio or virtual audio device + local Whisper</td><td>More setup, but captures meeting audio instead of only the microphone.</td></tr>
+          <tr><td>Post-meeting analysis of recordings</td><td>Browser audio/video import for short files; sidecar import for larger/diarized files</td><td>Browser path is easiest; sidecar path handles heavier local jobs.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Settings Contract</h3>
+      <p>The main settings object controls transcription, model routing, detection, export, display, diarization, bilingual transcript, and subscription-direct.</p>
+      <ul>
+        <li><code>engine</code>: live capture choice. <code>import</code> and <code>browser-whisper</code> are stored on imported sessions but are not selectable live engines.</li>
+        <li><code>language</code>: BCP-47 language passed to Web Speech, such as <code>en-US</code>.</li>
+        <li><code>whisperUrl</code>: websocket URL for local Whisper, default <code>ws://localhost:8765</code>.</li>
+        <li><code>provider</code>, <code>baseUrl</code>, <code>apiKey</code>: primary LLM route. Empty key means the server route may rely on environment configuration.</li>
+        <li><code>taskLlm</code>: optional per-task provider/model overrides for <code>translate</code>, <code>detect</code>, and <code>summary</code>. Define/look-up uses the detect configuration.</li>
+        <li><code>autoDetect</code>: turns live detection on/off. <code>aiDetect</code> only controls the LLM layer; the dictionary floor remains the instant local layer when detection is on.</li>
+        <li><code>minConfidence</code>: threshold applied when merging detections.</li>
+        <li><code>enabledPacks</code>: <code>null</code> means all packs are enabled; <code>core</code> is always on.</li>
+        <li><code>bilingualTranscript</code>: live segment-by-segment translation into <code>explainLanguage</code>.</li>
+        <li><code>hfToken</code> and <code>realtimeDiarize</code>: local sidecar diarization controls.</li>
+        <li><code>themeId</code>, <code>fontSize</code>, <code>transcriptScale</code>, <code>transcriptLeading</code>: display controls persisted independently from theme tokens.</li>
+      </ul>
+
+      <h3>Detection Spec</h3>
+      <ul>
+        <li>Every finalized segment is scanned synchronously by the dictionary when detection is enabled.</li>
+        <li>The LLM layer batches fresh text and uses the previous context tail only for disambiguation.</li>
+        <li>LLM results can upgrade dictionary cards in place; they do not retract dictionary hits.</li>
+        <li>Repeated expressions are merged by normalized key, with count and last-seen metadata.</li>
+        <li>Personal glossary entries shadow built-in dictionary matches and are never overwritten by the AI.</li>
+        <li>All-caps acronyms use stricter matching to avoid false positives; ordinary mixed-case terms are matched more flexibly.</li>
+      </ul>
+      <div class="callout info"><strong>Current limitation:</strong> remote pack terms are loaded alongside built-ins, but cross-source term dedup still needs a fix before large acronym packs are imported.</div>
+
+      <h3>Translation Spec</h3>
+      <ul>
+        <li>Live bilingual transcript translates finalized segments in small batches keyed by segment id.</li>
+        <li>Toggling bilingual transcript on mid-meeting backfills the most recent untranslated finalized segments.</li>
+        <li>If a segment is manually edited, its stale translation is invalidated and re-queued while the meeting is live.</li>
+        <li>No-key pauses are self-healing: once a key is added, new translation work can resume without restarting the meeting.</li>
+        <li>Repeated 429s pause and eventually skip the oldest stuck batch so newer segments are not starved forever.</li>
+        <li>Post-meeting report translation is separate: it chunks the full transcript by segment index and repairs missing indices where possible.</li>
+      </ul>
+
+      <h3>Import Spec</h3>
+      <table>
+        <thead><tr><th>Import Path</th><th>Processing</th><th>Limits / Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Transcript paste / <code>.txt</code> / <code>.srt</code> / <code>.vtt</code></td><td>Parse, build synthetic session, run detection, optional translation, save.</td><td>Timestamped cues are normalized to the import time; plain text gets synthetic spacing.</td></tr>
+          <tr><td>Browser audio import</td><td>Decode with browser AudioContext, resample to 16 kHz mono, run browser Whisper worker.</td><td>45-minute duration cap; 200 MB compressed audio cap.</td></tr>
+          <tr><td>Browser video import</td><td>Extract audio with ffmpeg.wasm, then reuse the browser audio path.</td><td>Video extraction has its own size gate; first run may download browser-side model assets.</td></tr>
+          <tr><td>Sidecar recording import</td><td>Local job API handles transcription and optional diarization.</td><td>Requires local sidecar; progress display is UI-local and may disappear on refresh while the job continues.</td></tr>
+          <tr><td>Video URL import</td><td>Local sidecar uses <code>yt-dlp</code>, then transcribes through the same job pipeline.</td><td>Local tier only; user is responsible for rights and platform terms.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Failure and Recovery Spec</h3>
+      <ul>
+        <li><strong>No API key:</strong> detection falls back to dictionary; live translation pauses; report generation asks for a key.</li>
+        <li><strong>Rate limits:</strong> detection retries once with jitter for 429; translation pauses and avoids starving newer work indefinitely.</li>
+        <li><strong>Sidecar unreachable:</strong> local Whisper, sidecar import, URL import, diarization, and subscription-direct cannot run; browser-local import still works for supported files.</li>
+        <li><strong>Meeting changed:</strong> async results carry <code>meetingGen</code>; stale results from an old meeting are dropped.</li>
+        <li><strong>Background tab:</strong> browsers throttle timers, so detection also flushes on segment arrival and visibility changes.</li>
+        <li><strong>Post-stop late results:</strong> detection and translation can land after stop; the store schedules a save top-up so history is not missing tail results.</li>
+      </ul>
+
+      <h3>Glossary and Learning Spec</h3>
+      <ul>
+        <li>Personal glossary entries are the durable learning home today; meeting sessions stay immutable archives.</li>
+        <li>Entries can be manual, AI-defined from selected text, or collected from a meeting's cards.</li>
+        <li>Each entry stores headword, variants, explanation, example, original context, user note, source, timestamps, and review state.</li>
+        <li>Expression entries may store category, meaning, plain-English rewrite, and tone. Term entries may store term type and English gloss.</li>
+        <li>Review state includes mastered, review count, and last reviewed time. v0.3.0 plans to expand this into a true learn-set and due-review loop.</li>
+      </ul>
+
+      <h3>Automation Spec</h3>
+      <ul>
+        <li>Auto-export writes <code>YYYY-MM-DD-HHmm-jargonslayer.md</code> and matching <code>.json</code> to the selected folder.</li>
+        <li>Folder auto-save uses the File System Access API and is therefore mainly Chromium-oriented.</li>
+        <li>Webhook sends a <code>meeting.saved</code> payload with <code>schemaVersion: 1</code>, <code>exportedAt</code>, and full <code>session</code>.</li>
+        <li>Full backups include sessions, glossary, and settings. By default, exports can strip API keys, HF token, agent token, webhook URL, and per-task API keys.</li>
+        <li>Restore sanitizes subscription-direct state so a restored backup does not silently reconnect to an old local agent sidecar.</li>
+      </ul>
+
+      <h3>Future Realtime Search Spec</h3>
+      <p>Realtime search should be an optional background enrichment delegate, not a blocking step in live detection. It should receive an expression, recent context, meeting generation, and segment ids; return a compact citation or disambiguation note; and patch the existing card without changing transcript focus.</p>
+      <ul>
+        <li>Search should be triggered by ambiguity, user request, or explicit pack/card action, not every card by default.</li>
+        <li>Results should attach to the card as references or context notes, not as a replacement for the local explanation.</li>
+        <li>Search jobs should be lower priority than live transcription, dictionary scan, and visible-card detection.</li>
+        <li>Privacy settings should clearly distinguish local dictionary, provider AI, and web search calls.</li>
+      </ul>
+    </section>
+
+    <section id="async-delegation">
+      <h2>Async Delegation Design</h2>
+      <p>The product should feel like one calm foreground process with specialized background workers. The foreground owns listening, transcript editing, user focus, and saved session state. Expensive work runs as asynchronous delegates and reports back when results are ready.</p>
+      <div class="cards">
+        <div class="card">
+          <h3>Foreground</h3>
+          <p>Append finalized transcript segments, keep focus stable, let the user edit/review, and render the best available state without blocking on AI or search.</p>
+        </div>
+        <div class="card">
+          <h3>Delegates</h3>
+          <p>Run translation, LLM detection, realtime search, diarization, and post-meeting report work in independent queues with priorities and retry policy.</p>
+        </div>
+        <div class="card">
+          <h3>Ledger</h3>
+          <p>Track per-segment coverage: dictionary done, LLM detection pending/done/failed, translation pending/done/skipped, search pending/done/stale.</p>
+        </div>
+      </div>
+      <pre><code>{
+  "id": "job_x",
+  "kind": "translate | detect | search | diarize",
+  "meetingGen": 12,
+  "segmentIds": ["seg_1", "seg_2"],
+  "textHash": "...",
+  "priority": 2,
+  "status": "queued | running | done | failed | stale",
+  "attempts": 0
+}</code></pre>
+      <p>Results should apply only when the meeting generation still matches, target segments still exist, and the source text hash is still current. A result should patch the relevant field; it should never replace the foreground transcript or steal the user's focus.</p>
+      <div class="callout info"><strong>Why this matters:</strong> translation and detection can fail, pause, or complete late. A job ledger makes those states visible, so text is never silently lost; it is processed, pending, stale, skipped with a reason, or retryable.</div>
+      <p>Realtime search fits this model naturally: a card can request background search using the current expression plus recent context, keep showing the local explanation immediately, then attach references or disambiguation notes when the search delegate returns.</p>
     </section>
 
     <section id="architecture">

@@ -1,0 +1,852 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer 中文文档</title>
+<meta name="description" content="JargonSlayer 完整中文文档：用户指南、本地部署、隐私边界、导入、词典包、导出、架构、sidecar、测试与路线图。">
+<link rel="icon" type="image/png" href="../../assets/icon-192.png">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #121212;
+    --panel2: #1a1a1a;
+    --edge: #2b2b2b;
+    --edge2: #3a3a3a;
+    --fg: #ededed;
+    --mut: #a0a0a0;
+    --mut2: #6b6b6b;
+    --green: #4ade80;
+    --cyan: #22d3ee;
+    --orange: #ffaa44;
+    --red: #ff5f56;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; background: var(--bg); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    line-height: 1.78;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  code, pre, .mono { font-family: var(--mono); }
+  code {
+    border: 1px solid var(--edge);
+    background: var(--panel2);
+    padding: 0.12rem 0.32rem;
+    font-size: 0.92em;
+  }
+  pre {
+    margin: 1rem 0;
+    overflow-x: auto;
+    border: 1px solid var(--edge);
+    background: #050505;
+    padding: 1rem;
+    color: var(--fg);
+    font-size: 0.92rem;
+    line-height: 1.65;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.94rem;
+  }
+  th, td {
+    border: 1px solid var(--edge);
+    padding: 0.72rem 0.8rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--panel2);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  td { color: var(--mut); }
+  strong { color: var(--fg); }
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--edge);
+    background: rgba(18, 18, 18, 0.94);
+    backdrop-filter: blur(10px);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+  }
+  .dots { display: flex; gap: 7px; }
+  .dot { width: 10px; height: 10px; border-radius: 999px; display: block; }
+  .dot.red { background: var(--red); }
+  .dot.yellow { background: var(--orange); }
+  .dot.green { background: var(--green); }
+  .topbar .path { color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar .path strong { color: var(--fg); }
+  .topbar .spacer { flex: 1; }
+  .topbar a {
+    color: var(--mut);
+    text-decoration: none;
+    border: 1px solid var(--edge);
+    padding: 0.3rem 0.55rem;
+    white-space: nowrap;
+  }
+  .topbar a:hover { color: var(--fg); border-color: var(--edge2); }
+  .layout {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    max-width: 1320px;
+    margin: 0 auto;
+  }
+  nav {
+    position: sticky;
+    top: 44px;
+    height: calc(100vh - 44px);
+    overflow-y: auto;
+    border-right: 1px solid var(--edge);
+    padding: 1.5rem 1rem 2rem;
+  }
+  nav .label {
+    color: var(--mut2);
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 1.1rem 0 0.42rem;
+  }
+  nav a {
+    display: block;
+    padding: 0.34rem 0.5rem;
+    color: var(--mut);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    font-size: 0.9rem;
+  }
+  nav a:hover {
+    color: var(--fg);
+    background: var(--panel);
+    border-left-color: var(--green);
+  }
+  main { min-width: 0; padding: 3rem 2rem 5rem; }
+  .hero {
+    border-bottom: 1px solid var(--edge);
+    padding-bottom: 2.2rem;
+    margin-bottom: 2.4rem;
+  }
+  .eyebrow {
+    color: var(--green);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  h1, h2, h3 { line-height: 1.25; letter-spacing: 0; }
+  h1 {
+    margin: 0.72rem 0 1rem;
+    font-size: clamp(2.4rem, 6vw, 4.6rem);
+    max-width: 920px;
+  }
+  h2 {
+    margin: 3.2rem 0 1rem;
+    padding-top: 0.4rem;
+    font-size: clamp(1.55rem, 2.6vw, 2.2rem);
+    border-top: 1px solid var(--edge);
+  }
+  h3 { margin: 1.8rem 0 0.75rem; color: var(--fg); font-size: 1.1rem; }
+  p, li { color: var(--mut); }
+  p.lead { max-width: 840px; color: var(--mut); font-size: 1.08rem; }
+  ul, ol { padding-left: 1.35rem; }
+  li { margin: 0.34rem 0; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .card {
+    border: 1px solid var(--edge);
+    background: var(--panel);
+    padding: 1rem;
+  }
+  .card h3 {
+    margin-top: 0;
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 0.96rem;
+  }
+  .card p { margin-bottom: 0; }
+  .callout {
+    border: 1px solid var(--edge);
+    border-left: 3px solid var(--orange);
+    background: var(--panel);
+    padding: 0.9rem 1rem;
+    margin: 1rem 0 1.4rem;
+    color: var(--mut);
+  }
+  .callout.local { border-left-color: var(--green); }
+  .callout.risk { border-left-color: var(--red); }
+  .callout.info { border-left-color: var(--cyan); }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+  .pill {
+    border: 1px solid var(--edge);
+    background: var(--panel2);
+    color: var(--mut);
+    padding: 0.3rem 0.52rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+  .shot-grid, .split {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  figure { margin: 0; border: 1px solid var(--edge); background: var(--panel); }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption {
+    border-top: 1px solid var(--edge);
+    color: var(--mut);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    padding: 0.55rem 0.7rem;
+  }
+  .footer {
+    margin-top: 4rem;
+    border-top: 1px solid var(--edge);
+    padding-top: 1rem;
+    color: var(--mut2);
+    font-family: var(--mono);
+    font-size: 0.82rem;
+  }
+  @media (max-width: 900px) {
+    .layout { display: block; }
+    nav {
+      position: static;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--edge);
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 0.5rem;
+    }
+    nav .label { grid-column: 1 / -1; }
+    main { padding: 2rem 1rem 4rem; }
+    .cards, .shot-grid, .split { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 520px) {
+    .topbar .path { display: none; }
+    nav { grid-template-columns: 1fr; }
+    h1 { font-size: 2.35rem; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / zh / v0.2.3+</div>
+  <div class="spacer"></div>
+  <a href="../../">首页</a>
+  <a href="../">English</a>
+  <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
+  <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
+</header>
+
+<div class="layout">
+  <nav aria-label="文档章节">
+    <div class="label">Start</div>
+    <a href="#overview">概览</a>
+    <a href="#reader-topics">读者关心的问题</a>
+    <a href="#quickstart">快速开始</a>
+    <a href="#workflow">会议流程</a>
+    <a href="#transcription">转录引擎</a>
+    <a href="#imports">导入</a>
+
+    <div class="label">Use</div>
+    <a href="#ai">AI 模式</a>
+    <a href="#review">复习与学习</a>
+    <a href="#glossary">词典与词典包</a>
+    <a href="#exports">导出与备份</a>
+    <a href="#privacy">隐私</a>
+    <a href="#faq">FAQ</a>
+
+    <div class="label">Operate</div>
+    <a href="#deep-specs">深入规格</a>
+    <a href="#async-delegation">异步委派设计</a>
+    <a href="#architecture">架构</a>
+    <a href="#storage">数据与存储</a>
+    <a href="#local-dev">本地开发</a>
+    <a href="#sidecars">Sidecar</a>
+    <a href="#remote-packs">远程词典包</a>
+    <a href="#deployment">部署与打包</a>
+    <a href="#testing">测试</a>
+    <a href="#roadmap">路线图</a>
+  </nav>
+
+  <main>
+    <section id="overview" class="hero">
+      <span class="eyebrow">完整中文文档</span>
+      <h1>JargonSlayer 文档</h1>
+      <p class="lead">JargonSlayer 是面向非英语母语者的英文会议实时理解助手。它把会议转录成文本，识别习语、商务黑话、委婉表达、缩写、专有名词和领域术语，并实时生成简短解释卡片。会议结束后，可以生成双语纪要、全文翻译、学习卡片和可导出的笔记。</p>
+      <div class="pill-row">
+        <span class="pill">无账号</span>
+        <span class="pill">词典模式</span>
+        <span class="pill">自带 Key</span>
+        <span class="pill">本地 Whisper</span>
+        <span class="pill">IndexedDB 历史</span>
+        <span class="pill">社区词典包</span>
+      </div>
+      <div class="shot-grid">
+        <figure>
+          <img src="../../assets/live.png" alt="JargonSlayer 实时会议界面">
+          <figcaption>实时转录与解释卡片</figcaption>
+        </figure>
+        <figure>
+          <img src="../../assets/summary.png" alt="JargonSlayer 纪要和导出界面">
+          <figcaption>会后纪要与导出</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="reader-topics">
+      <h2>读者关心的问题</h2>
+      <p>这份文档按真实用户和维护者会问的问题组织：开会前能不能信任、出问题时怎么判断、想扩展时应该从哪里下手。</p>
+      <div class="cards">
+        <div class="card">
+          <h3>我该用哪种模式？</h3>
+          <p>根据隐私和配置成本，在在线体验、本地 Web、词典模式、BYOK AI、本地 Whisper、sidecar 功能之间选择。</p>
+        </div>
+        <div class="card">
+          <h3>哪些数据会离开本机？</h3>
+          <p>音频和文本是两条独立路径。浏览器识别会把音频给浏览器厂商；AI 会把文本给配置的模型端点；词典模式文本留在本机。</p>
+        </div>
+        <div class="card">
+          <h3>为什么卡片晚到？</h3>
+          <p>词典命中是即时的。LLM 检测、翻译、搜索和说话人分离都是后台任务，可能稍后返回并补丁式更新会话。</p>
+        </div>
+        <div class="card">
+          <h3>文本会不会丢？</h3>
+          <p>转录文本是前台状态。后台结果可能失败或晚到，所以路线图会引入按片段记录覆盖情况的任务账本。</p>
+        </div>
+        <div class="card">
+          <h3>各种导入有什么区别？</h3>
+          <p>文稿导入先解析。浏览器音视频导入在浏览器内跑 Whisper。sidecar 导入可以处理更重任务和说话人分离。URL 导入只在本地版。</p>
+        </div>
+        <div class="card">
+          <h3>如何扩展词典？</h3>
+          <p>个人词典适合自己的术语；远程词典包适合共享数据。大型缩写源应先筛选，再作为可选词典包导入。</p>
+        </div>
+      </div>
+      <h3>完整主题列表</h3>
+      <ul>
+        <li>模式选择与部署层级：在线体验、本地 Web、PWA、未来 Tauri。</li>
+        <li>转录路径：浏览器识别、本地 Whisper、标签页音频、演示、文稿导入、浏览器 Whisper 导入。</li>
+        <li>线上会议音频捕获：麦克风、标签页音频、虚拟声卡、loopback。</li>
+        <li>检测行为：词典底座、LLM 升级、置信度阈值、去重、个人词典优先级。</li>
+        <li>翻译行为：实时双语转录、导入时翻译、会后全文翻译。</li>
+        <li>AI 提供商配置：Anthropic、OpenAI 兼容端点、OpenRouter、Poe、Ollama、分任务模型。</li>
+        <li>隐私边界：音频、转录文本、API Key、历史、自动导出、webhook。</li>
+        <li>导入限制：文件类型、浏览器模型下载、45 分钟浏览器音频上限、200 MB 浏览器音频上限、视频提取。</li>
+        <li>说话人标签：批处理分离、实时分离 beta、用户改名优先。</li>
+        <li>导出和自动化：Markdown、JSON、Anki TSV、Cornell 笔记、文件夹自动保存、webhook payload。</li>
+        <li>失败模式：无 Key、限流、sidecar 不可达、后台标签页节流、过期异步结果。</li>
+        <li>未来实时搜索：后台增强，不抢走会议中的前台焦点。</li>
+      </ul>
+    </section>
+
+    <section id="quickstart">
+      <h2>快速开始</h2>
+      <p>最快理解产品的方式是运行内置演示。它不需要麦克风，也不需要 API Key。</p>
+      <ol>
+        <li>打开在线体验，或在本地启动项目。</li>
+        <li>打开右上角 <code>≡</code> 菜单，选择 <code>演示</code>。</li>
+        <li>左侧查看转录，右侧查看解释卡片。</li>
+        <li>演示结束后点击 <code>停止</code>。</li>
+        <li>打开 <code>纪要与导出</code>，生成会议报告。</li>
+      </ol>
+      <h3>本地运行</h3>
+      <pre><code>git clone https://github.com/mianaz/jargonslayer.git
+cd jargonslayer
+npm install
+npm run dev
+# 打开 http://localhost:3000</code></pre>
+      <p>如果需要更接近生产环境的本地运行方式，使用 <code>npm run build</code> 和 <code>npm start</code>。</p>
+    </section>
+
+    <section id="workflow">
+      <h2>会议流程</h2>
+      <div class="cards">
+        <div class="card">
+          <h3>1. 开始监听</h3>
+          <p>选择转录引擎并点击 <code>开始监听</code>。最终转录片段会进入正文区域；未定稿的中间结果会以更弱的样式显示。</p>
+        </div>
+        <div class="card">
+          <h3>2. 阅读卡片</h3>
+          <p>右侧显示表达解释卡和术语卡。缩写、公司名、产品名、指标、技术术语会进入术语通道；重复命中只增加次数，不刷屏。</p>
+        </div>
+        <div class="card">
+          <h3>3. 会后复盘</h3>
+          <p>停止会议后生成报告，导出 Markdown、Anki TSV、JSON 或 Cornell 笔记，也可以之后从历史中重新打开。</p>
+        </div>
+      </div>
+      <ul>
+        <li>点击转录里的下划线表达，可以跳到对应卡片。</li>
+        <li>选中任意转录文本，可以即时查询并保存到个人词典。</li>
+        <li>启用说话人分离后，可以点击说话人标签改名；后续自动更新会继续应用别名。</li>
+      </ul>
+    </section>
+
+    <section id="transcription">
+      <h2>转录引擎</h2>
+      <table>
+        <thead><tr><th>引擎</th><th>配置成本</th><th>音频去向</th><th>适合场景</th></tr></thead>
+        <tbody>
+          <tr><td><strong>演示</strong></td><td>无需配置</td><td>无音频；脚本回放</td><td>快速体验完整流程</td></tr>
+          <tr><td><strong>浏览器识别</strong></td><td>无需配置，推荐 Chrome/Edge</td><td>浏览器厂商语音服务</td><td>日常低敏会议</td></tr>
+          <tr><td><strong>本地 Whisper</strong></td><td>Python sidecar</td><td>本机 <code>127.0.0.1</code></td><td>隐私敏感、离线、稳定转录</td></tr>
+          <tr><td><strong>标签页音频</strong></td><td>本地 sidecar</td><td>本机</td><td>捕获线上会议中对方的声音</td></tr>
+        </tbody>
+      </table>
+      <div class="callout info"><strong>线上会议注意：</strong>麦克风通常只听得到你自己。Zoom、Teams、Meet 等场景如果要听到对方声音，可使用标签页音频；或在 macOS 用 BlackHole、Windows 用 VB-Cable 把系统音频路由成输入，再配合本地 Whisper。</div>
+      <h3>本地 Whisper</h3>
+      <pre><code>cd sidecar
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python whisper_server.py --model small</code></pre>
+      <p>sidecar 通过 <code>ws://127.0.0.1:8765</code> 提供实时 websocket 转录，并通过本地 HTTP job API 处理录音导入。模型可选 <code>tiny</code>、<code>base</code>、<code>small</code>、<code>medium</code>、<code>large-v3</code>；日常默认推荐 <code>small</code>。</p>
+    </section>
+
+    <section id="imports">
+      <h2>导入</h2>
+      <div class="split">
+        <div>
+          <h3>文稿导入</h3>
+          <ol>
+            <li>打开 <code>历史</code>，选择 <code>导入文稿</code>。</li>
+            <li>粘贴文本，或上传 <code>.txt</code>、<code>.srt</code>、<code>.vtt</code>。</li>
+            <li>检查解析后的片段、时间戳和说话人。</li>
+            <li>可选：同时生成中文对照。</li>
+            <li>导入并分析，结果会保存为已停止的会议。</li>
+          </ol>
+        </div>
+        <div>
+          <h3>音频/视频文件</h3>
+          <ol>
+            <li>打开 <code>历史</code>，选择 <code>导入录音</code>。</li>
+            <li>选择浏览器本地转录，或本地 Whisper sidecar 路径。</li>
+            <li>常见音频文件可直接导入；视频文件会先在浏览器内用 ffmpeg.wasm 提取音轨。</li>
+            <li>使用 sidecar 路径时，如果配置了 pyannote，可以做说话人分离。</li>
+          </ol>
+        </div>
+      </div>
+      <h3>视频 URL 导入</h3>
+      <p>视频 URL 导入只属于本地版。sidecar 会在你的机器上调用 <code>yt-dlp</code>，再走本地转录任务管线；在线体验不提供这个服务器侧能力。</p>
+      <div class="callout risk"><strong>谨慎使用 URL 导入。</strong>服务器侧抓取第三方视频涉及平台条款和法律风险，所以项目把这条路径限制在用户自己的机器上。</div>
+    </section>
+
+    <section id="ai">
+      <h2>AI 模式与模型配置</h2>
+      <h3>词典模式</h3>
+      <p>在设置中关闭 <code>AI 检测</code>，转录文本就不会因为 AI 检测离开本机。内置词典仍会即时检测固定表达和术语。这是零 Key、零成本、本地文本路径。</p>
+      <h3>在线体验 AI</h3>
+      <p>在线体验可以使用预览服务器配置好的模型路径。文本会经过项目服务器内存中转，再转发到 OpenRouter，并带 <code>data_collection=allow</code>。请把预览版 AI 文本视为会与模型提供商共享。</p>
+      <h3>BYOK AI</h3>
+      <ol>
+        <li>打开 <code>设置</code>，进入 <code>AI 检测</code>。</li>
+        <li>选择 Anthropic，或 DeepSeek、Qwen、OpenRouter、Poe 预设、Ollama 等 OpenAI 兼容端点。</li>
+        <li>按需填写 base URL。</li>
+        <li>在 UI 中输入 API Key，或使用 <code>ANTHROPIC_API_KEY</code> 等服务端环境变量。</li>
+        <li>选择检测模型和报告模型，测试连接并保存。</li>
+      </ol>
+      <div class="callout"><strong>Key 处理：</strong>UI 输入的 Key 存在本地浏览器，并经应用 API 路由内存转发；不会在服务器侧持久化。环境变量方式可以让 Key 完全不进入浏览器。</div>
+      <h3>分任务模型</h3>
+      <p>高级设置可以为检测、翻译、报告使用不同提供商或模型。常见策略是实时检测用快而便宜的模型，会后报告用更强的模型。</p>
+    </section>
+
+    <section id="review">
+      <h2>复习与学习</h2>
+      <p><code>/review</code> 页面把历史会议和个人词典变成轻量学习中心。</p>
+      <figure>
+        <img src="../../assets/review.png" alt="JargonSlayer 复习页面">
+        <figcaption>复习页：统计、词云、高频列表、翻卡练习</figcaption>
+      </figure>
+      <ul>
+        <li>统计条展示会议数、累计表达、累计术语和近期活动。</li>
+        <li>词云用于快速扫过反复出现的表达和术语。</li>
+        <li>Top 10 列表用于集中复习最高频项目。</li>
+        <li>翻卡练习适合快速巩固；可以标记认识/不认识。</li>
+        <li>重度间隔重复仍建议导出 Anki TSV。</li>
+      </ul>
+      <div class="callout info"><strong>路线图：</strong>v0.3.0 计划把现在的个人词典掌握状态升级为一等的 learn-set 和到期复习循环。</div>
+    </section>
+
+    <section id="glossary">
+      <h2>词典与词典包</h2>
+      <h3>个人词典</h3>
+      <ol>
+        <li>在应用中打开 <code>我的词典</code>。</li>
+        <li>手动添加条目，或选中转录文本后点击 <code>加入我的词典</code>。</li>
+        <li>个人词典会参与后续会议检测，并优先于内置词典。</li>
+        <li>需要独立复习流程时，可导出为 Anki TSV。</li>
+      </ol>
+      <h3>内置词典包</h3>
+      <p>词典包用于按主题控制检测范围。当前内置分组包括基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药与生物科技。</p>
+      <h3>社区词典包</h3>
+      <p>远程词典包是从 GitHub raw 或 jsDelivr URL 安装的 JSON manifest。它可以包含表达条目和术语条目；缩写用 <code>terms</code> 且 <code>type: "acronym"</code>。</p>
+      <pre><code>{
+  "id": "biotech-terms",
+  "name": "Biotech Terms",
+  "version": "1.2.0",
+  "terms": [{
+    "term": "IND",
+    "type": "acronym",
+    "gloss_en": "Investigational New Drug application",
+    "gloss_zh": "美国 FDA 新药临床试验申请"
+  }]
+}</code></pre>
+      <div class="callout risk"><strong>已知问题：</strong>如果内置词典和远程词典包有同一术语，目前可能双重命中。导入大型缩写包前，应先修复跨来源术语去重。</div>
+    </section>
+
+    <section id="exports">
+      <h2>导出与备份</h2>
+      <h3>单次会议导出</h3>
+      <ul>
+        <li>Markdown 报告，可选 Obsidian/Dataview frontmatter。</li>
+        <li>Anki TSV 学习卡片。</li>
+        <li>带 <code>schemaVersion: 1</code> 的完整会议 JSON。</li>
+        <li>复制纪要到剪贴板。</li>
+        <li>Cornell 笔记可导出 PNG 或 Markdown。</li>
+      </ul>
+      <h3>自动导出</h3>
+      <p>设置中可以把每次会议自动保存为 Markdown + JSON 到指定文件夹。该能力依赖 File System Access API，因此更偏 Chromium 浏览器。它适合本地自动化、Obsidian vault 和 agent 工作流。</p>
+      <h3>Webhook</h3>
+      <p>设置中可以配置 URL，在每次保存会议后 POST <code>{ event: "meeting.saved", session }</code>。接收端应尽快返回 200 并异步处理；客户端超时 8 秒，无重试。</p>
+      <h3>全量备份</h3>
+      <p>全量备份包含会议、词典和设置。恢复时会先预览内容，并清理订阅直连连接状态等风险设置。</p>
+    </section>
+
+    <section id="privacy">
+      <h2>隐私</h2>
+      <p>JargonSlayer 的隐私策略是清楚标出每条数据路径，而不是笼统承诺。不同会议应该选择不同模式。</p>
+      <table>
+        <thead><tr><th>数据</th><th>去向</th></tr></thead>
+        <tbody>
+          <tr><td>本地 Whisper / 标签页音频</td><td>仅本机，loopback websocket</td></tr>
+          <tr><td>浏览器识别音频</td><td>浏览器厂商语音服务</td></tr>
+          <tr><td>音频/视频文件导入</td><td>浏览器内转录；文件不上传</td></tr>
+          <tr><td>在线体验 AI 文本</td><td>项目服务器内存中转，再到 OpenRouter，带 <code>data_collection=allow</code></td></tr>
+          <tr><td>BYOK AI 文本</td><td>你配置的模型提供商端点</td></tr>
+          <tr><td>订阅直连 detect/define</td><td>本地 <code>claude</code> 或 <code>codex</code> CLI</td></tr>
+          <tr><td>词典模式文本</td><td>仅本机</td></tr>
+          <tr><td>历史、设置、Key</td><td>本地浏览器存储；无账号</td></tr>
+        </tbody>
+      </table>
+      <div class="callout local"><strong>全本地文本路径：</strong>使用本地 Whisper 或标签页音频，关闭 <code>AI 检测</code>，并避免把 webhook/自动导出指向外部位置。</div>
+    </section>
+
+    <section id="faq">
+      <h2>FAQ</h2>
+      <h3>浏览器不支持语音识别</h3>
+      <p>浏览器识别推荐 Chrome 或 Edge；也可以切换到本地 Whisper。</p>
+      <h3>Whisper 连接不上</h3>
+      <p>确认 sidecar 终端正在运行，URL 是 <code>ws://localhost:8765</code>，本地防火墙没有拦截 loopback。</p>
+      <h3>检测太多或太少</h3>
+      <p>调整置信度阈值，启用/禁用词典包，或按会议场景开关 AI 检测。</p>
+      <h3>报告生成慢</h3>
+      <p>长会议会分块并行翻译；一到两分钟属于正常范围。卡片不需要生成报告也能导出。</p>
+      <h3>移动项目目录后 sidecar 坏了</h3>
+      <p>Python 虚拟环境包含绝对路径。移动或重命名仓库后，重建 sidecar venv。</p>
+    </section>
+
+    <section id="deep-specs">
+      <h2>深入规格</h2>
+      <p>这些规格面向真正使用和维护这个工具的人：什么时候该信任它、出问题如何判断、要扩展时有哪些边界。</p>
+
+      <h3>模式选择矩阵</h3>
+      <table>
+        <thead><tr><th>使用场景</th><th>推荐配置</th><th>取舍</th></tr></thead>
+        <tbody>
+          <tr><td>30 秒体验产品</td><td>在线体验 + 演示</td><td>零配置，但预览 AI 文本走预览提供商路径。</td></tr>
+          <tr><td>日常低敏会议</td><td>浏览器识别 + BYOK AI</td><td>实时配置最简单；音频会进入浏览器厂商语音服务。</td></tr>
+          <tr><td>隐私敏感会议</td><td>本地 Whisper + 词典模式</td><td>音频和文本都留在本机，但解释能力限于词典和个人词典。</td></tr>
+          <tr><td>既要隐私又要上下文检测</td><td>本地 Whisper + Ollama OpenAI 兼容端点</td><td>可全本地，但质量取决于本地模型。</td></tr>
+          <tr><td>听懂线上会议中对方声音</td><td>标签页音频或虚拟声卡 + 本地 Whisper</td><td>配置更多，但捕获的是会议音频，不只是麦克风。</td></tr>
+          <tr><td>分析会后录音</td><td>短文件用浏览器音视频导入；大文件/说话人分离用 sidecar 导入</td><td>浏览器路径最省事；sidecar 路径适合重任务。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>设置契约</h3>
+      <p>主设置对象控制转录、模型路由、检测、导出、显示、说话人分离、双语转录和订阅直连。</p>
+      <ul>
+        <li><code>engine</code>：实时捕获引擎。<code>import</code> 和 <code>browser-whisper</code> 只出现在导入会话中，不是实时引擎选项。</li>
+        <li><code>language</code>：传给 Web Speech 的 BCP-47 语言，例如 <code>en-US</code>。</li>
+        <li><code>whisperUrl</code>：本地 Whisper websocket，默认 <code>ws://localhost:8765</code>。</li>
+        <li><code>provider</code>、<code>baseUrl</code>、<code>apiKey</code>：主 LLM 路由。Key 为空时，服务端 route 可以依赖环境变量。</li>
+        <li><code>taskLlm</code>：可选分任务 provider/model 覆盖，支持 <code>translate</code>、<code>detect</code>、<code>summary</code>。划词解释跟随 detect 配置。</li>
+        <li><code>autoDetect</code>：整体开关。<code>aiDetect</code> 只控制 LLM 层；开启检测时，词典层仍是即时本地底座。</li>
+        <li><code>minConfidence</code>：合并检测结果时使用的置信度阈值。</li>
+        <li><code>enabledPacks</code>：<code>null</code> 表示启用所有词典包；<code>core</code> 始终开启。</li>
+        <li><code>bilingualTranscript</code>：把每个最终片段实时翻译成 <code>explainLanguage</code>。</li>
+        <li><code>hfToken</code> 和 <code>realtimeDiarize</code>：本地 sidecar 说话人分离配置。</li>
+        <li><code>themeId</code>、<code>fontSize</code>、<code>transcriptScale</code>、<code>transcriptLeading</code>：显示设置，独立于主题 token 持久化。</li>
+      </ul>
+
+      <h3>检测规格</h3>
+      <ul>
+        <li>启用检测时，每个最终转录片段都会被词典同步扫描。</li>
+        <li>LLM 层只批处理新增文本，之前的 context tail 仅用于消歧。</li>
+        <li>LLM 结果可以原地升级词典卡片，但不会撤回词典命中。</li>
+        <li>重复表达按归一化 key 合并，更新 count 和 last-seen 元数据。</li>
+        <li>个人词典优先于内置词典，且不会被 AI 覆盖。</li>
+        <li>全大写缩写使用更严格匹配，降低误报；普通混合大小写术语匹配更宽松。</li>
+      </ul>
+      <div class="callout info"><strong>当前限制：</strong>远程包术语会和内置词典一起扫描，但跨来源术语去重还需要修复；导入大型缩写包前应先处理。</div>
+
+      <h3>翻译规格</h3>
+      <ul>
+        <li>实时双语转录按 segment id 分小批翻译最终片段。</li>
+        <li>会议中打开双语转录时，会补翻最近几个尚未翻译的最终片段。</li>
+        <li>手动修改某个片段文本时，旧翻译会失效；会议仍在进行且开关开启时，会重新入队。</li>
+        <li>无 Key 暂停是可自愈的：填入 Key 后，新翻译工作可以恢复，不必重启会议。</li>
+        <li>连续 429 会暂停，并最终跳过最老的卡住批次，避免新片段一直被阻塞。</li>
+        <li>会后报告翻译是另一条路径：按 segment index 分块翻译，并尽量修复缺失 index。</li>
+      </ul>
+
+      <h3>导入规格</h3>
+      <table>
+        <thead><tr><th>导入路径</th><th>处理方式</th><th>限制 / 说明</th></tr></thead>
+        <tbody>
+          <tr><td>文稿粘贴 / <code>.txt</code> / <code>.srt</code> / <code>.vtt</code></td><td>解析、构建合成会话、检测、可选翻译、保存。</td><td>有时间戳的 cue 会归一到导入时间；纯文本会使用合成时间间隔。</td></tr>
+          <tr><td>浏览器音频导入</td><td>浏览器 AudioContext 解码，重采样到 16 kHz mono，交给浏览器 Whisper worker。</td><td>45 分钟时长上限；200 MB 压缩音频上限。</td></tr>
+          <tr><td>浏览器视频导入</td><td>用 ffmpeg.wasm 提取音轨，再复用浏览器音频路径。</td><td>视频提取有单独大小限制；首次运行可能下载浏览器侧模型资源。</td></tr>
+          <tr><td>Sidecar 录音导入</td><td>本地 job API 处理转录和可选说话人分离。</td><td>需要本地 sidecar；进度显示是 UI 本地状态，刷新会丢失显示但任务可继续。</td></tr>
+          <tr><td>视频 URL 导入</td><td>本地 sidecar 使用 <code>yt-dlp</code>，再走同一转录 job 管线。</td><td>仅本地版；用户自行负责版权和平台条款。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>失败与恢复规格</h3>
+      <ul>
+        <li><strong>无 API Key：</strong>检测回退到词典；实时翻译暂停；生成报告会提示需要 Key。</li>
+        <li><strong>限流：</strong>检测对 429 带抖动重试一次；翻译会暂停，并避免老批次永久阻塞新片段。</li>
+        <li><strong>Sidecar 不可达：</strong>本地 Whisper、sidecar 导入、URL 导入、说话人分离、订阅直连不可用；浏览器本地导入仍可处理支持文件。</li>
+        <li><strong>会议已切换：</strong>异步结果携带 <code>meetingGen</code>；旧会议的过期结果会被丢弃。</li>
+        <li><strong>后台标签页：</strong>浏览器会节流 timer，所以检测也会在片段到达和可见性变化时触发 flush。</li>
+        <li><strong>停止后的晚到结果：</strong>检测和翻译可能在停止后到达；store 会安排补保存，避免历史记录缺尾部结果。</li>
+      </ul>
+
+      <h3>词典与学习规格</h3>
+      <ul>
+        <li>今天个人词典是持久学习主场；会议记录保持为不可变归档。</li>
+        <li>条目可以手动创建、由划词 AI 定义创建，也可以从本场卡片收藏。</li>
+        <li>每个条目保存 headword、variants、解释、例句、原始上下文、用户笔记、来源、时间戳和复习状态。</li>
+        <li>表达条目可保存分类、英文含义、plain-English 改写和语气。术语条目可保存术语类型和英文 gloss。</li>
+        <li>复习状态包括 mastered、review count、last reviewed time。v0.3.0 计划升级为真正的 learn-set 和到期复习循环。</li>
+      </ul>
+
+      <h3>自动化规格</h3>
+      <ul>
+        <li>自动导出会写入 <code>YYYY-MM-DD-HHmm-jargonslayer.md</code> 和同名 <code>.json</code>。</li>
+        <li>文件夹自动保存依赖 File System Access API，因此主要面向 Chromium。</li>
+        <li>Webhook 发送 <code>meeting.saved</code> payload，包含 <code>schemaVersion: 1</code>、<code>exportedAt</code> 和完整 <code>session</code>。</li>
+        <li>全量备份包含会议、词典和设置。默认可剥离 API Key、HF token、agent token、webhook URL 和分任务 API Key。</li>
+        <li>恢复备份会清理订阅直连状态，避免静默重连到旧的本地 agent sidecar。</li>
+      </ul>
+
+      <h3>未来实时搜索规格</h3>
+      <p>实时搜索应该是可选的后台增强委派者，而不是实时检测的阻塞步骤。它接收表达、最近上下文、meeting generation 和 segment ids；返回简短引用或消歧说明；再补丁式挂到现有卡片上，不改变转录焦点。</p>
+      <ul>
+        <li>搜索应由歧义、用户请求或显式卡片操作触发，而不是默认搜索每张卡。</li>
+        <li>结果应作为 reference 或 context note 附加到卡片，不替换本地解释。</li>
+        <li>搜索 job 的优先级应低于实时转录、词典扫描和可见卡片检测。</li>
+        <li>隐私设置需要明确区分本地词典、模型提供商 AI、联网搜索调用。</li>
+      </ul>
+    </section>
+
+    <section id="async-delegation">
+      <h2>异步委派设计</h2>
+      <p>产品体验应该像一个稳定的前台进程，背后有多个专业后台 worker。前台负责监听、文本编辑、用户焦点和已保存会议状态；昂贵任务交给异步委派者，结果准备好后再自然合并回来。</p>
+      <div class="cards">
+        <div class="card">
+          <h3>前台</h3>
+          <p>追加最终转录片段，保持用户焦点稳定，允许编辑和复盘，渲染当前最好的状态，不等待 AI 或搜索。</p>
+        </div>
+        <div class="card">
+          <h3>委派者</h3>
+          <p>翻译、LLM 检测、实时搜索、说话人分离、会后报告各自排队运行，有优先级和重试策略。</p>
+        </div>
+        <div class="card">
+          <h3>任务账本</h3>
+          <p>按片段记录覆盖情况：词典已完成、LLM 检测待处理/完成/失败、翻译待处理/完成/跳过、搜索待处理/完成/过期。</p>
+        </div>
+      </div>
+      <pre><code>{
+  "id": "job_x",
+  "kind": "translate | detect | search | diarize",
+  "meetingGen": 12,
+  "segmentIds": ["seg_1", "seg_2"],
+  "textHash": "...",
+  "priority": 2,
+  "status": "queued | running | done | failed | stale",
+  "attempts": 0
+}</code></pre>
+      <p>结果只有在 meeting generation 仍匹配、目标片段仍存在、源文本 hash 仍是当前版本时才应用。结果应该以 patch 方式合并到相关字段，不能替换前台转录，也不能抢走用户焦点。</p>
+      <div class="callout info"><strong>为什么重要：</strong>翻译和检测可能失败、暂停或延迟完成。任务账本能让这些状态可见，避免文本“静默丢失”：它要么已处理，要么待处理，要么过期，要么带原因跳过，要么可重试。</div>
+      <p>未来实时搜索也天然适合这个模型：卡片用当前表达和最近上下文发起后台搜索，先显示本地解释；搜索返回后再附加参考来源或消歧说明。</p>
+    </section>
+
+    <section id="architecture">
+      <h2>架构</h2>
+      <p>应用基于 Next.js 15、TypeScript、Tailwind、zustand、IndexedDB 和服务端 LLM route proxy。zustand store 是转录片段、中间结果、卡片、术语、纪要、设置和会议历史的共享总线。</p>
+      <pre><code>Browser client
+  transcription engines
+    demo | Web Speech | local Whisper | tab audio
+  zustand store
+    segments | cards | terms | summaries | settings | sessions
+  detection
+    dictionary instant floor
+    LLM scheduler and dedupe
+  UI
+    transcript | cards | history | summary | review
+
+Server routes
+  /api/detect
+  /api/define
+  /api/translate
+  /api/summarize
+
+Sidecars
+  whisper_server.py
+  agent_server.py</code></pre>
+      <ul>
+        <li><code>src/lib/types.ts</code> 维护跨模块契约。</li>
+        <li><code>src/lib/store.ts</code> 是应用总线；STT 和检测通过 store 通信，而不是直接互相依赖。</li>
+        <li><code>src/lib/detect/dictionary.ts</code> 是同步即时词典层。</li>
+        <li><code>src/lib/detect/scheduler.ts</code> 负责 LLM 批处理和词典模式 fallback。</li>
+        <li><code>src/lib/detect/dedupe.ts</code> 合并重复命中，并用 LLM 结果原地升级词典卡片。</li>
+        <li><code>src/app/api/summarize/route.ts</code> 编排总结、分块翻译和漏检补扫。</li>
+      </ul>
+    </section>
+
+    <section id="storage">
+      <h2>数据与存储</h2>
+      <p>主要持久化都在本地浏览器存储。历史 <code>meetlingo:*</code> IndexedDB key 会在启动时复制迁移到新命名空间，并保留原数据以便回退。</p>
+      <table>
+        <thead><tr><th>对象</th><th>存储</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>会议</td><td>IndexedDB</td><td>会议归档和索引</td></tr>
+          <tr><td>个人词典</td><td><code>jargonslayer:glossary</code></td><td>个人条目和掌握状态</td></tr>
+          <tr><td>设置</td><td><code>jargonslayer:settings</code></td><td>本地配置</td></tr>
+          <tr><td>自动导出文件夹</td><td><code>jargonslayer:export-dir</code></td><td>浏览器目录 handle；偏 Chromium</td></tr>
+          <tr><td>远程词典包</td><td><code>jargonslayer:remote-packs</code></td><td>安装来源 URL 和已校验 manifest</td></tr>
+        </tbody>
+      </table>
+      <p>Schema version 1 覆盖会议 JSON、Markdown frontmatter、webhook payload、全量备份和远程词典包。</p>
+    </section>
+
+    <section id="local-dev">
+      <h2>本地开发</h2>
+      <pre><code>npm install
+npm run dev
+
+# checks
+npm run typecheck
+npm test
+npm run build</code></pre>
+      <p>本地服务端模型 Key 可以放在 <code>.env.local</code>。例如：</p>
+      <pre><code>ANTHROPIC_API_KEY=sk-ant-...</code></pre>
+      <div class="callout info"><strong>当前快照没有 sidecar/README.md。</strong>仓库 README、docs、sidecar 测试和代码注释是现阶段的运行手册。</div>
+    </section>
+
+    <section id="sidecars">
+      <h2>Sidecar</h2>
+      <h3>Whisper Sidecar</h3>
+      <p><code>sidecar/whisper_server.py</code> 处理本地 websocket 实时转录和录音 HTTP job。它使用 faster-whisper、能量 VAD、可选音频保存，并在配置后使用 pyannote 做说话人分离。</p>
+      <h3>说话人分离</h3>
+      <p>录音导入可以做批处理说话人分离。实时说话人分离仍是 beta：sidecar 会在最近一段音频窗口上反复运行 pyannote，把说话人匹配到稳定 registry，再把标签更新发回 UI，不阻塞转录。</p>
+      <h3>订阅直连</h3>
+      <p><code>sidecar/agent_server.py</code> 是实验性的本地功能。它调用用户自己已经登录的 <code>claude</code> 或 <code>codex</code> CLI，仅用于 detect/define。翻译和总结仍走正常应用 route。</p>
+      <ul>
+        <li>默认 loopback 地址：<code>127.0.0.1:8767</code>。</li>
+        <li>端点：<code>GET /agent/health</code>、<code>POST /agent/detect</code>、<code>POST /agent/define</code>。</li>
+        <li>detect/define 要求 loopback Origin 和启动时打印的一次性连接码。</li>
+        <li>构建开关：<code>NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1</code>。</li>
+        <li>sidecar 不可达、未登录或额度失败时，应用回退到词典检测。</li>
+      </ul>
+      <div class="callout risk"><strong>环境变量警告：</strong>如果 agent sidecar 环境中存在 <code>ANTHROPIC_API_KEY</code>，Claude 调用可能优先使用这个 Key，而不是订阅登录。sidecar 会警告，但不会替你 unset。</div>
+    </section>
+
+    <section id="remote-packs">
+      <h2>远程词典包</h2>
+      <p>远程词典包会被校验、归一化，并载入内存 registry。加载后，设置页会把它们和内置词典包一起展示。</p>
+      <ul>
+        <li>manifest 需要 <code>id</code>、<code>name</code>、<code>version</code>。</li>
+        <li>坏条目会被丢弃并打印 warning；只有 manifest 本身不可用时整个包才失败。</li>
+        <li>条目级 <code>pack</code> 字段会被忽略，并强制改成 manifest id。</li>
+        <li>只要 <code>version</code> 改变，就会触发更新。</li>
+        <li>远程包来自任意 URL，用户应把它视作内容导入。</li>
+      </ul>
+      <p>Global Acronym 这类大缩写源应该先作为候选数据使用，按领域和质量过滤，发布成可选词典包；通过验证后再考虑提升进内置词典。</p>
+    </section>
+
+    <section id="deployment">
+      <h2>部署与打包</h2>
+      <p>当前形态是 Web App 和 PWA。它可以在 Chrome/Edge 中安装成接近桌面应用的窗口，也可以在 iOS/iPadOS Safari 中添加到主屏幕，或作为本地/LAN Next.js 服务运行。</p>
+      <table>
+        <thead><tr><th>形态</th><th>状态</th><th>说明</th></tr></thead>
+        <tbody>
+          <tr><td>在线体验</td><td>可用</td><td>预览层，明确标出限制，本地功能灰显</td></tr>
+          <tr><td>本地 Web App</td><td>可用</td><td>完整本地优先构建</td></tr>
+          <tr><td>PWA 安装</td><td>可用</td><td>使用已有 manifest 和图标</td></tr>
+          <tr><td>Tauri 菜单栏应用</td><td>路线图</td><td>推荐的桌面打包方向</td></tr>
+          <tr><td>原生移动端</td><td>暂不推荐</td><td>PWA 已覆盖主要移动场景</td></tr>
+        </tbody>
+      </table>
+      <p>预览部署使用 <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>。默认构建是完整本地优先构建。</p>
+    </section>
+
+    <section id="testing">
+      <h2>测试</h2>
+      <h3>Web App</h3>
+      <pre><code>npm run typecheck
+npm test
+npm run build</code></pre>
+      <h3>Sidecar</h3>
+      <pre><code>sidecar/.venv/bin/python sidecar/test_agent_json.py
+sidecar/.venv/bin/python sidecar/test_agent_postfilter.py
+sidecar/.venv/bin/python sidecar/test_agent_server.py
+sidecar/.venv/bin/python sidecar/test_ingest_url.py
+sidecar/.venv/bin/python sidecar/test_realtime_diar.py</code></pre>
+      <p>sidecar 测试是 plain-assert 脚本，依赖 <code>sidecar/requirements.txt</code>。本地 Whisper 和 agent sidecar 是独立进程，改哪个测哪个。</p>
+    </section>
+
+    <section id="roadmap">
+      <h2>路线图</h2>
+      <p>当前 v0.3.0 的最高优先级是学习循环。如果容量不足，这条线优先于其他并行工作。</p>
+      <ol>
+        <li><strong>#48 Learning loop：</strong>learn-set 基底、已掌握抑制、到期复习。</li>
+        <li><strong>#58 统一导入与任务中心：</strong>长耗时导入/转录任务的统一入口。</li>
+        <li><strong>#62 设置渐进披露：</strong>保留高级能力，同时让设置更易扫读。</li>
+        <li><strong>#52 主题生态：</strong>主题选择后继续做设计清理。</li>
+      </ol>
+      <p>更大的平台项包括 Chrome 提取/插件、Tauri 打包、浏览器端 Whisper 实时、免费翻译层和划词联网搜索。</p>
+    </section>
+
+    <div class="footer">
+      来源：README.md、README.zh-CN.md、docs/PRODUCT.md、docs/ARCHITECTURE.md、docs/SCHEMA.md、docs/AGENT-WORKFLOWS.md、docs/PACKAGING.md、docs/PLAN-v0.3.0.md、docs/PLAN-v0.2.3-v0.3.0.md，以及 src/ 和 sidecar/ 下的实现文件。
+    </div>
+  </main>
+</div>
+</body>
+</html>
