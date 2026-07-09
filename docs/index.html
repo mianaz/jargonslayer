@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer Docs</title>
+<meta name="description" content="Complete JargonSlayer documentation: user guide, local setup, privacy, imports, glossary packs, exports, architecture, sidecars, testing, and roadmap.">
+<link rel="icon" type="image/png" href="../assets/icon-192.png">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --panel: #121212;
+    --panel2: #1a1a1a;
+    --panel3: #202020;
+    --edge: #2b2b2b;
+    --edge2: #3a3a3a;
+    --fg: #ededed;
+    --mut: #a0a0a0;
+    --mut2: #6b6b6b;
+    --green: #4ade80;
+    --cyan: #22d3ee;
+    --yellow: #f7d51d;
+    --orange: #ffaa44;
+    --red: #ff5f56;
+    --purple: #c084fc;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; background: var(--bg); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  code, pre, .mono { font-family: var(--mono); }
+  code {
+    border: 1px solid var(--edge);
+    background: var(--panel2);
+    padding: 0.12rem 0.32rem;
+    font-size: 0.92em;
+  }
+  pre {
+    margin: 1rem 0;
+    overflow-x: auto;
+    border: 1px solid var(--edge);
+    background: #050505;
+    padding: 1rem;
+    color: var(--fg);
+    font-size: 0.92rem;
+    line-height: 1.65;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1rem 0 1.5rem;
+    font-size: 0.94rem;
+  }
+  th, td {
+    border: 1px solid var(--edge);
+    padding: 0.72rem 0.8rem;
+    text-align: left;
+    vertical-align: top;
+  }
+  th {
+    background: var(--panel2);
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  td { color: var(--mut); }
+  strong { color: var(--fg); }
+
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--edge);
+    background: rgba(18, 18, 18, 0.94);
+    backdrop-filter: blur(10px);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+  }
+  .dots { display: flex; gap: 7px; }
+  .dot { width: 10px; height: 10px; border-radius: 999px; display: block; }
+  .dot.red { background: var(--red); }
+  .dot.yellow { background: var(--orange); }
+  .dot.green { background: var(--green); }
+  .topbar .path { color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar .path strong { color: var(--fg); }
+  .topbar .spacer { flex: 1; }
+  .topbar a {
+    color: var(--mut);
+    text-decoration: none;
+    border: 1px solid var(--edge);
+    padding: 0.3rem 0.55rem;
+    white-space: nowrap;
+  }
+  .topbar a:hover { color: var(--fg); border-color: var(--edge2); }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 280px minmax(0, 1fr);
+    max-width: 1320px;
+    margin: 0 auto;
+  }
+  nav {
+    position: sticky;
+    top: 44px;
+    height: calc(100vh - 44px);
+    overflow-y: auto;
+    border-right: 1px solid var(--edge);
+    padding: 1.5rem 1rem 2rem;
+  }
+  nav .label {
+    color: var(--mut2);
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 1.1rem 0 0.42rem;
+  }
+  nav a {
+    display: block;
+    padding: 0.34rem 0.5rem;
+    color: var(--mut);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    font-size: 0.9rem;
+  }
+  nav a:hover {
+    color: var(--fg);
+    background: var(--panel);
+    border-left-color: var(--green);
+  }
+  main { min-width: 0; padding: 3rem 2rem 5rem; }
+  .hero {
+    border-bottom: 1px solid var(--edge);
+    padding-bottom: 2.2rem;
+    margin-bottom: 2.4rem;
+  }
+  .eyebrow {
+    color: var(--green);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  h1, h2, h3 {
+    line-height: 1.2;
+    letter-spacing: 0;
+  }
+  h1 {
+    margin: 0.72rem 0 1rem;
+    font-size: clamp(2.4rem, 6vw, 4.6rem);
+    max-width: 920px;
+  }
+  h2 {
+    margin: 3.2rem 0 1rem;
+    padding-top: 0.4rem;
+    font-size: clamp(1.55rem, 2.6vw, 2.2rem);
+    border-top: 1px solid var(--edge);
+  }
+  h3 {
+    margin: 1.8rem 0 0.75rem;
+    color: var(--fg);
+    font-size: 1.1rem;
+  }
+  p, li { color: var(--mut); }
+  p.lead {
+    max-width: 840px;
+    color: var(--mut);
+    font-size: 1.08rem;
+  }
+  ul, ol { padding-left: 1.35rem; }
+  li { margin: 0.34rem 0; }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  .card {
+    border: 1px solid var(--edge);
+    background: var(--panel);
+    padding: 1rem;
+  }
+  .card h3 {
+    margin-top: 0;
+    color: var(--fg);
+    font-family: var(--mono);
+    font-size: 0.96rem;
+  }
+  .card p { margin-bottom: 0; }
+  .callout {
+    border: 1px solid var(--edge);
+    border-left: 3px solid var(--orange);
+    background: var(--panel);
+    padding: 0.9rem 1rem;
+    margin: 1rem 0 1.4rem;
+    color: var(--mut);
+  }
+  .callout.local { border-left-color: var(--green); }
+  .callout.risk { border-left-color: var(--red); }
+  .callout.info { border-left-color: var(--cyan); }
+  .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
+  .pill {
+    border: 1px solid var(--edge);
+    background: var(--panel2);
+    color: var(--mut);
+    padding: 0.3rem 0.52rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+  .shot-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  figure {
+    margin: 0;
+    border: 1px solid var(--edge);
+    background: var(--panel);
+  }
+  figure img { display: block; width: 100%; height: auto; }
+  figcaption {
+    border-top: 1px solid var(--edge);
+    color: var(--mut);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    padding: 0.55rem 0.7rem;
+  }
+  .split {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .footer {
+    margin-top: 4rem;
+    border-top: 1px solid var(--edge);
+    padding-top: 1rem;
+    color: var(--mut2);
+    font-family: var(--mono);
+    font-size: 0.82rem;
+  }
+  @media (max-width: 900px) {
+    .layout { display: block; }
+    nav {
+      position: static;
+      height: auto;
+      border-right: 0;
+      border-bottom: 1px solid var(--edge);
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0 0.5rem;
+    }
+    nav .label { grid-column: 1 / -1; }
+    main { padding: 2rem 1rem 4rem; }
+    .cards, .shot-grid, .split { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 520px) {
+    .topbar .path { display: none; }
+    nav { grid-template-columns: 1fr; }
+    h1 { font-size: 2.35rem; }
+  }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / v0.2.3+</div>
+  <div class="spacer"></div>
+  <a href="../">Landing</a>
+  <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
+  <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
+</header>
+
+<div class="layout">
+  <nav aria-label="Documentation sections">
+    <div class="label">Start</div>
+    <a href="#overview">Overview</a>
+    <a href="#quickstart">Quickstart</a>
+    <a href="#workflow">Meeting Workflow</a>
+    <a href="#transcription">Transcription Engines</a>
+    <a href="#imports">Imports</a>
+
+    <div class="label">Use</div>
+    <a href="#ai">AI Modes</a>
+    <a href="#review">Review and Learning</a>
+    <a href="#glossary">Glossary and Packs</a>
+    <a href="#exports">Export and Backup</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#faq">FAQ</a>
+
+    <div class="label">Operate</div>
+    <a href="#architecture">Architecture</a>
+    <a href="#storage">Data and Storage</a>
+    <a href="#local-dev">Local Development</a>
+    <a href="#sidecars">Sidecars</a>
+    <a href="#remote-packs">Remote Packs</a>
+    <a href="#deployment">Deployment</a>
+    <a href="#testing">Testing</a>
+    <a href="#roadmap">Roadmap</a>
+  </nav>
+
+  <main>
+    <section id="overview" class="hero">
+      <span class="eyebrow">Complete Documentation</span>
+      <h1>JargonSlayer Docs</h1>
+      <p class="lead">JargonSlayer is a real-time English-meeting comprehension assistant for non-native speakers. It transcribes meetings, detects idioms, business slang, indirect phrasing, acronyms, proper nouns, and domain terms, then turns them into short explanation cards. After the meeting, it can generate a bilingual summary, full transcript translation, study cards, and exportable notes.</p>
+      <div class="pill-row">
+        <span class="pill">No account</span>
+        <span class="pill">Dictionary-only mode</span>
+        <span class="pill">BYOK AI</span>
+        <span class="pill">Local Whisper</span>
+        <span class="pill">IndexedDB history</span>
+        <span class="pill">Remote packs</span>
+      </div>
+      <div class="shot-grid">
+        <figure>
+          <img src="../assets/live.png" alt="JargonSlayer live meeting view">
+          <figcaption>Live transcript with explanation cards</figcaption>
+        </figure>
+        <figure>
+          <img src="../assets/summary.png" alt="JargonSlayer summary and export view">
+          <figcaption>Post-meeting summary and export</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section id="quickstart">
+      <h2>Quickstart</h2>
+      <p>The fastest way to understand the product is the built-in demo. It does not need a microphone or an API key.</p>
+      <ol>
+        <li>Open the hosted app or run the project locally.</li>
+        <li>Open the <code>≡</code> menu and choose <code>演示</code>.</li>
+        <li>Watch the transcript on the left and explanation cards on the right.</li>
+        <li>Click <code>停止</code> when the demo ends.</li>
+        <li>Open <code>纪要与导出</code> and generate the meeting report.</li>
+      </ol>
+      <h3>Run locally</h3>
+      <pre><code>git clone https://github.com/mianaz/jargonslayer.git
+cd jargonslayer
+npm install
+npm run dev
+# open http://localhost:3000</code></pre>
+      <p>For a production-like local run, use <code>npm run build</code> and <code>npm start</code>.</p>
+    </section>
+
+    <section id="workflow">
+      <h2>Meeting Workflow</h2>
+      <div class="cards">
+        <div class="card">
+          <h3>1. Listen</h3>
+          <p>Pick a transcription engine and click <code>开始监听</code>. Final transcript segments appear in the transcript panel; interim text appears in a lighter style while speech is still being recognized.</p>
+        </div>
+        <div class="card">
+          <h3>2. Read Cards</h3>
+          <p>The right panel shows explanation cards for expressions and term cards for acronyms, companies, products, metrics, and technical terms. Repeated hits increment the original card instead of flooding the feed.</p>
+        </div>
+        <div class="card">
+          <h3>3. Review</h3>
+          <p>Stop the meeting, generate the report, export Markdown, Anki TSV, JSON, or a Cornell note, then reopen the session later from history.</p>
+        </div>
+      </div>
+      <ul>
+        <li>Click underlined expressions in the transcript to jump to their cards.</li>
+        <li>Select any transcript text to run an ad-hoc lookup and optionally save it to your personal glossary.</li>
+        <li>If speaker diarization is enabled, click speaker labels to rename them; aliases are re-applied to later updates.</li>
+      </ul>
+    </section>
+
+    <section id="transcription">
+      <h2>Transcription Engines</h2>
+      <table>
+        <thead><tr><th>Engine</th><th>Setup</th><th>Audio Destination</th><th>Best For</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Demo</strong></td><td>None</td><td>None; scripted playback</td><td>Trying the app without a microphone or key</td></tr>
+          <tr><td><strong>Browser recognition</strong></td><td>None, Chrome/Edge recommended</td><td>Browser vendor speech service</td><td>Everyday low-friction meetings</td></tr>
+          <tr><td><strong>Local Whisper</strong></td><td>Python sidecar</td><td>Local machine via <code>127.0.0.1</code></td><td>Sensitive meetings and offline use</td></tr>
+          <tr><td><strong>Tab audio</strong></td><td>Local sidecar</td><td>Local machine</td><td>Capturing the other side of an online meeting</td></tr>
+        </tbody>
+      </table>
+      <div class="callout info"><strong>Online meetings:</strong> your microphone only captures you. For Zoom, Teams, or Meet, use tab audio where available, or route system audio through a virtual device such as BlackHole on macOS or VB-Cable on Windows and use local Whisper.</div>
+      <h3>Local Whisper</h3>
+      <pre><code>cd sidecar
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python whisper_server.py --model small</code></pre>
+      <p>The sidecar provides live websocket transcription at <code>ws://127.0.0.1:8765</code> and a local HTTP job API for recording imports. Model choices include <code>tiny</code>, <code>base</code>, <code>small</code>, <code>medium</code>, and <code>large-v3</code>; <code>small</code> is the default daily-use target.</p>
+    </section>
+
+    <section id="imports">
+      <h2>Imports</h2>
+      <div class="split">
+        <div>
+          <h3>Transcript Import</h3>
+          <ol>
+            <li>Open <code>历史</code> and choose <code>导入文稿</code>.</li>
+            <li>Paste text or upload <code>.txt</code>, <code>.srt</code>, or <code>.vtt</code>.</li>
+            <li>Review the parsed segments and speaker/timestamp handling.</li>
+            <li>Optionally generate Chinese translation lines.</li>
+            <li>Import and analyze; the result is saved as a stopped session.</li>
+          </ol>
+        </div>
+        <div>
+          <h3>Audio and Video Files</h3>
+          <ol>
+            <li>Open <code>历史</code> and choose <code>导入录音</code>.</li>
+            <li>Use browser-local transcription or the local Whisper sidecar path.</li>
+            <li>Supported recording formats include common audio files; video files have their audio extracted locally through ffmpeg.wasm before browser transcription.</li>
+            <li>With the sidecar path, diarization can be used if pyannote is configured.</li>
+          </ol>
+        </div>
+      </div>
+      <h3>Video URL Import</h3>
+      <p>Video URL import is local-tier only. The sidecar uses <code>yt-dlp</code> on your machine and runs the result through the local transcription job pipeline. It is not part of the hosted preview path.</p>
+      <div class="callout risk"><strong>Use URL import deliberately.</strong> Server-side fetching of third-party video raises platform-terms and legal issues, so the project keeps this path on the user's own machine rather than the hosted demo.</div>
+    </section>
+
+    <section id="ai">
+      <h2>AI Modes and Provider Setup</h2>
+      <h3>Dictionary-only Mode</h3>
+      <p>Turn off <code>AI 检测</code> in Settings to keep transcript text local. The built-in dictionary still detects fixed expressions and terms instantly. This is the zero-key, zero-cost, fully local text path.</p>
+      <h3>Hosted Preview AI</h3>
+      <p>The hosted preview can use the preview server's configured model path. Text transits the project server in memory and is forwarded to OpenRouter with <code>data_collection=allow</code>. Treat preview AI text as shareable with the model provider.</p>
+      <h3>BYOK AI</h3>
+      <ol>
+        <li>Open <code>设置</code> and go to <code>AI 检测</code>.</li>
+        <li>Choose Anthropic or an OpenAI-compatible endpoint such as DeepSeek, Qwen, OpenRouter, Poe-compatible presets, or Ollama.</li>
+        <li>Set the base URL if required.</li>
+        <li>Enter an API key in the UI or use a server environment variable such as <code>ANTHROPIC_API_KEY</code>.</li>
+        <li>Choose detection and report models, test the connection, and save.</li>
+      </ol>
+      <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser and relayed in memory through the app's API routes. It is not persisted server-side. Environment keys keep the key out of the browser entirely.</div>
+      <h3>Per-task Models</h3>
+      <p>Advanced settings can use different providers or models for detection, translation, and reports. The normal split is fast/cheap for live detection and stronger models for post-meeting reports.</p>
+    </section>
+
+    <section id="review">
+      <h2>Review and Learning</h2>
+      <p>The <code>/review</code> page turns saved glossary and meeting data into a lightweight learning center.</p>
+      <figure>
+        <img src="../assets/review.png" alt="JargonSlayer review page">
+        <figcaption>Review page: stats, word cloud, frequency list, and practice deck</figcaption>
+      </figure>
+      <ul>
+        <li>Use the stats strip for meeting count, cumulative expressions, cumulative terms, and recent activity.</li>
+        <li>Use the word cloud to scan repeated expressions and terms.</li>
+        <li>Use the Top 10 list to focus on the most common items.</li>
+        <li>Use flashcards for quick practice; mark entries as known or unknown.</li>
+        <li>Use Anki TSV export for serious spaced repetition.</li>
+      </ul>
+      <div class="callout info"><strong>Roadmap note:</strong> v0.3.0 plans to evolve this from glossary-only mastery into a first-class learn-set and due-review loop.</div>
+    </section>
+
+    <section id="glossary">
+      <h2>Glossary and Packs</h2>
+      <h3>Personal Glossary</h3>
+      <ol>
+        <li>Open <code>我的词典</code> from the app.</li>
+        <li>Add entries manually or select transcript text and choose <code>加入我的词典</code>.</li>
+        <li>Saved entries participate in future detection and shadow built-in dictionary matches.</li>
+        <li>Export glossary entries to Anki TSV when you want a separate review workflow.</li>
+      </ol>
+      <h3>Built-in Packs</h3>
+      <p>Dictionary packs let users narrow detection by topic. Current built-in groups include core expressions, meeting flow, project execution, feedback, sales and growth, softening/criticism, academic meetings, chitchat, business terms, tech terms, and pharma/biotech.</p>
+      <h3>Community Packs</h3>
+      <p>Remote packs are JSON manifests installed from a GitHub raw or jsDelivr URL. They can contain expression entries and term entries; acronyms are <code>terms</code> with <code>type: "acronym"</code>.</p>
+      <pre><code>{
+  "id": "biotech-terms",
+  "name": "Biotech Terms",
+  "version": "1.2.0",
+  "terms": [{
+    "term": "IND",
+    "type": "acronym",
+    "gloss_en": "Investigational New Drug application",
+    "gloss_zh": "美国 FDA 新药临床试验申请"
+  }]
+}</code></pre>
+      <div class="callout risk"><strong>Known gotcha:</strong> overlapping built-in and remote terms can currently double-fire. Fix cross-source term deduplication before importing large acronym packs.</div>
+    </section>
+
+    <section id="exports">
+      <h2>Export and Backup</h2>
+      <h3>Session Exports</h3>
+      <ul>
+        <li>Markdown report, optionally with frontmatter for Obsidian/Dataview.</li>
+        <li>Anki TSV for study cards.</li>
+        <li>Full session JSON with <code>schemaVersion: 1</code>.</li>
+        <li>Copy-to-clipboard summary.</li>
+        <li>Cornell note export as PNG or Markdown.</li>
+      </ul>
+      <h3>Auto-export</h3>
+      <p>Settings can save every session to a folder as Markdown plus JSON. This uses the File System Access API, so folder auto-save is Chromium-oriented. It is intended for local automation, Obsidian vaults, and agent workflows.</p>
+      <h3>Webhook</h3>
+      <p>Settings can POST <code>{ event: "meeting.saved", session }</code> to a custom URL after each save. Receivers should return 200 quickly and process asynchronously; the app has an 8-second timeout and no retry.</p>
+      <h3>Full Backup</h3>
+      <p>Full backup exports sessions, glossary, and settings. Restores preview the contents before writing and sanitize risky settings such as subscription-direct connection state.</p>
+    </section>
+
+    <section id="privacy">
+      <h2>Privacy</h2>
+      <p>JargonSlayer's privacy posture is explicit data paths, not vague promises. The right mode depends on the meeting.</p>
+      <table>
+        <thead><tr><th>Data</th><th>Destination</th></tr></thead>
+        <tbody>
+          <tr><td>Audio, local Whisper / tab audio</td><td>Local machine only, loopback websocket</td></tr>
+          <tr><td>Audio, browser recognition</td><td>Browser vendor speech service</td></tr>
+          <tr><td>Audio/video file imports</td><td>Browser-local transcription; files are not uploaded</td></tr>
+          <tr><td>Preview AI text</td><td>Project server memory only, then OpenRouter with <code>data_collection=allow</code></td></tr>
+          <tr><td>BYOK AI text</td><td>The provider endpoint configured by the user</td></tr>
+          <tr><td>Subscription-direct detect/define</td><td>Local <code>claude</code> or <code>codex</code> CLI via sidecar</td></tr>
+          <tr><td>Dictionary-only text</td><td>Local only</td></tr>
+          <tr><td>History, settings, keys</td><td>Local browser storage; no account</td></tr>
+        </tbody>
+      </table>
+      <div class="callout local"><strong>Fully local text path:</strong> use local Whisper or tab audio, turn off <code>AI 检测</code>, and avoid webhook/auto-export to external locations.</div>
+    </section>
+
+    <section id="faq">
+      <h2>FAQ</h2>
+      <h3>Speech recognition is unsupported</h3>
+      <p>Use Chrome or Edge for browser recognition, or switch to local Whisper.</p>
+      <h3>Whisper will not connect</h3>
+      <p>Confirm the sidecar terminal is running, the URL is <code>ws://localhost:8765</code>, and the local firewall is not blocking loopback traffic.</p>
+      <h3>Detection is too noisy or too quiet</h3>
+      <p>Adjust the confidence threshold, enable/disable packs, or switch AI detection on or off depending on the meeting.</p>
+      <h3>Report generation is slow</h3>
+      <p>Long meetings are chunked and translated in parallel; one to two minutes is normal for substantial transcripts. Cards can be exported without a report.</p>
+      <h3>My project directory moved and the sidecar broke</h3>
+      <p>Python virtual environments contain absolute paths. Rebuild the sidecar venv after moving or renaming the repo.</p>
+    </section>
+
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <p>The app is Next.js 15 with TypeScript, Tailwind, zustand, IndexedDB, and server route proxies for LLM calls. The zustand store is the shared bus for transcript segments, interim text, cards, terms, summary output, settings, and sessions.</p>
+      <pre><code>Browser client
+  transcription engines
+    demo | Web Speech | local Whisper | tab audio
+  zustand store
+    segments | cards | terms | summaries | settings | sessions
+  detection
+    dictionary instant floor
+    LLM scheduler and dedupe
+  UI
+    transcript | cards | history | summary | review
+
+Server routes
+  /api/detect
+  /api/define
+  /api/translate
+  /api/summarize
+
+Sidecars
+  whisper_server.py
+  agent_server.py</code></pre>
+      <ul>
+        <li><code>src/lib/types.ts</code> owns cross-module contracts.</li>
+        <li><code>src/lib/store.ts</code> is the app bus; STT and detection communicate through it rather than importing each other.</li>
+        <li><code>src/lib/detect/dictionary.ts</code> is the synchronous instant floor.</li>
+        <li><code>src/lib/detect/scheduler.ts</code> batches LLM detection and falls back to dictionary mode.</li>
+        <li><code>src/lib/detect/dedupe.ts</code> merges repeats and upgrades dictionary hits with contextual LLM explanations.</li>
+        <li><code>src/app/api/summarize/route.ts</code> orchestrates summary, chunked translation, and missed-item gap fill.</li>
+      </ul>
+    </section>
+
+    <section id="storage">
+      <h2>Data and Storage</h2>
+      <p>Primary persistence is local browser storage. Legacy <code>meetlingo:*</code> IndexedDB keys are copy-migrated forward on startup and left in place for rollback safety.</p>
+      <table>
+        <thead><tr><th>Surface</th><th>Storage</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Sessions</td><td>IndexedDB</td><td>Meeting archive and index</td></tr>
+          <tr><td>Glossary</td><td><code>jargonslayer:glossary</code></td><td>Personal entries and mastery state</td></tr>
+          <tr><td>Settings</td><td><code>jargonslayer:settings</code></td><td>Local configuration</td></tr>
+          <tr><td>Auto-save folder</td><td><code>jargonslayer:export-dir</code></td><td>Browser handle; Chromium-oriented</td></tr>
+          <tr><td>Remote packs</td><td><code>jargonslayer:remote-packs</code></td><td>Installed pack source URLs and validated manifests</td></tr>
+        </tbody>
+      </table>
+      <p>Schema version 1 covers session JSON, Markdown frontmatter, webhook payloads, full backup, and remote dictionary packs.</p>
+    </section>
+
+    <section id="local-dev">
+      <h2>Local Development</h2>
+      <pre><code>npm install
+npm run dev
+
+# checks
+npm run typecheck
+npm test
+npm run build</code></pre>
+      <p>Use <code>.env.local</code> for local server-side provider keys. For example:</p>
+      <pre><code>ANTHROPIC_API_KEY=sk-ant-...</code></pre>
+      <div class="callout info"><strong>No sidecar README is present in this snapshot.</strong> The repository README, docs, sidecar tests, and inline comments are the current runbook for sidecar operation.</div>
+    </section>
+
+    <section id="sidecars">
+      <h2>Sidecars</h2>
+      <h3>Whisper Sidecar</h3>
+      <p><code>sidecar/whisper_server.py</code> handles local realtime transcription over websocket and recording jobs over HTTP. It uses faster-whisper, energy-based VAD, optional audio saving, and pyannote for diarization when configured.</p>
+      <h3>Speaker Diarization</h3>
+      <p>Batch imports can diarize recordings. Realtime diarization is beta: the sidecar re-runs pyannote on a recent tail window, matches speakers against a stable registry, and sends label updates back to the UI without blocking transcription.</p>
+      <h3>Subscription Direct</h3>
+      <p><code>sidecar/agent_server.py</code> is experimental and local-only. It drives the user's already-authenticated <code>claude</code> or <code>codex</code> CLI for detect/define only. Translation and summary still use the normal app routes.</p>
+      <ul>
+        <li>Default loopback host: <code>127.0.0.1:8767</code>.</li>
+        <li>Endpoints: <code>GET /agent/health</code>, <code>POST /agent/detect</code>, <code>POST /agent/define</code>.</li>
+        <li>Detect/define require loopback Origin plus the one-time connection code printed on startup.</li>
+        <li>Feature gate: <code>NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1</code>.</li>
+        <li>If the sidecar is unreachable, missing login, or quota-limited, the app falls back to dictionary detection.</li>
+      </ul>
+      <div class="callout risk"><strong>Environment warning:</strong> if <code>ANTHROPIC_API_KEY</code> is present in the agent sidecar environment, Claude calls may prefer that key over subscription login. The sidecar warns, but does not unset it.</div>
+    </section>
+
+    <section id="remote-packs">
+      <h2>Remote Packs</h2>
+      <p>Remote packs are validated, normalized, and loaded into an in-memory registry. Settings displays them alongside built-in packs after loading.</p>
+      <ul>
+        <li>Manifest requires <code>id</code>, <code>name</code>, and <code>version</code>.</li>
+        <li>Malformed entries are dropped with warnings; the whole pack only fails when the manifest itself is unusable.</li>
+        <li>Entry-level <code>pack</code> fields are ignored and overwritten with the manifest id.</li>
+        <li>Changing <code>version</code> is enough to trigger an update.</li>
+        <li>Users should treat remote packs as content imports from arbitrary URLs.</li>
+      </ul>
+      <p>Large acronym sources such as a global acronym plugin should be used as candidate data, filtered by domain and quality, and published as optional packs before promoting any entries into built-ins.</p>
+    </section>
+
+    <section id="deployment">
+      <h2>Deployment and Packaging</h2>
+      <p>The app currently ships as a web app and PWA. It can be installed from Chrome/Edge as a desktop-like window, added to iOS/iPadOS home screen through Safari, or run locally/LAN-hosted from a Next.js server.</p>
+      <table>
+        <thead><tr><th>Form</th><th>Status</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Hosted preview</td><td>Available</td><td>Preview tier with transparent limits and greyed local-only features</td></tr>
+          <tr><td>Local web app</td><td>Available</td><td>Full local-first build</td></tr>
+          <tr><td>PWA install</td><td>Available</td><td>Uses existing manifest and icons</td></tr>
+          <tr><td>Tauri menu-bar app</td><td>Roadmap</td><td>Preferred desktop packaging direction</td></tr>
+          <tr><td>Native mobile</td><td>Not recommended now</td><td>PWA covers most mobile use cases</td></tr>
+        </tbody>
+      </table>
+      <p>Preview deployments use <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>. The default build is the full local-first build.</p>
+    </section>
+
+    <section id="testing">
+      <h2>Testing</h2>
+      <h3>Web App</h3>
+      <pre><code>npm run typecheck
+npm test
+npm run build</code></pre>
+      <h3>Sidecar</h3>
+      <pre><code>sidecar/.venv/bin/python sidecar/test_agent_json.py
+sidecar/.venv/bin/python sidecar/test_agent_postfilter.py
+sidecar/.venv/bin/python sidecar/test_agent_server.py
+sidecar/.venv/bin/python sidecar/test_ingest_url.py
+sidecar/.venv/bin/python sidecar/test_realtime_diar.py</code></pre>
+      <p>Sidecar tests are plain-assert scripts and assume dependencies from <code>sidecar/requirements.txt</code>. The local Whisper and agent sidecars are independent processes, so test the one you changed.</p>
+    </section>
+
+    <section id="roadmap">
+      <h2>Roadmap</h2>
+      <p>The current v0.3.0 priority is the learning loop. If capacity is constrained, that work wins over parallel tracks.</p>
+      <ol>
+        <li><strong>#48 Learning loop:</strong> learn-set substrate, known suppression, and due-based review.</li>
+        <li><strong>#58 Unified import and task center:</strong> one place for long-running import/transcription jobs.</li>
+        <li><strong>#62 Settings progressive disclosure:</strong> make settings easier to scan without removing power-user controls.</li>
+        <li><strong>#52 Theme ecosystem:</strong> continue design cleanup after theme selection.</li>
+      </ol>
+      <p>Parked larger-platform items include Chrome extraction/plugin work, Tauri packaging, browser-Whisper realtime, free translation tier, and select-to-web-search.</p>
+    </section>
+
+    <div class="footer">
+      Sources: README.md, README.zh-CN.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, docs/SCHEMA.md, docs/AGENT-WORKFLOWS.md, docs/PACKAGING.md, docs/PLAN-v0.3.0.md, docs/PLAN-v0.2.3-v0.3.0.md, and implementation files under src/ and sidecar/.
+    </div>
+  </main>
+</div>
+</body>
+</html>
