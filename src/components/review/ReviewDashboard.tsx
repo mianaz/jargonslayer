@@ -273,9 +273,23 @@ function KnownTermsSection() {
   );
 }
 
-export default function ReviewDashboard() {
+// #48 s1 review item 8: `cache`/`loading` are now supplied by the
+// parent (ReviewPage) via a SINGLE useSessionCache() call, shared with
+// DueReview — previously ReviewDashboard and DueReview each called
+// useSessionCache() independently, so every saved session's full body
+// was loaded from IndexedDB twice on every /review visit. Required
+// props (not an internal fallback call) since useSessionCache's own
+// loading effect can't be conditionally skipped once a hook — a
+// fallback call here would just re-introduce the double load it's
+// meant to remove. Only call site today is ReviewPage.
+export default function ReviewDashboard({
+  cache,
+  loading,
+}: {
+  cache: Record<string, MeetingSession>;
+  loading: boolean;
+}) {
   const sessions = useApp((s) => s.sessions);
-  const { cache, loading } = useSessionCache();
   const words = useWordFrequency(cache);
 
   // Selection is shared between the word cloud and the Top-10 list —

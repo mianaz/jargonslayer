@@ -19,7 +19,6 @@ import {
   type ReviewQueueItem,
 } from "@/lib/learn/queue";
 import { FlashCard, KIND_LABELS, type FlashCardContent } from "./PracticeDeck";
-import { useSessionCache } from "./ReviewDashboard";
 
 const GRADE_OPTIONS: { grade: SrsGrade; label: string; cls: string }[] = [
   { grade: 0, label: "不认识", cls: "border-warn-soft/50 text-warn-soft" },
@@ -112,11 +111,10 @@ function EmptyDueState() {
   );
 }
 
-export default function DueReview() {
+export default function DueReview({ cache }: { cache: Record<string, MeetingSession> }) {
   const learnset = useApp((s) => s.learnset);
   const customEntries = useApp((s) => s.customEntries);
   const gradeReview = useApp((s) => s.gradeReview);
-  const { cache } = useSessionCache();
 
   const candidates = useMemo(() => buildCandidates(cache), [cache]);
   const contentIndex = useMemo(
@@ -130,6 +128,14 @@ export default function DueReview() {
 
   const current = queue[0] ?? null;
   const [flipped, setFlipped] = useState(false);
+  // #48 s1 review item 5: a grade write is async (IndexedDB) — without
+  // this, a fast double-tap on a grade button fires gradeReview twice
+  // before the first write lands, racing itself. The store now
+  // serializes same-key mutations, but the button must still be
+  // disabled while a grade is in flight so the second tap can't queue
+  // up a THIRD point of confusion (a re-grade of what LOOKS like a
+  // fresh card once the queue has already advanced).
+  const [grading, setGrading] = useState(false);
 
   // Reset the flip state whenever the front-of-queue card changes
   // (grading advances the queue naturally — see handleGrade below).
@@ -144,7 +150,13 @@ export default function DueReview() {
   const content = contentIndex[current.learnKey] ?? fallbackContent(current);
 
   const handleGrade = async (grade: SrsGrade) => {
-    await gradeReview(current.kind, current.surface, grade);
+    if (grading) return;
+    setGrading(true);
+    try {
+      await gradeReview(current.kind, current.surface, grade);
+    } finally {
+      setGrading(false);
+    }
   };
 
   return (
@@ -156,8 +168,9 @@ export default function DueReview() {
           <button
             key={grade}
             type="button"
+            disabled={grading}
             onClick={() => void handleGrade(grade)}
-            className={`btn-tactile h-10 rounded-none border px-5 text-sm ${cls} hover:bg-panel3`}
+            className={`btn-tactile h-10 rounded-none border px-5 text-sm ${cls} hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent`}
           >
             {label}
           </button>
