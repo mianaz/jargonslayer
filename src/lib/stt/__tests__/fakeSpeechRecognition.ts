@@ -1,3 +1,6 @@
+import type { VadHandle } from "../vad";
+import type { VadState } from "../vadCore";
+
 export interface WordAt {
   word: string;
   atMs: number;
@@ -22,7 +25,21 @@ export interface FakeSpeechRecognitionStats {
   stops: number;
   aborts: number;
   ends: number;
+  // Renamed in spirit (not in field name, to keep existing scenario
+  // assertions readable) by the VAD-supervisor rewrite: under the old
+  // engine every restart-that-isn't-the-first-start WAS a scheduled
+  // rotation. Now recover()/steer() ALSO call stop() as their primary
+  // action (see sttSupervisor.ts) — so this counts every session
+  // restart, whichever policy branch caused it. Individual scenarios
+  // below scope their time windows so they can still reason about
+  // "how many restarts happened", and stopTimestamps (below) lets a
+  // scenario inspect WHEN each one happened if it needs to verify
+  // backoff spacing.
   rotations: number;
+  /** Wall-clock (Date.now(), i.e. vitest fake-timer time) of every
+   *  stop() call — lets a scenario verify recovery cadence/backoff
+   *  directly instead of only counting totals. */
+  stopTimestamps: number[];
   instances: FakeSpeechRecognition[];
 }
 
@@ -108,6 +125,7 @@ export class FakeSpeechRecognition extends EventTarget {
   private heardCursor = 0;
   private currentResultIndex = 0;
   private currentWords: string[] = [];
+  private lastWordAt = 0;
   private finalResults = new Map<number, string>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private startCallTime = 0;
@@ -135,6 +153,7 @@ export class FakeSpeechRecognition extends EventTarget {
   stop(): void {
     if (!this.running) throw new Error("FakeSpeechRecognition is not running");
     FakeSpeechRecognition.activeStats.stops += 1;
+    FakeSpeechRecognition.activeStats.stopTimestamps.push(Date.now());
     this.flushFinal();
     this.endSoon();
   }
@@ -159,7 +178,26 @@ export class FakeSpeechRecognition extends EventTarget {
       this.stalled = true;
       this.stallConsumed = true;
     }
+    // A genuinely stalled/untranscribable-block recognizer produces
+    // NOTHING at all (that's the whole premise those scenarios test —
+    // see the diagnosis in stt-vad-supervisor.md) — bail before even
+    // the proactive finalization check below.
     if (this.stalled || isInRange(now, script.quietRanges)) return;
+
+    // Proactive silence-triggered finalization: a real recognizer
+    // doesn't wait for you to start talking again before deciding the
+    // PREVIOUS utterance is done — a long-enough pause finalizes on
+    // its own (checked every tick, so this fires DURING genuine dead
+    // air, not retroactively once new speech arrives). The
+    // word-arrival-triggered check below still exists as a fallback
+    // for gaps only barely at pauseFinalMs, where the next word can
+    // arrive before this timer-based check gets a chance to run.
+    if (
+      this.currentWords.length > 0 &&
+      now - this.lastWordAt >= script.pauseFinalMs
+    ) {
+      this.emitFinalAndAdvance();
+    }
 
     let changed = false;
     while (this.heardCursor < script.timeline.length) {
@@ -179,6 +217,7 @@ export class FakeSpeechRecognition extends EventTarget {
         this.emitFinalAndAdvance();
       }
       this.currentWords.push(word.word);
+      this.lastWordAt = word.atMs;
       changed = true;
     }
 
@@ -274,6 +313,7 @@ export function installFakeSpeechRecognition(
     get rotations() {
       return Math.max(0, this.stops - 1);
     },
+    stopTimestamps: [],
     instances: [],
   };
   FakeSpeechRecognition.activeStats = stats;
@@ -312,4 +352,87 @@ export function untranscribableWords(script: FakeSpeechRecognitionScript): strin
   return script.timeline
     .filter((word) => isInRange(word.atMs, quietRanges))
     .map((word) => word.word);
+}
+
+// ---- scripted VAD (for the injectable-VAD engine constructor arg) ----
+// A deterministic, script-driven VadHandle so loss-harness scenarios
+// can assert supervisor behavior (rotate-into-pause, speech-stall
+// recovery/steer, VAD-unavailable fallback) without going through the
+// real dB/EMA simulation vadCore.test.ts already covers directly.
+
+export interface VadRange {
+  startMs: number;
+  endMs: number;
+}
+
+export interface FakeVadOptions {
+  /** start() resolves false, simulating a VAD that never comes up
+   *  (permission denied / unsupported browser / capture failure) —
+   *  exercises sttSupervisor.ts's vadAvailable=false legacy branch. */
+  fail?: boolean;
+}
+
+export class FakeVad implements VadHandle {
+  available = false;
+
+  constructor(
+    private readonly ranges: VadRange[],
+    private readonly opts: FakeVadOptions = {},
+  ) {}
+
+  async start(): Promise<boolean> {
+    if (this.opts.fail) {
+      this.available = false;
+      return false;
+    }
+    this.available = true;
+    return true;
+  }
+
+  stop(): void {
+    this.available = false;
+  }
+
+  get state(): VadState {
+    const now = Date.now();
+    let speaking = false;
+    let lastSpeechAt = -Infinity;
+    for (const r of this.ranges) {
+      if (now >= r.startMs && now < r.endMs) speaking = true;
+      if (r.startMs <= now) lastSpeechAt = Math.max(lastSpeechAt, Math.min(now, r.endMs));
+    }
+    return { speaking, lastSpeechAt };
+  }
+}
+
+/** Cluster a word timeline into VAD "speaking" ranges: consecutive
+ *  words within `gapMs` of each other merge into one continuous run
+ *  (a short mouth-closing/breath pad, `trailMs`, extends past the
+ *  run's last word). Built from the RAW timeline (not filtered by
+ *  quietRanges) so an "untranscribable audio" block — someone
+ *  genuinely talking, the recognizer just can't transcribe it — still
+ *  reads as VAD-speaking, exactly like real acoustic energy would. */
+export function deriveVadRanges(
+  timeline: WordAt[],
+  opts: { gapMs?: number; trailMs?: number } = {},
+): VadRange[] {
+  const gapMs = opts.gapMs ?? 400;
+  const trailMs = opts.trailMs ?? 150;
+  const ranges: VadRange[] = [];
+  let start: number | null = null;
+  let end: number | null = null;
+  for (const w of timeline) {
+    if (start === null) {
+      start = w.atMs;
+      end = w.atMs;
+    } else if (w.atMs - (end as number) <= gapMs) {
+      end = w.atMs;
+    } else {
+      ranges.push({ startMs: start, endMs: (end as number) + trailMs });
+      start = w.atMs;
+      end = w.atMs;
+    }
+  }
+  if (start !== null) ranges.push({ startMs: start, endMs: (end as number) + trailMs });
+  return ranges;
 }
