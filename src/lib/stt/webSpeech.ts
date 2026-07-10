@@ -97,10 +97,21 @@ const MAX_INSTANT_FAILURES = 3;
 // this from being noisy; the tighter tick just shrinks the DECISION
 // latency once a threshold is actually crossed.
 const WATCHDOG_TICK_MS = 500;
-// endSession() recovery: stop() should fire onend (whose handler
-// relaunches); this fallback covers a zombie session where even
-// stop() — and then abort() — produces no event.
-const RECOVER_FALLBACK_MS = 600;
+// endSession() recovery grace: stop() should fire onend (whose
+// handler relaunches) once the recognizer has finished finalizing
+// whatever it already collected. Renamed from RECOVER_FALLBACK_MS and
+// widened 600ms -> 2000ms (2026-07 VAD-supervisor review finding #3a):
+// real cloud finalization routinely takes longer than 600ms, and the
+// old value's job wasn't just "detect a zombie" — endSession()'s
+// escalation used to INFER whether onend had already relaunched from
+// `Date.now() - lastStartAt <= 600`, so a merely-slow (not zombied)
+// onend beyond that window got its trailing final discarded by an
+// abort() that fired out from under it. The endGen token below (see
+// endSession's doc comment) replaced that time-based inference with
+// an exact match, so this constant now purely bounds "how long do we
+// wait for cloud finalization before treating the session as dead" —
+// hence the rename.
+const CLOUD_FINALIZE_GRACE_MS = 2_000;
 
 const STEER_NOTICE =
   "一直在说话但识别不出，可能语言不匹配，试试本地 Whisper 或标签页音频模式";
@@ -135,6 +146,29 @@ export class WebSpeechEngine implements STTEngine {
   // the loss harness's untranscribable-block scenario).
   private endingSession = false;
 
+  // End-cycle generation token (2026-07 VAD-supervisor review finding
+  // #3): endSession() increments endGen and records the new value in
+  // awaitingOnendForGen for the WHOLE window between its stop() call
+  // and a matching onend (or the escalation giving up on one ever
+  // arriving). Three things this single mechanism fixes together:
+  //  (a) the watchdog NO-OPs entirely while an end is in flight (see
+  //      watchdogTick) — a stop() whose onend takes a while can no
+  //      longer have the SAME stall double-counted by the next tick,
+  //      nor trigger a re-entrant stop()/launch() while the first one
+  //      is still resolving;
+  //  (b) handleEnd matches the exact generation instead of inferring
+  //      "did this onend already relaunch?" from elapsed wall-clock
+  //      time (see CLOUD_FINALIZE_GRACE_MS's doc comment) — no more
+  //      false-zombie aborts on a merely-slow real finalization;
+  //  (c) the escalation timers below fire abort()/force-launch() ONLY
+  //      if awaitingOnendForGen STILL matches the gen they were
+  //      scheduled for — a late-but-real onend (or a second endSession
+  //      cycle entirely) clears/replaces it first, so a delayed
+  //      escalation callback can never abort or launch out from under
+  //      a cycle it no longer applies to.
+  private endGen = 0;
+  private awaitingOnendForGen: number | null = null;
+
   private vad: VadHandle | null = null;
 
   constructor(
@@ -165,9 +199,20 @@ export class WebSpeechEngine implements STTEngine {
     // vad.available stays false and the supervisor runs its
     // VAD-unavailable legacy branch, which is the exact behavior this
     // engine had before VAD existed (strict enhancement).
-    this.vad = this.createVad();
-    void this.vad.start().then(() => {
-      if (this.userStopped) this.vad?.stop();
+    //
+    // The LOCAL `vad` capture (not `this.vad`) is what makes this race
+    // -safe (2026-07 VAD-supervisor review finding #2b): a
+    // stop()->start() while this promise is still pending resets
+    // `this.userStopped` back to false for the NEW call, which would
+    // make a naive `if (this.userStopped) this.vad?.stop()` wrongly
+    // conclude "still wanted" for a detector that a LATER start() has
+    // already replaced with a different instance. Checking
+    // `this.vad !== vad` catches exactly that: this callback belongs
+    // to a specific instance, and only ever acts on that one.
+    const vad = this.createVad();
+    this.vad = vad;
+    void vad.start().then((ok) => {
+      if (this.userStopped || this.vad !== vad || !ok) vad.stop();
     });
   }
 
@@ -260,19 +305,33 @@ export class WebSpeechEngine implements STTEngine {
     this.lastEventAt = Date.now();
     if (this.userStopped || !this.recognition || !this.events) return;
 
-    const elapsed = Date.now() - this.lastStartAt;
-    if (elapsed < 50) {
-      this.consecutiveInstantFailures += 1;
+    // This onend completes the end cycle endSession() started (see
+    // endGen's doc comment) — EXACT generation match, not a
+    // Date.now()-based guess. Clearing awaitingOnendForGen here is
+    // also what cancels the escalation timers below (they check for
+    // this same match and no-op once it's gone) and lets the watchdog
+    // resume evaluating on its next tick. A deliberate stop()'s onend
+    // is not a recognizer crash, so — unlike a spontaneous onend —
+    // it must never feed consecutiveInstantFailures.
+    const deliberateEnd = this.awaitingOnendForGen !== null;
+    if (deliberateEnd) {
+      this.awaitingOnendForGen = null;
+      this.endingSession = false;
     } else {
-      this.consecutiveInstantFailures = 0;
-    }
+      const elapsed = Date.now() - this.lastStartAt;
+      if (elapsed < 50) {
+        this.consecutiveInstantFailures += 1;
+      } else {
+        this.consecutiveInstantFailures = 0;
+      }
 
-    if (this.consecutiveInstantFailures >= MAX_INSTANT_FAILURES) {
-      this.events.onStatus(
-        "error",
-        "语音识别持续失败，请检查麦克风权限或切换引擎",
-      );
-      return;
+      if (this.consecutiveInstantFailures >= MAX_INSTANT_FAILURES) {
+        this.events.onStatus(
+          "error",
+          "语音识别持续失败，请检查麦克风权限或切换引擎",
+        );
+        return;
+      }
     }
 
     setTimeout(() => {
@@ -283,6 +342,18 @@ export class WebSpeechEngine implements STTEngine {
 
   private launch(events: STTEvents): void {
     if (!this.recognition) return;
+    // Rescue whatever flushStable/self-flush held back if the session
+    // that's ending right now never produced the trailing real final
+    // that was supposed to complete it (2026-07 VAD-supervisor review
+    // finding #4) — reset() below wipes pendingSnapshots
+    // unconditionally, and a final that hasn't shown up by the time we
+    // relaunch never will (this session is gone). The common case (a
+    // real trailing final DID arrive) already cleared pendingSnapshots
+    // via handleResult()'s assembler.push() before this ever runs, so
+    // flushAll() is a no-op then — no duplicate emission.
+    const rescued = this.assembler.flushAll(Date.now());
+    if (rescued) events.onFinal(rescued.text, { startedAt: rescued.startedAt });
+
     this.lastStartAt = Date.now();
     this.lastEventAt = this.lastStartAt;
     this.assembler.reset();
@@ -302,6 +373,13 @@ export class WebSpeechEngine implements STTEngine {
 
   private watchdogTick(): void {
     if (this.userStopped || !this.recognition || !this.events) return;
+    // An end cycle is already in flight (see endGen's doc comment) —
+    // no-op entirely until it resolves. Without this, a stop() whose
+    // onend takes a while used to let the NEXT tick(s) re-evaluate the
+    // supervisor against the SAME still-unresolved stall and
+    // double-count it (premature steer), or even call endSession()
+    // again re-entrantly while the first stop() was still pending.
+    if (this.awaitingOnendForGen !== null) return;
     const now = Date.now();
     const vadAvailable = this.vad?.available ?? false;
     const vadState = vadAvailable ? this.vad!.state : null;
@@ -347,30 +425,54 @@ export class WebSpeechEngine implements STTEngine {
    *  prefix (flushStable — the tail is expected to complete via this
    *  session's own trailing real final, see webSpeechSession.ts), then
    *  stop(). abort() fires ONLY as a zombie-session escalation if
-   *  stop() produces no onend within RECOVER_FALLBACK_MS. */
+   *  stop() produces no onend within CLOUD_FINALIZE_GRACE_MS — gated
+   *  by the endGen token (see its doc comment) rather than a
+   *  Date.now() guess, so a merely-slow (not zombied) onend is never
+   *  mistaken for one that already relaunched. watchdogTick() no-ops
+   *  for the entire window this token is set, so this can never be
+   *  entered re-entrantly while a previous cycle is still resolving
+   *  (finding #3b/#3c). */
   private endSession(): void {
     this.flushRotationTail();
     this.endingSession = true;
+    const gen = ++this.endGen;
+    this.awaitingOnendForGen = gen;
     try {
       this.recognition?.stop();
     } catch {
-      // already stopped — onend/relaunch handles it
-      return;
+      // stop() threw with no pending onend to relaunch us — schedule
+      // the escalation path anyway (finding #11): returning early
+      // here used to skip it entirely, stranding the engine with no
+      // way back to listening.
     }
+    this.scheduleEndEscalation(gen);
+  }
+
+  /** Escalation for the end cycle identified by `gen`: wait for a
+   *  matching onend; if it never (or not yet) arrives within
+   *  CLOUD_FINALIZE_GRACE_MS, abort() the zombie session; if EVEN THAT
+   *  produces no matching onend within another
+   *  CLOUD_FINALIZE_GRACE_MS, force a relaunch. Every stage re-checks
+   *  `awaitingOnendForGen === gen` first — once handleEnd() matches
+   *  this generation (or a later endSession() call replaces it), every
+   *  remaining stage here becomes a no-op for good. */
+  private scheduleEndEscalation(gen: number): void {
     setTimeout(() => {
+      if (this.awaitingOnendForGen !== gen) return; // already matched — no zombie
       if (this.userStopped || !this.recognition || !this.events) return;
-      if (Date.now() - this.lastStartAt <= RECOVER_FALLBACK_MS) return; // onend already relaunched
       try {
         this.recognition.abort();
       } catch {
-        // ignore — the fallback relaunch below covers it
+        // ignore — the forced relaunch below still covers it
       }
       setTimeout(() => {
+        if (this.awaitingOnendForGen !== gen) return; // matched in the meantime
         if (this.userStopped || !this.recognition || !this.events) return;
-        if (Date.now() - this.lastStartAt <= RECOVER_FALLBACK_MS) return;
+        this.awaitingOnendForGen = null;
+        this.endingSession = false;
         this.launch(this.events);
-      }, RECOVER_FALLBACK_MS);
-    }, RECOVER_FALLBACK_MS);
+      }, CLOUD_FINALIZE_GRACE_MS);
+    }, CLOUD_FINALIZE_GRACE_MS);
   }
 
   private flushRotationTail(): void {
