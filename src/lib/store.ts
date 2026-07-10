@@ -22,6 +22,7 @@ import { mergeDetections } from "./detect/dedupe";
 import type { DetectMode } from "./detect/scheduler";
 import * as storage from "./history/storage";
 import * as glossary from "./history/glossary";
+import * as learnset from "./learn/store";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "./types";
 import { activateTheme } from "./theme/apply";
@@ -372,6 +373,7 @@ export const useApp = create<AppState>((set, get) => ({
       storage.loadSettings(),
       storage.listSessions(),
       glossary.loadCustomEntries(),
+      learnset.loadLearnset(),
     ]);
     const settings = migrateSettings(saved);
     set({

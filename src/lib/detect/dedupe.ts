@@ -34,7 +34,7 @@ export function normalizeKey(s: string): string {
  *  longer than 4 chars). Multi-word phrases only flex on their
  *  final token — by design this leaves e.g. "circling back" and
  *  "circle back" as distinct keys (acceptable per spec). */
-function expressionNormKey(expression: string): string {
+export function expressionNormKey(expression: string): string {
   const base = normalizeKey(expression);
   if (!base) return base;
   const words = base.split(" ");
@@ -51,7 +51,7 @@ function expressionNormKey(expression: string): string {
 
 /** Term dedup key: trimmed; short (<=6 chars) all-letters terms are
  *  treated as acronyms and uppercased, everything else lowercased. */
-function termNormKey(term: string): string {
+export function termNormKey(term: string): string {
   const trimmed = term.trim();
   const isShortLettersOnly = trimmed.length <= 6 && /^[A-Za-z]+$/.test(trimmed);
   return isShortLettersOnly ? trimmed.toUpperCase() : trimmed.toLowerCase();
