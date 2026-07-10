@@ -103,7 +103,7 @@ const WATCHDOG_TICK_MS = 500;
 const RECOVER_FALLBACK_MS = 600;
 
 const STEER_NOTICE =
-  "检测到持续说话但未能识别，可能是语言不匹配。可切换到本地 Whisper 或标签页音频模式";
+  "一直在说话但识别不出，可能语言不匹配，试试本地 Whisper 或标签页音频模式";
 
 export class WebSpeechEngine implements STTEngine {
   readonly kind: STTEngineKind = "webspeech";
