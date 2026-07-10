@@ -201,7 +201,17 @@ export class UtteranceAssembler {
       const offset = this.flushedChars.get(index) ?? 0;
       const unflushed = snapshot.slice(offset);
       const cut = findFlushCut(unflushed);
-      if (cut <= 0) continue; // too short / all revision-prone — leave pending
+      // Too short / all revision-prone to safely cut — STOP here
+      // rather than skipping ahead to a later index (2026-07
+      // VAD-supervisor review finding #5): indices are processed
+      // oldest-first because that's chronological recognition order,
+      // so flushing a LATER index's safe prefix before an EARLIER
+      // one's still-pending final would land text out of order —
+      // [idx1-prefix, idx0-final, idx1-tail] instead of
+      // [idx0-final, idx1-prefix, idx1-tail]. Leaving idx1 (and
+      // anything after it) fully pending is strictly safer than
+      // reordering the transcript.
+      if (cut <= 0) break;
       const text = unflushed.slice(0, cut).trim();
       if (text) parts.push(text);
       this.flushedChars.set(index, offset + cut);

@@ -294,4 +294,26 @@ describe("UtteranceAssembler.flushStable — rotation/recovery, dup-bug regressi
     // startedAt reflects the utterance's TRUE origin, not the flush time.
     expect(out.finals[0].startedAt).toBe(T0);
   });
+
+  it("2026-07 VAD-supervisor review finding #5: stops at the first earlier index that can't safely flush, never skipping ahead to flush a LATER index first", () => {
+    const a = new UtteranceAssembler();
+    // index 0: too short to ever safely cut (findFlushCut returns 0).
+    a.push([{ index: 0, transcript: "hi", isFinal: false }], T0);
+    // index 1: long enough that, taken in isolation, it WOULD have a
+    // safe cut — without the fix, this used to get flushed anyway,
+    // landing emission order as [idx1-prefix, idx0-final, idx1-tail]
+    // instead of staying chronological.
+    const long = words(20);
+    a.push([{ index: 1, transcript: long, isFinal: false }], T0 + 50);
+
+    const out = a.flushStable(T0 + 100);
+    expect(out).toBeNull(); // nothing emitted — index 0 blocks index 1 too
+    expect(a.hasPendingInterim()).toBe(true);
+
+    // Index 1 never got a flushedChars offset either (confirmed via
+    // flushAll: both indices' FULL original text is still there, in
+    // order, nothing was partially consumed out of sequence).
+    const rescued = a.flushAll(T0 + 200);
+    expect(rescued?.text).toBe(`hi ${long}`);
+  });
 });
