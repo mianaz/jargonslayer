@@ -152,7 +152,36 @@ export function useMeeting(): UseMeetingResult {
   // let the pause continuation resurrect an already-saved meeting as
   // "paused"). Synchronous check-and-set — a concurrent lifecycle call
   // no-ops instead of interleaving.
+  //
+  // EXCEPT End (codex round-2 HIGH): a gated no-op silently DROPS the
+  // user's End exactly when it must win (e.g. clicked while resume is
+  // awaiting a permission prompt). End therefore never no-ops — when
+  // the gate is held it records an intent flag, the gate-holder checks
+  // it (resume refuses to flip to listening under a pending End), and
+  // the gate drains the intent into a real stop as soon as it frees.
   const lifecycleBusyRef = useRef(false);
+  const pendingEndRef = useRef(false);
+
+  // End body, ungated — reachable from listening AND paused; also the
+  // drain target for pendingEndRef.
+  const doStop = useCallback(async () => {
+    const engine = engineRef.current;
+    engineRef.current = null;
+    const scheduler = schedulerRef.current;
+    if (engine) {
+      await engine.stop();
+    }
+    // Scheduler stays alive so late responses still land; it is
+    // replaced+stopped on the next start().
+    scheduler?.flushNow();
+    useApp.getState().setStatus("stopped");
+
+    if (useApp.getState().segments.length > 0) {
+      await useApp.getState().saveCurrentSession();
+      useApp.getState().showToast("会议已保存到历史记录");
+    }
+  }, []);
+
   const withLifecycleGate = useCallback(async (fn: () => Promise<void>) => {
     if (lifecycleBusyRef.current) return;
     lifecycleBusyRef.current = true;
@@ -160,8 +189,15 @@ export function useMeeting(): UseMeetingResult {
       await fn();
     } finally {
       lifecycleBusyRef.current = false;
+      if (pendingEndRef.current) {
+        pendingEndRef.current = false;
+        // Re-enters the (now free) gate; a pendingEnd set during THIS
+        // drain lands in the drain's own finally, so intents can't
+        // starve.
+        void withLifecycleGate(doStop);
+      }
     }
-  }, []);
+  }, [doStop]);
 
   const start = useCallback(async () => withLifecycleGate(async () => {
     const { status } = useApp.getState();
@@ -228,30 +264,27 @@ export function useMeeting(): UseMeetingResult {
     const { status, meetingGen } = useApp.getState();
     if (status !== "paused") return;
     await attachEngine(meetingGen);
-    // attachEngine failure runs the engine's own error path (→
-    // "stopped" + save) — folding the accounting then would flip an
-    // ended meeting back to "listening" with no engine attached.
-    if (useApp.getState().status !== "stopped") {
+    // attachEngine failure runs the engine's own error path — which
+    // lands on "stopped" (segments exist, saved) OR "idle" (empty
+    // meeting; codex round-2 HIGH) — folding the accounting then would
+    // flip an ended meeting back to "listening" with no engine. A
+    // pending End equally wins over the flip: the gate's drain will
+    // stop the just-attached engine the moment this releases.
+    const after = useApp.getState().status;
+    if (after !== "stopped" && after !== "idle" && !pendingEndRef.current) {
       useApp.getState().resumeMeeting();
     }
   }), [attachEngine, withLifecycleGate]);
 
-  const stop = useCallback(async () => withLifecycleGate(async () => {
-    const engine = engineRef.current;
-    const scheduler = schedulerRef.current;
-    if (engine) {
-      await engine.stop();
+  const stop = useCallback(async () => {
+    if (lifecycleBusyRef.current) {
+      // Never drop an End (codex round-2 HIGH): the gate-holder's
+      // finally drains this intent into a real stop.
+      pendingEndRef.current = true;
+      return;
     }
-    // Scheduler stays alive so late responses still land; it is
-    // replaced+stopped on the next start().
-    scheduler?.flushNow();
-    useApp.getState().setStatus("stopped");
-
-    if (useApp.getState().segments.length > 0) {
-      await useApp.getState().saveCurrentSession();
-      useApp.getState().showToast("会议已保存到历史记录");
-    }
-  }), [withLifecycleGate]);
+    await withLifecycleGate(doStop);
+  }, [withLifecycleGate, doStop]);
 
   const startDemo = useCallback(async () => {
     useApp.getState().updateSettings({ engine: "demo" });
