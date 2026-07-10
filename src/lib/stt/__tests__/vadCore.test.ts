@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   VAD_ATTACK_MS,
   VAD_FLOOR_INIT_DB,
+  VAD_MIN_DB,
   VAD_NOISE_MARGIN_DB,
   VAD_RELEASE_MS,
   VAD_SAMPLE_MS,
@@ -215,5 +216,70 @@ describe("VadCore — adaptive noise floor", () => {
     const out = vad.sample(VAD_FLOOR_INIT_DB + 3, now + 10);
     expect(out.speaking).toBe(true); // still in release debounce
     expect(vad.floorDb).not.toBe(before); // yet the floor already adapted
+  });
+});
+
+describe("VadCore — non-finite sample defense (2026-07 VAD-supervisor review, finding #1)", () => {
+  it("a single -Infinity sample does not poison the floor to non-finite", () => {
+    const vad = new VadCore();
+    const out = vad.sample(-Infinity, T0);
+    expect(Number.isFinite(vad.floorDb)).toBe(true);
+    expect(out.speaking).toBe(false);
+  });
+
+  it("sustained digital silence (-Infinity every frame) never promotes to speaking, and the floor stays finite throughout", () => {
+    const vad = new VadCore();
+    let now = T0;
+    for (let i = 0; i < 200; i += 1) {
+      now += VAD_SAMPLE_MS;
+      const out = vad.sample(-Infinity, now);
+      expect(out.speaking).toBe(false);
+      expect(Number.isFinite(vad.floorDb)).toBe(true);
+    }
+    // The regression this guards against: once the floor itself goes
+    // -Infinity, `db >= floor + margin` is true for ANY finite db (even
+    // a genuinely quiet one), and quiet frames stop being able to
+    // adapt the floor back down — permanent false "speech". Confirm
+    // the floor actually settled near VAD_MIN_DB (not just "some
+    // finite number"), i.e. the clamp did its job every single frame.
+    expect(vad.floorDb).toBeLessThan(VAD_FLOOR_INIT_DB);
+    expect(vad.floorDb).toBeGreaterThanOrEqual(VAD_MIN_DB);
+  });
+
+  it("NaN samples are treated the same as -Infinity (also clamped, never poison the floor)", () => {
+    const vad = new VadCore();
+    let now = T0;
+    for (let i = 0; i < 50; i += 1) {
+      now += VAD_SAMPLE_MS;
+      const out = vad.sample(NaN, now);
+      expect(out.speaking).toBe(false);
+      expect(Number.isFinite(vad.floorDb)).toBe(true);
+    }
+  });
+
+  it("recovery: real loud audio after a run of digital silence still correctly promotes to speaking (the floor was never poisoned into misreading everything as loud)", () => {
+    const vad = new VadCore();
+    let now = T0;
+    // A long run of true digital silence first — if this had poisoned
+    // the floor to -Infinity, `speaking` would already have flipped
+    // true right here (any finite sample, loud or not, would clear
+    // -Infinity + margin), well before any genuinely loud audio.
+    for (let i = 0; i < 100; i += 1) {
+      now += VAD_SAMPLE_MS;
+      vad.sample(-Infinity, now);
+    }
+    expect(vad.state.speaking).toBe(false);
+
+    // Now genuinely loud audio arrives — must still take a full
+    // VAD_ATTACK_MS to promote, exactly like the attack-debounce
+    // tests above with a clean floor.
+    let flippedAt: number | null = null;
+    for (let i = 0; i < 10; i += 1) {
+      now += VAD_SAMPLE_MS;
+      const out = vad.sample(LOUD_DB, now);
+      if (out.speaking && flippedAt === null) flippedAt = now;
+    }
+    expect(flippedAt).not.toBeNull();
+    expect(vad.state.speaking).toBe(true);
   });
 });

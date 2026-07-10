@@ -16,7 +16,7 @@
 // at all when that happens (see sttSupervisor.ts's vadAvailable=false
 // legacy branch).
 
-import { VadCore, type VadState } from "./vadCore";
+import { VAD_MIN_DB, VadCore, type VadState } from "./vadCore";
 
 const VAD_SAMPLE_MS = 50;
 const FFT_SIZE = 1024;
@@ -37,10 +37,14 @@ function computeDb(analyser: AnalyserNode, buffer: Float32Array<ArrayBuffer>): n
     sumSquares += buffer[i] * buffer[i];
   }
   const rms = Math.sqrt(sumSquares / buffer.length);
-  // True digital silence (rms=0) has no finite dB — treat it as
-  // "arbitrarily quiet"; VadCore's floor+margin classification always
-  // reads -Infinity as quiet, so this is safe.
-  return rms > 0 ? 20 * Math.log10(rms) : -Infinity;
+  // True digital silence (rms=0) has no finite dB (log(0) = -Infinity)
+  // — clamp to VAD_MIN_DB instead. An unclamped -Infinity would drag
+  // VadCore's quiet-frame floor EMA toward -Infinity, at which point
+  // `-Infinity >= floor + margin` is TRUE and silence misclassifies as
+  // permanent speech (see vadCore.ts's VAD_MIN_DB doc comment — that
+  // module also re-clamps defensively, but this shell must not emit
+  // the poison value in the first place either).
+  return rms > 0 ? Math.max(VAD_MIN_DB, 20 * Math.log10(rms)) : VAD_MIN_DB;
 }
 
 export class SpeechActivityDetector implements VadHandle {
@@ -51,6 +55,26 @@ export class SpeechActivityDetector implements VadHandle {
   private buffer: Float32Array<ArrayBuffer> | null = null;
   private sampleTimer: ReturnType<typeof setInterval> | null = null;
   private started = false;
+  // Set by stop() and checked right after start()'s only await
+  // (getUserMedia) — real cancellation, not just "the caller stopped
+  // caring". Without this, a stop() that races the pending
+  // getUserMedia() call tears down an instance that owns nothing yet;
+  // the stream/context/interval start() goes on to acquire afterward
+  // then live on with nothing referencing them — hot mic until reload
+  // (2026-07 VAD-supervisor review's blocking finding #2). webSpeech.ts
+  // additionally captures its OWN local reference to this instance so
+  // a start/stop/start race can't lose track of WHICH detector needs
+  // stopping — the two fixes are independent layers of the same race.
+  private cancelled = false;
+  // "ended" on every acquired track (device revoked/unplugged, OS
+  // permission pulled mid-meeting) and AudioContext "statechange" to
+  // "closed" both mean this instance is dead — neither ever reaches us
+  // any other way. Without tearing down and flipping `available` off
+  // here, the supervisor keeps trusting a VAD that will never report
+  // speech again: silence forever, so all recovery stays suppressed
+  // (finding #7).
+  private trackEndedHandler: (() => void) | null = null;
+  private contextStateHandler: (() => void) | null = null;
 
   get available(): boolean {
     return this.started;
@@ -61,6 +85,7 @@ export class SpeechActivityDetector implements VadHandle {
   }
 
   async start(): Promise<boolean> {
+    this.cancelled = false;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
@@ -70,6 +95,14 @@ export class SpeechActivityDetector implements VadHandle {
           autoGainControl: true,
         },
       });
+      if (this.cancelled) {
+        // stop() ran while getUserMedia() was pending — this handle
+        // has already been abandoned by its caller; we still own this
+        // MediaStream and must release it ourselves; nothing else
+        // references it.
+        stream.getTracks().forEach((t) => t.stop());
+        return false;
+      }
       this.stream = stream;
 
       const AudioCtxCtor =
@@ -90,6 +123,7 @@ export class SpeechActivityDetector implements VadHandle {
       this.analyser = analyser;
       this.buffer = new Float32Array(analyser.fftSize);
 
+      this.attachLifecycleListeners();
       this.started = true;
       this.sampleTimer = setInterval(() => this.sample(), VAD_SAMPLE_MS);
       return true;
@@ -99,6 +133,28 @@ export class SpeechActivityDetector implements VadHandle {
     }
   }
 
+  private attachLifecycleListeners(): void {
+    if (this.stream) {
+      const handler = () => this.handleLifecycleDeath();
+      this.trackEndedHandler = handler;
+      for (const track of this.stream.getTracks()) {
+        track.addEventListener("ended", handler);
+      }
+    }
+    if (this.audioCtx) {
+      const handler = () => {
+        if (this.audioCtx?.state === "closed") this.handleLifecycleDeath();
+      };
+      this.contextStateHandler = handler;
+      this.audioCtx.addEventListener("statechange", handler);
+    }
+  }
+
+  private handleLifecycleDeath(): void {
+    if (!this.started) return; // already torn down (e.g. our own stop())
+    this.teardown();
+  }
+
   private sample(): void {
     if (!this.analyser || !this.buffer) return;
     const db = computeDb(this.analyser, this.buffer);
@@ -106,6 +162,7 @@ export class SpeechActivityDetector implements VadHandle {
   }
 
   stop(): void {
+    this.cancelled = true;
     this.teardown();
   }
 
@@ -116,13 +173,24 @@ export class SpeechActivityDetector implements VadHandle {
       this.sampleTimer = null;
     }
     if (this.stream) {
+      if (this.trackEndedHandler) {
+        const handler = this.trackEndedHandler;
+        for (const track of this.stream.getTracks()) {
+          track.removeEventListener("ended", handler);
+        }
+      }
       this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
     }
     if (this.audioCtx) {
+      if (this.contextStateHandler) {
+        this.audioCtx.removeEventListener("statechange", this.contextStateHandler);
+      }
       void this.audioCtx.close().catch(() => undefined);
       this.audioCtx = null;
     }
+    this.trackEndedHandler = null;
+    this.contextStateHandler = null;
     this.analyser = null;
     this.buffer = null;
   }

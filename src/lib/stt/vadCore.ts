@@ -39,6 +39,17 @@ export const VAD_RELEASE_MS = 250;
 export const VAD_NOISE_MARGIN_DB = 8;
 export const VAD_FLOOR_EMA = 0.05;
 export const VAD_FLOOR_INIT_DB = -60;
+// Defensive floor for every sample this core is fed. The shell's own
+// RMS->dB conversion should already clamp digital silence (rms=0,
+// mathematically -Infinity dB) to a finite minimum (see vad.ts's
+// computeDb) — but sample() re-clamps here too, so this pure core can
+// never be poisoned by a non-finite input regardless of the caller.
+// Without this, one -Infinity sample drags the quiet-frame floor EMA
+// toward -Infinity, and `-Infinity >= floor(-Infinity) + margin` is
+// TRUE — digital silence would then misclassify as permanent speech
+// (false stall "recoveries" + steer spam, pause-rotation dead; the
+// 2026-07 VAD-supervisor review's blocking finding #1).
+export const VAD_MIN_DB = -90;
 
 export interface VadState {
   speaking: boolean;
@@ -66,7 +77,11 @@ export class VadCore {
 
   /** Feed one dB sample at wall-clock `now`. Returns the updated state. */
   sample(db: number, now: number): VadState {
-    const loud = db >= this.floor + VAD_NOISE_MARGIN_DB;
+    // Clamp non-finite/absurdly-low input to VAD_MIN_DB (see its doc
+    // comment) — this is what actually stops -Infinity from ever
+    // reaching the floor EMA below.
+    const safeDb = Number.isFinite(db) ? Math.max(db, VAD_MIN_DB) : VAD_MIN_DB;
+    const loud = safeDb >= this.floor + VAD_NOISE_MARGIN_DB;
 
     if (loud) {
       this.quietSince = null;
@@ -83,7 +98,7 @@ export class VadCore {
       }
       // Adapt the floor only on quiet frames — a loud, sustained
       // utterance must never drag the floor up.
-      this.floor = this.floor * (1 - VAD_FLOOR_EMA) + db * VAD_FLOOR_EMA;
+      this.floor = this.floor * (1 - VAD_FLOOR_EMA) + safeDb * VAD_FLOOR_EMA;
     }
 
     return this.state;
