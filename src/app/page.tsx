@@ -15,6 +15,7 @@ import SettingsDialog from "@/components/SettingsDialog";
 import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverlay";
 import LookupPopover from "@/components/LookupPopover";
 import Toast from "@/components/Toast";
+import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
 
 type RightTab = "cards" | "summary" | "glossary";
 
@@ -129,6 +130,10 @@ export default function Home() {
 
   useEffect(() => {
     void hydrate();
+    // Diagnostics (item 2): window error/unhandledrejection -> diag
+    // ring buffer, registered once right alongside hydrate() — see
+    // lib/diag/globalHandlers.ts's own doc comment.
+    installGlobalDiagHandlers();
     if (shouldShowTutorial()) setHelpOpen(true);
   }, [hydrate]);
 

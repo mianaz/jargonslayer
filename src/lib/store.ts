@@ -70,7 +70,18 @@ export interface ToastAction {
   run: () => void;
 }
 
-export type ToastState = string | { message: string; action?: ToastAction } | null;
+// `ref` (diagnostics, e.g. "JS-K3F9" — see lib/diag/log.ts): optional,
+// additive field on the existing object variant — every pre-existing
+// `{message, action}` / plain-string call site keeps compiling and
+// rendering exactly as before (see Toast.tsx). Set by an error-class
+// choke point (DetectionScheduler/TranslateQueue onError, STT engine
+// onStatus("error")/onDiarStatus — see useMeeting.ts) alongside the
+// SAME ref already attached to that error's diag ring-buffer entry, so
+// a user can point a bug report at one exact log line.
+export type ToastState =
+  | string
+  | { message: string; action?: ToastAction; ref?: string }
+  | null;
 
 // ---------------------------------------------------------------
 // Realtime speaker diarization (beta) — pure helpers, exported so

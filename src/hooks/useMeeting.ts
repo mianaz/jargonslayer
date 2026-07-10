@@ -8,12 +8,33 @@ import { useApp } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
+import { diagLog } from "../lib/diag/log";
 import type { STTEngine, STTEvents } from "../lib/types";
 
 // Live bilingual transcript (#42): how many of the most recent
 // finalized segments to catch up when the toggle flips OFF->ON
 // mid-meeting (see the backfill effect below).
 const BILINGUAL_BACKFILL_COUNT = 5;
+
+/** Diagnostics choke-point wiring (item 2/3): every onError-shaped
+ *  callback below (DetectionScheduler, TranslateQueue, STT engine
+ *  onStatus("error")/onDiarStatus's error branch) uses this SAME
+ *  pattern — log an "error" diag entry (log.ts assigns it a ref) and
+ *  build the matching ref-carrying toast payload, so the toast's ref
+ *  and the ring-buffer entry's ref are always the exact same value.
+ *  Exported (not just inlined per call site) so this exact wiring is
+ *  directly unit-testable — this repo has no hook-render test harness
+ *  (see hooks/__tests__'s existing coverage, all pure-function-level),
+ *  so testing useMeeting() itself isn't practical; testing the wiring
+ *  it actually calls is. */
+export function logAndToastError(
+  tag: string,
+  message: string,
+  detail?: string,
+): { message: string; ref?: string } {
+  const entry = diagLog("error", tag, message, detail);
+  return { message, ref: entry.ref };
+}
 
 export interface UseMeetingResult {
   start: () => Promise<void>;
@@ -46,7 +67,7 @@ export function useMeeting(): UseMeetingResult {
       onDetection: (res, src, meta) => useApp.getState().applyDetection(res, src, meta),
       onBusyChange: (b) => useApp.getState().setDetectBusy(b),
       onModeChange: (m) => useApp.getState().setDetectMode(m),
-      onError: (msg) => useApp.getState().showToast(msg),
+      onError: (msg) => useApp.getState().showToast(logAndToastError("detect-scheduler", msg)),
     });
     schedulerRef.current = scheduler;
 
@@ -57,7 +78,7 @@ export function useMeeting(): UseMeetingResult {
       getSettings: () => useApp.getState().settings,
       getMeetingGen: () => useApp.getState().meetingGen,
       onTranslations: (map, gen) => useApp.getState().applyTranslations(map, gen),
-      onError: (msg) => useApp.getState().showToast(msg),
+      onError: (msg) => useApp.getState().showToast(logAndToastError("translate-queue", msg)),
     });
     translateQueueRef.current = translateQueue;
 
@@ -92,16 +113,23 @@ export function useMeeting(): UseMeetingResult {
         useApp.getState().applySpeakerUpdate(assignments, speakers, sessionGen);
       },
       onDiarStatus: (state, detail) => {
-        void detail; // shown in the sidecar's own logs; UI copy is fixed per spec
-        useApp
-          .getState()
-          .showToast(
-            state === "unavailable"
-              ? "实时说话人分离不可用，已回退到纯转录"
-              : "实时说话人分离出错，已停止本场自动标注",
-          );
+        // UI copy is fixed per spec — `detail` (the sidecar's own
+        // short status string) only ever reaches the diag ring buffer
+        // below, never the toast text itself.
+        if (state === "error") {
+          useApp
+            .getState()
+            .showToast(logAndToastError("stt-diar", "实时说话人分离出错，已停止本场自动标注", detail));
+        } else {
+          diagLog("warn", "stt-diar", "实时说话人分离不可用，已回退到纯转录", detail);
+          useApp.getState().showToast("实时说话人分离不可用，已回退到纯转录");
+        }
       },
       onNotice: (msg) => {
+        // Advisory only (see STTEvents.onNotice's own doc comment) —
+        // logged at "warn", no ref/toast-copy action: this is a steer
+        // hint, not a failure to diagnose.
+        diagLog("warn", "stt-notice", msg);
         useApp.getState().showToast(msg);
       },
       onStatus: (status, detail) => {
@@ -110,7 +138,7 @@ export function useMeeting(): UseMeetingResult {
         } else if (status === "listening") {
           useApp.getState().setStatus("listening");
         } else if (status === "error") {
-          useApp.getState().showToast(detail ?? "转录引擎错误");
+          useApp.getState().showToast(logAndToastError("stt", detail ?? "转录引擎错误"));
           void runStopFlow();
         } else if (
           status === "idle" &&

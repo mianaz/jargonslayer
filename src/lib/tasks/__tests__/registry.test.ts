@@ -30,12 +30,14 @@ import {
   useTasks,
   type TaskState,
 } from "../registry";
+import { clearDiag, getDiagEntries } from "../../diag/log";
 
 describe("task registry lifecycle (#58)", () => {
   beforeEach(() => {
     useTasks.setState({ tasks: {} });
     webhookUrl = "";
     mockPostTaskWebhook.mockClear();
+    clearDiag();
     vi.useRealTimers();
   });
 
@@ -82,11 +84,30 @@ describe("task registry lifecycle (#58)", () => {
     expect(task.error).toBe("解析失败");
   });
 
+  // Diagnostics choke point (item 2): failTask writes task kind + error
+  // message to the diag ring buffer — never the imported file/session
+  // content that led to the failure.
+  it("failTask also writes an 'error' diag entry carrying the task kind and error message", () => {
+    startTask("t1", "import-audio", "meeting.wav");
+    failTask("t1", "解析失败");
+    const entries = getDiagEntries().filter((e) => e.tag === "task-registry");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].level).toBe("error");
+    expect(entries[0].message).toContain("import-audio");
+    expect(entries[0].detail).toBe("解析失败");
+    expect(entries[0].ref).toMatch(/^JS-/);
+  });
+
   it("progress/complete/fail on an unknown id are no-ops (no throw, no phantom entry)", () => {
     updateTaskProgress("ghost", 0.5, "x");
     completeTask("ghost", "s1");
     failTask("ghost", "e");
     expect(useTasks.getState().tasks).toEqual({});
+  });
+
+  it("failTask on an unknown id does not write a diag entry either", () => {
+    failTask("ghost", "e");
+    expect(getDiagEntries().filter((e) => e.tag === "task-registry")).toHaveLength(0);
   });
 
   it("dismissTask removes the entry entirely; dismissing twice is a no-op", () => {

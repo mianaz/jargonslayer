@@ -21,6 +21,7 @@ import { create } from "zustand";
 import { newId } from "../types";
 import { useApp } from "../store";
 import { postTaskWebhook } from "../history/autoExport";
+import { diagLog } from "../diag/log";
 
 export type TaskKind = "import-audio" | "import-video" | "import-url" | "import-text";
 export type TaskStatus = "running" | "done" | "error";
@@ -135,7 +136,12 @@ export function completeTask(id: string, sessionId?: string): void {
 
 export function failTask(id: string, error: string): void {
   const task = patchTask(id, { status: "error", error });
-  if (task) emitTaskEvent("task.error", task);
+  if (task) {
+    // Diagnostics choke point (item 2): task kind + error message only
+    // — never the imported session/file content that led here.
+    diagLog("error", "task-registry", `${task.kind} 任务失败`, error);
+    emitTaskEvent("task.error", task);
+  }
 }
 
 /** Removes a task from the registry — the tray's per-row dismiss
