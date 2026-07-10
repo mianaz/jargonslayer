@@ -95,7 +95,7 @@ function DetectModeBadge() {
     // hidden <md (#55): the bottom StatusLine shows the same mode text,
     // and the mobile header row needs the width for the engine select.
     <span
-      className={`hidden items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono text-xs md:inline-flex ${config.cls}`}
+      className={`hidden items-center gap-1.5 border px-2.5 py-1 font-mono text-xs md:inline-flex ${config.cls}`}
     >
       {detectBusy && (
         <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent whitespace-nowrap" />
@@ -133,7 +133,7 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
   const busy = isEngineControlBusy(status);
 
   return (
-    <div className="hidden items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
+    <div className="hidden items-center gap-0.5 border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
       {ENGINE_OPTIONS.map((opt) => {
         // Preview tier (#61): sidecar-only pills stay visible but
         // disabled — never removed (showroom posture).
@@ -152,7 +152,7 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
                   ? "本地：音频不出本机"
                   : "云端：音频会离开设备"
             }
-            className={`rounded-sm px-2.5 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`px-2.5 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               engine === opt.value
                 ? "bg-panel3 text-fg"
                 : "text-mut hover:text-fg"
@@ -174,7 +174,7 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
         disabled={busy}
         onClick={onOpenImport}
         title="导入本地音频/视频或文稿"
-        className="ml-0.5 flex items-center gap-1 rounded-sm border-l border-edge px-2.5 py-1 font-mono text-xs text-mut transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+        className="ml-0.5 flex items-center gap-1 border-l border-edge px-2.5 py-1 font-mono text-xs text-mut transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
       >
         <UploadSimple size={13} weight="regular" />
         导入
@@ -205,7 +205,7 @@ function MobileEngineSelect() {
         const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
         if (v) updateSettings({ engine: v });
       }}
-      className="h-8 max-w-[8.5rem] rounded border border-edge bg-panel2 px-1.5 font-mono text-xs text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
+      className="h-8 max-w-[8.5rem] border border-edge bg-panel2 px-1.5 font-mono text-xs text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
     >
       {(engine === "demo" || engine === "import") && (
         <option value="" disabled>
@@ -250,7 +250,7 @@ function MobileImportButton({ onOpenImport }: { onOpenImport: () => void }) {
       onClick={onOpenImport}
       aria-label="导入"
       title="导入本地音频/视频或文稿"
-      className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-edge bg-panel2 text-mut hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
+      className="flex h-8 w-8 shrink-0 items-center justify-center border border-edge bg-panel2 text-mut hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
     >
       <UploadSimple size={14} weight="regular" />
     </button>
@@ -269,7 +269,7 @@ function EnginePostureChip() {
   return (
     <span
       title={isLocal ? "音频只在本机处理，不出设备" : "音频将经过浏览器厂商云端识别"}
-      className={`hidden items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${
+      className={`hidden items-center gap-1 border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${
         isLocal ? "border-lab-green/30 text-lab-green" : "border-warn-soft/30 text-warn-soft"
       }`}
     >
@@ -501,7 +501,7 @@ export default function Header({
           )}
 
           {activeSessionId && status === "stopped" && (
-            <span className="rounded-full border border-lab-orange/30 px-2.5 py-1 font-mono text-xs text-lab-orange whitespace-nowrap">
+            <span className="border border-lab-orange/30 px-2.5 py-1 font-mono text-xs text-lab-orange whitespace-nowrap">
               历史会话
             </span>
           )}

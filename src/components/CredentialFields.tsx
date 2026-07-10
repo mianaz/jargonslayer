@@ -121,7 +121,7 @@ export default function CredentialFields({
           value={activePreset}
           disabled={disabled}
           onChange={(e) => onSelectPreset(e.target.value as ProviderPresetId)}
-          className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         >
           {presets.map((p) => (
             <option key={p.id} value={p.id}>
@@ -140,7 +140,7 @@ export default function CredentialFields({
             disabled={disabled}
             onChange={(e) => onBaseUrlChange(e.target.value)}
             placeholder="https://api.deepseek.com"
-            className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           />
         </div>
       )}
@@ -151,7 +151,7 @@ export default function CredentialFields({
             type="button"
             disabled={disabled}
             onClick={onConnectOpenRouter}
-            className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+            className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
           >
             一键连接 OpenRouter 账号
           </button>
@@ -170,13 +170,13 @@ export default function CredentialFields({
             disabled={disabled}
             onChange={(e) => onApiKeyChange(e.target.value)}
             placeholder={apiKeyPlaceholder}
-            className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           />
           <button
             type="button"
             onClick={() => setShowKey((v) => !v)}
             aria-label={showKey ? "隐藏" : "显示"}
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
+            className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
           >
             {showKey ? <EyeSlash size={18} weight="regular" /> : <Eye size={18} weight="regular" />}
           </button>
@@ -240,7 +240,7 @@ function ModelField({
         <select
           value={model.value}
           onChange={(e) => model.onChange(e.target.value)}
-          className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+          className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
         >
           {model.previewOptions.map((opt) => (
             <option key={opt} value={opt}>
@@ -256,13 +256,13 @@ function ModelField({
             value={model.value}
             disabled={disabled}
             onChange={(e) => model.onChange(e.target.value)}
-            className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           />
           <button
             type="button"
             onClick={refresh}
             disabled={disabled || status === "loading"}
-            className="btn-tactile shrink-0 rounded-sm border border-edge px-2 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+            className="btn-tactile shrink-0 border border-edge px-2 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {status === "loading" ? "获取中…" : "刷新模型列表"}
           </button>

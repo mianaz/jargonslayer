@@ -193,7 +193,7 @@ export default function Home() {
               onKeyDown={nudgePanel}
               className="flex h-4 shrink-0 cursor-row-resize touch-none items-center justify-center border-b border-edge bg-panel2 focus:outline-none focus-visible:bg-panel3 lg:hidden"
             >
-              <span className="h-1 w-10 rounded-full bg-mut2/60" aria-hidden />
+              <span className="h-1 w-10 bg-mut2/60" aria-hidden />
             </div>
             <div className="flex items-center gap-1 border-b border-edge bg-panel2 px-3 pt-2">
               {(

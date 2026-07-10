@@ -144,14 +144,14 @@ function matchesQuery(item: UnifiedItem, q: string): boolean {
 function sourceBadge(source: DetectionSource) {
   if (source === "dictionary") {
     return (
-      <span className="rounded-sm border border-edge px-1.5 py-0 text-[10px] text-mut">
+      <span className="border border-edge px-1.5 py-0 text-[10px] text-mut">
         词典
       </span>
     );
   }
   if (source === "custom") {
     return (
-      <span className="rounded-sm border border-edge px-1.5 py-0 text-[10px] text-mut">
+      <span className="border border-edge px-1.5 py-0 text-[10px] text-mut">
         我的词典
       </span>
     );
@@ -191,7 +191,7 @@ function CollapseAffordance({ onCollapse }: { onCollapse: () => void }) {
       title="折叠"
       aria-label="折叠"
       aria-expanded
-      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm text-mut opacity-0 transition-opacity hover:bg-panel3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
+      className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center text-mut opacity-0 transition-opacity hover:bg-panel3 hover:text-fg focus-visible:opacity-100 group-hover:opacity-100"
     >
       <CaretUp size={14} weight="regular" />
     </button>
@@ -229,7 +229,7 @@ function KnownAffordance({
         type="button"
         onClick={(e) => run(e, onVote)}
         onKeyDown={(e) => handleButtonKeyDown(e, () => run(e, onVote))}
-        className="rounded-sm border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-mut hover:bg-panel3 hover:text-fg"
+        className="border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-mut hover:bg-panel3 hover:text-fg"
       >
         太简单
       </button>
@@ -237,7 +237,7 @@ function KnownAffordance({
         type="button"
         onClick={(e) => run(e, onSuppress)}
         onKeyDown={(e) => handleButtonKeyDown(e, () => run(e, onSuppress))}
-        className="rounded-sm border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-mut hover:bg-panel3 hover:text-fg"
+        className="border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-mut hover:bg-panel3 hover:text-fg"
       >
         别再提示
       </button>
@@ -308,7 +308,7 @@ function ExpressionCardRow({
   const badgeRow = (
     <div className="flex flex-wrap items-center gap-2">
       <span className="font-mono font-semibold text-fg">{card.expression}</span>
-      <span className={`rounded-sm border px-1.5 py-0 text-[12px] ${hue.border} ${hue.text}`}>
+      <span className={`border px-1.5 py-0 text-[12px] ${hue.border} ${hue.text}`}>
         {CATEGORY_LABELS[card.category]}
       </span>
       {card.count > 1 && (
@@ -329,7 +329,7 @@ function ExpressionCardRow({
         aria-expanded={false}
         onClick={onToggle}
         onKeyDown={(e) => handleButtonKeyDown(e, onToggle)}
-        className={`group relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${hue.bar} ${
+        className={`group relative cursor-pointer border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${hue.bar} ${
           isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${
           ring ? "ring-1 ring-act" : ""
@@ -349,7 +349,7 @@ function ExpressionCardRow({
       ref={ref}
       data-testid="card"
       data-kind="expression"
-      className={`group relative rounded-sm border-b border-edge border-l-2 bg-panel p-3 transition-colors hover:bg-panel3 ${hue.bar} ${
+      className={`group relative border-b border-edge border-l-2 bg-panel p-3 transition-colors hover:bg-panel3 ${hue.bar} ${
         isNew ? "diff-flash" : ""
       } ${isRepulsing ? "card-repulse" : ""} ${
         ring ? "ring-1 ring-act" : ""
@@ -410,7 +410,7 @@ function TermCardRow({
   const badgeRow = (
     <div className="flex flex-wrap items-center gap-2">
       <span className="font-mono font-semibold text-fg">{term.term}</span>
-      <span className={`rounded-sm border px-1.5 py-0 text-[12px] ${TERM_COLOR.border} ${TERM_COLOR.text}`}>
+      <span className={`border px-1.5 py-0 text-[12px] ${TERM_COLOR.border} ${TERM_COLOR.text}`}>
         术语 · {TERM_TYPE_LABELS[term.type]}
       </span>
       {term.count > 1 && (
@@ -431,7 +431,7 @@ function TermCardRow({
         aria-expanded={false}
         onClick={onToggle}
         onKeyDown={(e) => handleButtonKeyDown(e, onToggle)}
-        className={`group relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
+        className={`group relative cursor-pointer border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
           isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${
           ring ? "ring-1 ring-act" : ""
@@ -449,7 +449,7 @@ function TermCardRow({
       ref={ref}
       data-testid="card"
       data-kind="term"
-      className={`group relative rounded-sm border-b border-edge border-l-2 bg-panel p-3 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
+      className={`group relative border-b border-edge border-l-2 bg-panel p-3 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
         isNew ? "diff-flash" : ""
       } ${isRepulsing ? "card-repulse" : ""} ${
         ring ? "ring-1 ring-act" : ""
@@ -613,7 +613,7 @@ export default function CardsPanel() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="筛选表达或术语…"
-          className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+          className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
         />
 
         <div className="flex items-center gap-2">
@@ -623,7 +623,7 @@ export default function CardsPanel() {
                 key={f.key}
                 type="button"
                 onClick={() => setFilter(f.key)}
-                className={`rounded-sm border px-2.5 py-1 font-mono text-xs ${
+                className={`border px-2.5 py-1 font-mono text-xs ${
                   filter === f.key
                     ? "border-edge2 text-act"
                     : "border-edge text-mut hover:bg-panel3"
@@ -637,7 +637,7 @@ export default function CardsPanel() {
             type="button"
             onClick={handleCycleViewMode}
             title={viewModeTitle(viewMode)}
-            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-edge hover:bg-panel3 ${
+            className={`flex h-7 w-7 shrink-0 items-center justify-center border border-edge hover:bg-panel3 ${
               viewMode === "auto" ? "text-mut" : "text-act"
             }`}
           >

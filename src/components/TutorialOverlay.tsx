@@ -128,7 +128,7 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
               </div>
               <div className="mt-2 text-xs leading-[1.7] text-mut">{opt.hint}</div>
               <div
-                className={`mt-2 inline-block rounded-sm border px-2 py-0.5 text-[10px] ${
+                className={`mt-2 inline-block border px-2 py-0.5 text-[10px] ${
                   opt.posture === "local"
                     ? "border-lab-green/30 text-lab-green"
                     : "border-warn-soft/30 text-warn-soft"
@@ -271,7 +271,7 @@ export default function TutorialOverlay({
               <button
                 type="button"
                 onClick={() => setStep((s) => Math.max(0, s - 1))}
-                className="btn-tactile rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
               >
                 上一步
               </button>

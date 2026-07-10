@@ -7,7 +7,7 @@
 // bright colors.
 export default function PreviewLockedBadge() {
   return (
-    <span className="rounded-sm border border-edge px-1.5 py-0.5 text-[10px] text-mut2 whitespace-nowrap">
+    <span className="border border-edge px-1.5 py-0.5 text-[10px] text-mut2 whitespace-nowrap">
       本地版功能
     </span>
   );

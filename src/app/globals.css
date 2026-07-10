@@ -162,7 +162,6 @@ html[data-fs="xl"] {
 }
 .scroll-thin::-webkit-scrollbar-thumb {
   background: var(--edge);
-  border-radius: 3px;
 }
 .scroll-thin::-webkit-scrollbar-thumb:hover {
   background: var(--edge2);
@@ -222,7 +221,7 @@ html[data-fs="xl"] {
    lab-orange "expression" hue (docs/DESIGN.md v3.1: lab-orange is the
    expression-highlight-underline token). */
 .hl-expr {
-  @apply rounded px-0.5 text-lab-orange underline decoration-lab-orange/70 decoration-dotted underline-offset-4 cursor-pointer;
+  @apply px-0.5 text-lab-orange underline decoration-lab-orange/70 decoration-dotted underline-offset-4 cursor-pointer;
   /* token-driven tint (was a hardcoded rgba of terminal's #FFAA44 —
      a light theme's darker lab-orange must tint with ITS OWN hue) */
   background: rgb(var(--lab-orange-rgb) / 0.08);
@@ -234,7 +233,7 @@ html[data-fs="xl"] {
 /* highlighted term inside transcript — lab-cyan is the reserved
    term-highlight-underline token (tailwind.config.ts / DESIGN.md). */
 .hl-term {
-  @apply rounded px-0.5 text-lab-cyan underline decoration-lab-cyan/70 decoration-dotted underline-offset-4 cursor-pointer;
+  @apply px-0.5 text-lab-cyan underline decoration-lab-cyan/70 decoration-dotted underline-offset-4 cursor-pointer;
   background: rgb(var(--lab-cyan-rgb) / 0.08);
 }
 .hl-term:hover {
@@ -245,7 +244,6 @@ html[data-fs="xl"] {
 :focus-visible {
   outline: 2px solid var(--lab-cyan);
   outline-offset: 2px;
-  border-radius: 2px;
 }
 
 /* card-manuscript* (v2.3 illuminated-manuscript double-line chrome):

@@ -56,8 +56,8 @@ export default function HoverGlossCard({
   // scan) — two complete conditional strings, not an interpolated hue.
   const containerClassName =
     item.kind === "expression"
-      ? "fixed z-50 w-72 rounded-sm border border-edge border-l-2 border-l-lab-orange bg-panel2 p-3 shadow-xl"
-      : "fixed z-50 w-72 rounded-sm border border-edge border-l-2 border-l-lab-cyan bg-panel2 p-3 shadow-xl";
+      ? "fixed z-50 w-72 border border-edge border-l-2 border-l-lab-orange bg-panel2 p-3 shadow-xl"
+      : "fixed z-50 w-72 border border-edge border-l-2 border-l-lab-cyan bg-panel2 p-3 shadow-xl";
 
   return (
     <div className={containerClassName} style={{ left: pos.left, top: pos.top }}>
@@ -66,14 +66,14 @@ export default function HoverGlossCard({
           {item.kind === "expression" ? (
             <>
               <span className="font-mono font-semibold text-fg">{item.card.expression}</span>
-              <span className="rounded-sm border border-lab-orange/40 px-1.5 py-0 text-[10px] text-lab-orange">
+              <span className="border border-lab-orange/40 px-1.5 py-0 text-[10px] text-lab-orange">
                 {CATEGORY_LABELS[item.card.category]}
               </span>
             </>
           ) : (
             <>
               <span className="font-mono font-semibold text-fg">{item.term.term}</span>
-              <span className="rounded-sm border border-edge px-1.5 py-0 text-[10px] text-mut">
+              <span className="border border-edge px-1.5 py-0 text-[10px] text-mut">
                 术语 · {TERM_TYPE_LABELS[item.term.type]}
               </span>
             </>
@@ -84,7 +84,7 @@ export default function HoverGlossCard({
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
+            className="flex h-6 w-6 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
           >
             <X size={14} weight="regular" />
           </button>

@@ -327,7 +327,7 @@ function TaskDomainBlock({
   };
 
   return (
-    <div className="space-y-2 rounded-sm border border-edge bg-panel2 p-3">
+    <div className="space-y-2 border border-edge bg-panel2 p-3">
       <label className="flex items-center justify-between gap-3">
         <div>
           <div className="text-sm text-fg">{label}</div>
@@ -864,13 +864,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              every other field here does; it behaves like a pure view
              preference (same immediate-apply posture Header.tsx's own
              direct updateSettings calls already use for engine). */}
-          <div className="flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+          <div className="flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
             {UI_MODE_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
                 onClick={() => updateSettings({ uiMode: opt.value })}
-                className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
+                className={`px-2.5 py-1 text-xs transition-colors ${
                   level === opt.value ? "bg-panel3 text-fg" : "text-mut hover:text-fg"
                 }`}
               >
@@ -894,7 +894,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     disabled={opt.disabled || previewLocked}
                     onClick={() => patch({ engine: opt.value })}
                     title={previewLocked ? "本地版功能：需要本地 sidecar" : undefined}
-                    className={`rounded-sm border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                       draft.engine === opt.value
                         ? "border-act bg-panel3 text-fg"
                         : "border-edge text-fg hover:bg-panel3"
@@ -905,7 +905,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <span className="flex shrink-0 items-center gap-1.5">
                         {previewLocked && <PreviewLockedBadge />}
                         <span
-                          className={`shrink-0 rounded-sm border px-1.5 py-0 text-[10px] ${
+                          className={`shrink-0 border px-1.5 py-0 text-[10px] ${
                             opt.posture === "local"
                               ? "border-lab-green/30 text-lab-green"
                               : "border-warn-soft/30 text-warn-soft"
@@ -928,7 +928,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <select
                 value={draft.micId ?? ""}
                 onChange={(e) => patch({ micId: e.target.value || undefined })}
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
               >
                 <option value="">系统默认</option>
                 {mics.map((m) => (
@@ -945,7 +945,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <select
                 value={draft.language}
                 onChange={(e) => patch({ language: e.target.value })}
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
               >
                 {LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -966,7 +966,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 disabled={PREVIEW_TIER}
                 onChange={(e) => patch({ whisperUrl: e.target.value })}
                 placeholder="ws://localhost:8765"
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
           </section>
@@ -996,14 +996,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   disabled={PREVIEW_TIER}
                   onChange={(e) => patch({ hfToken: e.target.value })}
                   placeholder="hf_…"
-                  className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                 />
                 <button
                   type="button"
                   disabled={PREVIEW_TIER}
                   onClick={() => setShowHfToken((v) => !v)}
                   aria-label={showHfToken ? "隐藏" : "显示"}
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {showHfToken ? (
                     <EyeSlash size={18} weight="regular" />
@@ -1018,7 +1018,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
 
             {!PREVIEW_TIER && !draft.hfToken && (
-              <div className="space-y-2 rounded-sm border border-edge bg-panel2 p-3">
+              <div className="space-y-2 border border-edge bg-panel2 p-3">
                 <ol className="space-y-2 text-xs leading-[1.7] text-mut">
                   <li>
                     <span className="font-mono text-fg">①</span> 注册{" "}
@@ -1064,7 +1064,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               type="button"
               onClick={() => void handleCheckDiarizationStatus()}
               disabled={PREVIEW_TIER || checkingDiarization}
-              className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+              className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {checkingDiarization ? "检测中…" : "检测状态"}
             </button>
@@ -1176,7 +1176,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   type="button"
                   onClick={() => void handleTestConnection()}
                   disabled={testingConnection}
-                  className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {testingConnection ? "测试中…" : "测试连接"}
                 </button>
@@ -1243,7 +1243,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 onChange={(e) =>
                   patch({ explainLanguage: e.target.value as ExplainLanguage })
                 }
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
               >
                 {EXPLAIN_LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -1319,7 +1319,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       }
                       maxLength={40}
                       placeholder="如：金融 / SaaS / 生物医药"
-                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                   </div>
 
@@ -1333,7 +1333,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       }
                       maxLength={40}
                       placeholder="如：产品经理 / 后端工程师"
-                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                   </div>
 
@@ -1351,7 +1351,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           },
                         })
                       }
-                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
                     >
                       <option value="">未设置</option>
                       {ENGLISH_LEVEL_OPTIONS.map((l) => (
@@ -1374,7 +1374,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       }
                       maxLength={40}
                       placeholder="如：云基础设施, 数据管道"
-                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                   </div>
 
@@ -1388,7 +1388,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       }
                       maxLength={40}
                       placeholder="如：财务术语, 法务合同"
-                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -1424,7 +1424,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <div className="text-sm text-fg">
                       {p.name}
                       {p.remote && (
-                        <span className="ml-1.5 rounded-sm border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut">
+                        <span className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut">
                           社区
                         </span>
                       )}
@@ -1464,13 +1464,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     if (e.key === "Enter") void handleAddPackSource();
                   }}
                   placeholder="https://raw.githubusercontent.com/…/pack.json"
-                  className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                  className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                 />
                 <button
                   type="button"
                   onClick={() => void handleAddPackSource()}
                   disabled={addingPackSource || !packSourceUrl.trim()}
-                  className="btn-tactile shrink-0 rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="btn-tactile shrink-0 border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {addingPackSource ? "添加中…" : "添加"}
                 </button>
@@ -1481,7 +1481,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   {packSources.map((s) => (
                     <div
                       key={s.url}
-                      className="flex items-center justify-between gap-2 rounded-sm border border-edge bg-panel2 px-3 py-2"
+                      className="flex items-center justify-between gap-2 border border-edge bg-panel2 px-3 py-2"
                     >
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm text-fg">{s.pack.name}</div>
@@ -1495,14 +1495,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           type="button"
                           onClick={() => void handleCheckUpdates(s.url)}
                           disabled={checkingUpdates}
-                          className="btn-tactile rounded-sm px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                          className="btn-tactile px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
                         >
                           检查更新
                         </button>
                         <button
                           type="button"
                           onClick={() => void handleRemovePackSource(s.url)}
-                          className={`btn-tactile rounded-sm px-2 py-1 text-xs hover:bg-panel3 ${
+                          className={`btn-tactile px-2 py-1 text-xs hover:bg-panel3 ${
                             confirmRemoveUrl === s.url ? "text-warn-soft" : "text-mut hover:text-warn-soft"
                           }`}
                         >
@@ -1515,7 +1515,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     type="button"
                     onClick={() => void handleCheckUpdates()}
                     disabled={checkingUpdates}
-                    className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {checkingUpdates ? "检查中…" : "检查全部更新"}
                   </button>
@@ -1606,7 +1606,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <button
                   type="button"
                   onClick={() => void handleChooseExportFolder()}
-                  className="btn-tactile rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                  className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
                 >
                   选择导出文件夹
                 </button>
@@ -1636,7 +1636,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 value={draft.webhookUrl}
                 onChange={(e) => patch({ webhookUrl: e.target.value })}
                 placeholder="https://…"
-                className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
               />
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
                 会后 POST 会议 JSON 到该地址（n8n/飞书机器人等），导入任务的开始/完成/失败也会推送
@@ -1689,11 +1689,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <button
                   type="button"
                   onClick={() => void handleExportBackup()}
-                  className="btn-tactile rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                  className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
                 >
                   导出全量备份
                 </button>
-                <label className="btn-tactile cursor-pointer rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3">
+                <label className="btn-tactile cursor-pointer border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3">
                   导入备份
                   <input
                     type="file"
@@ -1713,7 +1713,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               )}
 
               {restorePreview && (
-                <div className="space-y-2 rounded-sm border border-warn-soft/40 bg-panel2 p-3">
+                <div className="space-y-2 border border-warn-soft/40 bg-panel2 p-3">
                   <div className="text-sm text-fg">确认恢复备份？</div>
                   <ul className="space-y-0.5 text-xs leading-[1.7] text-mut2">
                     <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，同 ID 的已有会议将被覆盖）</li>
@@ -1733,7 +1733,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       type="button"
                       onClick={() => setRestorePreview(null)}
                       disabled={restoring}
-                      className="btn-tactile rounded-sm px-3 py-1.5 text-sm text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
+                      className="btn-tactile px-3 py-1.5 text-sm text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       取消
                     </button>
@@ -1741,7 +1741,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       type="button"
                       onClick={() => void handleConfirmRestore()}
                       disabled={restoring}
-                      className="btn-tactile rounded-sm border border-warn-soft/50 px-3 py-1.5 text-sm text-warn-soft hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="btn-tactile border border-warn-soft/50 px-3 py-1.5 text-sm text-warn-soft hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {restoring ? "恢复中…" : "确认恢复"}
                     </button>
@@ -1773,7 +1773,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </a>
               </div>
 
-              <div className="max-h-40 space-y-1 overflow-y-auto rounded-sm border border-edge bg-panel2 p-2 font-mono text-xs">
+              <div className="max-h-40 space-y-1 overflow-y-auto border border-edge bg-panel2 p-2 font-mono text-xs">
                 {diagEntries.length === 0 ? (
                   <div className="text-mut2">暂无诊断记录</div>
                 ) : (
@@ -1802,7 +1802,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <button
                   type="button"
                   onClick={() => void handleCopyDiagnostics()}
-                  className="btn-tactile rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                  className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
                 >
                   复制诊断信息
                 </button>
@@ -1854,7 +1854,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
               {draft.subscriptionDirect && (
                 <>
-                  <div className="flex items-center justify-between gap-3 rounded-sm border border-edge bg-panel2 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3 border border-edge bg-panel2 px-3 py-2">
                     <div className="text-sm text-fg">
                       宿主状态：
                       {agentHealthState ? (
@@ -1867,7 +1867,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       type="button"
                       onClick={() => void handleCheckAgentHealth()}
                       disabled={checkingAgentHealth}
-                      className="btn-tactile shrink-0 rounded-sm border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                      className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {checkingAgentHealth ? "检测中…" : "重新检测"}
                     </button>
@@ -1876,7 +1876,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   {!agentHealthState && (
                     <div className="text-xs leading-[1.7] text-mut2">
                       未检测到宿主，请先启动 sidecar（
-                      <code className="rounded-sm bg-panel2 px-1 font-mono">
+                      <code className="bg-panel2 px-1 font-mono">
                         python -m sidecar.agent_server --port 8767
                       </code>
                       ），详见 README「订阅直连」章节
@@ -1890,17 +1890,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       value={draft.agentUrl}
                       onChange={(e) => patch({ agentUrl: e.target.value })}
                       placeholder="http://127.0.0.1:8767"
-                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                   </div>
 
                   <div>
                     <label className="text-xs text-mut">Provider</label>
-                    <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+                    <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
                       <button
                         type="button"
                         onClick={() => patch({ subscriptionProvider: "claude-sub" })}
-                        className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                        className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
                           draft.subscriptionProvider === "claude-sub"
                             ? "bg-panel3 text-fg"
                             : "text-mut hover:text-fg"
@@ -1911,7 +1911,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <button
                         type="button"
                         onClick={() => patch({ subscriptionProvider: "chatgpt-sub" })}
-                        className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                        className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
                           draft.subscriptionProvider === "chatgpt-sub"
                             ? "bg-panel3 text-fg"
                             : "text-mut hover:text-fg"
@@ -1960,7 +1960,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       value={draft.agentToken}
                       onChange={(e) => patch({ agentToken: e.target.value })}
                       placeholder="从 sidecar 启动日志复制粘贴"
-                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
                     <div className="mt-1 text-xs leading-[1.7] text-mut2">
                       仅存本机浏览器；sidecar 每次启动会打印一个新连接码，粘贴到这里才能调用
@@ -1986,7 +1986,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     key={t.id}
                     type="button"
                     onClick={() => patch({ themeId: t.id })}
-                    className={`rounded-sm border p-3 text-left text-sm transition-colors ${
+                    className={`border p-3 text-left text-sm transition-colors ${
                       draft.themeId === t.id
                         ? "border-act bg-panel3 text-fg"
                         : "border-edge text-fg hover:bg-panel3"
@@ -2003,13 +2003,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div>
               <label className="text-xs text-mut">全局字号</label>
-              <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+              <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
                 {FONT_SIZE_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
                     type="button"
                     onClick={() => patch({ fontSize: opt.value })}
-                    className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
                       draft.fontSize === opt.value
                         ? "bg-panel3 text-fg"
                         : "text-mut hover:text-fg"
@@ -2026,13 +2026,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div>
               <label className="text-xs text-mut">转录字号</label>
-              <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+              <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
                 {TRANSCRIPT_SCALE_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
                     type="button"
                     onClick={() => patch({ transcriptScale: opt.value })}
-                    className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
                       draft.transcriptScale === opt.value
                         ? "bg-panel3 text-fg"
                         : "text-mut hover:text-fg"
@@ -2049,13 +2049,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div>
               <label className="text-xs text-mut">转录行距</label>
-              <div className="mt-1 flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+              <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
                 {TRANSCRIPT_LEADING_OPTIONS.map((opt) => (
                   <button
                     key={opt.value}
                     type="button"
                     onClick={() => patch({ transcriptLeading: opt.value })}
-                    className={`flex-1 rounded-sm px-2 py-1.5 text-sm transition-colors ${
+                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
                       draft.transcriptLeading === opt.value
                         ? "bg-panel3 text-fg"
                         : "text-mut hover:text-fg"
@@ -2073,7 +2073,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <button
             type="button"
             onClick={onClose}
-            className="btn-tactile rounded-sm px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+            className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
           >
             取消
           </button>

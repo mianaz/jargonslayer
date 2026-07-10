@@ -53,7 +53,7 @@ export default function Toast() {
             action.run();
             clearToast();
           }}
-          className="rounded-sm border border-edge px-2 py-0.5 font-mono text-xs text-act hover:bg-panel3"
+          className="border border-edge px-2 py-0.5 font-mono text-xs text-act hover:bg-panel3"
         >
           {action.label}
         </button>

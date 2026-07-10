@@ -66,7 +66,7 @@ function WordButton({
       aria-pressed={isSelected}
       aria-label={`${word.label}，出现 ${word.count} 次`}
       title={`${word.label} · ${word.count} 次`}
-      className={`btn-tactile rounded-sm px-1.5 py-0.5 font-mono font-medium leading-none transition-colors hover:bg-panel3 ${sizeClass} ${colorClass} ${
+      className={`btn-tactile px-1.5 py-0.5 font-mono font-medium leading-none transition-colors hover:bg-panel3 ${sizeClass} ${colorClass} ${
         isSelected ? "bg-panel3" : ""
       }`}
     >

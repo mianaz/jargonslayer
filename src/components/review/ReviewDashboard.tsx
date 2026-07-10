@@ -174,7 +174,7 @@ function TopExpressions({
               key={item.label}
               type="button"
               onClick={() => onSelect(item.label)}
-              className={`flex w-full items-center gap-3 rounded-sm px-1 py-1 text-left transition-colors ${
+              className={`flex w-full items-center gap-3 px-1 py-1 text-left transition-colors ${
                 isSelected ? "bg-panel3" : "hover:bg-panel2"
               }`}
             >
@@ -262,7 +262,7 @@ function KnownTermsSection() {
             <button
               type="button"
               onClick={() => void unsuppressLearnRecord(record.learnKey)}
-              className="shrink-0 rounded-sm border border-edge px-2 py-1 font-mono text-xs text-mut hover:bg-panel3 hover:text-fg"
+              className="shrink-0 border border-edge px-2 py-1 font-mono text-xs text-mut hover:bg-panel3 hover:text-fg"
             >
               恢复提示
             </button>

@@ -329,7 +329,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="btn-tactile flex w-full items-center justify-center gap-2 rounded-sm border border-dashed border-edge2 px-3 py-8 text-sm text-mut hover:bg-panel3 hover:text-fg"
+                className="btn-tactile flex w-full items-center justify-center gap-2 border border-dashed border-edge2 px-3 py-8 text-sm text-mut hover:bg-panel3 hover:text-fg"
               >
                 <FileAudio size={20} weight="regular" />
                 选择音频或视频文件（支持多选）
@@ -356,7 +356,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                   <button
                     type="button"
                     onClick={() => setFilePath("browser")}
-                    className={`rounded-sm border p-3 text-left text-sm transition-colors ${
+                    className={`border p-3 text-left text-sm transition-colors ${
                       effectiveFilePath === "browser"
                         ? "border-act bg-panel3 text-fg"
                         : "border-edge text-fg hover:bg-panel3"
@@ -372,7 +372,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                     disabled={!routing.sidecarAvailable}
                     title={routing.sidecarLocked ? PREVIEW_SIDECAR_TITLE : undefined}
                     onClick={() => setFilePath("sidecar")}
-                    className={`rounded-sm border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                       effectiveFilePath === "sidecar"
                         ? "border-act bg-panel3 text-fg"
                         : "border-edge text-fg hover:bg-panel3"
@@ -401,7 +401,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                   <button
                     type="button"
                     onClick={onClose}
-                    className="btn-tactile rounded-sm px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+                    className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
                   >
                     取消
                   </button>
@@ -433,7 +433,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                   "粘贴会议文字记录，支持纯文本、SRT、VTT（Zoom/Otter 导出）格式\n" +
                   "可选说话人前缀，如 Alice: 今天先同步一下进度"
                 }
-                className="mt-1 w-full resize-y rounded-sm border border-edge bg-panel2 px-3 py-2 font-mono text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                className="mt-1 w-full resize-y border border-edge bg-panel2 px-3 py-2 font-mono text-sm text-fg placeholder:text-mut2 focus:outline-none"
               />
             </div>
 
@@ -451,7 +451,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
               <button
                 type="button"
                 onClick={() => textFileInputRef.current?.click()}
-                className="btn-tactile flex items-center gap-2 rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                className="btn-tactile flex items-center gap-2 border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
               >
                 <FileText size={16} weight="regular" />
                 选择文件
@@ -498,7 +498,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
               <button
                 type="button"
                 onClick={onClose}
-                className="btn-tactile rounded-sm px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+                className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
               >
                 取消
               </button>
@@ -537,13 +537,13 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                 if (e.key === "Enter") handleConfirmUrl();
               }}
               placeholder="https://..."
-              className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             />
             <div className="flex justify-end gap-2 border-t border-edge pt-4">
               <button
                 type="button"
                 onClick={onClose}
-                className="btn-tactile rounded-sm px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+                className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
               >
                 取消
               </button>

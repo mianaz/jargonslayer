@@ -117,7 +117,7 @@ export default function OpenRouterOAuthCallbackPage() {
             </div>
             <a
               href={withBase("/")}
-              className="mt-4 inline-block rounded-sm border border-edge px-4 py-1.5 text-sm text-fg hover:bg-panel3"
+              className="mt-4 inline-block border border-edge px-4 py-1.5 text-sm text-fg hover:bg-panel3"
             >
               返回首页
             </a>
@@ -130,7 +130,7 @@ export default function OpenRouterOAuthCallbackPage() {
             <div className="mt-1 text-xs leading-[1.7] text-mut2">{error}</div>
             <a
               href={withBase("/")}
-              className="mt-4 inline-block rounded-sm border border-edge px-4 py-1.5 text-sm text-fg hover:bg-panel3"
+              className="mt-4 inline-block border border-edge px-4 py-1.5 text-sm text-fg hover:bg-panel3"
             >
               返回首页重试
             </a>

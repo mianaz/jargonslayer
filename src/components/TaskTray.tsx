@@ -127,7 +127,7 @@ export default function TaskTray() {
                 onKeyDown={
                   jumpable ? (e) => handleButtonKeyDown(e, () => jumpToSession(task)) : undefined
                 }
-                className={`group relative rounded-sm px-2.5 py-2 ${
+                className={`group relative px-2.5 py-2 ${
                   jumpable ? "cursor-pointer hover:bg-panel3" : ""
                 }`}
               >

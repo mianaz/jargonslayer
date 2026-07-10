@@ -58,7 +58,7 @@ export default function ReviewPage() {
                 key={opt.value}
                 type="button"
                 onClick={() => setMode(opt.value)}
-                className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
+                className={`px-2.5 py-1 text-xs transition-colors ${
                   mode === opt.value
                     ? "bg-panel3 text-fg"
                     : "text-mut hover:text-fg"

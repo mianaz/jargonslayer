@@ -74,7 +74,6 @@ function SegmentRuns({
               style={{
                 background: isTerm ? BLUE_HL : GOLD_HL,
                 color: isTerm ? BLUE_HL_TEXT : GOLD_HL_TEXT,
-                borderRadius: 2,
                 padding: "0 2px",
               }}
             >
@@ -182,7 +181,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
           <button
             type="button"
             onClick={() => void handleExportPng()}
-            className="btn-tactile flex items-center gap-1.5 rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
+            className="btn-tactile flex items-center gap-1.5 border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
           >
             <DownloadSimple size={14} weight="regular" />
             导出 PNG
@@ -190,7 +189,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
           <button
             type="button"
             onClick={handleExportMarkdown}
-            className="btn-tactile flex items-center gap-1.5 rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
+            className="btn-tactile flex items-center gap-1.5 border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
           >
             <FileArrowDown size={14} weight="regular" />
             导出 Markdown
@@ -198,7 +197,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
           <button
             type="button"
             onClick={() => void handleCopyMarkdown()}
-            className="btn-tactile flex items-center gap-1.5 rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
+            className="btn-tactile flex items-center gap-1.5 border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
           >
             <Copy size={14} weight="regular" />
             复制 Markdown
@@ -208,7 +207,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
             type="button"
             onClick={onClose}
             aria-label="关闭"
-            className="btn-tactile flex h-8 w-8 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
+            className="btn-tactile flex h-8 w-8 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
           >
             <X size={18} weight="regular" />
           </button>
@@ -228,7 +227,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
         ) : (
           <div
             ref={sheetRef}
-            className="relative mx-auto max-w-[880px] rounded-xl p-8 sm:p-10"
+            className="relative mx-auto max-w-[880px] p-8 sm:p-10"
             style={{
               background: PAPER_BG,
               color: PAPER_TEXT,
@@ -242,7 +241,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
                inner line is a scoped inline-style div instead). */}
             <div
               aria-hidden
-              className="pointer-events-none absolute rounded-lg"
+              className="pointer-events-none absolute"
               style={{ inset: 6, border: `1px solid ${PAPER_BORDER_INNER}` }}
             />
             <div className="relative">
@@ -278,7 +277,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
                         {segAnnotations.map((a) => (
                           <div
                             key={a.n}
-                            className="rounded-lg p-2 text-xs leading-[1.7]"
+                            className="p-2 text-xs leading-[1.7]"
                             style={{
                               background: a.kind === "expression" ? "rgba(229,180,85,0.08)" : "rgba(91,157,255,0.08)",
                               border: `1px solid ${a.kind === "expression" ? "rgba(229,180,85,0.25)" : "rgba(91,157,255,0.25)"}`,

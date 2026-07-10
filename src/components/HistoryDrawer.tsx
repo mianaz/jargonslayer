@@ -156,7 +156,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
             <button
               type="button"
               onClick={onOpenImport}
-              className="flex items-center gap-2 rounded-sm border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+              className="flex items-center gap-2 border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
             >
               <UploadSimple size={16} weight="regular" />
               导入
@@ -165,7 +165,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
               type="button"
               onClick={onClose}
               aria-label="关闭"
-              className="flex h-8 w-8 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
+              className="flex h-8 w-8 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
             >
               <X size={18} weight="regular" />
             </button>
@@ -178,7 +178,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="按标题或表达搜索…"
-            className="w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+            className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
           />
         </div>
 
@@ -244,7 +244,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
                 <button
                   type="button"
                   onClick={onOpenImport}
-                  className="mt-4 flex items-center gap-2 rounded-sm border border-edge px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+                  className="mt-4 flex items-center gap-2 border border-edge px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
                 >
                   <UploadSimple size={14} weight="regular" />
                   或导入已有录音/文稿
@@ -277,7 +277,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
                           e.stopPropagation();
                           handleDeleteClick(meta.id);
                         }}
-                        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-warn-soft"
+                        className="flex h-7 w-7 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-warn-soft"
                       >
                         <Trash size={16} weight="regular" />
                       </button>
@@ -293,16 +293,16 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
                     </div>
 
                     <div className="mt-2 flex flex-wrap gap-1.5 text-[10px] text-mut">
-                      <span className="rounded-sm border border-edge px-1.5 py-0">
+                      <span className="border border-edge px-1.5 py-0">
                         {meta.segmentCount} 段
                       </span>
-                      <span className="rounded-sm border border-edge px-1.5 py-0">
+                      <span className="border border-edge px-1.5 py-0">
                         {meta.cardCount} 表达
                       </span>
-                      <span className="rounded-sm border border-edge px-1.5 py-0">
+                      <span className="border border-edge px-1.5 py-0">
                         {meta.termCount} 术语
                       </span>
-                      <span className="rounded-sm border border-edge px-1.5 py-0">
+                      <span className="border border-edge px-1.5 py-0">
                         摘要{meta.hasSummary ? "✓" : "✗"}
                       </span>
                     </div>

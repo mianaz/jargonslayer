@@ -252,7 +252,7 @@ function SpeakerRenamePopover({
   return (
     <div
       ref={ref}
-      className="fixed z-50 w-64 rounded-sm border border-edge bg-panel2 p-3 shadow-xl"
+      className="fixed z-50 w-64 border border-edge bg-panel2 p-3 shadow-xl"
       style={{ left: pos.left, top: pos.top }}
     >
       <input
@@ -263,7 +263,7 @@ function SpeakerRenamePopover({
         onKeyDown={(e) => {
           if (e.key === "Enter") handleConfirm();
         }}
-        className="w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
+        className="w-full border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
       />
       <div className="mt-2 text-xs leading-[1.7] text-mut">
         重命名将应用到该说话人的所有 {request.segmentCount} 段发言
@@ -272,14 +272,14 @@ function SpeakerRenamePopover({
         <button
           type="button"
           onClick={onClose}
-          className="btn-tactile rounded-sm px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+          className="btn-tactile px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
         >
           取消
         </button>
         <button
           type="button"
           onClick={handleConfirm}
-          className="btn-terminal rounded-sm bg-act px-3 py-1.5 text-xs font-medium text-ink hover:bg-act/85"
+          className="btn-terminal bg-act px-3 py-1.5 text-xs font-medium text-ink hover:bg-act/85"
         >
           确定
         </button>
@@ -327,20 +327,20 @@ function SegmentEditTextarea({
             onSave();
           }
         }}
-        className="w-full resize-none rounded-sm border border-edge bg-panel2 p-2 text-[15px] leading-relaxed text-fg focus:outline-none"
+        className="w-full resize-none border border-edge bg-panel2 p-2 text-[15px] leading-relaxed text-fg focus:outline-none"
       />
       <div className="mt-2 flex justify-end gap-2">
         <button
           type="button"
           onClick={onCancel}
-          className="btn-tactile rounded-sm px-3 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg"
+          className="btn-tactile px-3 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg"
         >
           取消
         </button>
         <button
           type="button"
           onClick={onSave}
-          className="btn-terminal rounded-sm bg-act px-3 py-1 text-xs font-medium text-ink hover:bg-act/85"
+          className="btn-terminal bg-act px-3 py-1 text-xs font-medium text-ink hover:bg-act/85"
         >
           保存
         </button>
@@ -941,7 +941,7 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
       >
         {isEmpty ? (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-            <div className="rounded-sm border border-edge bg-panel2 px-4 py-2 font-mono text-sm text-mut">
+            <div className="border border-edge bg-panel2 px-4 py-2 font-mono text-sm text-mut">
               <span className="text-lab-green">$</span>
               <span className="cursor-block ml-1 inline-block h-[1em] w-[0.55em] translate-y-[0.15em] bg-mut align-baseline">
                 &nbsp;
@@ -994,7 +994,7 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
         <button
           type="button"
           onClick={scrollToBottom}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 rounded-sm border border-edge bg-panel2 px-3 py-1 font-mono text-xs text-fg shadow-xl"
+          className="absolute bottom-3 left-1/2 -translate-x-1/2 border border-edge bg-panel2 px-3 py-1 font-mono text-xs text-fg shadow-xl"
         >
           ↓ 回到底部
         </button>

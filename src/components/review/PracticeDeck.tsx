@@ -80,7 +80,7 @@ export function FlashCard({
     >
       {!flipped ? (
         <div className="text-center">
-          <span className="mb-3 inline-block rounded-sm border border-edge px-2 py-0.5 text-[10px] text-mut">
+          <span className="mb-3 inline-block border border-edge px-2 py-0.5 text-[10px] text-mut">
             {content.kindLabel}
           </span>
           <div className="font-mono text-3xl font-semibold text-fg">
@@ -187,7 +187,7 @@ export default function PracticeDeck() {
               key={opt.value}
               type="button"
               onClick={() => setFilter(opt.value)}
-              className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
+              className={`px-2.5 py-1 text-xs transition-colors ${
                 filter === opt.value
                   ? "bg-panel3 text-fg"
                   : "text-mut hover:text-fg"
@@ -200,7 +200,7 @@ export default function PracticeDeck() {
         <button
           type="button"
           onClick={handleReshuffle}
-          className="btn-tactile flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+          className="btn-tactile flex items-center gap-2 border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
         >
           <ArrowsClockwise size={16} weight="regular" />
           重新洗牌
@@ -219,7 +219,7 @@ export default function PracticeDeck() {
             <button
               type="button"
               onClick={handleReshuffle}
-              className="btn-tactile mt-4 inline-flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+              className="btn-tactile mt-4 inline-flex items-center gap-2 border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
             >
               <ArrowsClockwise size={16} weight="regular" />
               重新洗牌

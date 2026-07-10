@@ -75,21 +75,21 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
       <button
         type="button"
         onClick={() => handleExport("md")}
-        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
+        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出报告 .md
       </button>
       <button
         type="button"
         onClick={() => handleExport("tsv")}
-        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
+        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出 Anki .tsv
       </button>
       <button
         type="button"
         onClick={() => handleExport("json")}
-        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
+        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出 JSON
       </button>
@@ -97,7 +97,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
         type="button"
         data-testid="btn-cornell"
         onClick={onOpenCornell}
-        className="btn-tactile flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile flex items-center gap-2 border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
       >
         <Notebook size={14} weight="regular" />
         康奈尔笔记
@@ -105,7 +105,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
       <button
         type="button"
         onClick={() => void handleCopy()}
-        className="btn-tactile rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
       >
         复制纪要
       </button>
@@ -113,7 +113,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
         <button
           type="button"
           onClick={() => void handleCollect()}
-          className="btn-tactile flex items-center gap-2 rounded-sm border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+          className="btn-tactile flex items-center gap-2 border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
         >
           <Star size={14} weight="regular" className="text-lab-orange" />
           收藏本场卡片

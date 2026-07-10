@@ -259,14 +259,14 @@ export default function LookupPopover() {
           type="button"
           onClick={() => setLookup(null)}
           aria-label="关闭"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-sm text-mut hover:bg-panel3 hover:text-fg"
+          className="flex h-6 w-6 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
         >
           <X size={14} weight="regular" />
         </button>
       </div>
 
       {dictFallback && (
-        <span className="mt-1 inline-block rounded-sm border border-lab-orange/30 px-1.5 py-0 text-[10px] text-lab-orange">
+        <span className="mt-1 inline-block border border-lab-orange/30 px-1.5 py-0 text-[10px] text-lab-orange">
           词典
         </span>
       )}
@@ -315,7 +315,7 @@ export default function LookupPopover() {
             <button
               type="button"
               disabled
-              className="w-full cursor-not-allowed rounded-sm border border-edge px-3 py-1.5 text-xs text-mut2"
+              className="w-full cursor-not-allowed border border-edge px-3 py-1.5 text-xs text-mut2"
             >
               已在词典中
             </button>
@@ -324,7 +324,7 @@ export default function LookupPopover() {
               type="button"
               onClick={() => void handleAddToGlossary()}
               disabled={glossaryLoading}
-              className="btn-tactile flex w-full items-center justify-center gap-2 rounded-sm border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+              className="btn-tactile flex w-full items-center justify-center gap-2 border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {glossaryLoading ? (
                 <>
@@ -343,7 +343,7 @@ export default function LookupPopover() {
         <div className="mt-3 space-y-2 border-t border-edge pt-3">
           <div className="flex items-center gap-2">
             <span
-              className={`rounded-sm border px-1.5 py-0 text-[10px] ${
+              className={`border px-1.5 py-0 text-[10px] ${
                 draft.kind === "expression"
                   ? "border-lab-orange/30 text-lab-orange"
                   : "border-lab-cyan/30 text-lab-cyan"
@@ -364,7 +364,7 @@ export default function LookupPopover() {
               onChange={(e) =>
                 setDraft((d) => (d ? { ...d, headword: e.target.value } : d))
               }
-              className="mt-1 w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
+              className="mt-1 w-full border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg focus:outline-none"
             />
           </div>
 
@@ -379,7 +379,7 @@ export default function LookupPopover() {
               }
               placeholder="说明这词在会议里的意思…"
               rows={2}
-              className="mt-1 w-full resize-none rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm leading-[1.7] text-fg placeholder:text-mut2 focus:outline-none"
+              className="mt-1 w-full resize-none border border-edge bg-panel px-2.5 py-1.5 text-sm leading-[1.7] text-fg placeholder:text-mut2 focus:outline-none"
             />
           </div>
 
@@ -392,7 +392,7 @@ export default function LookupPopover() {
                 setDraft((d) => (d ? { ...d, example: e.target.value } : d))
               }
               placeholder="可留空"
-              className="mt-1 w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+              className="mt-1 w-full border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
             />
           </div>
 
@@ -405,7 +405,7 @@ export default function LookupPopover() {
                 setDraft((d) => (d ? { ...d, note: e.target.value } : d))
               }
               placeholder="自己的笔记，可留空"
-              className="mt-1 w-full rounded-sm border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+              className="mt-1 w-full border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
             />
           </div>
 
@@ -413,7 +413,7 @@ export default function LookupPopover() {
             <button
               type="button"
               onClick={() => setDraft(null)}
-              className="btn-tactile rounded-sm px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+              className="btn-tactile px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
             >
               取消
             </button>
