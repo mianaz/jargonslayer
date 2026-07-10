@@ -23,7 +23,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import type { ExpressionCard, TermCard, TranscriptSegment } from "../../lib/types";
-import TranscriptPanel, { renderCounters } from "../TranscriptPanel";
+import TranscriptPanel, {
+  INTERIM_THROTTLE_MS,
+  SCROLL_STICKY_THRESHOLD,
+  renderCounters,
+} from "../TranscriptPanel";
 
 const SEGMENT_COUNT = 200;
 const HIGHLIGHT_TERM = "Kubernetes";
@@ -145,5 +149,232 @@ describe("TranscriptPanel render split", () => {
 
     expect(renderCounters.interimLine).toBeGreaterThanOrEqual(1);
     expect(renderCounters.segmentRow).toBe(0);
+  });
+
+  // ---- 2026-07 VAD-supervisor review finding #8: matcher/handler
+  // identity must survive a count-only cards/terms bump (the common
+  // re-detection case) and only actually invalidate on a real
+  // vocabulary change. ----
+
+  it("finding #8: a count-only detection update (re-detecting an already-known term) triggers ZERO SegmentRow re-renders", async () => {
+    (
+      globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+
+    const segments = buildSegments();
+    const terms = buildTerms();
+
+    useApp.setState({
+      segments,
+      cards: EMPTY_CARDS,
+      terms,
+      interim: null,
+      translations: {},
+      status: "listening",
+      focusMode: false,
+    });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+    expect(renderCounters.segmentRow).toBe(SEGMENT_COUNT);
+    renderCounters.segmentRow = 0;
+
+    // Same id/term/lastSeenAt (the matcher's ONLY inputs) — just a
+    // re-detection count bump, and a NEW array/object reference (the
+    // store's real update pattern), same as production would produce.
+    const recountedTerms: TermCard[] = terms.map((t) => ({
+      ...t,
+      count: t.count + 1,
+    }));
+    await act(async () => {
+      useApp.setState({ terms: recountedTerms });
+    });
+
+    expect(renderCounters.segmentRow).toBe(0);
+  });
+
+  it("finding #8: a genuine vocabulary change (new term text) re-renders every SegmentRow exactly once", async () => {
+    (
+      globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+
+    const segments = buildSegments();
+    const terms = buildTerms();
+
+    useApp.setState({
+      segments,
+      cards: EMPTY_CARDS,
+      terms,
+      interim: null,
+      translations: {},
+      status: "listening",
+      focusMode: false,
+    });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+    expect(renderCounters.segmentRow).toBe(SEGMENT_COUNT);
+    renderCounters.segmentRow = 0;
+
+    // A DIFFERENT term surface — the matcher's actual output changes.
+    const changedTerms: TermCard[] = terms.map((t) => ({
+      ...t,
+      term: "Docker",
+      normKey: "docker",
+    }));
+    await act(async () => {
+      useApp.setState({ terms: changedTerms });
+    });
+
+    expect(renderCounters.segmentRow).toBe(SEGMENT_COUNT);
+  });
+});
+
+// ---- 2026-07 VAD-supervisor review finding #6: InterimLine's
+// trailing-edge throttle must commit the LATEST value (not whatever
+// was current when the pending timer was scheduled), and the
+// auto-scroll decision it drives must read the CURRENT stickToBottom
+// at fire time, not a stale one captured at schedule time. ----
+
+describe("TranscriptPanel InterimLine throttle correctness", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({
+      segments: [],
+      cards: [],
+      terms: [],
+      interim: null,
+      translations: {},
+    });
+  });
+
+  function mount(): HTMLDivElement {
+    (
+      globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({
+      segments: [],
+      cards: EMPTY_CARDS,
+      terms: [],
+      interim: null,
+      translations: {},
+      status: "listening",
+      focusMode: false,
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    return container;
+  }
+
+  it("a burst of updates well within one throttle window commits the LATEST value, not the first", async () => {
+    await act(async () => {
+      mount();
+      root!.render(<TranscriptPanel />);
+    });
+
+    // Three updates back-to-back (real time between them is a
+    // fraction of a ms — nowhere near INTERIM_THROTTLE_MS): the FIRST
+    // commits immediately (nothing pending yet), the second and third
+    // land inside that same throttle window and must not install
+    // competing timers — only the LATEST value may ever be committed.
+    await act(async () => {
+      useApp.getState().setInterim({ text: "a" });
+    });
+    await act(async () => {
+      useApp.getState().setInterim({ text: "ab" });
+    });
+    await act(async () => {
+      useApp.getState().setInterim({ text: "abc" });
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, INTERIM_THROTTLE_MS + 40));
+    });
+
+    const interimEl = container!.querySelector(".ts-body.italic");
+    expect(interimEl?.textContent).toBe("abc");
+  });
+
+  it("scrolling up during the pending throttle window suppresses the auto-scroll snap-back, but the throttled value still commits", async () => {
+    await act(async () => {
+      mount();
+      root!.render(<TranscriptPanel />);
+    });
+
+    const scrollEl = container!.querySelector(
+      '[data-testid="transcript-panel"] > div',
+    ) as HTMLDivElement;
+    expect(scrollEl).toBeTruthy();
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      value: 1000,
+      configurable: true,
+    });
+    Object.defineProperty(scrollEl, "clientHeight", {
+      value: 500,
+      configurable: true,
+    });
+
+    // The mount-time effect (interim starts null) already stamped
+    // lastCommitAtRef with "now", so this FIRST real update itself
+    // lands inside a throttle window too — wait it out (stickToBottom
+    // is still true by default) so the auto-scroll fires once,
+    // snapping to the bottom, giving a known baseline to observe the
+    // SECOND update's (suppressed) snap-back against.
+    await act(async () => {
+      useApp.getState().setInterim({ text: "first" });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, INTERIM_THROTTLE_MS + 40));
+    });
+    expect(scrollEl.scrollTop).toBe(1000);
+
+    // Second update lands inside the throttle window — installs a
+    // PENDING timer (not yet fired).
+    await act(async () => {
+      useApp.getState().setInterim({ text: "second" });
+    });
+
+    // The user scrolls up WHILE that timer is still pending — distance
+    // from bottom now exceeds SCROLL_STICKY_THRESHOLD.
+    await act(async () => {
+      scrollEl.scrollTop = 10;
+      scrollEl.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    expect(scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight).toBeGreaterThan(
+      SCROLL_STICKY_THRESHOLD,
+    );
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, INTERIM_THROTTLE_MS + 40));
+    });
+
+    // The pending commit DID fire (value staleness fix)...
+    const interimEl = container!.querySelector(".ts-body.italic");
+    expect(interimEl?.textContent).toBe("second");
+    // ...but did NOT snap the scroll position back to the bottom
+    // (scroll staleness fix) — a stale `stickToBottom=true` captured
+    // when the timer was scheduled would have reset this to 1000.
+    expect(scrollEl.scrollTop).toBe(10);
   });
 });

@@ -11,18 +11,25 @@ import {
 } from "react";
 import { PencilSimple } from "@phosphor-icons/react";
 import { useApp } from "../lib/store";
-import { buildHighlightMatcher, type HighlightHit } from "../lib/highlight";
+import {
+  buildHighlightMatcher,
+  MAX_HIGHLIGHT_PER_KIND,
+  type HighlightHit,
+} from "../lib/highlight";
 import type { ExpressionCard, TermCard, TranscriptSegment } from "../lib/types";
 import HoverGlossCard, { type GlossItem } from "./HoverGlossCard";
 
-const SCROLL_STICKY_THRESHOLD = 80;
+// Exported (not just module-private) so the render-split regression
+// tests (TranscriptPanel.render.test.tsx) can drive exact boundary
+// timings/distances instead of guessing at or hardcoding these values.
+export const SCROLL_STICKY_THRESHOLD = 80;
 const HOVER_ENTER_DELAY_MS = 150;
 const HOVER_LEAVE_DELAY_MS = 200;
 // Interim growth throttle (render-perf split, see the design doc):
 // commits an interim UPDATE at most this often (~8fps) — but a
 // transition to null (a final just landed) always commits immediately,
 // never throttled, so there's no stale interim flash after a final.
-const INTERIM_THROTTLE_MS = 125;
+export const INTERIM_THROTTLE_MS = 125;
 
 // v0.2.1 transcript-only display settings (Settings → 显示): numeric
 // multipliers for the --ts-scale / --ts-leading custom properties
@@ -68,6 +75,39 @@ function formatTime(ms: number): string {
 
 // Term/expression matching for the live transcript now lives in
 // src/lib/highlight.ts (buildHighlightMatcher) and covers both kinds.
+
+/** Stable identity for buildHighlightMatcher's ACTUAL inputs (2026-07
+ *  VAD-supervisor review finding #8). buildHighlightMatcher only ever
+ *  looks at each card/term's `id` + surface text, and only the top
+ *  MAX_HIGHLIGHT_PER_KIND-per-kind entries by lastSeenAt participate —
+ *  memoizing `matcher` on the raw [cards, terms] ARRAYS instead gives
+ *  it (and everything downstream that depends on it — cardsById,
+ *  termsById, the hit handlers, and ultimately every SegmentRow's
+ *  props) a new identity on every detection update, including a
+ *  count-only re-detection bump that can't possibly change what the
+ *  matcher matches. This key changes if and only if the matcher's own
+ *  output could. Sorted by the key string itself (not lastSeenAt) so a
+ *  same-membership REORDER — which the regex is indifferent to, it
+ *  sorts candidates by length, not recency — doesn't spuriously
+ *  invalidate it either. */
+function highlightVocabularyKey(
+  cards: ExpressionCard[],
+  terms: TermCard[],
+): string {
+  const cardKey = [...cards]
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .slice(0, MAX_HIGHLIGHT_PER_KIND)
+    .map((c) => `${c.id}:${c.expression}`)
+    .sort()
+    .join("|");
+  const termKey = [...terms]
+    .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
+    .slice(0, MAX_HIGHLIGHT_PER_KIND)
+    .map((t) => `${t.id}:${t.term}`)
+    .sort()
+    .join("|");
+  return `${cardKey}::${termKey}`;
+}
 
 function HighlightedText({
   text,
@@ -327,6 +367,14 @@ function SegmentEditTextarea({
 // bailed memo never re-invokes its render function at all. These
 // counters do, at the cost of one integer increment per real
 // invocation — negligible, and otherwise inert outside tests.
+//
+// Gated behind NODE_ENV (2026-07 VAD-supervisor review finding #10):
+// production builds must not write these globals on every render —
+// dev/test both leave RENDER_COUNTERS_ENABLED true (NODE_ENV is
+// "development"/"test" there), and bundlers can dead-code-eliminate
+// the production branch since the check is a statically-known
+// `process.env.NODE_ENV` comparison.
+const RENDER_COUNTERS_ENABLED = process.env.NODE_ENV !== "production";
 export const renderCounters = { segmentRow: 0, interimLine: 0 };
 
 interface SegmentRowProps {
@@ -364,7 +412,7 @@ export const SegmentRow = memo(function SegmentRow({
   onHitEnter,
   onHitLeave,
 }: SegmentRowProps) {
-  renderCounters.segmentRow += 1;
+  if (RENDER_COUNTERS_ENABLED) renderCounters.segmentRow += 1;
   const palette = seg.speaker ? SPEAKER_PALETTE[hashSpeaker(seg.speaker)] : null;
 
   return (
@@ -450,11 +498,32 @@ export const SegmentRow = memo(function SegmentRow({
  *  immediately so a stale interim never lingers on screen after its
  *  text has already become a real segment. */
 export function InterimLine({ onGrow }: { onGrow?: () => void }) {
-  renderCounters.interimLine += 1;
+  if (RENDER_COUNTERS_ENABLED) renderCounters.interimLine += 1;
   const interim = useApp((s) => s.interim);
   const [displayed, setDisplayed] = useState(interim);
   const lastCommitAtRef = useRef(0);
   const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Trailing-edge throttle bugfix (2026-07 VAD-supervisor review
+  // finding #6): a burst of updates inside one throttle window used to
+  // install a timer only on the FIRST of them (the `pendingTimerRef.
+  // current === null` guard below) — that timer's `commit` closure
+  // captured `interim` as it was AT SCHEDULING time, so every LATER
+  // growth in the same window got silently dropped until the next
+  // throttle tick (or indefinitely, during a stall — no further tick
+  // ever comes). Reading from this ref at FIRE time instead means the
+  // already-scheduled timer always commits whatever is CURRENT.
+  const latestInterimRef = useRef(interim);
+  latestInterimRef.current = interim;
+  // Same fix applied to the scroll-follow callback: route it through a
+  // ref read at execution time instead of closing over the `onGrow`
+  // prop (and, transitively, the parent's `stickToBottom`) from
+  // whenever the timer was scheduled — otherwise a user who scrolled
+  // up DURING the pending window could get snapped back to the bottom
+  // by a decision made before they scrolled. This also makes it safe
+  // that the parent's onGrow (handleInterimGrow) isn't itself
+  // memoized — a fresh reference every parent render is fine now.
+  const onGrowRef = useRef(onGrow);
+  onGrowRef.current = onGrow;
 
   useEffect(() => {
     const clearPending = () => {
@@ -473,8 +542,8 @@ export function InterimLine({ onGrow }: { onGrow?: () => void }) {
 
     const commit = () => {
       lastCommitAtRef.current = Date.now();
-      setDisplayed(interim);
-      onGrow?.();
+      setDisplayed(latestInterimRef.current);
+      onGrowRef.current?.();
     };
 
     const elapsed = Date.now() - lastCommitAtRef.current;
@@ -610,9 +679,19 @@ export default function TranscriptPanel() {
     setEditValue("");
   }, [updateSegmentText, setEditingSegmentId, setEditValue]);
 
+  // Memoized on the SEMANTIC vocabulary key, not [cards, terms]
+  // directly (finding #8, see highlightVocabularyKey's doc comment) —
+  // a count-only detection bump no longer gives `matcher` a new
+  // identity, so SegmentRow's memo (which receives `matcher` as a
+  // prop) can actually hold across it.
+  const vocabularyKey = useMemo(
+    () => highlightVocabularyKey(cards, terms),
+    [cards, terms],
+  );
   const matcher = useMemo(
     () => buildHighlightMatcher(cards, terms),
-    [cards, terms],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [vocabularyKey],
   );
   const cardsById = useMemo(() => {
     const map = new Map<string, ExpressionCard>();
@@ -624,6 +703,17 @@ export default function TranscriptPanel() {
     for (const t of terms) map.set(t.id, t);
     return map;
   }, [terms]);
+  // Mirrored into refs so resolveGlossItem below can stay
+  // REFERENTIALLY STABLE (empty deps) regardless of how often
+  // cardsById/termsById themselves get new identities — it reads the
+  // latest map at CALL time instead of closing over one. That in turn
+  // keeps handleHitEnter/handleHitClick (both SegmentRow props) stable
+  // across a count-only cards/terms bump, same pattern already used
+  // for editingSegmentIdRef/editValueRef above.
+  const cardsByIdRef = useRef(cardsById);
+  cardsByIdRef.current = cardsById;
+  const termsByIdRef = useRef(termsById);
+  termsByIdRef.current = termsById;
 
   // Segment count per speaker, for the rename popover's hint copy.
   const speakerCounts = useMemo(() => {
@@ -671,13 +761,13 @@ export default function TranscriptPanel() {
   const resolveGlossItem = useCallback(
     (hit: HighlightHit): GlossItem | undefined => {
       if (hit.kind === "expression") {
-        const card = cardsById.get(hit.id);
+        const card = cardsByIdRef.current.get(hit.id);
         return card ? { kind: "expression", card } : undefined;
       }
-      const term = termsById.get(hit.id);
+      const term = termsByIdRef.current.get(hit.id);
       return term ? { kind: "term", term } : undefined;
     },
-    [cardsById, termsById],
+    [],
   );
 
   const handleHitEnter = useCallback(
