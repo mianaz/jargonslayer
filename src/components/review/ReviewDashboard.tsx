@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
+import type { LearnRecord } from "@/lib/learn/types";
 import WordCloud from "./WordCloud";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -209,6 +210,63 @@ function EmptyState() {
   );
 }
 
+function formatDate(ts: number | undefined): string {
+  if (ts === undefined) return "未知";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ts));
+}
+
+function KnownTermsSection() {
+  const learnset = useApp((s) => s.learnset);
+  const unsuppressLearnRecord = useApp((s) => s.unsuppressLearnRecord);
+
+  const known = useMemo(
+    () =>
+      Object.values(learnset)
+        .filter((record): record is LearnRecord => record.suppressed)
+        .sort((a, b) => (b.suppressedAt ?? 0) - (a.suppressedAt ?? 0)),
+    [learnset],
+  );
+
+  if (known.length === 0) return null;
+
+  return (
+    <section className="border-l-2 border-edge2 border-b border-edge bg-panel p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-fg">已知词</div>
+          <div className="mt-1 font-mono text-xs text-mut">{known.length}</div>
+        </div>
+      </div>
+      <div className="mt-3 divide-y divide-edge">
+        {known.map((record) => (
+          <div
+            key={record.learnKey}
+            className="flex items-center justify-between gap-3 py-2"
+          >
+            <div className="min-w-0">
+              <div className="truncate font-mono text-sm text-fg">{record.surface}</div>
+              <div className="mt-1 text-xs text-mut">
+                {record.kind === "term" ? "术语" : "表达"} · {formatDate(record.suppressedAt)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void unsuppressLearnRecord(record.learnKey)}
+              className="shrink-0 rounded-sm border border-edge px-2 py-1 font-mono text-xs text-mut hover:bg-panel3 hover:text-fg"
+            >
+              恢复提示
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function ReviewDashboard() {
   const sessions = useApp((s) => s.sessions);
   const { cache, loading } = useSessionCache();
@@ -226,12 +284,18 @@ export default function ReviewDashboard() {
   };
 
   if (sessions.length === 0) {
-    return <EmptyState />;
+    return (
+      <div className="space-y-6">
+        <EmptyState />
+        <KnownTermsSection />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <StatsStrip />
+      <KnownTermsSection />
       <WordCloud
         words={words}
         loading={loading}

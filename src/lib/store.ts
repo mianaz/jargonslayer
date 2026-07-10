@@ -23,8 +23,10 @@ import type { DetectMode } from "./detect/scheduler";
 import * as storage from "./history/storage";
 import * as glossary from "./history/glossary";
 import * as learnset from "./learn/store";
+import { filterSuppressed } from "./learn/suppress";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "./types";
+import type { LearnKind, LearnRecord } from "./learn/types";
 import { activateTheme } from "./theme/apply";
 import { writeDisplayMirror } from "./theme/displayStorage";
 import { getBuiltinTheme } from "./theme/themes";
@@ -61,6 +63,13 @@ export interface LookupRequest {
   x: number; // viewport coords for the popover
   y: number;
 }
+
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
+export type ToastState = string | { message: string; action?: ToastAction } | null;
 
 // ---------------------------------------------------------------
 // Realtime speaker diarization (beta) — pure helpers, exported so
@@ -190,9 +199,10 @@ interface AppState {
 
   // personal dictionary (global, cross-meeting)
   customEntries: CustomEntry[];
+  learnset: Record<string, LearnRecord>;
 
   // ui
-  toast: string | null;
+  toast: ToastState;
   focusMode: boolean; // 专注模式：折叠右栏，hover 看高亮释义
 
   // Subscription-direct (v0.2.2, experimental) kill-switch layer 3
@@ -277,7 +287,14 @@ interface AppState {
   updateCustomEntry: (entry: CustomEntry) => Promise<void>;
   removeCustomEntry: (id: string) => Promise<void>;
 
-  showToast: (msg: string) => void;
+  markKnown: (
+    kind: LearnKind,
+    surface: string,
+    mode?: "vote" | "suppress",
+  ) => Promise<void>;
+  unsuppressLearnRecord: (key: string) => Promise<void>;
+
+  showToast: (toast: Exclude<ToastState, null>) => void;
   clearToast: () => void;
   setFocusMode: (v: boolean) => void;
 }
@@ -314,6 +331,19 @@ export function applyTierDefaults(
     return { ...settings, engine: "webspeech" };
   }
   return settings;
+}
+
+function removeLiveLearnKey(
+  cards: ExpressionCard[],
+  terms: TermCard[],
+  key: string,
+): { cards: ExpressionCard[]; terms: TermCard[] } {
+  return {
+    cards: cards.filter(
+      (card) => learnset.learnKey("expression", card.expression) !== key,
+    ),
+    terms: terms.filter((term) => learnset.learnKey("term", term.term) !== key),
+  };
 }
 
 /** Fold persisted settings over defaults, migrating legacy field
@@ -362,6 +392,7 @@ export const useApp = create<AppState>((set, get) => ({
   activeSessionId: null,
 
   customEntries: [],
+  learnset: {},
 
   toast: null,
   focusMode: false,
@@ -375,11 +406,13 @@ export const useApp = create<AppState>((set, get) => ({
       glossary.loadCustomEntries(),
       learnset.loadLearnset(),
     ]);
+    const learned = await learnset.refreshStaleSuppressedLearnset();
     const settings = migrateSettings(saved);
     set({
       settings,
       sessions: metas,
       customEntries: entries,
+      learnset: learned,
       hydrated: true,
     });
     // The FOUC inline script (layout.tsx) already applied best-effort
@@ -556,6 +589,7 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   applyDetection: (res, source, meta) => {
+    res = filterSuppressed(res, source, get().learnset);
     const { cards, terms, settings } = get();
     const merged = mergeDetections(
       cards,
@@ -722,6 +756,68 @@ export const useApp = create<AppState>((set, get) => ({
   removeCustomEntry: async (id) => {
     const list = await glossary.deleteCustomEntry(id);
     set({ customEntries: [...list] });
+  },
+
+  markKnown: async (kind, surface, mode = "vote") => {
+    const key = learnset.learnKey(kind, surface);
+    const previous = get().learnset[key];
+    const now = Date.now();
+    const base = previous ?? learnset.makeInitialLearnRecord(kind, surface, now);
+    const familiarity =
+      mode === "suppress"
+        ? learnset.KNOWN_SUPPRESS_FAMILIARITY
+        : Math.min(
+            learnset.KNOWN_SUPPRESS_FAMILIARITY,
+            base.familiarity + learnset.KNOWN_VOTE_INCREMENT,
+          );
+    const suppressed =
+      mode === "suppress" ||
+      familiarity >= learnset.KNOWN_SUPPRESS_FAMILIARITY;
+    const next: LearnRecord = {
+      ...base,
+      surface,
+      familiarity,
+      suppressed,
+      suppressedAt: suppressed ? now : base.suppressedAt,
+      updatedAt: now,
+    };
+
+    const map = await learnset.upsertLearnRecord(next);
+    set({ learnset: { ...map } });
+
+    if (suppressed) {
+      const live = removeLiveLearnKey(get().cards, get().terms, key);
+      set(live);
+      get().showToast({
+        message: "已记为熟悉，将减少提示",
+        action: {
+          label: "撤销",
+          run: () => {
+            void (async () => {
+              const restored = previous
+                ? await learnset.upsertLearnRecord(previous)
+                : await learnset.removeLearnRecord(key);
+              set({ learnset: { ...restored } });
+            })();
+          },
+        },
+      });
+    } else {
+      get().showToast("已记一次熟悉");
+    }
+  },
+
+  unsuppressLearnRecord: async (key) => {
+    const record = get().learnset[key];
+    if (!record) return;
+    const next: LearnRecord = {
+      ...record,
+      suppressed: false,
+      dueAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    const map = await learnset.upsertLearnRecord(next);
+    set({ learnset: { ...map } });
   },
 
   newMeeting: () =>

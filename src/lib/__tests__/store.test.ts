@@ -7,8 +7,16 @@ import {
   renameSpeakerInSegments,
   scheduleSessionSave,
   shouldApplySpeakerUpdate,
+  useApp,
 } from "../store";
-import { DEFAULT_SETTINGS, type Settings, type TranscriptSegment } from "../types";
+import {
+  DEFAULT_SETTINGS,
+  type DetectResponse,
+  type Settings,
+  type TranscriptSegment,
+} from "../types";
+import { KNOWN_VOTE_INCREMENT } from "../learn/store";
+import type { LearnRecord } from "../learn/types";
 
 function makeSegment(overrides: Partial<TranscriptSegment> = {}): TranscriptSegment {
   return {
@@ -364,5 +372,120 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(!!withEngineKey && "engine" in withEngineKey).toBe(true);
     expect(!!withoutEngineKey && "engine" in withoutEngineKey).toBe(false);
     expect(!!noSavedObject && "engine" in noSavedObject).toBe(false);
+  });
+});
+
+function makeDetection(): DetectResponse {
+  return {
+    expressions: [
+      {
+        expression: "circle back",
+        category: "phrase",
+        meaning: "return to this topic",
+        chinese_explanation: "回头再聊",
+        plain_english: "talk later",
+        tone: "neutral",
+        confidence: 0.9,
+        source_sentence: "Let's circle back.",
+      },
+    ],
+    terms: [],
+  };
+}
+
+function makeSuppressedRecord(overrides: Partial<LearnRecord> = {}): LearnRecord {
+  return {
+    learnKey: "expression:circle back",
+    kind: "expression",
+    surface: "circle back",
+    familiarity: 1,
+    suppressed: true,
+    suppressedAt: 1000,
+    reps: 0,
+    intervalDays: 0,
+    ease: 2.5,
+    dueAt: 1000,
+    lapses: 0,
+    createdAt: 1000,
+    updatedAt: 1000,
+    ...overrides,
+  };
+}
+
+describe("learning loop store integration", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("suppresses after two familiarity votes, not one", async () => {
+    await useApp.getState().markKnown("expression", "circle back", "vote");
+    let record = useApp.getState().learnset["expression:circle back"];
+    expect(record.familiarity).toBe(KNOWN_VOTE_INCREMENT);
+    expect(record.suppressed).toBe(false);
+
+    await useApp.getState().markKnown("expression", "circle back", "vote");
+    record = useApp.getState().learnset["expression:circle back"];
+    expect(record.familiarity).toBe(1);
+    expect(record.suppressed).toBe(true);
+    expect(record.suppressedAt).toBe(10_000);
+  });
+
+  it("explicit suppress marks a term suppressed in one action", async () => {
+    await useApp.getState().markKnown("term", "ARR", "suppress");
+
+    const record = useApp.getState().learnset["term:ARR"];
+    expect(record).toMatchObject({
+      kind: "term",
+      surface: "ARR",
+      familiarity: 1,
+      suppressed: true,
+      suppressedAt: 10_000,
+    });
+  });
+
+  it("applyDetection filters a suppressed dictionary hit before card creation or count bump", () => {
+    useApp.setState({
+      learnset: {
+        "expression:circle back": makeSuppressedRecord(),
+      },
+    });
+
+    useApp.getState().applyDetection(makeDetection(), "dictionary");
+    expect(useApp.getState().cards).toHaveLength(0);
+
+    useApp.setState({
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+    });
+    useApp.getState().applyDetection(makeDetection(), "dictionary");
+    expect(useApp.getState().cards[0].count).toBe(1);
+  });
+
+  it("keeps string-only showToast calls backward-compatible", () => {
+    useApp.getState().showToast("已保存");
+    expect(useApp.getState().toast).toBe("已保存");
   });
 });

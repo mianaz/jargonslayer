@@ -19,9 +19,24 @@ export default function Toast() {
 
   if (!toast) return null;
 
+  const message = typeof toast === "string" ? toast : toast.message;
+  const action = typeof toast === "string" ? undefined : toast.action;
+
   return (
-    <div className="fade-up fixed bottom-9 left-1/2 z-50 -translate-x-1/2 border border-edge bg-panel2 px-4 py-2 text-sm text-fg shadow-lg">
-      {toast}
+    <div className="fade-up fixed bottom-9 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 border border-edge bg-panel2 px-4 py-2 text-sm text-fg shadow-lg">
+      <span>{message}</span>
+      {action && (
+        <button
+          type="button"
+          onClick={() => {
+            action.run();
+            clearToast();
+          }}
+          className="rounded-sm border border-edge px-2 py-0.5 font-mono text-xs text-act hover:bg-panel3"
+        >
+          {action.label}
+        </button>
+      )}
     </div>
   );
 }
