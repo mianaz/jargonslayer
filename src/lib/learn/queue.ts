@@ -98,6 +98,22 @@ function dayStart(ts: number): number {
   return d.getTime();
 }
 
+/** The local calendar day immediately before `ts`'s local calendar day,
+ *  at ITS OWN local midnight (Codex/#48 s1 review item 6). Deliberately
+ *  steps by calendar date (`setDate`) and re-normalizes via
+ *  `setHours(0,0,0,0)` rather than subtracting a fixed 24h in
+ *  milliseconds — a DST transition day is 23 or 25 hours long, so a
+ *  fixed-24h subtraction from local midnight lands an hour off true
+ *  midnight (and on the wrong side of the calendar-day boundary) the
+ *  moment a streak walk crosses one. `setDate` + JS's own calendar
+ *  rollover handles month/year boundaries the same way. */
+function previousLocalDay(ts: number): number {
+  const d = new Date(ts);
+  d.setDate(d.getDate() - 1);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 /** Consecutive-day streak ending today: counts back from today while
  *  every day has at least one graded review (lastReviewedAt). Zero if
  *  today itself has no review yet (a streak "at risk" still reads as
@@ -111,12 +127,11 @@ export function computeReviewStreak(
       .filter((r): r is LearnRecord & { lastReviewedAt: number } => r.lastReviewedAt !== undefined)
       .map((r) => dayStart(r.lastReviewedAt)),
   );
-  const oneDay = 24 * 60 * 60 * 1000;
   let streak = 0;
   let cursor = dayStart(now);
   while (reviewedDays.has(cursor)) {
     streak += 1;
-    cursor -= oneDay;
+    cursor = previousLocalDay(cursor);
   }
   return streak;
 }

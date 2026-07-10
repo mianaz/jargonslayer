@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   RECENT_MEETING_WINDOW_MS,
   REVIEW_QUEUE_CAP,
@@ -231,5 +231,56 @@ describe("computeReviewStreak", () => {
       a: makeRecord({ lastReviewedAt: undefined }),
     };
     expect(computeReviewStreak(learnset, NOW)).toBe(0);
+  });
+
+  describe("DST boundary (#48 s1 review item 6)", () => {
+    // The consecutive-day walk must compare local CALENDAR dates, not
+    // subtract a fixed 24h in ms — a US "spring forward" transition
+    // day is only 23 hours long, so a fixed-24h step from local
+    // midnight lands an hour short of the true previous midnight (and
+    // on the wrong side of the day boundary) the moment the walk
+    // crosses one. 2026-03-08 is the US spring-forward date (America/
+    // New_York: 02:00 -> 03:00). Force that specific timezone for
+    // these two tests only — DST doesn't exist in every TZ, so this
+    // must not depend on whatever TZ the test runner happens to use.
+    const ORIGINAL_TZ = process.env.TZ;
+
+    beforeEach(() => {
+      process.env.TZ = "America/New_York";
+    });
+
+    afterEach(() => {
+      process.env.TZ = ORIGINAL_TZ;
+    });
+
+    function localNoon(year: number, monthIndex: number, day: number): number {
+      return new Date(year, monthIndex, day, 12, 0, 0).getTime();
+    }
+
+    it("a 4-day streak spanning the spring-forward transition (Mar 6-9, 2026) still counts all 4 days", () => {
+      const mar6 = localNoon(2026, 2, 6);
+      const mar7 = localNoon(2026, 2, 7); // day BEFORE the transition
+      const mar8 = localNoon(2026, 2, 8); // transition day — only 23h long
+      const mar9 = localNoon(2026, 2, 9); // day AFTER the transition
+      const learnset: Record<string, LearnRecord> = {
+        a: makeRecord({ learnKey: "a", lastReviewedAt: mar6 }),
+        b: makeRecord({ learnKey: "b", lastReviewedAt: mar7 }),
+        c: makeRecord({ learnKey: "c", lastReviewedAt: mar8 }),
+        d: makeRecord({ learnKey: "d", lastReviewedAt: mar9 }),
+      };
+
+      expect(computeReviewStreak(learnset, mar9)).toBe(4);
+    });
+
+    it("a gap on the transition day itself still correctly breaks the streak at exactly 1 (the DST math doesn't paper over a real gap)", () => {
+      const mar7 = localNoon(2026, 2, 7);
+      const mar9 = localNoon(2026, 2, 9); // no review on mar8 (transition day) or mar7-adjacent chain
+      const learnset: Record<string, LearnRecord> = {
+        a: makeRecord({ learnKey: "a", lastReviewedAt: mar7 }), // isolated, 2 days back
+        d: makeRecord({ learnKey: "d", lastReviewedAt: mar9 }),
+      };
+
+      expect(computeReviewStreak(learnset, mar9)).toBe(1);
+    });
   });
 });
