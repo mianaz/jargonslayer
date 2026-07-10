@@ -42,11 +42,34 @@
 // pure decision core the shell polls) — this module stays scoped to
 // segmentation/dedup bookkeeping only.
 
+import { diagLog } from "../diag/log";
+
 export const FLUSH_MAX_CHARS = 200; // self-flush when unflushed grows past this
 export const FLUSH_AFTER_MS = 15_000; // …or the utterance is older than this
 export const FLUSH_MIN_CHARS = 80; // time trigger needs at least this much text
 export const FLUSH_HOLDBACK_CHARS = 48; // revision-prone tail, never flushed
 export const FLUSH_MIN_EMIT_CHARS = 24; // don't emit crumbs
+
+// stt-interim-shrink diag entries (append-only contract, round 3):
+// module-level (not per-assembler) throttle so a single Chrome session
+// that keeps revising a hypothesis down can never dominate the
+// DIAG_MAX_ENTRIES ring buffer — a hard cap on ring-buffer PRESSURE
+// from this one tag, independent of how many UtteranceAssembler
+// instances exist over the engine's lifetime (a new one is constructed
+// per WebSpeechEngine, not per session — see webSpeech.ts).
+const INTERIM_SHRINK_LOG_THROTTLE_MS = 5_000;
+let lastInterimShrinkLogAt = -Infinity;
+
+function maybeLogInterimShrink(byChars: number, now: number): void {
+  if (now - lastInterimShrinkLogAt < INTERIM_SHRINK_LOG_THROTTLE_MS) return;
+  lastInterimShrinkLogAt = now;
+  diagLog(
+    "warn",
+    "stt-interim-shrink",
+    "non-final transcript shrank past the revision holdback",
+    `byChars=${byChars}`,
+  );
+}
 
 export interface EmittedFinal {
   text: string;
@@ -63,7 +86,12 @@ export interface AssembleInput {
 
 export interface AssembleOutput {
   finals: EmittedFinal[];
-  /** Unflushed interim remainder to display (null = no change signal). */
+  /** Unflushed interim remainder to display. `null` = no change since
+   *  the last push()/peekInterim() call (honest interim contract,
+   *  round 3 fix #A4) — the caller should skip re-emitting onInterim
+   *  entirely. A non-null string (including `""`) means the remainder
+   *  actually changed, `""` itself signaling a retraction (whatever
+   *  was showing got fully flushed/cleared) rather than "unchanged". */
   interim: string | null;
   /** True when a REAL (recognizer-issued) final was in this event —
    *  a natural pause boundary, the cheapest moment to rotate. */
@@ -95,12 +123,18 @@ export class UtteranceAssembler {
   private pendingSnapshots = new Map<number, string>();
   /** First-seen wall-clock of the current unflushed utterance chunk. */
   private utteranceStart: number | null = null;
+  /** Last interim remainder returned as a CHANGE (by push() or
+   *  peekInterim()) — the honest-null-contract baseline (fix #A4):
+   *  push() only signals `interim` when the freshly-computed remainder
+   *  differs from this. */
+  private lastInterim = "";
 
   /** New recognition session: result indices restart at 0. */
   reset(): void {
     this.flushedChars.clear();
     this.pendingSnapshots.clear();
     this.utteranceStart = null;
+    this.lastInterim = "";
   }
 
   hasPendingInterim(): boolean {
@@ -121,6 +155,22 @@ export class UtteranceAssembler {
       if (r.isFinal) {
         sawRealFinal = true;
         const offset = this.flushedChars.get(r.index) ?? 0;
+        // Revision-underflow guard (fix #A2): a real final's transcript
+        // SHORTER than what's already committed (offset) means Chrome
+        // revised its hypothesis down past text we already emitted as
+        // a synthetic final (self-flush or flushStable). slice()
+        // already handles this gracefully (returns "" — committed
+        // wins, behavior unchanged), so this is pure observability:
+        // surface it so the drop isn't silent. PRIVACY: lengths/
+        // indices only, never transcript text.
+        if (r.transcript.length < offset) {
+          diagLog(
+            "warn",
+            "stt-revision-underflow",
+            "late final shorter than committed prefix; correction dropped (committed wins)",
+            `idx=${r.index} committedChars=${offset} finalChars=${r.transcript.length}`,
+          );
+        }
         const text = r.transcript.slice(offset).trim();
         this.flushedChars.delete(r.index);
         this.pendingSnapshots.delete(r.index);
@@ -129,6 +179,22 @@ export class UtteranceAssembler {
         }
         this.utteranceStart = null;
       } else {
+        // Interim-shrink observability (fix #A6): a non-final snapshot
+        // for the SAME index shrinking its unflushed portion by more
+        // than the revision holdback means Chrome un-heard a chunk of
+        // its own working hypothesis — surfaced (throttled) so a
+        // subsequent revision-underflow on the eventual final isn't
+        // the first sign anything happened.
+        const offset = this.flushedChars.get(r.index) ?? 0;
+        const prevSnapshot = this.pendingSnapshots.get(r.index);
+        if (prevSnapshot !== undefined) {
+          const prevUnflushed = Math.max(0, prevSnapshot.length - offset);
+          const nextUnflushed = Math.max(0, r.transcript.length - offset);
+          const shrinkBy = prevUnflushed - nextUnflushed;
+          if (shrinkBy > FLUSH_HOLDBACK_CHARS) {
+            maybeLogInterimShrink(shrinkBy, now);
+          }
+        }
         this.pendingSnapshots.set(r.index, r.transcript);
         if (this.utteranceStart === null) this.utteranceStart = now;
       }
@@ -158,7 +224,31 @@ export class UtteranceAssembler {
       }
     }
 
-    return { finals, interim: this.interimRemainder(), sawRealFinal };
+    // Honest interim contract (fix #A4): only signal a change when the
+    // remainder actually differs from what was last surfaced (by this
+    // method OR by peekInterim()) — `null` means "nothing to do",
+    // `""` itself is a real signal (a retraction cleared what was
+    // showing), never conflated with "unchanged".
+    const remainder = this.interimRemainder();
+    const interim = remainder === this.lastInterim ? null : remainder;
+    this.lastInterim = remainder;
+
+    return { finals, interim, sawRealFinal };
+  }
+
+  /** Public read of the current unflushed remainder that ALSO updates
+   *  the honest-interim-contract baseline (fix #A1's prerequisite): a
+   *  caller that surfaces this value itself (webSpeech.ts's
+   *  flushRotationTail, re-showing the held-back tail after a rotation
+   *  flush) needs push()'s NEXT null/changed diff computed against
+   *  what it just displayed, not a stale earlier value — otherwise the
+   *  next push() could either wrongly re-signal the same text as
+   *  "changed" or wrongly suppress a genuine change that happens to
+   *  match this peeked snapshot. */
+  peekInterim(): string {
+    const remainder = this.interimRemainder();
+    this.lastInterim = remainder;
+    return remainder;
   }
 
   /** Flush EVERYTHING unflushed, including the revision-prone tail.

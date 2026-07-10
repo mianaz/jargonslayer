@@ -30,6 +30,7 @@
 // arg) so tests can drive a scripted speech/silence timeline.
 
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "../types";
+import { diagLog } from "../diag/log";
 import {
   SESSION_ROTATE_SOFT_MS,
   type SupervisorAction,
@@ -250,7 +251,12 @@ export class WebSpeechEngine implements STTEngine {
     for (const f of out.finals) {
       this.events.onFinal(f.text, { startedAt: f.startedAt });
     }
-    if (out.interim) {
+    // Honest interim contract (fix #A4): `null` = no change, skip the
+    // event entirely; a non-null string (INCLUDING `""`) is a real
+    // signal — the old truthiness check here used to swallow a
+    // retract-to-empty (the interim clearing out with nothing to show)
+    // instead of forwarding it.
+    if (out.interim !== null) {
       this.events.onInterim(out.interim);
     }
 
@@ -352,7 +358,16 @@ export class WebSpeechEngine implements STTEngine {
     // via handleResult()'s assembler.push() before this ever runs, so
     // flushAll() is a no-op then — no duplicate emission.
     const rescued = this.assembler.flushAll(Date.now());
-    if (rescued) events.onFinal(rescued.text, { startedAt: rescued.startedAt });
+    if (rescued) {
+      events.onFinal(rescued.text, { startedAt: rescued.startedAt });
+      // Observability only (fix #A6) — lengths, never transcript text.
+      diagLog(
+        "warn",
+        "stt-relaunch-rescue",
+        "rescued a pending tail that never received a trailing real final before relaunch",
+        `rescuedChars=${rescued.text.length}`,
+      );
+    }
 
     this.lastStartAt = Date.now();
     this.lastEventAt = this.lastStartAt;
@@ -480,6 +495,26 @@ export class WebSpeechEngine implements STTEngine {
     const tail = this.assembler.flushStable(Date.now());
     if (tail) {
       this.events.onFinal(tail.text, { startedAt: tail.startedAt });
+    }
+    // Fix #A1: flushStable only ever emits the SAFE prefix — whatever
+    // it deliberately held back (the revision-prone tail) would
+    // otherwise just vanish from the screen the instant the final
+    // above fires (onFinal -> setInterim(null) in useMeeting.ts) and
+    // stay gone until either the dying session's own trailing real
+    // final lands or the relaunch rescue (launch()'s flushAll) runs.
+    // peekInterim() re-syncs the assembler's honest-interim-contract
+    // baseline (#A4) to what we're about to show here, so the NEXT
+    // push() diffs against THIS value instead of an earlier one.
+    const rem = this.assembler.peekInterim();
+    if (rem) {
+      this.events.onInterim(rem);
+      // Observability only (fix #A6) — length, never transcript text.
+      diagLog(
+        "warn",
+        "stt-rotate-tail",
+        "re-showing the held-back tail after a rotation flush",
+        `tailChars=${rem.length}`,
+      );
     }
   }
 

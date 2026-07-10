@@ -377,6 +377,40 @@ describe("TranscriptPanel InterimLine throttle correctness", () => {
     // when the timer was scheduled would have reset this to 1000.
     expect(scrollEl.scrollTop).toBe(10);
   });
+
+  // Append-only transcript contract, round 3 fix #A3: a shrink (or any
+  // revision that isn't a plain prefix-extension of what's displayed)
+  // bypasses the throttle entirely, same as the interim===null path —
+  // unlike ordinary GROWTH (the burst test above, which explicitly
+  // waits INTERIM_THROTTLE_MS+40ms before asserting).
+  it("a shrink (not a prefix-extension of what's displayed) commits immediately — no 125ms window showing the stale longer interim", async () => {
+    await act(async () => {
+      mount();
+      root!.render(<TranscriptPanel />);
+    });
+
+    const interimEl = () => container!.querySelector(".ts-body.italic");
+
+    // Establish a known "displayed" baseline — wait out the throttle
+    // (same pattern as the scroll test above: the mount-time effect,
+    // interim===null, already stamped lastCommitAtRef with "now", so
+    // this FIRST real update is throttled too, not free).
+    await act(async () => {
+      useApp.getState().setInterim({ text: "hello there world" });
+    });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, INTERIM_THROTTLE_MS + 40));
+    });
+    expect(interimEl()?.textContent).toBe("hello there world");
+
+    // A revision that SHRINKS ("hi" is not a prefix-extension of
+    // "hello there world") — must commit immediately: no waiting, and
+    // the stale longer text must never linger on screen.
+    await act(async () => {
+      useApp.getState().setInterim({ text: "hi" });
+    });
+    expect(interimEl()?.textContent).toBe("hi");
+  });
 });
 
 // ---- E2E batch item 5: honest empty state gets an optional demo CTA

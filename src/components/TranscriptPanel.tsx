@@ -546,8 +546,26 @@ export function InterimLine({ onGrow }: { onGrow?: () => void }) {
       onGrowRef.current?.();
     };
 
+    // Append-only transcript contract, round 3 fix #A3: a shrink (or
+    // any revision that ISN'T a plain prefix-extension of what's
+    // already on screen — a retraction, a genuine content swap, not
+    // just more words appended) commits immediately too, same as the
+    // interim===null path above. Otherwise the throttle could hold a
+    // now-STALE, too-long displayed value on screen for up to
+    // INTERIM_THROTTLE_MS after Chrome revised it shorter. Growth (a
+    // true prefix extension) keeps the existing throttle unchanged.
+    // `interim` (not the ref) is what's compared: this check runs
+    // SYNCHRONOUSLY inside the effect body itself (unlike commit(),
+    // which fires later from a timer and needs the ref to read the
+    // LATEST value at fire time) — `interim` is already this render's
+    // current value, and TS narrows it non-null here via the early
+    // return above (latestInterimRef.current holds the exact same
+    // value at this point, just not narrowed).
+    const isShrinkOrChange =
+      displayed !== null && !interim.text.startsWith(displayed.text);
+
     const elapsed = Date.now() - lastCommitAtRef.current;
-    if (elapsed >= INTERIM_THROTTLE_MS) {
+    if (isShrinkOrChange || elapsed >= INTERIM_THROTTLE_MS) {
       clearPending();
       commit();
     } else if (pendingTimerRef.current === null) {

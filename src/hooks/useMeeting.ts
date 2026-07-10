@@ -101,7 +101,13 @@ export function useMeeting(): UseMeetingResult {
 
     const events: STTEvents = {
       onInterim: (text, speaker) => {
-        useApp.getState().setInterim({ text, speaker });
+        // Honest interim contract (fix #A4): the engine layer now
+        // forwards `""` (a genuine retraction) instead of swallowing
+        // it — map that to `null` here so InterimLine doesn't render
+        // an empty-but-non-null interim row. Real engines other than
+        // webSpeech (wsTransport/demo) only ever emit non-empty text,
+        // so this is a no-op for them.
+        useApp.getState().setInterim(text ? { text, speaker } : null);
       },
       onFinal: (text, opts) => {
         const seg = useApp.getState().addFinal(text, opts);

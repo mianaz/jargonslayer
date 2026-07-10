@@ -33,6 +33,7 @@ import { writeDisplayMirror } from "./theme/displayStorage";
 import { getBuiltinTheme } from "./theme/themes";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
 import { PREVIEW_TIER } from "./deployTier";
+import { diagLog } from "./diag/log";
 
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
@@ -753,6 +754,23 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   updateSegmentText: (segmentId, text) => {
+    // Committed-mutation tripwire (fix #A5): this action only exists
+    // for a STOPPED session's transcript-correction UI (TranscriptPanel
+    // gates the edit affordance itself on status==="stopped") — no
+    // live path (webSpeech/whisperSocket/tabaudio/demo, or a future
+    // engine) may ever mutate already-committed text. Refuse the write
+    // and log rather than silently accepting a call that shouldn't be
+    // possible; PRIVACY: segment id + status only, never the text.
+    const status = get().status;
+    if (status !== "stopped") {
+      diagLog(
+        "warn",
+        "stt-committed-mutation",
+        "refused to mutate committed transcript text outside a stopped session",
+        `segmentId=${segmentId} status=${status}`,
+      );
+      return;
+    }
     const cleaned = text.trim();
     if (!cleaned) return;
     set({

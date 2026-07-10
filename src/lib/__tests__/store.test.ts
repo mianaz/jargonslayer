@@ -20,6 +20,7 @@ import {
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
 import * as learnsetModule from "../learn/store";
 import type { LearnRecord } from "../learn/types";
+import { clearDiag, getDiagEntries } from "../diag/log";
 
 function makeSegment(overrides: Partial<TranscriptSegment> = {}): TranscriptSegment {
   return {
@@ -281,6 +282,43 @@ describe("scheduleSessionSave — debounced post-stop save vs. meeting-boundary 
     await vi.advanceTimersByTimeAsync(1500);
 
     expect(save).toHaveBeenCalledTimes(1); // only the latest timer fired, once
+  });
+});
+
+describe("updateSegmentText — committed-mutation tripwire (fix #A5)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers(); // scheduleSessionSave's setTimeout must never actually fire in this block
+    clearDiag();
+    useApp.setState({
+      segments: [makeSegment({ id: "seg-1", text: "original" })],
+      translations: {},
+      status: "stopped",
+      meetingGen: 1,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("refuses the write and logs a warn diag entry (segment id + status, no text) when status !== 'stopped'", () => {
+    useApp.setState({ status: "listening" });
+    useApp.getState().updateSegmentText("seg-1", "hacked live edit");
+
+    expect(useApp.getState().segments[0].text).toBe("original"); // refused
+    const entries = getDiagEntries().filter((e) => e.tag === "stt-committed-mutation");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].level).toBe("warn");
+    expect(entries[0].detail).toBe("segmentId=seg-1 status=listening");
+    expect(entries[0].detail).not.toContain("hacked"); // never the transcript text
+    expect(entries[0].message).not.toContain("hacked");
+  });
+
+  it("still allows the edit (no diag entry) once the session is actually stopped", () => {
+    useApp.getState().updateSegmentText("seg-1", "corrected text");
+
+    expect(useApp.getState().segments[0].text).toBe("corrected text");
+    expect(getDiagEntries().filter((e) => e.tag === "stt-committed-mutation")).toHaveLength(0);
   });
 });
 

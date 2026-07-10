@@ -26,6 +26,21 @@ export interface FakeSpeechRecognitionScript {
   // its unconditional flushFinal() so a session can end with pending
   // interim text and genuinely NO trailing final ever arriving.
   suppressFinalOnStop?: boolean;
+  // Revision-SHRINK capability (append-only contract, round 3, #A7) —
+  // distinct from revisedTranscript()'s permanent +/-1-char tail
+  // oscillation below (which never changes word COUNT): at this
+  // wall-clock moment, the recognizer's in-progress (non-final)
+  // working buffer for whatever result index is CURRENTLY
+  // accumulating quietly drops `shrinkByWords` words (default: half of
+  // whatever's pending, rounded up) off its TAIL — a ONE-SHOT,
+  // permanent revision-down, modeling Chrome un-hearing a chunk of its
+  // own hypothesis. heardCursor is untouched (those words are simply
+  // gone, never re-heard), so whatever gets reported NEXT — the next
+  // interim tick, or the eventual final whenever it fires — is
+  // genuinely SHORTER than anything already reported/flushed for that
+  // index, exactly the case fixes #A2/#A6 exist to guard/log.
+  shrinkAtMs?: number;
+  shrinkByWords?: number;
 }
 
 export interface FakeSpeechRecognitionStats {
@@ -123,7 +138,7 @@ export class FakeSpeechRecognition extends EventTarget {
       | "suppressFinalOnStop"
     >
   > &
-    Pick<FakeSpeechRecognitionScript, "stallAtMs">;
+    Pick<FakeSpeechRecognitionScript, "stallAtMs" | "shrinkAtMs" | "shrinkByWords">;
 
   static activeStats: FakeSpeechRecognitionStats;
 
@@ -145,6 +160,11 @@ export class FakeSpeechRecognition extends EventTarget {
   private stalled = false;
   private stallConsumed = false;
   private revisionFlip = false;
+  // One-shot latch for the revision-shrink script event (#A7) — left
+  // alone across a restart, same as stallConsumed above: it's a
+  // permanent, wall-clock-scheduled script event, not something tied
+  // to any one recognizer session's lifetime.
+  private shrinkConsumed = false;
 
   constructor() {
     super();
@@ -214,6 +234,26 @@ export class FakeSpeechRecognition extends EventTarget {
     // see the diagnosis in stt-vad-supervisor.md) — bail before even
     // the proactive finalization check below.
     if (this.stalled || isInRange(now, script.quietRanges)) return;
+
+    // Revision-shrink (#A7): fires BEFORE the proactive finalization
+    // check below and before any new word arrives this tick, so
+    // whatever gets reported NEXT (a plain interim tick, a proactive
+    // pause-final, or a word-arrival-triggered final) reflects the
+    // shrunk buffer. heardCursor is untouched — the dropped words are
+    // simply gone from currentWords, never re-heard.
+    if (
+      script.shrinkAtMs !== undefined &&
+      !this.shrinkConsumed &&
+      now >= script.shrinkAtMs &&
+      this.currentWords.length > 0
+    ) {
+      this.shrinkConsumed = true;
+      const dropCount = script.shrinkByWords ?? Math.ceil(this.currentWords.length / 2);
+      this.currentWords = this.currentWords.slice(
+        0,
+        Math.max(0, this.currentWords.length - dropCount),
+      );
+    }
 
     // Proactive silence-triggered finalization: a real recognizer
     // doesn't wait for you to start talking again before deciding the
@@ -356,6 +396,8 @@ export function installFakeSpeechRecognition(
     interimTickMs: script.interimTickMs ?? DEFAULT_INTERIM_TICK_MS,
     pauseFinalMs: script.pauseFinalMs ?? DEFAULT_PAUSE_FINAL_MS,
     suppressFinalOnStop: script.suppressFinalOnStop ?? false,
+    shrinkAtMs: script.shrinkAtMs,
+    shrinkByWords: script.shrinkByWords,
   };
 
   if (typeof window === "undefined") {

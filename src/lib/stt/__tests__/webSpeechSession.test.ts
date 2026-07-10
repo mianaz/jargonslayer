@@ -132,12 +132,43 @@ describe("UtteranceAssembler", () => {
     const a = new UtteranceAssembler();
     const short = "just a few words here";
     a.push([{ index: 0, transcript: short, isFinal: false }], T0);
+    // A genuinely CHANGED (still short) transcript for the same
+    // index, not a repeat — see the honest-interim-contract test
+    // (#A4) right below for the unchanged-repeat case, which now
+    // correctly returns interim:null instead of re-signaling the same
+    // text.
+    const stillShort = `${short} still`;
     const out = a.push(
-      [{ index: 0, transcript: short, isFinal: false }],
+      [{ index: 0, transcript: stillShort, isFinal: false }],
       T0 + FLUSH_AFTER_MS * 2,
     );
     expect(out.finals).toEqual([]);
-    expect(out.interim).toBe(short);
+    expect(out.interim).toBe(stillShort);
+  });
+
+  it("fix #A4 (honest interim contract): push() returns interim:null when the remainder is unchanged from the last push", () => {
+    const a = new UtteranceAssembler();
+    const short = "just a few words here";
+    const first = a.push([{ index: 0, transcript: short, isFinal: false }], T0);
+    expect(first.interim).toBe(short);
+
+    // Same transcript, same index — nothing actually changed for the
+    // caller to redraw.
+    const second = a.push([{ index: 0, transcript: short, isFinal: false }], T0 + 100);
+    expect(second.interim).toBeNull();
+  });
+
+  it("fix #A4 (honest interim contract): a retraction to nothing pending returns interim:'' (a real signal), not null", () => {
+    const a = new UtteranceAssembler();
+    const text = "hello there";
+    const first = a.push([{ index: 0, transcript: text, isFinal: false }], T0);
+    expect(first.interim).toBe(text);
+
+    // The real final clears pendingSnapshots for index 0 — the
+    // remainder goes from "hello there" to "", a genuine change the
+    // caller must be told about (never conflated with "unchanged").
+    const out = a.push([{ index: 0, transcript: text, isFinal: true }], T0 + 200);
+    expect(out.interim).toBe("");
   });
 
   it("handles a final and a new non-final result in one event", () => {
