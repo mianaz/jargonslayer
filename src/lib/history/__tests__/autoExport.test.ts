@@ -227,6 +227,149 @@ describe("autoExport.ts — backup/restore (#57)", () => {
     });
   });
 
+  describe("learn-set record validation on restore (#48 s1 review item 4)", () => {
+    function makeHonestRawRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        learnKey: "expression:circle back",
+        kind: "expression",
+        surface: "circle back",
+        familiarity: 0.5,
+        suppressed: false,
+        reps: 1,
+        intervalDays: 1,
+        ease: 2.5,
+        dueAt: 2000,
+        lapses: 0,
+        createdAt: 1000,
+        updatedAt: 1000,
+        ...overrides,
+      };
+    }
+
+    function makeBackup(learnsetDict: Record<string, unknown>): string {
+      return JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+        learnset: learnsetDict,
+      });
+    }
+
+    it("accepts a sane record and drops nothing", async () => {
+      const learnset = await import("../../learn/store");
+      const autoExport = await import("../autoExport");
+      const honest = makeHonestRawRecord();
+
+      const result = await autoExport.restoreFullBackup(makeBackup({ [honest.learnKey as string]: honest }));
+
+      expect(result.learnset).toBe(1);
+      expect(await learnset.loadLearnset()).toEqual({
+        [honest.learnKey as string]: honest,
+      });
+    });
+
+    it("drops a record with a non-string/empty surface", async () => {
+      const autoExport = await import("../autoExport");
+      const hostile = makeHonestRawRecord({ surface: 12345 });
+
+      const result = await autoExport.restoreFullBackup(makeBackup({ "expression:circle back": hostile }));
+
+      expect(result.learnset).toBe(0);
+    });
+
+    it("drops a record with an invalid kind", async () => {
+      const autoExport = await import("../autoExport");
+      const hostile = makeHonestRawRecord({ kind: "malicious" });
+
+      const result = await autoExport.restoreFullBackup(makeBackup({ "expression:circle back": hostile }));
+
+      expect(result.learnset).toBe(0);
+    });
+
+    it("drops a record with a non-finite numeric field", async () => {
+      const autoExport = await import("../autoExport");
+      const hostile = makeHonestRawRecord({ dueAt: "not-a-number" });
+
+      const result = await autoExport.restoreFullBackup(makeBackup({ "expression:circle back": hostile }));
+
+      expect(result.learnset).toBe(0);
+    });
+
+    it("repairs (does not drop) a suppressed:true record missing suppressedAt — stamped with `now` so the 90d sweep can recover it", async () => {
+      const learnset = await import("../../learn/store");
+      const autoExport = await import("../autoExport");
+      const suppressedNoTimestamp = makeHonestRawRecord({ suppressed: true, suppressedAt: undefined });
+      delete suppressedNoTimestamp.suppressedAt;
+
+      const result = await autoExport.restoreFullBackup(
+        makeBackup({ "expression:circle back": suppressedNoTimestamp }),
+      );
+
+      expect(result.learnset).toBe(1);
+      const restored = (await learnset.loadLearnset())["expression:circle back"];
+      expect(restored.suppressed).toBe(true);
+      expect(typeof restored.suppressedAt).toBe("number");
+      expect(Number.isFinite(restored.suppressedAt)).toBe(true);
+    });
+
+    it("drops a suppressed:true record whose suppressedAt is present but non-finite", async () => {
+      const autoExport = await import("../autoExport");
+      const hostile = makeHonestRawRecord({ suppressed: true, suppressedAt: "yesterday" });
+
+      const result = await autoExport.restoreFullBackup(makeBackup({ "expression:circle back": hostile }));
+
+      expect(result.learnset).toBe(0);
+    });
+
+    it("rejects a record whose learnKey is a dangerous prototype-pollution key", async () => {
+      const autoExport = await import("../autoExport");
+      const hostile = makeHonestRawRecord({ learnKey: "__proto__" });
+
+      const result = await autoExport.restoreFullBackup(makeBackup({ "__proto__": hostile }));
+
+      expect(result.learnset).toBe(0);
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    });
+
+    it("rejects a dict entry whose OWN key is __proto__/constructor/prototype even if the record body looks sane", async () => {
+      const autoExport = await import("../autoExport");
+      const json = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+        learnset: JSON.parse(
+          '{"__proto__": ' + JSON.stringify(makeHonestRawRecord({ learnKey: "expression:circle back" })) + "}",
+        ),
+      });
+
+      const result = await autoExport.restoreFullBackup(json);
+
+      expect(result.learnset).toBe(0);
+    });
+
+    it("a mixed backup drops only the malformed records, restoring every sane one and counting accurately", async () => {
+      const learnset = await import("../../learn/store");
+      const autoExport = await import("../autoExport");
+      const sane1 = makeHonestRawRecord();
+      const sane2 = makeHonestRawRecord({ learnKey: "term:ARR", kind: "term", surface: "ARR" });
+      const malformed = makeHonestRawRecord({ learnKey: "expression:bad", surface: "" });
+
+      const result = await autoExport.restoreFullBackup(
+        makeBackup({
+          [sane1.learnKey as string]: sane1,
+          [sane2.learnKey as string]: sane2,
+          "expression:bad": malformed,
+        }),
+      );
+
+      expect(result.learnset).toBe(2);
+      const loaded = await learnset.loadLearnset();
+      expect(Object.keys(loaded).sort()).toEqual(["expression:circle back", "term:ARR"]);
+    });
+  });
+
   describe("previewBackup (confirmation-step counts, no writes)", () => {
     it("reports counts (including learnset) and hasSettings without touching storage", async () => {
       const storage = await import("../storage");
