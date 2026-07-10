@@ -70,6 +70,12 @@ export interface STTEvents {
     speakers: string[],
   ) => void;
   onDiarStatus?: (state: "unavailable" | "error", detail?: string) => void;
+  // STT VAD supervisor (docs/design-explorations/stt-vad-supervisor.md):
+  // a one-time "steer to a different engine" toast — e.g. Web Speech
+  // hearing continuous speech it can't transcribe (language mismatch).
+  // Advisory only: MUST NOT stop the meeting (never routed through
+  // onStatus("error")) — the engine keeps retrying on its own backoff.
+  onNotice?: (msg: string) => void;
 }
 
 export interface STTEngine {

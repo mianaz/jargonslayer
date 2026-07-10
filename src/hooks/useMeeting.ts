@@ -101,6 +101,9 @@ export function useMeeting(): UseMeetingResult {
               : "实时说话人分离出错，已停止本场自动标注",
           );
       },
+      onNotice: (msg) => {
+        useApp.getState().showToast(msg);
+      },
       onStatus: (status, detail) => {
         if (status === "connecting") {
           useApp.getState().setStatus("connecting", detail);

@@ -7,22 +7,36 @@
 // this engine picks up speaker-played "external" audio poorly — the
 // local Whisper engine or tab-audio mode are the answers there).
 //
-// Continuous-speech hardening (see webSpeechSession.ts for the full
-// rationale): Chrome never finalizes mid-speech and its recognizer
-// silently stalls after ~1–2min of uninterrupted talking. The shell
-// therefore (a) self-flushes long interims into synthetic finals via
-// UtteranceAssembler, (b) proactively rotates the recognition session
-// every SESSION_ROTATE_MS preferring natural pauses, and (c) runs a
-// stall watchdog that force-recovers a dead session.
+// Continuous-speech hardening (see webSpeechSession.ts for the
+// segmentation rationale, sttSupervisor.ts for the full rotation/
+// recovery policy this shell just executes): Chrome never finalizes
+// mid-speech and its recognizer silently stalls after ~1–2min of
+// uninterrupted talking. The shell therefore (a) self-flushes long
+// interims into synthetic finals via UtteranceAssembler, (b) polls the
+// pure sttSupervisor on a WATCHDOG_TICK_MS timer for what to do next
+// (rotate/recover/steer/none) given the current session age, idle
+// time, and — when available — a VAD's speaking/silence signal, and
+// (c) executes that decision uniformly via endSession(): flush what's
+// safely flushable, then stop() (never abort() as the FIRST resort —
+// MDN: stop() "must attempt to return a recognition result based on
+// audio already collected", abort() discards it), escalating to
+// abort() only if stop() itself produces no onend (a zombie session).
+//
+// VAD integration (see vad.ts): launched asynchronously right after
+// recognition.start() so it never delays capture start; if it fails
+// (unsupported browser, permission denial, ...) the engine simply runs
+// the VAD-unavailable legacy policy branch — strictly no worse than
+// before VAD existed. The VAD implementation is injectable (constructor
+// arg) so tests can drive a scripted speech/silence timeline.
 
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "../types";
 import {
-  ROTATE_GRACE_MS,
-  SESSION_ROTATE_MS,
-  STALL_SILENCE_MS,
-  STALL_SPEECH_MS,
-  UtteranceAssembler,
-} from "./webSpeechSession";
+  SESSION_ROTATE_SOFT_MS,
+  type SupervisorAction,
+  decideAction,
+} from "./sttSupervisor";
+import { SpeechActivityDetector, type VadHandle } from "./vad";
+import { UtteranceAssembler } from "./webSpeechSession";
 
 // ---- minimal local shims for the (non-standardized) Web Speech API ----
 // lib.dom.d.ts does not declare these; we type only what we touch.
@@ -78,11 +92,18 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
 
 const RESTART_DELAY_MS = 250;
 const MAX_INSTANT_FAILURES = 3;
-const WATCHDOG_TICK_MS = 5_000;
-// Watchdog recovery: abort() should fire onend (whose handler
+// Watchdog now polls the supervisor at 500ms (was 5000ms) — the
+// supervisor's own thresholds (STALL_SPEECH_MS=7s etc.) are what keep
+// this from being noisy; the tighter tick just shrinks the DECISION
+// latency once a threshold is actually crossed.
+const WATCHDOG_TICK_MS = 500;
+// endSession() recovery: stop() should fire onend (whose handler
 // relaunches); this fallback covers a zombie session where even
-// abort() produces no event.
+// stop() — and then abort() — produces no event.
 const RECOVER_FALLBACK_MS = 600;
+
+const STEER_NOTICE =
+  "检测到持续说话但未能识别，可能是语言不匹配。可切换到本地 Whisper 或标签页音频模式";
 
 export class WebSpeechEngine implements STTEngine {
   readonly kind: STTEngineKind = "webspeech";
@@ -95,9 +116,31 @@ export class WebSpeechEngine implements STTEngine {
   private lastEventAt = 0;
 
   private assembler = new UtteranceAssembler();
-  private rotateTimer: ReturnType<typeof setTimeout> | null = null;
   private watchdogTimer: ReturnType<typeof setInterval> | null = null;
-  private rotateRequestedAt: number | null = null;
+
+  // sttSupervisor.ts bookkeeping — see decideAction's SupervisorInput
+  // doc comments for what each field means.
+  private realFinalSinceSoft = false;
+  private consecutiveSpeechStalls = 0;
+  private lastRecoverAt = -Infinity;
+  private steerNotified = false;
+  // True from the moment endSession() calls stop() until the next
+  // launch(). A dying session's stop() reliably produces a trailing
+  // real final for whatever it had buffered (MDN) — that's leftover
+  // content from BEFORE the stall was even detected, not evidence the
+  // recognizer resumed working, so it must not reset the stall
+  // counters below (else STALL_STEER_AFTER becomes unreachable
+  // whenever the very first stalled session happens to have anything
+  // buffered — see sttSupervisor.test.ts's steer-threshold cases and
+  // the loss harness's untranscribable-block scenario).
+  private endingSession = false;
+
+  private vad: VadHandle | null = null;
+
+  constructor(
+    private readonly createVad: () => VadHandle = () =>
+      new SpeechActivityDetector(),
+  ) {}
 
   async start(events: STTEvents, settings: Settings): Promise<void> {
     this.events = events;
@@ -116,6 +159,16 @@ export class WebSpeechEngine implements STTEngine {
     this.setupRecognition(Ctor, settings);
     this.watchdogTimer = setInterval(() => this.watchdogTick(), WATCHDOG_TICK_MS);
     this.launch(events);
+
+    // Bring the VAD up asynchronously — never block/delay recognition
+    // start on it. Until it resolves (or if it fails outright),
+    // vad.available stays false and the supervisor runs its
+    // VAD-unavailable legacy branch, which is the exact behavior this
+    // engine had before VAD existed (strict enhancement).
+    this.vad = this.createVad();
+    void this.vad.start().then(() => {
+      if (this.userStopped) this.vad?.stop();
+    });
   }
 
   private setupRecognition(
@@ -156,13 +209,23 @@ export class WebSpeechEngine implements STTEngine {
       this.events.onInterim(out.interim);
     }
 
-    // Deferred rotation: take the natural pause (a real final) as the
-    // boundary, or force once the grace window expires mid-speech.
-    if (
-      this.rotateRequestedAt !== null &&
-      (out.sawRealFinal || now - this.rotateRequestedAt >= ROTATE_GRACE_MS)
-    ) {
-      this.doRotate();
+    if (out.sawRealFinal) {
+      // A final while a session is actively ENDING (endSession()'s
+      // stop() call) is just its trailing buffered-content flush, not
+      // proof the recognizer resumed working — see endingSession's
+      // doc comment. Only a final from a session we're NOT in the
+      // middle of tearing down counts as genuine progress.
+      if (!this.endingSession) {
+        this.consecutiveSpeechStalls = 0;
+        this.steerNotified = false;
+      }
+      // Rotation opportunity tracking is unaffected either way: once
+      // past the soft-rotate age, ANY real final (including a dying
+      // session's trailing flush) is the cheapest moment to finish
+      // rotating, which the next watchdog tick will act on.
+      if (now - this.lastStartAt >= SESSION_ROTATE_SOFT_MS) {
+        this.realFinalSinceSoft = true;
+      }
     }
   }
 
@@ -223,8 +286,8 @@ export class WebSpeechEngine implements STTEngine {
     this.lastStartAt = Date.now();
     this.lastEventAt = this.lastStartAt;
     this.assembler.reset();
-    this.rotateRequestedAt = null;
-    this.armRotateTimer();
+    this.realFinalSinceSoft = false;
+    this.endingSession = false;
     try {
       this.recognition.start();
       events.onStatus("listening");
@@ -237,36 +300,84 @@ export class WebSpeechEngine implements STTEngine {
     }
   }
 
-  private armRotateTimer(): void {
-    this.clearRotateTimer();
-    this.rotateTimer = setTimeout(() => {
-      if (this.userStopped || !this.recognition) return;
-      if (this.assembler.hasPendingInterim()) {
-        // Mid-speech: wait for a natural pause (or the grace window)
-        // — handleResult performs the actual rotation.
-        this.rotateRequestedAt = Date.now();
-      } else {
-        this.doRotate();
-      }
-    }, SESSION_ROTATE_MS);
-  }
+  private watchdogTick(): void {
+    if (this.userStopped || !this.recognition || !this.events) return;
+    const now = Date.now();
+    const vadAvailable = this.vad?.available ?? false;
+    const vadState = vadAvailable ? this.vad!.state : null;
 
-  private clearRotateTimer(): void {
-    if (this.rotateTimer !== null) {
-      clearTimeout(this.rotateTimer);
-      this.rotateTimer = null;
+    const action: SupervisorAction = decideAction({
+      now,
+      sessionStartedAt: this.lastStartAt,
+      lastEventAt: this.lastEventAt,
+      vadAvailable,
+      vadSpeaking: vadState?.speaking ?? false,
+      lastSpeechAt: vadState?.lastSpeechAt ?? -Infinity,
+      hasPendingInterim: this.assembler.hasPendingInterim(),
+      realFinalSinceSoft: this.realFinalSinceSoft,
+      consecutiveSpeechStalls: this.consecutiveSpeechStalls,
+      lastRecoverAt: this.lastRecoverAt,
+    });
+
+    switch (action.type) {
+      case "none":
+        return;
+      case "rotate":
+        this.endSession();
+        return;
+      case "recover":
+        this.consecutiveSpeechStalls += 1;
+        this.lastRecoverAt = now;
+        this.endSession();
+        return;
+      case "steer":
+        this.consecutiveSpeechStalls += 1;
+        this.lastRecoverAt = now;
+        if (!this.steerNotified) {
+          this.steerNotified = true;
+          this.events.onNotice?.(STEER_NOTICE);
+        }
+        this.endSession();
+        return;
     }
   }
 
-  /** Flush the pending tail and end the session; handleEnd relaunches. */
-  private doRotate(): void {
-    this.rotateRequestedAt = null;
-    this.clearRotateTimer();
-    this.flushPendingTail();
+  /** End the current session for any supervisor-decided reason
+   *  (rotate/recover/steer share this): flush the safely-flushable
+   *  prefix (flushStable — the tail is expected to complete via this
+   *  session's own trailing real final, see webSpeechSession.ts), then
+   *  stop(). abort() fires ONLY as a zombie-session escalation if
+   *  stop() produces no onend within RECOVER_FALLBACK_MS. */
+  private endSession(): void {
+    this.flushRotationTail();
+    this.endingSession = true;
     try {
       this.recognition?.stop();
     } catch {
-      // already stopped — onend/watchdog will pick it up
+      // already stopped — onend/relaunch handles it
+      return;
+    }
+    setTimeout(() => {
+      if (this.userStopped || !this.recognition || !this.events) return;
+      if (Date.now() - this.lastStartAt <= RECOVER_FALLBACK_MS) return; // onend already relaunched
+      try {
+        this.recognition.abort();
+      } catch {
+        // ignore — the fallback relaunch below covers it
+      }
+      setTimeout(() => {
+        if (this.userStopped || !this.recognition || !this.events) return;
+        if (Date.now() - this.lastStartAt <= RECOVER_FALLBACK_MS) return;
+        this.launch(this.events);
+      }, RECOVER_FALLBACK_MS);
+    }, RECOVER_FALLBACK_MS);
+  }
+
+  private flushRotationTail(): void {
+    if (!this.events) return;
+    const tail = this.assembler.flushStable(Date.now());
+    if (tail) {
+      this.events.onFinal(tail.text, { startedAt: tail.startedAt });
     }
   }
 
@@ -278,34 +389,8 @@ export class WebSpeechEngine implements STTEngine {
     }
   }
 
-  private watchdogTick(): void {
-    if (this.userStopped || !this.recognition || !this.events) return;
-    const idle = Date.now() - this.lastEventAt;
-    const limit = this.assembler.hasPendingInterim()
-      ? STALL_SPEECH_MS
-      : STALL_SILENCE_MS;
-    if (idle < limit) return;
-
-    // Session presumed dead: rescue the un-finalized text, then kick
-    // the recognizer. abort() normally fires onend → relaunch; the
-    // fallback below covers a fully zombie session.
-    this.flushPendingTail();
-    try {
-      this.recognition.abort();
-    } catch {
-      // ignore — fallback relaunch below
-    }
-    setTimeout(() => {
-      if (this.userStopped || !this.recognition || !this.events) return;
-      // If onend already relaunched us, lastStartAt is fresh — skip.
-      if (Date.now() - this.lastStartAt <= RECOVER_FALLBACK_MS) return;
-      this.launch(this.events);
-    }, RECOVER_FALLBACK_MS);
-  }
-
   async stop(): Promise<void> {
     this.userStopped = true;
-    this.clearRotateTimer();
     if (this.watchdogTimer !== null) {
       clearInterval(this.watchdogTimer);
       this.watchdogTimer = null;
@@ -313,7 +398,10 @@ export class WebSpeechEngine implements STTEngine {
     // Rescue the in-flight utterance BEFORE tearing down — a stop
     // during continuous speech used to silently drop everything Chrome
     // had not yet finalized (useMeeting saves the session right after
-    // engine.stop() resolves, so this final lands in time).
+    // engine.stop() resolves, so this final lands in time). Uses
+    // flushAll (not flushStable): nothing further will be processed
+    // once events/recognition are torn down below, so this is the only
+    // chance to grab the revision-prone tail too.
     this.flushPendingTail();
     const recognition = this.recognition;
     this.recognition = null;
@@ -325,5 +413,7 @@ export class WebSpeechEngine implements STTEngine {
         // already stopped — ignore
       }
     }
+    this.vad?.stop();
+    this.vad = null;
   }
 }
