@@ -3,12 +3,23 @@ import {
   aliasesAfterRename,
   applySpeakerUpdateToSegments,
   applyTierDefaults,
+  filterSuppressedLiveCards,
   migrateSettings,
   renameSpeakerInSegments,
   scheduleSessionSave,
   shouldApplySpeakerUpdate,
+  useApp,
 } from "../store";
-import { DEFAULT_SETTINGS, type Settings, type TranscriptSegment } from "../types";
+import {
+  DEFAULT_SETTINGS,
+  type CustomEntry,
+  type DetectResponse,
+  type Settings,
+  type TranscriptSegment,
+} from "../types";
+import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
+import * as learnsetModule from "../learn/store";
+import type { LearnRecord } from "../learn/types";
 
 function makeSegment(overrides: Partial<TranscriptSegment> = {}): TranscriptSegment {
   return {
@@ -364,5 +375,690 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(!!withEngineKey && "engine" in withEngineKey).toBe(true);
     expect(!!withoutEngineKey && "engine" in withoutEngineKey).toBe(false);
     expect(!!noSavedObject && "engine" in noSavedObject).toBe(false);
+  });
+});
+
+function makeDetection(): DetectResponse {
+  return {
+    expressions: [
+      {
+        expression: "circle back",
+        category: "phrase",
+        meaning: "return to this topic",
+        chinese_explanation: "回头再聊",
+        plain_english: "talk later",
+        tone: "neutral",
+        confidence: 0.9,
+        source_sentence: "Let's circle back.",
+      },
+    ],
+    terms: [],
+  };
+}
+
+function makeSuppressedRecord(overrides: Partial<LearnRecord> = {}): LearnRecord {
+  return {
+    learnKey: "expression:circle back",
+    kind: "expression",
+    surface: "circle back",
+    familiarity: 1,
+    suppressed: true,
+    suppressedAt: 1000,
+    reps: 0,
+    intervalDays: 0,
+    ease: 2.5,
+    dueAt: 1000,
+    lapses: 0,
+    createdAt: 1000,
+    updatedAt: 1000,
+    ...overrides,
+  };
+}
+
+describe("learning loop store integration", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    // Reset learn/store.ts's own module-level cache in lockstep with
+    // the zustand reset below — it's a singleton across this whole
+    // test file, so a record left behind by an earlier test would
+    // otherwise leak into any test that reads through it (e.g. via
+    // the catch-block reconciliation added for #48 s1 review item 3).
+    await learnsetModule.clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("suppresses after two familiarity votes, not one", async () => {
+    await useApp.getState().markKnown("expression", "circle back", "vote");
+    let record = useApp.getState().learnset["expression:circle back"];
+    expect(record.familiarity).toBe(KNOWN_VOTE_INCREMENT);
+    expect(record.suppressed).toBe(false);
+
+    await useApp.getState().markKnown("expression", "circle back", "vote");
+    record = useApp.getState().learnset["expression:circle back"];
+    expect(record.familiarity).toBe(1);
+    expect(record.suppressed).toBe(true);
+    expect(record.suppressedAt).toBe(10_000);
+  });
+
+  it("explicit suppress marks a term suppressed in one action", async () => {
+    await useApp.getState().markKnown("term", "ARR", "suppress");
+
+    const record = useApp.getState().learnset["term:ARR"];
+    expect(record).toMatchObject({
+      kind: "term",
+      surface: "ARR",
+      familiarity: 1,
+      suppressed: true,
+      suppressedAt: 10_000,
+    });
+  });
+
+  it("applyDetection filters a suppressed dictionary hit before card creation or count bump", () => {
+    useApp.setState({
+      learnset: {
+        "expression:circle back": makeSuppressedRecord(),
+      },
+    });
+
+    useApp.getState().applyDetection(makeDetection(), "dictionary");
+    expect(useApp.getState().cards).toHaveLength(0);
+
+    useApp.setState({
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+    });
+    useApp.getState().applyDetection(makeDetection(), "dictionary");
+    expect(useApp.getState().cards[0].count).toBe(1);
+  });
+
+  it("keeps string-only showToast calls backward-compatible", () => {
+    useApp.getState().showToast("已保存");
+    expect(useApp.getState().toast).toBe("已保存");
+  });
+});
+
+/** Flushes the async IIFE inside markKnown's 撤销 undo action.run() —
+ *  fake timers (vi.useFakeTimers) don't affect microtask/Promise
+ *  resolution, only setTimeout/Date, so plain awaited ticks are
+ *  enough to let the undo's own internal awaits settle. */
+async function flushMicrotasks(times = 5): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await Promise.resolve();
+  }
+}
+
+describe("markKnown undo — restores the removed live card (#48 s1 review item 1)", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    await learnsetModule.clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("suppress -> undo puts the removed card back in cards AND reverts the learn-set record", async () => {
+    const liveCard = {
+      ...makeDetection().expressions[0],
+      id: "c1",
+      normKey: "circle back",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+    };
+    useApp.setState({ cards: [liveCard] });
+
+    await useApp.getState().markKnown("expression", "circle back", "suppress");
+    expect(useApp.getState().cards).toHaveLength(0); // removed by suppression
+    expect(useApp.getState().learnset["expression:circle back"].suppressed).toBe(true);
+
+    const toast = useApp.getState().toast;
+    expect(toast).not.toBeNull();
+    expect(typeof toast).toBe("object");
+    const action = (toast as { action?: { run: () => void } }).action;
+    expect(action).toBeDefined();
+
+    action!.run();
+    await flushMicrotasks();
+
+    // The learn-set record is gone (there was no `previous` — this was
+    // a brand-new suppression) AND the card is back in `cards`.
+    expect(useApp.getState().learnset["expression:circle back"]).toBeUndefined();
+    expect(useApp.getState().cards).toEqual([liveCard]);
+  });
+
+  it("undo after a two-vote suppression reverts to the PRE-suppression familiarity, not zero, and restores the card", async () => {
+    const liveCard = {
+      ...makeDetection().expressions[0],
+      id: "c1",
+      normKey: "circle back",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+    };
+    await useApp.getState().markKnown("expression", "circle back", "vote"); // 1st vote, not yet suppressed
+    useApp.setState({ cards: [liveCard] }); // card appears AFTER the first vote
+
+    await useApp.getState().markKnown("expression", "circle back", "vote"); // 2nd vote -> suppresses
+    expect(useApp.getState().cards).toHaveLength(0);
+
+    const toast = useApp.getState().toast;
+    const action = (toast as { action?: { run: () => void } }).action!;
+    action.run();
+    await flushMicrotasks();
+
+    const restored = useApp.getState().learnset["expression:circle back"];
+    expect(restored.familiarity).toBe(KNOWN_VOTE_INCREMENT); // back to the post-1st-vote value
+    expect(restored.suppressed).toBe(false);
+    expect(useApp.getState().cards).toEqual([liveCard]);
+  });
+
+  it("undo restores a removed TERM card into `terms`, not `cards`", async () => {
+    const liveTerm = {
+      id: "t1",
+      normKey: "ARR",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+      term: "ARR",
+      type: "metric" as const,
+      gloss_en: "Annual Recurring Revenue",
+      gloss_zh: "年度经常性收入",
+    };
+    useApp.setState({ terms: [liveTerm] });
+
+    await useApp.getState().markKnown("term", "ARR", "suppress");
+    expect(useApp.getState().terms).toHaveLength(0);
+
+    const toast = useApp.getState().toast;
+    const action = (toast as { action?: { run: () => void } }).action!;
+    action.run();
+    await flushMicrotasks();
+
+    expect(useApp.getState().terms).toEqual([liveTerm]);
+    expect(useApp.getState().cards).toEqual([]); // never touched
+  });
+});
+
+describe("hydrate — atomicity vs. actions racing the hydrate window (#48 s1 review item 2)", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    await learnsetModule.clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      customEntries: [],
+      sessions: [],
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+      hydrated: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("action-wins merge: a record already in the zustand store survives hydrate() even when the loaded map doesn't have it (item 2a)", async () => {
+    vi.spyOn(learnsetModule, "refreshStaleSuppressedLearnset").mockResolvedValue({});
+    // Simulates an action (e.g. markKnown) that fired and fully
+    // completed in the window before hydrate()'s own set() ran —
+    // the loaded map above stands in for "disk/module cache had
+    // nothing relevant at load time."
+    useApp.setState({
+      learnset: { "expression:circle back": makeSuppressedRecord() },
+    });
+
+    await useApp.getState().hydrate();
+
+    expect(useApp.getState().learnset["expression:circle back"]).toEqual(
+      makeSuppressedRecord(),
+    );
+  });
+
+  it("a suppressed-term detection that slipped through before hydrate resolved is removed once the merged learnset lands (item 2b)", async () => {
+    const suppressedRecord = makeSuppressedRecord();
+    vi.spyOn(learnsetModule, "refreshStaleSuppressedLearnset").mockResolvedValue({
+      "expression:circle back": suppressedRecord,
+    });
+    // A live card for the same key that appeared during the hydrate
+    // window — filtered against the still-empty starting learnset at
+    // the time (applyDetection's filterSuppressed reads get().learnset
+    // synchronously), so it slipped through as a live card.
+    useApp.setState({
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+    });
+
+    await useApp.getState().hydrate();
+
+    expect(useApp.getState().cards).toHaveLength(0);
+    expect(useApp.getState().learnset["expression:circle back"]).toEqual(suppressedRecord);
+  });
+
+  it("does not touch cards/terms when nothing needs dropping (no spurious re-render churn)", async () => {
+    vi.spyOn(learnsetModule, "refreshStaleSuppressedLearnset").mockResolvedValue({});
+    const liveCard = {
+      ...makeDetection().expressions[0],
+      id: "c1",
+      normKey: "circle back",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+    };
+    useApp.setState({ cards: [liveCard] });
+
+    await useApp.getState().hydrate();
+
+    expect(useApp.getState().cards).toEqual([liveCard]);
+  });
+});
+
+describe("filterSuppressedLiveCards — pure helper (#48 s1 review item 2b)", () => {
+  it("drops a card whose learnKey is suppressed in the given learnset", () => {
+    const card = {
+      ...makeDetection().expressions[0],
+      id: "c1",
+      normKey: "circle back",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+    };
+    const result = filterSuppressedLiveCards(
+      [card],
+      [],
+      { "expression:circle back": makeSuppressedRecord() },
+    );
+    expect(result.cards).toEqual([]);
+  });
+
+  it("keeps a card whose learnKey is present but NOT suppressed", () => {
+    const card = {
+      ...makeDetection().expressions[0],
+      id: "c1",
+      normKey: "circle back",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+    };
+    const result = filterSuppressedLiveCards(
+      [card],
+      [],
+      { "expression:circle back": makeSuppressedRecord({ suppressed: false }) },
+    );
+    expect(result.cards).toEqual([card]);
+  });
+
+  it("drops a suppressed term from `terms`, independent of `cards`", () => {
+    const term = {
+      id: "t1",
+      normKey: "ARR",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+      term: "ARR",
+      type: "metric" as const,
+      gloss_en: "Annual Recurring Revenue",
+      gloss_zh: "年度经常性收入",
+    };
+    const result = filterSuppressedLiveCards(
+      [],
+      [term],
+      {
+        "term:ARR": makeSuppressedRecord({
+          learnKey: "term:ARR",
+          kind: "term",
+          surface: "ARR",
+        }),
+      },
+    );
+    expect(result.terms).toEqual([]);
+  });
+
+  it("is a no-op when the learnset is empty", () => {
+    const card = {
+      ...makeDetection().expressions[0],
+      id: "c1",
+      normKey: "circle back",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+    };
+    const result = filterSuppressedLiveCards([card], [], {});
+    expect(result.cards).toEqual([card]);
+  });
+});
+
+describe("learn-set persistence failures surface a visible error, never a success toast (#48 s1 review item 3)", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    await learnsetModule.clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      customEntries: [],
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("markKnown: a rejected upsertLearnRecord shows the persistence-failure toast, not the usual success toast, and leaves state untouched", async () => {
+    vi.spyOn(learnsetModule, "upsertLearnRecord").mockRejectedValueOnce(new Error("boom"));
+
+    await useApp.getState().markKnown("expression", "circle back", "vote");
+
+    expect(useApp.getState().toast).toBe("保存失败，本次标记未能持久化");
+    expect(useApp.getState().learnset["expression:circle back"]).toBeUndefined();
+  });
+
+  it("gradeReview: a rejected upsertLearnRecord shows a persistence-failure toast and does not touch live cards", async () => {
+    vi.spyOn(learnsetModule, "upsertLearnRecord").mockRejectedValueOnce(new Error("boom"));
+    const liveCard = {
+      ...makeDetection().expressions[0],
+      id: "c1",
+      normKey: "circle back",
+      firstSeenAt: 9000,
+      lastSeenAt: 9000,
+      count: 1,
+      source: "dictionary" as const,
+    };
+    useApp.setState({ cards: [liveCard] });
+
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+
+    expect(useApp.getState().toast).toBe("保存失败，本次评分未能持久化");
+    expect(useApp.getState().cards).toEqual([liveCard]); // untouched — no auto-suppression ran
+  });
+});
+
+describe("markKnown / gradeReview — per-learnKey serialization (#48 s1 review item 5)", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    await learnsetModule.clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("two markKnown votes fired in parallel (Promise.all) on the SAME key still reach familiarity 1.0 and suppress exactly once — not two independent 0->0.5 reads", async () => {
+    await Promise.all([
+      useApp.getState().markKnown("expression", "circle back", "vote"),
+      useApp.getState().markKnown("expression", "circle back", "vote"),
+    ]);
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.familiarity).toBe(1);
+    expect(record.suppressed).toBe(true);
+  });
+
+  it("three parallel votes on the same key still land at exactly 1.0 (clamped), not overshooting", async () => {
+    await Promise.all([
+      useApp.getState().markKnown("expression", "circle back", "vote"),
+      useApp.getState().markKnown("expression", "circle back", "vote"),
+      useApp.getState().markKnown("expression", "circle back", "vote"),
+    ]);
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.familiarity).toBe(1);
+    expect(record.suppressed).toBe(true);
+  });
+
+  it("parallel votes on DIFFERENT keys are not serialized against each other (each still resolves independently)", async () => {
+    await Promise.all([
+      useApp.getState().markKnown("expression", "circle back", "vote"),
+      useApp.getState().markKnown("term", "ARR", "vote"),
+    ]);
+
+    expect(useApp.getState().learnset["expression:circle back"].familiarity).toBe(
+      KNOWN_VOTE_INCREMENT,
+    );
+    expect(useApp.getState().learnset["term:ARR"].familiarity).toBe(KNOWN_VOTE_INCREMENT);
+  });
+});
+
+function makeCustomEntry(overrides: Partial<CustomEntry> = {}): CustomEntry {
+  const now = 10_000;
+  return {
+    id: "entry-1",
+    kind: "expression",
+    headword: "circle back",
+    variants: [],
+    chinese_explanation: "回头再聊",
+    example: "",
+    context: "",
+    note: "",
+    createdAt: now,
+    updatedAt: now,
+    source: "manual",
+    ...overrides,
+  };
+}
+
+describe("gradeReview — SRS review grading (#48 step 2)", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    await learnsetModule.clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      customEntries: [],
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lazily enrolls a never-graded learnKey and runs SM-2-lite from a fresh record", async () => {
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.reps).toBe(1);
+    expect(record.intervalDays).toBe(1);
+    expect(record.ease).toBe(DEFAULT_EASE + 0.1);
+    expect(record.dueAt).toBe(10_000 + 24 * 60 * 60 * 1000);
+    expect(record.lastReviewedAt).toBe(10_000);
+  });
+
+  it("a second grade continues the SAME record's schedule rather than re-enrolling", async () => {
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+    vi.setSystemTime(20_000);
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.reps).toBe(2);
+    expect(record.intervalDays).toBe(4);
+    expect(record.dueAt).toBe(20_000 + 4 * 24 * 60 * 60 * 1000);
+  });
+
+  it("auto-suppression from a review grade removes the term from any live cards", async () => {
+    useApp.setState({
+      learnset: {
+        "expression:circle back": {
+          learnKey: "expression:circle back",
+          kind: "expression",
+          surface: "circle back",
+          familiarity: 1,
+          suppressed: false,
+          reps: 2,
+          intervalDays: 20,
+          ease: 1.4,
+          dueAt: 10_000,
+          lapses: 0,
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+    });
+
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.intervalDays).toBe(30); // round(20 * 1.5)
+    expect(record.suppressed).toBe(true);
+    expect(useApp.getState().cards).toHaveLength(0); // live card removed
+  });
+
+  it("grading a term that never triggers auto-suppression leaves live cards untouched", async () => {
+    useApp.setState({
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+    });
+    await useApp.getState().gradeReview("expression", "circle back", 1);
+    expect(useApp.getState().cards).toHaveLength(1);
+  });
+});
+
+describe("addCustomEntry — glossary-save lazy SRS enrollment (#48 step 2)", () => {
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    await learnsetModule.clearLearnset();
+    useApp.setState({ learnset: {}, customEntries: [] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("auto-enrolls a brand-new headword with dueAt=now on first save", async () => {
+    await useApp.getState().addCustomEntry(makeCustomEntry({ id: "e1" }));
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record).toBeDefined();
+    expect(record.reps).toBe(0);
+    expect(record.dueAt).toBe(10_000);
+    expect(record.ease).toBe(DEFAULT_EASE);
+    expect(record.familiarity).toBe(0);
+  });
+
+  it("does not re-enroll (or reset scheduling) when the learnKey is already enrolled", async () => {
+    useApp.setState({
+      learnset: {
+        "expression:circle back": {
+          learnKey: "expression:circle back",
+          kind: "expression",
+          surface: "circle back",
+          familiarity: 0.4,
+          suppressed: false,
+          reps: 3,
+          intervalDays: 11,
+          ease: 2.8,
+          dueAt: 99_999,
+          lapses: 0,
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+    });
+
+    await useApp.getState().addCustomEntry(makeCustomEntry({ id: "e2" }));
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.reps).toBe(3);
+    expect(record.dueAt).toBe(99_999); // untouched
+  });
+
+  it("updateCustomEntry never enrolls into the learn-set", async () => {
+    await useApp.getState().updateCustomEntry(makeCustomEntry({ id: "e3" }));
+    expect(useApp.getState().learnset["expression:circle back"]).toBeUndefined();
   });
 });

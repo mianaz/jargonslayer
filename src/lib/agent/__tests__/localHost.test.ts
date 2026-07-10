@@ -187,6 +187,97 @@ describe("agentDetect", () => {
 });
 
 // ---------------------------------------------------------------
+// Profile (background-hint) passthrough (#48 s1 review item 7): with
+// profile enabled, the subscription-direct agent path must send the
+// SAME pre-rendered AUDIENCE hint the Next.js path already does
+// (client.ts's detectViaNext/defineViaNext splice
+// renderProfileHint(settings.profile) into the outgoing body) — not
+// silently omit it.
+// ---------------------------------------------------------------
+
+describe("agentDetect — profile passthrough", () => {
+  const body = { context: "", new_text: "let's circle back" };
+
+  it("sends the rendered profile hint when settings.profile is enabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ expressions: [], terms: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await agentDetect(
+      body,
+      makeSettings({ profile: { enabled: true, industry: "互联网", role: "产品经理" } }),
+    );
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string);
+    expect(sentBody.profile).toBe("行业：互联网；角色：产品经理");
+  });
+
+  it("omits the profile field when settings.profile is disabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ expressions: [], terms: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await agentDetect(body, makeSettings({ profile: { enabled: false, industry: "互联网" } }));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect("profile" in sentBody).toBe(false);
+  });
+
+  it("omits the profile field when settings.profile is entirely absent", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ expressions: [], terms: [] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await agentDetect(body, makeSettings({ profile: undefined }));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect("profile" in sentBody).toBe(false);
+  });
+});
+
+describe("agentDefine — profile passthrough", () => {
+  const body = { phrase: "boil the ocean", context: "let's not boil the ocean" };
+
+  it("sends the rendered profile hint when settings.profile is enabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        kind: "expression",
+        headword: "boil the ocean",
+        variants: [],
+        chinese_explanation: "z",
+        example: "e",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await agentDefine(body, makeSettings({ profile: { enabled: true, role: "工程师" } }));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string);
+    expect(sentBody.profile).toBe("角色：工程师");
+  });
+
+  it("omits the profile field when settings.profile is disabled", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        kind: "expression",
+        headword: "boil the ocean",
+        variants: [],
+        chinese_explanation: "z",
+        example: "e",
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await agentDefine(body, makeSettings({ profile: { enabled: false, role: "工程师" } }));
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect("profile" in sentBody).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------
 // agentDefine — same error-mapping contract as agentDetect
 // ---------------------------------------------------------------
 

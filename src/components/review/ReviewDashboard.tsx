@@ -8,6 +8,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
+import type { LearnRecord } from "@/lib/learn/types";
+import { computeReviewStreak, dueLearnRecords } from "@/lib/learn/queue";
 import WordCloud from "./WordCloud";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -23,7 +25,7 @@ export interface WordAgg {
   count: number;
 }
 
-function useSessionCache() {
+export function useSessionCache() {
   const sessions = useApp((s) => s.sessions);
   const [cache, setCache] = useState<Record<string, MeetingSession>>({});
 
@@ -108,6 +110,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
 
 function StatsStrip() {
   const sessions = useApp((s) => s.sessions);
+  const learnset = useApp((s) => s.learnset);
 
   const stats = useMemo(() => {
     const now = Date.now();
@@ -117,8 +120,10 @@ function StatsStrip() {
     const newThisWeek = sessions.filter(
       (m) => now - m.startedAt < WEEK_MS,
     ).length;
-    return { meetingCount, cardCount, termCount, newThisWeek };
-  }, [sessions]);
+    const dueToday = dueLearnRecords(learnset, now).length;
+    const streak = computeReviewStreak(learnset, now);
+    return { meetingCount, cardCount, termCount, newThisWeek, dueToday, streak };
+  }, [sessions, learnset]);
 
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -126,6 +131,8 @@ function StatsStrip() {
       <StatCard label="累计表达" value={stats.cardCount} />
       <StatCard label="累计术语" value={stats.termCount} />
       <StatCard label="本周新增会议" value={stats.newThisWeek} />
+      <StatCard label="今日待复习" value={stats.dueToday} />
+      <StatCard label="连续复习天数" value={stats.streak} />
     </div>
   );
 }
@@ -209,9 +216,80 @@ function EmptyState() {
   );
 }
 
-export default function ReviewDashboard() {
+function formatDate(ts: number | undefined): string {
+  if (ts === undefined) return "未知";
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ts));
+}
+
+function KnownTermsSection() {
+  const learnset = useApp((s) => s.learnset);
+  const unsuppressLearnRecord = useApp((s) => s.unsuppressLearnRecord);
+
+  const known = useMemo(
+    () =>
+      Object.values(learnset)
+        .filter((record): record is LearnRecord => record.suppressed)
+        .sort((a, b) => (b.suppressedAt ?? 0) - (a.suppressedAt ?? 0)),
+    [learnset],
+  );
+
+  if (known.length === 0) return null;
+
+  return (
+    <section className="border-l-2 border-edge2 border-b border-edge bg-panel p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-medium text-fg">已知词</div>
+          <div className="mt-1 font-mono text-xs text-mut">{known.length}</div>
+        </div>
+      </div>
+      <div className="mt-3 divide-y divide-edge">
+        {known.map((record) => (
+          <div
+            key={record.learnKey}
+            className="flex items-center justify-between gap-3 py-2"
+          >
+            <div className="min-w-0">
+              <div className="truncate font-mono text-sm text-fg">{record.surface}</div>
+              <div className="mt-1 text-xs text-mut">
+                {record.kind === "term" ? "术语" : "表达"} · {formatDate(record.suppressedAt)}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void unsuppressLearnRecord(record.learnKey)}
+              className="shrink-0 rounded-sm border border-edge px-2 py-1 font-mono text-xs text-mut hover:bg-panel3 hover:text-fg"
+            >
+              恢复提示
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// #48 s1 review item 8: `cache`/`loading` are now supplied by the
+// parent (ReviewPage) via a SINGLE useSessionCache() call, shared with
+// DueReview — previously ReviewDashboard and DueReview each called
+// useSessionCache() independently, so every saved session's full body
+// was loaded from IndexedDB twice on every /review visit. Required
+// props (not an internal fallback call) since useSessionCache's own
+// loading effect can't be conditionally skipped once a hook — a
+// fallback call here would just re-introduce the double load it's
+// meant to remove. Only call site today is ReviewPage.
+export default function ReviewDashboard({
+  cache,
+  loading,
+}: {
+  cache: Record<string, MeetingSession>;
+  loading: boolean;
+}) {
   const sessions = useApp((s) => s.sessions);
-  const { cache, loading } = useSessionCache();
   const words = useWordFrequency(cache);
 
   // Selection is shared between the word cloud and the Top-10 list —
@@ -226,12 +304,23 @@ export default function ReviewDashboard() {
   };
 
   if (sessions.length === 0) {
-    return <EmptyState />;
+    return (
+      <div className="space-y-6">
+        {/* Streak/due-today can be non-zero even pre-first-meeting
+           (glossary saves lazily enroll too — see store.ts's
+           addCustomEntry), so the strip stays visible here like
+           KnownTermsSection already does. */}
+        <StatsStrip />
+        <EmptyState />
+        <KnownTermsSection />
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
       <StatsStrip />
+      <KnownTermsSection />
       <WordCloud
         words={words}
         loading={loading}

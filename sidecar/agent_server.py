@@ -655,6 +655,29 @@ async def _call_one(provider: str, system_prompt: str, user_message: str, model:
 
 MAX_BODY_BYTES = 200_000  # detect/define bodies are transcript-sized text, not files
 
+# Background-profile hint (#48 step 3) passthrough — #48 s1 review item
+# 7: this sidecar path was silently dropping `profile` while the
+# Next.js path already spliced it into the user message
+# (profileHint.ts truncates client-side to PROFILE_HINT_MAX_CHARS
+# already; this is a server-side defense-in-depth cap only, same
+# posture as the Next.js routes' zod .max() on the same field).
+PROFILE_MAX_CHARS = 200
+
+
+def _extract_profile(payload: dict[str, Any]) -> Optional[str]:
+    """Pull `profile` out of a detect/define request payload, capped
+    and never an empty/whitespace-only string (matches
+    build_detect_user_message/build_define_user_message's own
+    `if profile` falsy check, so a stray "" doesn't grow an empty
+    AUDIENCE: line)."""
+    profile = payload.get("profile")
+    if not isinstance(profile, str):
+        return None
+    trimmed = profile.strip()
+    if not trimmed:
+        return None
+    return trimmed[:PROFILE_MAX_CHARS]
+
 
 def make_agent_http_handler(
     connection_token: str, env_warnings: list[str]
@@ -808,11 +831,12 @@ def make_agent_http_handler(
             if not isinstance(new_text, str) or not new_text.strip():
                 raise AgentCallError("缺少 new_text", "bad_request")
 
+            profile = _extract_profile(payload)
             model = CLAUDE_MODEL_DEFAULT if provider == "claude-sub" else "gpt-5.2-codex"
             raw = await call_provider_json(
                 provider,
                 build_detect_system_prompt(lang),
-                build_detect_user_message(context, new_text),
+                build_detect_user_message(context, new_text, profile),
                 model,
             )
             if not isinstance(raw, dict):
@@ -827,11 +851,12 @@ def make_agent_http_handler(
                 raise AgentCallError("缺少 phrase", "bad_request")
             context = payload.get("context") if isinstance(payload.get("context"), str) else ""
 
+            profile = _extract_profile(payload)
             model = CLAUDE_MODEL_DEFAULT if provider == "claude-sub" else "gpt-5.2-codex"
             raw = await call_provider_json(
                 provider,
                 build_define_system_prompt(lang),
-                build_define_user_message(phrase, context),
+                build_define_user_message(phrase, context, profile),
                 model,
             )
             if not isinstance(raw, dict):

@@ -29,6 +29,7 @@
 // handling, so the rest of the app never has to learn a new shape.
 
 import type { DefineRequest, DefineResult, DetectRequest, DetectResponse, Settings } from "../types";
+import { renderProfileHint } from "../llm/profileHint";
 
 export type SubscriptionProvider = "claude-sub" | "chatgpt-sub";
 
@@ -196,6 +197,13 @@ export async function agentDetect(
         context: body.context,
         new_text: body.new_text,
         lang: settings.explainLanguage,
+        // #48 s1 review item 7: with profile enabled, the Next.js path
+        // (client.ts's detectViaNext) already splices this same
+        // pre-rendered hint into the USER message — this branch must
+        // not silently diverge from it. renderProfileHint returns
+        // undefined when disabled/empty, which JSON.stringify simply
+        // omits (matching the Next.js route's z.string().optional()).
+        profile: renderProfileHint(settings.profile),
       }),
       signal: AbortSignal.timeout(20000),
     });
@@ -237,6 +245,9 @@ export async function agentDefine(
         phrase: body.phrase,
         context: body.context,
         lang: settings.explainLanguage,
+        // Same AUDIENCE-hint threading as agentDetect above (#48 s1
+        // review item 7).
+        profile: renderProfileHint(settings.profile),
       }),
       signal: AbortSignal.timeout(20000),
     });

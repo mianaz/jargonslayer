@@ -21,6 +21,7 @@ import {
   SUMMARY_SYSTEM_PROMPT,
   TRANSLATE_SYSTEM_PROMPT,
 } from "@/lib/llm/prompts";
+import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
 import type {
   ApiErrorBody,
   DetectedExpression,
@@ -67,6 +68,11 @@ const BodySchema = z.object({
   meetingTitle: z.string().optional(),
   model: z.string().optional(),
   lang: z.enum(["zh", "en"]).optional(),
+  // Pre-rendered background-profile hint (#48 step 3) — same threading
+  // as `lang`: affects the sweep stage only (see runSweepStage below).
+  // Shared cap constant with /api/detect and /api/define (#48 s1
+  // review item 9).
+  profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
 }) satisfies z.ZodType<SummarizeRequest>;
 
 function errorBody(body: ApiErrorBody, status: number) {
@@ -266,6 +272,7 @@ async function runSweepStage(
   alreadyCaptured: string[],
   llm: LlmConfig,
   lang: ExplainLanguage,
+  profileHint: string | undefined,
 ): Promise<{ expressions: DetectedExpression[]; terms: DetectedTerm[] }> {
   const fullTranscript = segments
     .map((s) => (s.speaker ? `${s.speaker}: ${s.text}` : s.text))
@@ -276,7 +283,7 @@ async function runSweepStage(
       apiKey,
       model,
       system: buildSweepSystemPrompt(lang),
-      user: buildSweepUserMessage(fullTranscript, alreadyCaptured),
+      user: buildSweepUserMessage(fullTranscript, alreadyCaptured, profileHint),
       schema: DetectResponseSchema,
       maxTokens: 2500,
       ...llm,
@@ -360,7 +367,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { segments, expressions, terms, model: requestedModel, lang } = parsedBody.data;
+  const { segments, expressions, terms, model: requestedModel, lang, profile } = parsedBody.data;
 
   if (
     segments.length > MAX_SEGMENTS ||
@@ -407,6 +414,7 @@ export async function POST(req: Request) {
         [...expressions.map((e) => e.expression), ...terms.map((t) => t.term)],
         llm,
         lang ?? "zh",
+        profile,
       ),
     ]);
 

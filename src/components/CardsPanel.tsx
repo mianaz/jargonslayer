@@ -10,7 +10,15 @@
 // lab-* hue (CATEGORY_COLOR below); all terms share one lab-cyan bar
 // regardless of TermType (term-type chip text stays mut, not colored).
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type RefObject,
+} from "react";
 import { CaretUp, CaretUpDown } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
@@ -190,6 +198,53 @@ function CollapseAffordance({ onCollapse }: { onCollapse: () => void }) {
   );
 }
 
+function KnownAffordance({
+  onVote,
+  onSuppress,
+  align = "right-2",
+}: {
+  onVote: () => void;
+  onSuppress: () => void;
+  align?: string;
+}) {
+  const run = (
+    e: MouseEvent<HTMLButtonElement> | KeyboardEvent<HTMLButtonElement>,
+    action: () => void,
+  ) => {
+    e.stopPropagation();
+    action();
+  };
+
+  return (
+    <div
+      // #48 s1 review item 11: aria-label on a non-interactive div is
+      // an a11y nit (labels an element that never receives focus and
+      // has no implicit role for the label to attach to) — role="group"
+      // instead; the buttons already carry their own visible text, so
+      // no group-level label is needed on top of that.
+      className={`absolute ${align} top-2 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100`}
+      role="group"
+    >
+      <button
+        type="button"
+        onClick={(e) => run(e, onVote)}
+        onKeyDown={(e) => handleButtonKeyDown(e, () => run(e, onVote))}
+        className="rounded-sm border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-mut hover:bg-panel3 hover:text-fg"
+      >
+        太简单
+      </button>
+      <button
+        type="button"
+        onClick={(e) => run(e, onSuppress)}
+        onKeyDown={(e) => handleButtonKeyDown(e, () => run(e, onSuppress))}
+        className="rounded-sm border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[10px] text-mut hover:bg-panel3 hover:text-fg"
+      >
+        别再提示
+      </button>
+    </div>
+  );
+}
+
 /** Shared focusCardId scroll+ring behavior for both card kinds: when
  *  `id` becomes the focused card, scroll it into view and flash a ring
  *  for 1.5s, then clear the focus request.
@@ -231,10 +286,14 @@ function ExpressionCardRow({
   card,
   expanded,
   onToggle,
+  onKnownVote,
+  onKnownSuppress,
 }: {
   card: ExpressionCard;
   expanded: boolean;
   onToggle: () => void;
+  onKnownVote: () => void;
+  onKnownSuppress: () => void;
 }) {
   const { ref, ring } = useFocusRing(card.id, expanded);
 
@@ -270,12 +329,13 @@ function ExpressionCardRow({
         aria-expanded={false}
         onClick={onToggle}
         onKeyDown={(e) => handleButtonKeyDown(e, onToggle)}
-        className={`relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${hue.bar} ${
+        className={`group relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${hue.bar} ${
           isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${
           ring ? "ring-1 ring-act" : ""
         }`}
       >
+        <KnownAffordance onVote={onKnownVote} onSuppress={onKnownSuppress} />
         {badgeRow}
         <div className="mt-2 truncate text-sm text-mut">
           {card.chinese_explanation}
@@ -296,6 +356,11 @@ function ExpressionCardRow({
       }`}
     >
       <CollapseAffordance onCollapse={onToggle} />
+      <KnownAffordance
+        onVote={onKnownVote}
+        onSuppress={onKnownSuppress}
+        align="right-10"
+      />
       {badgeRow}
 
       <div className="mt-2 text-sm text-fg/90">{card.meaning}</div>
@@ -325,10 +390,14 @@ function TermCardRow({
   term,
   expanded,
   onToggle,
+  onKnownVote,
+  onKnownSuppress,
 }: {
   term: TermCard;
   expanded: boolean;
   onToggle: () => void;
+  onKnownVote: () => void;
+  onKnownSuppress: () => void;
 }) {
   const { ref, ring } = useFocusRing(term.id, expanded);
 
@@ -362,12 +431,13 @@ function TermCardRow({
         aria-expanded={false}
         onClick={onToggle}
         onKeyDown={(e) => handleButtonKeyDown(e, onToggle)}
-        className={`relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
+        className={`group relative cursor-pointer rounded-sm border-b border-edge border-l-2 bg-panel p-2 transition-colors hover:bg-panel3 ${TERM_COLOR.bar} ${
           isNew ? "diff-flash" : ""
         } ${isRepulsing ? "card-repulse" : ""} ${
           ring ? "ring-1 ring-act" : ""
         }`}
       >
+        <KnownAffordance onVote={onKnownVote} onSuppress={onKnownSuppress} />
         {badgeRow}
         <div className="mt-2 truncate text-sm text-mut">{term.gloss_zh}</div>
       </div>
@@ -386,6 +456,11 @@ function TermCardRow({
       }`}
     >
       <CollapseAffordance onCollapse={onToggle} />
+      <KnownAffordance
+        onVote={onKnownVote}
+        onSuppress={onKnownSuppress}
+        align="right-10"
+      />
       {badgeRow}
 
       <div className="mt-2 text-sm text-fg/90">{term.gloss_en}</div>
@@ -447,6 +522,7 @@ export default function CardsPanel() {
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
   const focusCardId = useApp((s) => s.focusCardId);
+  const markKnown = useApp((s) => s.markKnown);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<FilterKind>("all");
 
@@ -581,21 +657,35 @@ export default function CardsPanel() {
               viewMode,
               manualMap,
             );
-            return item.kind === "expression" && item.expression ? (
-              <ExpressionCardRow
-                key={item.id}
-                card={item.expression}
-                expanded={expanded}
-                onToggle={() => handleToggleCard(item.id)}
-              />
-            ) : item.term ? (
-              <TermCardRow
-                key={item.id}
-                term={item.term}
-                expanded={expanded}
-                onToggle={() => handleToggleCard(item.id)}
-              />
-            ) : null;
+            if (item.kind === "expression" && item.expression) {
+              const card = item.expression;
+              return (
+                <ExpressionCardRow
+                  key={item.id}
+                  card={card}
+                  expanded={expanded}
+                  onToggle={() => handleToggleCard(item.id)}
+                  onKnownVote={() => void markKnown("expression", card.expression, "vote")}
+                  onKnownSuppress={() =>
+                    void markKnown("expression", card.expression, "suppress")
+                  }
+                />
+              );
+            }
+            if (item.term) {
+              const term = item.term;
+              return (
+                <TermCardRow
+                  key={item.id}
+                  term={term}
+                  expanded={expanded}
+                  onToggle={() => handleToggleCard(item.id)}
+                  onKnownVote={() => void markKnown("term", term.term, "vote")}
+                  onKnownSuppress={() => void markKnown("term", term.term, "suppress")}
+                />
+              );
+            }
+            return null;
           })}
         </div>
       )}

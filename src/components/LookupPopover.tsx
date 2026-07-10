@@ -108,6 +108,14 @@ export default function LookupPopover() {
           );
         }
         if (cancelled) return;
+        // #48 s1 review item 12c: `res` here is shown to the user
+        // as-is — a manually-selected phrase always gets explained in
+        // THIS popover, even if its learnKey is suppressed. Only
+        // applyDetection (below) re-filters against the learn-set
+        // before anything becomes a live card, so a suppressed term
+        // stays suppressed (no live card reappears) while the user can
+        // still deliberately look it up on demand. By design in v1 —
+        // "known" only means "stop pushing it at me automatically."
         setResult(res);
         if (res.expressions.length > 0 || res.terms.length > 0) {
           applyDetection(res, source);

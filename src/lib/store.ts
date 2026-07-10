@@ -22,8 +22,12 @@ import { mergeDetections } from "./detect/dedupe";
 import type { DetectMode } from "./detect/scheduler";
 import * as storage from "./history/storage";
 import * as glossary from "./history/glossary";
+import * as learnset from "./learn/store";
+import { filterSuppressed } from "./learn/suppress";
+import { schedule, type SrsGrade } from "./learn/srs";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "./types";
+import type { LearnKind, LearnRecord } from "./learn/types";
 import { activateTheme } from "./theme/apply";
 import { writeDisplayMirror } from "./theme/displayStorage";
 import { getBuiltinTheme } from "./theme/themes";
@@ -60,6 +64,13 @@ export interface LookupRequest {
   x: number; // viewport coords for the popover
   y: number;
 }
+
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
+
+export type ToastState = string | { message: string; action?: ToastAction } | null;
 
 // ---------------------------------------------------------------
 // Realtime speaker diarization (beta) — pure helpers, exported so
@@ -189,9 +200,10 @@ interface AppState {
 
   // personal dictionary (global, cross-meeting)
   customEntries: CustomEntry[];
+  learnset: Record<string, LearnRecord>;
 
   // ui
-  toast: string | null;
+  toast: ToastState;
   focusMode: boolean; // 专注模式：折叠右栏，hover 看高亮释义
 
   // Subscription-direct (v0.2.2, experimental) kill-switch layer 3
@@ -276,7 +288,18 @@ interface AppState {
   updateCustomEntry: (entry: CustomEntry) => Promise<void>;
   removeCustomEntry: (id: string) => Promise<void>;
 
-  showToast: (msg: string) => void;
+  markKnown: (
+    kind: LearnKind,
+    surface: string,
+    mode?: "vote" | "suppress",
+  ) => Promise<void>;
+  unsuppressLearnRecord: (key: string) => Promise<void>;
+  // SRS review grade (#48 step 2): lazily enrolls on the first grade
+  // (same posture as markKnown's first vote), then runs SM-2-lite
+  // (learn/srs.ts's schedule) to compute the next dueAt/ease/etc.
+  gradeReview: (kind: LearnKind, surface: string, grade: SrsGrade) => Promise<void>;
+
+  showToast: (toast: Exclude<ToastState, null>) => void;
   clearToast: () => void;
   setFocusMode: (v: boolean) => void;
 }
@@ -313,6 +336,88 @@ export function applyTierDefaults(
     return { ...settings, engine: "webspeech" };
   }
   return settings;
+}
+
+/** Returns both the filtered lists AND whatever was removed (Codex/
+ *  #48 s1 review item 1): markKnown's 撤销 undo needs to put a
+ *  suppressed live card back, not just revert the learn-set record —
+ *  without this, undo silently discarded the card/term the first
+ *  suppression removed. */
+function removeLiveLearnKey(
+  cards: ExpressionCard[],
+  terms: TermCard[],
+  key: string,
+): {
+  cards: ExpressionCard[];
+  terms: TermCard[];
+  removedCards: ExpressionCard[];
+  removedTerms: TermCard[];
+} {
+  const removedCards = cards.filter(
+    (card) => learnset.learnKey("expression", card.expression) === key,
+  );
+  const removedTerms = terms.filter((term) => learnset.learnKey("term", term.term) === key);
+  return {
+    cards: cards.filter(
+      (card) => learnset.learnKey("expression", card.expression) !== key,
+    ),
+    terms: terms.filter((term) => learnset.learnKey("term", term.term) !== key),
+    removedCards,
+    removedTerms,
+  };
+}
+
+/** After hydrate() merges the persisted learn-set with whatever the
+ *  zustand store already has (see hydrate() below — action-wins merge,
+ *  #48 s1 review item 2), re-run suppression over whatever cards/terms
+ *  are currently live: a suppressed-term detection landing in the
+ *  hydrate window would have been filtered against the still-empty
+ *  starting learnset (applyDetection's filterSuppressed reads
+ *  get().learnset synchronously) and become a live card that must not
+ *  survive hydration finishing. Pure so it's unit-testable without
+ *  driving hydrate() end-to-end. */
+export function filterSuppressedLiveCards(
+  cards: ExpressionCard[],
+  terms: TermCard[],
+  records: Record<string, LearnRecord>,
+): { cards: ExpressionCard[]; terms: TermCard[] } {
+  return {
+    cards: cards.filter(
+      (card) => !records[learnset.learnKey("expression", card.expression)]?.suppressed,
+    ),
+    terms: terms.filter((term) => !records[learnset.learnKey("term", term.term)]?.suppressed),
+  };
+}
+
+// ---------------------------------------------------------------
+// Per-learnKey mutation serialization (Codex/#48 s1 review item 5):
+// two near-simultaneous markKnown/gradeReview calls for the SAME
+// learnKey (e.g. a double-tap on 太简单) must not both read the same
+// stale record and both compute the same "next" value — each must see
+// the effect of the one immediately before it. Every mutation here is
+// already async (awaits IndexedDB via learn/store.ts), so a simple
+// per-key promise chain is enough to serialize without a real lock:
+// queue this call behind whatever's currently running for the same
+// key, so by the time its body actually executes, the previous call's
+// `set()` has already landed and reads see fresh state.
+// ---------------------------------------------------------------
+const learnKeyQueues = new Map<string, Promise<unknown>>();
+
+function withLearnKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const prior = learnKeyQueues.get(key) ?? Promise.resolve();
+  const run = prior.then(fn, fn);
+  // Track the queue with a rejection-swallowing tail so one failed
+  // mutation never permanently wedges the queue for that key — the
+  // real result (including any rejection) still flows to THIS call's
+  // own returned promise via `run` above.
+  learnKeyQueues.set(
+    key,
+    run.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return run;
 }
 
 /** Fold persisted settings over defaults, migrating legacy field
@@ -361,6 +466,7 @@ export const useApp = create<AppState>((set, get) => ({
   activeSessionId: null,
 
   customEntries: [],
+  learnset: {},
 
   toast: null,
   focusMode: false,
@@ -372,14 +478,38 @@ export const useApp = create<AppState>((set, get) => ({
       storage.loadSettings(),
       storage.listSessions(),
       glossary.loadCustomEntries(),
+      learnset.loadLearnset(),
     ]);
+    const learned = await learnset.refreshStaleSuppressedLearnset();
     const settings = migrateSettings(saved);
+    // Hydration atomicity (Codex/#48 s1 review item 2a): the UI is
+    // interactive (zustand store already exists) before this async
+    // hydrate() resolves — a markKnown/gradeReview/addCustomEntry that
+    // fires during that window already wrote straight into
+    // get().learnset via its own `set()`. Clobbering learnset with the
+    // freshly-loaded `learned` map here would silently discard that
+    // write. Action-wins merge: `learned` first, then whatever's
+    // already live in the store — see learn/store.ts's loadLearnset
+    // for the matching module-cache-side reconciliation (an upsert
+    // racing the disk read must win there too, or this merge would
+    // just be re-importing a stale value under a different name).
+    const mergedLearnset = { ...learned, ...get().learnset };
     set({
       settings,
       sessions: metas,
       customEntries: entries,
+      learnset: mergedLearnset,
       hydrated: true,
     });
+    // Item 2b: re-run suppression over whatever cards/terms are live
+    // right now — a suppressed-term detection landing in the same
+    // window would have been filtered against the starting (empty)
+    // learnset and slipped through as a live card. Only touches
+    // cards/terms when something actually needs dropping.
+    const cleaned = filterSuppressedLiveCards(get().cards, get().terms, mergedLearnset);
+    if (cleaned.cards.length !== get().cards.length || cleaned.terms.length !== get().terms.length) {
+      set({ cards: cleaned.cards, terms: cleaned.terms });
+    }
     // The FOUC inline script (layout.tsx) already applied best-effort
     // theme/data-fs from its localStorage mirror before this resolved
     // — this re-applies from the authoritative IndexedDB-backed
@@ -554,6 +684,7 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   applyDetection: (res, source, meta) => {
+    res = filterSuppressed(res, source, get().learnset);
     const { cards, terms, settings } = get();
     const merged = mergeDetections(
       cards,
@@ -676,6 +807,14 @@ export const useApp = create<AppState>((set, get) => ({
       get().showToast("会话不存在或已删除");
       return;
     }
+    // #48 s1 review item 12b: a saved session's cards/terms are
+    // deliberately NOT re-filtered against the CURRENT learn-set here
+    // — history is an immutable archive of what a meeting actually
+    // showed at the time, not a live view that should retroactively
+    // hide cards for terms suppressed LATER. Only live detection
+    // (applyDetection's filterSuppressed) and the hydrate-window
+    // cleanup (filterSuppressedLiveCards, see hydrate() above) ever
+    // drop a card for being suppressed.
     set((state) => ({
       status: "stopped",
       statusDetail: null,
@@ -707,6 +846,26 @@ export const useApp = create<AppState>((set, get) => ({
   addCustomEntry: async (entry) => {
     const list = await glossary.upsertCustomEntry(entry);
     set({ customEntries: [...list] });
+    // Lazy SRS enrollment (#48 step 2): a glossary save is itself a
+    // familiarity signal, so it auto-enrolls (dueAt=now) — but only
+    // the FIRST time this learnKey appears; never resets an already-
+    // enrolled record's schedule (a later edit of the same entry goes
+    // through updateCustomEntry, which does not re-enroll).
+    const key = learnset.learnKey(entry.kind, entry.headword);
+    if (!get().learnset[key]) {
+      const record = learnset.makeInitialLearnRecord(entry.kind, entry.headword, Date.now());
+      try {
+        const map = await learnset.upsertLearnRecord(record);
+        set({ learnset: { ...map } });
+      } catch (err) {
+        // #48 s1 review item 3: the glossary entry itself already
+        // saved above — only the SRS auto-enrollment failed to
+        // persist. Surface it rather than silently pretending it
+        // succeeded (learn/store.ts stays pure of UI and just throws).
+        console.warn("[store] addCustomEntry SRS enrollment persist failed", err);
+        get().showToast("保存失败，学习记录未能持久化");
+      }
+    }
   },
 
   updateCustomEntry: async (entry) => {
@@ -720,6 +879,159 @@ export const useApp = create<AppState>((set, get) => ({
   removeCustomEntry: async (id) => {
     const list = await glossary.deleteCustomEntry(id);
     set({ customEntries: [...list] });
+  },
+
+  markKnown: (kind, surface, mode = "vote") => {
+    const key = learnset.learnKey(kind, surface);
+    // #48 s1 review item 5: serialize concurrent mutations to the SAME
+    // learnKey — two rapid 太简单 taps must not both read the same
+    // stale familiarity and both compute the same "next" value.
+    return withLearnKeyLock(key, async () => {
+      // Freshest-record read: with the per-key queue above, any
+      // earlier call for this same key has already fully finished
+      // (including its own `set()`) before this one starts, so
+      // get().learnset[key] is never a stale snapshot from a call
+      // that raced ahead of this one. The one case where the zustand
+      // copy could otherwise drift from learn/store.ts's own module
+      // cache — a persist failure (#48 s1 review item 3) — is
+      // reconciled back onto zustand in the catch block below, so this
+      // read stays the single source of truth in every case.
+      const previous = get().learnset[key];
+      const now = Date.now();
+      const base = previous ?? learnset.makeInitialLearnRecord(kind, surface, now);
+      const familiarity =
+        mode === "suppress"
+          ? learnset.KNOWN_SUPPRESS_FAMILIARITY
+          : Math.min(
+              learnset.KNOWN_SUPPRESS_FAMILIARITY,
+              base.familiarity + learnset.KNOWN_VOTE_INCREMENT,
+            );
+      // #48 s1 review item 12a: a card with prior familiarity >= 0.5
+      // (i.e. it already survived one 认识 vote) suppresses on a
+      // SINGLE further tap by design — two votes total, never two
+      // more from wherever familiarity happened to be. A mis-tap is
+      // recoverable via the 撤销 undo in the toast below, so this
+      // stays a one-way ratchet rather than needing a confirmation.
+      const suppressed =
+        mode === "suppress" ||
+        familiarity >= learnset.KNOWN_SUPPRESS_FAMILIARITY;
+      const next: LearnRecord = {
+        ...base,
+        surface,
+        familiarity,
+        suppressed,
+        suppressedAt: suppressed ? now : base.suppressedAt,
+        updatedAt: now,
+      };
+
+      let map: Record<string, LearnRecord>;
+      try {
+        map = await learnset.upsertLearnRecord(next);
+      } catch (err) {
+        // #48 s1 review item 3: a persist failure must never show the
+        // usual success toast — learn/store.ts stays pure of UI and
+        // just throws/rejects; this is the one place that turns it
+        // into a visible error.
+        console.warn("[store] markKnown persist failed", err);
+        // Reconcile zustand back onto the module cache even on
+        // failure — persist() always assigns `cache = next` before it
+        // can throw (see learn/store.ts), so cache may already be
+        // ahead of the zustand copy at this point; without this, a
+        // later read of get().learnset[key] would be stale relative
+        // to what upsertLearnRecord/removeLearnRecord will use next.
+        set({ learnset: { ...learnset.getCachedLearnset() } });
+        get().showToast("保存失败，本次标记未能持久化");
+        return;
+      }
+      set({ learnset: { ...map } });
+
+      if (suppressed) {
+        // #48 s1 review item 1: capture what removeLiveLearnKey
+        // actually removed so 撤销 can put the card/term BACK, not
+        // just revert the learn-set record (previously the card was
+        // simply discarded — undo only fixed the badge, not the UI).
+        const removedFromLive = removeLiveLearnKey(get().cards, get().terms, key);
+        set({ cards: removedFromLive.cards, terms: removedFromLive.terms });
+        get().showToast({
+          message: "已记为熟悉，将减少提示",
+          action: {
+            label: "撤销",
+            run: () => {
+              void (async () => {
+                try {
+                  const restored = previous
+                    ? await learnset.upsertLearnRecord(previous)
+                    : await learnset.removeLearnRecord(key);
+                  set({
+                    learnset: { ...restored },
+                    cards: [...get().cards, ...removedFromLive.removedCards],
+                    terms: [...get().terms, ...removedFromLive.removedTerms],
+                  });
+                } catch (err) {
+                  console.warn("[store] markKnown undo persist failed", err);
+                  get().showToast("撤销失败，请重试");
+                }
+              })();
+            },
+          },
+        });
+      } else {
+        get().showToast("已记一次熟悉");
+      }
+    });
+  },
+
+  unsuppressLearnRecord: async (key) => {
+    const record = get().learnset[key];
+    if (!record) return;
+    const next: LearnRecord = {
+      ...record,
+      suppressed: false,
+      dueAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    try {
+      const map = await learnset.upsertLearnRecord(next);
+      set({ learnset: { ...map } });
+    } catch (err) {
+      console.warn("[store] unsuppressLearnRecord persist failed", err);
+      get().showToast("保存失败，恢复提示未能持久化");
+    }
+  },
+
+  gradeReview: (kind, surface, grade) => {
+    const key = learnset.learnKey(kind, surface);
+    // Same per-key serialization as markKnown above — a double-tapped
+    // grade button must not race itself either (#48 s1 review item 5).
+    return withLearnKeyLock(key, async () => {
+      const now = Date.now();
+      // Lazy enrollment: grading a recent-meeting card that has no
+      // learn-set record yet (composeReviewQueue's "recent, not
+      // enrolled" bucket) starts it fresh right here. Freshest-record
+      // read — see markKnown's own comment above (per-key queue +
+      // catch-block reconciliation keeps get().learnset current).
+      const base = get().learnset[key] ?? learnset.makeInitialLearnRecord(kind, surface, now);
+      const next = schedule(base, grade, now);
+
+      let map: Record<string, LearnRecord>;
+      try {
+        map = await learnset.upsertLearnRecord(next);
+      } catch (err) {
+        console.warn("[store] gradeReview persist failed", err);
+        set({ learnset: { ...learnset.getCachedLearnset() } });
+        get().showToast("保存失败，本次评分未能持久化");
+        return;
+      }
+      set({ learnset: { ...map } });
+
+      // Auto-suppression (interval >= 30d AND familiarity >= 0.85 on a
+      // 认识 grade) behaves like a markKnown suppression for any card
+      // still live in the current meeting — never surface it again.
+      if (next.suppressed && !base.suppressed) {
+        const removedFromLive = removeLiveLearnKey(get().cards, get().terms, key);
+        set({ cards: removedFromLive.cards, terms: removedFromLive.terms });
+      }
+    });
   },
 
   newMeeting: () =>
