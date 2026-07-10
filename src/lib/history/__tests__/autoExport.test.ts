@@ -539,6 +539,74 @@ describe("sanitizeRestoredSettings — Codex v0.2.3 MEDIUM (untrusted backup set
   });
 });
 
+describe("postTaskWebhook — task.* envelope (#58 task center connector hook)", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockFetch = vi.fn(async () => ({ ok: true }));
+    global.fetch = mockFetch as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const task = {
+    id: "t1",
+    kind: "import-audio",
+    label: "meeting.wav",
+    stage: "转录中",
+    progress: 0.5,
+    status: "running",
+    createdAt: 1000,
+    updatedAt: 1500,
+  };
+
+  it("POSTs {schemaVersion, event, exportedAt, task} to the given url, mirroring postWebhook's own envelope shape", async () => {
+    const autoExport = await import("../autoExport");
+    await autoExport.postTaskWebhook(task, "task.started", "https://hooks.example.com/x");
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [url, init] = mockFetch.mock.calls[0];
+    expect(url).toBe("https://hooks.example.com/x");
+    expect(init.method).toBe("POST");
+    expect(init.headers).toEqual({ "Content-Type": "application/json" });
+    const body = JSON.parse(init.body as string);
+    expect(body).toMatchObject({ schemaVersion: 1, event: "task.started", task });
+    expect(typeof body.exportedAt).toBe("number");
+  });
+
+  it("supports the done/error event names with their own task snapshot fields", async () => {
+    const autoExport = await import("../autoExport");
+    await autoExport.postTaskWebhook(
+      { ...task, status: "done", sessionId: "s1" },
+      "task.done",
+      "https://hooks.example.com/x",
+    );
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(body.event).toBe("task.done");
+    expect(body.task.sessionId).toBe("s1");
+
+    mockFetch.mockClear();
+    await autoExport.postTaskWebhook(
+      { ...task, status: "error", error: "上传失败" },
+      "task.error",
+      "https://hooks.example.com/x",
+    );
+    const errBody = JSON.parse(mockFetch.mock.calls[0][1].body as string);
+    expect(errBody.event).toBe("task.error");
+    expect(errBody.task.error).toBe("上传失败");
+  });
+
+  it("never throws when the fetch itself fails (fire-and-forget, same contract as postWebhook)", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("network down"));
+    const autoExport = await import("../autoExport");
+    await expect(
+      autoExport.postTaskWebhook(task, "task.started", "https://hooks.example.com/x"),
+    ).resolves.toBeUndefined();
+  });
+});
+
 describe("stripKeyMaterial — Codex v0.2.3 LOW (webhookUrl is credential-like)", () => {
   it("strips webhookUrl along with the key fields", async () => {
     // this describe sits outside the main block's beforeEach — shim

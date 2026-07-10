@@ -184,6 +184,48 @@ export async function postWebhook(
   }
 }
 
+/** POST a task lifecycle event (#58 task center) to the webhook URL —
+ *  same fire-and-forget/timeout contract as postWebhook above, but
+ *  envelopes a task-registry snapshot under `event: "task.*"` instead
+ *  of a full session. Reuses the SAME webhookUrl setting (design
+ *  decision 5: "the event bus doubles as the connector hook", no new
+ *  config surface) — call sites live in src/lib/tasks/registry.ts.
+ *  `task` is typed structurally (not against TaskState) so this module
+ *  never has to import from lib/tasks — registry.ts already imports
+ *  FROM here, and a one-way dependency keeps that clean. */
+export async function postTaskWebhook(
+  task: {
+    id: string;
+    kind: string;
+    label: string;
+    stage: string;
+    progress?: number;
+    status: string;
+    error?: string;
+    sessionId?: string;
+    createdAt: number;
+    updatedAt: number;
+  },
+  event: "task.started" | "task.done" | "task.error",
+  url: string,
+): Promise<void> {
+  try {
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        event,
+        exportedAt: Date.now(),
+        task,
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (err) {
+    console.warn("[autoExport] postTaskWebhook failed", err);
+  }
+}
+
 /** Every field on Settings that can hold BYOK key material — kept in
  *  one place so the export-time strip below and any future audit stay
  *  in sync (see #57's plaintext-key audit). taskLlm's per-domain

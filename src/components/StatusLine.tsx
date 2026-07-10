@@ -8,6 +8,7 @@
 
 import { useApp } from "@/lib/store";
 import PixelDragon from "@/components/PixelDragon";
+import TaskTray from "@/components/TaskTray";
 
 const ENGINE_POSTURE: Record<string, "local" | "cloud"> = {
   webspeech: "cloud",
@@ -83,6 +84,16 @@ export default function StatusLine() {
           Bit outranks it for the remaining phone-width pixels. */}
       <span className="ml-auto hidden whitespace-nowrap px-3 tabular-nums sm:inline">
         {count} cards
+      </span>
+      {/* #58 review fix 1: unlike the count span above, the task tray
+          is reachable at every width — it's the only in-app surface
+          for import progress/errors on mobile (the drawer's own inline
+          job rows require opening 历史 first), so it stays visible
+          below sm too; TaskTray itself keeps its own compact-chip
+          discipline (icon+count, sm:hidden icon) and gives its popover
+          a phone-safe width. */}
+      <span className="flex h-full items-center">
+        <TaskTray />
       </span>
       <span
         id="mascot-perch"

@@ -423,6 +423,24 @@ export interface ImportOptions {
   diarize?: boolean;
 }
 
+/** Appended by importAndTrack/importUrlAndTrack's own catch below when
+ * the failure carries no message of its own (a non-Error throw); also
+ * exported for ImportHub's task-tray error rows (#58 review fix 2) —
+ * the pre-#58 HistoryDrawer unconditionally appended this to EVERY
+ * failed sidecar-path row regardless of the underlying message, and
+ * TaskTray's TaskKind ("import-audio"/"import-video"/"import-url")
+ * can't tell a sidecar-path failure from a browser-path one to
+ * reproduce that itself, so the two sidecar call sites in ImportHub
+ * wrap their onError with withSidecarHint to restore it. */
+export const SIDECAR_UNREACHABLE_HINT = "，确认 sidecar 已启动且 --http-port 开启";
+
+/** Appends SIDECAR_UNREACHABLE_HINT to a task-registry error message —
+ * see the constant's own doc above for why this lives here rather than
+ * being derived from TaskKind. */
+export function withSidecarHint(message: string): string {
+  return `${message}${SIDECAR_UNREACHABLE_HINT}`;
+}
+
 /** status_detail -> Chinese phase label for a sidecar job's polled
  * status. The upload path's own detail values (`"diarizing"`,
  * `null`); `importUrlAndTrack` passes a wider mapper that also covers
@@ -493,10 +511,7 @@ export async function importAndTrack(
 
     onDone(session.id);
   } catch (err) {
-    const msg =
-      err instanceof Error
-        ? err.message
-        : "导入失败，请确认 sidecar 已启动且 --http-port 开启";
+    const msg = err instanceof Error ? err.message : `导入失败${SIDECAR_UNREACHABLE_HINT}`;
     onError(msg);
   }
 }
@@ -582,10 +597,7 @@ export async function importUrlAndTrack(
 
     onDone(session.id);
   } catch (err) {
-    const msg =
-      err instanceof Error
-        ? err.message
-        : "导入失败，请确认 sidecar 已启动且 --http-port 开启";
+    const msg = err instanceof Error ? err.message : `导入失败${SIDECAR_UNREACHABLE_HINT}`;
     onError(msg);
   }
 }

@@ -50,6 +50,7 @@ export class VideoExtractError extends Error {
 }
 
 const VIDEO_EXTENSIONS = ["mp4", "webm", "mov", "mkv", "m4v"];
+const AUDIO_EXTENSIONS = ["m4a", "mp3", "wav", "flac"];
 
 /** Pure — no ffmpeg/File I/O — so HistoryDrawer's file-input routing
  *  and importAudio's own routing can both call it synchronously.
@@ -60,6 +61,19 @@ export function isVideoFile(file: { name: string; type: string }): boolean {
   if (file.type.startsWith("video/")) return true;
   const ext = file.name.split(".").pop()?.toLowerCase();
   return ext !== undefined && VIDEO_EXTENSIONS.includes(ext);
+}
+
+/** ImportHub's 文件 tab staging guard (#58 review fix 8) — the native
+ *  `<input accept>` is advisory only (some OS pickers/drag-drop paths
+ *  ignore it entirely), so without this a non-media file (a PDF, say)
+ *  could get staged and become a doomed transcription task. Same MIME-
+ *  then-extension shape as isVideoFile above: audio/* or video/* MIME
+ *  wins outright, else fall back to the exact extension allowlist
+ *  ImportHub's own FILE_ACCEPT string advertises. */
+export function isSupportedMediaFile(file: { name: string; type: string }): boolean {
+  if (file.type.startsWith("audio/") || isVideoFile(file)) return true;
+  const ext = file.name.split(".").pop()?.toLowerCase();
+  return ext !== undefined && AUDIO_EXTENSIONS.includes(ext);
 }
 
 /** Extracts the audio track from `file` as a 16kHz mono wav, entirely
