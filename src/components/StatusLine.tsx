@@ -8,6 +8,7 @@
 
 import { useApp } from "@/lib/store";
 import PixelDragon from "@/components/PixelDragon";
+import TaskTray from "@/components/TaskTray";
 
 const ENGINE_POSTURE: Record<string, "local" | "cloud"> = {
   webspeech: "cloud",
@@ -83,6 +84,13 @@ export default function StatusLine() {
           Bit outranks it for the remaining phone-width pixels. */}
       <span className="ml-auto hidden whitespace-nowrap px-3 tabular-nums sm:inline">
         {count} cards
+      </span>
+      {/* Same <sm discipline as the count span above — a running-task
+          count is a nice-to-have, not essential on the tightest phone
+          width; the drawer's own inline job rows + the completion
+          toast still cover it there. */}
+      <span className="hidden h-full items-center sm:flex">
+        <TaskTray />
       </span>
       <span
         id="mascot-perch"

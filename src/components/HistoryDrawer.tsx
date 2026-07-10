@@ -2,55 +2,23 @@
 
 // Right-side drawer listing saved sessions, with search (title +
 // lazy-loaded expression match) and delete-confirm.
+//
+// #58: every import path used to live inline here (a 导入录音 popover +
+// a separate ImportTranscriptDialog), each tracking its own progress
+// in component-local state that vanished on drawer close. That's now
+// ImportHub (one 导入 button opens it) + the task registry
+// (src/lib/tasks/registry.ts) — the in-progress rows below just READ
+// the registry (selectRunningTasks/error tasks), so progress survives
+// this drawer closing and reopening, matching StatusLine's task tray.
 
-import { useEffect, useRef, useState } from "react";
-import { X, Trash, UploadSimple, FileText, LinkSimple } from "@phosphor-icons/react";
+import { useEffect, useState } from "react";
+import { Trash, UploadSimple, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
-import {
-  fetchSidecarHealth,
-  importAndTrack,
-  importUrlAndTrack,
-} from "@/lib/stt/upload";
-import { importTranscriptText } from "@/lib/ingest/importText";
-import { importAudio } from "@/lib/ingest/importAudio";
-import ImportTranscriptDialog from "@/components/ImportTranscriptDialog";
-import PreviewLockedBadge from "@/components/PreviewLockedBadge";
-import { PREVIEW_TIER } from "@/lib/deployTier";
-
-const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 sidecar";
-
-// 本地转录（浏览器）(#43 phase 2a, video added in phase 2b) is a THIRD
-// import-mode choice alongside importAndTrack's own "sidecar"/
-// "cloud" — it never reaches importAndTrack at all (importAudio.ts is
-// a separate, fully in-browser pipeline that also handles video files
-// via ffmpegExtract.ts), so it's a plain local union rather than
-// "browser" is HistoryDrawer-local (in-browser Whisper via
-// importAudio.ts); "sidecar" is upload.ts's importAndTrack path.
-// (#66 removed the third "cloud" choice along with its route.)
-type ImportModeChoice = "sidecar" | "browser";
-
-// Upload-a-recording job tracking is intentionally component-local
-// (not in the global store) — it's ephemeral UI progress, and a page
-// refresh losing it is an accepted tradeoff (the sidecar keeps
-// transcribing regardless; see the hint text below the section).
-interface ImportJobState {
-  filename: string;
-  progress: number;
-  phase: string;
-  error: string | null;
-  // "recording" (default, omitted): sidecar/cloud audio import — its
-  // error row appends a sidecar-specific hint. "text": #43 transcript
-  // import — errors are parse/detect/translate failures, so that hint
-  // would be actively misleading and is suppressed for these rows.
-  // "audio" (#43 phase 2a, video added in phase 2b): in-browser
-  // Whisper transcription of an audio OR video file — decode/extract/
-  // model/detect/translate failures, same reasoning as "text", no
-  // sidecar involved at all.
-  kind?: "recording" | "text" | "audio";
-}
+import { dismissTask, useTasks, type TaskState } from "@/lib/tasks/registry";
+import ImportHub from "@/components/ImportHub";
 
 export interface HistoryDrawerProps {
   open: boolean;
@@ -73,330 +41,36 @@ function formatDurationMin(startMs: number, endMs: number): string {
   return `${min} 分`;
 }
 
+/** In-progress/failed imports only — a completed one already appears
+ *  as a saved session below (and briefly in StatusLine's task tray via
+ *  jump-to-session), so it drops out of this inline list the moment it
+ *  finishes, exactly like the old component-local job rows did. */
+function activeImportRows(tasks: Record<string, TaskState>): TaskState[] {
+  return Object.values(tasks)
+    .filter((t) => t.status === "running" || t.status === "error")
+    .sort((a, b) => a.createdAt - b.createdAt);
+}
+
 export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   const sessions = useApp((s) => s.sessions);
   const loadSession = useApp((s) => s.loadSession);
   const deleteSession = useApp((s) => s.deleteSession);
-  const settings = useApp((s) => s.settings);
-  const showToast = useApp((s) => s.showToast);
 
   const [query, setQuery] = useState("");
   const [cache, setCache] = useState<Record<string, MeetingSession>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [jobs, setJobs] = useState<Map<string, ImportJobState>>(new Map());
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  // 导入录音 source-choice popover (#22: sidecar vs cloud). The chosen
-  // mode is stashed in a ref (not state) because it only needs to
-  // survive the synchronous "click row -> open native file picker"
-  // round trip, read once when the file input's onChange fires.
-  const [importPickerOpen, setImportPickerOpen] = useState(false);
-  const importModeRef = useRef<ImportModeChoice>("sidecar");
-  const importPickerRef = useRef<HTMLDivElement>(null);
-  // 本地 Whisper row's diarization status line — fetched lazily each
-  // time the popover opens (not on mount) since it's a network call
-  // whose relevance is scoped to "user is about to pick an import
-  // source"; undefined = not yet checked this open, null = sidecar
-  // unreachable.
-  const [diarizationHealth, setDiarizationHealth] = useState<
-    { diarization_ready: boolean } | null | undefined
-  >(undefined);
-  // 导入文稿 (#43) dialog — separate from the 导入录音 popover above
-  // since it's a full paste/upload + preview flow, not a one-click
-  // file-picker shortcut.
-  const [importTextOpen, setImportTextOpen] = useState(false);
-  // 从视频链接导入（本地）(#43 phase 2c, LOCAL TIER ONLY): inline URL
-  // input revealed within the popover entry itself (rather than a
-  // separate dialog like ImportTranscriptDialog) — a single text field
-  // doesn't warrant a whole modal. Gated on sidecar reachability via
-  // the SAME diarizationHealth fetch the 本地 Whisper entry already
-  // triggers on popover open (fetchSidecarHealth returns null on any
-  // unreachability/timeout, which doubles as "is the sidecar even
-  // there" — no separate probe needed).
-  const [urlImportOpen, setUrlImportOpen] = useState(false);
-  const [urlImportValue, setUrlImportValue] = useState("");
+  const [importHubOpen, setImportHubOpen] = useState(false);
+
+  const tasks = useTasks((s) => s.tasks);
+  const importRows = activeImportRows(tasks);
 
   useEffect(() => {
     if (!open) {
       setQuery("");
       setConfirmDeleteId(null);
-      setImportPickerOpen(false);
-      setImportTextOpen(false);
-      setUrlImportOpen(false);
-      setUrlImportValue("");
+      setImportHubOpen(false);
     }
   }, [open]);
-
-  useEffect(() => {
-    if (!importPickerOpen) return;
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setImportPickerOpen(false);
-    };
-    const handleMouseDown = (e: MouseEvent) => {
-      if (importPickerRef.current && !importPickerRef.current.contains(e.target as Node)) {
-        setImportPickerOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleKey);
-    document.addEventListener("mousedown", handleMouseDown);
-    return () => {
-      document.removeEventListener("keydown", handleKey);
-      document.removeEventListener("mousedown", handleMouseDown);
-    };
-  }, [importPickerOpen]);
-
-  // Collapse the inline URL input whenever the popover itself closes
-  // (Escape / click-outside / an unrelated entry picked) — otherwise
-  // reopening the popover would show a stale expanded input.
-  useEffect(() => {
-    if (!importPickerOpen) {
-      setUrlImportOpen(false);
-      setUrlImportValue("");
-    }
-  }, [importPickerOpen]);
-
-  useEffect(() => {
-    // Preview tier (#61): sidecar-only rows are unconditionally
-    // disabled below (see previewLocked) — no probe is ever fired,
-    // per the showroom's "no sidecar probing to unlock" posture (a
-    // preview visitor could never have a reachable local sidecar
-    // anyway, but the point is this build never asks).
-    if (!importPickerOpen || PREVIEW_TIER) return;
-    setDiarizationHealth(undefined);
-    let cancelled = false;
-    void fetchSidecarHealth(settings).then((health) => {
-      if (!cancelled) setDiarizationHealth(health);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [importPickerOpen]);
-
-  const patchJob = (jobId: string, patch: Partial<ImportJobState>) => {
-    setJobs((prev) => {
-      const next = new Map(prev);
-      const existing = next.get(jobId);
-      if (existing) next.set(jobId, { ...existing, ...patch });
-      return next;
-    });
-  };
-
-  const handleImportFiles = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    for (const file of Array.from(files)) {
-      const jobId = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      setJobs((prev) =>
-        new Map(prev).set(jobId, {
-          filename: file.name,
-          progress: 0,
-          phase: "转录中",
-          error: null,
-        }),
-      );
-
-      void importAndTrack(
-        file,
-        settings,
-        {
-          onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
-          onDone: async (sessionId) => {
-            await loadSession(sessionId);
-            // No dedicated "refresh session metas" action exists on the
-            // store — hydrate() re-reads settings/sessions/glossary from
-            // storage, which is a superset that also refreshes the list.
-            await useApp.getState().hydrate();
-            showToast("已导入并打开会话");
-            setJobs((prev) => {
-              const next = new Map(prev);
-              next.delete(jobId);
-              return next;
-            });
-          },
-          onError: (msg) => patchJob(jobId, { error: msg, phase: "失败" }),
-        },
-      );
-    }
-  };
-
-  // 本地转录（浏览器）(#43 phase 2a, video added in phase 2b): same
-  // job-row tracking shape as handleImportFiles above, but calling
-  // importAudio.ts directly instead of importAndTrack — this path
-  // never touches the sidecar job API or the cloud route at all, so
-  // kind:"audio" suppresses the sidecar-specific error hint exactly
-  // like kind:"text" does for 导入文稿. A video file (mp4/webm/mov/
-  // mkv/m4v) is routed the same way — importAudio.ts itself detects
-  // and extracts the audio track via ffmpeg.wasm before transcribing,
-  // this handler stays unaware of that distinction. importAudio never
-  // throws in practice (every awaited step already produces a
-  // zh-ready Error), but wrapped in try/catch anyway as the same
-  // last-resort net every other import path here uses.
-  const handleImportAudio = (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    for (const file of Array.from(files)) {
-      const jobId = `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-      setJobs((prev) =>
-        new Map(prev).set(jobId, {
-          filename: file.name,
-          progress: 0,
-          phase: "读取音频",
-          error: null,
-          kind: "audio",
-        }),
-      );
-
-      void (async () => {
-        try {
-          const { sessionId, warnings } = await importAudio({
-            file,
-            // No dialog step in this one-click flow to ask explicitly
-            // (unlike 导入文稿's ImportTranscriptDialog checkbox) — same
-            // settings.bilingualTranscript default that dialog itself
-            // seeds its checkbox from.
-            translate: settings.bilingualTranscript,
-            settings,
-            onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
-          });
-
-          await loadSession(sessionId);
-          await useApp.getState().hydrate();
-          showToast(
-            warnings.length > 0
-              ? `音频已转录，分析完成，${warnings[0]}`
-              : "音频已转录，分析完成",
-          );
-          setJobs((prev) => {
-            const next = new Map(prev);
-            next.delete(jobId);
-            return next;
-          });
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "音频导入失败";
-          patchJob(jobId, { error: msg, phase: "失败" });
-        }
-      })();
-    }
-  };
-
-  // 导入文稿 (#43): same job-row tracking + error-containment shape as
-  // handleImportFiles above — importTranscriptText never throws to
-  // React, but wrapped in try/catch anyway as a last-resort net,
-  // mirroring importAndTrack's own belt-and-suspenders callback
-  // design.
-  const handleImportTranscriptText = (opts: {
-    raw: string;
-    filename?: string;
-    translate: boolean;
-  }) => {
-    setImportTextOpen(false);
-    const label = opts.filename ?? "粘贴的文稿";
-    const jobId = `${label}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setJobs((prev) =>
-      new Map(prev).set(jobId, {
-        filename: label,
-        progress: 0,
-        phase: "解析中",
-        error: null,
-        kind: "text",
-      }),
-    );
-
-    const phaseLabel: Record<"parse" | "detect" | "translate", string> = {
-      parse: "解析",
-      detect: "检测",
-      translate: "翻译",
-    };
-
-    void (async () => {
-      try {
-        const { sessionId, warnings } = await importTranscriptText({
-          raw: opts.raw,
-          filename: opts.filename,
-          translate: opts.translate,
-          settings,
-          onProgress: (phase, done, total) => {
-            patchJob(jobId, {
-              progress: total > 0 ? done / total : 0,
-              phase: `${phaseLabel[phase]} ${done}/${total}`,
-            });
-          },
-        });
-
-        await loadSession(sessionId);
-        await useApp.getState().hydrate();
-        showToast(warnings.length > 0 ? `文稿已导入，分析完成，${warnings[0]}` : "文稿已导入，分析完成");
-        setJobs((prev) => {
-          const next = new Map(prev);
-          next.delete(jobId);
-          return next;
-        });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : "文稿导入失败";
-        patchJob(jobId, { error: msg, phase: "失败" });
-      }
-    })();
-  };
-
-  // 从视频链接导入（本地）(#43 phase 2c, LOCAL TIER ONLY): kind is left
-  // at its default ("recording") rather than getting its own value —
-  // this IS a sidecar job (yt-dlp download + the same job API the
-  // uploaded-file path uses), so the sidecar-unreachable error hint
-  // that "recording" rows already append is exactly appropriate here
-  // too, unlike "text"/"audio" which suppress it.
-  const handleImportUrl = (url: string) => {
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    setUrlImportOpen(false);
-    setUrlImportValue("");
-    setImportPickerOpen(false);
-
-    const jobId = `${trimmed}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setJobs((prev) =>
-      new Map(prev).set(jobId, {
-        filename: trimmed,
-        progress: 0,
-        phase: "下载中",
-        error: null,
-      }),
-    );
-
-    void importUrlAndTrack(trimmed, settings, {
-      onProgress: (progress, phase) => patchJob(jobId, { progress, phase }),
-      onDone: async (sessionId) => {
-        await loadSession(sessionId);
-        await useApp.getState().hydrate();
-        showToast("已导入并打开会话");
-        setJobs((prev) => {
-          const next = new Map(prev);
-          next.delete(jobId);
-          return next;
-        });
-      },
-      onError: (msg) => patchJob(jobId, { error: msg, phase: "失败" }),
-    });
-  };
-
-  // 从视频链接导入（本地）is gated on the SAME sidecar-reachability
-  // signal the 本地 Whisper entry's diarization status line already
-  // uses: undefined (not yet checked) treated as available so the
-  // entry doesn't flash disabled before the health check resolves;
-  // null (fetchSidecarHealth's explicit "unreachable" sentinel) is the
-  // only state that disables it. Preview tier (#61): irrelevant — the
-  // probe above never fires there, diarizationHealth stays undefined
-  // forever, so this alone would incorrectly read "reachable"; every
-  // sidecar-only row below also ORs in previewLocked to force disabled.
-  const sidecarReachable = diarizationHealth !== null;
-  // Preview tier (#61): sidecar-only rows (本地 Whisper upload, 从视频
-  // 链接导入) are unconditionally disabled+badged — never probe-gated —
-  // per the showroom posture (see the diarizationHealth useEffect
-  // above). Full tier is untouched: sidecarReachable's real probe
-  // result still governs everything below exactly as before.
-  const previewLocked = PREVIEW_TIER;
-
-  const chooseImportMode = (mode: ImportModeChoice) => {
-    importModeRef.current = mode;
-    setImportPickerOpen(false);
-    fileInputRef.current?.click();
-  };
 
   useEffect(() => {
     const q = query.trim();
@@ -464,131 +138,14 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
           <span className="font-medium text-fg">会议历史</span>
           <div className="flex items-center gap-1">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="audio/*,.m4a,.mp3,.wav,.flac,.mp4,.webm,.mov,.mkv,.m4v,video/*"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                if (importModeRef.current === "browser") {
-                  handleImportAudio(e.target.files);
-                } else {
-                  handleImportFiles(e.target.files);
-                }
-                e.target.value = "";
-              }}
-            />
-            <div ref={importPickerRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setImportPickerOpen((v) => !v)}
-                className="flex items-center gap-2 rounded-sm border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
-              >
-                <UploadSimple size={16} weight="regular" />
-                导入录音
-              </button>
-
-              {importPickerOpen && (
-                <div className="absolute right-0 top-full z-50 mt-2 w-64 rounded-none border border-edge2 bg-panel2 p-1.5 shadow-xl">
-                  <button
-                    type="button"
-                    onClick={() => chooseImportMode("browser")}
-                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3"
-                  >
-                    <div className="text-sm text-fg">本地转录（浏览器·音频/视频·不出本机）</div>
-                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      在浏览器内转录，文件不上传·支持音频与视频（自动提取音轨）·首次需下载模型
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={previewLocked}
-                    title={previewLocked ? PREVIEW_SIDECAR_TITLE : undefined}
-                    onClick={() => chooseImportMode("sidecar")}
-                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-                  >
-                    <div className="flex items-center gap-2 text-sm text-fg">
-                      本地 Whisper（推荐·不出本机）
-                      {previewLocked && <PreviewLockedBadge />}
-                    </div>
-                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      需启动本地 sidecar
-                    </div>
-                    {!previewLocked && diarizationHealth !== undefined && (
-                      <div className="mt-0.5 text-[10px] leading-[1.7]">
-                        {diarizationHealth?.diarization_ready ? (
-                          <span className="text-lab-cyan">说话人分离已就绪</span>
-                        ) : (
-                          <span className="text-mut2">
-                            说话人分离未启用 · 在设置中配置 HF Token
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setImportPickerOpen(false);
-                      setImportTextOpen(true);
-                    }}
-                    className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3"
-                  >
-                    <div className="flex items-center gap-2 text-sm text-fg">
-                      <FileText size={16} weight="regular" />
-                      导入文稿（粘贴或上传 .txt/.srt/.vtt）
-                    </div>
-                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      文字记录不出本机，仅检测/翻译请求经 API
-                    </div>
-                  </button>
-                  <div>
-                    <button
-                      type="button"
-                      disabled={previewLocked || !sidecarReachable}
-                      title={previewLocked ? PREVIEW_SIDECAR_TITLE : undefined}
-                      onClick={() => setUrlImportOpen((v) => !v)}
-                      className="w-full rounded-sm px-2.5 py-2 text-left hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-                    >
-                      <div className="flex items-center gap-2 text-sm text-fg">
-                        <LinkSimple size={16} weight="regular" />
-                        从视频链接导入（本地）
-                        {previewLocked && <PreviewLockedBadge />}
-                      </div>
-                      <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                        {!previewLocked && sidecarReachable
-                          ? "通过本地 sidecar 下载并转录，仅限本地版·请确保你有权处理该内容"
-                          : "需本地 Whisper sidecar（体验版不提供）"}
-                      </div>
-                    </button>
-                    {urlImportOpen && !previewLocked && sidecarReachable && (
-                      <div className="flex items-center gap-1.5 px-2.5 pb-2">
-                        <input
-                          type="text"
-                          autoFocus
-                          value={urlImportValue}
-                          onChange={(e) => setUrlImportValue(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") handleImportUrl(urlImportValue);
-                          }}
-                          placeholder="https://..."
-                          className="w-full min-w-0 rounded-sm border border-edge bg-panel2 px-2 py-1 text-xs text-fg placeholder:text-mut2 focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          disabled={!urlImportValue.trim()}
-                          onClick={() => handleImportUrl(urlImportValue)}
-                          className="shrink-0 rounded-sm border border-edge px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
-                        >
-                          确认
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+            <button
+              type="button"
+              onClick={() => setImportHubOpen(true)}
+              className="flex items-center gap-2 rounded-sm border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+            >
+              <UploadSimple size={16} weight="regular" />
+              导入
+            </button>
             <button
               type="button"
               onClick={onClose}
@@ -611,38 +168,42 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
         </div>
 
         <div className="scroll-thin flex-1 overflow-y-auto px-3 pb-4">
-          {jobs.size > 0 && (
+          {importRows.length > 0 && (
             <div className="mb-3 space-y-2">
-              {Array.from(jobs.entries()).map(([jobId, job]) => (
+              {importRows.map((task) => (
                 <div
-                  key={jobId}
+                  key={task.id}
                   className="rounded-none border border-edge bg-panel2 p-3"
                 >
                   <div className="flex items-center justify-between gap-2">
                     <span className="truncate text-sm text-fg">
-                      {job.filename}
+                      {task.label}
                     </span>
                     <span className="shrink-0 text-xs text-mut">
-                      {job.error ? "失败" : job.phase}
+                      {task.status === "error" ? "失败" : task.stage || "处理中"}
                     </span>
                   </div>
-                  {job.error ? (
-                    <div className="mt-2 text-xs text-warn-soft">
-                      {job.error}
-                      {job.kind !== "text" &&
-                        job.kind !== "audio" &&
-                        "，确认 sidecar 已启动且 --http-port 开启"}
+                  {task.status === "error" ? (
+                    <div className="mt-2 flex items-start justify-between gap-2 text-xs text-warn-soft">
+                      <span>{task.error}</span>
+                      <button
+                        type="button"
+                        onClick={() => dismissTask(task.id)}
+                        className="shrink-0 text-mut2 hover:text-fg"
+                      >
+                        忽略
+                      </button>
                     </div>
                   ) : (
                     <div className="mt-2 flex items-center gap-2">
                       <div className="h-1.5 flex-1 rounded-none bg-edge">
                         <div
                           className="h-full rounded-none bg-lab-green transition-all"
-                          style={{ width: `${Math.round(job.progress * 100)}%` }}
+                          style={{ width: `${Math.round((task.progress ?? 0) * 100)}%` }}
                         />
                       </div>
                       <span className="shrink-0 font-mono text-[11px] tabular-nums text-mut2">
-                        {Math.round(job.progress * 100)}%
+                        {Math.round((task.progress ?? 0) * 100)}%
                       </span>
                     </div>
                   )}
@@ -664,6 +225,16 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
                   ? "开一场会议或点「演示」，结束后会自动出现在这里。"
                   : "换个关键词试试。"}
               </div>
+              {sessions.length === 0 && (
+                <button
+                  type="button"
+                  onClick={() => setImportHubOpen(true)}
+                  className="mt-4 flex items-center gap-2 rounded-sm border border-edge px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
+                >
+                  <UploadSimple size={14} weight="regular" />
+                  或导入已有录音/文稿
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-2">
@@ -734,11 +305,7 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
         </div>
       </div>
 
-      <ImportTranscriptDialog
-        open={importTextOpen}
-        onClose={() => setImportTextOpen(false)}
-        onConfirm={handleImportTranscriptText}
-      />
+      <ImportHub open={importHubOpen} onClose={() => setImportHubOpen(false)} />
     </>
   );
 }
