@@ -48,3 +48,23 @@ export function decideVideoRouting(opts: {
     sidecarLocked: false,
   };
 }
+
+/** Confirm-time guard (#58 review fix 4): a file is staged with
+ * filePath = routing.defaultPath at THAT moment, which can go stale —
+ * the health probe is async, so a file staged while it still read
+ * `undefined` (optimistically "sidecar") can have the probe resolve to
+ * unreachable (health === null) before the user hits confirm. filePath
+ * state itself is never auto-reset when that happens, so without this
+ * the confirm button would still dispatch the sidecar path against a
+ * now-known-down sidecar. Coerces "sidecar" back to "browser" whenever
+ * `routing` says the sidecar isn't actually available; every other
+ * combination passes `chosen` through unchanged. Used both for the
+ * actual dispatch decision AND for the 文件 tab's selected-card
+ * styling, so a disabled sidecar card never renders as selected. */
+export function resolveImportPath(
+  chosen: ImportPath,
+  routing: VideoRoutingDecision,
+): ImportPath {
+  if (chosen === "sidecar" && !routing.sidecarAvailable) return "browser";
+  return chosen;
+}

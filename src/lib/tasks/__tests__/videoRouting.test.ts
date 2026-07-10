@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { decideVideoRouting } from "../videoRouting";
+import { decideVideoRouting, resolveImportPath, type VideoRoutingDecision } from "../videoRouting";
 
 describe("decideVideoRouting — sidecar-healthy × tier decision table (#58 design decision 6)", () => {
   it("preview tier: browser default, sidecar unavailable AND locked, regardless of health", () => {
@@ -41,5 +41,24 @@ describe("decideVideoRouting — sidecar-healthy × tier decision table (#58 des
       sidecarAvailable: true,
       sidecarLocked: false,
     });
+  });
+});
+
+describe("resolveImportPath — confirm-time coercion (#58 review fix 4)", () => {
+  function routing(overrides: Partial<VideoRoutingDecision>): VideoRoutingDecision {
+    return { defaultPath: "sidecar", sidecarAvailable: true, sidecarLocked: false, ...overrides };
+  }
+
+  it("chosen sidecar + sidecar actually available: passes through unchanged", () => {
+    expect(resolveImportPath("sidecar", routing({ sidecarAvailable: true }))).toBe("sidecar");
+  });
+
+  it("chosen sidecar + sidecar NOT available (staged optimistically, probe later resolved unreachable): coerces to browser", () => {
+    expect(resolveImportPath("sidecar", routing({ sidecarAvailable: false }))).toBe("browser");
+  });
+
+  it("chosen browser: always passes through unchanged, regardless of sidecar availability", () => {
+    expect(resolveImportPath("browser", routing({ sidecarAvailable: true }))).toBe("browser");
+    expect(resolveImportPath("browser", routing({ sidecarAvailable: false }))).toBe("browser");
   });
 });

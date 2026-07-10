@@ -25,8 +25,13 @@ import { FileAudio, FileText, LinkSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
-import { fetchSidecarHealth, importAndTrack, importUrlAndTrack } from "@/lib/stt/upload";
-import { importAudio, isVideoFile } from "@/lib/ingest/importAudio";
+import {
+  fetchSidecarHealth,
+  importAndTrack,
+  importUrlAndTrack,
+  withSidecarHint,
+} from "@/lib/stt/upload";
+import { importAudio, isVideoFile, isSupportedMediaFile } from "@/lib/ingest/importAudio";
 import { importTranscriptText } from "@/lib/ingest/importText";
 import {
   parseTranscript,
@@ -34,7 +39,7 @@ import {
   type ParsedTranscript,
 } from "@/lib/ingest/parseTranscript";
 import { runTracked, runTrackedAsync, type TaskKind } from "@/lib/tasks/registry";
-import { decideVideoRouting, type ImportPath } from "@/lib/tasks/videoRouting";
+import { decideVideoRouting, resolveImportPath, type ImportPath } from "@/lib/tasks/videoRouting";
 
 const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 sidecar";
 const FILE_ACCEPT = "audio/*,.m4a,.mp3,.wav,.flac,.mp4,.webm,.mov,.mkv,.m4v,video/*";
@@ -126,6 +131,19 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // Esc-to-close (#58 review fix 5) — matches the affordance the old
+  // 导入录音 popover this dialog replaced already had.
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open, onClose]);
+
   // Debounced live parse preview for the 文稿 tab.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -151,11 +169,27 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
   if (!open) return null;
 
   const routing = decideVideoRouting({ sidecarHealth: diarizationHealth, isPreviewTier: PREVIEW_TIER });
+  // Confirm-time coercion (#58 review fix 4): a file staged while the
+  // sidecar's health probe hadn't resolved yet (optimistic "sidecar"
+  // default) can go stale once it resolves unreachable — filePath
+  // itself doesn't auto-reset, so both the dispatch decision below and
+  // the file-path cards' selected-state styling read this derived
+  // value instead of the raw `filePath` state.
+  const effectiveFilePath = resolveImportPath(filePath, routing);
 
   const handleFilesPicked = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const list = Array.from(files);
-    setStagedFiles(list);
+    // Accept-list guard (#58 review fix 8): the native <input accept>
+    // is advisory only — reject anything that isn't actually audio/
+    // video BEFORE it can become a doomed transcription task.
+    const accepted = list.filter(isSupportedMediaFile);
+    const rejected = list.filter((f) => !isSupportedMediaFile(f));
+    if (rejected.length > 0) {
+      showToast(`不支持的文件类型，已跳过：${rejected.map((f) => f.name).join("、")}`);
+    }
+    if (accepted.length === 0) return;
+    setStagedFiles(accepted);
     setFilePath(routing.defaultPath);
   };
 
@@ -163,7 +197,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
     if (stagedFiles.length === 0) return;
     for (const file of stagedFiles) {
       const kind: TaskKind = isVideoFile(file) ? "import-video" : "import-audio";
-      if (filePath === "sidecar") {
+      if (effectiveFilePath === "sidecar") {
         runTracked(kind, file.name, (cb) => {
           void importAndTrack(file, settings, {
             onProgress: cb.onProgress,
@@ -174,7 +208,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                 showToast("已导入并打开会话");
               })();
             },
-            onError: cb.onError,
+            onError: (message) => cb.onError(withSidecarHint(message)),
           });
         });
       } else {
@@ -248,7 +282,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
             showToast("已导入并打开会话");
           })();
         },
-        onError: cb.onError,
+        onError: (message) => cb.onError(withSidecarHint(message)),
       });
     });
     onClose();
@@ -323,7 +357,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                     type="button"
                     onClick={() => setFilePath("browser")}
                     className={`rounded-sm border p-3 text-left text-sm transition-colors ${
-                      filePath === "browser"
+                      effectiveFilePath === "browser"
                         ? "border-act bg-panel3 text-fg"
                         : "border-edge text-fg hover:bg-panel3"
                     }`}
@@ -339,7 +373,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                     title={routing.sidecarLocked ? PREVIEW_SIDECAR_TITLE : undefined}
                     onClick={() => setFilePath("sidecar")}
                     className={`rounded-sm border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                      filePath === "sidecar"
+                      effectiveFilePath === "sidecar"
                         ? "border-act bg-panel3 text-fg"
                         : "border-edge text-fg hover:bg-panel3"
                     }`}

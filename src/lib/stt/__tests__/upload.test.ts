@@ -46,6 +46,8 @@ import {
   buildSessionFromSegments,
   ingestUrl,
   importUrlAndTrack,
+  withSidecarHint,
+  SIDECAR_UNREACHABLE_HINT,
   type PlainTranscriptSegment,
 } from "../upload";
 
@@ -613,5 +615,16 @@ describe("importUrlAndTrack — poll/build/save flow (#43 phase 2c, LOCAL TIER O
     );
     // Only the ingestUrl POST — no poll GET was ever attempted.
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("withSidecarHint — ImportHub sidecar-path error hint (#58 review fix 2)", () => {
+  it("appends SIDECAR_UNREACHABLE_HINT to any message", () => {
+    expect(withSidecarHint("上传失败（500）")).toBe(`上传失败（500）${SIDECAR_UNREACHABLE_HINT}`);
+    expect(withSidecarHint("转录失败")).toBe(`转录失败${SIDECAR_UNREACHABLE_HINT}`);
+  });
+
+  it("the hint text itself is the exact pre-#58 HistoryDrawer copy", () => {
+    expect(SIDECAR_UNREACHABLE_HINT).toBe("，确认 sidecar 已启动且 --http-port 开启");
   });
 });

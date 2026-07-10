@@ -28,7 +28,7 @@ import { transcribeInBrowser, type TranscribedSegment } from "./whisperBrowser";
 import { isVideoFile, extractAudioFromVideo } from "./ffmpegExtract";
 
 export { mapChunksToSegments } from "./whisperBrowser";
-export { isVideoFile } from "./ffmpegExtract";
+export { isVideoFile, isSupportedMediaFile } from "./ffmpegExtract";
 
 // onnx-community/whisper-base (#43 settled decision): good enough
 // accuracy for meeting speech, small enough to be a reasonable first-

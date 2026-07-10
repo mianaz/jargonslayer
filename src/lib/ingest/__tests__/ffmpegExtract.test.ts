@@ -38,6 +38,7 @@ vi.mock("@ffmpeg/util", () => ({
 
 import {
   isVideoFile,
+  isSupportedMediaFile,
   extractAudioFromVideo,
   VideoTooLargeError,
   VideoExtractError,
@@ -76,6 +77,30 @@ describe("isVideoFile", () => {
   it("returns false for a file with no matching extension and a non-video MIME", () => {
     expect(isVideoFile({ name: "notes.txt", type: "text/plain" })).toBe(false);
     expect(isVideoFile({ name: "noextension", type: "" })).toBe(false);
+  });
+});
+
+describe("isSupportedMediaFile — ImportHub 文件 tab staging guard (#58 review fix 8)", () => {
+  it("accepts every video extension/MIME isVideoFile already accepts", () => {
+    expect(isSupportedMediaFile({ name: "clip.mp4", type: "" })).toBe(true);
+    expect(isSupportedMediaFile({ name: "clip.bin", type: "video/mp4" })).toBe(true);
+  });
+
+  it("accepts audio/* MIME and the spec'd audio extensions, regardless of MIME", () => {
+    expect(isSupportedMediaFile({ name: "meeting.bin", type: "audio/mpeg" })).toBe(true);
+    for (const ext of ["m4a", "mp3", "wav", "flac"]) {
+      expect(isSupportedMediaFile({ name: `meeting.${ext}`, type: "" })).toBe(true);
+      expect(isSupportedMediaFile({ name: `meeting.${ext.toUpperCase()}`, type: "" })).toBe(true);
+    }
+  });
+
+  it("rejects a PDF (wrong MIME AND wrong extension) — the exact doomed-task case", () => {
+    expect(isSupportedMediaFile({ name: "slides.pdf", type: "application/pdf" })).toBe(false);
+  });
+
+  it("rejects an unknown extension with no usable MIME", () => {
+    expect(isSupportedMediaFile({ name: "mystery.xyz", type: "" })).toBe(false);
+    expect(isSupportedMediaFile({ name: "noextension", type: "" })).toBe(false);
   });
 });
 
