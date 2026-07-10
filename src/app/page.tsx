@@ -168,7 +168,7 @@ export default function Home() {
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">
-          <TranscriptPanel />
+          <TranscriptPanel onDemo={() => void startDemo()} />
         </section>
 
         {!focusMode && (

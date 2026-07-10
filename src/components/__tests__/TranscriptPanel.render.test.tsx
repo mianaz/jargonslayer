@@ -19,7 +19,7 @@
 // memo() never triggers at all.
 
 import { act } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import type { ExpressionCard, TermCard, TranscriptSegment } from "../../lib/types";
@@ -376,5 +376,68 @@ describe("TranscriptPanel InterimLine throttle correctness", () => {
     // (scroll staleness fix) — a stale `stickToBottom=true` captured
     // when the timer was scheduled would have reset this to 1000.
     expect(scrollEl.scrollTop).toBe(10);
+  });
+});
+
+// ---- E2E batch item 5: honest empty state gets an optional demo CTA
+// (onDemo prop) — only rendered when the caller actually supplies one,
+// so every pre-existing `<TranscriptPanel />` call site keeps working
+// unchanged. ----
+
+describe("TranscriptPanel — demo CTA in the empty state", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ segments: [], status: "idle" });
+  });
+
+  it("renders btn-demo-empty when onDemo is supplied and fires it on click", async () => {
+    (
+      globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ segments: [], status: "idle" });
+    const onDemo = vi.fn();
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(<TranscriptPanel onDemo={onDemo} />);
+    });
+
+    const btn = container!.querySelector('[data-testid="btn-demo-empty"]');
+    expect(btn).not.toBeNull();
+
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onDemo).toHaveBeenCalledTimes(1);
+  });
+
+  it("omits btn-demo-empty entirely when onDemo is not supplied", async () => {
+    (
+      globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ segments: [], status: "idle" });
+
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+
+    expect(container!.querySelector('[data-testid="btn-demo-empty"]')).toBeNull();
   });
 });

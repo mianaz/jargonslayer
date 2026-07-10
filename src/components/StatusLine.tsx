@@ -29,6 +29,8 @@ export default function StatusLine() {
   const terms = useApp((s) => s.terms);
   const detectMode = useApp((s) => s.detectMode);
   const engine = useApp((s) => s.settings.engine);
+  const aiDetect = useApp((s) => s.settings.aiDetect);
+  const updateSettings = useApp((s) => s.updateSettings);
 
   const isListening = status === "listening";
   const modeLabel =
@@ -53,9 +55,9 @@ export default function StatusLine() {
 
   const posture = ENGINE_POSTURE[engine] ?? "local";
   const privacyLabel =
-    posture === "local" ? "音频未离开本机" : "音频经浏览器厂商云端识别";
+    posture === "local" ? "音频未离开本机" : "音频将经过浏览器厂商云端识别";
   const privacyLabelShort =
-    posture === "local" ? "音频未离开本机" : "音频经厂商云端";
+    posture === "local" ? "音频未离开本机" : "音频将经厂商云端";
 
   const count = cards.length + terms.length;
 
@@ -72,11 +74,32 @@ export default function StatusLine() {
         <span className="hidden sm:inline">{modeLabel}</span>
         <span className="sm:hidden">{modeLabelShort}</span>
       </span>
-      <span className="whitespace-nowrap px-2 sm:px-3">
-        {DETECT_MODE_LABEL[detectMode] ?? DETECT_MODE_LABEL.off}
-      </span>
+      {detectMode === "off" ? (
+        <span className="whitespace-nowrap px-2 sm:px-3">
+          {DETECT_MODE_LABEL.off}
+        </span>
+      ) : (
+        // Clickable (E2E feedback): flips settings.aiDetect — the label
+        // itself keeps deriving from detectMode (the scheduler's own
+        // derived runtime state, see detect/scheduler.ts), not from the
+        // setting directly, so a click reflects a moment later once the
+        // scheduler observes the new setting on its next segment/batch.
+        <button
+          type="button"
+          data-testid="statusline-detect-toggle"
+          onClick={() => updateSettings({ aiDetect: !aiDetect })}
+          title="点击切换 AI 检测（词典检测始终开启）"
+          className="flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3"
+        >
+          {DETECT_MODE_LABEL[detectMode]}
+        </button>
+      )}
       <span className="text-mut2">|</span>
-      <span className="min-w-0 truncate px-2 sm:px-3">
+      <span
+        className={`min-w-0 truncate px-2 sm:px-3 ${
+          posture === "local" ? "text-lab-green" : "text-warn-soft"
+        }`}
+      >
         <span className="hidden sm:inline">{privacyLabel}</span>
         <span className="sm:hidden">{privacyLabelShort}</span>
       </span>

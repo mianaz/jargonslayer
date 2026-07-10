@@ -268,9 +268,9 @@ function EnginePostureChip() {
   const isLocal = opt.posture === "local";
   return (
     <span
-      title={isLocal ? "音频只在本机处理，不出设备" : "音频会离开设备，经云端识别"}
+      title={isLocal ? "音频只在本机处理，不出设备" : "音频将经过浏览器厂商云端识别"}
       className={`hidden items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${
-        isLocal ? "border-lab-orange/30 text-lab-orange" : "border-warn-soft/30 text-warn-soft"
+        isLocal ? "border-lab-green/30 text-lab-green" : "border-warn-soft/30 text-warn-soft"
       }`}
     >
       {POSTURE_LABEL[opt.posture]}
@@ -278,16 +278,17 @@ function EnginePostureChip() {
   );
 }
 
-// ≡ 汉堡菜单 (v3.3 汉堡收纳): 演示/历史/学习中心/设置/帮助 live here now.
-// Old testids (btn-demo/btn-history/btn-review/btn-settings/btn-help)
-// are preserved unchanged on the items themselves — only their
-// container/visibility moved, not their identity.
+// ≡ 汉堡菜单 (v3.3 汉堡收纳): 演示/学习中心/设置/帮助 live here now — 历史
+// moved back out to its own standalone header button (E2E feedback:
+// history is used often enough to deserve one click, not two). Old
+// testids (btn-demo/btn-review/btn-settings/btn-help) are preserved
+// unchanged on the items themselves — only their container/visibility
+// moved, not their identity.
 function HamburgerMenu({
   onDemo,
-  onOpenHistory,
   onOpenSettings,
   onOpenHelp,
-}: Pick<HeaderProps, "onDemo" | "onOpenHistory" | "onOpenSettings" | "onOpenHelp">) {
+}: Pick<HeaderProps, "onDemo" | "onOpenSettings" | "onOpenHelp">) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const status = useApp((s) => s.status);
@@ -350,19 +351,6 @@ function HamburgerMenu({
               演示
             </button>
           )}
-          <button
-            type="button"
-            role="menuitem"
-            data-testid="btn-history"
-            onClick={() => {
-              setOpen(false);
-              onOpenHistory();
-            }}
-            className={itemCls}
-          >
-            <ClockCounterClockwise size={16} weight="regular" />
-            历史
-          </button>
           <a
             href={withBase("/review")}
             role="menuitem"
@@ -518,9 +506,22 @@ export default function Header({
             </span>
           )}
 
+          {/* 历史 (E2E feedback): standalone button, directly left of ≡ —
+              used often enough that burying it a menu-item deep cost an
+              extra click every time. Identical footprint to ≡ itself. */}
+          <button
+            type="button"
+            data-testid="btn-history"
+            onClick={onOpenHistory}
+            aria-label="历史"
+            title="历史会话"
+            className="flex h-9 w-9 items-center justify-center border border-edge text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg"
+          >
+            <ClockCounterClockwise size={18} weight="regular" />
+          </button>
+
           <HamburgerMenu
             onDemo={onDemo}
-            onOpenHistory={onOpenHistory}
             onOpenSettings={onOpenSettings}
             onOpenHelp={onOpenHelp}
           />

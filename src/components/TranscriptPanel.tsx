@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { PencilSimple } from "@phosphor-icons/react";
+import { PencilSimple, Play } from "@phosphor-icons/react";
 import { useApp } from "../lib/store";
 import {
   buildHighlightMatcher,
@@ -594,7 +594,15 @@ export function InterimLine({ onGrow }: { onGrow?: () => void }) {
   );
 }
 
-export default function TranscriptPanel() {
+export interface TranscriptPanelProps {
+  // Empty-state demo CTA (E2E feedback): optional so every existing
+  // render-test call site (`<TranscriptPanel />`, no props) keeps
+  // working unchanged — the button itself only renders when a handler
+  // is actually supplied.
+  onDemo?: () => void;
+}
+
+export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
   const segments = useApp((s) => s.segments);
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
@@ -934,15 +942,25 @@ export default function TranscriptPanel() {
         {isEmpty ? (
           <div className="flex h-full flex-col items-center justify-center px-6 text-center">
             <div className="rounded-sm border border-edge bg-panel2 px-4 py-2 font-mono text-sm text-mut">
-              <span className="text-lab-green">$</span> jargonslayer --listen
+              <span className="text-lab-green">$</span>
               <span className="cursor-block ml-1 inline-block h-[1em] w-[0.55em] translate-y-[0.15em] bg-mut align-baseline">
                 &nbsp;
               </span>
             </div>
             <div className="mt-3 max-w-sm text-[15px] leading-[26px] text-mut">
-              选择上方引擎并点「开始监听」，或在右上角 ≡ 菜单里点「演示」先看效果，演示无需麦克风与
-              API Key。
+              选择上方引擎并点「开始监听」，或先看演示——无需麦克风与 API Key。
             </div>
+            {onDemo && (
+              <button
+                type="button"
+                data-testid="btn-demo-empty"
+                onClick={onDemo}
+                className="mt-4 flex items-center gap-1.5 border border-edge bg-panel2 px-4 py-1.5 font-mono text-sm text-fg hover:bg-panel3"
+              >
+                <Play size={14} weight="regular" />
+                演示
+              </button>
+            )}
           </div>
         ) : (
           <>
