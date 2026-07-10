@@ -1,6 +1,6 @@
 "use client";
 
-// SRS due-review deck (#48 step 2) — 复习到期 mode. Reuses PracticeDeck's
+// SRS due-review deck (#48 step 2) — 到期复习 mode. Reuses PracticeDeck's
 // flip-card visuals (FlashCard) but grades on the 3-button SM-2-lite
 // scale (不认识/模糊/认识) instead of PracticeDeck's mastered/not toggle.
 // Deliberately does NOT replace 翻卡浏览 — the two modes ship in

@@ -147,7 +147,7 @@ async function persist(next: Record<string, LearnRecord>): Promise<void> {
     // automatic reload attempt before reaching here (option a) — this
     // only fires when that reload attempt ALSO failed.
     throw new LearnsetPersistError(
-      "学习记录未能同步，已跳过本次保存以避免覆盖已有数据",
+      "同步失败，已跳过保存以防覆盖",
     );
   }
   try {

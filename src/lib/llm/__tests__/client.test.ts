@@ -395,7 +395,7 @@ describe("detectApi — Next.js path status-code failures log to the diag ring b
 
   it("a 429 response throws RateLimitApiError and also logs a diag entry", async () => {
     mockFetch.mockResolvedValue(
-      errorResponseJson({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429),
+      errorResponseJson({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429),
     );
 
     await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toBeInstanceOf(

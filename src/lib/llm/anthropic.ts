@@ -803,7 +803,7 @@ export function mapLlmError(err: unknown): MappedError {
     return { status: 401, body: { error: "API Key 无效", code: "no_key" } };
   }
   if (err instanceof Anthropic.RateLimitError) {
-    return { status: 429, body: { error: "请求过于频繁，请稍后再试", code: "rate_limit" } };
+    return { status: 429, body: { error: "请求过于频繁，请稍后重试", code: "rate_limit" } };
   }
   if (err instanceof OpenAiCompatError) {
     if (err.status === 400 && err.message === "缺少 Base URL") {
@@ -813,7 +813,7 @@ export function mapLlmError(err: unknown): MappedError {
       return { status: 401, body: { error: "API Key 无效", code: "no_key" } };
     }
     if (err.status === 429) {
-      return { status: 429, body: { error: "请求过于频繁，请稍后再试", code: "rate_limit" } };
+      return { status: 429, body: { error: "请求过于频繁，请稍后重试", code: "rate_limit" } };
     }
     return { status: 502, body: { error: err.message, code: "upstream" } };
   }

@@ -874,7 +874,7 @@ export const useApp = create<AppState>((set, get) => ({
         // persist. Surface it rather than silently pretending it
         // succeeded (learn/store.ts stays pure of UI and just throws).
         console.warn("[store] addCustomEntry SRS enrollment persist failed", err);
-        get().showToast("保存失败，学习记录未能持久化");
+        get().showToast("学习记录保存失败");
       }
     }
   },
@@ -951,7 +951,7 @@ export const useApp = create<AppState>((set, get) => ({
         // later read of get().learnset[key] would be stale relative
         // to what upsertLearnRecord/removeLearnRecord will use next.
         set({ learnset: { ...learnset.getCachedLearnset() } });
-        get().showToast("保存失败，本次标记未能持久化");
+        get().showToast("本次标记保存失败");
         return;
       }
       set({ learnset: { ...map } });
@@ -987,7 +987,7 @@ export const useApp = create<AppState>((set, get) => ({
           },
         });
       } else {
-        get().showToast("已记一次熟悉");
+        get().showToast("熟悉度 +1");
       }
     });
   },
@@ -1006,7 +1006,7 @@ export const useApp = create<AppState>((set, get) => ({
       set({ learnset: { ...map } });
     } catch (err) {
       console.warn("[store] unsuppressLearnRecord persist failed", err);
-      get().showToast("保存失败，恢复提示未能持久化");
+      get().showToast("恢复提示保存失败");
     }
   },
 
@@ -1030,7 +1030,7 @@ export const useApp = create<AppState>((set, get) => ({
       } catch (err) {
         console.warn("[store] gradeReview persist failed", err);
         set({ learnset: { ...learnset.getCachedLearnset() } });
-        get().showToast("保存失败，本次评分未能持久化");
+        get().showToast("本次评分保存失败");
         return;
       }
       set({ learnset: { ...map } });

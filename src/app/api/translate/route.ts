@@ -76,7 +76,7 @@ export async function POST(req: Request) {
   // req/min at this batch size (6 segments/1.5s debounce); 30/min
   // leaves headroom for two tabs.
   if (cfg.isServerKey && !allowRequest(`translate:${clientIp(req)}`, 30)) {
-    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
+    return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
   }
 
   try {

@@ -16,7 +16,7 @@ let rejectionListener: ((event: PromiseRejectionEvent) => void) | null = null;
 function describeReason(reason: unknown): string {
   if (reason instanceof Error) return reason.message;
   if (typeof reason === "string") return reason;
-  return "未知的未处理 Promise 拒绝";
+  return "未处理的 Promise 异常（原因未知）";
 }
 
 /** Idempotent — safe to call from a component effect that may run

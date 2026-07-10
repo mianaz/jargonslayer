@@ -1,7 +1,7 @@
 "use client";
 
 // Study center: cross-session stats + two review modes over the
-// learn-set — 复习到期 (SRS due-driven, #48 step 2) and 翻卡浏览 (the
+// learn-set — 到期复习 (SRS due-driven, #48 step 2) and 翻卡浏览 (the
 // original light flip-through practice over the personal glossary,
 // unchanged). Can be opened directly (bookmark, new tab), so it
 // hydrates the store itself if needed.
@@ -17,7 +17,7 @@ import { withBase } from "@/lib/basePath";
 type ReviewMode = "due" | "browse";
 
 const MODE_OPTIONS: { value: ReviewMode; label: string }[] = [
-  { value: "due", label: "复习到期" },
+  { value: "due", label: "到期复习" },
   { value: "browse", label: "翻卡浏览" },
 ];
 

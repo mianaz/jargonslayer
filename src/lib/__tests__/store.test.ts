@@ -834,7 +834,7 @@ describe("learn-set persistence failures surface a visible error, never a succes
 
     await useApp.getState().markKnown("expression", "circle back", "vote");
 
-    expect(useApp.getState().toast).toBe("保存失败，本次标记未能持久化");
+    expect(useApp.getState().toast).toBe("本次标记保存失败");
     expect(useApp.getState().learnset["expression:circle back"]).toBeUndefined();
   });
 
@@ -853,7 +853,7 @@ describe("learn-set persistence failures surface a visible error, never a succes
 
     await useApp.getState().gradeReview("expression", "circle back", 2);
 
-    expect(useApp.getState().toast).toBe("保存失败，本次评分未能持久化");
+    expect(useApp.getState().toast).toBe("本次评分保存失败");
     expect(useApp.getState().cards).toEqual([liveCard]); // untouched — no auto-suppression ran
   });
 });

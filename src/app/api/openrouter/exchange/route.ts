@@ -29,7 +29,7 @@ export async function POST(req: Request) {
   // Abuse guard: this endpoint takes no API key of its own, so it's
   // otherwise an open proxy to OpenRouter's exchange endpoint.
   if (!allowRequest(`openrouter-exchange:${clientIp(req)}`, 10)) {
-    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
+    return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
   }
 
   let json: unknown;

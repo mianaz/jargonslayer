@@ -80,7 +80,7 @@ export function buildDiagnosticReport(settings: Settings): string {
     `浏览器: ${ua}`,
     `主题: ${settings.themeId} · 界面模式: ${settings.uiMode}`,
     "",
-    "## 设置摘要（已脱敏，不含任何 Key/Token 原文）",
+    "## 设置摘要（已脱敏，不含任何 Key/Token 明文）",
     "```json",
     JSON.stringify(summarizeSettings(settings), null, 2),
     "```",

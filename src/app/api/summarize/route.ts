@@ -390,7 +390,7 @@ export async function POST(req: Request) {
   // Shared server credential: one summary spawns several upstream
   // calls (summary + chunked translation + sweep), so keep this tight.
   if (cfg.isServerKey && !allowRequest(`summarize:${clientIp(req)}`, 4)) {
-    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
+    return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
   }
   const apiKey = cfg.apiKey;
   const llm: LlmConfig = {

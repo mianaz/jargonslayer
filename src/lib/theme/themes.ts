@@ -271,7 +271,7 @@ export const GRIMOIRE_THEME: ThemeDefinition = {
 // cathedral" mood rather than left unthemed.
 export const NOIR_THEME: ThemeDefinition = {
   id: "noir",
-  label: "黑色电影（黑金）",
+  label: "黑金（黑色电影）",
   scheme: "dark",
   tokens: {
     ink: "#050505", // --black, verbatim (page canvas)

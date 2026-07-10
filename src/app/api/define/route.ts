@@ -122,7 +122,7 @@ export async function POST(req: Request) {
     return errorBody({ error: "缺少 Base URL", code: "bad_request" }, 400);
   }
   if (cfg.isServerKey && !allowRequest(`define:${clientIp(req)}`, 10)) {
-    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
+    return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
   }
 
   try {

@@ -39,7 +39,7 @@ export class NoKeyError extends Error {
 }
 
 export class RateLimitApiError extends Error {
-  constructor(message = "请求过于频繁，请稍后再试") {
+  constructor(message = "请求过于频繁，请稍后重试") {
     super(message);
     this.name = "RateLimitApiError";
   }
@@ -112,7 +112,7 @@ async function throwForStatus(res: Response, ctx: RequestErrorContext): Promise<
     throw new NoKeyError(msg);
   }
   if (res.status === 429) {
-    const msg = body?.error ?? "请求过于频繁，请稍后再试";
+    const msg = body?.error ?? "请求过于频繁，请稍后重试";
     diagLog("error", ctx.tag, msg, detail);
     throw new RateLimitApiError(msg);
   }
@@ -156,8 +156,8 @@ async function detectViaNext(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "检测请求超时", errorDetail(ctx));
-      throw new UpstreamError("检测请求超时");
+      diagLog("error", ctx.tag, "检测请求超时，请稍后重试", errorDetail(ctx));
+      throw new UpstreamError("检测请求超时，请稍后重试");
     }
     diagLog("error", ctx.tag, "检测请求失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("检测请求失败，请检查网络连接");
@@ -193,8 +193,8 @@ export async function summarizeApi(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "生成报告超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("生成报告超时，请稍后重试");
+      diagLog("error", ctx.tag, "报告生成超时，请稍后重试", errorDetail(ctx));
+      throw new UpstreamError("报告生成超时，请稍后重试");
     }
     diagLog("error", ctx.tag, "报告生成失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("报告生成失败，请检查网络连接");
@@ -234,8 +234,8 @@ async function defineViaNext(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "解释请求超时", errorDetail(ctx));
-      throw new UpstreamError("解释请求超时");
+      diagLog("error", ctx.tag, "解释请求超时，请稍后重试", errorDetail(ctx));
+      throw new UpstreamError("解释请求超时，请稍后重试");
     }
     diagLog("error", ctx.tag, "解释请求失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("解释请求失败，请检查网络连接");
@@ -442,8 +442,8 @@ export async function translateApi(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "翻译请求超时", errorDetail(ctx));
-      throw new UpstreamError("翻译请求超时");
+      diagLog("error", ctx.tag, "翻译请求超时，请稍后重试", errorDetail(ctx));
+      throw new UpstreamError("翻译请求超时，请稍后重试");
     }
     diagLog("error", ctx.tag, "翻译请求失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("翻译请求失败，请检查网络连接");

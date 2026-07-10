@@ -23,7 +23,7 @@ vi.mock("../../lib/llm/client", () => ({
     }
   },
   RateLimitApiError: class RateLimitApiError extends Error {
-    constructor(message = "请求过于频繁，请稍后再试") {
+    constructor(message = "请求过于频繁，请稍后重试") {
       super(message);
       this.name = "RateLimitApiError";
     }

@@ -81,7 +81,7 @@ export async function POST(req: Request) {
   // Shared server credential: budget the caller (live detection fires
   // every few seconds, so this is the most generous of the three).
   if (cfg.isServerKey && !allowRequest(`detect:${clientIp(req)}`, 20)) {
-    return errorBody({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429);
+    return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
   }
 
   try {
