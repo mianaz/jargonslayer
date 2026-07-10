@@ -283,6 +283,22 @@ export interface TaskLlmConfig {
 }
 
 export interface Settings {
+  // ---- progressive disclosure (#62) ----
+  // Governs how much of SettingsDialog renders: "simple" (default,
+  // fleet-wide) hides advanced-only sections/rows (LLM/BYOK + per-task
+  // models, 说话人分离, 数据与联动, 订阅直连, dictionary packs,
+  // confidence tuning); "advanced" shows everything (simple ∪
+  // advanced-only, never a disjoint view). See lib/settingsSections.ts
+  // for the section→level map and shouldAutoPromoteToAdvanced, which
+  // forces this to "advanced" whenever an advanced-only field already
+  // deviates from its default — nothing a user relies on is ever
+  // hidden. Toggled immediately via the dialog header's 简单/高级
+  // control — a pure view preference, applied+persisted outside the
+  // draft/保存 flow (see SettingsDialog.tsx). migrateSettings's
+  // defaults-fold handles absence on old settings blobs; no migration
+  // code needed.
+  uiMode: "simple" | "advanced";
+
   engine: STTEngineKind;
   micId?: string;
   language: string; // BCP-47, for Web Speech API
@@ -409,6 +425,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  uiMode: "simple",
   engine: "demo",
   language: "en-US",
   whisperUrl: "ws://localhost:8765",

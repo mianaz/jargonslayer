@@ -315,6 +315,30 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
   });
 });
 
+describe("migrateSettings — #62 uiMode persisted toggle roundtrip", () => {
+  it("fresh install (no saved uiMode) defaults to simple via the defaults-fold, no migration code", () => {
+    expect(migrateSettings(null).uiMode).toBe("simple");
+    expect(migrateSettings(undefined).uiMode).toBe("simple");
+    expect(migrateSettings({} as never).uiMode).toBe("simple");
+  });
+
+  it("a persisted uiMode:'advanced' round-trips through the fold unchanged", () => {
+    const s = migrateSettings({ uiMode: "advanced" } as never);
+    expect(s.uiMode).toBe("advanced");
+  });
+
+  it("a persisted uiMode:'simple' round-trips through the fold unchanged", () => {
+    const s = migrateSettings({ uiMode: "simple" } as never);
+    expect(s.uiMode).toBe("simple");
+  });
+
+  it("uiMode folds independently of other saved fields", () => {
+    const s = migrateSettings({ uiMode: "advanced", language: "en-GB" } as never);
+    expect(s.uiMode).toBe("advanced");
+    expect(s.language).toBe("en-GB");
+  });
+});
+
 describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
   function withEngine(engine: Settings["engine"]): Settings {
     return { ...DEFAULT_SETTINGS, engine };

@@ -38,6 +38,11 @@ import type {
 } from "@/lib/types";
 import { withBase } from "@/lib/basePath";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
+import {
+  isSectionVisible,
+  SETTINGS_UI_LEVELS,
+  shouldAutoPromoteToAdvanced,
+} from "@/lib/settingsSections";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
 import { PREVIEW_LIVE_MODELS, PREVIEW_SUMMARY_MODELS, PREVIEW_TIER } from "@/lib/deployTier";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
@@ -170,6 +175,12 @@ const TRANSCRIPT_LEADING_OPTIONS: { value: Settings["transcriptLeading"]; label:
   { value: "compact", label: "紧凑" },
   { value: "standard", label: "标准" },
   { value: "relaxed", label: "宽松" },
+];
+
+// #62 progressive disclosure: dialog-header segmented control.
+const UI_MODE_OPTIONS: { value: Settings["uiMode"]; label: string }[] = [
+  { value: "simple", label: "简单" },
+  { value: "advanced", label: "高级" },
 ];
 
 // Primary-only preset extras: applied to draft.detectModel/
@@ -429,6 +440,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // the user never opens this dialog. Mirrors the dictionary.ts
   // registry-pattern comment (see setEnabledPacks there).
   useEffect(() => {
+    // #62 progressive disclosure: auto-promote simple → advanced on
+    // first render if the user already relies on an advanced-only
+    // setting (BYOK key, task overrides, webhook, filtered packs,
+    // subscription-direct, diarization, custom confidence, …) — pure,
+    // deterministic, re-derived every mount, never a stored migration
+    // flag (see shouldAutoPromoteToAdvanced's own doc comment).
+    // Persisted immediately via updateSettings, same as the header
+    // toggle itself — uiMode is a view preference, kept OUT of the
+    // draft/保存 flow (see the toggle's own comment below).
+    if (settings.uiMode === "simple" && shouldAutoPromoteToAdvanced(settings)) {
+      updateSettings({ uiMode: "advanced" });
+    }
     setEnabledPacks(settings.enabledPacks);
     // Remote packs (#20) have no store.hydrate() hook (this worker
     // doesn't own store.ts), so they're bootstrapped here — and again,
@@ -749,15 +772,44 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // disabled (zh-only for now; more languages later, see Settings.
   // explainLanguage).
   const bilingualTranscriptAvailable = draft.explainLanguage !== "en";
+  // #62 progressive disclosure: the dialog's current level. Read from
+  // the LIVE settings (not draft) — the header toggle below writes
+  // straight through updateSettings, outside the draft/保存 flow (a
+  // pure view preference, same posture as themeId's live-apply-on-
+  // write, see updateSettings' own side effects).
+  const level = settings.uiMode;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
       <div className="scroll-thin max-h-[85vh] w-[540px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-5">
-        <div className="mb-4 text-lg font-semibold text-fg">设置</div>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="text-lg font-semibold text-fg">设置</div>
+          {/* 简单/高级 segmented control (#62): applied + persisted
+             immediately via updateSettings, deliberately OUT of the
+             draft/保存 flow — this toggles what's currently RENDERED in
+             this already-open dialog, so it can't wait for 保存 the way
+             every other field here does; it behaves like a pure view
+             preference (same immediate-apply posture Header.tsx's own
+             direct updateSettings calls already use for engine). */}
+          <div className="flex items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5">
+            {UI_MODE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => updateSettings({ uiMode: opt.value })}
+                className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
+                  level === opt.value ? "bg-panel3 text-fg" : "text-mut hover:text-fg"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         <div className="space-y-6">
-          {/* 转录引擎 */}
-          <section className="space-y-3">
+          {/* 转录引擎 — simple */}
+          <section className="space-y-3" data-ui-level={SETTINGS_UI_LEVELS.engine}>
             <SectionHeading>转录引擎</SectionHeading>
             <div className="grid grid-cols-2 gap-2">
               {ENGINE_CARDS.map((opt) => {
@@ -846,13 +898,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
           </section>
 
-          {/* 说话人分离 — preview tier (#61): the entire section needs
-             the local sidecar (HF Token pairs with sidecar-side
-             pyannote, 检测状态 probes the sidecar, 实时说话人分离 only runs
-             through the sidecar's ws pass), so it's disabled as ONE
-             group with a single badge on the heading rather than
-             per-field. */}
-          <section className="space-y-3 border-t border-edge pt-5">
+          {/* 说话人分离 — advanced. preview tier (#61): the entire
+             section needs the local sidecar (HF Token pairs with
+             sidecar-side pyannote, 检测状态 probes the sidecar, 实时说话人
+             分离 only runs through the sidecar's ws pass), so it's
+             disabled as ONE group with a single badge on the heading
+             rather than per-field. */}
+          {isSectionVisible(level, SETTINGS_UI_LEVELS.diarization) && (
+          <section
+            className="space-y-3 border-t border-edge pt-5"
+            data-ui-level={SETTINGS_UI_LEVELS.diarization}
+          >
             <div className="flex items-center gap-2">
               <SectionHeading>说话人分离</SectionHeading>
               {PREVIEW_TIER && <PreviewLockedBadge />}
@@ -962,8 +1018,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
           </section>
+          )}
 
-          {/* AI 检测 */}
+          {/* AI 检测 — mixed section, tagged row-by-row below */}
           <section className="space-y-3 border-t border-edge pt-5">
             <SectionHeading>AI 检测</SectionHeading>
 
@@ -973,7 +1030,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                unmounted — because the hosted build's detect/summarize
                calls run on OUR server key, not the visitor's own. */}
             {PREVIEW_TIER && (
-              <div className="space-y-1">
+              <div className="space-y-1" data-ui-level={SETTINGS_UI_LEVELS.aiDetectPreviewBanner}>
                 <div className="flex items-center gap-2">
                   <PreviewLockedBadge />
                   <span className="text-xs leading-[1.7] text-mut2">
@@ -993,58 +1050,70 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            <CredentialFields
-              idPrefix="primary"
-              provider={draft.provider}
-              baseUrl={draft.baseUrl}
-              apiKey={draft.apiKey}
-              onSelectPreset={handleSelectPreset}
-              onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
-              onApiKeyChange={(apiKey) => patch({ apiKey })}
-              apiKeyPlaceholder="sk-…"
-              apiKeyHint="仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
-              presets={PROVIDER_PRESETS}
-              disabled={PREVIEW_TIER}
-              onConnectOpenRouter={() => void handleConnectOpenRouter()}
-              models={[
-                {
-                  key: "detect",
-                  label: "检测模型",
-                  value: draft.detectModel,
-                  onChange: (v) => patch({ detectModel: v }),
-                  staticOptions: DETECT_MODEL_OPTIONS,
-                  previewOptions: PREVIEW_TIER ? PREVIEW_LIVE_MODELS : undefined,
-                  hint: PREVIEW_TIER ? (
-                    <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                      检测用轻量模型（更快），报告可用更强模型
-                    </div>
-                  ) : (
-                    activePreset === "ollama" && (
-                      <div className="mt-1 text-xs text-mut2">Ollama 常用模型：qwen3:8b</div>
-                    )
-                  ),
-                },
-                {
-                  key: "summary",
-                  label: "报告模型",
-                  value: draft.summaryModel,
-                  onChange: (v) => patch({ summaryModel: v }),
-                  staticOptions: SUMMARY_MODEL_OPTIONS,
-                  previewOptions: PREVIEW_TIER ? PREVIEW_SUMMARY_MODELS : undefined,
-                },
-              ]}
-            />
+            {/* LLM/BYOK — advanced (provider/baseUrl/apiKey + detect/
+               summary model pickers + 测试连接). */}
+            {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectCredentials) && (
+              <div
+                className="space-y-3"
+                data-ui-level={SETTINGS_UI_LEVELS.aiDetectCredentials}
+              >
+                <CredentialFields
+                  idPrefix="primary"
+                  provider={draft.provider}
+                  baseUrl={draft.baseUrl}
+                  apiKey={draft.apiKey}
+                  onSelectPreset={handleSelectPreset}
+                  onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
+                  onApiKeyChange={(apiKey) => patch({ apiKey })}
+                  apiKeyPlaceholder="sk-…"
+                  apiKeyHint="仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                  presets={PROVIDER_PRESETS}
+                  disabled={PREVIEW_TIER}
+                  onConnectOpenRouter={() => void handleConnectOpenRouter()}
+                  models={[
+                    {
+                      key: "detect",
+                      label: "检测模型",
+                      value: draft.detectModel,
+                      onChange: (v) => patch({ detectModel: v }),
+                      staticOptions: DETECT_MODEL_OPTIONS,
+                      previewOptions: PREVIEW_TIER ? PREVIEW_LIVE_MODELS : undefined,
+                      hint: PREVIEW_TIER ? (
+                        <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                          检测用轻量模型（更快），报告可用更强模型
+                        </div>
+                      ) : (
+                        activePreset === "ollama" && (
+                          <div className="mt-1 text-xs text-mut2">Ollama 常用模型：qwen3:8b</div>
+                        )
+                      ),
+                    },
+                    {
+                      key: "summary",
+                      label: "报告模型",
+                      value: draft.summaryModel,
+                      onChange: (v) => patch({ summaryModel: v }),
+                      staticOptions: SUMMARY_MODEL_OPTIONS,
+                      previewOptions: PREVIEW_TIER ? PREVIEW_SUMMARY_MODELS : undefined,
+                    },
+                  ]}
+                />
 
-            <button
-              type="button"
-              onClick={() => void handleTestConnection()}
-              disabled={testingConnection}
-              className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                <button
+                  type="button"
+                  onClick={() => void handleTestConnection()}
+                  disabled={testingConnection}
+                  className="btn-tactile w-full rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {testingConnection ? "测试中…" : "测试连接"}
+                </button>
+              </div>
+            )}
+
+            <label
+              className="flex items-center justify-between gap-3 py-1"
+              data-ui-level={SETTINGS_UI_LEVELS.aiDetectAutoDetect}
             >
-              {testingConnection ? "测试中…" : "测试连接"}
-            </button>
-
-            <label className="flex items-center justify-between gap-3 py-1">
               <span className="text-sm text-fg">实时检测</span>
               <input
                 type="checkbox"
@@ -1054,7 +1123,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
 
-            <label className="flex items-center justify-between gap-3 py-1">
+            <label
+              className="flex items-center justify-between gap-3 py-1"
+              data-ui-level={SETTINGS_UI_LEVELS.aiDetectCore}
+            >
               <div>
                 <div className="text-sm text-fg">AI 检测</div>
                 <div className="text-xs text-mut2">
@@ -1069,27 +1141,29 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
 
-            <div>
-              <div className="flex items-center justify-between">
-                <label className="text-xs text-mut">置信度阈值</label>
-                <span className="font-mono text-xs tabular-nums text-fg">
-                  {draft.minConfidence.toFixed(2)}
-                </span>
+            {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectConfidence) && (
+              <div data-ui-level={SETTINGS_UI_LEVELS.aiDetectConfidence}>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-mut">置信度阈值</label>
+                  <span className="font-mono text-xs tabular-nums text-fg">
+                    {draft.minConfidence.toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min={0.3}
+                  max={0.9}
+                  step={0.05}
+                  value={draft.minConfidence}
+                  onChange={(e) =>
+                    patch({ minConfidence: Number(e.target.value) })
+                  }
+                  className="mt-1 w-full accent-act"
+                />
               </div>
-              <input
-                type="range"
-                min={0.3}
-                max={0.9}
-                step={0.05}
-                value={draft.minConfidence}
-                onChange={(e) =>
-                  patch({ minConfidence: Number(e.target.value) })
-                }
-                className="mt-1 w-full accent-act"
-              />
-            </div>
+            )}
 
-            <div>
+            <div data-ui-level={SETTINGS_UI_LEVELS.aiDetectExplainLanguage}>
               <label className="text-xs text-mut">解释语言</label>
               <select
                 value={draft.explainLanguage}
@@ -1109,7 +1183,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
 
-            <label className="flex items-center justify-between gap-3 py-1">
+            <label
+              className="flex items-center justify-between gap-3 py-1"
+              data-ui-level={SETTINGS_UI_LEVELS.aiDetectBilingual}
+            >
               <div>
                 <div className={`text-sm ${bilingualTranscriptAvailable ? "text-fg" : "text-mut2"}`}>
                   双语转录
@@ -1135,7 +1212,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                prompts.ts's AUDIENCE splice); works in preview too (no
                PreviewLockedBadge — it's prompt text on the server-key
                path, not a credential). */}
-            <div className="space-y-2 border-t border-edge pt-3">
+            <div
+              className="space-y-2 border-t border-edge pt-3"
+              data-ui-level={SETTINGS_UI_LEVELS.aiDetectProfile}
+            >
               <label className="flex items-center justify-between gap-3 py-1">
                 <div>
                   <div className="text-sm text-fg">背景画像</div>
@@ -1242,7 +1322,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               )}
             </div>
 
-            <div className="space-y-2 border-t border-edge pt-3">
+            {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPacks) && (
+            <div
+              className="space-y-2 border-t border-edge pt-3"
+              data-ui-level={SETTINGS_UI_LEVELS.aiDetectPacks}
+            >
               <div className="text-xs text-mut">词典主题包</div>
               <label className="flex items-center justify-between gap-3 py-1">
                 <div>
@@ -1285,12 +1369,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </label>
               ))}
             </div>
+            )}
 
             {/* 词典源 (#20): install community dictionary packs from a
                URL. getAllPacks() above already folds loaded remote
                packs into the checkbox list; this subsection manages
                the underlying sources (add/remove/update-check). */}
-            <div className="space-y-2 border-t border-edge pt-3">
+            {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPackSources) && (
+            <div
+              className="space-y-2 border-t border-edge pt-3"
+              data-ui-level={SETTINGS_UI_LEVELS.aiDetectPackSources}
+            >
               <div className="text-xs text-mut">词典源</div>
 
               <div className="flex items-center gap-2">
@@ -1364,6 +1453,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 从 GitHub raw / jsDelivr 链接安装社区词典包，JSON 格式见文档
               </div>
             </div>
+            )}
           </section>
 
           {/* 分任务模型（高级）(#56, BYOK-only): a self-contained section
@@ -1374,8 +1464,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              default. Preview tier: disabled as ONE group + one
              PreviewLockedBadge, same grouping pattern as 说话人分离
              above — BYOK has no meaning when the hosted build's calls
-             run on our own server key. */}
-          <section className="space-y-3 border-t border-edge pt-5">
+             run on our own server key. #62: advanced-only, per the fit
+             note above. */}
+          {isSectionVisible(level, SETTINGS_UI_LEVELS.taskLlm) && (
+          <section
+            className="space-y-3 border-t border-edge pt-5"
+            data-ui-level={SETTINGS_UI_LEVELS.taskLlm}
+          >
             <button
               type="button"
               onClick={() => setTaskLlmExpanded((v) => !v)}
@@ -1413,9 +1508,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
           </section>
+          )}
 
-          {/* 数据与联动 */}
-          <section className="space-y-3 border-t border-edge pt-5">
+          {/* 数据与联动 — advanced */}
+          {isSectionVisible(level, SETTINGS_UI_LEVELS.dataIntegration) && (
+          <section
+            className="space-y-3 border-t border-edge pt-5"
+            data-ui-level={SETTINGS_UI_LEVELS.dataIntegration}
+          >
             <SectionHeading>数据与联动</SectionHeading>
 
             <label className="flex items-center justify-between gap-3 py-1">
@@ -1577,6 +1677,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               )}
             </div>
           </section>
+          )}
 
           {/* 订阅直连（实验性，v0.2.2）— kill-switch layer 2: this whole
              section (markup, state, calls) is compiled out of the
@@ -1588,9 +1689,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              model at all (a separate local sidecar port instead), and
              folding it into that dropdown would blur resolveLlmConfig's
              BYOK-vs-shared-key architecture (see anthropic.ts's own
-             comment on that boundary). */}
-          {process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" && (
-            <section className="space-y-3 border-t border-edge pt-5">
+             comment on that boundary). #62: advanced-only, AND-ed with
+             the build flag above. */}
+          {process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" &&
+            isSectionVisible(level, SETTINGS_UI_LEVELS.subscriptionDirect) && (
+            <section
+              className="space-y-3 border-t border-edge pt-5"
+              data-ui-level={SETTINGS_UI_LEVELS.subscriptionDirect}
+            >
               <SectionHeading>订阅直连（实验性）</SectionHeading>
               <div className="text-xs leading-[1.7] text-mut2">
                 用你自己机器上已登录的 Claude / ChatGPT，通过本机 sidecar 直接调用
@@ -1726,8 +1832,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </section>
           )}
 
-          {/* 显示 (v0.2.1: 主题 + 字号/行距，独立于其他设置，切主题不丢) */}
-          <section className="space-y-3 border-t border-edge pt-5">
+          {/* 显示 (v0.2.1: 主题 + 字号/行距，独立于其他设置，切主题不丢) — simple */}
+          <section
+            className="space-y-3 border-t border-edge pt-5"
+            data-ui-level={SETTINGS_UI_LEVELS.display}
+          >
             <SectionHeading>显示</SectionHeading>
 
             <div>
