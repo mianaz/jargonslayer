@@ -141,7 +141,7 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
         })}
       </div>
       <div className="mt-3 text-xs leading-[1.7] text-mut2">
-        之后随时可在设置里更换；上传录音转录在「历史→导入录音」。
+        之后随时可在设置里更换；上传录音/文稿/视频链接转录在「历史→导入」（文件/文稿/链接三个标签）。
       </div>
     </div>
   );

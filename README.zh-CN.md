@@ -155,7 +155,7 @@ python whisper_server.py --model small
 2. HuggingFace 免费账号 → 依次接受三个模型的使用条款：[segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)、[speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)、[speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)（pyannote 4.x 新增的依赖，漏掉会 403）；
 3. 建一个 Read 权限的 token，填进 设置 → 说话人分离（或启动 sidecar 时传 `--hf-token`）。
 
-**上传录音自动分离**：≡ 菜单 → 「历史」→ 「导入录音」，选音频文件（m4a/mp3/wav），后台转录 + 分离，完成后自动载入。点说话人标签即可改名（SPEAKER_1 → Elena）。
+**上传录音自动分离**：≡ 菜单 → 「历史」→ 「导入」→「文件」标签，选音频文件（m4a/mp3/wav），后台转录 + 分离，完成后自动载入。点说话人标签即可改名（SPEAKER_1 → Elena）。
 
 **实时分离（beta）**：设置 → 说话人分离 → 「实时说话人分离（beta）」。开会时标签延迟数秒出现并随会议进行逐步修正，会多占一些 CPU；转录本身不受影响。
 
