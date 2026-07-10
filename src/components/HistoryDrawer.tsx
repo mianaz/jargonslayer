@@ -18,7 +18,7 @@ import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
-import { dismissTask, useTasks, type TaskState } from "@/lib/tasks/registry";
+import { dismissTask, EMPTY_TASKS, useTasks, type TaskState } from "@/lib/tasks/registry";
 import ImportHub from "@/components/ImportHub";
 
 export interface HistoryDrawerProps {
@@ -62,8 +62,13 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [importHubOpen, setImportHubOpen] = useState(false);
 
-  const tasks = useTasks((s) => s.tasks);
-  const importRows = activeImportRows(tasks);
+  // Narrow selector (review fix 6): the drawer is unmounted-in-effect
+  // (renders null below) while closed, but the `useTasks` hook itself
+  // still has to be called every render regardless — gating the
+  // derivation on `open` means a closed drawer resolves to the SAME
+  // EMPTY_TASKS reference on every progress tick instead of a fresh
+  // array, so it doesn't re-render at all while it isn't visible.
+  const importRows = useTasks((s) => (open ? activeImportRows(s.tasks) : EMPTY_TASKS));
 
   useEffect(() => {
     if (!open) {

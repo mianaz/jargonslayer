@@ -85,11 +85,14 @@ export default function StatusLine() {
       <span className="ml-auto hidden whitespace-nowrap px-3 tabular-nums sm:inline">
         {count} cards
       </span>
-      {/* Same <sm discipline as the count span above — a running-task
-          count is a nice-to-have, not essential on the tightest phone
-          width; the drawer's own inline job rows + the completion
-          toast still cover it there. */}
-      <span className="hidden h-full items-center sm:flex">
+      {/* #58 review fix 1: unlike the count span above, the task tray
+          is reachable at every width — it's the only in-app surface
+          for import progress/errors on mobile (the drawer's own inline
+          job rows require opening 历史 first), so it stays visible
+          below sm too; TaskTray itself keeps its own compact-chip
+          discipline (icon+count, sm:hidden icon) and gives its popover
+          a phone-safe width. */}
+      <span className="flex h-full items-center">
         <TaskTray />
       </span>
       <span

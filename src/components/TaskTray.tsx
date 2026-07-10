@@ -12,13 +12,16 @@
 // notification itself.
 
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { CheckCircle, ListChecks, WarningCircle, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import {
   dismissTask,
+  EMPTY_TASKS,
+  selectCanDismiss,
   selectHasTasks,
   selectRunningCount,
+  selectTotalCount,
   selectTrayTasks,
   useTasks,
   type TaskState,
@@ -32,14 +35,21 @@ const KIND_LABEL: Record<TaskState["kind"], string> = {
 };
 
 export default function TaskTray() {
-  const tasks = useTasks((s) => s.tasks);
   const loadSession = useApp((s) => s.loadSession);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  const runningCount = selectRunningCount(tasks);
-  const hasTasks = selectHasTasks(tasks);
-  const trayTasks = selectTrayTasks(tasks);
+  // Narrow selectors (review fix 6): runningCount/hasTasks/totalCount
+  // are primitives, so a progress-only tick (stage/progress% changing
+  // without any of those changing) doesn't re-render this chip at all.
+  // trayTasks — the only piece that needs the full per-row stage/
+  // progress — is only computed while the popover is actually open;
+  // closed, it resolves to the SAME EMPTY_TASKS reference every time,
+  // so a closed tray sees zero re-renders from progress ticks.
+  const runningCount = useTasks((s) => selectRunningCount(s.tasks));
+  const hasTasks = useTasks((s) => selectHasTasks(s.tasks));
+  const totalCount = useTasks((s) => selectTotalCount(s.tasks));
+  const trayTasks = useTasks((s) => (open ? selectTrayTasks(s.tasks) : EMPTY_TASKS));
 
   useEffect(() => {
     if (!open) return;
@@ -85,12 +95,19 @@ export default function TaskTray() {
             {runningCount}
           </>
         ) : (
-          <span className="tabular-nums">{trayTasks.length}</span>
+          <>
+            {/* Icon only <sm (#58 review fix 1): the chip is now reachable
+                below 640px too, and a bare number there reads as
+                ambiguous next to the rest of the status line — desktop
+                keeps its pre-existing bare-number presentation. */}
+            <ListChecks size={12} weight="regular" className="sm:hidden" />
+            <span className="tabular-nums">{totalCount}</span>
+          </>
         )}
       </button>
 
       {open && (
-        <div className="scroll-thin absolute bottom-full right-0 z-50 mb-2 max-h-80 w-72 overflow-y-auto rounded-none border border-edge2 bg-panel2 p-1.5 shadow-xl">
+        <div className="scroll-thin fixed inset-x-4 bottom-9 z-50 max-h-80 overflow-y-auto rounded-none border border-edge2 bg-panel2 p-1.5 shadow-xl sm:absolute sm:inset-x-auto sm:bottom-full sm:right-0 sm:mb-2 sm:w-72">
           {trayTasks.map((task) => {
             const jumpable = task.status === "done" && !!task.sessionId;
             return (
@@ -108,17 +125,19 @@ export default function TaskTray() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-xs text-fg">{task.label}</span>
-                  <button
-                    type="button"
-                    aria-label="移除"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      dismissTask(task.id);
-                    }}
-                    className="shrink-0 text-mut2 opacity-0 hover:text-fg group-hover:opacity-100"
-                  >
-                    <X size={12} weight="regular" />
-                  </button>
+                  {selectCanDismiss(task.status) && (
+                    <button
+                      type="button"
+                      aria-label="移除"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        dismissTask(task.id);
+                      }}
+                      className="shrink-0 text-mut2 opacity-0 hover:text-fg group-hover:opacity-100"
+                    >
+                      <X size={12} weight="regular" />
+                    </button>
+                  )}
                 </div>
                 <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-mut2">
                   <span>{KIND_LABEL[task.kind]}</span>
