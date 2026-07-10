@@ -19,6 +19,10 @@ const BodySchema = z.object({
   new_text: z.string().min(1).max(3000),
   model: z.string().optional(),
   lang: z.enum(["zh", "en"]).optional(),
+  // Pre-rendered background-profile hint (#48 step 3); client-truncated
+  // to ~60 tokens (profileHint.ts) — this cap is a generous
+  // defense-in-depth bound, not the token budget itself.
+  profile: z.string().max(500).optional(),
 });
 
 const MAX_EXPRESSIONS = 6;
@@ -56,7 +60,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { context, new_text, model, lang } = parsedBody.data;
+  const { context, new_text, model, lang, profile } = parsedBody.data;
 
   const cfg = resolveLlmConfig(req, "detect");
   if (!cfg) {
@@ -79,7 +83,7 @@ export async function POST(req: Request) {
         apiKey: cfg.apiKey,
         model: pickModel(cfg, model, "claude-haiku-4-5"),
         system: buildDetectSystemPrompt(lang ?? "zh"),
-        user: buildDetectUserMessage(context, new_text),
+        user: buildDetectUserMessage(context, new_text, profile),
         schema: DetectResponseSchema,
         maxTokens: 1000,
         cacheSystem: true,

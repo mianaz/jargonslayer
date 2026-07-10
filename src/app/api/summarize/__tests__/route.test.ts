@@ -53,3 +53,37 @@ describe("POST /api/summarize — request size caps", () => {
     expect(res.status).not.toBe(413);
   });
 });
+
+// #48 step 3 — the `profile` wire field (pre-rendered background-
+// profile hint, threaded exactly like `lang`, affecting the sweep
+// stage only) just needs to survive zod validation and reach
+// runSweepStage/buildSweepUserMessage; same no-key-configured
+// convention as the size-cap tests above.
+describe("POST /api/summarize — profile field passthrough (#48 step 3)", () => {
+  it("accepts a request with a profile hint string (fails later for lack of a key, not schema validation)", async () => {
+    const res = await POST(
+      makeRequest({ ...baseBody, segments: makeSegments(3, 10), profile: "行业：互联网" }),
+    );
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.code).toBe("no_key");
+  });
+
+  it("accepts a request with no profile field at all", async () => {
+    const res = await POST(makeRequest({ ...baseBody, segments: makeSegments(3, 10) }));
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a profile string over 500 chars with 400 bad_request", async () => {
+    const res = await POST(
+      makeRequest({
+        ...baseBody,
+        segments: makeSegments(3, 10),
+        profile: "x".repeat(501),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.code).toBe("bad_request");
+  });
+});

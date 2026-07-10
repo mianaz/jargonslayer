@@ -73,11 +73,18 @@ Rules:
 
 Output the JSON object now.`;
 
+/** `profileHint` (#48 step 3, design Q5): pre-rendered background-
+ *  profile hint, prepended as one AUDIENCE: line when present. USER
+ *  message only — the SYSTEM prompt (buildDetectSystemPrompt above) is
+ *  server-built and prompt-cached; it must stay byte-identical with or
+ *  without a profile, so this splice happens ONLY here. */
 export function buildDetectUserMessage(
   context: string,
   newText: string,
+  profileHint?: string,
 ): string {
-  return `CONTEXT:\n${context || "(meeting just started)"}\n\nNEW:\n${newText}`;
+  const audience = profileHint ? `AUDIENCE:\n${profileHint}\n\n` : "";
+  return `${audience}CONTEXT:\n${context || "(meeting just started)"}\n\nNEW:\n${newText}`;
 }
 
 /** Detection prompt in the requested explanation language. "zh" is
@@ -172,11 +179,18 @@ export function buildSweepSystemPrompt(lang: ExplainLanguage): string {
   ]);
 }
 
+/** `profileHint` (#48 step 3) — same AUDIENCE splice as
+ *  buildDetectUserMessage above; may be slightly more liberal than
+ *  detect's since the sweep stage is not the high-volume path. USER
+ *  message only — SUMMARY_SYSTEM_PROMPT / buildSweepSystemPrompt above
+ *  never see it. */
 export function buildSweepUserMessage(
   transcript: string,
   alreadyCaptured: string[],
+  profileHint?: string,
 ): string {
-  return `ALREADY_CAPTURED:\n${
+  const audience = profileHint ? `AUDIENCE:\n${profileHint}\n\n` : "";
+  return `${audience}ALREADY_CAPTURED:\n${
     alreadyCaptured.length ? alreadyCaptured.join(", ") : "(none)"
   }\n\nTRANSCRIPT:\n${transcript}`;
 }
@@ -222,11 +236,17 @@ Rules:
 4. Keep it a single entry for exactly this PHRASE. Do not add unrelated items.
 Output the JSON object now.`;
 
+/** `profileHint` (#48 step 3) — same AUDIENCE splice as
+ *  buildDetectUserMessage above; may be slightly more liberal than
+ *  detect's since define is not the high-volume path. USER message
+ *  only — DEFINE_SYSTEM_PROMPT / buildDefineSystemPrompt never see it. */
 export function buildDefineUserMessage(
   phrase: string,
   context: string,
+  profileHint?: string,
 ): string {
-  return `PHRASE:\n${phrase}\n\nCONTEXT:\n${context || "(none)"}`;
+  const audience = profileHint ? `AUDIENCE:\n${profileHint}\n\n` : "";
+  return `${audience}PHRASE:\n${phrase}\n\nCONTEXT:\n${context || "(none)"}`;
 }
 
 // ---------------- live bilingual transcript (#42) ----------------
