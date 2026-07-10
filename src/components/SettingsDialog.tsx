@@ -1341,7 +1341,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
               />
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                会后 POST 会议 JSON 到该地址（n8n/飞书机器人等）
+                会后 POST 会议 JSON 到该地址（n8n/飞书机器人等），导入任务的开始/完成/失败也会推送
+                task.* 事件
               </div>
             </div>
 

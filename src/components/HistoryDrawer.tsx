@@ -8,8 +8,9 @@
 // in component-local state that vanished on drawer close. That's now
 // ImportHub (one 导入 button opens it) + the task registry
 // (src/lib/tasks/registry.ts) — the in-progress rows below just READ
-// the registry (selectRunningTasks/error tasks), so progress survives
-// this drawer closing and reopening, matching StatusLine's task tray.
+// the registry (running/error tasks, see activeImportRows below), so
+// progress survives this drawer closing and reopening, matching
+// StatusLine's task tray.
 
 import { useEffect, useState } from "react";
 import { Trash, UploadSimple, X } from "@phosphor-icons/react";
