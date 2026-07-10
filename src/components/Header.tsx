@@ -320,7 +320,10 @@ function HamburgerMenu({
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
   const newMeeting = useApp((s) => s.newMeeting);
-  const isConnectingOrListening = status === "connecting" || status === "listening";
+  // Includes "paused": starting the demo begins a NEW meeting, which
+  // would silently clobber a paused one the user intends to resume.
+  const meetingActive =
+    status === "connecting" || status === "listening" || status === "paused";
 
   useEffect(() => {
     if (!open) return;
@@ -362,7 +365,7 @@ function HamburgerMenu({
           role="menu"
           className="absolute right-0 top-[calc(100%+4px)] z-30 flex w-56 flex-col border border-edge bg-panel2 py-1 shadow-lg"
         >
-          {!isConnectingOrListening && (
+          {!meetingActive && (
             <button
               type="button"
               role="menuitem"

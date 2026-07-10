@@ -34,25 +34,30 @@ export default function StatusLine() {
   const setDetectMode = useApp((s) => s.setDetectMode);
 
   const isListening = status === "listening";
+  const isPaused = status === "paused";
   const modeLabel =
     status === "listening"
       ? "-- LISTENING --"
-      : status === "stopped"
-        ? "-- STOPPED --"
-        : status === "connecting"
-          ? "-- CONNECTING --"
-          : "-- IDLE --";
+      : status === "paused"
+        ? "-- PAUSED --"
+        : status === "stopped"
+          ? "-- STOPPED --"
+          : status === "connecting"
+            ? "-- CONNECTING --"
+            : "-- IDLE --";
   // Short vim-token variant for phone widths — the full form plus the
   // privacy sentence pushed Bit's perch clear off a 375px screen
   // (Miana's v0.2.2 E2E finding: mascot missing, "N cards" clipped).
   const modeLabelShort =
     status === "listening"
       ? "--LIVE--"
-      : status === "stopped"
-        ? "--STOP--"
-        : status === "connecting"
-          ? "--CONN--"
-          : "--IDLE--";
+      : status === "paused"
+        ? "--PAUS--"
+        : status === "stopped"
+          ? "--STOP--"
+          : status === "connecting"
+            ? "--CONN--"
+            : "--IDLE--";
 
   const posture = ENGINE_POSTURE[engine] ?? "local";
   const privacyLabel =
@@ -69,7 +74,11 @@ export default function StatusLine() {
     >
       <span
         className={`flex h-full items-center whitespace-nowrap px-2 font-bold tracking-wide sm:px-3 ${
-          isListening ? "bg-lab-green text-ink" : "bg-mut text-ink"
+          isListening
+            ? "bg-lab-green text-ink"
+            : isPaused
+              ? "bg-lab-orange text-ink"
+              : "bg-mut text-ink"
         }`}
       >
         <span className="hidden sm:inline">{modeLabel}</span>
