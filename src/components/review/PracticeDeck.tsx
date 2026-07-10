@@ -17,7 +17,7 @@ const FILTER_OPTIONS: { value: Filter; label: string }[] = [
   { value: "mastered", label: "已掌握" },
 ];
 
-const KIND_LABELS: Record<CustomEntry["kind"], string> = {
+export const KIND_LABELS: Record<CustomEntry["kind"], string> = {
   expression: "表达",
   term: "术语",
 };
@@ -42,18 +42,29 @@ function EmptyState() {
   );
 }
 
-function FlashCard({
-  entry,
+// Generic front/back content for the flip-card visual — shared between
+// this (personal-glossary) deck and the SRS due-review deck
+// (DueReview.tsx), which sources its content from session cards/terms
+// and the glossary rather than CustomEntry directly.
+export interface FlashCardContent {
+  kindLabel: string;
+  kindBorderCls: string;
+  headword: string;
+  chineseExplanation: string;
+  meaning?: string;
+  example?: string;
+  context?: string;
+}
+
+export function FlashCard({
+  content,
   flipped,
   onFlip,
 }: {
-  entry: CustomEntry;
+  content: FlashCardContent;
   flipped: boolean;
   onFlip: () => void;
 }) {
-  const kindBorderCls =
-    entry.kind === "expression" ? "border-l-lab-orange" : "border-l-lab-cyan";
-
   return (
     <div
       role="button"
@@ -65,38 +76,50 @@ function FlashCard({
           onFlip();
         }
       }}
-      className={`relative mx-auto flex min-h-[220px] w-full max-w-md cursor-pointer flex-col justify-center rounded-none border-l-2 ${kindBorderCls} border-y border-r border-edge bg-panel p-6`}
+      className={`relative mx-auto flex min-h-[220px] w-full max-w-md cursor-pointer flex-col justify-center rounded-none border-l-2 ${content.kindBorderCls} border-y border-r border-edge bg-panel p-6`}
     >
       {!flipped ? (
         <div className="text-center">
           <span className="mb-3 inline-block rounded-sm border border-edge px-2 py-0.5 text-[10px] text-mut">
-            {KIND_LABELS[entry.kind]}
+            {content.kindLabel}
           </span>
           <div className="font-mono text-3xl font-semibold text-fg">
-            {entry.headword}
+            {content.headword}
           </div>
           <div className="mt-4 text-xs text-mut2">点击卡片查看解释</div>
         </div>
       ) : (
         <div className="space-y-2 text-center">
           <div className="text-[15px] font-medium leading-[26px] text-fg">
-            {entry.chinese_explanation}
+            {content.chineseExplanation}
           </div>
-          {(entry.meaning || entry.gloss_en) && (
-            <div className="text-sm text-mut">{entry.meaning ?? entry.gloss_en}</div>
+          {content.meaning && (
+            <div className="text-sm text-mut">{content.meaning}</div>
           )}
-          {entry.example && (
-            <div className="text-sm italic text-mut">{entry.example}</div>
+          {content.example && (
+            <div className="text-sm italic text-mut">{content.example}</div>
           )}
-          {entry.context && (
+          {content.context && (
             <div className="border-l-2 border-edge pl-2 text-left text-xs text-mut2">
-              {entry.context}
+              {content.context}
             </div>
           )}
         </div>
       )}
     </div>
   );
+}
+
+function customEntryToFlashCardContent(entry: CustomEntry): FlashCardContent {
+  return {
+    kindLabel: KIND_LABELS[entry.kind],
+    kindBorderCls: entry.kind === "expression" ? "border-l-lab-orange" : "border-l-lab-cyan",
+    headword: entry.headword,
+    chineseExplanation: entry.chinese_explanation,
+    meaning: entry.meaning ?? entry.gloss_en,
+    example: entry.example,
+    context: entry.context,
+  };
 }
 
 export default function PracticeDeck() {
@@ -213,7 +236,7 @@ export default function PracticeDeck() {
       ) : (
         <>
           <FlashCard
-            entry={current}
+            content={customEntryToFlashCardContent(current)}
             flipped={flipped}
             onFlip={() => setFlipped((v) => !v)}
           />
