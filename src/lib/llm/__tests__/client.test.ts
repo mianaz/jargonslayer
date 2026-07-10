@@ -418,4 +418,74 @@ describe("detectApi — Next.js path status-code failures log to the diag ring b
     expect(entries[0].message).not.toContain("SENTINEL");
     expect(entries[0].detail ?? "").not.toContain("SENTINEL");
   });
+
+  // ---------------------------------------------------------------
+  // Tag-blocker BLOCKER 2 (privacy): body.error can be a raw upstream
+  // response-body slice for openai-compat providers (see anthropic.ts's
+  // requestChatContent — up to 500 chars of whatever the provider sent
+  // back), which can echo request content. That value must never reach
+  // diagLog — only a FIXED zh category message keyed off HTTP status.
+  // The THROWN error (toast path) is a SEPARATE, unchanged contract:
+  // it still carries body.error verbatim.
+  // ---------------------------------------------------------------
+
+  describe("throwForStatus — diag gets a fixed category message, never body.error", () => {
+    const SENTINEL = "SENTINEL-UPSTREAM-BODY-LEAK-TRANSCRIPT-FRAGMENT";
+
+    it("401: diag message is the fixed 'API Key 无效或未配置' phrase; the thrown NoKeyError still carries body.error", async () => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: SENTINEL, code: "no_key" }, 401));
+
+      await expect(
+        detectApi({ context: "", new_text: "hi" }, makeSettings()),
+      ).rejects.toMatchObject({ message: SENTINEL });
+
+      const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message).toBe("API Key 无效或未配置");
+      expect(entries[0].message).not.toContain(SENTINEL);
+      expect(entries[0].detail ?? "").not.toContain(SENTINEL);
+    });
+
+    it("429: diag message is the fixed '请求过于频繁' phrase; the thrown RateLimitApiError still carries body.error", async () => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: SENTINEL, code: "rate_limit" }, 429));
+
+      await expect(
+        detectApi({ context: "", new_text: "hi" }, makeSettings()),
+      ).rejects.toMatchObject({ message: SENTINEL });
+
+      const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message).toBe("请求过于频繁");
+      expect(entries[0].message).not.toContain(SENTINEL);
+    });
+
+    it("other status (e.g. 502, the openai-compat raw-body-slice case): diag message is the fixed '请求失败（status）' phrase, sentinel never reaches getDiagEntries() or buildDiagnosticReport()", async () => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: SENTINEL, code: "upstream" }, 502));
+
+      await expect(
+        detectApi({ context: "", new_text: "hi" }, makeSettings()),
+      ).rejects.toMatchObject({ message: SENTINEL });
+
+      const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message).toBe("请求失败（502）");
+      expect(entries[0].message).not.toContain(SENTINEL);
+      expect(entries[0].detail ?? "").not.toContain(SENTINEL);
+
+      const { buildDiagnosticReport } = await import("../../diag/report");
+      const report = buildDiagnosticReport(makeSettings());
+      expect(report).not.toContain(SENTINEL);
+    });
+
+    it("403 (defensive — server today always normalizes upstream 401/403 to client status 401, but the diag category covers 403 too): diag message is the fixed 'API Key 无效或未配置' phrase", async () => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: SENTINEL, code: "forbidden" }, 403));
+
+      await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toThrow();
+
+      const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message).toBe("API Key 无效或未配置");
+      expect(entries[0].message).not.toContain(SENTINEL);
+    });
+  });
 });

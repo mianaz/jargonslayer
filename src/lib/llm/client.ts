@@ -103,22 +103,33 @@ function errorDetail(ctx: RequestErrorContext, status?: number, requestId?: stri
   return parts.join(" ");
 }
 
+// Diagnostics privacy (tag-blocker BLOCKER 2): body.error is NOT safe
+// to put in a diagLog message — for openai-compat providers it can be
+// up to a 500-char slice of the raw upstream response body (see
+// anthropic.ts's requestChatContent), which can echo back fragments of
+// the request (transcript/profile content) the provider rejected. The
+// diag ring buffer renders straight into the copyable 诊断信息 panel/
+// issue report (log.ts's hard privacy rule), so this function logs a
+// FIXED zh category message keyed off the HTTP status only — never
+// `body.error`. The THROWN error (the user-facing toast path) is
+// unchanged: it still carries body.error, same as before this fix.
+function diagMessageForStatus(status: number): string {
+  if (status === 401 || status === 403) return "API Key 无效或未配置";
+  if (status === 429) return "请求过于频繁";
+  return `请求失败（${status}）`;
+}
+
 async function throwForStatus(res: Response, ctx: RequestErrorContext): Promise<never> {
   const body = await parseErrorBody(res);
   const detail = errorDetail(ctx, res.status, body?.requestId);
+  diagLog("error", ctx.tag, diagMessageForStatus(res.status), detail);
   if (res.status === 401) {
-    const msg = body?.error ?? "未配置 API Key";
-    diagLog("error", ctx.tag, msg, detail);
-    throw new NoKeyError(msg);
+    throw new NoKeyError(body?.error ?? "未配置 API Key");
   }
   if (res.status === 429) {
-    const msg = body?.error ?? "请求过于频繁，请稍后重试";
-    diagLog("error", ctx.tag, msg, detail);
-    throw new RateLimitApiError(msg);
+    throw new RateLimitApiError(body?.error ?? "请求过于频繁，请稍后重试");
   }
-  const msg = body?.error ?? `请求失败（${res.status}）`;
-  diagLog("error", ctx.tag, msg, detail);
-  throw new UpstreamError(msg);
+  throw new UpstreamError(body?.error ?? `请求失败（${res.status}）`);
 }
 
 /** Existing Next.js-routed detect call (BYOK / shared-key / Poe / …).
