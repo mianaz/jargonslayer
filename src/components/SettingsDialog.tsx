@@ -29,6 +29,7 @@ import {
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import type {
+  EnglishLevel,
   ExplainLanguage,
   LlmTaskDomain,
   STTEngineKind,
@@ -142,6 +143,13 @@ const TRANSLATE_MODEL_OPTIONS = [
 const EXPLAIN_LANGUAGE_OPTIONS: { value: ExplainLanguage; label: string }[] = [
   { value: "zh", label: "中文（默认）" },
   { value: "en", label: "English" },
+];
+
+// 背景画像 (#48 step 3): englishLevel select options.
+const ENGLISH_LEVEL_OPTIONS: { value: EnglishLevel; label: string }[] = [
+  { value: "basic", label: "初级" },
+  { value: "intermediate", label: "中级" },
+  { value: "advanced", label: "高级" },
 ];
 
 // 显示设置 (v0.2.1): 全局字号 4 档 + 转录字号/行距各 3 档。
@@ -976,7 +984,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="text-xs leading-[1.7] text-mut2">
                   数据路径：体验版的 AI 文本经我们的服务器内存中转（不存储）后转发
                   OpenRouter，带 data_collection=allow 标志（可能被模型提供方留存）；本地版
-                  BYOK 直连你自己的端点、不带该标志。音频永远不经过我们的服务器。
+                  BYOK 直连你自己的端点、不带该标志。音频永远不经过我们的服务器。启用下方「背景画像」后，
+                  画像内容同样经此路径中转。
                 </div>
               </div>
             )}
@@ -1116,6 +1125,119 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="h-4 w-4 shrink-0 accent-act disabled:opacity-50"
               />
             </label>
+
+            {/* 背景画像 (#48 step 3, design Q5): opt-in — default off.
+               The rendered hint (llm/profileHint.ts) is spliced into the
+               USER message only, never the cached SYSTEM prompt (see
+               prompts.ts's AUDIENCE splice); works in preview too (no
+               PreviewLockedBadge — it's prompt text on the server-key
+               path, not a credential). */}
+            <div className="space-y-2 border-t border-edge pt-3">
+              <label className="flex items-center justify-between gap-3 py-1">
+                <div>
+                  <div className="text-sm text-fg">背景画像</div>
+                  <div className="mt-0.5 text-xs leading-[1.7] text-mut2">
+                    把行业/角色/英语水平等信息带入检测与解释请求，帮助 AI 判断哪些内容对你陌生；
+                    默认关闭，内容随请求发送到你配置的端点
+                  </div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={draft.profile?.enabled ?? false}
+                  onChange={(e) =>
+                    patch({ profile: { ...draft.profile, enabled: e.target.checked } })
+                  }
+                  className="h-4 w-4 shrink-0 accent-act"
+                />
+              </label>
+
+              {draft.profile?.enabled && (
+                <div className="space-y-2 pt-1">
+                  <div>
+                    <label className="text-xs text-mut">行业</label>
+                    <input
+                      type="text"
+                      value={draft.profile.industry ?? ""}
+                      onChange={(e) =>
+                        patch({ profile: { ...draft.profile!, industry: e.target.value } })
+                      }
+                      maxLength={40}
+                      placeholder="如：金融 / SaaS / 生物医药"
+                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-mut">角色</label>
+                    <input
+                      type="text"
+                      value={draft.profile.role ?? ""}
+                      onChange={(e) =>
+                        patch({ profile: { ...draft.profile!, role: e.target.value } })
+                      }
+                      maxLength={40}
+                      placeholder="如：产品经理 / 后端工程师"
+                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-mut">英语水平</label>
+                    <select
+                      value={draft.profile.englishLevel ?? ""}
+                      onChange={(e) =>
+                        patch({
+                          profile: {
+                            ...draft.profile!,
+                            englishLevel: (e.target.value || undefined) as
+                              | EnglishLevel
+                              | undefined,
+                          },
+                        })
+                      }
+                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                    >
+                      <option value="">未设置</option>
+                      {ENGLISH_LEVEL_OPTIONS.map((l) => (
+                        <option key={l.value} value={l.value}>
+                          {l.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-mut">熟悉领域</label>
+                    <input
+                      type="text"
+                      value={draft.profile.familiarDomains ?? ""}
+                      onChange={(e) =>
+                        patch({
+                          profile: { ...draft.profile!, familiarDomains: e.target.value },
+                        })
+                      }
+                      maxLength={40}
+                      placeholder="如：云基础设施, 数据管道"
+                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs text-mut">薄弱领域</label>
+                    <input
+                      type="text"
+                      value={draft.profile.weakDomains ?? ""}
+                      onChange={(e) =>
+                        patch({ profile: { ...draft.profile!, weakDomains: e.target.value } })
+                      }
+                      maxLength={40}
+                      placeholder="如：财务术语, 法务合同"
+                      className="mt-1 w-full rounded-sm border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
 
             <div className="space-y-2 border-t border-edge pt-3">
               <div className="text-xs text-mut">词典主题包</div>
