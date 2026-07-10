@@ -20,25 +20,33 @@
 //  - holdback: never flush the revision-prone tail — Chrome rewrites
 //    the last few words of an interim hypothesis as context arrives.
 //
-// The session-rotation / stall-watchdog timing constants for the
-// shell live here too so they are unit-visible.
+// Two flush-everything methods, both used when a recognition session
+// is about to end, but for different reasons (see flushAll/flushStable
+// below): flushAll grabs the holdback tail too because nothing further
+// will ever be processed once the caller tears down (engine.stop());
+// flushStable respects the SAME holdback boundary as self-flush
+// because the caller (rotation/recovery) IS still watching — the
+// dying session's own stop()-triggered real final is expected to
+// complete whatever gets held back (MDN: stop() "must attempt to
+// return a recognition result based on audio already collected").
+// Using flushAll for rotation used to commit an in-flight revision
+// (Chrome rewriting the last word, e.g. "w3" -> "w3x") as permanent,
+// wrong text AND desync the dedup offset past the real final's actual
+// (shorter, plain) length — the real final's slice(offset) then
+// underflowed to "", silently dropping the correct word while the
+// corrupted guess survived in the transcript. That was the source of
+// the 66-dup regression webSpeechLoss.test.ts's natural-pauses
+// scenario measured (2026-07).
+//
+// Rotation/stall-watchdog timing now lives in sttSupervisor.ts (the
+// pure decision core the shell polls) — this module stays scoped to
+// segmentation/dedup bookkeeping only.
 
 export const FLUSH_MAX_CHARS = 200; // self-flush when unflushed grows past this
 export const FLUSH_AFTER_MS = 15_000; // …or the utterance is older than this
 export const FLUSH_MIN_CHARS = 80; // time trigger needs at least this much text
 export const FLUSH_HOLDBACK_CHARS = 48; // revision-prone tail, never flushed
 export const FLUSH_MIN_EMIT_CHARS = 24; // don't emit crumbs
-
-// Proactively rotate the recognition session well under the observed
-// ~1–2min continuous-speech stall. Rotation prefers a natural pause
-// (a real final) and force-flushes after the grace window.
-export const SESSION_ROTATE_MS = 45_000;
-export const ROTATE_GRACE_MS = 15_000;
-// Watchdog: interim pending but no events → the session died mid-
-// speech; no events at all for much longer → died silently (Chrome
-// normally fires no-speech/onend well before this in real silence).
-export const STALL_SPEECH_MS = 12_000;
-export const STALL_SILENCE_MS = 30_000;
 
 export interface EmittedFinal {
   text: string;
@@ -153,9 +161,13 @@ export class UtteranceAssembler {
     return { finals, interim: this.interimRemainder(), sawRealFinal };
   }
 
-  /** Flush EVERYTHING unflushed (rotation / stall recovery / user
-   *  stop). A late real final from the dying session still dedups
-   *  against flushedChars because reset() only runs at relaunch. */
+  /** Flush EVERYTHING unflushed, including the revision-prone tail.
+   *  For engine.stop() ONLY — once that caller tears down, no further
+   *  event (in particular no trailing real final) will ever be
+   *  processed, so this is the only chance to rescue the tail; a late
+   *  real final would still dedup correctly against flushedChars if it
+   *  somehow arrived (reset() only runs at relaunch), but nothing
+   *  guarantees it does once the caller has stopped listening. */
   flushAll(now: number): EmittedFinal | null {
     const parts: string[] = [];
     for (const [index, snapshot] of [...this.pendingSnapshots.entries()].sort(
@@ -170,6 +182,32 @@ export class UtteranceAssembler {
     this.utteranceStart = null;
     if (parts.length === 0) return null;
     return { text: parts.join(" "), startedAt };
+  }
+
+  /** Flush only the SAFE (non-revision-prone) prefix of every pending
+   *  index, using the same findFlushCut boundary the growth-triggered
+   *  self-flush in push() uses. For rotation/recovery/steer: the
+   *  caller keeps watching this session (it only just called or is
+   *  about to call stop(), not tear down), so the dying session's own
+   *  trailing real final reliably completes whatever gets held back
+   *  here. Unlike flushAll, does NOT clear utteranceStart or fully
+   *  consume an index it could only partially cut — that index is
+   *  still "the same ongoing utterance" pending its trailing final. */
+  flushStable(now: number): EmittedFinal | null {
+    const parts: string[] = [];
+    for (const [index, snapshot] of [...this.pendingSnapshots.entries()].sort(
+      (a, b) => a[0] - b[0],
+    )) {
+      const offset = this.flushedChars.get(index) ?? 0;
+      const unflushed = snapshot.slice(offset);
+      const cut = findFlushCut(unflushed);
+      if (cut <= 0) continue; // too short / all revision-prone — leave pending
+      const text = unflushed.slice(0, cut).trim();
+      if (text) parts.push(text);
+      this.flushedChars.set(index, offset + cut);
+    }
+    if (parts.length === 0) return null;
+    return { text: parts.join(" "), startedAt: this.utteranceStart ?? now };
   }
 
   private lastPendingIndex(): number | null {

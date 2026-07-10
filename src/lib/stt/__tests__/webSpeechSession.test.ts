@@ -204,3 +204,94 @@ describe("UtteranceAssembler", () => {
     expect(fin.finals[0].startedAt).toBe(T0 + 30_000);
   });
 });
+
+describe("UtteranceAssembler.flushStable — rotation/recovery, dup-bug regression", () => {
+  it("holds back the revision-prone tail (same cut boundary as self-flush), unlike flushAll", () => {
+    const a = new UtteranceAssembler();
+    const long = words(20); // long enough for a safe cut to exist
+    a.push([{ index: 0, transcript: long, isFinal: false }], T0);
+
+    const out = a.flushStable(T0 + 100);
+    expect(out).not.toBeNull();
+    expect(long.startsWith(out!.text)).toBe(true);
+    // The tail stayed pending — not the whole snapshot like flushAll.
+    expect(out!.text.length).toBeLessThan(long.length);
+    expect(a.hasPendingInterim()).toBe(true);
+  });
+
+  it("returns null and leaves everything pending when the unflushed text is too short to safely cut", () => {
+    const a = new UtteranceAssembler();
+    a.push([{ index: 0, transcript: "short interim", isFinal: false }], T0);
+    const out = a.flushStable(T0 + 100);
+    expect(out).toBeNull();
+    expect(a.hasPendingInterim()).toBe(true);
+  });
+
+  it("returns null when nothing is pending, same as flushAll", () => {
+    const a = new UtteranceAssembler();
+    expect(a.flushStable(T0)).toBeNull();
+    a.push([{ index: 0, transcript: "done.", isFinal: true }], T0);
+    expect(a.flushStable(T0 + 100)).toBeNull();
+  });
+
+  it("a subsequent real final for the same index completes the held-back tail with no loss and no dup", () => {
+    const a = new UtteranceAssembler();
+    const long = words(20);
+    a.push([{ index: 0, transcript: long, isFinal: false }], T0);
+
+    const partial = a.flushStable(T0 + 100);
+    expect(partial).not.toBeNull();
+
+    // The dying session's own stop()-triggered real final: the SAME
+    // (unrevised) text, exactly what a real Chrome finalization of
+    // already-collected audio would report.
+    const out = a.push([{ index: 0, transcript: long, isFinal: true }], T0 + 200);
+
+    const reconstructed = [partial!.text, ...out.finals.map((f) => f.text)]
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(reconstructed).toBe(long.replace(/\s+/g, " ").trim());
+    expect(a.hasPendingInterim()).toBe(false);
+  });
+
+  it("regression: a real final DIVERGING from the last revision-flipped interim is never dropped, and the revision artifact never leaks into a final (the 2026-07 66-dup bug)", () => {
+    const a = new UtteranceAssembler();
+    // Long enough that the safe cut lands well before the revision-
+    // flipped last word, mirroring Chrome rewriting the tail as more
+    // context arrives (FakeSpeechRecognition.revisedTranscript).
+    const stable = words(20);
+    const revised = `${stable}x`; // last word mid-revision, e.g. "wordx"
+    a.push([{ index: 0, transcript: stable, isFinal: false }], T0);
+    a.push([{ index: 0, transcript: revised, isFinal: false }], T0 + 300);
+
+    // Rotation/recovery fires HERE, mid-revision.
+    const partial = a.flushStable(T0 + 350);
+    expect(partial).not.toBeNull();
+    // The corrupted "wordx" artifact must never appear in emitted text.
+    expect(partial!.text).not.toContain("wordx");
+
+    // The dying session's stop() finalizes based on ACTUAL collected
+    // audio — the plain (non-revised) transcript, per MDN semantics —
+    // which may be SHORTER than the revision we last rendered.
+    const out = a.push([{ index: 0, transcript: stable, isFinal: true }], T0 + 400);
+
+    const reconstructed = [partial!.text, ...out.finals.map((f) => f.text)]
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+    expect(reconstructed).toBe(stable.replace(/\s+/g, " ").trim());
+    expect(reconstructed).not.toContain("wordx");
+  });
+
+  it("does not clear utteranceStart — the held-back remainder is still the same ongoing utterance", () => {
+    const a = new UtteranceAssembler();
+    const long = words(20);
+    a.push([{ index: 0, transcript: long, isFinal: false }], T0);
+    a.flushStable(T0 + 100);
+
+    const out = a.push([{ index: 0, transcript: long, isFinal: true }], T0 + 5_000);
+    // startedAt reflects the utterance's TRUE origin, not the flush time.
+    expect(out.finals[0].startedAt).toBe(T0);
+  });
+});
