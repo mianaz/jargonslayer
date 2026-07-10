@@ -1153,7 +1153,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       previewOptions: PREVIEW_TIER ? PREVIEW_LIVE_MODELS : undefined,
                       hint: PREVIEW_TIER ? (
                         <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                          检测用轻量模型（更快），报告可用更强模型
+                          体验版由服务端在预置模型内代理调用，下拉所选即实际使用的模型；检测用轻量模型（更快），报告可用更强模型
                         </div>
                       ) : (
                         activePreset === "ollama" && (
