@@ -21,13 +21,15 @@ import {
   ShieldCheck,
   UploadSimple,
 } from "@phosphor-icons/react";
-import { useApp } from "@/lib/store";
+import { elapsedActiveMs, useApp } from "@/lib/store";
 import type { MeetingStatus, STTEngineKind } from "@/lib/types";
 import { withBase } from "@/lib/basePath";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 
 export interface HeaderProps {
   onStart: () => void;
+  onPause: () => void;
+  onResume: () => void;
   onStop: () => void;
   onDemo: () => void;
   onOpenHistory: () => void;
@@ -44,6 +46,22 @@ export interface HeaderProps {
 // per pill/select/menu.
 export function isEngineControlBusy(status: MeetingStatus): boolean {
   return status === "connecting" || status === "listening";
+}
+
+// Pause availability (B4): 暂停 is hidden entirely (end-only posture)
+// for engines where a resume can't safely reattach mid-meeting —
+// tabaudio (resuming would have to re-open the OS/browser tab-share
+// picker, a jarring interruption to re-request every pause), demo (a
+// scripted replay that only knows how to restart from line 0, not
+// "resume"), and whisper WITH realtime diarization on (the sidecar's
+// seg-id numbering isn't guaranteed stable across a stop()/reattach
+// pair — a post-resume diarization segment could collide with a
+// pre-pause one; known beta limitation). Exported so it's
+// independently unit-testable, same pattern as isEngineControlBusy.
+export function canPause(engine: STTEngineKind, realtimeDiarize: boolean): boolean {
+  if (engine === "tabaudio" || engine === "demo") return false;
+  if (engine === "whisper" && realtimeDiarize) return false;
+  return true;
 }
 
 // Real capture engines only — demo is a scripted preview, not a peer
@@ -109,19 +127,27 @@ function DetectModeBadge() {
 function ElapsedTimer() {
   const status = useApp((s) => s.status);
   const startedAt = useApp((s) => s.startedAt);
+  const pausedAccumMs = useApp((s) => s.pausedAccumMs);
+  const pauseStartedAt = useApp((s) => s.pauseStartedAt);
   const [now, setNow] = useState(() => Date.now());
 
+  // 1s ticking only while actually listening — while paused the
+  // readout is frozen (elapsedActiveMs ignores `now` once
+  // pauseStartedAt is set, see its own doc comment), so there's
+  // nothing for a running interval to do.
   useEffect(() => {
     if (status !== "listening") return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [status]);
 
-  if (status !== "listening" || startedAt === null) return null;
+  if ((status !== "listening" && status !== "paused") || startedAt === null) {
+    return null;
+  }
 
   return (
     <span className="font-mono text-xs tabular-nums text-mut">
-      {formatElapsed(now - startedAt)}
+      {formatElapsed(elapsedActiveMs(startedAt, now, pausedAccumMs, pauseStartedAt))}
     </span>
   );
 }
@@ -410,6 +436,8 @@ function HamburgerMenu({
 
 export default function Header({
   onStart,
+  onPause,
+  onResume,
   onStop,
   onDemo,
   onOpenHistory,
@@ -419,6 +447,8 @@ export default function Header({
 }: HeaderProps) {
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
+  const engine = useApp((s) => s.settings.engine);
+  const realtimeDiarize = useApp((s) => s.settings.realtimeDiarize);
 
   return (
     // Single-row header (Miana's v0.2.2 E2E feedback: the old h-9
@@ -488,7 +518,29 @@ export default function Header({
             </button>
           )}
 
-          {status === "listening" && (
+          {status === "listening" && canPause(engine, realtimeDiarize) && (
+            <button
+              type="button"
+              data-testid="btn-pause"
+              onClick={onPause}
+              className="h-9 rounded-none border border-edge px-4 font-mono text-sm text-fg hover:bg-panel3 whitespace-nowrap"
+            >
+              暂停
+            </button>
+          )}
+
+          {status === "paused" && (
+            <button
+              type="button"
+              data-testid="btn-resume"
+              onClick={onResume}
+              className="btn-terminal h-9 rounded-none bg-act px-4 font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap"
+            >
+              继续
+            </button>
+          )}
+
+          {(status === "listening" || status === "paused") && (
             <button
               type="button"
               data-testid="btn-stop"
@@ -496,7 +548,7 @@ export default function Header({
               className="btn-terminal flex h-9 items-center gap-2 rounded-none border border-lab-red px-4 font-mono text-sm font-semibold text-lab-red hover:bg-lab-red/10 whitespace-nowrap"
             >
               <span className="dot-live h-2 w-2 rounded-full bg-lab-red whitespace-nowrap" />
-              停止
+              结束
             </button>
           )}
 

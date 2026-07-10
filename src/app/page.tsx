@@ -53,7 +53,7 @@ function savePanelH(h: number): void {
 }
 
 export default function Home() {
-  const { start, stop, startDemo } = useMeeting();
+  const { start, pause, resume, stop, startDemo } = useMeeting();
   const hydrate = useApp((s) => s.hydrate);
   const status = useApp((s) => s.status);
   const summary = useApp((s) => s.summary);
@@ -158,6 +158,8 @@ export default function Home() {
     <div className="flex h-screen flex-col overflow-hidden">
       <Header
         onStart={() => void start()}
+        onPause={() => void pause()}
+        onResume={() => void resume()}
         onStop={() => void stop()}
         onDemo={() => void startDemo()}
         onOpenHistory={() => setHistoryOpen(true)}

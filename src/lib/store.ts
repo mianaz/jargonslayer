@@ -184,6 +184,13 @@ interface AppState {
   meetingGen: number;
   segments: TranscriptSegment[];
   interim: InterimState | null;
+  // Pause/resume/end (B2): total ms spent paused so far this meeting,
+  // and the wall-clock moment the CURRENT pause began (null when not
+  // paused). Both reset alongside the rest of the live-meeting slice
+  // in beginMeeting/newMeeting. See elapsedActiveMs above for the pure
+  // math that excludes paused time from the displayed elapsed timer.
+  pausedAccumMs: number;
+  pauseStartedAt: number | null;
   // realtime speaker diarization (beta): stable id -> user-chosen
   // display name, written only by renameSpeaker (see rename-wins in
   // applySpeakerUpdate/aliasesAfterRename above).
@@ -243,6 +250,13 @@ interface AppState {
 
   setStatus: (status: MeetingStatus, detail?: string | null) => void;
   beginMeeting: () => void; // clears live state, stamps startedAt
+  // Pause/resume (B2): pauseMeeting stamps pauseStartedAt and flips to
+  // "paused"; resumeMeeting folds (now - pauseStartedAt) into
+  // pausedAccumMs, clears pauseStartedAt, and flips back to
+  // "listening". Both are thin — useMeeting.ts's pause()/resume() own
+  // tearing down/reattaching the actual engine around these calls.
+  pauseMeeting: () => void;
+  resumeMeeting: () => void;
   addFinal: (
     text: string,
     opts?: { speaker?: string; startedAt?: number; sttSeg?: number },
@@ -451,6 +465,34 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   return applyTierDefaults(settings, PREVIEW_TIER, !!saved && "engine" in saved);
 }
 
+// ---------------------------------------------------------------
+// Pause/resume elapsed-time math (B2) — pure, unit-tested independent
+// of zustand, same posture as the realtime-diarization helpers above.
+// ---------------------------------------------------------------
+
+/** Live meeting elapsed time EXCLUDING paused spans. `pausedAccumMs`
+ *  is the running total of every PREVIOUS pause's duration (folded in
+ *  by resumeMeeting on each resume — see below); while a pause is
+ *  CURRENTLY in progress (`pauseStartedAt` non-null), the readout
+ *  freezes at the instant pauseMeeting() fired instead of ticking
+ *  forward with `now` — the ongoing pause's own duration only gets
+ *  folded into pausedAccumMs at the NEXT resumeMeeting(). `startedAt:
+ *  null` (no meeting yet) is 0. Pure epoch-ms subtraction throughout —
+ *  no Date/timezone-aware math at all, so this is inherently
+ *  DST-agnostic (see the unit tests). Exported so Header.tsx's
+ *  ElapsedTimer renders the exact same math the store itself uses to
+ *  fold a pause on resume. */
+export function elapsedActiveMs(
+  startedAt: number | null,
+  now: number,
+  pausedAccumMs: number,
+  pauseStartedAt: number | null,
+): number {
+  if (startedAt === null) return 0;
+  const upTo = pauseStartedAt ?? now;
+  return Math.max(0, upTo - startedAt - pausedAccumMs);
+}
+
 export const useApp = create<AppState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   hydrated: false,
@@ -461,6 +503,8 @@ export const useApp = create<AppState>((set, get) => ({
   meetingGen: 0,
   segments: [],
   interim: null,
+  pausedAccumMs: 0,
+  pauseStartedAt: null,
   speakerAliases: {},
   translations: {},
 
@@ -616,6 +660,8 @@ export const useApp = create<AppState>((set, get) => ({
       meetingGen: state.meetingGen + 1,
       segments: [],
       interim: null,
+      pausedAccumMs: 0,
+      pauseStartedAt: null,
       speakerAliases: {},
       translations: {},
       cards: [],
@@ -624,6 +670,18 @@ export const useApp = create<AppState>((set, get) => ({
       focusCardId: null,
       lookup: null,
       activeSessionId: null,
+    })),
+
+  // Pause/resume/end (B2). See elapsedActiveMs above for the paired
+  // pure math these two actions' state feeds.
+  pauseMeeting: () => set({ status: "paused", pauseStartedAt: Date.now() }),
+
+  resumeMeeting: () =>
+    set((state) => ({
+      status: "listening",
+      pausedAccumMs:
+        state.pausedAccumMs + (Date.now() - (state.pauseStartedAt ?? Date.now())),
+      pauseStartedAt: null,
     })),
 
   addFinal: (text, opts) => {
@@ -1071,6 +1129,8 @@ export const useApp = create<AppState>((set, get) => ({
       meetingGen: state.meetingGen + 1,
       segments: [],
       interim: null,
+      pausedAccumMs: 0,
+      pauseStartedAt: null,
       speakerAliases: {},
       translations: {},
       cards: [],

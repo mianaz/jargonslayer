@@ -3,6 +3,7 @@ import {
   aliasesAfterRename,
   applySpeakerUpdateToSegments,
   applyTierDefaults,
+  elapsedActiveMs,
   filterSuppressedLiveCards,
   migrateSettings,
   renameSpeakerInSegments,
@@ -285,6 +286,117 @@ describe("scheduleSessionSave — debounced post-stop save vs. meeting-boundary 
   });
 });
 
+describe("elapsedActiveMs — pure pause/resume elapsed-time math (B2)", () => {
+  it("returns 0 when there's no meeting (startedAt: null), regardless of the other params", () => {
+    expect(elapsedActiveMs(null, 999_999, 12_345, 500)).toBe(0);
+    expect(elapsedActiveMs(null, 0, 0, null)).toBe(0);
+  });
+
+  it("not paused (pauseStartedAt: null): elapsed = now - startedAt - pausedAccumMs", () => {
+    expect(elapsedActiveMs(1000, 5000, 0, null)).toBe(4000);
+    expect(elapsedActiveMs(1000, 10_000, 3_000, null)).toBe(6_000); // one prior pause already folded in
+  });
+
+  it("currently paused: frozen at pauseStartedAt, ignoring `now` entirely", () => {
+    const frozen = elapsedActiveMs(1000, 5000, 0, 4000); // paused at t=4000
+    expect(frozen).toBe(3000); // 4000 - 1000 - 0
+    // `now` ticking further makes no difference while still paused.
+    expect(elapsedActiveMs(1000, 999_999, 0, 4000)).toBe(frozen);
+  });
+
+  it("a prior pause's accumulated duration is excluded even while paused again", () => {
+    // Meeting started at 0, one earlier pause already folded pausedAccumMs
+    // to 2000ms, now paused AGAIN at t=10_000.
+    expect(elapsedActiveMs(0, 999_999, 2_000, 10_000)).toBe(8_000);
+  });
+
+  it("clamps to 0 rather than going negative on pathological inputs", () => {
+    expect(elapsedActiveMs(5000, 5000, 10_000, null)).toBe(0);
+  });
+
+  it("is DST-agnostic — pure epoch-ms subtraction, no wall-clock/timezone-aware math", () => {
+    // 2026 US spring-forward DST boundary. Date.UTC values straddle it,
+    // but since this helper only ever subtracts raw epoch ms, the
+    // result is exactly the millisecond delta regardless of the local
+    // timezone the test happens to run in — a wall-clock-aware
+    // implementation (e.g. one that built Date objects and diffed
+    // hours/minutes) could otherwise misfire by +/- 1h right here.
+    const before = Date.UTC(2026, 2, 8, 1, 30, 0); // 2026-03-08T01:30:00Z
+    const after = Date.UTC(2026, 2, 8, 3, 30, 0); // 2026-03-08T03:30:00Z
+    expect(elapsedActiveMs(before, after, 0, null)).toBe(2 * 60 * 60 * 1000);
+  });
+});
+
+describe("pauseMeeting / resumeMeeting — store actions (B2)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    useApp.setState({
+      status: "listening",
+      startedAt: 0,
+      pausedAccumMs: 0,
+      pauseStartedAt: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("pauseMeeting sets status:'paused' and stamps pauseStartedAt to now, leaving pausedAccumMs untouched", () => {
+    useApp.getState().pauseMeeting();
+    expect(useApp.getState().status).toBe("paused");
+    expect(useApp.getState().pauseStartedAt).toBe(10_000);
+    expect(useApp.getState().pausedAccumMs).toBe(0);
+  });
+
+  it("resumeMeeting folds the pause duration into pausedAccumMs, flips back to listening, and clears pauseStartedAt", () => {
+    useApp.getState().pauseMeeting(); // pauseStartedAt = 10_000
+    vi.setSystemTime(13_500); // paused for 3.5s
+    useApp.getState().resumeMeeting();
+
+    const s = useApp.getState();
+    expect(s.status).toBe("listening");
+    expect(s.pauseStartedAt).toBeNull();
+    expect(s.pausedAccumMs).toBe(3_500);
+  });
+
+  it("a second pause/resume cycle accumulates on top of the prior pausedAccumMs", () => {
+    useApp.getState().pauseMeeting(); // t=10_000
+    vi.setSystemTime(12_000);
+    useApp.getState().resumeMeeting(); // +2000 -> pausedAccumMs=2000
+
+    vi.setSystemTime(20_000);
+    useApp.getState().pauseMeeting(); // t=20_000
+    vi.setSystemTime(21_500);
+    useApp.getState().resumeMeeting(); // +1500 -> pausedAccumMs=3500
+
+    expect(useApp.getState().pausedAccumMs).toBe(3_500);
+  });
+
+  it("resumeMeeting tolerates pauseStartedAt already being null (defensive ?? Date.now() fallback) without NaN/throw", () => {
+    useApp.setState({ pauseStartedAt: null, pausedAccumMs: 1_000 });
+    useApp.getState().resumeMeeting();
+    expect(useApp.getState().pausedAccumMs).toBe(1_000); // (now - now) folded in — unchanged
+    expect(useApp.getState().status).toBe("listening");
+    expect(Number.isNaN(useApp.getState().pausedAccumMs)).toBe(false);
+  });
+
+  it("beginMeeting resets pausedAccumMs/pauseStartedAt for a fresh meeting", () => {
+    useApp.setState({ pausedAccumMs: 5_000, pauseStartedAt: 9_000 });
+    useApp.getState().beginMeeting();
+    expect(useApp.getState().pausedAccumMs).toBe(0);
+    expect(useApp.getState().pauseStartedAt).toBeNull();
+  });
+
+  it("newMeeting resets pausedAccumMs/pauseStartedAt too", () => {
+    useApp.setState({ pausedAccumMs: 5_000, pauseStartedAt: 9_000 });
+    useApp.getState().newMeeting();
+    expect(useApp.getState().pausedAccumMs).toBe(0);
+    expect(useApp.getState().pauseStartedAt).toBeNull();
+  });
+});
+
 describe("updateSegmentText — committed-mutation tripwire (fix #A5)", () => {
   beforeEach(() => {
     vi.useFakeTimers(); // scheduleSessionSave's setTimeout must never actually fire in this block
@@ -312,6 +424,14 @@ describe("updateSegmentText — committed-mutation tripwire (fix #A5)", () => {
     expect(entries[0].detail).toBe("segmentId=seg-1 status=listening");
     expect(entries[0].detail).not.toContain("hacked"); // never the transcript text
     expect(entries[0].message).not.toContain("hacked");
+  });
+
+  it("refuses while 'paused' too — not only 'listening'/'connecting'", () => {
+    useApp.setState({ status: "paused" });
+    useApp.getState().updateSegmentText("seg-1", "hacked during pause");
+
+    expect(useApp.getState().segments[0].text).toBe("original");
+    expect(getDiagEntries().filter((e) => e.tag === "stt-committed-mutation")).toHaveLength(1);
   });
 
   it("still allows the edit (no diag entry) once the session is actually stopped", () => {

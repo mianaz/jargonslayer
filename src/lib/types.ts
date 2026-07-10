@@ -474,7 +474,12 @@ export const PROVIDER_HEADERS = {
 
 // ---------- meeting session / history ----------
 
-export type MeetingStatus = "idle" | "connecting" | "listening" | "stopped";
+// "paused" (B1, pause/resume/end): the engine is fully torn down but
+// the meeting itself is still open (same meetingGen, segments/cards
+// intact) — distinct from "stopped", which is the terminal, saved-to-
+// history state. See store.ts's pauseMeeting/resumeMeeting and
+// useMeeting.ts's pause()/resume().
+export type MeetingStatus = "idle" | "connecting" | "listening" | "paused" | "stopped";
 
 export interface MeetingSession {
   id: string;

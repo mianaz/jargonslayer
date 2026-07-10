@@ -38,6 +38,8 @@ export function logAndToastError(
 
 export interface UseMeetingResult {
   start: () => Promise<void>;
+  pause: () => Promise<void>;
+  resume: () => Promise<void>;
   stop: () => Promise<void>;
   startDemo: () => Promise<void>;
 }
@@ -47,40 +49,19 @@ export function useMeeting(): UseMeetingResult {
   const schedulerRef = useRef<DetectionScheduler | null>(null);
   const translateQueueRef = useRef<TranslateQueue | null>(null);
 
-  const start = useCallback(async () => {
-    const { status } = useApp.getState();
-    if (status === "listening" || status === "connecting") return;
-
-    useApp.getState().beginMeeting();
-    // Captured once, right after beginMeeting() bumps meetingGen —
-    // this is "this engine session's gen" for the meeting-boundary
-    // guards below (late scheduler results / late speaker updates
-    // from a previous meeting must not land on this one, and vice
-    // versa once a NEXT meeting starts and bumps the gen again).
-    const sessionGen = useApp.getState().meetingGen;
-
-    // Replace any previous scheduler before wiring a fresh one.
-    schedulerRef.current?.stop();
-    const scheduler = new DetectionScheduler({
-      getSettings: () => useApp.getState().settings,
-      getMeetingGen: () => useApp.getState().meetingGen,
-      onDetection: (res, src, meta) => useApp.getState().applyDetection(res, src, meta),
-      onBusyChange: (b) => useApp.getState().setDetectBusy(b),
-      onModeChange: (m) => useApp.getState().setDetectMode(m),
-      onError: (msg) => useApp.getState().showToast(logAndToastError("detect-scheduler", msg)),
-    });
-    schedulerRef.current = scheduler;
-
-    // Replace any previous translate queue before wiring a fresh one —
-    // same lifecycle as the scheduler above.
-    translateQueueRef.current?.stop();
-    const translateQueue = new TranslateQueue({
-      getSettings: () => useApp.getState().settings,
-      getMeetingGen: () => useApp.getState().meetingGen,
-      onTranslations: (map, gen) => useApp.getState().applyTranslations(map, gen),
-      onError: (msg) => useApp.getState().showToast(logAndToastError("translate-queue", msg)),
-    });
-    translateQueueRef.current = translateQueue;
+  // Engine-creation/wiring block (pause/resume, B3): extracted out of
+  // start() so resume() can reattach a FRESH engine instance to the
+  // SAME meeting (same scheduler/translateQueue, same sessionGen)
+  // without re-running beginMeeting() or recreating either queue —
+  // both stay alive across a pause (they read meetingGen via
+  // closures, not a captured value, so they keep working unchanged
+  // once the meeting resumes). Requires schedulerRef/translateQueueRef
+  // to already be wired (true both from start(), which just created
+  // them, and from resume(), which never tore them down).
+  const attachEngine = useCallback(async (sessionGen: number) => {
+    const scheduler = schedulerRef.current;
+    const translateQueue = translateQueueRef.current;
+    if (!scheduler || !translateQueue) return;
 
     const settings = useApp.getState().settings;
     const engine = createEngine(settings.engine);
@@ -164,6 +145,72 @@ export function useMeeting(): UseMeetingResult {
     await engine.start(events, settings);
   }, []);
 
+  const start = useCallback(async () => {
+    const { status } = useApp.getState();
+    if (status === "listening" || status === "connecting") return;
+
+    useApp.getState().beginMeeting();
+    // Captured once, right after beginMeeting() bumps meetingGen —
+    // this is "this engine session's gen" for the meeting-boundary
+    // guards below (late scheduler results / late speaker updates
+    // from a previous meeting must not land on this one, and vice
+    // versa once a NEXT meeting starts and bumps the gen again).
+    const sessionGen = useApp.getState().meetingGen;
+
+    // Replace any previous scheduler before wiring a fresh one.
+    schedulerRef.current?.stop();
+    const scheduler = new DetectionScheduler({
+      getSettings: () => useApp.getState().settings,
+      getMeetingGen: () => useApp.getState().meetingGen,
+      onDetection: (res, src, meta) => useApp.getState().applyDetection(res, src, meta),
+      onBusyChange: (b) => useApp.getState().setDetectBusy(b),
+      onModeChange: (m) => useApp.getState().setDetectMode(m),
+      onError: (msg) => useApp.getState().showToast(logAndToastError("detect-scheduler", msg)),
+    });
+    schedulerRef.current = scheduler;
+
+    // Replace any previous translate queue before wiring a fresh one —
+    // same lifecycle as the scheduler above.
+    translateQueueRef.current?.stop();
+    const translateQueue = new TranslateQueue({
+      getSettings: () => useApp.getState().settings,
+      getMeetingGen: () => useApp.getState().meetingGen,
+      onTranslations: (map, gen) => useApp.getState().applyTranslations(map, gen),
+      onError: (msg) => useApp.getState().showToast(logAndToastError("translate-queue", msg)),
+    });
+    translateQueueRef.current = translateQueue;
+
+    await attachEngine(sessionGen);
+  }, [attachEngine]);
+
+  // Pause (B3): stop the LIVE engine only — scheduler/translateQueue
+  // stay alive (same meeting, same meetingGen; they read it via
+  // closures so nothing needs re-wiring). engineRef.current is nulled
+  // BEFORE pauseMeeting() so a racing stop() (End, reachable from
+  // "paused" too) sees a clean null ref rather than re-stopping the
+  // same instance — though every STTEngine.stop() already tolerates a
+  // repeat/concurrent call as a safe no-op regardless (verified across
+  // all four: webSpeech/whisperSocket/tabAudio/demo).
+  const pause = useCallback(async () => {
+    const { status } = useApp.getState();
+    if (status !== "listening") return;
+    await engineRef.current?.stop();
+    engineRef.current = null;
+    useApp.getState().pauseMeeting();
+  }, []);
+
+  // Resume (B3): same meeting, same meetingGen — resumeMeeting() folds
+  // the just-finished pause span into pausedAccumMs and flips status
+  // back to "listening", then attachEngine() reattaches a FRESH engine
+  // instance (the paused one was fully torn down, not merely idled) to
+  // the STILL-alive scheduler/translateQueue.
+  const resume = useCallback(async () => {
+    const { status, meetingGen } = useApp.getState();
+    if (status !== "paused") return;
+    useApp.getState().resumeMeeting();
+    await attachEngine(meetingGen);
+  }, [attachEngine]);
+
   const stop = useCallback(async () => {
     const engine = engineRef.current;
     const scheduler = schedulerRef.current;
@@ -242,5 +289,5 @@ export function useMeeting(): UseMeetingResult {
     }
   }, [segments, meetingGen]);
 
-  return { start, stop, startDemo };
+  return { start, pause, resume, stop, startDemo };
 }
