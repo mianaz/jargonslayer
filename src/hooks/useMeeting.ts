@@ -145,7 +145,25 @@ export function useMeeting(): UseMeetingResult {
     await engine.start(events, settings);
   }, []);
 
-  const start = useCallback(async () => {
+  // Lifecycle serialization (codex review 2026-07-10 HIGH): start/
+  // pause/resume/stop each await an engine teardown or attach, and a
+  // second lifecycle click landing INSIDE that window corrupted state
+  // (double-pause restamped pauseStartedAt; End during pause's await
+  // let the pause continuation resurrect an already-saved meeting as
+  // "paused"). Synchronous check-and-set — a concurrent lifecycle call
+  // no-ops instead of interleaving.
+  const lifecycleBusyRef = useRef(false);
+  const withLifecycleGate = useCallback(async (fn: () => Promise<void>) => {
+    if (lifecycleBusyRef.current) return;
+    lifecycleBusyRef.current = true;
+    try {
+      await fn();
+    } finally {
+      lifecycleBusyRef.current = false;
+    }
+  }, []);
+
+  const start = useCallback(async () => withLifecycleGate(async () => {
     const { status } = useApp.getState();
     if (status === "listening" || status === "connecting") return;
 
@@ -181,37 +199,44 @@ export function useMeeting(): UseMeetingResult {
     translateQueueRef.current = translateQueue;
 
     await attachEngine(sessionGen);
-  }, [attachEngine]);
+  }), [attachEngine, withLifecycleGate]);
 
   // Pause (B3): stop the LIVE engine only — scheduler/translateQueue
   // stay alive (same meeting, same meetingGen; they read it via
-  // closures so nothing needs re-wiring). engineRef.current is nulled
-  // BEFORE pauseMeeting() so a racing stop() (End, reachable from
-  // "paused" too) sees a clean null ref rather than re-stopping the
-  // same instance — though every STTEngine.stop() already tolerates a
-  // repeat/concurrent call as a safe no-op regardless (verified across
-  // all four: webSpeech/whisperSocket/tabAudio/demo).
-  const pause = useCallback(async () => {
+  // closures so nothing needs re-wiring). Ordering matters (codex
+  // review 2026-07-10): detach the ref and flip to "paused"
+  // SYNCHRONOUSLY, so every other lifecycle guard sees the new state
+  // before the (awaited) teardown; then stop the engine — webspeech's
+  // stop() drains the working tail into committed segments before it
+  // resolves; the interim display is cleared only after that drain.
+  const pause = useCallback(async () => withLifecycleGate(async () => {
     const { status } = useApp.getState();
     if (status !== "listening") return;
-    await engineRef.current?.stop();
+    const engine = engineRef.current;
     engineRef.current = null;
     useApp.getState().pauseMeeting();
-  }, []);
+    await engine?.stop();
+    useApp.getState().setInterim(null);
+  }), [withLifecycleGate]);
 
-  // Resume (B3): same meeting, same meetingGen — resumeMeeting() folds
-  // the just-finished pause span into pausedAccumMs and flips status
-  // back to "listening", then attachEngine() reattaches a FRESH engine
-  // instance (the paused one was fully torn down, not merely idled) to
-  // the STILL-alive scheduler/translateQueue.
-  const resume = useCallback(async () => {
+  // Resume (B3): same meeting, same meetingGen — attachEngine() FIRST
+  // (a FRESH engine instance; the paused one was fully torn down), and
+  // resumeMeeting() only once capture is attached, so the paused-time
+  // accounting also absorbs the connection delay instead of counting
+  // it as active meeting time (codex review 2026-07-10).
+  const resume = useCallback(async () => withLifecycleGate(async () => {
     const { status, meetingGen } = useApp.getState();
     if (status !== "paused") return;
-    useApp.getState().resumeMeeting();
     await attachEngine(meetingGen);
-  }, [attachEngine]);
+    // attachEngine failure runs the engine's own error path (→
+    // "stopped" + save) — folding the accounting then would flip an
+    // ended meeting back to "listening" with no engine attached.
+    if (useApp.getState().status !== "stopped") {
+      useApp.getState().resumeMeeting();
+    }
+  }), [attachEngine, withLifecycleGate]);
 
-  const stop = useCallback(async () => {
+  const stop = useCallback(async () => withLifecycleGate(async () => {
     const engine = engineRef.current;
     const scheduler = schedulerRef.current;
     if (engine) {
@@ -226,7 +251,7 @@ export function useMeeting(): UseMeetingResult {
       await useApp.getState().saveCurrentSession();
       useApp.getState().showToast("会议已保存到历史记录");
     }
-  }, []);
+  }), [withLifecycleGate]);
 
   const startDemo = useCallback(async () => {
     useApp.getState().updateSettings({ engine: "demo" });

@@ -49,6 +49,15 @@ export class TabAudioEngine implements STTEngine {
       return;
     }
 
+    // stop() can land while the share picker is open — without this
+    // re-check the granted capture would attach AFTER teardown and
+    // keep recording a tab on a stopped engine (codex review
+    // 2026-07-10; same class as whisperSocket's post-acquire guard).
+    if (this.stopping) {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
       stream.getTracks().forEach((t) => t.stop());

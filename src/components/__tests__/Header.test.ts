@@ -22,23 +22,19 @@ describe("isEngineControlBusy", () => {
 });
 
 describe("canPause — pause-button availability by engine (B4)", () => {
-  it("allows pause for webspeech, regardless of realtimeDiarize", () => {
-    expect(canPause("webspeech", false)).toBe(true);
-    expect(canPause("webspeech", true)).toBe(true);
+  it("allows pause only for webspeech — its stop() drains the working tail synchronously", () => {
+    expect(canPause("webspeech")).toBe(true);
+  });
+
+  it("hides pause for whisper — no stop-drain ack protocol yet (codex review 2026-07-10)", () => {
+    expect(canPause("whisper")).toBe(false);
   });
 
   it("hides pause for tabaudio — resume would have to re-open the OS share picker", () => {
-    expect(canPause("tabaudio", false)).toBe(false);
-    expect(canPause("tabaudio", true)).toBe(false);
+    expect(canPause("tabaudio")).toBe(false);
   });
 
   it("hides pause for demo — a scripted replay only knows how to restart, not resume", () => {
-    expect(canPause("demo", false)).toBe(false);
-    expect(canPause("demo", true)).toBe(false);
-  });
-
-  it("whisper allows pause UNLESS realtimeDiarize is on (beta seg-id collision limitation)", () => {
-    expect(canPause("whisper", false)).toBe(true);
-    expect(canPause("whisper", true)).toBe(false);
+    expect(canPause("demo")).toBe(false);
   });
 });

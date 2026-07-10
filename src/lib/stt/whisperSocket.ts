@@ -27,6 +27,14 @@ export class WhisperSocketEngine implements STTEngine {
       );
       return;
     }
+    // stop() can land while getUserMedia is awaiting the permission
+    // prompt/device — without this re-check the acquired stream would
+    // attach AFTER teardown and leave a hot mic on a stopped engine
+    // (codex review 2026-07-10).
+    if (this.stopping) {
+      for (const t of stream.getTracks()) t.stop();
+      return;
+    }
     this.stream = stream;
 
     const transport = new WsTransport({

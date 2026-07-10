@@ -58,10 +58,13 @@ export function isEngineControlBusy(status: MeetingStatus): boolean {
 // pair — a post-resume diarization segment could collide with a
 // pre-pause one; known beta limitation). Exported so it's
 // independently unit-testable, same pattern as isEngineControlBusy.
-export function canPause(engine: STTEngineKind, realtimeDiarize: boolean): boolean {
-  if (engine === "tabaudio" || engine === "demo") return false;
-  if (engine === "whisper" && realtimeDiarize) return false;
-  return true;
+export function canPause(engine: STTEngineKind): boolean {
+  // webspeech ONLY for v1. whisper is deferred pending a stop-drain
+  // ack protocol — WsTransport.stop() closes right after {type:"stop"},
+  // so the sidecar's post-stop final can be dropped or interleave past
+  // a resume (codex review 2026-07-10); tabaudio would re-open the OS
+  // share picker on resume; demo restarts its script.
+  return engine === "webspeech";
 }
 
 // Real capture engines only — demo is a scripted preview, not a peer
@@ -521,7 +524,7 @@ export default function Header({
             </button>
           )}
 
-          {status === "listening" && canPause(engine, realtimeDiarize) && (
+          {status === "listening" && canPause(engine) && (
             <button
               type="button"
               data-testid="btn-pause"
