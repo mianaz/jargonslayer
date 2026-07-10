@@ -2,11 +2,12 @@
 //
 // Detect-mode toggle (E2E batch item 2): the statusline's detect-mode
 // label becomes clickable while detectMode is "llm"/"dictionary" and
-// flips settings.aiDetect — the label itself keeps deriving from
-// detectMode (the scheduler's own derived runtime state, see
-// detect/scheduler.ts), never from the setting directly. Mirrors
-// Toast.test.tsx's createRoot/act pattern (no @testing-library/react
-// in this repo's test stack).
+// flips settings.aiDetect. The label derives from detectMode (the
+// scheduler's runtime state, see detect/scheduler.ts); the click also
+// echoes the expected mode synchronously so an idle meeting doesn't
+// show a dead button — the scheduler corrects the echo on its next
+// batch if reality differs. Mirrors Toast.test.tsx's createRoot/act
+// pattern (no @testing-library/react in this repo's test stack).
 
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -74,6 +75,20 @@ describe("StatusLine — detect-mode toggle", () => {
     });
 
     expect(useApp.getState().settings.aiDetect).toBe(false);
+    // Synchronous echo: the label must flip immediately, not wait for
+    // the scheduler's next batch.
+    expect(useApp.getState().detectMode).toBe("dictionary");
+    expect(
+      container!.querySelector('[data-testid="statusline-detect-toggle"]')!.textContent,
+    ).toBe("词典检测");
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="statusline-detect-toggle"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useApp.getState().settings.aiDetect).toBe(true);
+    expect(useApp.getState().detectMode).toBe("llm");
   });
 
   it("detectMode 'off' renders the plain non-interactive span, no toggle button", async () => {

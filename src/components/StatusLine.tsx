@@ -31,6 +31,7 @@ export default function StatusLine() {
   const engine = useApp((s) => s.settings.engine);
   const aiDetect = useApp((s) => s.settings.aiDetect);
   const updateSettings = useApp((s) => s.updateSettings);
+  const setDetectMode = useApp((s) => s.setDetectMode);
 
   const isListening = status === "listening";
   const modeLabel =
@@ -79,15 +80,22 @@ export default function StatusLine() {
           {DETECT_MODE_LABEL.off}
         </span>
       ) : (
-        // Clickable (E2E feedback): flips settings.aiDetect — the label
-        // itself keeps deriving from detectMode (the scheduler's own
-        // derived runtime state, see detect/scheduler.ts), not from the
-        // setting directly, so a click reflects a moment later once the
-        // scheduler observes the new setting on its next segment/batch.
+        // Clickable (E2E feedback): flips settings.aiDetect. The label
+        // derives from detectMode (the scheduler's runtime state, see
+        // detect/scheduler.ts), which the scheduler only re-reads on its
+        // next segment/batch — so the click ALSO echoes the expected
+        // mode synchronously, or an idle meeting would show a dead
+        // button. The scheduler's own onModeChange remains authoritative
+        // and corrects the echo if reality differs (e.g. key-less
+        // fallback downgrades llm back to dictionary).
         <button
           type="button"
           data-testid="statusline-detect-toggle"
-          onClick={() => updateSettings({ aiDetect: !aiDetect })}
+          onClick={() => {
+            const next = !aiDetect;
+            updateSettings({ aiDetect: next });
+            setDetectMode(next ? "llm" : "dictionary");
+          }}
           title="点击切换 AI 检测（词典检测始终开启）"
           className="flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3"
         >
