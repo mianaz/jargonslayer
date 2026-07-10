@@ -189,6 +189,56 @@ describe("useMeeting — lifecycle races", () => {
     expect(useApp.getState().pausedAccumMs).toBe(0);
   });
 
+  it("a pending End suppresses the resumed engine's own 'listening' emission", async () => {
+    await startListening();
+    await act(async () => {
+      await api!.pause();
+    });
+
+    await act(async () => {
+      const resumeP = api!.resume();
+      await flush();
+      await api!.stop(); // End intent recorded while resume holds the gate
+      // The engine warms up and reports listening BEFORE start()
+      // resolves — after an End this must be ignored, not stored.
+      engines[1].events!.onStatus("listening");
+      engines[1].startResolve!();
+      await resumeP;
+      await flush();
+      await flush();
+    });
+
+    expect(useApp.getState().status).toBe("stopped");
+    expect(statuses.slice(statuses.indexOf("paused"))).not.toContain("listening");
+  });
+
+  it("failed resume with SLOW error teardown never folds — attach success is explicit", async () => {
+    await startListening();
+    await act(async () => {
+      await api!.pause();
+    });
+
+    await act(async () => {
+      const resumeP = api!.resume();
+      await flush();
+      // Error teardown hangs on engine.stop() while start() resolves
+      // first — global status still reads "paused" at that moment, so
+      // only the explicit attach-failure signal can prevent the fold.
+      engines[1].deferStop();
+      engines[1].events!.onStatus("error", "denied");
+      engines[1].startResolve!();
+      await resumeP;
+      await flush();
+      expect(useApp.getState().status).not.toBe("listening");
+      engines[1].stopResolve!();
+      await flush();
+      await flush();
+    });
+
+    expect(useApp.getState().status).toBe("idle");
+    expect(statuses.slice(statuses.indexOf("paused"))).not.toContain("listening");
+  });
+
   it("End during pause's teardown drains into a real stop (not a paused zombie)", async () => {
     const engine = await startListening();
     engine.deferStop();

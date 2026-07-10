@@ -49,6 +49,24 @@ export function useMeeting(): UseMeetingResult {
   const schedulerRef = useRef<DetectionScheduler | null>(null);
   const translateQueueRef = useRef<TranslateQueue | null>(null);
 
+  // Lifecycle serialization (codex review 2026-07-10, rounds 1-3):
+  // start/pause/resume/stop each await an engine teardown or attach,
+  // and a second lifecycle click landing INSIDE that window corrupted
+  // state (double-pause restamped pauseStartedAt; End during pause's
+  // await resurrected an already-saved meeting as "paused").
+  // Synchronous check-and-set — a concurrent lifecycle call no-ops
+  // instead of interleaving.
+  //
+  // EXCEPT End: a gated no-op silently DROPS the user's End exactly
+  // when it must win (e.g. clicked while resume is awaiting a
+  // permission prompt). End therefore never no-ops — when the gate is
+  // held it records an intent flag; the intent suppresses any
+  // engine-driven upward status flip (attachEngine's onStatus), blocks
+  // resume's accounting fold, and the gate drains it into a real stop
+  // the moment it frees.
+  const lifecycleBusyRef = useRef(false);
+  const pendingEndRef = useRef(false);
+
   // Engine-creation/wiring block (pause/resume, B3): extracted out of
   // start() so resume() can reattach a FRESH engine instance to the
   // SAME meeting (same scheduler/translateQueue, same sessionGen)
@@ -58,14 +76,19 @@ export function useMeeting(): UseMeetingResult {
   // once the meeting resumes). Requires schedulerRef/translateQueueRef
   // to already be wired (true both from start(), which just created
   // them, and from resume(), which never tore them down).
-  const attachEngine = useCallback(async (sessionGen: number) => {
+  // Returns whether the attach SUCCEEDED — resume must not infer
+  // success from global status (codex round-3: the un-awaited error
+  // stop flow updates status asynchronously, so status can read
+  // "paused" long after the engine already failed).
+  const attachEngine = useCallback(async (sessionGen: number): Promise<boolean> => {
     const scheduler = schedulerRef.current;
     const translateQueue = translateQueueRef.current;
-    if (!scheduler || !translateQueue) return;
+    if (!scheduler || !translateQueue) return false;
 
     const settings = useApp.getState().settings;
     const engine = createEngine(settings.engine);
     engineRef.current = engine;
+    let attachFailed = false;
 
     const runStopFlow = async () => {
       await engine.stop();
@@ -120,11 +143,14 @@ export function useMeeting(): UseMeetingResult {
         useApp.getState().showToast(msg);
       },
       onStatus: (status, detail) => {
-        if (status === "connecting") {
-          useApp.getState().setStatus("connecting", detail);
-        } else if (status === "listening") {
-          useApp.getState().setStatus("listening");
+        if (status === "connecting" || status === "listening") {
+          // A pending End outranks the engine (codex round-3): once
+          // the user clicked End, no engine event may flip the meeting
+          // upward while the intent awaits its drain.
+          if (pendingEndRef.current) return;
+          useApp.getState().setStatus(status, status === "connecting" ? detail : undefined);
         } else if (status === "error") {
+          attachFailed = true;
           useApp.getState().showToast(logAndToastError("stt", detail ?? "转录引擎错误"));
           void runStopFlow();
         } else if (
@@ -143,24 +169,8 @@ export function useMeeting(): UseMeetingResult {
     };
 
     await engine.start(events, settings);
+    return !attachFailed;
   }, []);
-
-  // Lifecycle serialization (codex review 2026-07-10 HIGH): start/
-  // pause/resume/stop each await an engine teardown or attach, and a
-  // second lifecycle click landing INSIDE that window corrupted state
-  // (double-pause restamped pauseStartedAt; End during pause's await
-  // let the pause continuation resurrect an already-saved meeting as
-  // "paused"). Synchronous check-and-set — a concurrent lifecycle call
-  // no-ops instead of interleaving.
-  //
-  // EXCEPT End (codex round-2 HIGH): a gated no-op silently DROPS the
-  // user's End exactly when it must win (e.g. clicked while resume is
-  // awaiting a permission prompt). End therefore never no-ops — when
-  // the gate is held it records an intent flag, the gate-holder checks
-  // it (resume refuses to flip to listening under a pending End), and
-  // the gate drains the intent into a real stop as soon as it frees.
-  const lifecycleBusyRef = useRef(false);
-  const pendingEndRef = useRef(false);
 
   // End body, ungated — reachable from listening AND paused; also the
   // drain target for pendingEndRef.
@@ -263,15 +273,16 @@ export function useMeeting(): UseMeetingResult {
   const resume = useCallback(async () => withLifecycleGate(async () => {
     const { status, meetingGen } = useApp.getState();
     if (status !== "paused") return;
-    await attachEngine(meetingGen);
-    // attachEngine failure runs the engine's own error path — which
-    // lands on "stopped" (segments exist, saved) OR "idle" (empty
-    // meeting; codex round-2 HIGH) — folding the accounting then would
-    // flip an ended meeting back to "listening" with no engine. A
-    // pending End equally wins over the flip: the gate's drain will
-    // stop the just-attached engine the moment this releases.
+    const attached = await attachEngine(meetingGen);
+    // Fold accounting ONLY on an explicit successful attach (codex
+    // round-3: the error stop flow is un-awaited, so global status is
+    // not a reliable success signal). A failed attach's own error path
+    // lands the meeting on stopped/idle; the terminal-status check is
+    // the belt for teardown that already completed. A pending End
+    // equally wins over the flip: the gate's drain will stop the
+    // just-attached engine the moment this releases.
     const after = useApp.getState().status;
-    if (after !== "stopped" && after !== "idle" && !pendingEndRef.current) {
+    if (attached && after !== "stopped" && after !== "idle" && !pendingEndRef.current) {
       useApp.getState().resumeMeeting();
     }
   }), [attachEngine, withLifecycleGate]);
