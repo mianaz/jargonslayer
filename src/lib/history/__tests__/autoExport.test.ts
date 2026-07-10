@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type CustomEntry, type MeetingSession, type Settings } from "../../types";
+import type { LearnRecord } from "../../learn/types";
 
 // Same in-memory idb-keyval mock as storage.test.ts/glossary.test.ts —
-// buildFullBackup/restoreFullBackup call through storage.ts + glossary.ts,
-// both idb-keyval-backed.
+// buildFullBackup/restoreFullBackup call through storage.ts + glossary.ts
+// + learn/store.ts (#48 step 4), all idb-keyval-backed.
 const memStore = new Map<string, unknown>();
 
 vi.mock("idb-keyval", () => ({
@@ -47,6 +48,24 @@ function makeEntry(overrides: Partial<CustomEntry> = {}): CustomEntry {
   };
 }
 
+function makeLearnRecord(overrides: Partial<LearnRecord> = {}): LearnRecord {
+  return {
+    learnKey: "expression:circle back",
+    kind: "expression",
+    surface: "circle back",
+    familiarity: 0.5,
+    suppressed: false,
+    reps: 1,
+    intervalDays: 1,
+    ease: 2.5,
+    dueAt: 2000,
+    lapses: 0,
+    createdAt: 1000,
+    updatedAt: 1000,
+    ...overrides,
+  };
+}
+
 const keyedSettings: Settings = {
   ...DEFAULT_SETTINGS,
   apiKey: "sk-ant-secret",
@@ -71,12 +90,14 @@ describe("autoExport.ts — backup/restore (#57)", () => {
   });
 
   describe("round-trip: build -> parse -> restore", () => {
-    it("restoreFullBackup reproduces the sessions/glossary/settings a fresh buildFullBackup captured", async () => {
+    it("restoreFullBackup reproduces the sessions/glossary/learnset/settings a fresh buildFullBackup captured", async () => {
       const storage = await import("../storage");
       const glossary = await import("../glossary");
+      const learnset = await import("../../learn/store");
       await storage.saveSession(makeSession({ id: "s1", title: "First" }));
       await storage.saveSession(makeSession({ id: "s2", title: "Second", startedAt: 500 }));
       await glossary.upsertCustomEntry(makeEntry({ id: "e1" }));
+      await learnset.upsertLearnRecord(makeLearnRecord());
       await storage.saveSettings(keyedSettings);
 
       const autoExport = await import("../autoExport");
@@ -88,7 +109,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       expect(emptySessions).toHaveLength(0);
 
       const result = await autoExport.restoreFullBackup(json);
-      expect(result).toEqual({ sessions: 2, entries: 1, settingsRestored: true });
+      expect(result).toEqual({ sessions: 2, entries: 1, learnset: 1, settingsRestored: true });
 
       const restoredSessions = await storage.listSessions();
       expect(restoredSessions.map((m) => m.id).sort()).toEqual(["s1", "s2"]);
@@ -97,6 +118,9 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       const restoredGlossary = await glossary.loadCustomEntries();
       expect(restoredGlossary).toHaveLength(1);
       expect(restoredGlossary[0]).toMatchObject({ id: "e1", headword: "circle back" });
+
+      const restoredLearnset = await learnset.loadLearnset();
+      expect(restoredLearnset).toEqual({ "expression:circle back": makeLearnRecord() });
 
       // sanitizeRestoredSettings force-resets the machine-local
       // pairing/kill-switch trio on every restore (Codex v0.2.3
@@ -109,11 +133,13 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       });
     });
 
-    it("restoring twice does not duplicate sessions or glossary entries (upsert-by-id)", async () => {
+    it("restoring twice does not duplicate sessions, glossary entries, or learn-set records (upsert-by-id/learnKey)", async () => {
       const storage = await import("../storage");
       const glossary = await import("../glossary");
+      const learnset = await import("../../learn/store");
       await storage.saveSession(makeSession({ id: "s1" }));
       await glossary.upsertCustomEntry(makeEntry({ id: "e1" }));
+      await learnset.upsertLearnRecord(makeLearnRecord());
 
       const autoExport = await import("../autoExport");
       const json = await autoExport.buildFullBackup();
@@ -123,6 +149,34 @@ describe("autoExport.ts — backup/restore (#57)", () => {
 
       expect(await storage.listSessions()).toHaveLength(1);
       expect(await glossary.loadCustomEntries()).toHaveLength(1);
+      expect(Object.keys(await learnset.loadLearnset())).toHaveLength(1);
+    });
+
+    it("restoring an OLD backup (no learnset key at all) leaves the current learn-set completely untouched", async () => {
+      const storage = await import("../storage");
+      const learnset = await import("../../learn/store");
+      const existingRecord = makeLearnRecord({ learnKey: "term:ARR", surface: "ARR" });
+      await learnset.upsertLearnRecord(existingRecord);
+
+      const autoExport = await import("../autoExport");
+      // A pre-#48 backup: sessions/glossary/settings only, no `learnset`
+      // field at all (not even an empty object).
+      const oldBackup = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        exportedAt: Date.now(),
+        sessions: [],
+        glossary: [],
+      });
+
+      const result = await autoExport.restoreFullBackup(oldBackup);
+      expect(result.learnset).toBe(0);
+
+      expect(await learnset.loadLearnset()).toEqual({
+        "term:ARR": existingRecord,
+      });
+      // sanity: storage.listSessions still resolves fine post-restore.
+      expect(await storage.listSessions()).toHaveLength(0);
     });
 
     it("a backup with no settings field leaves current settings untouched and reports settingsRestored:false", async () => {
@@ -174,7 +228,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
   });
 
   describe("previewBackup (confirmation-step counts, no writes)", () => {
-    it("reports counts and hasSettings without touching storage", async () => {
+    it("reports counts (including learnset) and hasSettings without touching storage", async () => {
       const storage = await import("../storage");
       const autoExport = await import("../autoExport");
       const json = JSON.stringify({
@@ -182,15 +236,33 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         kind: "jargonslayer-backup",
         sessions: [makeSession({ id: "s1" }), makeSession({ id: "s2" })],
         glossary: [makeEntry()],
+        learnset: { "expression:circle back": makeLearnRecord() },
         settings: keyedSettings,
       });
 
       const preview = autoExport.previewBackup(json);
-      expect(preview).toEqual({ sessions: 2, entries: 1, hasSettings: true, hasApiKey: true });
+      expect(preview).toEqual({
+        sessions: 2,
+        entries: 1,
+        learnset: 1,
+        hasSettings: true,
+        hasApiKey: true,
+      });
 
       // No writes happened — the store this test's beforeEach set up
       // stays empty.
       expect(await storage.listSessions()).toHaveLength(0);
+    });
+
+    it("learnset count is 0 when the backup carries no learnset field at all (pre-#48 backup)", async () => {
+      const autoExport = await import("../autoExport");
+      const json = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+      });
+      expect(autoExport.previewBackup(json).learnset).toBe(0);
     });
 
     it("hasSettings is false when the backup carries no settings field", async () => {
@@ -204,6 +276,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       expect(autoExport.previewBackup(json)).toEqual({
         sessions: 0,
         entries: 0,
+        learnset: 0,
         hasSettings: false,
         hasApiKey: false,
       });

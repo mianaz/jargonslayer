@@ -8,6 +8,7 @@ import { DEFAULT_SETTINGS, type MeetingSession, type Settings } from "../types";
 import { buildMarkdownReport, buildObsidianFrontmatter } from "./export";
 import * as storage from "./storage";
 import * as glossary from "./glossary";
+import * as learnset from "../learn/store";
 
 const EXPORT_DIR_KEY = "jargonslayer:export-dir";
 
@@ -209,16 +210,19 @@ function stripKeyMaterial(settings: Settings): Settings {
   };
 }
 
-/** Serialize sessions + glossary + settings into one backup JSON.
- *  `includeKeys: false` (the Settings dialog's default-checked "不包含
- *  API Key" option) strips apiKey/taskLlm[*].apiKey/hfToken/agentToken
- *  from the embedded settings — everything else round-trips as-is.
+/** Serialize sessions + glossary + learn-set + settings into one backup
+ *  JSON. `includeKeys: false` (the Settings dialog's default-checked
+ *  "不包含 API Key" option) strips apiKey/taskLlm[*].apiKey/hfToken/
+ *  agentToken from the embedded settings — everything else round-trips
+ *  as-is.
  *
- *  Extension note for #48 (learning loop, not yet landed): once
- *  `src/lib/learn/store.ts`'s learn-set store exists (see
- *  docs/design-explorations/48-learning-loop.md Q1), add its
- *  `Record<string, LearnRecord>` here as a fourth top-level field and
- *  restore it the same dedupe-by-key way glossary is restored below. */
+ *  `learnset` (#48 step 4): the learn-set's `Record<string,
+ *  LearnRecord>` (see learn/store.ts) as a fourth top-level field,
+ *  KEEPING schemaVersion 1 — the key is optional so an old backup file
+ *  (pre-#48) restores exactly as before (see restoreFullBackup below,
+ *  which tolerates its absence). Losing the learn-set on restore means
+ *  re-teaching the app every known term, which is why this ships in
+ *  the same release as #48 step 1 (known-term suppression). */
 export async function buildFullBackup(
   opts: { includeKeys?: boolean } = {},
 ): Promise<string> {
@@ -228,6 +232,7 @@ export async function buildFullBackup(
     await Promise.all(metas.map((m) => storage.getSession(m.id)))
   ).filter((s): s is MeetingSession => s !== null);
   const glossaryEntries = await glossary.loadCustomEntries();
+  const learnsetRecords = await learnset.loadLearnset();
   const rawSettings = await storage.loadSettings();
   const settings = rawSettings && !includeKeys ? stripKeyMaterial(rawSettings) : rawSettings;
   return JSON.stringify(
@@ -237,6 +242,7 @@ export async function buildFullBackup(
       exportedAt: Date.now(),
       sessions,
       glossary: glossaryEntries,
+      learnset: learnsetRecords,
       settings,
     },
     null,
@@ -249,6 +255,10 @@ interface BackupShape {
   kind?: string;
   sessions?: MeetingSession[];
   glossary?: unknown[];
+  // #48 step 4: absent on any pre-#48 backup — every read site below
+  // tolerates absence (0 count / no restore writes / learn-set left
+  // untouched), never assumes the key exists.
+  learnset?: Record<string, unknown>;
   settings?: Settings;
 }
 
@@ -281,15 +291,21 @@ function parseBackup(json: string): BackupShape {
 export function previewBackup(json: string): {
   sessions: number;
   entries: number;
+  learnset: number;
   hasSettings: boolean;
   hasApiKey: boolean;
 } {
   const parsed = parseBackup(json);
   const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
   const entries = Array.isArray(parsed.glossary) ? parsed.glossary : [];
+  const learnsetCount =
+    parsed.learnset && typeof parsed.learnset === "object"
+      ? Object.keys(parsed.learnset).length
+      : 0;
   return {
     sessions: sessions.length,
     entries: entries.length,
+    learnset: learnsetCount,
     hasSettings: !!parsed.settings,
     hasApiKey: !!parsed.settings?.apiKey,
   };
@@ -303,10 +319,17 @@ export function previewBackup(json: string): {
  *  re-hydrate the live store afterward (store.hydrate() already runs
  *  the restored blob through migrateSettings, so a backup taken on an
  *  older schema still comes out with every current field populated).
- *  Returns counts for the caller's toast/confirmation copy. */
+ *  Returns counts for the caller's toast/confirmation copy.
+ *
+ *  `learnset` (#48 step 4): upserted by `learnKey` the same way
+ *  glossary entries are upserted by `id` above — a key already present
+ *  locally is overwritten by the backup's copy, everything else local
+ *  is kept. A backup with no `learnset` key (any pre-#48 file) simply
+ *  contributes zero records — the current learn-set is left completely
+ *  untouched, never cleared. */
 export async function restoreFullBackup(
   json: string,
-): Promise<{ sessions: number; entries: number; settingsRestored: boolean }> {
+): Promise<{ sessions: number; entries: number; learnset: number; settingsRestored: boolean }> {
   const parsed = parseBackup(json);
 
   const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
@@ -319,6 +342,14 @@ export async function restoreFullBackup(
     await glossary.upsertCustomEntry(entry as Parameters<typeof glossary.upsertCustomEntry>[0]);
   }
 
+  const learnsetRecords =
+    parsed.learnset && typeof parsed.learnset === "object" ? Object.values(parsed.learnset) : [];
+  for (const record of learnsetRecords) {
+    await learnset.upsertLearnRecord(
+      record as Parameters<typeof learnset.upsertLearnRecord>[0],
+    );
+  }
+
   let settingsRestored = false;
   if (parsed.settings && typeof parsed.settings === "object") {
     // Cast: the sanitizer returns a Partial (unknown keys dropped),
@@ -328,7 +359,12 @@ export async function restoreFullBackup(
     settingsRestored = true;
   }
 
-  return { sessions: sessions.length, entries: entries.length, settingsRestored };
+  return {
+    sessions: sessions.length,
+    entries: entries.length,
+    learnset: learnsetRecords.length,
+    settingsRestored,
+  };
 }
 
 /** Restored settings are UNTRUSTED input (Codex v0.2.3 review,

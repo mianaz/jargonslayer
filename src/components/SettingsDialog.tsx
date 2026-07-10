@@ -390,6 +390,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     text: string;
     sessions: number;
     entries: number;
+    learnset: number;
     hasSettings: boolean;
     hasApiKey: boolean;
   } | null>(null);
@@ -692,8 +693,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setRestoreError(null);
     const text = await file.text();
     try {
-      const { sessions, entries, hasSettings, hasApiKey } = previewBackup(text);
-      setRestorePreview({ text, sessions, entries, hasSettings, hasApiKey });
+      const { sessions, entries, learnset, hasSettings, hasApiKey } = previewBackup(text);
+      setRestorePreview({ text, sessions, entries, learnset, hasSettings, hasApiKey });
     } catch (err) {
       setRestorePreview(null);
       setRestoreError(err instanceof Error ? err.message : "备份文件解析失败");
@@ -709,11 +710,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (!restorePreview) return;
     setRestoring(true);
     try {
-      const { sessions, entries, settingsRestored } = await restoreFullBackup(restorePreview.text);
+      const { sessions, entries, learnset, settingsRestored } = await restoreFullBackup(
+        restorePreview.text,
+      );
       await useApp.getState().hydrate();
       setRestorePreview(null);
       showToast(
-        `已恢复 ${sessions} 场会议、${entries} 条词典` +
+        `已恢复 ${sessions} 场会议、${entries} 条词典、${learnset} 条学习记录` +
           (settingsRestored ? "，设置已替换为备份版本" : ""),
       );
       // draft is a local snapshot taken when the dialog opened — resync
@@ -1541,6 +1544,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <ul className="space-y-0.5 text-xs leading-[1.7] text-mut2">
                     <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，同 ID 的已有会议将被覆盖）</li>
                     <li>个人词典：{restorePreview.entries} 条（按 ID 合并，规则同上）</li>
+                    <li>学习记录：{restorePreview.learnset} 条（按记录合并，规则同上；备份不含此项时当前记录保持不变）</li>
                     <li>
                       设置：
                       {restorePreview.hasSettings
