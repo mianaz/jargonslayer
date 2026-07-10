@@ -18,6 +18,14 @@ export interface FakeSpeechRecognitionScript {
   warmupMs?: number;
   interimTickMs?: number;
   pauseFinalMs?: number;
+  // 2026-07 VAD-supervisor review, finding #9's "fixture optimism"
+  // scenario: every prior harness pause eventually finalizes on its
+  // own (via pauseFinalMs's proactive tick, or stop()'s own
+  // flushFinal()) — real Chrome sometimes doesn't, which is exactly
+  // the case finding #4's rescue exists for. When true, stop() skips
+  // its unconditional flushFinal() so a session can end with pending
+  // interim text and genuinely NO trailing final ever arriving.
+  suppressFinalOnStop?: boolean;
 }
 
 export interface FakeSpeechRecognitionStats {
@@ -107,7 +115,12 @@ export class FakeSpeechRecognition extends EventTarget {
   static activeScript: Required<
     Pick<
       FakeSpeechRecognitionScript,
-      "timeline" | "quietRanges" | "warmupMs" | "interimTickMs" | "pauseFinalMs"
+      | "timeline"
+      | "quietRanges"
+      | "warmupMs"
+      | "interimTickMs"
+      | "pauseFinalMs"
+      | "suppressFinalOnStop"
     >
   > &
     Pick<FakeSpeechRecognitionScript, "stallAtMs">;
@@ -143,6 +156,22 @@ export class FakeSpeechRecognition extends EventTarget {
     this.running = true;
     this.stalled = false;
     this.startCallTime = Date.now();
+    // A real recognizer's start() begins a genuinely NEW session: a
+    // fresh result-index space, and — crucially — NO memory of the
+    // previous session's unfinalized buffered audio (once a session
+    // ends without finalizing an in-flight utterance, that audio is
+    // just gone; that's the whole premise finding #4's rescue exists
+    // for). heardCursor is deliberately NOT reset here — the script's
+    // wall-clock word timeline keeps flowing across a restart exactly
+    // like a live microphone would; only THIS recognizer session's own
+    // bookkeeping resets. (stalled/stallConsumed are also left alone —
+    // existing scenarios' stall semantics are a permanent-until-script
+    // -defined-recovery condition, unrelated to session boundaries.)
+    this.currentResultIndex = 0;
+    this.currentWords = [];
+    this.lastWordAt = 0;
+    this.finalResults.clear();
+    this.revisionFlip = false;
     FakeSpeechRecognition.activeStats.starts += 1;
     this.tickTimer = setInterval(
       () => this.tick(),
@@ -154,7 +183,9 @@ export class FakeSpeechRecognition extends EventTarget {
     if (!this.running) throw new Error("FakeSpeechRecognition is not running");
     FakeSpeechRecognition.activeStats.stops += 1;
     FakeSpeechRecognition.activeStats.stopTimestamps.push(Date.now());
-    this.flushFinal();
+    if (!FakeSpeechRecognition.activeScript.suppressFinalOnStop) {
+      this.flushFinal();
+    }
     this.endSoon();
   }
 
@@ -324,6 +355,7 @@ export function installFakeSpeechRecognition(
     warmupMs: script.warmupMs ?? DEFAULT_WARMUP_MS,
     interimTickMs: script.interimTickMs ?? DEFAULT_INTERIM_TICK_MS,
     pauseFinalMs: script.pauseFinalMs ?? DEFAULT_PAUSE_FINAL_MS,
+    suppressFinalOnStop: script.suppressFinalOnStop ?? false,
   };
 
   if (typeof window === "undefined") {

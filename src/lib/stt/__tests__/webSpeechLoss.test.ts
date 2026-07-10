@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Settings, STTEvents } from "../../types";
 import { WebSpeechEngine } from "../webSpeech";
 import type { VadHandle } from "../vad";
+import { SESSION_ROTATE_HARD_MS, ROTATE_PAUSE_MS } from "../sttSupervisor";
 import {
   FakeVad,
   type FakeSpeechRecognitionScript,
@@ -399,5 +400,100 @@ describe("WebSpeechEngine word-loss measurement harness (VAD supervisor)", () =>
     // No zombie sessions in this harness's fake (stop() always
     // succeeds) — abort() would only ever fire as that escalation.
     expect(metrics.abortCount).toBe(0);
+  });
+
+  it("7. no-proactive-final pause (fixture optimism, finding #9): the 700ms gap-rotate branch stays blocked by pending interim, only the 55s HARD ceiling forces the cut, and fix #4's rescue keeps the held tail from being lost", async () => {
+    // Every OTHER scenario's fake recognizer eventually finalizes a
+    // pause on its own (either its own proactive pauseFinalMs tick, or
+    // stop()'s unconditional flushFinal()) — real Chrome sometimes
+    // just doesn't, which is exactly what finding #4's rescue exists
+    // for. This script speaks briefly, then produces NOTHING further
+    // AND is configured to never finalize even on stop()
+    // (suppressFinalOnStop) — pauseFinalMs is also pushed far past the
+    // run length so the tick-based proactive finalization never fires
+    // either. The only way this session ever ends is the supervisor's
+    // own HARD-ceiling rotation, and the only way the held-back
+    // interim ever reaches `finals` is launch()'s flushAll() rescue.
+    const burstEndMs = 9_000;
+    const runForMs = 60_000;
+    const script: FakeSpeechRecognitionScript = {
+      timeline: buildWords(burstEndMs, 350),
+      pauseFinalMs: 999_999,
+      suppressFinalOnStop: true,
+    };
+    const { metrics, stopTimestamps } = await runScenario(
+      "7. no-proactive-final pause",
+      script,
+      runForMs,
+      { vadFactory: () => new FakeVad(deriveVadRanges(script.timeline)) },
+    );
+
+    console.table([metrics]);
+    // Exactly one supervisor-driven stop for the whole run: the
+    // SOFT-age gap-based rotate opportunity (available from roughly
+    // burstEndMs + ROTATE_PAUSE_MS onward, since VAD read the pause as
+    // a gap well past 700ms) never takes it, because hasPendingInterim
+    // stays true the entire time (nothing ever finalizes it) — the
+    // policy's `!hasPendingInterim` guard is exactly what's under
+    // test here.
+    const supervisorStops = stopTimestamps.filter((t) => t < runForMs);
+    expect(supervisorStops).toHaveLength(1);
+    // And that one stop is the HARD ceiling, not the (blocked) gap
+    // opportunity that would otherwise have fired around
+    // burstEndMs + ROTATE_PAUSE_MS (~9.7s) — assert it landed near
+    // SESSION_ROTATE_HARD_MS, with slack only for the 500ms watchdog
+    // tick granularity.
+    expect(supervisorStops[0]).toBeGreaterThanOrEqual(SESSION_ROTATE_HARD_MS);
+    expect(supervisorStops[0]).toBeLessThan(
+      SESSION_ROTATE_HARD_MS + burstEndMs + ROTATE_PAUSE_MS,
+    );
+    // No zombie escalation needed — endSession()'s own onend (however
+    // final-less) still arrives well inside CLOUD_FINALIZE_GRACE_MS.
+    expect(metrics.abortCount).toBe(0);
+    // Bounded loss: measured 2/26 lost (7.69%) — EXACTLY the same
+    // fixed startup warmup/attack-edge 2-word cost every scenario in
+    // this file pays at t=0 (see scenario 5's identical note), not one
+    // word more — i.e. fix #4's rescue recovers the ENTIRE held-back
+    // tail with zero additional loss. The regression this guards
+    // against (pre-#4, an un-rescued reset() silently wiping whatever
+    // flushStable/self-flush had held back) would read far higher:
+    // this fixture's whole point is a session that NEVER finalizes on
+    // its own, so without the rescue essentially the entire post-burst
+    // remainder would vanish.
+    expect(metrics.lossPct).toBeLessThan(8);
+    expect(metrics.dupWords).toBe(0);
+  });
+
+  it("8. engine-level: user stop() mid-utterance rescues the pending interim (flush-before-teardown ordering)", async () => {
+    // Restored from the pre-VAD-supervisor harness (d3cd10f's "e. stop
+    // mid-utterance") at the request of the 2026-07 review — the
+    // rewrite (63dd988) dropped the direct engine.stop()-during-
+    // continuous-speech case in favor of the 6 acceptance scenarios,
+    // but flushPendingTail()'s flush-before-teardown ordering (see
+    // webSpeech.ts's stop()) deserves its own direct regression
+    // coverage independent of the supervisor's rotate/recover policy —
+    // this stops the engine mid-utterance, well before ANY rotation
+    // could have fired on its own (rotationCount stays 0).
+    const script = { timeline: buildWords(40_000, 350) };
+    const { metrics } = await runScenario(
+      "8. engine-level stop mid-utterance",
+      script,
+      40_000,
+      { stopAtMs: 30_000 },
+    );
+
+    console.table([metrics]);
+    expect(metrics.rotationCount).toBe(0);
+    // Baseline observed (2026-07-09, this pass): 86 hearable, 3 lost
+    // (3.49%), 1 dup — UNCHANGED from the pre-VAD-supervisor harness's
+    // original measurement of this exact scenario (d3cd10f), because
+    // engine.stop()'s flushPendingTail()->flushAll() path predates
+    // (and is untouched by) this pass's fixes; item #4 only changed
+    // the RELAUNCH path (launch()), which a user-initiated stop()
+    // never reaches. Recorded here as a direct, isolated regression
+    // guard on that flush-before-teardown ordering specifically, not a
+    // claim that this pass improved it.
+    expect(metrics.lossPct).toBeLessThan(4);
+    expect(metrics.dupWords).toBeLessThan(2);
   });
 });
