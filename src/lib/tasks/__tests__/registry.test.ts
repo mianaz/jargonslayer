@@ -110,6 +110,27 @@ describe("task registry lifecycle (#58)", () => {
     expect(getDiagEntries().filter((e) => e.tag === "task-registry")).toHaveLength(0);
   });
 
+  // Tag-blocker MEDIUM 4: a sidecar/job error string can carry a URL
+  // with a query string (filenames, signed params, tokens) — the diag
+  // entry (copyable report) must have it redacted; the tray/task UI
+  // (TaskState.error) must keep the full, un-redacted string.
+  it("failTask redacts URLs/query strings in the DIAG entry only — the tray/task error stays full", () => {
+    startTask("t1", "import-url", "https://example.com/audio.mp3");
+    const rawError =
+      "下载失败：https://cdn.example.com/private/audio.mp3?token=SENTINEL-SECRET&sig=abc123 (404)";
+    failTask("t1", rawError);
+
+    const task = useTasks.getState().tasks.t1;
+    expect(task.error).toBe(rawError); // tray/task UI: unredacted, unchanged
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-registry");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).not.toContain("SENTINEL-SECRET");
+    expect(entries[0].detail).not.toContain("cdn.example.com");
+    expect(entries[0].detail).toContain("<url>");
+    expect(entries[0].detail).toContain("(404)"); // non-URL context survives
+  });
+
   it("dismissTask removes the entry entirely; dismissing twice is a no-op", () => {
     startTask("t1", "import-audio", "a.wav");
     dismissTask("t1");

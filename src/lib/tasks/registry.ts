@@ -134,12 +134,24 @@ export function completeTask(id: string, sessionId?: string): void {
   if (task) emitTaskEvent("task.done", task);
 }
 
+// Diagnostics privacy (tag-blocker MEDIUM 4): a task-failure string can
+// come straight from a sidecar/job (upload/import) error and may carry
+// a URL with a query string — filenames, signed params, tokens. This
+// ONLY scrubs the copy of the message headed for the diag ring buffer
+// (log.ts's copyable 诊断信息 panel/report) — failTask's own `error`
+// (below, on TaskState) and the tray/task UI that reads it stay
+// untouched. log.ts's own DIAG_MAX_FIELD_CHARS truncation still applies
+// on top of this at insertion (see log.ts's diagLog).
+function redactUrlsForDiag(message: string): string {
+  return message.replace(/https?:\/\/\S+/gi, "<url>");
+}
+
 export function failTask(id: string, error: string): void {
   const task = patchTask(id, { status: "error", error });
   if (task) {
     // Diagnostics choke point (item 2): task kind + error message only
     // — never the imported session/file content that led here.
-    diagLog("error", "task-registry", `${task.kind} 任务失败`, error);
+    diagLog("error", "task-registry", `${task.kind} 任务失败`, redactUrlsForDiag(error));
     emitTaskEvent("task.error", task);
   }
 }
