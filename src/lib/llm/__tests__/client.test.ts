@@ -115,7 +115,8 @@ vi.mock("../../store", () => ({
 // network request when a test falls through to them.
 const mockFetch = vi.fn();
 
-import { detectApi, defineApi, NoKeyError, resetSubscriptionToastLatch } from "../client";
+import { detectApi, defineApi, NoKeyError, RateLimitApiError, resetSubscriptionToastLatch } from "../client";
+import { clearDiag, getDiagEntries } from "../../diag/log";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return { ...DEFAULT_SETTINGS, ...overrides };
@@ -138,6 +139,7 @@ beforeEach(() => {
   mockShowToast.mockReset();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
+  clearDiag();
 });
 
 afterEach(() => {
@@ -353,5 +355,67 @@ describe("defineApi — subscription-direct routing", () => {
 
     expect(mockShowToast).toHaveBeenCalledWith("订阅额度暂不可用，已回退至词典检测");
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------
+// Diagnostics choke point (item 2): the plain Next.js path
+// (detectViaNext, going through throwForStatus) logs every request
+// failure — status code + provider/model id, never the request/
+// response body — to the diag ring buffer (lib/diag/log.ts).
+// subscription-direct is off in every test here (default settings)
+// so these exercise the SAME path every non-experimental build uses.
+// ---------------------------------------------------------------
+
+function errorResponseJson(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+describe("detectApi — Next.js path status-code failures log to the diag ring buffer", () => {
+  it("a 401 (no_key) response logs an 'error' diag entry with a ref, tagged llm-detect", async () => {
+    mockFetch.mockResolvedValue(
+      errorResponseJson({ error: "未配置 API Key", code: "no_key", requestId: "abc123" }, 401),
+    );
+
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toBeInstanceOf(
+      NoKeyError,
+    );
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].level).toBe("error");
+    expect(entries[0].ref).toMatch(/^JS-/);
+    // requestId (item 5) chains into the diag detail, never the message.
+    expect(entries[0].detail).toContain("requestId=abc123");
+    expect(entries[0].detail).toContain("status=401");
+  });
+
+  it("a 429 response throws RateLimitApiError and also logs a diag entry", async () => {
+    mockFetch.mockResolvedValue(
+      errorResponseJson({ error: "请求过于频繁，请稍后再试", code: "rate_limit" }, 429),
+    );
+
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toBeInstanceOf(
+      RateLimitApiError,
+    );
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+  });
+
+  it("never logs the request body content (only the small fixed zh error phrase + status/provider/model)", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "服务异常", code: "upstream" }, 502));
+
+    await expect(
+      detectApi({ context: "SENTINEL-TRANSCRIPT-TEXT", new_text: "another SENTINEL" }, makeSettings()),
+    ).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).not.toContain("SENTINEL");
+    expect(entries[0].detail ?? "").not.toContain("SENTINEL");
   });
 });

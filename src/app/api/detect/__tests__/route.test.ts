@@ -58,3 +58,31 @@ describe("POST /api/detect — profile field passthrough (#48 step 3)", () => {
     expect(res.status).not.toBe(400);
   });
 });
+
+// Diagnostics (item 5): every 4xx/5xx error response carries a fresh
+// requestId so a user's diag ref (client-side) can chain to this
+// exact server-side response — see lib/diag/requestId.ts.
+describe("POST /api/detect — error responses carry requestId (diagnostics)", () => {
+  it("a 401 no_key response includes a non-empty requestId string", async () => {
+    const res = await POST(makeRequest({ context: "", new_text: "hi" }));
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(typeof json.requestId).toBe("string");
+    expect(json.requestId.length).toBeGreaterThan(0);
+  });
+
+  it("a 400 bad_request response also includes a requestId", async () => {
+    const res = await POST(makeRequest({ context: "", new_text: "" }));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(typeof json.requestId).toBe("string");
+  });
+
+  it("two error responses get two DIFFERENT requestIds", async () => {
+    const res1 = await POST(makeRequest({ context: "", new_text: "hi" }));
+    const res2 = await POST(makeRequest({ context: "", new_text: "hi" }));
+    const json1 = await res1.json();
+    const json2 = await res2.json();
+    expect(json1.requestId).not.toBe(json2.requestId);
+  });
+});

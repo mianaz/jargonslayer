@@ -50,3 +50,22 @@ describe("POST /api/define — profile field passthrough (#48 step 3)", () => {
     expect(res.status).not.toBe(400);
   });
 });
+
+// Diagnostics (item 5) — see detect/__tests__/route.test.ts's identical block.
+describe("POST /api/define — error responses carry requestId (diagnostics)", () => {
+  it("a 401 no_key response includes a non-empty requestId string", async () => {
+    const res = await POST(makeRequest({ phrase: "circle back", context: "" }));
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(typeof json.requestId).toBe("string");
+    expect(json.requestId.length).toBeGreaterThan(0);
+  });
+
+  it("two error responses get two DIFFERENT requestIds", async () => {
+    const res1 = await POST(makeRequest({ phrase: "circle back", context: "" }));
+    const res2 = await POST(makeRequest({ phrase: "circle back", context: "" }));
+    const json1 = await res1.json();
+    const json2 = await res2.json();
+    expect(json1.requestId).not.toBe(json2.requestId);
+  });
+});

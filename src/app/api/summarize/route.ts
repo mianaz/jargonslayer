@@ -22,6 +22,7 @@ import {
   TRANSLATE_SYSTEM_PROMPT,
 } from "@/lib/llm/prompts";
 import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
+import { newRequestId } from "@/lib/diag/requestId";
 import type {
   ApiErrorBody,
   DetectedExpression,
@@ -75,8 +76,11 @@ const BodySchema = z.object({
   profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
 }) satisfies z.ZodType<SummarizeRequest>;
 
+// Diagnostics (item 5) — see detect/route.ts's identical helper doc.
 function errorBody(body: ApiErrorBody, status: number) {
-  return NextResponse.json(body, { status });
+  return NextResponse.json({ ...body, requestId: newRequestId() } satisfies ApiErrorBody, {
+    status,
+  });
 }
 
 // ---------------------------------------------------------------

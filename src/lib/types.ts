@@ -253,6 +253,12 @@ export interface SummaryResult {
 export interface ApiErrorBody {
   error: string;
   code?: "no_key" | "bad_request" | "upstream" | "rate_limit";
+  // Diagnostics (server-side chain): a short id stamped on every 4xx/
+  // 5xx response by the three routes below — see
+  // lib/diag/requestId.ts. The client (llm/client.ts) folds it into
+  // its own diagLog detail so a user's ref (lib/diag/log.ts) can be
+  // chained to a server-side log line for the SAME request.
+  requestId?: string;
 }
 
 // ---------- settings ----------

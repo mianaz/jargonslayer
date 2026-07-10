@@ -13,6 +13,7 @@ import {
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { buildDetectSystemPrompt, buildDetectUserMessage } from "@/lib/llm/prompts";
 import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
+import { newRequestId } from "@/lib/diag/requestId";
 import type { ApiErrorBody, DetectResponse } from "@/lib/types";
 
 const BodySchema = z.object({
@@ -31,8 +32,13 @@ const BodySchema = z.object({
 const MAX_EXPRESSIONS = 6;
 const MAX_TERMS = 4;
 
+// Diagnostics (item 5): every error response carries a short
+// requestId so a user's diag ref (client-side) can chain to this
+// exact server-side response — see lib/diag/requestId.ts.
 function errorBody(body: ApiErrorBody, status: number) {
-  return NextResponse.json(body, { status });
+  return NextResponse.json({ ...body, requestId: newRequestId() } satisfies ApiErrorBody, {
+    status,
+  });
 }
 
 /** Anti-hallucination post-filter: drop any expression whose

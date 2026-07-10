@@ -17,6 +17,7 @@ import type {
 import { PROVIDER_HEADERS } from "../types";
 import { withBase } from "../basePath";
 import { PREVIEW_TIER } from "../deployTier";
+import { diagLog } from "../diag/log";
 import { resolveTaskCreds } from "./taskConfig";
 import { renderProfileHint } from "./profileHint";
 import {
@@ -73,26 +74,51 @@ export function taskHeaders(settings: Settings, domain: LlmTaskDomain): Record<s
   return headers;
 }
 
-async function parseErrorBody(res: Response): Promise<string | undefined> {
+async function parseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
   try {
-    const body = (await res.json()) as ApiErrorBody;
-    return body?.error;
+    return (await res.json()) as ApiErrorBody;
   } catch {
     return undefined;
   }
 }
 
-async function throwForStatus(res: Response): Promise<never> {
+// Diagnostics (item 2/5): every request-failure choke point in this
+// file logs status code + provider/model id — NEVER request/response
+// bodies beyond the small fixed zh error phrase the route already
+// returns (see log.ts's PRIVACY RULE). `requestId` (item 5) chains a
+// user's ref back to the matching server-side response, when the
+// failing route is one of the three that stamps one (detect/define/
+// summarize — translate's route does not, so requestId is simply
+// absent there).
+interface RequestErrorContext {
+  tag: string;
+  provider: string;
+  model?: string;
+}
+
+function errorDetail(ctx: RequestErrorContext, status?: number, requestId?: string): string {
+  const parts = [`provider=${ctx.provider}`, `model=${ctx.model || "(inherited)"}`];
+  if (status !== undefined) parts.push(`status=${status}`);
+  if (requestId) parts.push(`requestId=${requestId}`);
+  return parts.join(" ");
+}
+
+async function throwForStatus(res: Response, ctx: RequestErrorContext): Promise<never> {
+  const body = await parseErrorBody(res);
+  const detail = errorDetail(ctx, res.status, body?.requestId);
   if (res.status === 401) {
-    const msg = await parseErrorBody(res);
-    throw new NoKeyError(msg ?? "未配置 API Key");
+    const msg = body?.error ?? "未配置 API Key";
+    diagLog("error", ctx.tag, msg, detail);
+    throw new NoKeyError(msg);
   }
   if (res.status === 429) {
-    const msg = await parseErrorBody(res);
-    throw new RateLimitApiError(msg ?? "请求过于频繁，请稍后再试");
+    const msg = body?.error ?? "请求过于频繁，请稍后再试";
+    diagLog("error", ctx.tag, msg, detail);
+    throw new RateLimitApiError(msg);
   }
-  const msg = await parseErrorBody(res);
-  throw new UpstreamError(msg ?? `请求失败（${res.status}）`);
+  const msg = body?.error ?? `请求失败（${res.status}）`;
+  diagLog("error", ctx.tag, msg, detail);
+  throw new UpstreamError(msg);
 }
 
 /** Existing Next.js-routed detect call (BYOK / shared-key / Poe / …).
@@ -102,6 +128,8 @@ async function detectViaNext(
   body: DetectRequest,
   settings: Settings,
 ): Promise<DetectResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  const ctx: RequestErrorContext = { tag: "llm-detect", provider: creds.provider, model: body.model ?? creds.model };
   let res: Response;
   try {
     res = await fetch(withBase("/api/detect"), {
@@ -128,13 +156,15 @@ async function detectViaNext(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
+      diagLog("error", ctx.tag, "检测请求超时", errorDetail(ctx));
       throw new UpstreamError("检测请求超时");
     }
+    diagLog("error", ctx.tag, "检测请求失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("检测请求失败，请检查网络连接");
   }
 
   if (!res.ok) {
-    await throwForStatus(res);
+    await throwForStatus(res, ctx);
   }
 
   return (await res.json()) as DetectResponse;
@@ -144,6 +174,8 @@ export async function summarizeApi(
   body: SummarizeRequest,
   settings: Settings,
 ): Promise<SummaryResult> {
+  const creds = resolveTaskCreds(settings, "summary");
+  const ctx: RequestErrorContext = { tag: "llm-summary", provider: creds.provider, model: body.model ?? creds.model };
   let res: Response;
   try {
     res = await fetch(withBase("/api/summarize"), {
@@ -161,13 +193,15 @@ export async function summarizeApi(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
+      diagLog("error", ctx.tag, "生成报告超时，请稍后重试", errorDetail(ctx));
       throw new UpstreamError("生成报告超时，请稍后重试");
     }
+    diagLog("error", ctx.tag, "报告生成失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("报告生成失败，请检查网络连接");
   }
 
   if (!res.ok) {
-    await throwForStatus(res);
+    await throwForStatus(res, ctx);
   }
 
   return (await res.json()) as SummaryResult;
@@ -179,6 +213,10 @@ async function defineViaNext(
   body: DefineRequest,
   settings: Settings,
 ): Promise<DefineResult> {
+  // define rides detect's config (see taskHeaders call below) — same
+  // domain for the diag tag's provider/model context.
+  const creds = resolveTaskCreds(settings, "detect");
+  const ctx: RequestErrorContext = { tag: "llm-define", provider: creds.provider, model: body.model ?? creds.model };
   let res: Response;
   try {
     res = await fetch(withBase("/api/define"), {
@@ -196,13 +234,15 @@ async function defineViaNext(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
+      diagLog("error", ctx.tag, "解释请求超时", errorDetail(ctx));
       throw new UpstreamError("解释请求超时");
     }
+    diagLog("error", ctx.tag, "解释请求失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("解释请求失败，请检查网络连接");
   }
 
   if (!res.ok) {
-    await throwForStatus(res);
+    await throwForStatus(res, ctx);
   }
 
   return (await res.json()) as DefineResult;
@@ -379,8 +419,13 @@ export async function translateApi(
   // never a literal empty-string model. Callers (translate/queue.ts,
   // ingest/importText.ts) never set body.model themselves — resolved
   // here, once, same as headers.
-  const resolvedModel = resolveTaskCreds(settings, "translate").model;
+  const translateCreds = resolveTaskCreds(settings, "translate");
+  const resolvedModel = translateCreds.model;
   const outBody: TranslateRequest = resolvedModel ? { ...body, model: resolvedModel } : body;
+  // /api/translate is not one of the three routes that stamp a
+  // requestId (item 5's scope) — errorDetail/throwForStatus still work
+  // fine, `requestId` just stays absent in the logged detail.
+  const ctx: RequestErrorContext = { tag: "llm-translate", provider: translateCreds.provider, model: resolvedModel };
 
   let res: Response;
   try {
@@ -397,13 +442,15 @@ export async function translateApi(
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
+      diagLog("error", ctx.tag, "翻译请求超时", errorDetail(ctx));
       throw new UpstreamError("翻译请求超时");
     }
+    diagLog("error", ctx.tag, "翻译请求失败，请检查网络连接", errorDetail(ctx));
     throw new UpstreamError("翻译请求失败，请检查网络连接");
   }
 
   if (!res.ok) {
-    await throwForStatus(res);
+    await throwForStatus(res, ctx);
   }
 
   return (await res.json()) as TranslateResponse;

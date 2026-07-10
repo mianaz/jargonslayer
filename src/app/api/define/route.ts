@@ -11,6 +11,7 @@ import {
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { buildDefineSystemPrompt, buildDefineUserMessage } from "@/lib/llm/prompts";
 import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
+import { newRequestId } from "@/lib/diag/requestId";
 import type { ApiErrorBody, DefineResult } from "@/lib/types";
 
 const BodySchema = z.object({
@@ -54,8 +55,11 @@ const DefineResultSchema = z.object({
   gloss_en: z.string().optional(),
 }) satisfies z.ZodType<DefineResult>;
 
+// Diagnostics (item 5) — see detect/route.ts's identical helper doc.
 function errorBody(body: ApiErrorBody, status: number) {
-  return NextResponse.json(body, { status });
+  return NextResponse.json({ ...body, requestId: newRequestId() } satisfies ApiErrorBody, {
+    status,
+  });
 }
 
 function clamp(s: string, max: number): string {
