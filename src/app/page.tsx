@@ -11,6 +11,7 @@ import CardsPanel from "@/components/CardsPanel";
 import SummaryPanel from "@/components/SummaryPanel";
 import GlossaryPanel from "@/components/GlossaryPanel";
 import HistoryDrawer from "@/components/HistoryDrawer";
+import ImportHub from "@/components/ImportHub";
 import SettingsDialog from "@/components/SettingsDialog";
 import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverlay";
 import LookupPopover from "@/components/LookupPopover";
@@ -64,6 +65,13 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // #62 item 2: lifted here (not owned by HistoryDrawer) so Header's
+  // 导入 pill (desktop peer of the engine pills + mobile icon button)
+  // and HistoryDrawer's own 导入 button open the exact same ImportHub
+  // instance/open-state — mounting it once below means it also stays
+  // open even if the drawer behind it closes, instead of unmounting
+  // with it.
+  const [importHubOpen, setImportHubOpen] = useState(false);
 
   // Mobile bottom-panel resize state. null = never dragged on this
   // device → the default content-driven max-h-[55vh] behavior. Only
@@ -155,6 +163,7 @@ export default function Home() {
         onOpenHistory={() => setHistoryOpen(true)}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenHelp={() => setHelpOpen(true)}
+        onOpenImport={() => setImportHubOpen(true)}
       />
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
@@ -245,7 +254,12 @@ export default function Home() {
         </button>
       )}
 
-      <HistoryDrawer open={historyOpen} onClose={() => setHistoryOpen(false)} />
+      <HistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        onOpenImport={() => setImportHubOpen(true)}
+      />
+      <ImportHub open={importHubOpen} onClose={() => setImportHubOpen(false)} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <TutorialOverlay
         open={helpOpen}

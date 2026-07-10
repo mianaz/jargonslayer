@@ -11,6 +11,13 @@
 // the registry (running/error tasks, see activeImportRows below), so
 // progress survives this drawer closing and reopening, matching
 // StatusLine's task tray.
+//
+// #62 item 2: ImportHub itself no longer mounts inside this drawer —
+// Header's own 导入 pill (desktop pill row + mobile icon button, a
+// peer of the engine pills) needs to open the exact same dialog
+// instance without requiring this drawer to be open at all, so the
+// mount + open-state moved up to page.tsx (onOpenImport prop below);
+// this drawer's own 导入 buttons just call it, same as before.
 
 import { useEffect, useState } from "react";
 import { Trash, UploadSimple, X } from "@phosphor-icons/react";
@@ -19,11 +26,11 @@ import { handleButtonKeyDown } from "@/lib/a11y";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
 import { dismissTask, EMPTY_TASKS, useTasks, type TaskState } from "@/lib/tasks/registry";
-import ImportHub from "@/components/ImportHub";
 
 export interface HistoryDrawerProps {
   open: boolean;
   onClose: () => void;
+  onOpenImport: () => void;
 }
 
 function pad2(n: number): string {
@@ -52,7 +59,7 @@ function activeImportRows(tasks: Record<string, TaskState>): TaskState[] {
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
-export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
+export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDrawerProps) {
   const sessions = useApp((s) => s.sessions);
   const loadSession = useApp((s) => s.loadSession);
   const deleteSession = useApp((s) => s.deleteSession);
@@ -60,7 +67,6 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
   const [query, setQuery] = useState("");
   const [cache, setCache] = useState<Record<string, MeetingSession>>({});
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  const [importHubOpen, setImportHubOpen] = useState(false);
 
   // Narrow selector (review fix 6): the drawer is unmounted-in-effect
   // (renders null below) while closed, but the `useTasks` hook itself
@@ -74,7 +80,6 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
     if (!open) {
       setQuery("");
       setConfirmDeleteId(null);
-      setImportHubOpen(false);
     }
   }, [open]);
 
@@ -146,7 +151,7 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
           <div className="flex items-center gap-1">
             <button
               type="button"
-              onClick={() => setImportHubOpen(true)}
+              onClick={onOpenImport}
               className="flex items-center gap-2 rounded-sm border border-edge px-2.5 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
             >
               <UploadSimple size={16} weight="regular" />
@@ -234,7 +239,7 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
               {sessions.length === 0 && (
                 <button
                   type="button"
-                  onClick={() => setImportHubOpen(true)}
+                  onClick={onOpenImport}
                   className="mt-4 flex items-center gap-2 rounded-sm border border-edge px-3 py-1.5 text-xs text-mut hover:bg-panel3 hover:text-fg"
                 >
                   <UploadSimple size={14} weight="regular" />
@@ -310,8 +315,6 @@ export default function HistoryDrawer({ open, onClose }: HistoryDrawerProps) {
           )}
         </div>
       </div>
-
-      <ImportHub open={importHubOpen} onClose={() => setImportHubOpen(false)} />
     </>
   );
 }

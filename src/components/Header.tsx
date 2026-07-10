@@ -19,9 +19,10 @@ import {
   Question,
   Shield,
   ShieldCheck,
+  UploadSimple,
 } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
-import type { STTEngineKind } from "@/lib/types";
+import type { MeetingStatus, STTEngineKind } from "@/lib/types";
 import { withBase } from "@/lib/basePath";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 
@@ -32,6 +33,17 @@ export interface HeaderProps {
   onOpenHistory: () => void;
   onOpenSettings: () => void;
   onOpenHelp: () => void;
+  onOpenImport: () => void;
+}
+
+// Shared "is a meeting live enough that switching engines (or opening
+// the import hub, #62 item 2) would be unsafe" gate — connecting means
+// a socket is already mid-handshake, listening means audio is actively
+// flowing; both must finish/stop first. Exported so it has exactly one
+// definition instead of the inline duplicate this file used to carry
+// per pill/select/menu.
+export function isEngineControlBusy(status: MeetingStatus): boolean {
+  return status === "connecting" || status === "listening";
 }
 
 // Real capture engines only — demo is a scripted preview, not a peer
@@ -114,11 +126,11 @@ function ElapsedTimer() {
   );
 }
 
-function EnginePillGroup() {
+function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
   const engine = useApp((s) => s.settings.engine);
   const status = useApp((s) => s.status);
   const updateSettings = useApp((s) => s.updateSettings);
-  const busy = status === "connecting" || status === "listening";
+  const busy = isEngineControlBusy(status);
 
   return (
     <div className="hidden items-center gap-0.5 rounded border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
@@ -150,6 +162,23 @@ function EnginePillGroup() {
           </button>
         );
       })}
+      {/* 导入 (#62 item 2, owner's explicit ask: upload local audio/
+          video side by side with the other modes) — sits in the same
+          pill row as a PEER of the engine buttons above, but it is an
+          action (opens ImportHub), never a selectable engine: no
+          active/inactive styling, a left divider + icon mark it as
+          distinct, and its onClick never touches settings.engine. */}
+      <button
+        type="button"
+        data-testid="btn-import"
+        disabled={busy}
+        onClick={onOpenImport}
+        title="导入本地音频/视频或文稿"
+        className="ml-0.5 flex items-center gap-1 rounded-sm border-l border-edge px-2.5 py-1 font-mono text-xs text-mut transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <UploadSimple size={13} weight="regular" />
+        导入
+      </button>
     </div>
   );
 }
@@ -165,7 +194,7 @@ function MobileEngineSelect() {
   const engine = useApp((s) => s.settings.engine);
   const status = useApp((s) => s.status);
   const updateSettings = useApp((s) => s.updateSettings);
-  const disabled = status === "connecting" || status === "listening";
+  const disabled = isEngineControlBusy(status);
 
   return (
     <select
@@ -201,6 +230,30 @@ function MobileEngineSelect() {
         );
       })}
     </select>
+  );
+}
+
+// Mobile counterpart of EnginePillGroup's 导入 pill (#62 item 2): the
+// native <select> above can't host a non-engine action as a peer
+// option without misrepresenting it as a selectable engine, so this
+// sits directly beside it instead — same row, same busy gating, same
+// dialog. Icon-only (375px width budget, see MobileEngineSelect above).
+function MobileImportButton({ onOpenImport }: { onOpenImport: () => void }) {
+  const status = useApp((s) => s.status);
+  const disabled = isEngineControlBusy(status);
+
+  return (
+    <button
+      type="button"
+      data-testid="btn-import-mobile"
+      disabled={disabled}
+      onClick={onOpenImport}
+      aria-label="导入"
+      title="导入本地音频/视频或文稿"
+      className="flex h-8 w-8 shrink-0 items-center justify-center rounded border border-edge bg-panel2 text-mut hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
+    >
+      <UploadSimple size={14} weight="regular" />
+    </button>
   );
 }
 
@@ -374,6 +427,7 @@ export default function Header({
   onOpenHistory,
   onOpenSettings,
   onOpenHelp,
+  onOpenImport,
 }: HeaderProps) {
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
@@ -416,8 +470,9 @@ export default function Header({
           </div>
         </div>
 
-        <EnginePillGroup />
+        <EnginePillGroup onOpenImport={onOpenImport} />
         <MobileEngineSelect />
+        <MobileImportButton onOpenImport={onOpenImport} />
         <EnginePostureChip />
 
         <div className="ml-auto flex items-center gap-2">
