@@ -1,15 +1,28 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { PencilSimple } from "@phosphor-icons/react";
 import { useApp } from "../lib/store";
 import { buildHighlightMatcher, type HighlightHit } from "../lib/highlight";
-import type { ExpressionCard, TermCard } from "../lib/types";
+import type { ExpressionCard, TermCard, TranscriptSegment } from "../lib/types";
 import HoverGlossCard, { type GlossItem } from "./HoverGlossCard";
 
 const SCROLL_STICKY_THRESHOLD = 80;
 const HOVER_ENTER_DELAY_MS = 150;
 const HOVER_LEAVE_DELAY_MS = 200;
+// Interim growth throttle (render-perf split, see the design doc):
+// commits an interim UPDATE at most this often (~8fps) — but a
+// transition to null (a final just landed) always commits immediately,
+// never throttled, so there's no stale interim flash after a final.
+const INTERIM_THROTTLE_MS = 125;
 
 // v0.2.1 transcript-only display settings (Settings → 显示): numeric
 // multipliers for the --ts-scale / --ts-leading custom properties
@@ -296,9 +309,224 @@ function SegmentEditTextarea({
   );
 }
 
+// ---- render split (stt-vad-supervisor.md): a live interim tick used
+// to re-render the WHOLE segment list (every row's highlight regex
+// re-scanning its text on every partial). SegmentRow is memoized with
+// stable (useCallback'd) handlers from the panel so an interim update
+// — which no longer even lives in this component's props — never
+// invalidates it; InterimLine owns its own `interim` subscription so
+// only it re-renders on a partial. ----
+
+// Test-only render-commit counters (see
+// components/__tests__/TranscriptPanel.render.test.tsx). React.Profiler's
+// onRender fires for a Profiler-wrapped subtree on every commit
+// REGARDLESS of a memoized child bailing out (verified empirically —
+// Profiler wraps a non-memoized boundary, so it can't distinguish
+// "SegmentRow's memo held" from "it re-rendered to an unchanged
+// result"), so it can't assert the render-split's actual point: a
+// bailed memo never re-invokes its render function at all. These
+// counters do, at the cost of one integer increment per real
+// invocation — negligible, and otherwise inert outside tests.
+export const renderCounters = { segmentRow: 0, interimLine: 0 };
+
+interface SegmentRowProps {
+  seg: TranscriptSegment;
+  editable: boolean;
+  isEditing: boolean;
+  editValue: string;
+  matcher: ReturnType<typeof buildHighlightMatcher>;
+  translation: string | undefined;
+  speakerCount: number;
+  onStartEdit: (segId: string, text: string) => void;
+  onChangeEditValue: (v: string) => void;
+  onSaveEdit: () => void;
+  onCancelEdit: () => void;
+  onRenameRequest: (speaker: string, segmentCount: number, x: number, y: number) => void;
+  onHitClick: (hit: HighlightHit, rect: DOMRect) => void;
+  onHitEnter: (hit: HighlightHit, rect: DOMRect) => void;
+  onHitLeave: () => void;
+}
+
+export const SegmentRow = memo(function SegmentRow({
+  seg,
+  editable,
+  isEditing,
+  editValue,
+  matcher,
+  translation,
+  speakerCount,
+  onStartEdit,
+  onChangeEditValue,
+  onSaveEdit,
+  onCancelEdit,
+  onRenameRequest,
+  onHitClick,
+  onHitEnter,
+  onHitLeave,
+}: SegmentRowProps) {
+  renderCounters.segmentRow += 1;
+  const palette = seg.speaker ? SPEAKER_PALETTE[hashSpeaker(seg.speaker)] : null;
+
+  return (
+    <div
+      className="fade-up grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3"
+      data-segment-text={seg.text}
+    >
+      <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
+        {palette && (
+          <span className={`block text-sm font-bold ${palette.text}`}>
+            {palette.glyph}
+          </span>
+        )}
+        <span className="block whitespace-nowrap">{formatTime(seg.startedAt)}</span>
+        {seg.speaker && palette && (
+          <span
+            onClick={
+              editable
+                ? (e) => {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    onRenameRequest(seg.speaker!, speakerCount, rect.left, rect.bottom);
+                  }
+                : undefined
+            }
+            className={`group/chip mt-0.5 inline-flex items-center gap-1 ${palette.text} ${
+              editable
+                ? "cursor-pointer hover:underline hover:decoration-dotted hover:underline-offset-2"
+                : ""
+            }`}
+          >
+            {seg.speaker}
+            {editable && (
+              <PencilSimple
+                size={9}
+                weight="regular"
+                className="opacity-0 transition-opacity group-hover/chip:opacity-100"
+              />
+            )}
+          </span>
+        )}
+      </div>
+      {isEditing ? (
+        <div>
+          <SegmentEditTextarea
+            value={editValue}
+            onChange={onChangeEditValue}
+            onSave={onSaveEdit}
+            onCancel={onCancelEdit}
+          />
+        </div>
+      ) : (
+        <div
+          className="ts-body"
+          onDoubleClick={
+            editable
+              ? () => {
+                  window.getSelection()?.removeAllRanges();
+                  onStartEdit(seg.id, seg.text);
+                }
+              : undefined
+          }
+        >
+          <HighlightedText
+            text={seg.text}
+            matcher={matcher}
+            onHit={onHitClick}
+            onHitEnter={onHitEnter}
+            onHitLeave={onHitLeave}
+          />
+          {translation && (
+            <div className="ts-translation mt-0.5 text-mut">{translation}</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/** Owns the live `interim` subscription alone — the whole point of the
+ *  split above. Growth is throttled to INTERIM_THROTTLE_MS (~8fps),
+ *  but a transition to null (a final just landed, see webSpeech.ts's
+ *  onFinal->setInterim(null) ordering in useMeeting.ts) always commits
+ *  immediately so a stale interim never lingers on screen after its
+ *  text has already become a real segment. */
+export function InterimLine({ onGrow }: { onGrow?: () => void }) {
+  renderCounters.interimLine += 1;
+  const interim = useApp((s) => s.interim);
+  const [displayed, setDisplayed] = useState(interim);
+  const lastCommitAtRef = useRef(0);
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const clearPending = () => {
+      if (pendingTimerRef.current !== null) {
+        clearTimeout(pendingTimerRef.current);
+        pendingTimerRef.current = null;
+      }
+    };
+
+    if (interim === null) {
+      clearPending();
+      setDisplayed(null);
+      lastCommitAtRef.current = Date.now();
+      return;
+    }
+
+    const commit = () => {
+      lastCommitAtRef.current = Date.now();
+      setDisplayed(interim);
+      onGrow?.();
+    };
+
+    const elapsed = Date.now() - lastCommitAtRef.current;
+    if (elapsed >= INTERIM_THROTTLE_MS) {
+      clearPending();
+      commit();
+    } else if (pendingTimerRef.current === null) {
+      pendingTimerRef.current = setTimeout(() => {
+        pendingTimerRef.current = null;
+        commit();
+      }, INTERIM_THROTTLE_MS - elapsed);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [interim]);
+
+  useEffect(
+    () => () => {
+      if (pendingTimerRef.current !== null) clearTimeout(pendingTimerRef.current);
+    },
+    [],
+  );
+
+  if (!displayed) return null;
+
+  return (
+    <div className="grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3">
+      <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
+        {displayed.speaker &&
+          (() => {
+            const palette = SPEAKER_PALETTE[hashSpeaker(displayed.speaker)];
+            return (
+              <>
+                <span className={`block text-sm font-bold ${palette.text}`}>
+                  {palette.glyph}
+                </span>
+                <span className={`mt-0.5 inline-block ${palette.text}`}>
+                  {displayed.speaker}
+                </span>
+              </>
+            );
+          })()}
+      </div>
+      <span className="ts-body italic text-mut">
+        {displayed.text}
+        <span className="cursor-block ml-0.5 inline-block h-[1em] w-[0.6em] translate-y-[0.15em] bg-mut align-baseline" />
+      </span>
+    </div>
+  );
+}
+
 export default function TranscriptPanel() {
   const segments = useApp((s) => s.segments);
-  const interim = useApp((s) => s.interim);
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
   const status = useApp((s) => s.status);
@@ -339,28 +567,48 @@ export default function TranscriptPanel() {
   );
 
   // Segment text correction: one segment editable at a time; starting
-  // another discards the previous unsaved edit.
-  const [editingSegmentId, setEditingSegmentId] = useState<string | null>(
-    null,
+  // another discards the previous unsaved edit. Mirrored into refs so
+  // the handlers passed down to SegmentRow (startEditingSegment etc.)
+  // can stay referentially STABLE (empty useCallback deps) — needed
+  // for React.memo on SegmentRow to actually hold across a keystroke
+  // in the currently-editing row (see the render-split doc comment
+  // above SegmentRow).
+  const [editingSegmentId, setEditingSegmentIdState] = useState<
+    string | null
+  >(null);
+  const editingSegmentIdRef = useRef<string | null>(null);
+  const [editValue, setEditValueState] = useState("");
+  const editValueRef = useRef("");
+
+  const setEditingSegmentId = useCallback((id: string | null) => {
+    editingSegmentIdRef.current = id;
+    setEditingSegmentIdState(id);
+  }, []);
+  const setEditValue = useCallback((v: string) => {
+    editValueRef.current = v;
+    setEditValueState(v);
+  }, []);
+
+  const startEditingSegment = useCallback(
+    (segId: string, text: string) => {
+      setEditingSegmentId(segId);
+      setEditValue(text);
+    },
+    [setEditingSegmentId, setEditValue],
   );
-  const [editValue, setEditValue] = useState("");
 
-  const startEditingSegment = (segId: string, text: string) => {
-    setEditingSegmentId(segId);
-    setEditValue(text);
-  };
-
-  const cancelEditingSegment = () => {
+  const cancelEditingSegment = useCallback(() => {
     setEditingSegmentId(null);
     setEditValue("");
-  };
+  }, [setEditingSegmentId, setEditValue]);
 
-  const saveEditingSegment = () => {
-    if (!editingSegmentId) return;
-    updateSegmentText(editingSegmentId, editValue);
+  const saveEditingSegment = useCallback(() => {
+    const segId = editingSegmentIdRef.current;
+    if (!segId) return;
+    updateSegmentText(segId, editValueRef.current);
     setEditingSegmentId(null);
     setEditValue("");
-  };
+  }, [updateSegmentText, setEditingSegmentId, setEditValue]);
 
   const matcher = useMemo(
     () => buildHighlightMatcher(cards, terms),
@@ -416,36 +664,45 @@ export default function TranscriptPanel() {
   }, [focusMode]);
 
   // Resolve a hit to its full GlossItem, looking it up in whichever map
-  // matches its kind.
-  const resolveGlossItem = (hit: HighlightHit): GlossItem | undefined => {
-    if (hit.kind === "expression") {
-      const card = cardsById.get(hit.id);
-      return card ? { kind: "expression", card } : undefined;
-    }
-    const term = termsById.get(hit.id);
-    return term ? { kind: "term", term } : undefined;
-  };
+  // matches its kind. Memoized (not just a plain function) so the
+  // handlers below that depend on it — and are themselves passed down
+  // to the memoized SegmentRow — stay referentially stable across
+  // renders that don't actually change cards/terms.
+  const resolveGlossItem = useCallback(
+    (hit: HighlightHit): GlossItem | undefined => {
+      if (hit.kind === "expression") {
+        const card = cardsById.get(hit.id);
+        return card ? { kind: "expression", card } : undefined;
+      }
+      const term = termsById.get(hit.id);
+      return term ? { kind: "term", term } : undefined;
+    },
+    [cardsById, termsById],
+  );
 
-  const handleHitEnter = (hit: HighlightHit, rect: DOMRect) => {
-    if (!focusMode) return;
-    if (leaveTimer.current) {
-      clearTimeout(leaveTimer.current);
-      leaveTimer.current = null;
-    }
-    const item = resolveGlossItem(hit);
-    if (!item) return;
-    if (enterTimer.current) clearTimeout(enterTimer.current);
-    enterTimer.current = setTimeout(() => {
-      enterTimer.current = null;
-      setGloss((prev) =>
-        prev?.pinned
-          ? prev
-          : { item, x: rect.left, y: rect.bottom + 6, pinned: false },
-      );
-    }, HOVER_ENTER_DELAY_MS);
-  };
+  const handleHitEnter = useCallback(
+    (hit: HighlightHit, rect: DOMRect) => {
+      if (!focusMode) return;
+      if (leaveTimer.current) {
+        clearTimeout(leaveTimer.current);
+        leaveTimer.current = null;
+      }
+      const item = resolveGlossItem(hit);
+      if (!item) return;
+      if (enterTimer.current) clearTimeout(enterTimer.current);
+      enterTimer.current = setTimeout(() => {
+        enterTimer.current = null;
+        setGloss((prev) =>
+          prev?.pinned
+            ? prev
+            : { item, x: rect.left, y: rect.bottom + 6, pinned: false },
+        );
+      }, HOVER_ENTER_DELAY_MS);
+    },
+    [focusMode, resolveGlossItem],
+  );
 
-  const handleHitLeave = () => {
+  const handleHitLeave = useCallback(() => {
     if (!focusMode) return;
     if (enterTimer.current) {
       clearTimeout(enterTimer.current);
@@ -456,18 +713,32 @@ export default function TranscriptPanel() {
       leaveTimer.current = null;
       setGloss((prev) => (prev?.pinned ? prev : null));
     }, HOVER_LEAVE_DELAY_MS);
-  };
+  }, [focusMode]);
 
-  const handleHitClick = (hit: HighlightHit, rect: DOMRect) => {
-    if (!focusMode) {
-      setFocusCard(hit.id);
-      return;
-    }
-    clearTimers();
-    const item = resolveGlossItem(hit);
-    if (!item) return;
-    setGloss({ item, x: rect.left, y: rect.bottom + 6, pinned: true });
-  };
+  const handleHitClick = useCallback(
+    (hit: HighlightHit, rect: DOMRect) => {
+      if (!focusMode) {
+        setFocusCard(hit.id);
+        return;
+      }
+      clearTimers();
+      const item = resolveGlossItem(hit);
+      if (!item) return;
+      setGloss({ item, x: rect.left, y: rect.bottom + 6, pinned: true });
+    },
+    [focusMode, setFocusCard, resolveGlossItem],
+  );
+
+  // Speaker-rename popover: SegmentRow reports its own speaker +
+  // segment count rather than closing over `speakerCounts` (a Map
+  // that gets a new reference on every segments change) so this
+  // handler stays stable regardless.
+  const handleRenameRequest = useCallback(
+    (speaker: string, segmentCount: number, x: number, y: number) => {
+      setRenameRequest({ speaker, segmentCount, x, y });
+    },
+    [],
+  );
 
   // Escape unpins the gloss card.
   useEffect(() => {
@@ -484,12 +755,21 @@ export default function TranscriptPanel() {
 
   const isEmpty = segments.length === 0 && status === "idle";
 
-  // Auto-scroll: stick to bottom unless the user scrolled up.
+  // Auto-scroll: stick to bottom unless the user scrolled up. Keyed on
+  // [segments] only now — interim moved out to its own component
+  // (InterimLine), which reports growth via onInterimGrow below
+  // instead of this component re-rendering on every partial.
   useEffect(() => {
     const el = containerRef.current;
     if (!el || !stickToBottom) return;
     el.scrollTop = el.scrollHeight;
-  }, [segments, interim, stickToBottom]);
+  }, [segments, stickToBottom]);
+
+  const handleInterimGrow = () => {
+    const el = containerRef.current;
+    if (!el || !stickToBottom) return;
+    el.scrollTop = el.scrollHeight;
+  };
 
   const handleScroll = () => {
     const el = containerRef.current;
@@ -576,124 +856,28 @@ export default function TranscriptPanel() {
           </div>
         ) : (
           <>
-            {segments.map((seg) => {
-              const palette = seg.speaker
-                ? SPEAKER_PALETTE[hashSpeaker(seg.speaker)]
-                : null;
-              const isEditingThis = editingSegmentId === seg.id;
-              return (
-                <div
-                  key={seg.id}
-                  className="fade-up grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3"
-                  data-segment-text={seg.text}
-                >
-                  <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
-                    {palette && (
-                      <span className={`block text-sm font-bold ${palette.text}`}>
-                        {palette.glyph}
-                      </span>
-                    )}
-                    <span className="block whitespace-nowrap">
-                      {formatTime(seg.startedAt)}
-                    </span>
-                    {seg.speaker && palette && (
-                      <span
-                        onClick={
-                          editable
-                            ? (e) => {
-                                const rect =
-                                  e.currentTarget.getBoundingClientRect();
-                                setRenameRequest({
-                                  speaker: seg.speaker!,
-                                  segmentCount:
-                                    speakerCounts.get(seg.speaker!) ?? 1,
-                                  x: rect.left,
-                                  y: rect.bottom,
-                                });
-                              }
-                            : undefined
-                        }
-                        className={`group/chip mt-0.5 inline-flex items-center gap-1 ${palette.text} ${
-                          editable
-                            ? "cursor-pointer hover:underline hover:decoration-dotted hover:underline-offset-2"
-                            : ""
-                        }`}
-                      >
-                        {seg.speaker}
-                        {editable && (
-                          <PencilSimple
-                            size={9}
-                            weight="regular"
-                            className="opacity-0 transition-opacity group-hover/chip:opacity-100"
-                          />
-                        )}
-                      </span>
-                    )}
-                  </div>
-                  {isEditingThis ? (
-                    <div>
-                      <SegmentEditTextarea
-                        value={editValue}
-                        onChange={setEditValue}
-                        onSave={saveEditingSegment}
-                        onCancel={cancelEditingSegment}
-                      />
-                    </div>
-                  ) : (
-                    <div
-                      className="ts-body"
-                      onDoubleClick={
-                        editable
-                          ? () => {
-                              window.getSelection()?.removeAllRanges();
-                              startEditingSegment(seg.id, seg.text);
-                            }
-                          : undefined
-                      }
-                    >
-                      <HighlightedText
-                        text={seg.text}
-                        matcher={matcher}
-                        onHit={handleHitClick}
-                        onHitEnter={handleHitEnter}
-                        onHitLeave={handleHitLeave}
-                      />
-                      {translations[seg.id] && (
-                        <div className="ts-translation mt-0.5 text-mut">
-                          {translations[seg.id]}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {segments.map((seg) => (
+              <SegmentRow
+                key={seg.id}
+                seg={seg}
+                editable={editable}
+                isEditing={editingSegmentId === seg.id}
+                editValue={editingSegmentId === seg.id ? editValue : ""}
+                matcher={matcher}
+                translation={translations[seg.id]}
+                speakerCount={seg.speaker ? speakerCounts.get(seg.speaker) ?? 1 : 0}
+                onStartEdit={startEditingSegment}
+                onChangeEditValue={setEditValue}
+                onSaveEdit={saveEditingSegment}
+                onCancelEdit={cancelEditingSegment}
+                onRenameRequest={handleRenameRequest}
+                onHitClick={handleHitClick}
+                onHitEnter={handleHitEnter}
+                onHitLeave={handleHitLeave}
+              />
+            ))}
 
-            {interim && (
-              <div className="grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3">
-                <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
-                  {interim.speaker &&
-                    (() => {
-                      const palette =
-                        SPEAKER_PALETTE[hashSpeaker(interim.speaker)];
-                      return (
-                        <>
-                          <span className={`block text-sm font-bold ${palette.text}`}>
-                            {palette.glyph}
-                          </span>
-                          <span className={`mt-0.5 inline-block ${palette.text}`}>
-                            {interim.speaker}
-                          </span>
-                        </>
-                      );
-                    })()}
-                </div>
-                <span className="ts-body italic text-mut">
-                  {interim.text}
-                  <span className="cursor-block ml-0.5 inline-block h-[1em] w-[0.6em] translate-y-[0.15em] bg-mut align-baseline" />
-                </span>
-              </div>
-            )}
+            <InterimLine onGrow={handleInterimGrow} />
           </>
         )}
       </div>
