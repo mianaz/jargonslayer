@@ -12,6 +12,7 @@
 // notification itself.
 
 import { useEffect, useRef, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { CheckCircle, ListChecks, WarningCircle, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
@@ -46,10 +47,17 @@ export default function TaskTray() {
   // progress — is only computed while the popover is actually open;
   // closed, it resolves to the SAME EMPTY_TASKS reference every time,
   // so a closed tray sees zero re-renders from progress ticks.
+  //
+  // useShallow is load-bearing, not an optimization: zustand v5's
+  // plain useSyncExternalStore requires referentially-stable selector
+  // output, and selectTrayTasks builds a fresh array per call — bare,
+  // that loops render→snapshot forever the moment the tray opens with
+  // any task present (the 2026-07-10 prod React #185 crash; see
+  // TaskTray.test.tsx).
   const runningCount = useTasks((s) => selectRunningCount(s.tasks));
   const hasTasks = useTasks((s) => selectHasTasks(s.tasks));
   const totalCount = useTasks((s) => selectTotalCount(s.tasks));
-  const trayTasks = useTasks((s) => (open ? selectTrayTasks(s.tasks) : EMPTY_TASKS));
+  const trayTasks = useTasks(useShallow((s) => (open ? selectTrayTasks(s.tasks) : EMPTY_TASKS)));
 
   useEffect(() => {
     if (!open) return;

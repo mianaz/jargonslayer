@@ -20,6 +20,7 @@
 // this drawer's own 导入 buttons just call it, same as before.
 
 import { useEffect, useState } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Trash, UploadSimple, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
@@ -74,7 +75,10 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
   // derivation on `open` means a closed drawer resolves to the SAME
   // EMPTY_TASKS reference on every progress tick instead of a fresh
   // array, so it doesn't re-render at all while it isn't visible.
-  const importRows = useTasks((s) => (open ? activeImportRows(s.tasks) : EMPTY_TASKS));
+  // useShallow is load-bearing under zustand v5 (unstable selector
+  // output = infinite render loop, React #185) — same crash class as
+  // TaskTray's trayTasks selector, see TaskTray.test.tsx.
+  const importRows = useTasks(useShallow((s) => (open ? activeImportRows(s.tasks) : EMPTY_TASKS)));
 
   useEffect(() => {
     if (!open) {

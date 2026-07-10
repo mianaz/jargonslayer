@@ -51,7 +51,16 @@ export const useTasks = create<TaskRegistryStore>(() => ({ tasks: {} }));
  *  and skips a re-render (review fix 6: a closed tray/drawer shouldn't
  *  re-render on every progress tick just because it's still subscribed
  *  to the tasks map). See TaskTray's/HistoryDrawer's `open`-gated
- *  selectors. */
+ *  selectors.
+ *
+ *  INVARIANT (zustand v5): any useTasks selector that DERIVES an
+ *  array/object (selectTrayTasks, activeImportRows, ...) must be
+ *  wrapped in useShallow at the hook call site. v5's plain
+ *  useSyncExternalStore has no selector-output caching — a selector
+ *  returning a fresh reference per call re-renders in an infinite
+ *  loop and crashes with React #185 ("Maximum update depth exceeded",
+ *  the 2026-07-10 prod crash). Primitive-returning selectors are safe
+ *  bare. */
 export const EMPTY_TASKS: TaskState[] = [];
 
 // Terminal-task cap (review fix 6): unbounded done/error tasks would
