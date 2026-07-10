@@ -11,11 +11,12 @@ import {
 } from "../store";
 import {
   DEFAULT_SETTINGS,
+  type CustomEntry,
   type DetectResponse,
   type Settings,
   type TranscriptSegment,
 } from "../types";
-import { KNOWN_VOTE_INCREMENT } from "../learn/store";
+import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
 import type { LearnRecord } from "../learn/types";
 
 function makeSegment(overrides: Partial<TranscriptSegment> = {}): TranscriptSegment {
@@ -487,5 +488,176 @@ describe("learning loop store integration", () => {
   it("keeps string-only showToast calls backward-compatible", () => {
     useApp.getState().showToast("已保存");
     expect(useApp.getState().toast).toBe("已保存");
+  });
+});
+
+function makeCustomEntry(overrides: Partial<CustomEntry> = {}): CustomEntry {
+  const now = 10_000;
+  return {
+    id: "entry-1",
+    kind: "expression",
+    headword: "circle back",
+    variants: [],
+    chinese_explanation: "回头再聊",
+    example: "",
+    context: "",
+    note: "",
+    createdAt: now,
+    updatedAt: now,
+    source: "manual",
+    ...overrides,
+  };
+}
+
+describe("gradeReview — SRS review grading (#48 step 2)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      customEntries: [],
+      toast: null,
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("lazily enrolls a never-graded learnKey and runs SM-2-lite from a fresh record", async () => {
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.reps).toBe(1);
+    expect(record.intervalDays).toBe(1);
+    expect(record.ease).toBe(DEFAULT_EASE + 0.1);
+    expect(record.dueAt).toBe(10_000 + 24 * 60 * 60 * 1000);
+    expect(record.lastReviewedAt).toBe(10_000);
+  });
+
+  it("a second grade continues the SAME record's schedule rather than re-enrolling", async () => {
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+    vi.setSystemTime(20_000);
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.reps).toBe(2);
+    expect(record.intervalDays).toBe(4);
+    expect(record.dueAt).toBe(20_000 + 4 * 24 * 60 * 60 * 1000);
+  });
+
+  it("auto-suppression from a review grade removes the term from any live cards", async () => {
+    useApp.setState({
+      learnset: {
+        "expression:circle back": {
+          learnKey: "expression:circle back",
+          kind: "expression",
+          surface: "circle back",
+          familiarity: 1,
+          suppressed: false,
+          reps: 2,
+          intervalDays: 20,
+          ease: 1.4,
+          dueAt: 10_000,
+          lapses: 0,
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+    });
+
+    await useApp.getState().gradeReview("expression", "circle back", 2);
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.intervalDays).toBe(30); // round(20 * 1.5)
+    expect(record.suppressed).toBe(true);
+    expect(useApp.getState().cards).toHaveLength(0); // live card removed
+  });
+
+  it("grading a term that never triggers auto-suppression leaves live cards untouched", async () => {
+    useApp.setState({
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+    });
+    await useApp.getState().gradeReview("expression", "circle back", 1);
+    expect(useApp.getState().cards).toHaveLength(1);
+  });
+});
+
+describe("addCustomEntry — glossary-save lazy SRS enrollment (#48 step 2)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    useApp.setState({ learnset: {}, customEntries: [] });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("auto-enrolls a brand-new headword with dueAt=now on first save", async () => {
+    await useApp.getState().addCustomEntry(makeCustomEntry({ id: "e1" }));
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record).toBeDefined();
+    expect(record.reps).toBe(0);
+    expect(record.dueAt).toBe(10_000);
+    expect(record.ease).toBe(DEFAULT_EASE);
+    expect(record.familiarity).toBe(0);
+  });
+
+  it("does not re-enroll (or reset scheduling) when the learnKey is already enrolled", async () => {
+    useApp.setState({
+      learnset: {
+        "expression:circle back": {
+          learnKey: "expression:circle back",
+          kind: "expression",
+          surface: "circle back",
+          familiarity: 0.4,
+          suppressed: false,
+          reps: 3,
+          intervalDays: 11,
+          ease: 2.8,
+          dueAt: 99_999,
+          lapses: 0,
+          createdAt: 1000,
+          updatedAt: 1000,
+        },
+      },
+    });
+
+    await useApp.getState().addCustomEntry(makeCustomEntry({ id: "e2" }));
+
+    const record = useApp.getState().learnset["expression:circle back"];
+    expect(record.reps).toBe(3);
+    expect(record.dueAt).toBe(99_999); // untouched
+  });
+
+  it("updateCustomEntry never enrolls into the learn-set", async () => {
+    await useApp.getState().updateCustomEntry(makeCustomEntry({ id: "e3" }));
+    expect(useApp.getState().learnset["expression:circle back"]).toBeUndefined();
   });
 });

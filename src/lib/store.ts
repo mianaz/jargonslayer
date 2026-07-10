@@ -24,6 +24,7 @@ import * as storage from "./history/storage";
 import * as glossary from "./history/glossary";
 import * as learnset from "./learn/store";
 import { filterSuppressed } from "./learn/suppress";
+import { schedule, type SrsGrade } from "./learn/srs";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "./types";
 import type { LearnKind, LearnRecord } from "./learn/types";
@@ -293,6 +294,10 @@ interface AppState {
     mode?: "vote" | "suppress",
   ) => Promise<void>;
   unsuppressLearnRecord: (key: string) => Promise<void>;
+  // SRS review grade (#48 step 2): lazily enrolls on the first grade
+  // (same posture as markKnown's first vote), then runs SM-2-lite
+  // (learn/srs.ts's schedule) to compute the next dueAt/ease/etc.
+  gradeReview: (kind: LearnKind, surface: string, grade: SrsGrade) => Promise<void>;
 
   showToast: (toast: Exclude<ToastState, null>) => void;
   clearToast: () => void;
@@ -743,6 +748,17 @@ export const useApp = create<AppState>((set, get) => ({
   addCustomEntry: async (entry) => {
     const list = await glossary.upsertCustomEntry(entry);
     set({ customEntries: [...list] });
+    // Lazy SRS enrollment (#48 step 2): a glossary save is itself a
+    // familiarity signal, so it auto-enrolls (dueAt=now) — but only
+    // the FIRST time this learnKey appears; never resets an already-
+    // enrolled record's schedule (a later edit of the same entry goes
+    // through updateCustomEntry, which does not re-enroll).
+    const key = learnset.learnKey(entry.kind, entry.headword);
+    if (!get().learnset[key]) {
+      const record = learnset.makeInitialLearnRecord(entry.kind, entry.headword, Date.now());
+      const map = await learnset.upsertLearnRecord(record);
+      set({ learnset: { ...map } });
+    }
   },
 
   updateCustomEntry: async (entry) => {
@@ -818,6 +834,27 @@ export const useApp = create<AppState>((set, get) => ({
     };
     const map = await learnset.upsertLearnRecord(next);
     set({ learnset: { ...map } });
+  },
+
+  gradeReview: async (kind, surface, grade) => {
+    const key = learnset.learnKey(kind, surface);
+    const now = Date.now();
+    // Lazy enrollment: grading a recent-meeting card that has no
+    // learn-set record yet (composeReviewQueue's "recent, not
+    // enrolled" bucket) starts it fresh right here.
+    const base = get().learnset[key] ?? learnset.makeInitialLearnRecord(kind, surface, now);
+    const next = schedule(base, grade, now);
+
+    const map = await learnset.upsertLearnRecord(next);
+    set({ learnset: { ...map } });
+
+    // Auto-suppression (interval >= 30d AND familiarity >= 0.85 on a
+    // 认识 grade) behaves like a markKnown suppression for any card
+    // still live in the current meeting — never surface it again.
+    if (next.suppressed && !base.suppressed) {
+      const live = removeLiveLearnKey(get().cards, get().terms, key);
+      set(live);
+    }
   },
 
   newMeeting: () =>
