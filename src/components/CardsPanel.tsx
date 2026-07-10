@@ -217,8 +217,13 @@ function KnownAffordance({
 
   return (
     <div
+      // #48 s1 review item 11: aria-label on a non-interactive div is
+      // an a11y nit (labels an element that never receives focus and
+      // has no implicit role for the label to attach to) — role="group"
+      // instead; the buttons already carry their own visible text, so
+      // no group-level label is needed on top of that.
       className={`absolute ${align} top-2 flex items-center gap-1 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100`}
-      aria-label="熟悉度"
+      role="group"
     >
       <button
         type="button"
