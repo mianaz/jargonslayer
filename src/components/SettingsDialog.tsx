@@ -388,6 +388,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
   const showToast = useApp((s) => s.showToast);
+  // #62/tag-blocker 1: SettingsDialog is mounted unconditionally from
+  // page.tsx, before store.hydrate() (async) resolves — so `settings`
+  // starts out as DEFAULT_SETTINGS. Read `hydrated` so the auto-promote
+  // effect below can wait for the real persisted settings instead of
+  // evaluating (and never re-evaluating) DEFAULT_SETTINGS.
+  const hydrated = useApp((s) => s.hydrated);
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
@@ -442,24 +448,38 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // packSources above.
   const [diagEntries, setDiagEntries] = useState<DiagEntry[]>([]);
 
+  // #62 progressive disclosure: auto-promote simple → advanced if the
+  // user already relies on an advanced-only setting (BYOK key, task
+  // overrides, webhook, filtered packs, subscription-direct,
+  // diarization, custom confidence, …) — pure, deterministic, re-
+  // derived every time hydration settles (see shouldAutoPromoteToAdvanced's
+  // own doc comment). Persisted immediately via updateSettings, same as
+  // the header toggle itself — uiMode is a view preference, kept OUT of
+  // the draft/保存 flow (see the toggle's own comment below).
+  //
+  // Gated on `hydrated` (tag-blocker 1), not an empty dep array: this
+  // dialog is mounted unconditionally from page.tsx while store.
+  // hydrate() is still async, so `settings` starts out as
+  // DEFAULT_SETTINGS — an empty-dep effect would evaluate that default
+  // (never promoting) and then never fire again once the real
+  // persisted settings arrive, silently dropping an upgrading power
+  // user into simple mode with their BYOK key field hidden. Depending
+  // on `hydrated` re-runs this exactly once more, right when hydrate()
+  // publishes the real settings.
+  useEffect(() => {
+    if (!hydrated) return;
+    if (settings.uiMode === "simple" && shouldAutoPromoteToAdvanced(settings)) {
+      updateSettings({ uiMode: "advanced" });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated]);
+
   // App-mount-once (not open-gated): SettingsDialog is always mounted
   // by page.tsx, so this applies the persisted pack selection to the
   // live scanDictionary() registry as soon as the app loads, even if
   // the user never opens this dialog. Mirrors the dictionary.ts
   // registry-pattern comment (see setEnabledPacks there).
   useEffect(() => {
-    // #62 progressive disclosure: auto-promote simple → advanced on
-    // first render if the user already relies on an advanced-only
-    // setting (BYOK key, task overrides, webhook, filtered packs,
-    // subscription-direct, diarization, custom confidence, …) — pure,
-    // deterministic, re-derived every mount, never a stored migration
-    // flag (see shouldAutoPromoteToAdvanced's own doc comment).
-    // Persisted immediately via updateSettings, same as the header
-    // toggle itself — uiMode is a view preference, kept OUT of the
-    // draft/保存 flow (see the toggle's own comment below).
-    if (settings.uiMode === "simple" && shouldAutoPromoteToAdvanced(settings)) {
-      updateSettings({ uiMode: "advanced" });
-    }
     setEnabledPacks(settings.enabledPacks);
     // Remote packs (#20) have no store.hydrate() hook (this worker
     // doesn't own store.ts), so they're bootstrapped here — and again,
@@ -489,8 +509,31 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         new Set(settings.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
       );
       void listAudioInputs().then(setMics);
-      void getExportFolderName().then(setExportFolderName);
-      void listPackSources().then(setPackSources);
+      // #62 auto-promote, async-plumbing follow-up (tag-blocker
+      // BEST-EFFORT 6): shouldAutoPromoteToAdvanced (settingsSections.ts)
+      // is a PURE function over `Settings` alone, so it can't see either
+      // of these two IndexedDB-backed facts — a stored export-directory
+      // handle or an installed remote dictionary pack source. Both are
+      // already fetched here on every dialog open regardless (for
+      // exportFolderName/packSources' own UI), so promoting off their
+      // resolved values is just piggy-backing on an existing round-trip,
+      // not new async plumbing. Reads `settings.uiMode` off the closure
+      // at effect-run time (mirrors the sync auto-promote effect above);
+      // an open dialog's `settings` only ever changes via a hydrate that
+      // itself re-opens this same check next time, so this is not
+      // expected to race the way tag-blocker 1 did.
+      void getExportFolderName().then((name) => {
+        setExportFolderName(name);
+        if (settings.uiMode === "simple" && name) {
+          updateSettings({ uiMode: "advanced" });
+        }
+      });
+      void listPackSources().then((sources) => {
+        setPackSources(sources);
+        if (settings.uiMode === "simple" && sources.length > 0) {
+          updateSettings({ uiMode: "advanced" });
+        }
+      });
       setDiagEntries(getDiagEntries());
       // 订阅直连（实验性）: kill-switch layer 2 — never even probes when
       // this build didn't set NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT
@@ -584,7 +627,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const handleSave = () => {
     const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
-    const toSave: Settings = { ...draft, enabledPacks };
+    // uiMode is deliberately excluded from `draft` — the header toggle
+    // above writes it straight through updateSettings the moment it's
+    // clicked (a view preference, not part of 保存's flow). `draft`
+    // still carries whatever uiMode was LIVE when the dialog opened, so
+    // spreading it wholesale here would revert a toggle click made
+    // while the dialog was open (tag-blocker HIGH 3) — always take the
+    // live value instead.
+    const toSave: Settings = { ...draft, enabledPacks, uiMode: useApp.getState().settings.uiMode };
     updateSettings(toSave);
     setEnabledPacks(enabledPacks);
     showToast("设置已保存");
