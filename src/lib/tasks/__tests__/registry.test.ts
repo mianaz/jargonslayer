@@ -19,9 +19,11 @@ import {
   failTask,
   runTracked,
   runTrackedAsync,
+  selectCanDismiss,
   selectHasTasks,
   selectRunningCount,
   selectRunningTasks,
+  selectTotalCount,
   selectTrayTasks,
   startTask,
   updateTaskProgress,
@@ -271,5 +273,135 @@ describe("pure selectors — chip/tray derivation", () => {
   it("empty registry: running count 0, no tasks", () => {
     expect(selectRunningCount({})).toBe(0);
     expect(selectTrayTasks({})).toEqual([]);
+  });
+
+  it("selectTotalCount counts every task regardless of status", () => {
+    const tasks: Record<string, TaskState> = {
+      a: task({ id: "a", status: "running" }),
+      b: task({ id: "b", status: "done" }),
+      c: task({ id: "c", status: "error" }),
+    };
+    expect(selectTotalCount(tasks)).toBe(3);
+    expect(selectTotalCount({})).toBe(0);
+  });
+
+  it("selectCanDismiss is false only for status:running (#58 review fix 3)", () => {
+    expect(selectCanDismiss("running")).toBe(false);
+    expect(selectCanDismiss("done")).toBe(true);
+    expect(selectCanDismiss("error")).toBe(true);
+  });
+});
+
+describe("terminal-task pruning on insert (#58 review fix 6)", () => {
+  beforeEach(() => {
+    useTasks.setState({ tasks: {} });
+    webhookUrl = "";
+    mockPostTaskWebhook.mockClear();
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not prune when a new insert brings the terminal count to exactly the cap", () => {
+    for (let i = 0; i < 20; i++) {
+      vi.setSystemTime(i * 10);
+      startTask(`t${i}`, "import-audio", `f${i}`);
+      completeTask(`t${i}`, `s${i}`);
+    }
+    expect(Object.keys(useTasks.getState().tasks)).toHaveLength(20);
+
+    vi.setSystemTime(1000);
+    startTask("t-running", "import-video", "still-going.mp4");
+
+    const tasks = useTasks.getState().tasks;
+    // 20 terminal (untouched, still exactly at the cap) + 1 running.
+    expect(Object.keys(tasks)).toHaveLength(21);
+    expect(tasks.t0).toBeDefined();
+  });
+
+  it("prunes exactly the single oldest-updated terminal task once an insert pushes the terminal count one over the cap", () => {
+    for (let i = 0; i < 21; i++) {
+      vi.setSystemTime(i * 10);
+      startTask(`t${i}`, "import-audio", `f${i}`);
+      completeTask(`t${i}`, `s${i}`);
+    }
+    // completeTask itself never prunes — only a NEW insert does.
+    expect(Object.keys(useTasks.getState().tasks)).toHaveLength(21);
+
+    vi.setSystemTime(1000);
+    startTask("t-running", "import-video", "still-going.mp4");
+
+    const tasks = useTasks.getState().tasks;
+    expect(tasks.t0).toBeUndefined(); // oldest-updated terminal task, pruned
+    expect(tasks.t1).toBeDefined(); // every other terminal task survives
+    expect(tasks["t-running"]).toBeDefined();
+    expect(tasks["t-running"].status).toBe("running");
+    // 21 terminal - 1 pruned = 20 terminal, + the 1 new running task.
+    expect(Object.keys(tasks)).toHaveLength(21);
+  });
+
+  it("never prunes a running task, even one older than every terminal task and even once the terminal count is well over the cap", () => {
+    startTask("keep-running", "import-audio", "long.wav");
+    for (let i = 0; i < 25; i++) {
+      vi.setSystemTime((i + 1) * 10);
+      startTask(`t${i}`, "import-audio", `f${i}`);
+      completeTask(`t${i}`, `s${i}`);
+    }
+    const kept = useTasks.getState().tasks["keep-running"];
+    expect(kept).toBeDefined();
+    expect(kept.status).toBe("running");
+  });
+});
+
+describe("task.* webhook destination captured at task-start (#58 review fix 7)", () => {
+  beforeEach(() => {
+    useTasks.setState({ tasks: {} });
+    webhookUrl = "";
+    mockPostTaskWebhook.mockClear();
+  });
+
+  it("task.started AND task.done both use the URL captured at startTask time, even if webhookUrl changes before the task completes", () => {
+    webhookUrl = "https://a.example.com/hook";
+    const id = runTracked("import-audio", "meeting.wav", () => {});
+    // Settings change mid-task — a naive live-read at emit time would
+    // send task.done here instead.
+    webhookUrl = "https://b.example.com/hook";
+    completeTask(id, "session-1");
+
+    expect(mockPostTaskWebhook).toHaveBeenCalledTimes(2);
+    expect(mockPostTaskWebhook.mock.calls[0][1]).toBe("task.started");
+    expect(mockPostTaskWebhook.mock.calls[0][2]).toBe("https://a.example.com/hook");
+    expect(mockPostTaskWebhook.mock.calls[1][1]).toBe("task.done");
+    expect(mockPostTaskWebhook.mock.calls[1][2]).toBe("https://a.example.com/hook");
+  });
+
+  it("a failed task's captured URL is used for task.error too", () => {
+    webhookUrl = "https://a.example.com/hook";
+    const id = runTracked("import-url", "https://x", () => {});
+    webhookUrl = "https://b.example.com/hook";
+    failTask(id, "下载失败");
+
+    expect(mockPostTaskWebhook).toHaveBeenCalledTimes(2);
+    expect(mockPostTaskWebhook.mock.calls[1][1]).toBe("task.error");
+    expect(mockPostTaskWebhook.mock.calls[1][2]).toBe("https://a.example.com/hook");
+  });
+
+  it("no webhookUrl configured at start: task.done never fires even if one is configured before completion", () => {
+    webhookUrl = "";
+    const id = runTracked("import-audio", "meeting.wav", () => {});
+    webhookUrl = "https://late.example.com/hook";
+    completeTask(id, "session-1");
+
+    expect(mockPostTaskWebhook).not.toHaveBeenCalled();
+  });
+
+  it("the captured URL is never exposed on the TaskState payload itself", () => {
+    webhookUrl = "https://a.example.com/hook";
+    const id = runTracked("import-audio", "meeting.wav", () => {});
+    const task = useTasks.getState().tasks[id];
+    expect(task).not.toHaveProperty("webhookUrl");
   });
 });

@@ -44,12 +44,54 @@ interface TaskRegistryStore {
 
 export const useTasks = create<TaskRegistryStore>(() => ({ tasks: {} }));
 
+/** Referentially-stable empty list — narrow zustand selectors return
+ *  this (instead of a fresh `[]` literal) when they have nothing to
+ *  show, so the store's default Object.is comparison sees "no change"
+ *  and skips a re-render (review fix 6: a closed tray/drawer shouldn't
+ *  re-render on every progress tick just because it's still subscribed
+ *  to the tasks map). See TaskTray's/HistoryDrawer's `open`-gated
+ *  selectors. */
+export const EMPTY_TASKS: TaskState[] = [];
+
+// Terminal-task cap (review fix 6): unbounded done/error tasks would
+// otherwise grow the in-memory registry for the lifetime of a long
+// session. Pruned on every startTask insert, oldest-updated first —
+// running tasks are NEVER pruned, only done/error ones once they
+// exceed the cap.
+const MAX_TERMINAL_TASKS = 20;
+
+function pruneTerminalTasks(tasks: Record<string, TaskState>): Record<string, TaskState> {
+  const terminal = Object.values(tasks)
+    .filter((t) => t.status !== "running")
+    .sort((a, b) => a.updatedAt - b.updatedAt);
+  const excess = terminal.length - MAX_TERMINAL_TASKS;
+  if (excess <= 0) return tasks;
+  const toRemove = new Set(terminal.slice(0, excess).map((t) => t.id));
+  const next: Record<string, TaskState> = {};
+  for (const [id, t] of Object.entries(tasks)) {
+    if (!toRemove.has(id)) next[id] = t;
+  }
+  return next;
+}
+
+// Per-task webhook destination, captured once at startTask (review fix
+// 7) — read fresh from settings only there, then reused for every
+// event of that SAME task (task.started/task.done/task.error all land
+// at the one destination even if settings.webhookUrl changes mid-task).
+// Deliberately a private side-table, not a TaskState field: the value
+// must never end up in the payload postTaskWebhook serializes. Cleared
+// once a task reaches a terminal webhook event — no more events will
+// ever fire for that id.
+const taskWebhookUrls = new Map<string, string>();
+
 /** Fire-and-forget task.* webhook — reuses the SAME webhookUrl setting
  *  autoExport.ts's postWebhook already POSTs meeting.saved to (design
  *  decision 5: "the event bus doubles as the connector hook", no new
- *  config surface). No-ops silently when no webhookUrl is configured. */
+ *  config surface). No-ops silently when no webhookUrl was configured
+ *  at task-start time. */
 function emitTaskEvent(event: "task.started" | "task.done" | "task.error", task: TaskState): void {
-  const url = useApp.getState().settings.webhookUrl;
+  const url = taskWebhookUrls.get(task.id);
+  if (event !== "task.started") taskWebhookUrls.delete(task.id);
   if (!url) return;
   void postTaskWebhook(task, event, url);
 }
@@ -76,7 +118,8 @@ export function startTask(id: string, kind: TaskKind, label: string): TaskState 
     createdAt: now,
     updatedAt: now,
   };
-  useTasks.setState((s) => ({ tasks: { ...s.tasks, [id]: task } }));
+  taskWebhookUrls.set(id, useApp.getState().settings.webhookUrl ?? "");
+  useTasks.setState((s) => ({ tasks: pruneTerminalTasks({ ...s.tasks, [id]: task }) }));
   emitTaskEvent("task.started", task);
   return task;
 }
@@ -187,4 +230,23 @@ export function selectTrayTasks(tasks: Record<string, TaskState>): TaskState[] {
 
 export function selectHasTasks(tasks: Record<string, TaskState>): boolean {
   return Object.keys(tasks).length > 0;
+}
+
+/** Total task count — the collapsed chip's idle-state number (review
+ *  fix 1/6: it must stay live regardless of whether the tray popover
+ *  is open, unlike selectTrayTasks' sorted row list, so it's its own
+ *  narrow primitive selector rather than reading `trayTasks.length`). */
+export function selectTotalCount(tasks: Record<string, TaskState>): number {
+  return Object.keys(tasks).length;
+}
+
+/** Whether the tray's per-row dismiss (X) affordance should render for
+ *  a task (review fix 3) — gated to non-running so dismissing never
+ *  dangles a still-in-flight task's webhook lifecycle (task.done/
+ *  task.error would otherwise never have anywhere to land once the
+ *  user has already removed the row). Mirrors HistoryDrawer's own
+ *  error-only 忽略 control, and makes dismissTask's own doc comment
+ *  above ("never called on a still-running task") literally true. */
+export function selectCanDismiss(status: TaskStatus): boolean {
+  return status !== "running";
 }
