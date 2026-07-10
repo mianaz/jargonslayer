@@ -18,6 +18,7 @@ import { PROVIDER_HEADERS } from "../types";
 import { withBase } from "../basePath";
 import { PREVIEW_TIER } from "../deployTier";
 import { resolveTaskCreds } from "./taskConfig";
+import { renderProfileHint } from "./profileHint";
 import {
   agentDetect,
   agentDefine,
@@ -109,7 +110,11 @@ async function detectViaNext(
         "Content-Type": "application/json",
         ...taskHeaders(settings, "detect"),
       },
-      body: JSON.stringify({ ...body, lang: settings.explainLanguage } satisfies DetectRequest),
+      body: JSON.stringify({
+        ...body,
+        lang: settings.explainLanguage,
+        profile: renderProfileHint(settings.profile),
+      } satisfies DetectRequest),
       // Reasoning models behind openai-compat endpoints (e.g. the
       // hosted demo's MiniMax M-series) routinely take 8-15s per
       // batch; the previous 8s (tuned for Haiku) timed every batch
@@ -150,6 +155,7 @@ export async function summarizeApi(
       body: JSON.stringify({
         ...body,
         lang: settings.explainLanguage,
+        profile: renderProfileHint(settings.profile),
       } satisfies SummarizeRequest),
       signal: AbortSignal.timeout(300000),
     });
@@ -181,7 +187,11 @@ async function defineViaNext(
         "Content-Type": "application/json",
         ...taskHeaders(settings, "detect"),
       },
-      body: JSON.stringify({ ...body, lang: settings.explainLanguage } satisfies DefineRequest),
+      body: JSON.stringify({
+        ...body,
+        lang: settings.explainLanguage,
+        profile: renderProfileHint(settings.profile),
+      } satisfies DefineRequest),
       signal: AbortSignal.timeout(20000),
     });
   } catch (err) {

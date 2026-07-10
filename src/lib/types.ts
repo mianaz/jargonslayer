@@ -149,11 +149,20 @@ export interface TermCard extends DetectedTerm {
 
 export type ExplainLanguage = "zh" | "en";
 
+// Background profile (#48 step 3) self-reported English proficiency.
+export type EnglishLevel = "basic" | "intermediate" | "advanced";
+
 export interface DetectRequest {
   context: string; // previously analyzed tail, disambiguation only
   new_text: string; // fresh finalized text to analyze
   model?: string;
   lang?: ExplainLanguage; // explanation language, default "zh"
+  // Pre-rendered background-profile hint (#48 step 3, design Q5):
+  // threaded exactly like `lang` above — client renders it from
+  // Settings.profile (llm/profileHint.ts), sent only when
+  // profile.enabled. Spliced into the USER message ONLY (see
+  // buildDetectUserMessage); the cached SYSTEM prompt never changes.
+  profile?: string;
 }
 
 export interface DetectResponse {
@@ -168,6 +177,10 @@ export interface SummarizeRequest {
   meetingTitle?: string;
   model?: string;
   lang?: ExplainLanguage; // affects the missed-items sweep only
+  // Pre-rendered background-profile hint (#48 step 3) — same threading
+  // as `lang` above: affects the missed-items sweep stage only (the
+  // summary/translation stages stay untouched, same v1 scope as lang).
+  profile?: string;
 }
 
 export interface TranslationPair {
@@ -318,6 +331,23 @@ export interface Settings {
   // no-op); default off (existing single-line transcript unchanged).
   bilingualTranscript: boolean;
 
+  // Background profile (#48 step 3, design Q5): a handful of short
+  // free-text hints about the user, rendered into ONE short string
+  // (see llm/profileHint.ts) and spliced into the USER message only —
+  // the server-built, prompt-cached SYSTEM prompt never sees it (cache
+  // guarantee; see prompts.ts's AUDIENCE splice). `enabled: false` is
+  // the default — opt-in privacy posture, matches the #63 framework.
+  // migrateSettings's defaults-fold handles absence on old settings
+  // blobs; no migration code needed.
+  profile?: {
+    industry?: string;
+    role?: string;
+    englishLevel?: EnglishLevel;
+    familiarDomains?: string;
+    weakDomains?: string;
+    enabled: boolean;
+  };
+
   // ---- display settings (v0.2.1) — independent of theme; surviving a
   // theme switch is the whole point, so these live as their own
   // fields rather than inside a theme's token set. Persisted through
@@ -394,6 +424,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hfToken: "",
   realtimeDiarize: false,
   bilingualTranscript: false,
+  profile: { enabled: false },
   themeId: "terminal",
   fontSize: "md",
   transcriptScale: "follow",
@@ -503,6 +534,9 @@ export interface DefineRequest {
   context: string; // surrounding sentence for disambiguation
   model?: string;
   lang?: ExplainLanguage;
+  // Pre-rendered background-profile hint (#48 step 3) — threaded
+  // exactly like `lang` above.
+  profile?: string;
 }
 
 export interface DefineResult {

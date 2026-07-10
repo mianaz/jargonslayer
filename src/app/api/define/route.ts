@@ -17,6 +17,9 @@ const BodySchema = z.object({
   context: z.string().max(600),
   model: z.string().optional(),
   lang: z.enum(["zh", "en"]).optional(),
+  // Pre-rendered background-profile hint (#48 step 3) — same cap as
+  // /api/detect (profileHint.ts client-truncates to ~60 tokens).
+  profile: z.string().max(500).optional(),
 });
 
 // Length ceilings mirror the prompt's own guidance (see
@@ -104,7 +107,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { phrase, context, model, lang } = parsedBody.data;
+  const { phrase, context, model, lang, profile } = parsedBody.data;
 
   const cfg = resolveLlmConfig(req, "define");
   if (!cfg) {
@@ -125,7 +128,7 @@ export async function POST(req: Request) {
         apiKey: cfg.apiKey,
         model: pickModel(cfg, model, "claude-haiku-4-5"),
         system: buildDefineSystemPrompt(lang ?? "zh"),
-        user: buildDefineUserMessage(phrase, context),
+        user: buildDefineUserMessage(phrase, context, profile),
         schema: DefineResultSchema,
         maxTokens: 900,
         provider: cfg.provider,
