@@ -15,7 +15,14 @@ export const PROFILE_FIELD_MAX_CHARS = 40;
  *  tokenizer runs client-side, so this is a deliberately conservative
  *  chars-per-token estimate (undercounts tokens, i.e. truncates
  *  earlier rather than later) covering a hint that may mix Chinese
- *  and English text. */
+ *  and English text.
+ *
+ *  #48 s1 review item 9: also imported by the detect/define/summarize
+ *  route zod schemas as the `profile` field's `.max()` bound, so the
+ *  server-side contract can never silently drift wider than what a
+ *  well-behaved client actually sends (previously each route
+ *  hardcoded its own `.max(500)`, a generous defense-in-depth bound
+ *  disconnected from this actual client-side cap). */
 export const PROFILE_HINT_MAX_TOKENS = 60;
 const CHARS_PER_TOKEN_ESTIMATE = 3;
 export const PROFILE_HINT_MAX_CHARS = PROFILE_HINT_MAX_TOKENS * CHARS_PER_TOKEN_ESTIMATE;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { POST } from "../route";
+import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
 
 function makeRequest(body: unknown): Request {
   return new Request("http://localhost/api/detect", {
@@ -37,12 +38,12 @@ describe("POST /api/detect — profile field passthrough (#48 step 3)", () => {
     expect(res.status).toBe(401);
   });
 
-  it("rejects a profile string over 500 chars with 400 bad_request", async () => {
+  it("rejects a profile string over PROFILE_HINT_MAX_CHARS with 400 bad_request (#48 s1 review item 9 — shared constant, not a separately-hardcoded 500)", async () => {
     const res = await POST(
       makeRequest({
         context: "",
         new_text: "hi",
-        profile: "x".repeat(501),
+        profile: "x".repeat(PROFILE_HINT_MAX_CHARS + 1),
       }),
     );
     expect(res.status).toBe(400);
@@ -50,9 +51,9 @@ describe("POST /api/detect — profile field passthrough (#48 step 3)", () => {
     expect(json.code).toBe("bad_request");
   });
 
-  it("accepts a profile string at exactly 500 chars", async () => {
+  it("accepts a profile string at exactly PROFILE_HINT_MAX_CHARS", async () => {
     const res = await POST(
-      makeRequest({ context: "", new_text: "hi", profile: "x".repeat(500) }),
+      makeRequest({ context: "", new_text: "hi", profile: "x".repeat(PROFILE_HINT_MAX_CHARS) }),
     );
     expect(res.status).not.toBe(400);
   });

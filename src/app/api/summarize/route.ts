@@ -21,6 +21,7 @@ import {
   SUMMARY_SYSTEM_PROMPT,
   TRANSLATE_SYSTEM_PROMPT,
 } from "@/lib/llm/prompts";
+import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
 import type {
   ApiErrorBody,
   DetectedExpression,
@@ -69,7 +70,9 @@ const BodySchema = z.object({
   lang: z.enum(["zh", "en"]).optional(),
   // Pre-rendered background-profile hint (#48 step 3) — same threading
   // as `lang`: affects the sweep stage only (see runSweepStage below).
-  profile: z.string().max(500).optional(),
+  // Shared cap constant with /api/detect and /api/define (#48 s1
+  // review item 9).
+  profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
 }) satisfies z.ZodType<SummarizeRequest>;
 
 function errorBody(body: ApiErrorBody, status: number) {

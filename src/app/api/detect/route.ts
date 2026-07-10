@@ -12,6 +12,7 @@ import {
 } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { buildDetectSystemPrompt, buildDetectUserMessage } from "@/lib/llm/prompts";
+import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
 import type { ApiErrorBody, DetectResponse } from "@/lib/types";
 
 const BodySchema = z.object({
@@ -20,9 +21,11 @@ const BodySchema = z.object({
   model: z.string().optional(),
   lang: z.enum(["zh", "en"]).optional(),
   // Pre-rendered background-profile hint (#48 step 3); client-truncated
-  // to ~60 tokens (profileHint.ts) — this cap is a generous
-  // defense-in-depth bound, not the token budget itself.
-  profile: z.string().max(500).optional(),
+  // to PROFILE_HINT_MAX_CHARS (profileHint.ts) — enforced here via the
+  // SAME exported constant (#48 s1 review item 9) rather than a
+  // separately-hardcoded bound that could silently drift from the
+  // actual client contract.
+  profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
 });
 
 const MAX_EXPRESSIONS = 6;

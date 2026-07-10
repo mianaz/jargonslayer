@@ -10,6 +10,7 @@ import {
 } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { buildDefineSystemPrompt, buildDefineUserMessage } from "@/lib/llm/prompts";
+import { PROFILE_HINT_MAX_CHARS } from "@/lib/llm/profileHint";
 import type { ApiErrorBody, DefineResult } from "@/lib/types";
 
 const BodySchema = z.object({
@@ -17,9 +18,9 @@ const BodySchema = z.object({
   context: z.string().max(600),
   model: z.string().optional(),
   lang: z.enum(["zh", "en"]).optional(),
-  // Pre-rendered background-profile hint (#48 step 3) — same cap as
-  // /api/detect (profileHint.ts client-truncates to ~60 tokens).
-  profile: z.string().max(500).optional(),
+  // Pre-rendered background-profile hint (#48 step 3) — same shared
+  // constant as /api/detect (#48 s1 review item 9).
+  profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
 });
 
 // Length ceilings mirror the prompt's own guidance (see

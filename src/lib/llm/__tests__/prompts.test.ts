@@ -10,6 +10,8 @@ import {
   buildSweepSystemPrompt,
   buildSweepUserMessage,
 } from "../prompts";
+import { renderProfileHint } from "../profileHint";
+import type { Settings } from "../../types";
 
 describe("buildDetectSystemPrompt", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;
@@ -185,6 +187,98 @@ describe("profile hint splice — system-prompt byte-identity (cache guarantee)"
   it("buildSweepSystemPrompt is byte-identical regardless of a profile hint", () => {
     expect(buildSweepSystemPrompt("zh")).toBe(buildSweepSystemPrompt("zh"));
     expect(buildSweepSystemPrompt("en")).toBe(buildSweepSystemPrompt("en"));
+  });
+});
+
+// ---------------------------------------------------------------
+// #48 s1 review item 10: the block above is tautological — calling
+// e.g. buildDetectSystemPrompt("zh") twice with no input that could
+// ever vary trivially returns the same string regardless of whether
+// this feature works at all. This block instead builds the FULL
+// request-level message pair (system + user) exactly as each API
+// route does (detect/route.ts, define/route.ts, summarize/route.ts's
+// runSweepStage) with profile enabled+set vs. disabled, and asserts:
+// the SYSTEM string is byte-identical in both cases, and ONLY the
+// USER message differs — the actual cache guarantee this whole
+// design rests on.
+// ---------------------------------------------------------------
+
+describe("profile hint splice — REQUEST-level byte-identity (#48 s1 review item 10)", () => {
+  const enabledProfile: Settings["profile"] = {
+    enabled: true,
+    industry: "互联网",
+    role: "产品经理",
+  };
+  // Fields still populated but enabled:false (opt-out, not "empty") —
+  // proves the byte-identity below isn't accidentally comparing two
+  // hints that both happen to be empty.
+  const disabledProfile: Settings["profile"] = {
+    enabled: false,
+    industry: "互联网",
+    role: "产品经理",
+  };
+
+  function buildDetectRequest(profile: Settings["profile"], lang: "zh" | "en") {
+    const hint = renderProfileHint(profile);
+    return {
+      system: buildDetectSystemPrompt(lang),
+      user: buildDetectUserMessage("some transcript context", "some new text", hint),
+    };
+  }
+
+  function buildDefineRequest(profile: Settings["profile"], lang: "zh" | "en") {
+    const hint = renderProfileHint(profile);
+    return {
+      system: buildDefineSystemPrompt(lang),
+      user: buildDefineUserMessage("circle back", "some context", hint),
+    };
+  }
+
+  function buildSweepRequest(profile: Settings["profile"], lang: "zh" | "en") {
+    const hint = renderProfileHint(profile);
+    return {
+      system: buildSweepSystemPrompt(lang),
+      user: buildSweepUserMessage("full transcript", ["circle back"], hint),
+    };
+  }
+
+  for (const lang of ["zh", "en"] as const) {
+    it(`detect (${lang}): SYSTEM is byte-identical enabled vs. disabled; only USER differs`, () => {
+      const withProfile = buildDetectRequest(enabledProfile, lang);
+      const withoutProfile = buildDetectRequest(disabledProfile, lang);
+
+      expect(withProfile.system).toBe(withoutProfile.system);
+      expect(withProfile.user).not.toBe(withoutProfile.user);
+      expect(withProfile.user).toContain("AUDIENCE:");
+      expect(withoutProfile.user).not.toContain("AUDIENCE:");
+    });
+
+    it(`define (${lang}): SYSTEM is byte-identical enabled vs. disabled; only USER differs`, () => {
+      const withProfile = buildDefineRequest(enabledProfile, lang);
+      const withoutProfile = buildDefineRequest(disabledProfile, lang);
+
+      expect(withProfile.system).toBe(withoutProfile.system);
+      expect(withProfile.user).not.toBe(withoutProfile.user);
+      expect(withProfile.user).toContain("AUDIENCE:");
+      expect(withoutProfile.user).not.toContain("AUDIENCE:");
+    });
+
+    it(`summarize sweep stage (${lang}): SYSTEM is byte-identical enabled vs. disabled; only USER differs`, () => {
+      const withProfile = buildSweepRequest(enabledProfile, lang);
+      const withoutProfile = buildSweepRequest(disabledProfile, lang);
+
+      expect(withProfile.system).toBe(withoutProfile.system);
+      expect(withProfile.user).not.toBe(withoutProfile.user);
+      expect(withProfile.user).toContain("AUDIENCE:");
+      expect(withoutProfile.user).not.toContain("AUDIENCE:");
+    });
+  }
+
+  it("a disabled profile with fields still populated (opt-out, not empty) sends no AUDIENCE line at all — proves the test above isn't accidentally comparing two empty hints", () => {
+    const hint = renderProfileHint(disabledProfile);
+    expect(hint).toBeUndefined();
+    const msg = buildDetectUserMessage("ctx", "new text", hint);
+    expect(msg).not.toContain("AUDIENCE:");
   });
 });
 
