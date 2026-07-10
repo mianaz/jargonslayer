@@ -387,6 +387,61 @@ check(
     "--json" in _argv,
 )
 
+# =================================================================
+# Background-profile hint passthrough (#48 s1 review item 7): the
+# subscription-direct path must send the same AUDIENCE: hint the
+# Next.js path already splices in — see agent_prompts.py's
+# build_detect_user_message/build_define_user_message and this
+# module's _extract_profile.
+# =================================================================
+
+import agent_prompts as p  # noqa: E402
+
+check(
+    "_extract_profile: a present, non-empty profile is trimmed and returned",
+    s._extract_profile({"profile": "  行业：互联网  "}) == "行业：互联网",
+)
+check(
+    "_extract_profile: an empty-string profile is treated as absent (None)",
+    s._extract_profile({"profile": ""}) is None,
+)
+check(
+    "_extract_profile: a whitespace-only profile is treated as absent (None)",
+    s._extract_profile({"profile": "   "}) is None,
+)
+check(
+    "_extract_profile: a missing profile key returns None",
+    s._extract_profile({}) is None,
+)
+check(
+    "_extract_profile: a non-string profile value returns None",
+    s._extract_profile({"profile": 12345}) is None,
+)
+check(
+    "_extract_profile: a long profile is capped to PROFILE_MAX_CHARS server-side (defense in depth)",
+    len(s._extract_profile({"profile": "x" * 500})) == s.PROFILE_MAX_CHARS,
+)
+check(
+    "build_detect_user_message: no profile -> unchanged from the pre-#48-step-3 shape, no AUDIENCE line",
+    p.build_detect_user_message("ctx", "new text")
+    == "CONTEXT:\nctx\n\nNEW:\nnew text",
+)
+check(
+    "build_detect_user_message: a profile hint prepends exactly one AUDIENCE: line",
+    p.build_detect_user_message("ctx", "new text", "行业：互联网")
+    == "AUDIENCE:\n行业：互联网\n\nCONTEXT:\nctx\n\nNEW:\nnew text",
+)
+check(
+    "build_define_user_message: no profile -> unchanged, no AUDIENCE line",
+    p.build_define_user_message("circle back", "ctx")
+    == "PHRASE:\ncircle back\n\nCONTEXT:\nctx",
+)
+check(
+    "build_define_user_message: a profile hint prepends exactly one AUDIENCE: line",
+    p.build_define_user_message("circle back", "ctx", "角色：工程师")
+    == "AUDIENCE:\n角色：工程师\n\nPHRASE:\ncircle back\n\nCONTEXT:\nctx",
+)
+
 
 # =================================================================
 # summary

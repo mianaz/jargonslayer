@@ -95,9 +95,18 @@ def build_detect_system_prompt(lang: str) -> str:
     return DETECT_SYSTEM_PROMPT if lang == "zh" else DETECT_SYSTEM_PROMPT_EN
 
 
-def build_detect_user_message(context: str, new_text: str) -> str:
-    """Mirrors prompts.ts's buildDetectUserMessage verbatim."""
-    return f"CONTEXT:\n{context or '(meeting just started)'}\n\nNEW:\n{new_text}"
+def build_detect_user_message(
+    context: str, new_text: str, profile: str | None = None
+) -> str:
+    """Mirrors prompts.ts's buildDetectUserMessage, including the #48
+    step 3 AUDIENCE splice (#48 s1 review item 7 — this sidecar path
+    was silently omitting it while the Next.js path already sent it).
+    `profile` is the caller's already-capped hint string (see
+    agent_server.py's profile extraction — length is enforced there,
+    not here, mirroring how profileHint.ts's truncation happens
+    client-side before prompts.ts ever sees the string)."""
+    audience = f"AUDIENCE:\n{profile}\n\n" if profile else ""
+    return f"{audience}CONTEXT:\n{context or '(meeting just started)'}\n\nNEW:\n{new_text}"
 
 
 # ---------------- on-demand "define this" (personal dictionary) ----------------
@@ -158,6 +167,10 @@ def build_define_system_prompt(lang: str) -> str:
     return DEFINE_SYSTEM_PROMPT if lang == "zh" else DEFINE_SYSTEM_PROMPT_EN
 
 
-def build_define_user_message(phrase: str, context: str) -> str:
-    """Mirrors prompts.ts's buildDefineUserMessage verbatim."""
-    return f"PHRASE:\n{phrase}\n\nCONTEXT:\n{context or '(none)'}"
+def build_define_user_message(
+    phrase: str, context: str, profile: str | None = None
+) -> str:
+    """Mirrors prompts.ts's buildDefineUserMessage, including the AUDIENCE
+    splice (#48 s1 review item 7 — see build_detect_user_message above)."""
+    audience = f"AUDIENCE:\n{profile}\n\n" if profile else ""
+    return f"{audience}PHRASE:\n{phrase}\n\nCONTEXT:\n{context or '(none)'}"
