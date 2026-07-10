@@ -1,19 +1,30 @@
 "use client";
 
-// Study center: cross-session stats + a light flip-through practice
-// deck over the personal glossary. Can be opened directly (bookmark,
-// new tab), so it hydrates the store itself if needed.
+// Study center: cross-session stats + two review modes over the
+// learn-set — 复习到期 (SRS due-driven, #48 step 2) and 翻卡浏览 (the
+// original light flip-through practice over the personal glossary,
+// unchanged). Can be opened directly (bookmark, new tab), so it
+// hydrates the store itself if needed.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useApp } from "@/lib/store";
 import ReviewDashboard from "@/components/review/ReviewDashboard";
 import PracticeDeck from "@/components/review/PracticeDeck";
+import DueReview from "@/components/review/DueReview";
 import Toast from "@/components/Toast";
 import { withBase } from "@/lib/basePath";
+
+type ReviewMode = "due" | "browse";
+
+const MODE_OPTIONS: { value: ReviewMode; label: string }[] = [
+  { value: "due", label: "复习到期" },
+  { value: "browse", label: "翻卡浏览" },
+];
 
 export default function ReviewPage() {
   const hydrated = useApp((s) => s.hydrated);
   const hydrate = useApp((s) => s.hydrate);
+  const [mode, setMode] = useState<ReviewMode>("due");
 
   useEffect(() => {
     if (!hydrated) void hydrate();
@@ -35,7 +46,25 @@ export default function ReviewPage() {
       <main className="mx-auto max-w-5xl space-y-8 px-4 py-6">
         <ReviewDashboard />
         <div className="border-t border-edge" aria-hidden="true" />
-        <PracticeDeck />
+        <div className="space-y-4">
+          <div className="flex items-center gap-1 rounded-none border border-edge bg-panel2 p-0.5">
+            {MODE_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setMode(opt.value)}
+                className={`rounded-sm px-2.5 py-1 text-xs transition-colors ${
+                  mode === opt.value
+                    ? "bg-panel3 text-fg"
+                    : "text-mut hover:text-fg"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          {mode === "due" ? <DueReview /> : <PracticeDeck />}
+        </div>
       </main>
 
       <Toast />

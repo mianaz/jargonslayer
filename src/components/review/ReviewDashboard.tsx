@@ -9,6 +9,7 @@ import { useApp } from "@/lib/store";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
 import type { LearnRecord } from "@/lib/learn/types";
+import { computeReviewStreak, dueLearnRecords } from "@/lib/learn/queue";
 import WordCloud from "./WordCloud";
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
@@ -24,7 +25,7 @@ export interface WordAgg {
   count: number;
 }
 
-function useSessionCache() {
+export function useSessionCache() {
   const sessions = useApp((s) => s.sessions);
   const [cache, setCache] = useState<Record<string, MeetingSession>>({});
 
@@ -109,6 +110,7 @@ function StatCard({ label, value }: { label: string; value: number }) {
 
 function StatsStrip() {
   const sessions = useApp((s) => s.sessions);
+  const learnset = useApp((s) => s.learnset);
 
   const stats = useMemo(() => {
     const now = Date.now();
@@ -118,8 +120,10 @@ function StatsStrip() {
     const newThisWeek = sessions.filter(
       (m) => now - m.startedAt < WEEK_MS,
     ).length;
-    return { meetingCount, cardCount, termCount, newThisWeek };
-  }, [sessions]);
+    const dueToday = dueLearnRecords(learnset, now).length;
+    const streak = computeReviewStreak(learnset, now);
+    return { meetingCount, cardCount, termCount, newThisWeek, dueToday, streak };
+  }, [sessions, learnset]);
 
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -127,6 +131,8 @@ function StatsStrip() {
       <StatCard label="累计表达" value={stats.cardCount} />
       <StatCard label="累计术语" value={stats.termCount} />
       <StatCard label="本周新增会议" value={stats.newThisWeek} />
+      <StatCard label="今日待复习" value={stats.dueToday} />
+      <StatCard label="连续复习天数" value={stats.streak} />
     </div>
   );
 }
@@ -286,6 +292,11 @@ export default function ReviewDashboard() {
   if (sessions.length === 0) {
     return (
       <div className="space-y-6">
+        {/* Streak/due-today can be non-zero even pre-first-meeting
+           (glossary saves lazily enroll too — see store.ts's
+           addCustomEntry), so the strip stays visible here like
+           KnownTermsSection already does. */}
+        <StatsStrip />
         <EmptyState />
         <KnownTermsSection />
       </div>
