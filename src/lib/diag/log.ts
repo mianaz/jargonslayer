@@ -29,6 +29,22 @@ export interface DiagEntry {
 
 export const DIAG_MAX_ENTRIES = 300;
 
+// Tag-blocker MEDIUM 5: per-entry size cap — a single oversized
+// message/detail (e.g. an unbounded upstream string a call site failed
+// to trim) would otherwise let one entry balloon the ring buffer/
+// report far past what DIAG_MAX_ENTRIES' entry-COUNT cap bounds.
+// Applied at insertion so every consumer (getDiagEntries, report.ts)
+// sees the already-truncated value.
+export const DIAG_MAX_FIELD_CHARS = 2000;
+const TRUNCATE_SUFFIX = "…[truncated]";
+
+function truncateField(v: string): string;
+function truncateField(v: string | undefined): string | undefined;
+function truncateField(v: string | undefined): string | undefined {
+  if (v === undefined || v.length <= DIAG_MAX_FIELD_CHARS) return v;
+  return v.slice(0, DIAG_MAX_FIELD_CHARS) + TRUNCATE_SUFFIX;
+}
+
 let entries: DiagEntry[] = [];
 
 const REF_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -73,8 +89,8 @@ export function diagLog(
     ts: Date.now(),
     level,
     tag,
-    message,
-    detail,
+    message: truncateField(message),
+    detail: truncateField(detail),
     ref: level === "error" ? newErrorRef() : undefined,
   };
   entries.push(entry);

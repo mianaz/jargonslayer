@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearDiag, DIAG_MAX_ENTRIES, diagLog, getDiagEntries, newErrorRef } from "../log";
+import { clearDiag, DIAG_MAX_ENTRIES, DIAG_MAX_FIELD_CHARS, diagLog, getDiagEntries, newErrorRef } from "../log";
 
 describe("diag/log.ts — ring buffer", () => {
   beforeEach(() => {
@@ -41,6 +41,36 @@ describe("diag/log.ts — ring buffer", () => {
     // The first 10 (oldest) were dropped — entry-10 is now the oldest survivor.
     expect(entries[0].message).toBe("entry-10");
     expect(entries[entries.length - 1].message).toBe(`entry-${DIAG_MAX_ENTRIES + 9}`);
+  });
+
+  // Tag-blocker MEDIUM 5: per-entry size cap at insertion — an
+  // unbounded message/detail from a misbehaving call site must not let
+  // one entry balloon past DIAG_MAX_FIELD_CHARS.
+  describe("per-entry field truncation (DIAG_MAX_FIELD_CHARS)", () => {
+    it("an oversized message is truncated with a '…[truncated]' suffix", () => {
+      const oversized = "x".repeat(DIAG_MAX_FIELD_CHARS + 500);
+      diagLog("info", "test-tag", oversized);
+      const stored = getDiagEntries()[0].message;
+      expect(stored.length).toBeLessThan(oversized.length);
+      expect(stored.endsWith("…[truncated]")).toBe(true);
+      expect(stored.startsWith("x".repeat(100))).toBe(true);
+    });
+
+    it("an oversized detail is truncated the same way", () => {
+      const oversized = "y".repeat(DIAG_MAX_FIELD_CHARS + 500);
+      diagLog("error", "test-tag", "short message", oversized);
+      const stored = getDiagEntries()[0].detail!;
+      expect(stored.length).toBeLessThan(oversized.length);
+      expect(stored.endsWith("…[truncated]")).toBe(true);
+    });
+
+    it("a message/detail at or under the cap is stored verbatim, untouched", () => {
+      const exact = "z".repeat(DIAG_MAX_FIELD_CHARS);
+      diagLog("info", "test-tag", exact, exact);
+      const entry = getDiagEntries()[0];
+      expect(entry.message).toBe(exact);
+      expect(entry.detail).toBe(exact);
+    });
   });
 
   it("clearDiag empties the buffer", () => {
