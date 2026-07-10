@@ -45,6 +45,8 @@ import {
 } from "@/lib/settingsSections";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
 import { PREVIEW_LIVE_MODELS, PREVIEW_SUMMARY_MODELS, PREVIEW_TIER } from "@/lib/deployTier";
+import { clearDiag, getDiagEntries, type DiagEntry } from "@/lib/diag/log";
+import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import CredentialFields, {
   presetIdFor,
@@ -433,6 +435,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // even disabled.
   const [agentHealthState, setAgentHealthState] = useState<AgentHealth | null>(null);
   const [checkingAgentHealth, setCheckingAgentHealth] = useState(false);
+  // 诊断信息 (owner ask: "用户需要能看到错误信息和编号方便反馈") — snapshot
+  // of the diag ring buffer (lib/diag/log.ts), re-read on every dialog
+  // open (see the `open`-gated effect below); not live-subscribed
+  // while open, same "snapshot on open" posture as exportFolderName/
+  // packSources above.
+  const [diagEntries, setDiagEntries] = useState<DiagEntry[]>([]);
 
   // App-mount-once (not open-gated): SettingsDialog is always mounted
   // by page.tsx, so this applies the persisted pack selection to the
@@ -483,6 +491,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       void listAudioInputs().then(setMics);
       void getExportFolderName().then(setExportFolderName);
       void listPackSources().then(setPackSources);
+      setDiagEntries(getDiagEntries());
       // 订阅直连（实验性）: kill-switch layer 2 — never even probes when
       // this build didn't set NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT
       // (the section itself doesn't render either — see below). Reads
@@ -751,6 +760,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     } finally {
       setRestoring(false);
     }
+  };
+
+  // 诊断信息: 复制诊断信息 copies the same bundle a ref-carrying toast's
+  // 复制诊断 action does (see Toast.tsx) — buildDiagnosticReport already
+  // strips key material, see report.ts's own doc comment.
+  const handleCopyDiagnostics = async () => {
+    const ok = await copyDiagnosticReport(useApp.getState().settings);
+    showToast(ok ? "诊断信息已复制到剪贴板" : "复制失败，请检查浏览器剪贴板权限");
+  };
+
+  const handleClearDiagnostics = () => {
+    clearDiag();
+    setDiagEntries([]);
+    showToast("诊断记录已清空");
   };
 
   const activePreset = presetIdFor(PROVIDER_PRESETS, draft);
@@ -1675,6 +1698,72 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </div>
                 </div>
               )}
+            </div>
+
+            {/* 诊断信息 (owner ask: "用户需要能看到错误信息和编号方便反馈") — a
+               small viewer over the diag ring buffer (lib/diag/log.ts) +
+               a copyable, secret-stripped bundle (buildDiagnosticReport,
+               lib/diag/report.ts). This block is advanced-only (数据与联
+               动's own section tag, above) — simple-mode users don't see
+               it, but they still get a `[JS-xxxx]` ref + 复制诊断 action
+               straight off any error toast (Toast.tsx), so a bug report
+               is possible without ever opening 高级 settings; this panel
+               is the deeper "browse everything" view for people who
+               already have advanced open. */}
+            <div className="space-y-2 border-t border-edge pt-3">
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-mut">诊断信息 · 共 {diagEntries.length} 条</div>
+                <a
+                  href="https://github.com/mianaz/jargonslayer/issues"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-xs text-act hover:underline"
+                >
+                  提交 Issue ↗
+                </a>
+              </div>
+
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-sm border border-edge bg-panel2 p-2 font-mono text-xs">
+                {diagEntries.length === 0 ? (
+                  <div className="text-mut2">暂无诊断记录</div>
+                ) : (
+                  diagEntries
+                    .slice(-50)
+                    .reverse()
+                    .map((entry, i) => (
+                      <div
+                        key={i}
+                        className={
+                          entry.level === "error"
+                            ? "text-warn-soft"
+                            : entry.level === "warn"
+                              ? "text-lab-orange"
+                              : "text-mut2"
+                        }
+                      >
+                        {new Date(entry.ts).toLocaleTimeString()} [{entry.tag}] {entry.message}
+                        {entry.ref ? ` (${entry.ref})` : ""}
+                      </div>
+                    ))
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleCopyDiagnostics()}
+                  className="btn-tactile rounded-sm border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                >
+                  复制诊断信息
+                </button>
+                <button
+                  type="button"
+                  onClick={handleClearDiagnostics}
+                  className="btn-tactile text-xs text-mut hover:text-warn-soft"
+                >
+                  清空
+                </button>
+              </div>
             </div>
           </section>
           )}
