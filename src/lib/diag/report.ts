@@ -42,7 +42,15 @@ function summarizeSettings(settings: Settings): Record<string, unknown> {
 
   return {
     engine: settings.engine,
-    provider: settings.provider,
+    // Item 5: an unconfigured key means the client's own idle
+    // `settings.provider` never actually serves a request (the Next.js
+    // route falls back to its own server-managed credential when no
+    // key header is sent — see llm/client.ts's ctxProvider/taskHeaders
+    // and anthropic.ts's resolveLlmConfig). Printing it unconditionally
+    // read as "anthropic" next to hasApiKey:false on the server-managed
+    // preview tier — misleading, since "anthropic" was never chosen by
+    // anything, just the field's default value.
+    provider: hasSecret(settings.apiKey) ? settings.provider : "(未配置)",
     hasApiKey: hasSecret(settings.apiKey),
     hasHfToken: hasSecret(settings.hfToken),
     hasAgentToken: hasSecret(settings.agentToken),
