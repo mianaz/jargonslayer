@@ -30,6 +30,7 @@ vi.mock("../dictionary", () => ({
 import { detectApi, NoKeyError } from "../../llm/client";
 import { scanDictionary } from "../dictionary";
 import { DetectionScheduler, type DetectMode } from "../scheduler";
+import { clearDiag, getDiagEntries } from "../../diag/log";
 
 const mockDetectApi = vi.mocked(detectApi);
 const mockScanDictionary = vi.mocked(scanDictionary);
@@ -361,5 +362,149 @@ describe("DetectionScheduler", () => {
     // Window START, not dispatch time: must be <= before + a little
     // slack, NOT the flush time 3.5s later.
     expect(meta?.batchWindowStart).toBeLessThan(before + 1000);
+  });
+
+  // Item 6 (#54 field evidence): the owner reported seeing no
+  // dictionary cards while AI detect was on, with nothing in the diag
+  // ring buffer to confirm whether the floor was even running. These
+  // tests are purely observational — onDetection's own floor-hit
+  // behavior (already covered by the "instant floor" tests above) is
+  // never changed by this describe block, only the new diag entry.
+  describe("dictionary-floor observability (detect-dict-floor diag entry)", () => {
+    beforeEach(() => {
+      clearDiag();
+      // Neutralizes the (unrelated) LLM batching path some of these
+      // pushSegment calls can also arm — aiDetect defaults on via
+      // makeSettings(), matching the exact "AI detect was on" scenario
+      // the owner reported, so a resolved mock here keeps that path
+      // quiet rather than switching it off for this describe block.
+      mockDetectApi.mockResolvedValue(emptyRes());
+    });
+
+    function dictHit(expressions: number, terms: number): DetectResponse {
+      return {
+        expressions: Array.from({ length: expressions }, (_, i) => ({
+          expression: `expr-${i}`,
+          category: "phrase",
+          meaning: "m",
+          chinese_explanation: "z",
+          plain_english: "p",
+          tone: "t",
+          confidence: 0.9,
+          source_sentence: "s",
+        })),
+        terms: Array.from({ length: terms }, (_, i) => ({
+          term: `term-${i}`,
+          type: "other",
+          gloss_en: "e",
+          gloss_zh: "z",
+        })),
+      };
+    }
+
+    function dictFloorEntries() {
+      return getDiagEntries().filter((e) => e.tag === "detect-dict-floor");
+    }
+
+    it("writes an entry on the very FIRST hit, immediately — so a short session still produces evidence", () => {
+      mockScanDictionary.mockReturnValue(dictHit(1, 0));
+      scheduler.pushSegment(makeSegment("let's circle back"));
+
+      const entries = dictFloorEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].level).toBe("info");
+      expect(entries[0].detail).toBe("segments=1 expressions=1 terms=0");
+    });
+
+    it("writes no entry at all when a scan yields no hits", () => {
+      mockScanDictionary.mockReturnValue(emptyRes());
+      scheduler.pushSegment(makeSegment("nothing dictionary-worthy here"));
+
+      expect(dictFloorEntries()).toHaveLength(0);
+    });
+
+    it("accumulates subsequent hits silently — no second entry within 60s of the first write", () => {
+      mockScanDictionary.mockReturnValue(dictHit(1, 0));
+      scheduler.pushSegment(makeSegment("a")); // first hit -> immediate write
+
+      mockScanDictionary.mockReturnValue(dictHit(0, 2));
+      scheduler.pushSegment(makeSegment("b"));
+      scheduler.pushSegment(makeSegment("c"));
+
+      expect(dictFloorEntries()).toHaveLength(1); // still just the first-hit entry
+    });
+
+    it("writes a second entry once 60s have elapsed since the last write, carrying only the counts accumulated since then", () => {
+      mockScanDictionary.mockReturnValue(dictHit(1, 0));
+      scheduler.pushSegment(makeSegment("a")); // first hit -> immediate write, resets the accumulator
+
+      mockScanDictionary.mockReturnValue(dictHit(2, 1));
+      scheduler.pushSegment(makeSegment("b")); // accumulates silently (< 60s since last write)
+
+      vi.advanceTimersByTime(60_000);
+
+      mockScanDictionary.mockReturnValue(dictHit(0, 3));
+      scheduler.pushSegment(makeSegment("c")); // >= 60s since last write -> flush now
+
+      const entries = dictFloorEntries();
+      expect(entries).toHaveLength(2);
+      expect(entries[0].detail).toBe("segments=1 expressions=1 terms=0");
+      // segment b (2 expr/1 term) + segment c (0 expr/3 terms), NOT
+      // re-including segment a (already flushed+reset by the first entry).
+      expect(entries[1].detail).toBe("segments=2 expressions=2 terms=4");
+    });
+
+    it("does NOT flush early just because 60s elapsed with no NEW hit in between — the check only runs when a hit actually arrives", () => {
+      mockScanDictionary.mockReturnValue(dictHit(1, 0));
+      scheduler.pushSegment(makeSegment("a"));
+      vi.advanceTimersByTime(120_000);
+
+      expect(dictFloorEntries()).toHaveLength(1); // no autonomous timer, nothing new to flush
+    });
+
+    it("counts only — the diag entry never contains the matched expression/term text (privacy)", () => {
+      mockScanDictionary.mockReturnValue({
+        expressions: [
+          {
+            expression: "circle back",
+            category: "phrase",
+            meaning: "m",
+            chinese_explanation: "z",
+            plain_english: "p",
+            tone: "t",
+            confidence: 0.9,
+            source_sentence: "s",
+          },
+        ],
+        terms: [{ term: "ARR", type: "metric", gloss_en: "e", gloss_zh: "z" }],
+      });
+      scheduler.pushSegment(makeSegment("let's circle back on ARR"));
+
+      const entries = dictFloorEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message).not.toContain("circle back");
+      expect(entries[0].message).not.toContain("ARR");
+      expect(entries[0].detail ?? "").not.toContain("circle back");
+      expect(entries[0].detail ?? "").not.toContain("ARR");
+    });
+
+    it("a NEW scheduler instance gets its own independent first-hit evidence (instance-scoped, not shared across meetings)", () => {
+      mockScanDictionary.mockReturnValue(dictHit(1, 0));
+      scheduler.pushSegment(makeSegment("a")); // this scheduler's first hit -> immediate write
+
+      const secondScheduler = new DetectionScheduler({
+        getSettings: () => settings,
+        getMeetingGen: () => meetingGen,
+        onDetection,
+        onBusyChange,
+        onModeChange,
+        onError,
+      });
+      mockScanDictionary.mockReturnValue(dictHit(0, 1));
+      secondScheduler.pushSegment(makeSegment("b")); // a DIFFERENT scheduler's own first hit
+      secondScheduler.stop();
+
+      expect(dictFloorEntries()).toHaveLength(2); // both wrote immediately, independently
+    });
   });
 });

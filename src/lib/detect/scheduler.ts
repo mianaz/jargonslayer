@@ -10,6 +10,7 @@
 
 import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
 import { resolveTaskCreds } from "../llm/taskConfig";
+import { diagLog } from "../diag/log";
 import type {
   DetectResponse,
   DetectionSource,
@@ -57,6 +58,11 @@ const MAX_INFLIGHT = 2;
 const MAX_CONSECUTIVE_FAILURES = 2;
 const RETRY_BASE_DELAY_MS = 500;
 const RETRY_JITTER_MS = 300;
+// #54 dictionary-floor observability: "at most one entry per 60s" cap
+// on the detect-dict-floor diag entry (see pushSegment/recordDictDiagHit
+// below) — evidence for whether the floor is actually finding hits,
+// without spamming the diag ring buffer on every single segment.
+const DICT_DIAG_THROTTLE_MS = 60_000;
 
 interface Batch {
   context: string;
@@ -87,6 +93,17 @@ export class DetectionScheduler {
   private noKeyToastFired = false;
   private consecutiveFailures = 0;
 
+  // Dictionary-floor observability (#54 field-evidence follow-up):
+  // instance-scoped (one scheduler per meeting, see useMeeting.ts) so a
+  // new meeting starts fresh — dictDiagFirstHitLogged makes sure a
+  // short session still produces at least one detect-dict-floor diag
+  // entry even if it never reaches the 60s throttle window.
+  private dictDiagFirstHitLogged = false;
+  private lastDictDiagAt: number | null = null;
+  private dictDiagSegments = 0;
+  private dictDiagExpressions = 0;
+  private dictDiagTerms = 0;
+
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private visibilityHandler: (() => void) | null = null;
 
@@ -115,6 +132,7 @@ export class DetectionScheduler {
     const res = scanDictionary(seg.text);
     if (res.expressions.length > 0 || res.terms.length > 0) {
       this.opts.onDetection(res, "dictionary");
+      this.recordDictDiagHit(res);
     }
 
     if (!settings.aiDetect || this.fellBack) {
@@ -159,6 +177,39 @@ export class DetectionScheduler {
   // ---------------------------------------------------------------
   // internals
   // ---------------------------------------------------------------
+
+  /** #54 field evidence: the owner reported seeing no dictionary cards
+   *  while AI detect was on, with nothing in the diag ring buffer to
+   *  confirm whether the floor was even running — this is observability
+   *  only, never a behavior change (onDetection above already fired
+   *  before this is called). Counts only, no text, per log.ts's PRIVACY
+   *  RULE — segments/expressions/terms are accumulated across hits and
+   *  written at most once per DICT_DIAG_THROTTLE_MS, except the very
+   *  FIRST hit of this scheduler's lifetime, which writes immediately
+   *  so a short session still produces evidence. */
+  private recordDictDiagHit(res: DetectResponse): void {
+    this.dictDiagSegments++;
+    this.dictDiagExpressions += res.expressions.length;
+    this.dictDiagTerms += res.terms.length;
+
+    const now = Date.now();
+    const isFirstHitEver = !this.dictDiagFirstHitLogged;
+    const throttleElapsed =
+      this.lastDictDiagAt === null || now - this.lastDictDiagAt >= DICT_DIAG_THROTTLE_MS;
+    if (!isFirstHitEver && !throttleElapsed) return;
+
+    this.dictDiagFirstHitLogged = true;
+    this.lastDictDiagAt = now;
+    diagLog(
+      "info",
+      "detect-dict-floor",
+      "词典检测命中",
+      `segments=${this.dictDiagSegments} expressions=${this.dictDiagExpressions} terms=${this.dictDiagTerms}`,
+    );
+    this.dictDiagSegments = 0;
+    this.dictDiagExpressions = 0;
+    this.dictDiagTerms = 0;
+  }
 
   private armFlushTimer(): void {
     if (this.flushTimer !== null) return;
