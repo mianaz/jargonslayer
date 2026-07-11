@@ -1,5 +1,6 @@
 // Copies the ffmpeg.wasm runtime trio out of node_modules into
-// public/ffmpeg (gitignored) so the browser loads them SAME-ORIGIN.
+// apps/web/public/ffmpeg (gitignored) so the browser loads them
+// SAME-ORIGIN.
 // Why not CDN + toBlobURL (the ffmpeg.wasm README pattern): a Worker
 // constructed from a blob: URL cannot dynamically import() anything
 // (null base/origin) — load() hangs forever with zero console output;
@@ -13,8 +14,12 @@ import { copyFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// #53 workspace extraction: `root` stays the repo root (node_modules
+// is hoisted there by npm workspaces), but the built app — and thus
+// its public/ dir — now lives under apps/web/.
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const out = join(root, "public", "ffmpeg");
+const webRoot = join(root, "apps", "web");
+const out = join(webRoot, "public", "ffmpeg");
 mkdirSync(out, { recursive: true });
 
 const files = [
@@ -30,4 +35,4 @@ const files = [
 for (const [src, dst] of files) {
   copyFileSync(join(root, src), join(out, dst));
 }
-console.log("[copy-ffmpeg-assets] public/ffmpeg ready (worker.js + core js/wasm)");
+console.log("[copy-ffmpeg-assets] apps/web/public/ffmpeg ready (worker.js + core js/wasm)");

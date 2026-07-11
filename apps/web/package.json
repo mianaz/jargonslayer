@@ -1,0 +1,40 @@
+{
+  "name": "@jargonslayer/web",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Real-time English-meeting comprehension assistant for non-native speakers — transparent by default, fully local when you choose (英文会议实时理解助手)",
+  "license": "MIT",
+  "author": "Miana Zeng",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/ffmpeg": "0.12.15",
+    "@ffmpeg/util": "0.12.2",
+    "@huggingface/transformers": "3.8.1",
+    "@jargonslayer/core": "*",
+    "@phosphor-icons/react": "^2.1.10",
+    "html-to-image": "^1.11.13",
+    "idb-keyval": "^6.2.6",
+    "next": "^15.1.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^4.4.3",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "autoprefixer": "^10.4.20",
+    "jsdom": "^29.1.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17"
+  }
+}

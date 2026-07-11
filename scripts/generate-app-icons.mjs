@@ -11,6 +11,10 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(ROOT, "branding/icon-cropped.png");
+// #53 workspace extraction: branding/ (the SRC read above) stays at
+// the repo root, but the app's public/ and src/app/ output targets
+// below now live under apps/web/.
+const WEB_ROOT = join(ROOT, "apps", "web");
 const MODE = "A"; // green fire (candidate B = warm fire was considered and parked)
 
 function rgbToHsl(r, g, b) {
@@ -75,7 +79,7 @@ const jobs = [
   [64, "src/app/icon.png"],
 ];
 for (const [size, out] of jobs) {
-  await master.clone().resize(size, size).png().toFile(join(ROOT, out));
+  await master.clone().resize(size, size).png().toFile(join(WEB_ROOT, out));
   console.log("wrote", out, size);
 }
 
@@ -199,6 +203,6 @@ for (const [buf, out] of [
     .extract(crop)
     .resize({ height: 192 })
     .png()
-    .toFile(join(ROOT, out));
+    .toFile(join(WEB_ROOT, out));
   console.log("wrote", out, `h192 (crop ${crop.width}x${crop.height}@${crop.left},${crop.top})`);
 }
