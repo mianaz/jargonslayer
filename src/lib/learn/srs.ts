@@ -28,6 +28,13 @@ export const SRS_FAMILIARITY_EMA_NEW_WEIGHT = 0.4;
 // single tap (that's the vote-based suppression in learn/store.ts).
 export const SRS_AUTO_SUPPRESS_INTERVAL_DAYS = 30;
 export const SRS_AUTO_SUPPRESS_FAMILIARITY = 0.85;
+// Anki-style relearn step (E2E 2026-07-11): a grade-0 (不认识) card used
+// to come back due at `now`, i.e. right back at queue[0] the instant
+// DueReview.tsx recomputed — grading 不认识 looked like a dead button
+// because the "next" card was the same card. Stepping dueAt forward
+// lets the card leave the front of the queue and resurface shortly
+// after, matching Anki's relearn-step behavior.
+export const RELEARN_STEP_MS = 10 * 60 * 1000;
 
 const GRADE_FAMILIARITY_VALUE: Record<SrsGrade, number> = { 0: 0, 1: 0.5, 2: 1 };
 
@@ -47,7 +54,9 @@ export function schedule(rec: LearnRecord, grade: SrsGrade, now: number): LearnR
   const familiarity = nextFamiliarity(rec, grade);
 
   if (grade === 0) {
-    // Lapse: relearn today, reps reset, ease penalized (floored).
+    // Lapse: relearn today, reps reset, ease penalized (floored). dueAt
+    // steps forward by RELEARN_STEP_MS rather than sitting at `now` —
+    // see that const's doc comment for why (E2E 2026-07-11).
     return {
       ...rec,
       reps: 0,
@@ -55,7 +64,7 @@ export function schedule(rec: LearnRecord, grade: SrsGrade, now: number): LearnR
       intervalDays: 0,
       ease: Math.max(SRS_EASE_FLOOR, rec.ease - SRS_LAPSE_EASE_PENALTY),
       familiarity,
-      dueAt: now,
+      dueAt: now + RELEARN_STEP_MS,
       lastReviewedAt: now,
       updatedAt: now,
     };

@@ -10,7 +10,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useApp } from "@/lib/store";
 import type { CustomEntry, ExpressionCard, MeetingSession, TermCard } from "@/lib/types";
 import { learnKey } from "@/lib/learn/store";
-import type { SrsGrade } from "@/lib/learn/srs";
+import { RELEARN_STEP_MS, type SrsGrade } from "@/lib/learn/srs";
+import type { LearnRecord } from "@/lib/learn/types";
 import {
   composeReviewQueue,
   expressionCardToCandidate,
@@ -100,13 +101,34 @@ function buildCandidates(sessions: Record<string, MeetingSession>): ReviewCandid
   return list;
 }
 
-function EmptyDueState() {
+// Grade-0 relearn-step hint (E2E 2026-07-11, srs.ts's RELEARN_STEP_MS):
+// a card graded 不认识 moments ago leaves the queue for the step window
+// instead of pinning at queue[0] (see srs.ts), which is correct but
+// means the queue can go briefly empty right after the only due card
+// was just failed. Without this hint that reads as "nothing to review"
+// when really it's "back in ~10 minutes" — exported for a pure-helper
+// unit test since there's no existing DueReview component test file.
+export function hasPendingRelearn(
+  learnset: Record<string, LearnRecord>,
+  now: number,
+): boolean {
+  return Object.values(learnset).some(
+    (r) => r.dueAt > now && r.dueAt <= now + RELEARN_STEP_MS,
+  );
+}
+
+function EmptyDueState({ pendingRelearn }: { pendingRelearn: boolean }) {
   return (
     <div className="rounded-none border border-edge bg-panel p-6 text-center">
       <div className="text-sm font-medium text-fg">今天没有待复习的词条</div>
       <div className="mt-2 text-xs leading-[1.7] text-mut">
         继续开会积累新表达，或去词库收藏几个术语——到期后会自动出现在这里。
       </div>
+      {pendingRelearn && (
+        <div className="mt-2 text-xs leading-[1.7] text-warn-soft">
+          刚标记「不认识」的词条会在约 10 分钟后重新出现
+        </div>
+      )}
     </div>
   );
 }
@@ -144,7 +166,7 @@ export default function DueReview({ cache }: { cache: Record<string, MeetingSess
   }, [current?.learnKey]);
 
   if (current === null) {
-    return <EmptyDueState />;
+    return <EmptyDueState pendingRelearn={hasPendingRelearn(learnset, Date.now())} />;
   }
 
   const content = contentIndex[current.learnKey] ?? fallbackContent(current);
