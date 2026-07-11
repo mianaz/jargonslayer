@@ -156,6 +156,17 @@ function sourceBadge(source: DetectionSource) {
       </span>
     );
   }
+  if (source === "llm") {
+    // AI-detected cards were previously indistinguishable from dictionary
+    // ones — no badge at all (E2E feedback: owner explicitly asked for
+    // the distinction). Same badge shape, lab-green to match the
+    // header/statusline's own "词典+AI 检测" color.
+    return (
+      <span className="border border-edge px-1.5 py-0 text-[10px] text-lab-green">
+        AI
+      </span>
+    );
+  }
   return null;
 }
 

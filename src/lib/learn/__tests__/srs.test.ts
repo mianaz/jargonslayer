@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  RELEARN_STEP_MS,
   SRS_AUTO_SUPPRESS_FAMILIARITY,
   SRS_AUTO_SUPPRESS_INTERVAL_DAYS,
   SRS_EASE_FLOOR,
@@ -95,7 +96,7 @@ describe("schedule — lapse path (grade 0 不认识)", () => {
     expect(next.lapses).toBe(2);
     expect(next.intervalDays).toBe(0);
     expect(next.ease).toBe(2.8 - 0.2);
-    expect(next.dueAt).toBe(now); // relearn today
+    expect(next.dueAt).toBe(now + RELEARN_STEP_MS); // relearn step, not "now"
     expect(next.lastReviewedAt).toBe(now);
     expect(next.familiarity).toBeCloseTo(0.784 * 0.6 + 0 * 0.4, 10);
   });
@@ -104,6 +105,17 @@ describe("schedule — lapse path (grade 0 不认识)", () => {
     const rec = makeRecord({ suppressed: false });
     const next = schedule(rec, 0, 1000);
     expect(next.suppressed).toBe(false);
+  });
+
+  // Regression (E2E 2026-07-11): a card graded 不认识 must actually
+  // LEAVE the front of the due queue — dueAt === now (the pre-fix
+  // behavior) meant DueReview.tsx's queue recomputed with the same
+  // card back at queue[0], so grading looked like a dead button.
+  it("regression: a just-lapsed record is NOT due at `now`, only after RELEARN_STEP_MS", () => {
+    const now = 100_000;
+    const next = schedule(makeRecord(), 0, now);
+    expect(next.dueAt).not.toBe(now);
+    expect(next.dueAt).toBe(now + RELEARN_STEP_MS);
   });
 });
 

@@ -10,6 +10,7 @@
 // preserved inside the dropdown so existing tests/QA flows still pass).
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import {
   ClockCounterClockwise,
   GearSix,
@@ -104,26 +105,68 @@ function formatElapsed(ms: number): string {
 function DetectModeBadge() {
   const detectMode = useApp((s) => s.detectMode);
   const detectBusy = useApp((s) => s.detectBusy);
+  const aiDetect = useApp((s) => s.settings.aiDetect);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const setDetectMode = useApp((s) => s.setDetectMode);
 
   const config =
     detectMode === "llm"
-      ? { label: "词典+AI 检测", cls: "text-lab-green border-lab-green/30", Icon: ShieldCheck }
+      ? { label: "词典+AI 检测", cls: "text-lab-green", Icon: ShieldCheck }
       : detectMode === "dictionary"
-        ? { label: "词典检测", cls: "text-lab-orange border-lab-orange/30", Icon: Shield }
-        : { label: "检测关闭", cls: "text-mut border-edge", Icon: null };
+        ? { label: "词典检测", cls: "text-lab-orange", Icon: Shield }
+        : { label: "检测关闭", cls: "text-mut", Icon: null };
 
-  return (
-    // hidden <md (#55): the bottom StatusLine shows the same mode text,
-    // and the mobile header row needs the width for the engine select.
-    <span
-      className={`hidden items-center gap-1.5 border px-2.5 py-1 font-mono text-xs md:inline-flex ${config.cls}`}
-    >
+  const content = (
+    <>
       {detectBusy && (
         <span className="h-2.5 w-2.5 shrink-0 animate-spin rounded-full border border-current border-t-transparent whitespace-nowrap" />
       )}
       {!detectBusy && config.Icon && <config.Icon size={14} weight="regular" />}
       {config.label}
-    </span>
+    </>
+  );
+
+  // hidden <md (#55): the bottom StatusLine shows the same mode text,
+  // and the mobile header row needs the width for the engine select.
+  // Borderless (E2E feedback 2026-07-11): the old bordered span read as
+  // a disabled control even though it never did anything — chrome with
+  // no affordance behind it is worse than plain text. Border removed in
+  // every mode, including the interactive one below.
+  if (detectMode === "off") {
+    return (
+      <span
+        className={`hidden items-center gap-1.5 px-2.5 py-1 font-mono text-xs md:inline-flex ${config.cls}`}
+      >
+        {content}
+      </span>
+    );
+  }
+
+  return (
+    // Clickable, mirroring StatusLine.tsx's statusline-detect-toggle
+    // (same E2E batch item): flips settings.aiDetect. The label derives
+    // from detectMode (the scheduler's runtime state, see
+    // detect/scheduler.ts), which the scheduler only re-reads on its
+    // next segment/batch — so the click ALSO echoes the expected mode
+    // synchronously, or an idle meeting would show a dead button. The
+    // scheduler's own onModeChange remains authoritative and corrects
+    // the echo if reality differs (e.g. key-less fallback downgrades
+    // llm back to dictionary). Deliberately duplicated here rather than
+    // extracted into a shared hook — see StatusLine.tsx's toggle for
+    // the twin copy.
+    <button
+      type="button"
+      data-testid="header-detect-toggle"
+      onClick={() => {
+        const next = !aiDetect;
+        updateSettings({ aiDetect: next });
+        setDetectMode(next ? "llm" : "dictionary");
+      }}
+      title="点击切换 AI 检测（词典检测始终开启）"
+      className={`hidden items-center gap-1.5 px-2.5 py-1 font-mono text-xs hover:text-fg md:inline-flex ${config.cls}`}
+    >
+      {content}
+    </button>
   );
 }
 
@@ -383,16 +426,41 @@ function HamburgerMenu({
               演示
             </button>
           )}
-          <a
-            href={withBase("/review")}
-            role="menuitem"
-            data-testid="btn-review"
-            onClick={() => setOpen(false)}
-            className={itemCls}
-          >
-            <GraduationCap size={16} weight="regular" />
-            学习中心
-          </a>
+          {/* 学习中心 nav (E2E feedback 2026-07-11): a plain <a href>
+              full-page-loaded /review, wiping every bit of in-memory
+              state on the way there AND back (running import tasks,
+              transcript, cards) — Link does a client-side transition
+              instead, Next auto-prefixing basePath so this must NOT be
+              wrapped in withBase (see src/lib/basePath.ts's own doc
+              comment). Gated on meetingActive: useMeeting's unmount
+              cleanup (the effect below its stop()) stops the engine but
+              never resets the store's status, so a client-side nav
+              mid-meeting would strand a zombie "listening"/"paused" UI
+              back on "/" instead of ending the meeting — disabled here
+              until the meeting actually ends. */}
+          {meetingActive ? (
+            <div
+              role="menuitem"
+              aria-disabled="true"
+              data-testid="btn-review"
+              title="会议进行中，结束后可进入学习中心"
+              className={`${itemCls} cursor-not-allowed opacity-50`}
+            >
+              <GraduationCap size={16} weight="regular" />
+              学习中心
+            </div>
+          ) : (
+            <Link
+              href="/review"
+              role="menuitem"
+              data-testid="btn-review"
+              onClick={() => setOpen(false)}
+              className={itemCls}
+            >
+              <GraduationCap size={16} weight="regular" />
+              学习中心
+            </Link>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -559,8 +627,16 @@ export default function Header({
           )}
 
           {activeSessionId && status === "stopped" && (
-            <span className="border border-lab-orange/30 px-2.5 py-1 font-mono text-xs text-lab-orange whitespace-nowrap">
-              历史会话
+            // State descriptor, not a control (E2E feedback 2026-07-11):
+            // sitting right next to btn-history's icon button, the old
+            // bordered chip read as a second clickable affordance. It's
+            // plain text — no border/chrome — so it can only be read as
+            // "you're viewing a saved session", never mistaken for a button.
+            <span
+              data-testid="chip-saved"
+              className="px-2.5 py-1 font-mono text-xs text-lab-green whitespace-nowrap"
+            >
+              已保存
             </span>
           )}
 
@@ -572,7 +648,7 @@ export default function Header({
             data-testid="btn-history"
             onClick={onOpenHistory}
             aria-label="历史"
-            title="历史会话"
+            title="历史"
             className="flex h-9 w-9 items-center justify-center border border-edge text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg"
           >
             <ClockCounterClockwise size={18} weight="regular" />

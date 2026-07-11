@@ -853,7 +853,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const level = settings.uiMode;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      // Click-outside-to-close (E2E feedback 2026-07-11): mousedown
+      // (not click) + target===currentTarget, so a drag that starts
+      // inside the panel and ends on the backdrop (text selection,
+      // slider drag) doesn't close it, and a click on an inner popover
+      // (which portals onto this same backdrop) doesn't bubble up as
+      // "the backdrop itself was clicked". onClose is the existing
+      // discard-draft cancel path (same handler the footer's 取消 uses)
+      // — no confirmation, matches that button's behavior exactly.
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="scroll-thin max-h-[85vh] w-[540px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-5">
         <div className="mb-4 flex items-center justify-between">
           <div className="text-lg font-semibold text-fg">设置</div>
@@ -1217,7 +1230,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectConfidence) && (
               <div data-ui-level={SETTINGS_UI_LEVELS.aiDetectConfidence}>
                 <div className="flex items-center justify-between">
-                  <label className="text-xs text-mut">置信度阈值</label>
+                  <label className="text-xs text-mut">AI 检测置信度阈值</label>
                   <span className="font-mono text-xs tabular-nums text-fg">
                     {draft.minConfidence.toFixed(2)}
                   </span>
@@ -1233,6 +1246,21 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   }
                   className="mt-1 w-full accent-act"
                 />
+                {/* E2E feedback 2026-07-11 ("opaque setting") — copy
+                    verified against dedupe.ts's mergeExpressions (drops
+                    expressions with confidence < minConfidence, whatever
+                    the source) and its actual inputs: dictionary hits
+                    are hardcoded to confidence 0.9 (dictionary-data.ts)
+                    and custom/我的词典 hits to 1 (types.ts's
+                    customEntryToExpression) — both always at or above
+                    this slider's 0.9 ceiling, so they never actually get
+                    dropped; only the model-assigned confidence on real
+                    AI detections varies enough to be filtered. mergeTerms
+                    has no confidence check at all — 术语卡片 are never
+                    filtered by this control, from any source. */}
+                <div className="mt-1 text-xs text-mut2">
+                  低于该置信度的 AI 检测结果不会生成表达卡片——调高更准但更少，调低更多但可能误报；词典、我的词典命中不受影响；此项不影响术语卡片。
+                </div>
               </div>
             )}
 
