@@ -1,0 +1,143 @@
+// @vitest-environment jsdom
+//
+// F2 MEDIUM (codex review round 1): DueReview.test.ts already covers the
+// pure hasPendingRelearn helper logic; this file covers the one
+// rendering behavior that only shows up with an actually-mounted
+// component — the queue memo re-evaluating "now" over time via the 30s
+// tick (not just once per render off a stale [learnset, candidates] dep
+// array). Mirrors TaskTray.test.tsx/HistoryDrawer.test.tsx's
+// createRoot/act pattern (no @testing-library/react in this repo's test
+// stack).
+
+import { act } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createRoot, type Root } from "react-dom/client";
+import DueReview from "../DueReview";
+import { useApp } from "@/lib/store";
+import { clearLearnset } from "@/lib/learn/store";
+import { RELEARN_STEP_MS } from "@jargonslayer/core/learn/srs";
+import type { LearnRecord } from "@jargonslayer/core/learn/types";
+
+function dueRecord(overrides: Partial<LearnRecord> = {}): LearnRecord {
+  return {
+    learnKey: "expression:circle back",
+    kind: "expression",
+    surface: "circle back",
+    familiarity: 0.5,
+    suppressed: false,
+    reps: 2,
+    intervalDays: 5,
+    ease: 2.5,
+    dueAt: 5_000, // already due at the t0=10_000 system time used below
+    lapses: 0,
+    createdAt: 1_000,
+    updatedAt: 1_000,
+    ...overrides,
+  };
+}
+
+describe("DueReview — queue re-evaluates time while mounted (F2 MEDIUM)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+    await clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      customEntries: [],
+      learnset: { "expression:circle back": dueRecord() },
+      toast: null,
+    });
+  });
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    container?.remove();
+    container = null;
+    vi.useRealTimers();
+  });
+
+  function mount() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  it("card graded 0 empties the queue, then advancing fake timers past RELEARN_STEP_MS re-surfaces it with no further learnset change", async () => {
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} />);
+    });
+
+    // Sanity: the due card is showing before any grading happens.
+    expect(container!.textContent).toContain("circle back");
+
+    const grade0Btn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.textContent === "不认识",
+    );
+    expect(grade0Btn).toBeDefined();
+
+    await act(async () => {
+      grade0Btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(0); // flush gradeReview's promise chain
+    });
+
+    // gradeReview (SM-2-lite lapse branch, srs.ts) steps dueAt forward
+    // by RELEARN_STEP_MS from the grade's own `now` — confirms the
+    // fixture actually exercised the real store action, not a manual
+    // state poke.
+    const graded = useApp.getState().learnset["expression:circle back"];
+    expect(graded.intervalDays).toBe(0);
+    expect(graded.dueAt).toBe(10_000 + RELEARN_STEP_MS);
+
+    // Queue is empty right after grading — the relearn-step hint from
+    // hasPendingRelearn (F5) should be showing too.
+    expect(container!.textContent).toContain("今天没有待复习的词条");
+    expect(container!.textContent).toContain("约 10 分钟后重新出现");
+    expect(container!.textContent).not.toContain("circle back");
+
+    // Advance past RELEARN_STEP_MS purely via wall-clock time (>=1 tick
+    // of the component's own 30s interval crosses the dueAt threshold)
+    // — no useApp.setState call anywhere below this line.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RELEARN_STEP_MS + 30_000);
+    });
+
+    expect(container!.textContent).toContain("circle back");
+    expect(container!.textContent).not.toContain("今天没有待复习的词条");
+  });
+
+  it("without the passage of time, the queue does NOT resurface the card on its own (control: the interval, not a spurious re-render, is what does it)", async () => {
+    useApp.setState({
+      learnset: {
+        "expression:circle back": dueRecord({
+          intervalDays: 0,
+          dueAt: 10_000 + RELEARN_STEP_MS,
+        }),
+      },
+    });
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} />);
+    });
+
+    expect(container!.textContent).toContain("今天没有待复习的词条");
+
+    // Well under the relearn step and under one 30s tick — nothing
+    // should change.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(container!.textContent).toContain("今天没有待复习的词条");
+    expect(container!.textContent).not.toContain("circle back");
+  });
+});
