@@ -65,7 +65,7 @@ import {
   AudioTooLongError,
   AudioTooLargeError,
 } from "../importAudio";
-import { mapChunksToSegments } from "../whisper.worker";
+import { mapChunksToSegments, mapDownloadProgress } from "../whisper.worker";
 
 const mockDetectApi = vi.mocked(detectApi);
 const mockTranslateApi = vi.mocked(translateApi);
@@ -319,9 +319,9 @@ describe("importAudio", () => {
     expect(warnings).toEqual(["翻译请求多次被限流，已停止翻译剩余内容"]);
   });
 
-  it("calls onProgress through the 读取音频/下载模型/转录/构建会话 phases", async () => {
+  it("calls onProgress through the 读取音频/下载模型（首次较慢）/转录中/构建会话 phases", async () => {
     mockTranscribeInBrowser.mockImplementation(async (_audio, _modelId, onProgress) => {
-      onProgress?.({ phase: "download", ratio: 0.5 });
+      onProgress?.({ phase: "download", ratio: 0.5, detail: "encoder.onnx 12.3MB" });
       onProgress?.({ phase: "transcribe", ratio: 1 });
       return [{ start: 0, end: 1, text: "hi" }];
     });
@@ -336,9 +336,78 @@ describe("importAudio", () => {
 
     const phases = onProgress.mock.calls.map((c) => c[1]);
     expect(phases).toContain("读取音频");
-    expect(phases).toContain("下载模型");
-    expect(phases).toContain("转录");
+    // Item 3: the worker's own "<file> <MB>MB" detail (item 1) is
+    // appended as-is, and "（首次较慢）" reassures the first-visit case
+    // regardless of whether a numeric ratio is also available.
+    expect(phases).toContain("下载模型 encoder.onnx 12.3MB（首次较慢）");
+    // Item 3: "转录中" (not the old bare "转录") — an honest in-progress
+    // label, since item 2 confirmed there is no interim ratio to show.
+    expect(phases).toContain("转录中");
     expect(phases).toContain("构建会话");
+  });
+
+  it("download phase stage omits the MB suffix when the worker provides no detail", async () => {
+    mockTranscribeInBrowser.mockImplementation(async (_audio, _modelId, onProgress) => {
+      onProgress?.({ phase: "download", ratio: undefined });
+      onProgress?.({ phase: "transcribe", ratio: 1 });
+      return [{ start: 0, end: 1, text: "hi" }];
+    });
+
+    const onProgress = vi.fn();
+    await importAudio({
+      file: fakeFile(),
+      translate: false,
+      settings: makeSettings(),
+      onProgress,
+    });
+
+    const phases = onProgress.mock.calls.map((c) => c[1]);
+    expect(phases).toContain("下载模型（首次较慢）");
+  });
+
+  it("item 1: an undefined download ratio (unknown Content-Length) passes progress:undefined straight through — no fabricated percentage", async () => {
+    mockTranscribeInBrowser.mockImplementation(async (_audio, _modelId, onProgress) => {
+      onProgress?.({ phase: "download", ratio: undefined, detail: "decoder.onnx 45.6MB" });
+      onProgress?.({ phase: "transcribe", ratio: 1 });
+      return [{ start: 0, end: 1, text: "hi" }];
+    });
+
+    const onProgress = vi.fn();
+    await importAudio({
+      file: fakeFile(),
+      translate: false,
+      settings: makeSettings(),
+      onProgress,
+    });
+
+    const downloadCall = onProgress.mock.calls.find((c) => c[1].startsWith("下载模型"));
+    expect(downloadCall?.[0]).toBeUndefined();
+  });
+
+  // Coordinator follow-up: the transcribe phase's START event also now
+  // carries an undefined ratio (no per-chunk hook exists — item 2), so
+  // "转录中" must pass progress:undefined straight through too, not just
+  // the download phase. Completion (ratio:1) stays a real number.
+  it("an undefined transcribe-start ratio passes progress:undefined straight through to the 转录中 stage — no fabricated 0%", async () => {
+    mockTranscribeInBrowser.mockImplementation(async (_audio, _modelId, onProgress) => {
+      onProgress?.({ phase: "download", ratio: 1, detail: "encoder.onnx 50.0MB" });
+      onProgress?.({ phase: "transcribe", ratio: undefined });
+      onProgress?.({ phase: "transcribe", ratio: 1 });
+      return [{ start: 0, end: 1, text: "hi" }];
+    });
+
+    const onProgress = vi.fn();
+    await importAudio({
+      file: fakeFile(),
+      translate: false,
+      settings: makeSettings(),
+      onProgress,
+    });
+
+    const transcribeCalls = onProgress.mock.calls.filter((c) => c[1] === "转录中");
+    expect(transcribeCalls).toHaveLength(2);
+    expect(transcribeCalls[0][0]).toBeUndefined(); // start: no fabricated ratio
+    expect(transcribeCalls[1][0]).toBe(1); // completion: still a real number
   });
 
   it("passes the decoded Float32Array and the default model id to transcribeInBrowser", async () => {
@@ -401,5 +470,61 @@ describe("mapChunksToSegments", () => {
   it("falls back end to start when end is null/undefined (unclosed trailing chunk)", () => {
     const result = mapChunksToSegments([{ text: "trailing", timestamp: [9, null] }]);
     expect(result).toEqual([{ start: 9, end: 9, text: "trailing" }]);
+  });
+});
+
+// Item 1 (honest download-phase progress): mapDownloadProgress is the
+// pure guard extracted from whisper.worker.ts's progress_callback —
+// exercised directly here rather than through a real transformers.js
+// callback, same reasoning as mapChunksToSegments above.
+describe("mapDownloadProgress", () => {
+  it("reports a real ratio + MB detail when loaded < total (Content-Length genuinely known)", () => {
+    const result = mapDownloadProgress({
+      progress: 25,
+      loaded: 12_910_592, // 12.31...MB
+      total: 50_000_000,
+      file: "encoder.onnx",
+    });
+    expect(result.ratio).toBeCloseTo(0.25);
+    expect(result.detail).toBe("encoder.onnx 12.3MB");
+  });
+
+  // Reproduces the actual field bug (verified against the installed
+  // @huggingface/transformers@3.8.1's hub.js: readResponse starts
+  // `total` at 0 when Content-Length is missing, then re-expands it to
+  // exactly equal `loaded` on every chunk) — `progress` reads as a
+  // constant 100 the whole download, never NaN, so this is the
+  // meaningful case the guard actually has to catch.
+  it("suppresses the ratio when loaded === total (the missing-Content-Length signature), even though progress itself is a well-formed 100", () => {
+    const result = mapDownloadProgress({
+      progress: 100,
+      loaded: 65536,
+      total: 65536,
+      file: "decoder_model_merged.onnx",
+    });
+    expect(result.ratio).toBeUndefined();
+    expect(result.detail).toBe("decoder_model_merged.onnx 0.1MB"); // loaded MB still shown
+  });
+
+  it("suppresses the ratio when progress is NaN (e.g. an empty non-final chunk leaving total at 0)", () => {
+    const result = mapDownloadProgress({
+      progress: NaN,
+      loaded: 0,
+      total: 0,
+      file: "config.json",
+    });
+    expect(result.ratio).toBeUndefined();
+  });
+
+  it("suppresses the ratio when total is 0 even if progress happens to be finite", () => {
+    const result = mapDownloadProgress({ progress: 0, loaded: 0, total: 0, file: "tokenizer.json" });
+    expect(result.ratio).toBeUndefined();
+  });
+
+  it("detail always carries the loaded MB (to 1 decimal) regardless of whether the ratio is trustworthy", () => {
+    const known = mapDownloadProgress({ progress: 10, loaded: 1_048_576, total: 100_000_000, file: "a" });
+    expect(known.detail).toBe("a 1.0MB");
+    const unknown = mapDownloadProgress({ progress: 100, loaded: 1_048_576, total: 1_048_576, file: "b" });
+    expect(unknown.detail).toBe("b 1.0MB");
   });
 });

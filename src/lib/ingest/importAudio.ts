@@ -141,7 +141,13 @@ export interface ImportAudioOptions {
   file: File;
   translate: boolean;
   settings: Settings;
-  onProgress: (progress: number, phase: string) => void;
+  // progress is undefined for the download phase whenever the CDN
+  // response carried no Content-Length header — see whisper.worker.ts/
+  // whisperBrowser.ts — so the task tray shows the (still honest) stage
+  // label alone rather than a fabricated percentage (registry.ts's
+  // updateTaskProgress / TaskTray.tsx already render stage-only when
+  // progress is undefined).
+  onProgress: (progress: number | undefined, phase: string) => void;
 }
 
 export interface ImportAudioResult {
@@ -179,8 +185,29 @@ export async function importAudio(opts: ImportAudioOptions): Promise<ImportAudio
     audio,
     DEFAULT_MODEL_ID,
     (progress) => {
-      const phaseLabel = progress.phase === "download" ? "下载模型" : "转录";
-      onProgress(progress.ratio, phaseLabel);
+      if (progress.phase === "download") {
+        // #43 phase-2a follow-up (honest download progress): whisper.
+        // worker.ts's `detail` already carries "<file> <MB>MB" when
+        // loaded bytes are known (item 1) — appended as-is rather than
+        // re-parsed apart, so this stays correct even if the worker's
+        // own detail format changes. ratio is passed straight through
+        // — undefined stays undefined, which registry.ts's
+        // updateTaskProgress/TaskTray.tsx already render as
+        // stage-only, no fabricated percentage. "（首次较慢）" reassures
+        // the first-time-visit case regardless of whether a real ratio
+        // is available (mirrors ImportHub.tsx's own "首次需下载模型"
+        // copy).
+        const detailSuffix = progress.detail ? ` ${progress.detail}` : "";
+        onProgress(progress.ratio, `下载模型${detailSuffix}（首次较慢）`);
+      } else {
+        // Item 2: transformers.js's installed ASR pipeline (@huggingface/
+        // transformers@3.8.1) exposes no per-chunk progress hook (see
+        // whisper.worker.ts's comment for the verification), so this
+        // phase can only ever be 0-at-start/1-at-end — "转录中" (rather
+        // than the old bare "转录") makes that an honest "in progress"
+        // label instead of implying a live percentage that never comes.
+        onProgress(progress.ratio, "转录中");
+      }
     },
   );
 

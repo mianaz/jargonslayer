@@ -68,6 +68,25 @@ describe("task registry lifecycle (#58)", () => {
     expect(task.updatedAt).toBeGreaterThanOrEqual(before);
   });
 
+  // F4 LOW (codex review round 1): the choke-point sanitization — a NaN
+  // progress (the FFmpeg duration-less media path's one known producer)
+  // must never reach TaskState, only `undefined` ("no trustworthy
+  // ratio", the same existing contract an unknown-Content-Length
+  // download already uses).
+  it("updateTaskProgress coerces a non-finite progress (NaN/Infinity) to undefined before patching", () => {
+    startTask("t1", "import-audio", "meeting.wav");
+    updateTaskProgress("t1", Number.NaN, "转码中");
+    expect(useTasks.getState().tasks.t1.progress).toBeUndefined();
+    expect(useTasks.getState().tasks.t1.stage).toBe("转码中");
+
+    updateTaskProgress("t1", Number.POSITIVE_INFINITY, "转码中");
+    expect(useTasks.getState().tasks.t1.progress).toBeUndefined();
+
+    // A genuine finite value right after is unaffected by the guard.
+    updateTaskProgress("t1", 0.5, "转码中");
+    expect(useTasks.getState().tasks.t1.progress).toBe(0.5);
+  });
+
   it("completeTask marks status done and records the sessionId", () => {
     startTask("t1", "import-url", "https://example.com/x");
     completeTask("t1", "session-42");
@@ -136,6 +155,138 @@ describe("task registry lifecycle (#58)", () => {
     dismissTask("t1");
     expect(useTasks.getState().tasks.t1).toBeUndefined();
     expect(() => dismissTask("t1")).not.toThrow();
+  });
+});
+
+describe("task lifecycle diag entries (item 4)", () => {
+  beforeEach(() => {
+    useTasks.setState({ tasks: {} });
+    webhookUrl = "";
+    mockPostTaskWebhook.mockClear();
+    clearDiag();
+    vi.useRealTimers();
+  });
+
+  it("startTask writes an 'info' task-started entry carrying only the task kind, NEVER the label/filename", () => {
+    startTask("t1", "import-audio", "board-meeting-q3-SENTINEL.wav");
+    const entries = getDiagEntries().filter((e) => e.tag === "task-started");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].level).toBe("info");
+    expect(entries[0].message).toContain("import-audio");
+    expect(entries[0].message).not.toContain("SENTINEL");
+    expect(entries[0].detail ?? "").not.toContain("SENTINEL");
+    expect(entries[0].ref).toBeUndefined(); // info entries carry no error ref (log.ts)
+  });
+
+  it("updateTaskProgress writes a task-phase entry on the very first call (transition off the initial empty stage)", () => {
+    startTask("t1", "import-audio", "a.wav");
+    updateTaskProgress("t1", 0, "读取音频");
+    const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].level).toBe("info");
+    expect(entries[0].detail).toBe("stage=读取音频 progress=0");
+  });
+
+  it("does NOT write another task-phase entry when the stage's leading label is unchanged, even though the exact string keeps changing every tick (e.g. a growing MB suffix)", () => {
+    startTask("t1", "import-audio", "a.wav");
+    updateTaskProgress("t1", undefined, "下载模型 1.0MB（首次较慢）");
+    updateTaskProgress("t1", undefined, "下载模型 4.7MB（首次较慢）");
+    updateTaskProgress("t1", 0.3, "下载模型 12.3MB（首次较慢）");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
+    expect(entries).toHaveLength(1); // only the first tick's transition
+    // F3 MEDIUM (codex review round 1): the LABEL only ("下载模型"), not
+    // the raw stage string — see the dedicated leak-regression test
+    // below for why.
+    expect(entries[0].detail).toBe("stage=下载模型 progress=-");
+  });
+
+  it("the same throttle applies to a batch-counter suffix (e.g. importText.ts's '检测 1/2' -> '检测 2/2')", () => {
+    startTask("t1", "import-text", "粘贴的文稿");
+    updateTaskProgress("t1", 0.5, "检测 1/2");
+    updateTaskProgress("t1", 1, "检测 2/2");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe("stage=检测 progress=50");
+  });
+
+  it("DOES write a new task-phase entry once the stage's leading label actually changes", () => {
+    startTask("t1", "import-audio", "a.wav");
+    updateTaskProgress("t1", undefined, "下载模型 1.0MB（首次较慢）");
+    updateTaskProgress("t1", undefined, "下载模型 90.0MB（首次较慢）");
+    updateTaskProgress("t1", 1, "转录中");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
+    expect(entries).toHaveLength(2);
+    expect(entries[0].detail).toBe("stage=下载模型 progress=-");
+    expect(entries[1].detail).toBe("stage=转录中 progress=100");
+  });
+
+  // F3 MEDIUM (codex review round 1): the stage's DISPLAY text can embed
+  // progress detail down to a model shard's filename (e.g. importAudio.
+  // ts's "下载模型 encoder.onnx 12.3MB（首次较慢）") — that must never
+  // reach the copyable diag ring buffer, only the leading label
+  // (counts/labels-only redaction rule). Pins the fix by construction:
+  // whatever detail a stage string grows to contain, only its first
+  // token can land in the entry.
+  it("a stage with a filename suffix logs the label only — the filename never reaches the diag entry", () => {
+    startTask("t1", "import-audio", "a.wav");
+    updateTaskProgress("t1", 0.12, "下载模型 encoder.onnx 12.3MB（首次较慢）");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe("stage=下载模型 progress=12");
+    expect(entries[0].detail).not.toContain("encoder.onnx");
+    expect(entries[0].message).not.toContain("encoder.onnx");
+  });
+
+  it("task-phase progress is rounded to a whole percent, and '-' when undefined", () => {
+    startTask("t1", "import-audio", "a.wav");
+    updateTaskProgress("t1", 0.126, "读取音频");
+    updateTaskProgress("t1", undefined, "下载模型（首次较慢）");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
+    expect(entries[0].detail).toBe("stage=读取音频 progress=13");
+    expect(entries[1].detail).toBe("stage=下载模型（首次较慢） progress=-");
+  });
+
+  it("completeTask writes a task-done entry with elapsed ms", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000);
+    startTask("t1", "import-audio", "a.wav");
+    vi.setSystemTime(1_750);
+    completeTask("t1", "session-1");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-done");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].level).toBe("info");
+    expect(entries[0].message).toContain("import-audio");
+    expect(entries[0].detail).toBe("elapsedMs=750");
+    vi.useRealTimers();
+  });
+
+  it("task-started/task-phase/task-done entries track per-task-id independently — a second concurrent task doesn't suppress the first's transitions", () => {
+    startTask("t1", "import-audio", "a.wav");
+    startTask("t2", "import-video", "b.mp4");
+    updateTaskProgress("t1", 0, "读取音频");
+    updateTaskProgress("t2", 0, "提取音频");
+    updateTaskProgress("t1", 0.5, "下载模型 5.0MB（首次较慢）");
+    updateTaskProgress("t2", 0.5, "提取音频"); // same leading label as t2's own last stage
+
+    const started = getDiagEntries().filter((e) => e.tag === "task-started");
+    expect(started).toHaveLength(2);
+    const phase = getDiagEntries().filter((e) => e.tag === "task-phase");
+    // t1: "" -> 读取音频 -> 下载模型... (2 transitions). t2: "" -> 提取音频,
+    // then a repeat of 提取音频 (no transition) (1 transition).
+    expect(phase).toHaveLength(3);
+  });
+
+  it("progress/complete on an unknown id writes no task-phase/task-done entry (mirrors the existing no-op contract)", () => {
+    updateTaskProgress("ghost", 0.5, "x");
+    completeTask("ghost", "s1");
+    expect(getDiagEntries().filter((e) => e.tag === "task-phase")).toHaveLength(0);
+    expect(getDiagEntries().filter((e) => e.tag === "task-done")).toHaveLength(0);
   });
 });
 

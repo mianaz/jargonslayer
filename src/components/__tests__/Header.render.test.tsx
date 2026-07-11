@@ -202,3 +202,229 @@ describe("Header — pause/resume/end button matrix (B4)", () => {
     expect(onResume).toHaveBeenCalledTimes(1);
   });
 });
+
+// E2E batch item 1: the old chip read as clickable (bordered, sitting
+// right beside btn-history's icon button). It's now plain text — this
+// covers both the copy change and the "no border chrome" requirement.
+describe("Header — chip-saved (E2E batch item 1)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", activeSessionId: null });
+  });
+
+  async function renderHeader() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+        />,
+      );
+    });
+  }
+
+  it("reads 已保存, not 历史会话, and carries no border class", async () => {
+    useApp.setState({
+      settings: DEFAULT_SETTINGS,
+      status: "stopped",
+      activeSessionId: "session-1",
+    });
+    await renderHeader();
+
+    const chip = container!.querySelector('[data-testid="chip-saved"]');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toBe("已保存");
+    expect(chip!.className).not.toMatch(/\bborder\b/);
+
+    // btn-history's title now matches its aria-label exactly.
+    const historyBtn = container!.querySelector('[data-testid="btn-history"]');
+    expect(historyBtn!.getAttribute("title")).toBe("历史");
+    expect(historyBtn!.getAttribute("aria-label")).toBe("历史");
+  });
+
+  it("does not render when there is no active session (nothing to be mistaken for a button)", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", activeSessionId: null });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="chip-saved"]')).toBeNull();
+  });
+});
+
+// E2E batch item 2: mirrors StatusLine.test.tsx's detect-toggle
+// coverage for the header's own copy of the control (header-detect-toggle).
+describe("Header — header-detect-toggle (E2E batch item 2)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", detectMode: "llm" });
+  });
+
+  async function renderHeader() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+        />,
+      );
+    });
+  }
+
+  it("clicking the badge flips settings.aiDetect and echoes detectMode synchronously, borderless throughout", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, aiDetect: true },
+      status: "idle",
+      detectMode: "llm",
+    });
+    await renderHeader();
+
+    const toggle = container!.querySelector('[data-testid="header-detect-toggle"]');
+    expect(toggle).not.toBeNull();
+    expect(toggle!.tagName).toBe("BUTTON");
+    expect(toggle!.className).not.toMatch(/\bborder\b/);
+
+    await act(async () => {
+      toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.aiDetect).toBe(false);
+    // Synchronous echo — same rationale as StatusLine's toggle: the
+    // scheduler only re-reads settings on its next segment/batch.
+    expect(useApp.getState().detectMode).toBe("dictionary");
+  });
+
+  it("detectMode 'off' renders a non-interactive, borderless span (no toggle button)", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", detectMode: "off" });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="header-detect-toggle"]')).toBeNull();
+    const badge = Array.from(container!.querySelectorAll("span")).find((el) =>
+      el.textContent?.includes("检测关闭"),
+    );
+    expect(badge).toBeDefined();
+    expect(badge!.className).not.toMatch(/\bborder\b/);
+  });
+});
+
+// E2E batch item 3: 学习中心 must not full-reload the app, but must also
+// not strand a zombie listening/paused UI if clicked mid-meeting.
+describe("HamburgerMenu — btn-review gating (E2E batch item 3)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+  });
+
+  async function renderAndOpenMenu() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+        />,
+      );
+    });
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="btn-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  it("renders btn-review as a real link (next/link -> <a>) while idle", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+    await renderAndOpenMenu();
+
+    const item = container!.querySelector('[data-testid="btn-review"]');
+    expect(item).not.toBeNull();
+    expect(item!.tagName).toBe("A");
+    expect(item!.getAttribute("href")).toContain("/review");
+    expect(item!.getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("renders btn-review as a disabled, non-clickable element while a meeting is active (listening)", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "listening" });
+    await renderAndOpenMenu();
+
+    const item = container!.querySelector('[data-testid="btn-review"]');
+    expect(item).not.toBeNull();
+    expect(item!.tagName).not.toBe("A");
+    expect(item!.getAttribute("aria-disabled")).toBe("true");
+    expect(item!.getAttribute("title")).toBe("会议进行中，结束后可进入学习中心");
+  });
+
+  it("also disables btn-review while paused (resuming is still possible, not a dead meeting)", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "paused" });
+    await renderAndOpenMenu();
+
+    const item = container!.querySelector('[data-testid="btn-review"]');
+    expect(item!.getAttribute("aria-disabled")).toBe("true");
+  });
+});

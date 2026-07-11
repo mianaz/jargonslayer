@@ -7,12 +7,12 @@
 // hydrates the store itself if needed.
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useApp } from "@/lib/store";
 import ReviewDashboard, { useSessionCache } from "@/components/review/ReviewDashboard";
 import PracticeDeck from "@/components/review/PracticeDeck";
 import DueReview from "@/components/review/DueReview";
 import Toast from "@/components/Toast";
-import { withBase } from "@/lib/basePath";
 
 type ReviewMode = "due" | "browse";
 
@@ -38,12 +38,18 @@ export default function ReviewPage() {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel/85 px-4 backdrop-blur">
-        <a
-          href={withBase("/")}
+        {/* Client-side nav back to "/" (E2E feedback 2026-07-11): a
+            plain <a href> full-page-loaded the app, wiping in-memory
+            state (running import tasks, transcript, cards) on the way
+            back just as badly as the outbound Header.tsx link did — see
+            that file's matching comment. Link auto-prefixes basePath,
+            so no withBase() here. */}
+        <Link
+          href="/"
           className="flex items-center gap-1.5 text-sm text-mut hover:text-fg"
         >
           ← 返回会议
-        </a>
+        </Link>
         <span className="font-medium text-fg">学习中心</span>
         <span className="font-mono text-xs text-mut2">/review</span>
       </header>
