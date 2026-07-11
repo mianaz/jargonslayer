@@ -68,6 +68,25 @@ describe("task registry lifecycle (#58)", () => {
     expect(task.updatedAt).toBeGreaterThanOrEqual(before);
   });
 
+  // F4 LOW (codex review round 1): the choke-point sanitization — a NaN
+  // progress (the FFmpeg duration-less media path's one known producer)
+  // must never reach TaskState, only `undefined` ("no trustworthy
+  // ratio", the same existing contract an unknown-Content-Length
+  // download already uses).
+  it("updateTaskProgress coerces a non-finite progress (NaN/Infinity) to undefined before patching", () => {
+    startTask("t1", "import-audio", "meeting.wav");
+    updateTaskProgress("t1", Number.NaN, "转码中");
+    expect(useTasks.getState().tasks.t1.progress).toBeUndefined();
+    expect(useTasks.getState().tasks.t1.stage).toBe("转码中");
+
+    updateTaskProgress("t1", Number.POSITIVE_INFINITY, "转码中");
+    expect(useTasks.getState().tasks.t1.progress).toBeUndefined();
+
+    // A genuine finite value right after is unaffected by the guard.
+    updateTaskProgress("t1", 0.5, "转码中");
+    expect(useTasks.getState().tasks.t1.progress).toBe(0.5);
+  });
+
   it("completeTask marks status done and records the sessionId", () => {
     startTask("t1", "import-url", "https://example.com/x");
     completeTask("t1", "session-42");

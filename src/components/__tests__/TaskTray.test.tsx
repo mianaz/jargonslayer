@@ -108,4 +108,36 @@ describe("TaskTray — open tray with live tasks (React #185 regression)", () =>
     expect(container!.textContent).toContain("转录中");
     expect(container!.textContent).not.toContain("%");
   });
+
+  // F4 LOW (codex review round 1) — defense in depth: registry.test.ts
+  // already pins that updateTaskProgress's own choke point coerces a
+  // non-finite progress to undefined before it ever reaches TaskState;
+  // this pins the render guard itself against a NaN that reaches
+  // TaskState through some OTHER path. The old guard, `typeof
+  // task.progress === "number"`, is true for NaN too (it really is a JS
+  // `number`) and used to render a literal "NaN%".
+  it("a task with a NaN progress value shows the stage text alone, never 'NaN%'", async () => {
+    startTask("task-3", "import-audio", "导入 broken-duration.mov");
+    mountTray();
+
+    await act(async () => {
+      root!.render(<TaskTray />);
+    });
+    const chip = container!.querySelector('button[aria-label="后台任务"]');
+    await act(async () => {
+      chip!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      useTasks.setState((s) => ({
+        tasks: {
+          ...s.tasks,
+          "task-3": { ...s.tasks["task-3"], progress: Number.NaN, stage: "转码中" },
+        },
+      }));
+    });
+
+    expect(container!.textContent).toContain("导入 broken-duration.mov");
+    expect(container!.textContent).toContain("转码中");
+    expect(container!.textContent).not.toContain("NaN");
+  });
 });

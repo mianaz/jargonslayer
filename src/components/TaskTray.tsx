@@ -19,6 +19,7 @@ import { handleButtonKeyDown } from "@/lib/a11y";
 import {
   dismissTask,
   EMPTY_TASKS,
+  isFiniteProgress,
   selectCanDismiss,
   selectHasTasks,
   selectRunningCount,
@@ -153,7 +154,11 @@ export default function TaskTray() {
                   {task.status === "running" && (
                     <span className="text-mut">
                       {task.stage || "处理中"}
-                      {typeof task.progress === "number" && ` ${Math.round(task.progress * 100)}%`}
+                      {/* isFiniteProgress, not typeof === "number" (F4 LOW,
+                          codex review round 1): NaN/Infinity are still
+                          JS `number`s and used to slip past the old
+                          guard, rendering a literal "NaN%". */}
+                      {isFiniteProgress(task.progress) && ` ${Math.round(task.progress * 100)}%`}
                     </span>
                   )}
                   {task.status === "done" && (

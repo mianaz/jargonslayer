@@ -77,4 +77,48 @@ describe("HistoryDrawer — import job rows render progress honestly", () => {
     expect(container!.textContent).toContain("解析失败");
     expect(container!.textContent).not.toContain("%");
   });
+
+  // F4 LOW (codex review round 1) — defense in depth: registry.test.ts
+  // already pins that updateTaskProgress's own choke point coerces a
+  // non-finite progress to undefined before it ever reaches TaskState;
+  // this pins the render guard itself against a NaN that reaches
+  // TaskState through some OTHER path. The old guard, `typeof
+  // task.progress === "number"`, is true for NaN too (it really is a JS
+  // `number`) and used to render a literal "NaN%" / a broken-width bar.
+  it("a task with a NaN progress value shows the stage text alone, never 'NaN%' or a bar", async () => {
+    startTask("t4", "import-video", "broken-duration.mov");
+    useTasks.setState((s) => ({
+      tasks: {
+        ...s.tasks,
+        t4: { ...s.tasks.t4, progress: Number.NaN, stage: "转码中" },
+      },
+    }));
+
+    mountDrawer();
+    await act(async () => {
+      root!.render(<HistoryDrawer open onClose={() => {}} onOpenImport={() => {}} />);
+    });
+
+    expect(container!.textContent).toContain("broken-duration.mov");
+    expect(container!.textContent).toContain("转码中");
+    expect(container!.textContent).not.toContain("NaN");
+    expect(container!.textContent).not.toContain("%");
+  });
+
+  // Clamp is defense in depth too (no known producer sends an
+  // out-of-[0,1] but still-finite progress) — pins that IF one ever did,
+  // the bar/percentage would read a sane 100%, not something like
+  // "150%" or a CSS width overflowing the track.
+  it("a finite but out-of-range progress (>1) is clamped to 100% rather than overflowing", async () => {
+    startTask("t5", "import-audio", "weird.wav");
+    updateTaskProgress("t5", 1.5, "处理中");
+
+    mountDrawer();
+    await act(async () => {
+      root!.render(<HistoryDrawer open onClose={() => {}} onOpenImport={() => {}} />);
+    });
+
+    expect(container!.textContent).toContain("100%");
+    expect(container!.textContent).not.toContain("150%");
+  });
 });

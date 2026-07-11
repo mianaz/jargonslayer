@@ -200,11 +200,23 @@ export function startTask(id: string, kind: TaskKind, label: string): TaskState 
 // `undefined` straight through to patchTask below OVERWRITES (not just
 // leaves untouched) any previous progress value, since the key IS
 // present in the patch object; TaskTray.tsx already renders stage-only
-// whenever `typeof task.progress !== "number"`, so this "clear" is
-// exactly the sensible tray behavior with no further UI change needed.
+// whenever the task has no finite progress (see isFiniteProgress below),
+// so this "clear" is exactly the sensible tray behavior with no further
+// UI change needed.
 export function updateTaskProgress(id: string, progress: number | undefined, stage: string): void {
-  const task = patchTask(id, { progress, stage });
-  if (task) diagTaskPhase(task, stage, progress);
+  // F4 LOW (codex review round 1): coerce a non-finite progress to
+  // undefined HERE, the one seam every progress value passes through on
+  // its way into TaskState — so no renderer downstream can ever see a
+  // NaN/Infinity, no matter how many render sites read task.progress.
+  // The FFmpeg duration-less media path (no readable duration to divide
+  // by) is today's one known NaN producer; `undefined` is already the
+  // established, correct contract for "no trustworthy ratio" (see the
+  // comment above), so collapsing NaN/Infinity into it needs no new UI
+  // behavior, only this one guard.
+  const safeProgress =
+    progress !== undefined && Number.isFinite(progress) ? progress : undefined;
+  const task = patchTask(id, { progress: safeProgress, stage });
+  if (task) diagTaskPhase(task, stage, safeProgress);
 }
 
 export function completeTask(id: string, sessionId?: string): void {
@@ -322,6 +334,22 @@ export function runTrackedAsync<T extends { sessionId: string }>(
 // Pure selectors — chip/tray derivation logic extracted for
 // testability (prefer pure functions, per the plan's own note).
 // ---------------------------------------------------------------
+
+/** Progress render guard (F4 LOW, codex review round 1): shared by
+ *  TaskTray.tsx and HistoryDrawer.tsx's job rows so both surfaces gate
+ *  identically. `typeof task.progress === "number"` — the guard both
+ *  used before this fix — is true for NaN and Infinity too (both really
+ *  are JS `number`s), so either could slip through and render as a
+ *  literal "NaN%"/broken-width bar. A type predicate (rather than a bare
+ *  `Number.isFinite(task.progress)` call) is required here: Number.
+ *  isFinite's own lib.d.ts signature takes `unknown` and returns a plain
+ *  `boolean`, so it does not narrow `number | undefined` on its own. The
+ *  registry's updateTaskProgress already sanitizes at the write choke
+ *  point (non-finite -> undefined), so this is defense in depth for any
+ *  other path onto TaskState.progress. */
+export function isFiniteProgress(progress: number | undefined): progress is number {
+  return Number.isFinite(progress);
+}
 
 export function selectRunningTasks(tasks: Record<string, TaskState>): TaskState[] {
   return Object.values(tasks).filter((t) => t.status === "running");

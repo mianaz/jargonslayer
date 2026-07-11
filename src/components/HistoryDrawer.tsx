@@ -26,7 +26,13 @@ import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import * as storage from "@/lib/history/storage";
 import type { MeetingSession } from "@/lib/types";
-import { dismissTask, EMPTY_TASKS, useTasks, type TaskState } from "@/lib/tasks/registry";
+import {
+  dismissTask,
+  EMPTY_TASKS,
+  isFiniteProgress,
+  useTasks,
+  type TaskState,
+} from "@/lib/tasks/registry";
 
 export interface HistoryDrawerProps {
   open: boolean;
@@ -48,6 +54,16 @@ function formatDateTime(ms: number): string {
 function formatDurationMin(startMs: number, endMs: number): string {
   const min = Math.max(0, Math.round((endMs - startMs) / 60000));
   return `${min} 分`;
+}
+
+// F4 LOW (codex review round 1): the registry's updateTaskProgress
+// choke point already rules out NaN/Infinity before a progress value
+// ever reaches TaskState, but this bar's CSS `width` percentage is
+// still clamped to [0,1] before formatting — a defensively-guarded
+// belt-and-suspenders (not currently reachable from any known producer)
+// against a negative-width or overflowing-past-100% bar.
+function clampProgress(progress: number): number {
+  return Math.min(1, Math.max(0, progress));
 }
 
 /** In-progress/failed imports only — a completed one already appears
@@ -210,25 +226,30 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
                       </button>
                     </div>
                   ) : (
-                    // typeof-number gated, not `task.progress ?? 0`
-                    // (coordinator follow-up on the honest-progress fix):
-                    // a phase with no trustworthy ratio (download with
-                    // unknown Content-Length, or transcribe — see
-                    // whisper.worker.ts) previously coerced to a bar
-                    // frozen at a fabricated 0% for the entire phase,
-                    // reproducing the exact reported bug in this second
-                    // surface. Mirrors TaskTray.tsx's own guard — stage
-                    // text above is enough when there's no real number.
-                    typeof task.progress === "number" && (
+                    // isFiniteProgress gated, not `typeof === "number"`
+                    // (F4 LOW, codex review round 1) and not
+                    // `task.progress ?? 0` (coordinator follow-up on the
+                    // honest-progress fix): a phase with no trustworthy
+                    // ratio (download with unknown Content-Length, or
+                    // transcribe — see whisper.worker.ts) previously
+                    // coerced to a bar frozen at a fabricated 0% for the
+                    // entire phase, reproducing the exact reported bug in
+                    // this second surface. `typeof === "number"` on its
+                    // own is also true for NaN/Infinity (e.g. FFmpeg on a
+                    // duration-less media file) — isFiniteProgress rules
+                    // those out too. Mirrors TaskTray.tsx's own guard —
+                    // stage text above is enough when there's no real
+                    // number.
+                    isFiniteProgress(task.progress) && (
                       <div className="mt-2 flex items-center gap-2">
                         <div className="h-1.5 flex-1 rounded-none bg-edge">
                           <div
                             className="h-full rounded-none bg-lab-green transition-all"
-                            style={{ width: `${Math.round(task.progress * 100)}%` }}
+                            style={{ width: `${Math.round(clampProgress(task.progress) * 100)}%` }}
                           />
                         </div>
                         <span className="shrink-0 font-mono text-[11px] tabular-nums text-mut2">
-                          {Math.round(task.progress * 100)}%
+                          {Math.round(clampProgress(task.progress) * 100)}%
                         </span>
                       </div>
                     )
