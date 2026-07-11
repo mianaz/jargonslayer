@@ -7,6 +7,7 @@ import type {
   DefineResult,
   DetectRequest,
   DetectResponse,
+  LlmProvider,
   LlmTaskDomain,
   Settings,
   SummarizeRequest,
@@ -103,6 +104,24 @@ function errorDetail(ctx: RequestErrorContext, status?: number, requestId?: stri
   return parts.join(" ");
 }
 
+// Item 5: a request whose resolved creds carry no key runs KEYLESS —
+// taskHeaders only sets the key header `if (creds.apiKey)`, so the
+// Next.js route falls back to ITS OWN server-managed credential
+// (anthropic.ts's resolveLlmConfig: env JARGONSLAYER_API_KEY/
+// ANTHROPIC_API_KEY — the preview tier's shared key, or a full-tier
+// deploy's optional server key) whenever no client key header arrives.
+// The client's own idle settings.provider (or a taskLlm domain
+// override) never actually serves that request, so logging it in a
+// diag ctx is misleading — the owner saw "anthropic" paired with
+// hasApiKey:false on the server-managed preview tier (report.ts's
+// summarizeSettings fix addresses the same confusion in the settings
+// summary). "server" makes the real, server-decided routing explicit
+// instead of echoing a client-side setting nobody's request actually
+// used.
+function ctxProvider(creds: { provider: LlmProvider; apiKey: string }): string {
+  return creds.apiKey ? creds.provider : "server";
+}
+
 // Diagnostics privacy (tag-blocker BLOCKER 2): body.error is NOT safe
 // to put in a diagLog message — for openai-compat providers it can be
 // up to a 500-char slice of the raw upstream response body (see
@@ -140,7 +159,7 @@ async function detectViaNext(
   settings: Settings,
 ): Promise<DetectResponse> {
   const creds = resolveTaskCreds(settings, "detect");
-  const ctx: RequestErrorContext = { tag: "llm-detect", provider: creds.provider, model: body.model ?? creds.model };
+  const ctx: RequestErrorContext = { tag: "llm-detect", provider: ctxProvider(creds), model: body.model ?? creds.model };
   let res: Response;
   try {
     res = await fetch(withBase("/api/detect"), {
@@ -186,7 +205,7 @@ export async function summarizeApi(
   settings: Settings,
 ): Promise<SummaryResult> {
   const creds = resolveTaskCreds(settings, "summary");
-  const ctx: RequestErrorContext = { tag: "llm-summary", provider: creds.provider, model: body.model ?? creds.model };
+  const ctx: RequestErrorContext = { tag: "llm-summary", provider: ctxProvider(creds), model: body.model ?? creds.model };
   let res: Response;
   try {
     res = await fetch(withBase("/api/summarize"), {
@@ -227,7 +246,12 @@ async function defineViaNext(
   // define rides detect's config (see taskHeaders call below) — same
   // domain for the diag tag's provider/model context.
   const creds = resolveTaskCreds(settings, "detect");
-  const ctx: RequestErrorContext = { tag: "llm-define", provider: creds.provider, model: body.model ?? creds.model };
+  // Not explicitly named in item 5's "detect/translate/summary" list,
+  // but this is the exact same RequestErrorContext pattern (same
+  // ctxProvider(creds) fix applies for the identical reason) — applied
+  // for consistency rather than leaving one of the four occurrences
+  // stale; see the task report for this call.
+  const ctx: RequestErrorContext = { tag: "llm-define", provider: ctxProvider(creds), model: body.model ?? creds.model };
   let res: Response;
   try {
     res = await fetch(withBase("/api/define"), {
@@ -436,7 +460,7 @@ export async function translateApi(
   // /api/translate is not one of the three routes that stamp a
   // requestId (item 5's scope) — errorDetail/throwForStatus still work
   // fine, `requestId` just stays absent in the logged detail.
-  const ctx: RequestErrorContext = { tag: "llm-translate", provider: translateCreds.provider, model: resolvedModel };
+  const ctx: RequestErrorContext = { tag: "llm-translate", provider: ctxProvider(translateCreds), model: resolvedModel };
 
   let res: Response;
   try {

@@ -9,6 +9,7 @@ import type { WhisperWorkerOutMessage } from "../whisper.worker";
 class FakeWorker {
   onmessage: ((e: MessageEvent<WhisperWorkerOutMessage>) => void) | null = null;
   onerror: ((e: ErrorEvent) => void) | null = null;
+  onmessageerror: (() => void) | null = null;
   terminate = vi.fn();
   postMessage = vi.fn();
 
@@ -16,8 +17,12 @@ class FakeWorker {
     this.onmessage?.({ data } as MessageEvent<WhisperWorkerOutMessage>);
   }
 
-  emitError(message: string) {
-    this.onerror?.({ message } as ErrorEvent);
+  emitError(message: string, filename?: string, lineno?: number) {
+    this.onerror?.({ message, filename, lineno } as ErrorEvent);
+  }
+
+  emitMessageError() {
+    this.onmessageerror?.();
   }
 }
 
@@ -100,5 +105,81 @@ describe("transcribeInBrowser", () => {
 
     lastWorker.emit({ type: "done", segments: [] });
     await promise;
+  });
+
+  // Item 1 (honest download-phase progress): the worker posts
+  // ratio:undefined for the download phase when the CDN response
+  // carried no Content-Length header — TranscribeProgress.ratio is now
+  // optional specifically so this passes straight through unchanged,
+  // rather than being coerced to a fabricated 0/NaN.
+  it("forwards a progress message with an undefined ratio (unknown Content-Length) unchanged, with the MB-enriched detail", async () => {
+    const onProgress = vi.fn();
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base", onProgress);
+
+    lastWorker.emit({
+      type: "progress",
+      phase: "download",
+      ratio: undefined,
+      detail: "encoder.onnx 12.3MB",
+    });
+
+    expect(onProgress).toHaveBeenCalledWith({
+      phase: "download",
+      ratio: undefined,
+      detail: "encoder.onnx 12.3MB",
+    });
+
+    lastWorker.emit({ type: "done", segments: [] });
+    await promise;
+  });
+
+  // Coordinator follow-up: the transcribe phase's START post also
+  // carries an undefined ratio now (no per-chunk hook exists to back a
+  // real number — see whisper.worker.ts) rather than the old literal 0,
+  // which used to sit in the tray as a fake "转录中 0%" for the entire
+  // transcription of a long file. Same optional-ratio shape, same
+  // pass-through contract as the download-phase case above.
+  it("forwards a transcribe-phase progress message with an undefined ratio (start) unchanged", async () => {
+    const onProgress = vi.fn();
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base", onProgress);
+
+    lastWorker.emit({ type: "progress", phase: "transcribe", ratio: undefined });
+    expect(onProgress).toHaveBeenNthCalledWith(1, { phase: "transcribe", ratio: undefined, detail: undefined });
+
+    lastWorker.emit({ type: "progress", phase: "transcribe", ratio: 1 });
+    expect(onProgress).toHaveBeenNthCalledWith(2, { phase: "transcribe", ratio: 1, detail: undefined });
+
+    lastWorker.emit({ type: "done", segments: [] });
+    await promise;
+  });
+
+  it("maps an EMPTY onerror (the worker-script-failed-to-load signature) to the load-failure message, not the generic one", async () => {
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
+    lastWorker.emitError("");
+
+    await expect(promise).rejects.toThrow("转录组件加载失败");
+    expect(lastWorker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes the chunk basename:line when the ErrorEvent carries a location", async () => {
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
+    lastWorker.emitError(
+      "Out of memory",
+      "http://localhost:3000/_next/static/chunks/whisper.worker.abc123.js",
+      17,
+    );
+
+    await expect(promise).rejects.toThrow(
+      "浏览器转录 worker 出错：Out of memory @ whisper.worker.abc123.js:17",
+    );
+    expect(lastWorker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects (rather than hanging forever) on onmessageerror, and still terminates", async () => {
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
+    lastWorker.emitMessageError();
+
+    await expect(promise).rejects.toThrow("浏览器转录 worker 消息解码失败");
+    expect(lastWorker.terminate).toHaveBeenCalledTimes(1);
   });
 });

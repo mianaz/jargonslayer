@@ -72,12 +72,24 @@ export async function fetchOpenAiCompatModels(baseUrl: string, apiKey: string): 
   return extractModelIds(json);
 }
 
-/** Anthropic `GET /v1/models` with `x-api-key` + `anthropic-version`. */
+/** Anthropic `GET /v1/models` with `x-api-key` + `anthropic-version`.
+ *  Keyless calls are skipped outright (empty result, no request): a
+ *  fetch without x-api-key is a guaranteed 401, so firing it only
+ *  spams the console — a saved-but-keyless anthropic config hit this
+ *  on every credential-block expand. */
 export async function fetchAnthropicModels(apiKey: string): Promise<string[]> {
+  if (!apiKey) return [];
   const res = await fetch(ANTHROPIC_MODELS_URL, {
     headers: {
       "x-api-key": apiKey,
       "anthropic-version": ANTHROPIC_VERSION,
+      // Anthropic's API fails browser-origin CORS preflights unless
+      // the client opts in with this header (the SDK's
+      // dangerouslyAllowBrowser sets the same one) — without it this
+      // fetch could never succeed from a page, for any key. BYOK
+      // model listing is the sanctioned case: the user's own key,
+      // from their own browser, to the provider itself.
+      "anthropic-dangerous-direct-browser-access": "true",
     },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });

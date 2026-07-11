@@ -115,7 +115,15 @@ vi.mock("../../store", () => ({
 // network request when a test falls through to them.
 const mockFetch = vi.fn();
 
-import { detectApi, defineApi, NoKeyError, RateLimitApiError, resetSubscriptionToastLatch } from "../client";
+import {
+  detectApi,
+  defineApi,
+  summarizeApi,
+  translateApi,
+  NoKeyError,
+  RateLimitApiError,
+  resetSubscriptionToastLatch,
+} from "../client";
 import { clearDiag, getDiagEntries } from "../../diag/log";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
@@ -487,5 +495,79 @@ describe("detectApi — Next.js path status-code failures log to the diag ring b
       expect(entries[0].message).toBe("API Key 无效或未配置");
       expect(entries[0].message).not.toContain(SENTINEL);
     });
+  });
+});
+
+// ---------------------------------------------------------------
+// Item 5: a request with no client-side key runs KEYLESS through the
+// Next.js route, which falls back to ITS OWN server-managed credential
+// (anthropic.ts's resolveLlmConfig) — the client's idle settings.
+// provider never actually serves that request, so the diag ctx must
+// say "server", not echo the idle setting. subscriptionDirect is off
+// in every test here (default settings), so these hit the plain
+// Next.js path exercised above.
+// ---------------------------------------------------------------
+
+describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, the real provider when a key was actually sent", () => {
+  it("detectApi: no apiKey configured -> diag detail says provider=server, never the idle settings.provider (anthropic)", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
+
+    await expect(
+      detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" })),
+    ).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toContain("provider=server");
+    expect(entries[0].detail).not.toContain("provider=anthropic");
+  });
+
+  it("detectApi: an apiKey IS configured -> diag detail names the real provider, not 'server'", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
+
+    await expect(
+      detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "sk-real-key" })),
+    ).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toContain("provider=anthropic");
+    expect(entries[0].detail).not.toContain("provider=server");
+  });
+
+  it("summarizeApi: no apiKey configured -> provider=server", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
+
+    await expect(
+      summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKey: "" })),
+    ).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-summary");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toContain("provider=server");
+  });
+
+  it("translateApi: no apiKey configured -> provider=server (uses its own translateCreds variable, not detect's creds)", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
+
+    await expect(
+      translateApi({ segments: [], lang: "zh" }, makeSettings({ apiKey: "" })),
+    ).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-translate");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toContain("provider=server");
+  });
+
+  it("defineApi: no apiKey configured -> provider=server (rides detect's config, same ctxProvider fix applies)", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
+
+    await expect(
+      defineApi({ phrase: "boil the ocean", context: "" }, makeSettings({ apiKey: "" })),
+    ).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-define");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toContain("provider=server");
   });
 });

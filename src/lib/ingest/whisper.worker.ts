@@ -25,7 +25,7 @@ export interface WhisperWorkerInMessage {
 
 export type WhisperWorkerOutMessage =
   | { type: "ready"; backend: "webgpu" | "wasm" }
-  | { type: "progress"; phase: "download" | "transcribe"; ratio: number; detail?: string }
+  | { type: "progress"; phase: "download" | "transcribe"; ratio?: number; detail?: string }
   | { type: "done"; segments: { start: number; end: number; text: string }[] }
   | { type: "error"; message: string };
 
@@ -53,6 +53,46 @@ export function mapChunksToSegments(
     });
   }
   return segments;
+}
+
+/** Pure download-progress mapping (item 1: honest download-phase
+ *  progress) — exported so whisperBrowser.ts's tests can exercise the
+ *  ratio guard without a real transformers.js progress_callback
+ *  invocation, same reasoning as mapChunksToSegments above.
+ *
+ *  A well-formed 0-100 `progress` percentage needs BOTH a finite
+ *  number (transformers.js CAN emit NaN — hub.js's readResponse leaves
+ *  `total` at 0 if a stream's very first chunk happens to arrive
+ *  empty, giving 0/0) AND `loaded < total`. The second condition is
+ *  the one that actually matters in the field: when the CDN response
+ *  carries no Content-Length header (confirmed against the exact
+ *  "Unable to determine content-length from response headers" console
+ *  warning transformers.js itself logs in that case), hub.js's
+ *  readResponse (verified against the installed @huggingface/
+ *  transformers@3.8.1, node_modules/@huggingface/transformers/src/
+ *  utils/hub.js:726-769 — traced, not guessed) starts `total` at 0 and
+ *  then silently RE-EXPANDS it to equal `loaded` on EVERY single
+ *  chunk. That makes `progress` read as a constant, meaningless 100
+ *  for the ENTIRE download — never NaN — because `loaded` can then
+ *  never be < `total`. Only `loaded < total` proves a REAL, fixed
+ *  total (Content-Length genuinely known) backs the fraction; that's
+ *  the one signal a single progress event can offer with no
+ *  cross-event state.
+ *
+ *  `loaded` itself is real/monotonic regardless of whether `total` can
+ *  be trusted — surfacing it as MB gives the user something honest to
+ *  watch even when the ratio can't be shown (see importAudio.ts's
+ *  stage-label use of this detail). */
+export function mapDownloadProgress(info: {
+  progress: number;
+  loaded: number;
+  total: number;
+  file: string;
+}): { ratio?: number; detail: string } {
+  const known = Number.isFinite(info.progress) && info.total > 0 && info.loaded < info.total;
+  const mb = info.loaded / (1024 * 1024);
+  const detail = Number.isFinite(mb) ? `${info.file} ${mb.toFixed(1)}MB` : info.file;
+  return { ratio: known ? info.progress / 100 : undefined, detail };
 }
 
 async function detectBackend(): Promise<{ device: "webgpu" | "wasm"; dtype: "q4" | "q8" }> {
@@ -90,7 +130,7 @@ async function run(msg: WhisperWorkerInMessage): Promise<void> {
     dtype: backend.dtype,
     progress_callback: (info) => {
       if (info.status === "progress") {
-        post({ type: "progress", phase: "download", ratio: info.progress / 100, detail: info.file });
+        post({ type: "progress", phase: "download", ...mapDownloadProgress(info) });
       }
     },
   });
@@ -100,9 +140,21 @@ async function run(msg: WhisperWorkerInMessage): Promise<void> {
     // splits + stitches timestamps for audio longer than Whisper's
     // native 30s window — no hand-rolled chunking here. There is no
     // public per-chunk progress hook on the ASR pipeline's call
-    // signature, so the "transcribe" phase can only report
-    // start (0) and finish (1), not interim ratios.
-    post({ type: "progress", phase: "transcribe", ratio: 0 });
+    // signature (re-verified against the installed @huggingface/
+    // transformers@3.8.1: no `chunk_callback` anywhere in src/dist/
+    // types, and the ASR pipeline's own documented options —
+    // AutomaticSpeechRecognitionSpecificParams in src/pipelines.js —
+    // enumerate return_timestamps/chunk_length_s/stride_length_s/
+    // force_full_sequences/language/task/num_frames and nothing else;
+    // the per-chunk `for` loop in `_call_whisper` never invokes a
+    // caller-supplied hook), so the "transcribe" phase genuinely has no
+    // interim ratio — start posts NO ratio (undefined, same shape as
+    // the download phase's unknown-Content-Length case) rather than a
+    // literal 0, which used to sit in the task tray/HistoryDrawer as a
+    // fake "转录中 0%" for the entire transcription of a long file (the
+    // exact stuck-progress complaint this whole fix chases). Only
+    // completion (ratio: 1, below) is a real number.
+    post({ type: "progress", phase: "transcribe", ratio: undefined });
     const output = await transcriber(msg.audio, {
       chunk_length_s: 30,
       stride_length_s: 5,

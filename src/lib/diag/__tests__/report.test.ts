@@ -102,6 +102,31 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).toContain(entry.ref!);
     });
   });
+
+  // Item 5: the owner saw "anthropic" (settings.provider's default)
+  // paired with hasApiKey:false on the server-managed preview tier —
+  // reads as "configured for anthropic" when in fact nothing was
+  // configured and a real request would run through the server's own
+  // credential instead.
+  describe("item 5 — provider only names a real value when a key is actually configured", () => {
+    it("reports the literal '(未配置)' string, never settings.provider, when no key is configured (default settings)", () => {
+      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      expect(DEFAULT_SETTINGS.provider).toBe("anthropic"); // sanity: this is the misleading default
+      expect(report).toContain('"provider": "(未配置)"');
+      expect(report).not.toContain('"provider": "anthropic"');
+    });
+
+    it("reports the real provider once a key IS configured", () => {
+      const report = buildDiagnosticReport({
+        ...DEFAULT_SETTINGS,
+        provider: "openai-compat",
+        apiKey: SENTINELS.apiKey,
+      });
+      expect(report).toContain('"provider": "openai-compat"');
+      expect(report).not.toContain('"provider": "(未配置)"');
+      expect(report).not.toContain(SENTINELS.apiKey); // still never the key VALUE itself
+    });
+  });
 });
 
 describe("diag/report.ts — copyDiagnosticReport", () => {

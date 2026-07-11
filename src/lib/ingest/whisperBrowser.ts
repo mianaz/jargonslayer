@@ -21,7 +21,11 @@ export { mapChunksToSegments } from "./whisper.worker";
 
 export type TranscribeProgress = {
   phase: "download" | "transcribe";
-  ratio: number;
+  // Optional (#43 phase-2a follow-up): the download phase's ratio is
+  // undefined when the CDN response carries no Content-Length header —
+  // see whisper.worker.ts's progress_callback for why the underlying
+  // transformers.js number can't be trusted in that case.
+  ratio?: number;
   detail?: string;
 };
 
@@ -75,7 +79,30 @@ export function transcribeInBrowser(
     };
 
     worker.onerror = (e: ErrorEvent) => {
-      finish(() => reject(new Error(e.message || "浏览器转录 worker 出错")));
+      // An ErrorEvent with no message/filename is what the browser
+      // delivers when the worker SCRIPT itself failed to fetch/parse
+      // (server stopped mid-session, network dropped, stale deploy) —
+      // the worker's own catch/post("error") never got a chance to
+      // run. Name that case; a generic "worker 出错" reads like a
+      // transcription bug and sends debugging in the wrong direction.
+      const where = e.filename ? ` @ ${e.filename.split("/").pop()}:${e.lineno}` : "";
+      const detail = e.message ? `${e.message}${where}` : "";
+      finish(() =>
+        reject(
+          new Error(
+            detail
+              ? `浏览器转录 worker 出错：${detail}`
+              : "转录组件加载失败（多为网络中断或本地服务器已停止），请刷新页面后重试",
+          ),
+        ),
+      );
+    };
+
+    // A structured-clone failure on a worker reply would otherwise
+    // leave this promise pending forever: no error, no diag entry,
+    // an import task spinning until tab close.
+    worker.onmessageerror = () => {
+      finish(() => reject(new Error("浏览器转录 worker 消息解码失败，请刷新页面后重试")));
     };
 
     const inMsg: WhisperWorkerInMessage = { type: "transcribe", audio, modelId };
