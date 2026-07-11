@@ -94,6 +94,53 @@ function pruneTerminalTasks(tasks: Record<string, TaskState>): Record<string, Ta
 // ever fire for that id.
 const taskWebhookUrls = new Map<string, string>();
 
+// Diagnostics (item 4): last STAGE seen per task id, so updateTaskProgress
+// can log a "task-phase" diag entry only on a genuine transition, never
+// once per tick — a long download/transcribe can call updateTaskProgress
+// many times a second. Side-table for the same reason taskWebhookUrls is
+// one (must never leak into TaskState/the tray UI); cleared at either
+// terminal transition (completeTask/failTask), mirroring taskWebhookUrls'
+// own cleanup discipline.
+const taskLastStage = new Map<string, string>();
+
+/** A stage's DISPLAY text can carry a growing, ever-changing detail
+ *  suffix (e.g. importAudio.ts's "下载模型 12.3MB（首次较慢）", whose MB
+ *  count ticks on nearly every progress event, or the text-import
+ *  path's "检测 1/2" -> "检测 2/2" batch counter) — comparing the raw
+ *  stage string would fire a diag entry on almost every tick of a long
+ *  phase, exactly the per-tick spam this throttle exists to avoid.
+ *  Only the label BEFORE the first space is the actual phase identity;
+ *  stages with no space (提取音频/读取音频/转录中/构建会话 today) are
+ *  returned unchanged. */
+function stageKey(stage: string): string {
+  const spaceIdx = stage.indexOf(" ");
+  return spaceIdx === -1 ? stage : stage.slice(0, spaceIdx);
+}
+
+/** Diag entries (item 4): a coarse, privacy-safe FYI trail of what a
+ *  background import task actually did, filed at "info" (unlike
+ *  failTask's existing "error" entry below) so a start/phase/done
+ *  event never mints a spurious error ref (log.ts) or reads as
+ *  something-went-wrong in the copyable report. NEVER task.label —
+ *  that's frequently a literal filename or URL (see runTracked's own
+ *  callers) — only task.kind, the same privacy boundary failTask's
+ *  existing entry already upholds. */
+function diagTaskStarted(task: TaskState): void {
+  diagLog("info", "task-started", `${task.kind} 任务开始`);
+}
+
+function diagTaskPhase(task: TaskState, stage: string, progress: number | undefined): void {
+  const key = stageKey(stage);
+  if (taskLastStage.get(task.id) === key) return;
+  taskLastStage.set(task.id, key);
+  const progressLabel = typeof progress === "number" ? String(Math.round(progress * 100)) : "-";
+  diagLog("info", "task-phase", `${task.kind} 阶段变化`, `stage=${stage} progress=${progressLabel}`);
+}
+
+function diagTaskDone(task: TaskState): void {
+  diagLog("info", "task-done", `${task.kind} 完成`, `elapsedMs=${task.updatedAt - task.createdAt}`);
+}
+
 /** Fire-and-forget task.* webhook — reuses the SAME webhookUrl setting
  *  autoExport.ts's postWebhook already POSTs meeting.saved to (design
  *  decision 5: "the event bus doubles as the connector hook", no new
@@ -129,18 +176,33 @@ export function startTask(id: string, kind: TaskKind, label: string): TaskState 
     updatedAt: now,
   };
   taskWebhookUrls.set(id, useApp.getState().settings.webhookUrl ?? "");
+  taskLastStage.set(id, task.stage);
   useTasks.setState((s) => ({ tasks: pruneTerminalTasks({ ...s.tasks, [id]: task }) }));
   emitTaskEvent("task.started", task);
+  diagTaskStarted(task);
   return task;
 }
 
-export function updateTaskProgress(id: string, progress: number, stage: string): void {
-  patchTask(id, { progress, stage });
+// progress is `number | undefined` (item 3/item 1's honest-download-
+// progress follow-up): a download phase with an unknown Content-Length
+// has no trustworthy fraction to show (see whisper.worker.ts) — passing
+// `undefined` straight through to patchTask below OVERWRITES (not just
+// leaves untouched) any previous progress value, since the key IS
+// present in the patch object; TaskTray.tsx already renders stage-only
+// whenever `typeof task.progress !== "number"`, so this "clear" is
+// exactly the sensible tray behavior with no further UI change needed.
+export function updateTaskProgress(id: string, progress: number | undefined, stage: string): void {
+  const task = patchTask(id, { progress, stage });
+  if (task) diagTaskPhase(task, stage, progress);
 }
 
 export function completeTask(id: string, sessionId?: string): void {
   const task = patchTask(id, { status: "done", sessionId });
-  if (task) emitTaskEvent("task.done", task);
+  if (task) {
+    diagTaskDone(task);
+    taskLastStage.delete(id);
+    emitTaskEvent("task.done", task);
+  }
 }
 
 // Diagnostics privacy (tag-blocker MEDIUM 4): a task-failure string can
@@ -158,9 +220,13 @@ function redactUrlsForDiag(message: string): string {
 export function failTask(id: string, error: string): void {
   const task = patchTask(id, { status: "error", error });
   if (task) {
-    // Diagnostics choke point (item 2): task kind + error message only
-    // — never the imported session/file content that led here.
+    // Diagnostics choke point (item 2, and item 4's "verify an entry
+    // already exists" check — it does, this IS that entry; item 4
+    // deliberately does not duplicate it under a "task-failed" tag):
+    // task kind + error message only — never the imported session/file
+    // content that led here.
     diagLog("error", "task-registry", `${task.kind} 任务失败`, redactUrlsForDiag(error));
+    taskLastStage.delete(id);
     emitTaskEvent("task.error", task);
   }
 }
@@ -215,11 +281,17 @@ export function runTracked(
  *  callbacks) — same registry lifecycle, adapted to that shape. The
  *  returned `result` promise still rejects exactly like the wrapped
  *  call would have; the registry's own error is recorded regardless of
- *  whether the caller goes on to catch it. */
+ *  whether the caller goes on to catch it.
+ *
+ *  onProgress's progress is `number | undefined` (item 3) so importAudio.
+ *  ts's honest-download-progress phase (item 1: undefined when the CDN
+ *  gave no Content-Length) can flow straight through — every OTHER
+ *  existing caller (importText.ts's batch progress) only ever passes a
+ *  concrete number, so this widening is additive/backward-compatible. */
 export function runTrackedAsync<T extends { sessionId: string }>(
   kind: TaskKind,
   label: string,
-  run: (onProgress: (progress: number, stage: string) => void) => Promise<T>,
+  run: (onProgress: (progress: number | undefined, stage: string) => void) => Promise<T>,
 ): { id: string; result: Promise<T> } {
   const id = newId();
   startTask(id, kind, label);
