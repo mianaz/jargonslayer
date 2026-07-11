@@ -100,7 +100,15 @@ describe("fetchAnthropicModels", () => {
     expect(init.headers).toEqual({
       "x-api-key": "sk-ant-key",
       "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
     });
+  });
+
+  it("skips the network entirely for a keyless call — empty result, fetch never invoked", async () => {
+    const models = await fetchAnthropicModels("");
+
+    expect(models).toEqual([]);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("parses the Anthropic {data:[{id}]} response shape identically to the OpenAI-compat one", async () => {

@@ -9,6 +9,7 @@ import type { WhisperWorkerOutMessage } from "../whisper.worker";
 class FakeWorker {
   onmessage: ((e: MessageEvent<WhisperWorkerOutMessage>) => void) | null = null;
   onerror: ((e: ErrorEvent) => void) | null = null;
+  onmessageerror: (() => void) | null = null;
   terminate = vi.fn();
   postMessage = vi.fn();
 
@@ -16,8 +17,12 @@ class FakeWorker {
     this.onmessage?.({ data } as MessageEvent<WhisperWorkerOutMessage>);
   }
 
-  emitError(message: string) {
-    this.onerror?.({ message } as ErrorEvent);
+  emitError(message: string, filename?: string, lineno?: number) {
+    this.onerror?.({ message, filename, lineno } as ErrorEvent);
+  }
+
+  emitMessageError() {
+    this.onmessageerror?.();
   }
 }
 
@@ -100,5 +105,35 @@ describe("transcribeInBrowser", () => {
 
     lastWorker.emit({ type: "done", segments: [] });
     await promise;
+  });
+
+  it("maps an EMPTY onerror (the worker-script-failed-to-load signature) to the load-failure message, not the generic one", async () => {
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
+    lastWorker.emitError("");
+
+    await expect(promise).rejects.toThrow("转录组件加载失败");
+    expect(lastWorker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("includes the chunk basename:line when the ErrorEvent carries a location", async () => {
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
+    lastWorker.emitError(
+      "Out of memory",
+      "http://localhost:3000/_next/static/chunks/whisper.worker.abc123.js",
+      17,
+    );
+
+    await expect(promise).rejects.toThrow(
+      "浏览器转录 worker 出错：Out of memory @ whisper.worker.abc123.js:17",
+    );
+    expect(lastWorker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects (rather than hanging forever) on onmessageerror, and still terminates", async () => {
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
+    lastWorker.emitMessageError();
+
+    await expect(promise).rejects.toThrow("浏览器转录 worker 消息解码失败");
+    expect(lastWorker.terminate).toHaveBeenCalledTimes(1);
   });
 });
