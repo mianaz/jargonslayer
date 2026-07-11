@@ -294,12 +294,32 @@ export class DetectionScheduler {
       // one is safe and must not be dropped. `batch.endOffset` is
       // kept only for scheduling/telemetry, never for gating.
       //
-      // The ONE discard condition left: this batch belongs to a
-      // PREVIOUS meeting (a new one began — meetingGen bumped — while
-      // this request was in flight). Applying it now would land
-      // detections (or an "llm mode active" signal) on the wrong
-      // (current, unrelated) meeting — drop silently, no side effects.
+      // Two discard conditions at completion time (codex review round 1,
+      // F1 HIGH added the second one below — this first one is
+      // unchanged): this batch belongs to a PREVIOUS meeting (a new one
+      // began — meetingGen bumped — while this request was in flight).
+      // Applying it now would land detections (or an "llm mode active"
+      // signal) on the wrong (current, unrelated) meeting — drop
+      // silently, no side effects.
       if (batch.gen !== this.opts.getMeetingGen()) {
+        return;
+      }
+
+      // aiDetect-off race (F1 HIGH): re-read settings HERE, at
+      // completion time — NOT the `settings` captured at the top of
+      // this method, before the network round trip. Header/StatusLine's
+      // toggle sets aiDetect=false and synchronously echoes
+      // detectMode="dictionary" the instant the user clicks — but this
+      // in-flight batch was already on the wire. Applying its "llm"
+      // result now would silently flip detectMode back to "llm" behind
+      // the user's back: store ends up (aiDetect=false, detectMode=
+      // "llm"), the label claims AI is on, and the NEXT toggle click
+      // computes next=!aiDetect=true — the button reads as inverted.
+      // The user explicitly turned AI off mid-round-trip; discard the
+      // result and report the mode the user actually asked for.
+      if (!this.opts.getSettings().aiDetect) {
+        this.opts.onModeChange("dictionary");
+        this.consecutiveFailures = 0;
         return;
       }
 
@@ -319,6 +339,16 @@ export class DetectionScheduler {
     // mutate the current (unrelated) meeting's dictionary-fallback
     // detections, mode, or error toast.
     if (batch.gen !== this.opts.getMeetingGen()) return;
+
+    // F1 HIGH follow-up check: every onModeChange call below (both
+    // terminal-failure branches) already reports "dictionary" — never
+    // "llm" — unconditionally, with no aiDetect read at all. That is
+    // correct regardless of the live aiDetect value at completion time:
+    // a NoKeyError means there is no key to use either way, and
+    // consecutiveFailures>=MAX permanently flips fellBack=true, so this
+    // scheduler genuinely will only run dictionary-mode from here on.
+    // Unlike the success path's "llm" report, there is no stale-mode
+    // report to race here — nothing below needed the same fix.
 
     // NOTE (#54): no dictionary re-scan on any error path below — the
     // instant floor already scanned (and counted) this batch's text at

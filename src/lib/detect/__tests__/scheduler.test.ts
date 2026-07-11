@@ -364,6 +364,68 @@ describe("DetectionScheduler", () => {
     expect(meta?.batchWindowStart).toBeLessThan(before + 1000);
   });
 
+  // F1 HIGH (codex review round 1): a batch dispatched while aiDetect
+  // was on can still be in flight when the user flips aiDetect off —
+  // Header/StatusLine's toggle sets aiDetect=false and synchronously
+  // echoes detectMode="dictionary" the instant the user clicks. Before
+  // this fix, the batch's eventual success still applied its "llm"
+  // detections and reported onModeChange("llm"), silently overwriting
+  // that echo and leaving the store inconsistent (aiDetect=false,
+  // detectMode="llm") — the toggle button then reads as inverted on the
+  // next click.
+  describe("aiDetect-off race at batch completion (F1 HIGH)", () => {
+    it("aiDetect flips off after flush but before the mocked LLM resolves: results are discarded, final mode is dictionary", async () => {
+      const d1 = deferred<DetectResponse>();
+      mockDetectApi.mockImplementationOnce(() => d1.promise);
+
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+      // The user turns AI detect off while this batch is still on the
+      // wire (the real toggle handler also echoes detectMode
+      // synchronously — out of scope for this scheduler-only test; what
+      // matters here is that getSettings() now returns aiDetect:false).
+      settings = makeSettings({ aiDetect: false });
+
+      const llmRes: DetectResponse = {
+        expressions: [],
+        terms: [{ term: "LATE", type: "other", gloss_en: "", gloss_zh: "" }],
+      };
+      d1.resolve(llmRes);
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Discarded: the late llm result never reaches onDetection at all
+      // (the empty-mock dictionary floor produced nothing either).
+      expect(onDetection).not.toHaveBeenCalled();
+      // The scheduler must report the mode the user actually asked for,
+      // not resurrect "llm" behind their back.
+      expect(onModeChange).toHaveBeenLastCalledWith("dictionary");
+      expect(onModeChange).not.toHaveBeenCalledWith("llm");
+    });
+
+    it("aiDetect stays ON through completion: unchanged behavior — llm detections applied, mode reports llm", async () => {
+      const d1 = deferred<DetectResponse>();
+      mockDetectApi.mockImplementationOnce(() => d1.promise);
+
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+      const llmRes: DetectResponse = {
+        expressions: [],
+        terms: [{ term: "OK", type: "other", gloss_en: "", gloss_zh: "" }],
+      };
+      d1.resolve(llmRes);
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(onDetection).toHaveBeenCalledTimes(1);
+      expect(onDetection).toHaveBeenCalledWith(llmRes, "llm", { batchWindowStart: expect.any(Number) });
+      expect(onModeChange).toHaveBeenCalledWith("llm");
+      expect(onModeChange).not.toHaveBeenCalledWith("dictionary");
+    });
+  });
+
   // Item 6 (#54 field evidence): the owner reported seeing no
   // dictionary cards while AI detect was on, with nothing in the diag
   // ring buffer to confirm whether the floor was even running. These
