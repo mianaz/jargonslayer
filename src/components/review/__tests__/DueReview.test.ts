@@ -61,4 +61,44 @@ describe("hasPendingRelearn", () => {
     };
     expect(hasPendingRelearn(learnset, now)).toBe(false);
   });
+
+  // F5 LOW (codex review round 1): the pre-fix version flagged ANY
+  // record with dueAt inside the window, so a suppressed record or a
+  // perfectly ordinary, normally-scheduled review (intervalDays > 0)
+  // due in a few minutes both false-positived as "mid relearn-step".
+  it("is false for a suppressed record and a normally-scheduled (intervalDays > 0) record, even though both are due within the window", () => {
+    const now = 100_000;
+    const learnset: Record<string, LearnRecord> = {
+      // Looks like a relearn step by dueAt alone, but it's suppressed —
+      // it isn't coming back to the visible queue regardless.
+      suppressed: makeRecord({
+        learnKey: "suppressed",
+        intervalDays: 0,
+        suppressed: true,
+        dueAt: now + 5 * 60 * 1000,
+      }),
+      // A normal review due in 5 minutes — never lapsed, not a relearn
+      // step, just an ordinary interval that happens to land soon.
+      normal: makeRecord({
+        learnKey: "normal",
+        intervalDays: 4,
+        dueAt: now + 5 * 60 * 1000,
+      }),
+    };
+    expect(hasPendingRelearn(learnset, now)).toBe(false);
+  });
+
+  it("is true for a genuine just-lapsed record (intervalDays === 0, not suppressed) even alongside false-positive-shaped records", () => {
+    const now = 100_000;
+    const learnset: Record<string, LearnRecord> = {
+      normal: makeRecord({ learnKey: "normal", intervalDays: 4, dueAt: now + 5 * 60 * 1000 }),
+      lapsed: makeRecord({
+        learnKey: "lapsed",
+        intervalDays: 0,
+        suppressed: false,
+        dueAt: now + RELEARN_STEP_MS,
+      }),
+    };
+    expect(hasPendingRelearn(learnset, now)).toBe(true);
+  });
 });

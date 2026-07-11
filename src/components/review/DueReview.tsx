@@ -108,12 +108,27 @@ function buildCandidates(sessions: Record<string, MeetingSession>): ReviewCandid
 // was just failed. Without this hint that reads as "nothing to review"
 // when really it's "back in ~10 minutes" — exported for a pure-helper
 // unit test since there's no existing DueReview component test file.
+// F5 LOW (codex review round 1): used to flag ANY record with dueAt
+// inside (now, now + RELEARN_STEP_MS] — but ease/interval math is
+// continuous, so a perfectly ordinary, normally-scheduled record
+// (intervalDays > 0) can also just happen to come due in the next 10
+// minutes, which isn't "a card is mid relearn-step" at all. The signal
+// srs.ts's schedule() actually produces on a grade-0 lapse is
+// intervalDays reset to exactly 0 (see its lapse branch) with dueAt
+// stepped forward by RELEARN_STEP_MS — that's the one case this hint is
+// for. Suppressed records are excluded too: a suppressed card sitting
+// in that window isn't coming back to the visible queue regardless of
+// how soon its dueAt is.
 export function hasPendingRelearn(
   learnset: Record<string, LearnRecord>,
   now: number,
 ): boolean {
   return Object.values(learnset).some(
-    (r) => r.dueAt > now && r.dueAt <= now + RELEARN_STEP_MS,
+    (r) =>
+      r.intervalDays === 0 &&
+      !r.suppressed &&
+      r.dueAt > now &&
+      r.dueAt <= now + RELEARN_STEP_MS,
   );
 }
 
@@ -143,9 +158,27 @@ export default function DueReview({ cache }: { cache: Record<string, MeetingSess
     () => buildContentIndex(cache, customEntries),
     [cache, customEntries],
   );
+
+  // F2 MEDIUM (codex review round 1): the queue is time-dependent
+  // (composeReviewQueue/dueLearnRecords filter on dueAt <= now) but this
+  // memo used to read Date.now() ONCE per render with deps [learnset,
+  // candidates] only — after the 10-minute relearn step elapses
+  // (RELEARN_STEP_MS, srs.ts), a due-again card never resurfaces while
+  // this screen just sits open, since nothing else forces a re-render to
+  // take a fresh Date.now() reading. The empty-state's own "约 10 分钟
+  // 后重新出现" promise (see EmptyDueState below) never came true on its
+  // own either. 30s ticks are plenty of granularity for a 10-minute step
+  // — no reason to re-render every second just to watch a countdown
+  // nobody's staring at.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   const queue = useMemo(
-    () => composeReviewQueue(learnset, candidates, Date.now()),
-    [learnset, candidates],
+    () => composeReviewQueue(learnset, candidates, now),
+    [learnset, candidates, now],
   );
 
   const current = queue[0] ?? null;
@@ -166,7 +199,10 @@ export default function DueReview({ cache }: { cache: Record<string, MeetingSess
   }, [current?.learnKey]);
 
   if (current === null) {
-    return <EmptyDueState pendingRelearn={hasPendingRelearn(learnset, Date.now())} />;
+    // Same tick as the queue memo above (F2 MEDIUM) — not a fresh
+    // Date.now() read — so this hint and the queue's own due-check never
+    // disagree about "now" between two reads a render apart.
+    return <EmptyDueState pendingRelearn={hasPendingRelearn(learnset, now)} />;
   }
 
   const content = contentIndex[current.learnKey] ?? fallbackContent(current);
