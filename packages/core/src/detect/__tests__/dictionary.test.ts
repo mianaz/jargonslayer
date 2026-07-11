@@ -1,16 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Isolate scanDictionary from the personal glossary and the remote
-// pack bootstrap so these tests only exercise the built-in tables.
-vi.mock("../../history/glossary", () => ({
+// pack registry so these tests only exercise the built-in tables.
+vi.mock("../../history/glossaryLookup", () => ({
   findEntryBySurface: vi.fn(() => null),
 }));
-vi.mock("../remotePacks", () => ({
-  loadRemotePacksIntoRegistry: vi.fn(async () => {}),
+vi.mock("../remotePacksRegistry", () => ({
   getLoadedRemotePacks: vi.fn(() => []),
 }));
 
-import { findEntryBySurface } from "../../history/glossary";
+import { findEntryBySurface } from "../../history/glossaryLookup";
 import { scanDictionary } from "../dictionary";
 
 const mockFindEntryBySurface = vi.mocked(findEntryBySurface);

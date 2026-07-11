@@ -13,9 +13,9 @@ import type {
   TermType,
 } from "../types";
 import { EXTRA_EXPRESSIONS, EXTRA_TERMS } from "./dictionary-data";
-import { findEntryBySurface } from "../history/glossary";
+import { findEntryBySurface } from "../history/glossaryLookup";
 import { isPackEnabled } from "./packs";
-import { getLoadedRemotePacks, loadRemotePacksIntoRegistry } from "./remotePacks";
+import { getLoadedRemotePacks } from "./remotePacksRegistry";
 
 // ---------------------------------------------------------------
 // Dictionary entry shapes (internal — not part of the wire schema)
@@ -1021,39 +1021,33 @@ function splitSentences(text: string): string[] {
 }
 
 // ---------------------------------------------------------------
-// Remote pack lazy bootstrap — scanDictionary must stay synchronous
-// (called from the live detection scheduler per-segment), so the
-// registry load below is fire-and-forget: the very first call(s) to
-// scanDictionary may run before any remote packs have finished
-// loading, and later calls automatically pick them up once
-// loadRemotePacksIntoRegistry() resolves. This mirrors the module-
-// level cache pattern already used for enabledPacks/customEntries in
-// this codebase (see the comment on registeredEnabledPacks above and
-// glossary.ts's `cache`). SettingsDialog's mount effect also triggers
-// this load (see that file for why store.hydrate() isn't used here —
-// this worker doesn't own store.ts).
+// Remote packs (#53 core extraction): this package only ever READS
+// remotePacksRegistry.ts's in-memory cache — the actual fetch +
+// idb-keyval load is inherently impure/browser-only and lives in
+// apps/web's remotePacks.ts, which populates that shared registry.
+// Before #53, this function used to lazily kick off the load itself
+// on its first call (fire-and-forget); that trigger can no longer
+// live here since this package cannot import apps/web's loader.
+// Behavior is unchanged in practice: SettingsDialog is unconditionally
+// mounted by page.tsx and already triggers the same load, unconditional
+// of whether the dialog is open, on every app start (see that file's
+// mount effect) — this was already the dominant trigger path (it fires
+// on mount, before any user action could call scanDictionary), so
+// dropping the redundant internal trigger here does not change
+// observable behavior. See PLAN-v0.4 S1 report for the full reasoning.
 // ---------------------------------------------------------------
-
-let remotePacksBootstrapped = false;
-
-function ensureRemotePacksBootstrapped(): void {
-  if (remotePacksBootstrapped) return;
-  remotePacksBootstrapped = true;
-  void loadRemotePacksIntoRegistry();
-}
 
 /** Scan text against the built-in dictionaries. Word-boundary,
  *  case-insensitive, light inflection tolerance (e.g. "circling back").
  *  `enabledPacks` defaults to the value last set via setEnabledPacks()
  *  when omitted — see the registry comment above. Remote packs loaded
- *  via remotePacks.ts (see the comment above) participate exactly
- *  like EXTRA_EXPRESSIONS/EXTRA_TERMS, filtered by their own pack id. */
+ *  via apps/web's remotePacks.ts (see the comment above) participate
+ *  exactly like EXTRA_EXPRESSIONS/EXTRA_TERMS, filtered by their own
+ *  pack id. */
 export function scanDictionary(
   text: string,
   enabledPacks: string[] | null = registeredEnabledPacks,
 ): DetectResponse {
-  ensureRemotePacksBootstrapped();
-
   const sentences = splitSentences(text);
   if (sentences.length === 0) return { expressions: [], terms: [] };
 

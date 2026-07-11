@@ -2,7 +2,7 @@
 // to the domains relevant to them (e.g. turn off 学术 jargon if they
 // never attend academic meetings). OWNER: worker G.
 
-import { getLoadedRemotePacks } from "./remotePacks";
+import { getLoadedRemotePacks } from "./remotePacksRegistry";
 
 export interface DictPack {
   id: string;
@@ -79,12 +79,14 @@ export function isPackEnabled(pack: string, enabled: string[] | null): boolean {
 }
 
 /** Built-in packs plus metadata for every currently-loaded remote pack
- *  (see remotePacks.ts), so the Settings checkbox list and any other
- *  pack-aware UI can render both sources uniformly. Remote packs are
- *  tagged `remote: true` and only appear once
- *  loadRemotePacksIntoRegistry() has populated the in-memory registry
- *  (lazily triggered by dictionary.ts's first scan or SettingsDialog's
- *  mount effect — see those files for why). */
+ *  (see apps/web's remotePacks.ts), so the Settings checkbox list and
+ *  any other pack-aware UI can render both sources uniformly. Remote
+ *  packs are tagged `remote: true` and only appear once apps/web's
+ *  remotePacks.ts has populated remotePacksRegistry.ts's in-memory
+ *  registry (triggered by SettingsDialog's app-mount effect — #53 core
+ *  extraction moved this registry here since it's pure; the fetch/
+ *  idb-keyval load itself stays in apps/web and can't be triggered
+ *  from this package). */
 export function getAllPacks(): DictPack[] {
   const remotePacks: DictPack[] = getLoadedRemotePacks().map((p) => ({
     id: p.id,

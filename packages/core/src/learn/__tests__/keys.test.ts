@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { scanDictionary } from "../../detect/dictionary";
 import { mergeDetections } from "../../detect/dedupe";
-import { learnKey } from "../store";
+import { learnKey } from "../keys";
 
 describe("learnKey detection parity", () => {
   it("matches expression normKey produced by scanDictionary + mergeDetections", () => {

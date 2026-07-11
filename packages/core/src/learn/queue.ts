@@ -5,7 +5,7 @@
 // module never touches storage itself.
 
 import type { ExpressionCard, TermCard } from "../types";
-import { learnKey } from "./store";
+import { learnKey } from "./keys";
 import type { LearnKind, LearnRecord } from "./types";
 
 // Never pre-populate the queue from all history — only records due
