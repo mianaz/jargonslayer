@@ -176,7 +176,10 @@ describe("task lifecycle diag entries (item 4)", () => {
 
     const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
     expect(entries).toHaveLength(1); // only the first tick's transition
-    expect(entries[0].detail).toBe("stage=下载模型 1.0MB（首次较慢） progress=-");
+    // F3 MEDIUM (codex review round 1): the LABEL only ("下载模型"), not
+    // the raw stage string — see the dedicated leak-regression test
+    // below for why.
+    expect(entries[0].detail).toBe("stage=下载模型 progress=-");
   });
 
   it("the same throttle applies to a batch-counter suffix (e.g. importText.ts's '检测 1/2' -> '检测 2/2')", () => {
@@ -186,6 +189,7 @@ describe("task lifecycle diag entries (item 4)", () => {
 
     const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
     expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe("stage=检测 progress=50");
   });
 
   it("DOES write a new task-phase entry once the stage's leading label actually changes", () => {
@@ -196,8 +200,26 @@ describe("task lifecycle diag entries (item 4)", () => {
 
     const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
     expect(entries).toHaveLength(2);
-    expect(entries[0].detail).toBe("stage=下载模型 1.0MB（首次较慢） progress=-");
+    expect(entries[0].detail).toBe("stage=下载模型 progress=-");
     expect(entries[1].detail).toBe("stage=转录中 progress=100");
+  });
+
+  // F3 MEDIUM (codex review round 1): the stage's DISPLAY text can embed
+  // progress detail down to a model shard's filename (e.g. importAudio.
+  // ts's "下载模型 encoder.onnx 12.3MB（首次较慢）") — that must never
+  // reach the copyable diag ring buffer, only the leading label
+  // (counts/labels-only redaction rule). Pins the fix by construction:
+  // whatever detail a stage string grows to contain, only its first
+  // token can land in the entry.
+  it("a stage with a filename suffix logs the label only — the filename never reaches the diag entry", () => {
+    startTask("t1", "import-audio", "a.wav");
+    updateTaskProgress("t1", 0.12, "下载模型 encoder.onnx 12.3MB（首次较慢）");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "task-phase");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe("stage=下载模型 progress=12");
+    expect(entries[0].detail).not.toContain("encoder.onnx");
+    expect(entries[0].message).not.toContain("encoder.onnx");
   });
 
   it("task-phase progress is rounded to a whole percent, and '-' when undefined", () => {

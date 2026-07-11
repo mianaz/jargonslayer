@@ -134,7 +134,18 @@ function diagTaskPhase(task: TaskState, stage: string, progress: number | undefi
   if (taskLastStage.get(task.id) === key) return;
   taskLastStage.set(task.id, key);
   const progressLabel = typeof progress === "number" ? String(Math.round(progress * 100)) : "-";
-  diagLog("info", "task-phase", `${task.kind} 阶段变化`, `stage=${stage} progress=${progressLabel}`);
+  // F3 MEDIUM (codex review round 1): log the throttle's own LABEL
+  // (`key`, the text before the first space — see stageKey above), never
+  // the raw `stage` string. A stage's display text can grow a detail
+  // suffix that carries a model shard filename (e.g. importAudio.ts's
+  // "下载模型 encoder.onnx 12.3MB（首次较慢）") — logging `stage` verbatim
+  // put that filename straight into the copyable diag ring buffer,
+  // violating the counts/labels-only redaction rule this whole function
+  // is supposed to uphold (see the doc comment above). Guaranteed by
+  // construction: whatever detail a future stage string grows to
+  // contain, only its leading token (computed once, above) can ever
+  // reach diagLog.
+  diagLog("info", "task-phase", `${task.kind} 阶段变化`, `stage=${key} progress=${progressLabel}`);
 }
 
 function diagTaskDone(task: TaskState): void {
