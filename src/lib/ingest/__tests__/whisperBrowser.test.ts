@@ -107,6 +107,32 @@ describe("transcribeInBrowser", () => {
     await promise;
   });
 
+  // Item 1 (honest download-phase progress): the worker posts
+  // ratio:undefined for the download phase when the CDN response
+  // carried no Content-Length header — TranscribeProgress.ratio is now
+  // optional specifically so this passes straight through unchanged,
+  // rather than being coerced to a fabricated 0/NaN.
+  it("forwards a progress message with an undefined ratio (unknown Content-Length) unchanged, with the MB-enriched detail", async () => {
+    const onProgress = vi.fn();
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base", onProgress);
+
+    lastWorker.emit({
+      type: "progress",
+      phase: "download",
+      ratio: undefined,
+      detail: "encoder.onnx 12.3MB",
+    });
+
+    expect(onProgress).toHaveBeenCalledWith({
+      phase: "download",
+      ratio: undefined,
+      detail: "encoder.onnx 12.3MB",
+    });
+
+    lastWorker.emit({ type: "done", segments: [] });
+    await promise;
+  });
+
   it("maps an EMPTY onerror (the worker-script-failed-to-load signature) to the load-failure message, not the generic one", async () => {
     const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
     lastWorker.emitError("");

@@ -21,7 +21,11 @@ export { mapChunksToSegments } from "./whisper.worker";
 
 export type TranscribeProgress = {
   phase: "download" | "transcribe";
-  ratio: number;
+  // Optional (#43 phase-2a follow-up): the download phase's ratio is
+  // undefined when the CDN response carries no Content-Length header —
+  // see whisper.worker.ts's progress_callback for why the underlying
+  // transformers.js number can't be trusted in that case.
+  ratio?: number;
   detail?: string;
 };
 
