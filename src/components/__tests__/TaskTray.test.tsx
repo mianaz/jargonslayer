@@ -80,4 +80,32 @@ describe("TaskTray — open tray with live tasks (React #185 regression)", () =>
     expect(container!.textContent).toContain("下载模型");
     expect(container!.textContent).toContain("40%");
   });
+
+  // Coordinator follow-up on the honest-progress fix: the transcribe
+  // phase's start post now carries an undefined ratio (no per-chunk
+  // hook exists to back a real number) instead of the old literal 0,
+  // which used to sit here as a fake "转录中 0%" for the entire
+  // transcription of a long file — the exact stuck-progress complaint
+  // this fix chases. The tray's existing typeof-number guard already
+  // renders stage-only in that case; this pins the actual rendered
+  // behavior down.
+  it("a running task with progress:undefined shows the stage text alone, no fabricated percentage", async () => {
+    startTask("task-2", "import-audio", "导入 long-meeting.wav");
+    mountTray();
+
+    await act(async () => {
+      root!.render(<TaskTray />);
+    });
+    const chip = container!.querySelector('button[aria-label="后台任务"]');
+    await act(async () => {
+      chip!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      updateTaskProgress("task-2", undefined, "转录中");
+    });
+
+    expect(container!.textContent).toContain("导入 long-meeting.wav");
+    expect(container!.textContent).toContain("转录中");
+    expect(container!.textContent).not.toContain("%");
+  });
 });

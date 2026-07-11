@@ -384,6 +384,32 @@ describe("importAudio", () => {
     expect(downloadCall?.[0]).toBeUndefined();
   });
 
+  // Coordinator follow-up: the transcribe phase's START event also now
+  // carries an undefined ratio (no per-chunk hook exists — item 2), so
+  // "转录中" must pass progress:undefined straight through too, not just
+  // the download phase. Completion (ratio:1) stays a real number.
+  it("an undefined transcribe-start ratio passes progress:undefined straight through to the 转录中 stage — no fabricated 0%", async () => {
+    mockTranscribeInBrowser.mockImplementation(async (_audio, _modelId, onProgress) => {
+      onProgress?.({ phase: "download", ratio: 1, detail: "encoder.onnx 50.0MB" });
+      onProgress?.({ phase: "transcribe", ratio: undefined });
+      onProgress?.({ phase: "transcribe", ratio: 1 });
+      return [{ start: 0, end: 1, text: "hi" }];
+    });
+
+    const onProgress = vi.fn();
+    await importAudio({
+      file: fakeFile(),
+      translate: false,
+      settings: makeSettings(),
+      onProgress,
+    });
+
+    const transcribeCalls = onProgress.mock.calls.filter((c) => c[1] === "转录中");
+    expect(transcribeCalls).toHaveLength(2);
+    expect(transcribeCalls[0][0]).toBeUndefined(); // start: no fabricated ratio
+    expect(transcribeCalls[1][0]).toBe(1); // completion: still a real number
+  });
+
   it("passes the decoded Float32Array and the default model id to transcribeInBrowser", async () => {
     await importAudio({
       file: fakeFile(),

@@ -147,9 +147,14 @@ async function run(msg: WhisperWorkerInMessage): Promise<void> {
     // enumerate return_timestamps/chunk_length_s/stride_length_s/
     // force_full_sequences/language/task/num_frames and nothing else;
     // the per-chunk `for` loop in `_call_whisper` never invokes a
-    // caller-supplied hook), so the "transcribe" phase can only report
-    // start (0) and finish (1), not interim ratios.
-    post({ type: "progress", phase: "transcribe", ratio: 0 });
+    // caller-supplied hook), so the "transcribe" phase genuinely has no
+    // interim ratio — start posts NO ratio (undefined, same shape as
+    // the download phase's unknown-Content-Length case) rather than a
+    // literal 0, which used to sit in the task tray/HistoryDrawer as a
+    // fake "转录中 0%" for the entire transcription of a long file (the
+    // exact stuck-progress complaint this whole fix chases). Only
+    // completion (ratio: 1, below) is a real number.
+    post({ type: "progress", phase: "transcribe", ratio: undefined });
     const output = await transcriber(msg.audio, {
       chunk_length_s: 30,
       stride_length_s: 5,

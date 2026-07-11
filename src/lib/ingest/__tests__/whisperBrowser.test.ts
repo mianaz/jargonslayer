@@ -133,6 +133,26 @@ describe("transcribeInBrowser", () => {
     await promise;
   });
 
+  // Coordinator follow-up: the transcribe phase's START post also
+  // carries an undefined ratio now (no per-chunk hook exists to back a
+  // real number — see whisper.worker.ts) rather than the old literal 0,
+  // which used to sit in the tray as a fake "转录中 0%" for the entire
+  // transcription of a long file. Same optional-ratio shape, same
+  // pass-through contract as the download-phase case above.
+  it("forwards a transcribe-phase progress message with an undefined ratio (start) unchanged", async () => {
+    const onProgress = vi.fn();
+    const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base", onProgress);
+
+    lastWorker.emit({ type: "progress", phase: "transcribe", ratio: undefined });
+    expect(onProgress).toHaveBeenNthCalledWith(1, { phase: "transcribe", ratio: undefined, detail: undefined });
+
+    lastWorker.emit({ type: "progress", phase: "transcribe", ratio: 1 });
+    expect(onProgress).toHaveBeenNthCalledWith(2, { phase: "transcribe", ratio: 1, detail: undefined });
+
+    lastWorker.emit({ type: "done", segments: [] });
+    await promise;
+  });
+
   it("maps an EMPTY onerror (the worker-script-failed-to-load signature) to the load-failure message, not the generic one", async () => {
     const promise = transcribeInBrowser(new Float32Array([0]), "onnx-community/whisper-base");
     lastWorker.emitError("");

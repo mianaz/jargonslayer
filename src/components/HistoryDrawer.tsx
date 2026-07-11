@@ -210,17 +210,28 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
                       </button>
                     </div>
                   ) : (
-                    <div className="mt-2 flex items-center gap-2">
-                      <div className="h-1.5 flex-1 rounded-none bg-edge">
-                        <div
-                          className="h-full rounded-none bg-lab-green transition-all"
-                          style={{ width: `${Math.round((task.progress ?? 0) * 100)}%` }}
-                        />
+                    // typeof-number gated, not `task.progress ?? 0`
+                    // (coordinator follow-up on the honest-progress fix):
+                    // a phase with no trustworthy ratio (download with
+                    // unknown Content-Length, or transcribe — see
+                    // whisper.worker.ts) previously coerced to a bar
+                    // frozen at a fabricated 0% for the entire phase,
+                    // reproducing the exact reported bug in this second
+                    // surface. Mirrors TaskTray.tsx's own guard — stage
+                    // text above is enough when there's no real number.
+                    typeof task.progress === "number" && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <div className="h-1.5 flex-1 rounded-none bg-edge">
+                          <div
+                            className="h-full rounded-none bg-lab-green transition-all"
+                            style={{ width: `${Math.round(task.progress * 100)}%` }}
+                          />
+                        </div>
+                        <span className="shrink-0 font-mono text-[11px] tabular-nums text-mut2">
+                          {Math.round(task.progress * 100)}%
+                        </span>
                       </div>
-                      <span className="shrink-0 font-mono text-[11px] tabular-nums text-mut2">
-                        {Math.round((task.progress ?? 0) * 100)}%
-                      </span>
-                    </div>
+                    )
                   )}
                 </div>
               ))}
