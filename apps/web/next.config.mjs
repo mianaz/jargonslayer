@@ -1,12 +1,28 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  // #53 workspace extraction: @jargonslayer/core ships raw TS source
+  // (no build step, see packages/core/package.json), so Next's default
+  // "don't transform node_modules" fast path must be told to run its
+  // own SWC transform over it too, same as first-party app code.
+  transpilePackages: ["@jargonslayer/core"],
   // Sub-path hosting (e.g. NEXT_PUBLIC_BASE_PATH=/jargonslayer for the
   // public demo). Unset for the default root deployment. Client code
   // reads the same var via src/lib/basePath.ts.
   ...(process.env.NEXT_PUBLIC_BASE_PATH
     ? { basePath: process.env.NEXT_PUBLIC_BASE_PATH }
     : {}),
+  // v0.4 S1 dual-target hook (PLAN-v0.4 §1A): Tauri's desktop shell
+  // wraps a static-export webview, so BUILD_TARGET=desktop must emit
+  // `output: "export"` — API routes don't run in that target (S2
+  // moves detect/define/translate/summarize to a client-side
+  // callProvider). Only wiring the hook is in scope for S1: a
+  // `BUILD_TARGET=desktop npm run build -w apps/web` run today is
+  // EXPECTED to fail on the API routes (next export can't emit a
+  // route with no static params / server-only code) — that's S2+S3's
+  // job to resolve, not this session's. Web builds (BUILD_TARGET unset
+  // or anything else) are completely unaffected.
+  ...(process.env.BUILD_TARGET === "desktop" ? { output: "export" } : {}),
   // Subscription-direct kill-switch (v0.2.2, experimental — see
   // src/lib/agent/localHost.ts's isFeatureBuilt). Next.js's webpack
   // DefinePlugin only inlines a NEXT_PUBLIC_* var (and thus lets the
