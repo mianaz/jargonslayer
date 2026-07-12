@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2017",
+    // Browser extension context: DOM (side panel page) + the ambient
+    // "chrome" and "dom-chromium-ai" (Translator/LanguageDetector —
+    // Chrome 138+ built-in AI APIs, not yet part of @types/chrome)
+    // global type packages below. Deliberately no "node" types (unlike
+    // packages/core's tsconfig) — this app never runs under Node, and
+    // pulling in @types/node would silently retype browser globals
+    // like setTimeout with Node's signatures.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["chrome", "dom-chromium-ai"],
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "incremental": true,
+    "paths": {
+      // #53 core extraction: resolves TS source directly (no build
+      // step, see packages/core/package.json's "exports" map for the
+      // matching runtime/bundler resolution) so tsc and the editor
+      // both see real types without an install step in between.
+      // Mirrors apps/web/tsconfig.json's identical paths entry.
+      "@jargonslayer/core/*": ["../../packages/core/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "vite.config.ts", "manifest.config.ts", "vitest.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}
