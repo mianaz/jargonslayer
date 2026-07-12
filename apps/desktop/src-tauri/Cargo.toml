@@ -22,6 +22,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-http = "2"
+# Chunk 3's own command/event payload structs (AppPaths, ProcessResult,
+# UvLogEvent, ...) — already resolved transitively via tauri itself, made
+# explicit here since this crate's own code derives Serialize directly.
+serde = { version = "1", features = ["derive"] }
 
 # Single-instance is desktop-only (no Android/iOS support) — same
 # target gate the plugin's own setup docs recommend for `cargo add`.
