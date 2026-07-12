@@ -61,7 +61,24 @@ const nextConfig = {
     // expected to set this alongside BUILD_TARGET=desktop, since that
     // target has no /api/* to fall back to at all; S2 itself never sets
     // it by default.
-    NEXT_PUBLIC_LLM_TRANSPORT: process.env.NEXT_PUBLIC_LLM_TRANSPORT ?? "",
+    //
+    // Flag containment (F2, codex v04-integration review): only ever
+    // forward the AMBIENT env var when this is genuinely a
+    // BUILD_TARGET=desktop build. A shared CI environment that happens
+    // to export NEXT_PUBLIC_LLM_TRANSPORT=client (e.g. alongside a
+    // desktop build run in the same job/environment) would otherwise
+    // silently flip an ordinary hosted-web build onto the client-side
+    // path too — and the hosted web app must NEVER lose its route-side
+    // validation/allowlist/rate-limit (app/api/*/route.ts), even if
+    // that env var leaks into its build environment. Every non-desktop
+    // build gets a hardcoded "server" here, ignoring the ambient var
+    // entirely (not "" — an explicit non-empty sentinel so a bundle
+    // inspection unambiguously shows containment took effect, same
+    // spirit as the two vars above always being build-time-inlinable).
+    NEXT_PUBLIC_LLM_TRANSPORT:
+      process.env.BUILD_TARGET === "desktop"
+        ? (process.env.NEXT_PUBLIC_LLM_TRANSPORT ?? "")
+        : "server",
   },
 };
 
