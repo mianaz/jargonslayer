@@ -199,6 +199,13 @@ export function useMeeting(): UseMeetingResult {
         diagLog("warn", "stt-notice", msg);
         useApp.getState().showToast(msg);
       },
+      onEngineMode: (mode) => {
+        // On-device Web Speech (see STTEvents.onEngineMode's own doc)
+        // — plain store mirror, no toast/diag here (webSpeech.ts
+        // already diag-logs the decision itself); StatusLine's privacy
+        // indicator reads this field directly.
+        useApp.getState().setSttEngineMode(mode);
+      },
       onStatus: (status, detail) => {
         if (status === "connecting" || status === "listening") {
           // A pending End outranks the engine (codex round-3): once

@@ -247,3 +247,125 @@ describe("StatusLine — sidecar-down tooltip", () => {
     expect(privacySegment().title).toBe("");
   });
 });
+
+// ---------------------------------------------------------------
+// On-device Web Speech privacy posture (docs/research/
+// stt-live-engines-2026-07.md item #1): the privacy segment shows the
+// same green "音频未离开本机" posture whisper/tabaudio use whenever the
+// ACTIVE webspeech session reported on-device mode
+// (store.sttEngineMode, written by useMeeting.ts's onEngineMode
+// handler) — instead of the default amber cloud warning webspeech
+// otherwise always shows (ENGINE_POSTURE['webspeech'] === 'cloud').
+// ---------------------------------------------------------------
+
+describe("StatusLine — on-device privacy posture", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({
+      status: "idle",
+      sttEngineMode: null,
+      settings: { ...s.settings, engine: "demo" },
+    }));
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  // Same hook as the sidecar-down describe block above — the privacy
+  // sentence's own wrapping span is the only `.truncate` element.
+  function privacySegment(): HTMLElement {
+    const el = container!.querySelector(".truncate");
+    if (!el) throw new Error("privacy segment (.truncate) not found");
+    return el as HTMLElement;
+  }
+
+  it("shows the green on-device posture when engine:webspeech and sttEngineMode:'on-device'", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      sttEngineMode: "on-device",
+      settings: { ...s.settings, engine: "webspeech" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine />);
+    });
+
+    expect(privacySegment().textContent).toContain("音频未离开本机");
+    expect(privacySegment().className).toContain("text-lab-green");
+    expect(privacySegment().className).not.toContain("text-warn-soft");
+  });
+
+  it("stays amber cloud when engine:webspeech and sttEngineMode:'cloud' (decided/fell back to cloud)", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      sttEngineMode: "cloud",
+      settings: { ...s.settings, engine: "webspeech" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine />);
+    });
+
+    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().className).toContain("text-warn-soft");
+  });
+
+  it("stays amber cloud when engine:webspeech and sttEngineMode:null (no session has reported yet)", async () => {
+    useApp.setState((s) => ({
+      status: "connecting",
+      sttEngineMode: null,
+      settings: { ...s.settings, engine: "webspeech" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine />);
+    });
+
+    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().className).toContain("text-warn-soft");
+  });
+
+  it("ignores a stale sttEngineMode:'on-device' left over from a previous webspeech session once the engine switches away", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      sttEngineMode: "on-device",
+      settings: { ...s.settings, engine: "whisper" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine />);
+    });
+
+    // Still green (whisper's own posture is local) — but via
+    // ENGINE_POSTURE, not the stale on-device flag; the point is this
+    // doesn't crash/misbehave for a non-webspeech engine.
+    expect(privacySegment().textContent).toContain("音频未离开本机");
+    expect(privacySegment().className).toContain("text-lab-green");
+  });
+});
