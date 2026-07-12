@@ -128,7 +128,9 @@ export function useMeeting(): UseMeetingResult {
       useApp.getState().setStatus(segCount ? "stopped" : "idle");
       // Persist whatever was transcribed — engine errors and demo
       // completion must not lose the session. Late detection results
-      // are re-saved by the store's post-stop debounced save.
+      // and a lingering speaker_update (see wsTransport.ts's
+      // POST_STOP_LINGER_MS) are both re-saved by the store's post-stop
+      // debounced save (store.ts's applyDetection/applySpeakerUpdate).
       if (segCount > 0) {
         await useApp.getState().saveCurrentSession();
       }

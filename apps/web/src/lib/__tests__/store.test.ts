@@ -291,6 +291,75 @@ describe("scheduleSessionSave — debounced post-stop save vs. meeting-boundary 
   });
 });
 
+describe("applySpeakerUpdate (store action) — post-stop diarization linger re-save + meeting-boundary guard", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("a late update arriving after doStop (status already 'stopped') re-persists — the saved session gains the labels", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 5,
+      segments: [makeSegment({ id: "a", sttSeg: 0 })],
+      speakerAliases: {},
+      activeSessionId: null,
+    });
+
+    useApp.getState().applySpeakerUpdate([{ segId: 0, speaker: "SPEAKER_1" }], ["SPEAKER_1"], 5);
+
+    // Live state updates immediately...
+    expect(useApp.getState().segments[0].speaker).toBe("SPEAKER_1");
+    expect(saveSpy).not.toHaveBeenCalled(); // ...but the re-save is debounced, not immediate
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.segments[0].speaker).toBe("SPEAKER_1");
+  });
+
+  it("does not schedule a re-save while the meeting is still live (status !== 'stopped')", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    useApp.setState({
+      status: "listening",
+      meetingGen: 5,
+      segments: [makeSegment({ id: "a", sttSeg: 0 })],
+      speakerAliases: {},
+    });
+
+    useApp.getState().applySpeakerUpdate([{ segId: 0, speaker: "SPEAKER_1" }], ["SPEAKER_1"], 5);
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  // sessionGen is captured per attach (useMeeting.ts's attachEngine
+  // parameter, threaded through onSpeakerUpdate) — a speaker_update
+  // that lingers (see wsTransport.ts's POST_STOP_LINGER_MS) past the
+  // point a NEW meeting has already started must never land on it.
+  it("rejects a lingering update whose gen belongs to a previous meeting — no state change and no re-save scheduled", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 6, // a NEW meeting already started (bumped past the old engine session's gen)
+      segments: [makeSegment({ id: "a", sttSeg: 0 })],
+      speakerAliases: {},
+    });
+
+    useApp.getState().applySpeakerUpdate([{ segId: 0, speaker: "SPEAKER_1" }], ["SPEAKER_1"], 5); // stale gen
+
+    expect(useApp.getState().segments[0].speaker).toBeUndefined(); // untouched
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("elapsedActiveMs — pure pause/resume elapsed-time math (B2)", () => {
   it("returns 0 when there's no meeting (startedAt: null), regardless of the other params", () => {
     expect(elapsedActiveMs(null, 999_999, 12_345, 500)).toBe(0);

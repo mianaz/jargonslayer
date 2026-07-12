@@ -295,6 +295,11 @@ interface AppState {
   // sttSeg numbering restarts per engine session, so a stale update
   // could otherwise collide with an unrelated segment in the new
   // meeting that happens to reuse the same small sttSeg number).
+  // Post-stop diarization linger: the sidecar's own final pass can
+  // still deliver one of these after the session was already saved
+  // (up to POST_STOP_LINGER_MS later — see wsTransport.ts) — same
+  // top-up re-save as applyTranslations/applyDetection below, so the
+  // labels this update carries aren't lost from history.
   applySpeakerUpdate: (
     assignments: { segId: number; speaker: string }[],
     speakers: string[],
@@ -793,6 +798,17 @@ export const useApp = create<AppState>((set, get) => ({
         get().speakerAliases,
       ),
     });
+    // Post-stop diarization linger (see AppState.applySpeakerUpdate's
+    // own doc above): the sidecar's final pass can resolve after the
+    // session was already saved on stop — same top-up re-save as
+    // applyTranslations/applyDetection/renameSpeaker/updateSegmentText.
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
   },
 
   applyTranslations: (map, gen) => {
