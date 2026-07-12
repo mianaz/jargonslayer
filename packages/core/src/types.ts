@@ -80,6 +80,16 @@ export interface STTEvents {
   // Advisory only: MUST NOT stop the meeting (never routed through
   // onStatus("error")) — the engine keeps retrying on its own backoff.
   onNotice?: (msg: string) => void;
+  // On-device Web Speech (Chrome 139+, `processLocally` — see
+  // docs/research/stt-live-engines-2026-07.md item #1 and
+  // lib/stt/onDeviceSpeech.ts's decision core): fires once per engine
+  // session, right after the session actually starts, with the mode
+  // it ended up running in (post any defensive cloud fallback — never
+  // the merely-decided mode if starting on-device threw and it fell
+  // back). webspeech-only; other engines never call this. Lets
+  // StatusLine's privacy indicator show the same green "音频未离开本机"
+  // posture whisper/tabaudio use instead of the amber cloud warning.
+  onEngineMode?: (mode: "on-device" | "cloud") => void;
 }
 
 export interface STTEngine {
@@ -377,6 +387,18 @@ export interface Settings {
   // it CPU-cheap regardless of segment length). See SettingsDialog.
   // tsx's 实时转录预览 row.
   partials: boolean;
+  // On-device Web Speech (Chrome 139+, `processLocally` — see
+  // docs/research/stt-live-engines-2026-07.md item #1 and
+  // lib/stt/onDeviceSpeech.ts's decision core): webspeech-only. When
+  // on AND the browser reports a local model available for
+  // `language`, recognition runs fully on-device — audio never
+  // reaches the browser vendor's cloud STT. Falls back to the
+  // existing cloud Web Speech path whenever the browser lacks the
+  // feature, the language isn't (yet) available on-device, or this is
+  // off. Default true — plainly better privacy posture at zero cost
+  // when supported; a no-op (existing cloud behavior, byte-identical)
+  // everywhere it isn't. See SettingsDialog.tsx's 设备端识别 row.
+  preferOnDeviceSpeech: boolean;
   // Live bilingual transcript (#42): translate each FINALIZED segment
   // into explainLanguage and render it as a secondary line under the
   // English text (see translate/queue.ts). Only meaningful when
@@ -478,6 +500,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hfToken: "",
   realtimeDiarize: false,
   partials: true,
+  preferOnDeviceSpeech: true,
   bilingualTranscript: false,
   profile: { enabled: false },
   themeId: "terminal",

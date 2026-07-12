@@ -38,6 +38,12 @@ import {
 } from "./sttSupervisor";
 import { SpeechActivityDetector, type VadHandle } from "./vad";
 import { UtteranceAssembler } from "./webSpeechSession";
+import {
+  decideOnDeviceMode,
+  type OnDeviceAvailability,
+  type OnDeviceDecision,
+  type OnDeviceMode,
+} from "./onDeviceSpeech";
 
 // ---- minimal local shims for the (non-standardized) Web Speech API ----
 // lib.dom.d.ts does not declare these; we type only what we touch.
@@ -70,6 +76,14 @@ interface SpeechRecognition extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
+  // On-device recognition (Chrome 139+ — docs/research/
+  // stt-live-engines-2026-07.md item #1; verified against MDN
+  // 2026-07). Settable before start(); true forces on-device-only
+  // processing. Only ever set once this engine's own availability
+  // check has confirmed a local model is ready for `lang` (see
+  // onDeviceSpeech.ts's decision core + this file's resolveOnDevice
+  // Decision) — never set blind.
+  processLocally?: boolean;
   start(): void;
   stop(): void;
   abort(): void;
@@ -78,7 +92,38 @@ interface SpeechRecognition extends EventTarget {
   onend: (() => void) | null;
 }
 
-type SpeechRecognitionCtor = new () => SpeechRecognition;
+// available()/install() shared options shape (MDN, 2026-07): `langs`
+// is required by both; `quality` defaults to "command" and is never
+// set by this engine (SOME on-device model for the language is enough
+// — we don't need a higher-quality dictation/conversation-tier pack);
+// `processLocally` is documented on available()'s formal params and
+// shown (informally, in the example code) on install()'s page too —
+// passed to both here for symmetry.
+interface SpeechRecognitionAvailabilityOptions {
+  langs: string[];
+  quality?: "command" | "dictation" | "conversation";
+  processLocally?: boolean;
+}
+
+type SpeechRecognitionAvailabilityResult =
+  | "available"
+  | "downloadable"
+  | "downloading"
+  | "unavailable";
+
+interface SpeechRecognitionCtor {
+  new (): SpeechRecognition;
+  // Static feature-detection/install (Chrome 139+) — absent entirely
+  // on older Chrome/other browsers, and on every SpeechRecognition
+  // test double in this repo that predates this feature; hence
+  // optional. Every call site feature-detects with
+  // `typeof Ctor.available === "function"` rather than assuming
+  // presence from the type alone.
+  available?(
+    options: SpeechRecognitionAvailabilityOptions,
+  ): Promise<SpeechRecognitionAvailabilityResult>;
+  install?(options: SpeechRecognitionAvailabilityOptions): Promise<boolean>;
+}
 
 interface WindowWithSpeech extends Window {
   SpeechRecognition?: SpeechRecognitionCtor;
@@ -89,6 +134,127 @@ function getSpeechRecognitionCtor(): SpeechRecognitionCtor | null {
   if (typeof window === "undefined") return null;
   const w = window as WindowWithSpeech;
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+// ---- on-device Web Speech (processLocally) shell — see
+// onDeviceSpeech.ts for the pure decision core this wraps. ----
+
+// Per-language availability cache (module-level, survives across
+// engine instances/meetings within the SAME page load). Internal
+// supervisor rotation never re-queries at all — the availability
+// check only ever runs once per WebSpeechEngine.start() call (see
+// start()'s own call site): rotation reuses the SAME recognizer
+// instance via stop()/start(), it never reconstructs one (see
+// setupRecognition, called exactly once per start()). This cache's
+// real payoff is across MULTIPLE top-level start() calls in one page
+// load — a new meeting, or a pause/resume teardown+reattach cycle
+// (WebSpeech implements neither STTEngine.pause nor .resume, so
+// useMeeting.ts's resume() always goes through the teardown-reattach
+// branch, which DOES call start() again).
+const onDeviceAvailabilityCache = new Map<string, Promise<OnDeviceAvailability>>();
+const KNOWN_AVAILABILITY = new Set<string>([
+  "available",
+  "downloadable",
+  "downloading",
+  "unavailable",
+]);
+
+function queryOnDeviceAvailability(
+  Ctor: SpeechRecognitionCtor,
+  lang: string,
+): Promise<OnDeviceAvailability> {
+  if (typeof Ctor.available !== "function") return Promise.resolve("api-absent");
+  return Ctor.available({ langs: [lang], processLocally: true }).then(
+    (result): OnDeviceAvailability =>
+      KNOWN_AVAILABILITY.has(result) ? (result as OnDeviceAvailability) : "unavailable",
+    () => "unavailable" as OnDeviceAvailability,
+  );
+}
+
+function getOnDeviceAvailability(
+  Ctor: SpeechRecognitionCtor,
+  lang: string,
+): Promise<OnDeviceAvailability> {
+  const cached = onDeviceAvailabilityCache.get(lang);
+  if (cached) return cached;
+  const promise = queryOnDeviceAvailability(Ctor, lang);
+  onDeviceAvailabilityCache.set(lang, promise);
+  return promise;
+}
+
+// One install() attempt per language per page-load — fire-and-forget;
+// this engine never hot-swaps a LIVE session onto a freshly-installed
+// model (see start()'s own doc). A later session's own availability
+// query picks up a successful install because it invalidates the
+// cached verdict below, so that query is a real recheck instead of a
+// replay of the stale "downloadable".
+const onDeviceInstallAttempted = new Set<string>();
+
+function triggerOnDeviceInstallOnce(Ctor: SpeechRecognitionCtor, lang: string): void {
+  if (onDeviceInstallAttempted.has(lang) || typeof Ctor.install !== "function") return;
+  onDeviceInstallAttempted.add(lang);
+  diagLog("info", "stt-ondevice", "开始下载设备端语音识别模型", `lang=${lang}`);
+  void Ctor.install({ langs: [lang], processLocally: true }).then(
+    (installed) => {
+      diagLog(
+        installed ? "info" : "warn",
+        "stt-ondevice",
+        "设备端语音识别模型下载完成",
+        `lang=${lang} installed=${installed}`,
+      );
+      if (installed) onDeviceAvailabilityCache.delete(lang);
+    },
+    () => {
+      diagLog("warn", "stt-ondevice", "设备端语音识别模型下载失败", `lang=${lang}`);
+    },
+  );
+}
+
+// Mode-decision diag throttle — mirrors detect-dict-floor's posture
+// (detect/scheduler.ts's recordDictDiagHit): this CAN repeat across
+// top-level engine attaches (a new meeting, or a pause/resume
+// reattach), so throttle to <=1/60s, except the very first entry this
+// page load (so a short session still leaves evidence).
+const ONDEVICE_DECISION_LOG_THROTTLE_MS = 60_000;
+let lastOnDeviceDecisionLogAt = -Infinity;
+let onDeviceDecisionLoggedOnce = false;
+
+function logOnDeviceDecision(
+  decision: OnDeviceDecision,
+  availability: OnDeviceAvailability,
+  lang: string,
+): void {
+  const now = Date.now();
+  const isFirst = !onDeviceDecisionLoggedOnce;
+  if (!isFirst && now - lastOnDeviceDecisionLogAt < ONDEVICE_DECISION_LOG_THROTTLE_MS) return;
+  onDeviceDecisionLoggedOnce = true;
+  lastOnDeviceDecisionLogAt = now;
+  diagLog(
+    "info",
+    "stt-ondevice",
+    "设备端识别模式决策",
+    `mode=${decision.mode} availability=${availability} lang=${lang}`,
+  );
+}
+
+async function resolveOnDeviceDecision(
+  Ctor: SpeechRecognitionCtor,
+  settings: Settings,
+): Promise<OnDeviceDecision> {
+  const availability = await getOnDeviceAvailability(Ctor, settings.language);
+  const decision = decideOnDeviceMode(availability, settings.preferOnDeviceSpeech);
+  logOnDeviceDecision(decision, availability, settings.language);
+  if (decision.triggerInstall) triggerOnDeviceInstallOnce(Ctor, settings.language);
+  return decision;
+}
+
+/** Test helper — clears the per-language availability cache, the
+ *  one-shot install-attempt set, and the mode-decision diag throttle. */
+export function resetOnDeviceSpeechState(): void {
+  onDeviceAvailabilityCache.clear();
+  onDeviceInstallAttempted.clear();
+  lastOnDeviceDecisionLogAt = -Infinity;
+  onDeviceDecisionLoggedOnce = false;
 }
 
 const RESTART_DELAY_MS = 250;
@@ -172,6 +338,16 @@ export class WebSpeechEngine implements STTEngine {
 
   private vad: VadHandle | null = null;
 
+  // On-device Web Speech (processLocally) — see resolveOnDeviceDecision
+  // and onDeviceSpeech.ts's decision core. `onDeviceMode` tracks what
+  // the CURRENT recognizer is actually configured for (flipped to
+  // "cloud" by launch()'s defensive fallback if starting on-device
+  // throws); `modeAnnounced`/`onDeviceFallbackAttempted` are both
+  // one-shot per engine lifetime, reset in start().
+  private onDeviceMode: OnDeviceMode = "cloud";
+  private modeAnnounced = false;
+  private onDeviceFallbackAttempted = false;
+
   constructor(
     private readonly createVad: () => VadHandle = () =>
       new SpeechActivityDetector(),
@@ -181,6 +357,8 @@ export class WebSpeechEngine implements STTEngine {
     this.events = events;
     this.userStopped = false;
     this.consecutiveInstantFailures = 0;
+    this.modeAnnounced = false;
+    this.onDeviceFallbackAttempted = false;
 
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) {
@@ -191,7 +369,17 @@ export class WebSpeechEngine implements STTEngine {
       return;
     }
 
-    this.setupRecognition(Ctor, settings);
+    const onDeviceDecision = await resolveOnDeviceDecision(Ctor, settings);
+    // Race guard (same idiom as the VAD capture's `this.vad !== vad`
+    // below): this await is a NEW yield point stop()/a newer start()
+    // can land in — `this.events` no longer matching the local
+    // `events` this call captured means exactly that happened, and
+    // this call must not resurrect a session that was already
+    // cancelled (or launch a stale recognizer out from under a NEWER
+    // start()).
+    if (this.events !== events) return;
+    this.onDeviceMode = onDeviceDecision.mode;
+    this.setupRecognition(Ctor, settings, onDeviceDecision);
     this.watchdogTimer = setInterval(() => this.watchdogTick(), WATCHDOG_TICK_MS);
     this.launch(events);
 
@@ -220,11 +408,15 @@ export class WebSpeechEngine implements STTEngine {
   private setupRecognition(
     Ctor: SpeechRecognitionCtor,
     settings: Settings,
+    onDeviceDecision: OnDeviceDecision,
   ): void {
     const recognition = new Ctor();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = settings.language;
+    if (onDeviceDecision.mode === "on-device") {
+      recognition.processLocally = true;
+    }
 
     recognition.onresult = (ev) => this.handleResult(ev);
     recognition.onerror = (ev) => this.handleError(ev);
@@ -377,13 +569,53 @@ export class WebSpeechEngine implements STTEngine {
     try {
       this.recognition.start();
       events.onStatus("listening");
+      this.announceModeOnce(events);
     } catch {
+      // Defensive on-device fallback (research memo's kill-criteria
+      // posture): a session decided on-device can still throw where
+      // cloud wouldn't have (a race between available() and start(),
+      // or a model that got uninstalled in between) — retry THIS
+      // session once as cloud rather than surface a spurious error.
+      // One-shot per engine lifetime (onDeviceFallbackAttempted),
+      // regardless of which launch() call (first start or a later
+      // rotation) hits it.
+      if (this.recognition.processLocally && !this.onDeviceFallbackAttempted) {
+        this.onDeviceFallbackAttempted = true;
+        diagLog(
+          "warn",
+          "stt-ondevice",
+          "设备端识别启动失败，已回退云端重试",
+          `lang=${this.recognition.lang}`,
+        );
+        this.recognition.processLocally = false;
+        this.onDeviceMode = "cloud";
+        try {
+          this.recognition.start();
+          events.onStatus("listening");
+          this.announceModeOnce(events);
+          return;
+        } catch {
+          // Both attempts failed — fall through to the generic
+          // failure-counting below (one increment for the episode).
+        }
+      }
       // start() throws if already started, or on rapid restart races.
       this.consecutiveInstantFailures += 1;
       if (this.consecutiveInstantFailures >= MAX_INSTANT_FAILURES) {
         events.onStatus("error", "语音识别持续失败，请检查麦克风权限或切换引擎");
       }
     }
+  }
+
+  /** Surface the mode this engine session actually ended up running
+   *  in (see STTEvents.onEngineMode's own doc) — once per engine
+   *  lifetime, after the FIRST successful recognition.start() (post
+   *  any defensive fallback above), never re-announced on later
+   *  supervisor-driven rotation restarts. */
+  private announceModeOnce(events: STTEvents): void {
+    if (this.modeAnnounced) return;
+    this.modeAnnounced = true;
+    events.onEngineMode?.(this.onDeviceMode);
   }
 
   private watchdogTick(): void {

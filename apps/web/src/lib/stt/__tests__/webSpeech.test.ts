@@ -13,11 +13,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings, STTEvents } from "@jargonslayer/core/types";
-import { WebSpeechEngine } from "../webSpeech";
+import { WebSpeechEngine, resetOnDeviceSpeechState } from "../webSpeech";
 import { SpeechActivityDetector } from "../vad";
 import type { VadHandle } from "../vad";
 import type { VadState } from "../vadCore";
 import { STALL_SPEECH_MS } from "../sttSupervisor";
+import type { OnDeviceAvailability, OnDeviceMode } from "../onDeviceSpeech";
+import { clearDiag, getDiagEntries } from "../../diag/log";
 import {
   FakeMediaStream,
   installFakeMediaDevices,
@@ -35,9 +37,44 @@ interface ManualResultEntry {
 class ManualSpeechRecognition extends EventTarget {
   static instances: ManualSpeechRecognition[] = [];
 
+  // On-device (Chrome 139+) static feature surface — configurable per
+  // test. Defaults keep every test that predates this feature on the
+  // exact same cloud path as before: none of them set
+  // preferOnDeviceSpeech, and decideOnDeviceMode's pref-off branch
+  // wins regardless of what these resolve to. NOT reset by
+  // installManualSpeechRecognition() (called possibly MULTIPLE times
+  // within one test, e.g. the restart-race tests below) — see
+  // resetManualSpeechRecognitionOnDeviceStatics, called once per test
+  // from the top-level afterEach instead.
+  static availableResult: OnDeviceAvailability = "unavailable";
+  static availableCalls: { langs: string[]; processLocally?: boolean }[] = [];
+  static installResult = true;
+  static installCalls: { langs: string[]; processLocally?: boolean }[] = [];
+  /** Makes the NEXT start() call (on ANY instance) throw once — the
+   *  "starting an on-device session throws where cloud wouldn't"
+   *  defensive-fallback case. */
+  static failNextStart = false;
+
+  static async available(options: {
+    langs: string[];
+    processLocally?: boolean;
+  }): Promise<OnDeviceAvailability> {
+    ManualSpeechRecognition.availableCalls.push(options);
+    return ManualSpeechRecognition.availableResult;
+  }
+
+  static async install(options: {
+    langs: string[];
+    processLocally?: boolean;
+  }): Promise<boolean> {
+    ManualSpeechRecognition.installCalls.push(options);
+    return ManualSpeechRecognition.installResult;
+  }
+
   continuous = false;
   interimResults = false;
   lang = "";
+  processLocally = false;
   onresult: ((ev: { resultIndex: number; results: unknown }) => void) | null =
     null;
   onerror: ((ev: { error: string }) => void) | null = null;
@@ -65,6 +102,10 @@ class ManualSpeechRecognition extends EventTarget {
   }
 
   start(): void {
+    if (ManualSpeechRecognition.failNextStart) {
+      ManualSpeechRecognition.failNextStart = false;
+      throw new Error("start() failed (scripted)");
+    }
     if (this.running) throw new Error("already started");
     this.running = true;
     this.startCalls += 1;
@@ -136,6 +177,20 @@ function uninstallManualSpeechRecognition(): void {
   }
 }
 
+/** Test helper — resets the on-device static config/counters. Once
+ *  per TEST (top-level afterEach), not once per makeEngineHarness()
+ *  call: several tests below (and the pre-existing restart-race tests
+ *  above) call makeEngineHarness() more than once per test to model
+ *  multiple engine instances, and availableCalls/installCalls need to
+ *  accumulate ACROSS those to be assertable at all. */
+function resetManualSpeechRecognitionOnDeviceStatics(): void {
+  ManualSpeechRecognition.availableResult = "unavailable";
+  ManualSpeechRecognition.availableCalls = [];
+  ManualSpeechRecognition.installResult = true;
+  ManualSpeechRecognition.installCalls = [];
+  ManualSpeechRecognition.failNextStart = false;
+}
+
 /** A VadHandle stub always reporting `speaking` (once available), used
  *  to make a RECOVER decision (idle >= STALL_SPEECH_MS while speaking)
  *  deterministic and independent of the HARD rotation ceiling. */
@@ -159,25 +214,32 @@ function makeEngineHarness(vadFactory?: () => VadHandle) {
   installManualSpeechRecognition();
   const finals: { text: string; startedAt?: number }[] = [];
   const notices: string[] = [];
+  const engineModes: OnDeviceMode[] = [];
   const events: STTEvents = {
     onInterim: () => undefined,
     onFinal: (text, opts) => finals.push({ text, startedAt: opts?.startedAt }),
     onStatus: () => undefined,
     onNotice: (msg) => notices.push(msg),
+    onEngineMode: (mode) => engineModes.push(mode),
   };
   const engine = new WebSpeechEngine(vadFactory);
-  return { engine, events, finals, notices };
+  return { engine, events, finals, notices, engineModes };
 }
 
 describe("WebSpeechEngine — engine-level", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(T0);
+    resetManualSpeechRecognitionOnDeviceStatics();
+    resetOnDeviceSpeechState();
+    clearDiag();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     uninstallManualSpeechRecognition();
+    resetManualSpeechRecognitionOnDeviceStatics();
+    resetOnDeviceSpeechState();
     uninstallFakeMediaDevices();
   });
 
@@ -409,6 +471,129 @@ describe("WebSpeechEngine — engine-level", () => {
       await vi.advanceTimersByTimeAsync(2_000);
       expect(rec.startCalls).toBe(2); // forced relaunch — engine is NOT stranded
       await engine.stop();
+    });
+  });
+
+  // ---- on-device Web Speech (processLocally, Chrome 139+ —
+  // docs/research/stt-live-engines-2026-07.md item #1) ----
+
+  describe("on-device Web Speech (processLocally)", () => {
+    it("applies processLocally and announces mode 'on-device' when availability is 'available' and the pref is on", async () => {
+      ManualSpeechRecognition.availableResult = "available";
+      const { engine, events, engineModes } = makeEngineHarness();
+      await engine.start(events, {
+        language: "en-US",
+        preferOnDeviceSpeech: true,
+      } as Settings);
+      const rec = ManualSpeechRecognition.instances[0];
+
+      expect(rec.processLocally).toBe(true);
+      expect(ManualSpeechRecognition.availableCalls).toEqual([
+        { langs: ["en-US"], processLocally: true },
+      ]);
+      expect(engineModes).toEqual(["on-device"]);
+      await engine.stop();
+    });
+
+    it("does not apply processLocally when the pref is off, even if available", async () => {
+      ManualSpeechRecognition.availableResult = "available";
+      const { engine, events, engineModes } = makeEngineHarness();
+      await engine.start(events, {
+        language: "en-US",
+        preferOnDeviceSpeech: false,
+      } as Settings);
+      const rec = ManualSpeechRecognition.instances[0];
+
+      expect(rec.processLocally).toBe(false);
+      expect(engineModes).toEqual(["cloud"]);
+      await engine.stop();
+    });
+
+    it("does not apply processLocally when unavailable, even with the pref on", async () => {
+      ManualSpeechRecognition.availableResult = "unavailable";
+      const { engine, events, engineModes } = makeEngineHarness();
+      await engine.start(events, {
+        language: "en-US",
+        preferOnDeviceSpeech: true,
+      } as Settings);
+      const rec = ManualSpeechRecognition.instances[0];
+
+      expect(rec.processLocally).toBe(false);
+      expect(engineModes).toEqual(["cloud"]);
+      await engine.stop();
+    });
+
+    it("downloadable + pref on: stays cloud THIS session, but triggers install() once for the language", async () => {
+      ManualSpeechRecognition.availableResult = "downloadable";
+      const { engine, events, engineModes } = makeEngineHarness();
+      await engine.start(events, {
+        language: "en-US",
+        preferOnDeviceSpeech: true,
+      } as Settings);
+      const rec = ManualSpeechRecognition.instances[0];
+
+      expect(rec.processLocally).toBe(false);
+      expect(engineModes).toEqual(["cloud"]);
+      await vi.advanceTimersByTimeAsync(0); // let the fire-and-forget install() settle
+      expect(ManualSpeechRecognition.installCalls).toEqual([
+        { langs: ["en-US"], processLocally: true },
+      ]);
+      await engine.stop();
+    });
+
+    it("starting an on-device session throws once -> falls back to cloud and retries successfully", async () => {
+      ManualSpeechRecognition.availableResult = "available";
+      ManualSpeechRecognition.failNextStart = true;
+      const { engine, events, engineModes } = makeEngineHarness();
+      await engine.start(events, {
+        language: "en-US",
+        preferOnDeviceSpeech: true,
+      } as Settings);
+      const rec = ManualSpeechRecognition.instances[0];
+
+      // Fell back BEFORE the successful retry — processLocally ends up
+      // false, and exactly one SUCCESSFUL start (the retry) happened.
+      expect(rec.processLocally).toBe(false);
+      expect(rec.startCalls).toBe(1);
+      expect(engineModes).toEqual(["cloud"]); // announces the ACTUAL (post-fallback) mode
+      expect(
+        getDiagEntries().some(
+          (e) => e.tag === "stt-ondevice" && e.message.includes("回退云端"),
+        ),
+      ).toBe(true);
+      await engine.stop();
+    });
+  });
+
+  describe("on-device availability cache", () => {
+    it("queries availability once per language per page-load, even across multiple engine starts", async () => {
+      ManualSpeechRecognition.availableResult = "available";
+
+      const { engine: engine1, events: events1 } = makeEngineHarness();
+      await engine1.start(events1, {
+        language: "en-US",
+        preferOnDeviceSpeech: true,
+      } as Settings);
+      await engine1.stop();
+
+      const { engine: engine2, events: events2 } = makeEngineHarness();
+      await engine2.start(events2, {
+        language: "en-US",
+        preferOnDeviceSpeech: true,
+      } as Settings);
+      await engine2.stop();
+
+      expect(ManualSpeechRecognition.availableCalls).toHaveLength(1);
+
+      const { engine: engine3, events: events3 } = makeEngineHarness();
+      await engine3.start(events3, {
+        language: "zh-CN",
+        preferOnDeviceSpeech: true,
+      } as Settings);
+      await engine3.stop();
+
+      // A DIFFERENT language is a fresh cache entry.
+      expect(ManualSpeechRecognition.availableCalls).toHaveLength(2);
     });
   });
 });
