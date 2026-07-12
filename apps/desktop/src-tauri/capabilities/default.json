@@ -1,20 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window — core defaults, the uv sidecar spawn permission, and BYOK-provider HTTP access.",
+  "description": "Capability for the main window — core defaults and BYOK-provider HTTP access. Deliberately NO shell permission: run_uv (uv.rs) spawns the uv sidecar via tauri-plugin-shell's Rust API (ShellExt::shell().sidecar()/Command::spawn), which goes straight to std::process::Command and never consults capabilities/ACL — verified against tauri-plugin-shell 2.3.5's own source: the CommandScope/GlobalScope extractors a capability grant actually populates appear only in commands.rs's IPC-exposed execute/spawn/kill handlers, never in Shell::sidecar or Command::spawn. A shell:allow-spawn grant here would therefore do nothing for run_uv's own call — its only live effect would be authorizing webview JS to invoke plugin:shell|spawn directly with `args: true` (arbitrary uv arguments, bypassing uv.rs's own validate_uv_args), which this app's own TS never does (see lib.rs) — so the grant only ever handed an XSS-in-the-webview a path to arbitrary uv execution. Removed for that reason; do not re-add it for the sidecar call.",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    {
-      "identifier": "shell:allow-spawn",
-      "allow": [
-        {
-          "name": "binaries/uv",
-          "sidecar": true,
-          "args": true
-        }
-      ]
-    },
     {
       "identifier": "http:default",
       "allow": [

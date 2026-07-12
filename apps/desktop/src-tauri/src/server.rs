@@ -38,7 +38,9 @@ pub fn validate_model(model: &str) -> Result<(), String> {
 /// under this app's management. A held child means "started by us, still
 /// (as far as we last checked) alive" — start_server, stop_server, the
 /// exit-monitor thread, and the app's own RunEvent::Exit handler (lib.rs)
-/// are the only four places that ever touch this lock.
+/// are the only four places that ever touch this lock. start_server holds
+/// it for its entire check-spawn-store sequence (see that fn's own
+/// comment); the other three only ever take it briefly.
 #[derive(Default)]
 pub struct ServerState(pub Mutex<Option<Child>>);
 
@@ -137,14 +139,32 @@ pub async fn start_server(
 ) -> Result<StartServerResult, String> {
     validate_model(&model)?;
 
-    // Fast is-it-running short-circuit — hold the lock only briefly.
-    {
-        let guard = state.0.lock().map_err(poison_err)?;
-        if guard.is_some() {
-            return Ok(StartServerResult {
-                already_running: true,
-            });
-        }
+    // Hold ONE lock across the entire check-spawn-store sequence below —
+    // this is the fix for a double-spawn race the earlier "check, drop,
+    // spawn, re-lock" shape had: two concurrent start_server calls could
+    // both pass an is-it-running check taken before spawning, both spawn
+    // whisper_server.py racing for ports 8765/8766, and a "kill whichever
+    // call re-locked second" step at the end killed whichever call
+    // happened to re-acquire the lock second — NOT whichever process
+    // actually lost the port-bind race — so the port-holding child could
+    // be the one killed while the address-in-use child (which then exits
+    // on its own) was kept, leaving no server running even though both
+    // invokes returned success.
+    //
+    // Holding the lock this long is safe/cheap because everything below
+    // is synchronous std code with no `.await` in it: spawn_streamed's
+    // cmd.spawn() is a quick fork/exec, and the only other lock holder
+    // (spawn_exit_monitor's thread) only contends for this same mutex
+    // once every EXIT_POLL_INTERVAL. If this section ever grows an
+    // `.await` while `guard` is still alive, it will fail to compile — a
+    // std MutexGuard held across an await point makes this async fn's
+    // future non-Send, which tauri rejects for an async #[tauri::command]
+    // — so the compiler enforces this invariant, not just this comment.
+    let mut guard = state.0.lock().map_err(poison_err)?;
+    if guard.is_some() {
+        return Ok(StartServerResult {
+            already_running: true,
+        });
     }
 
     let paths = resolve_app_paths(&app)?;
@@ -185,18 +205,9 @@ pub async fn start_server(
     )
     .map_err(|e| format!("failed to spawn whisper_server.py: {e}"))?;
 
-    let mut guard = state.0.lock().map_err(poison_err)?;
-    if guard.is_some() {
-        // Lost a race against a second start_server call that landed
-        // between our first is-it-running check and now — keep whichever
-        // child is already held, kill the one we just (redundantly)
-        // spawned rather than leaking/orphaning it.
-        drop(guard);
-        kill_and_reap(child);
-        return Ok(StartServerResult {
-            already_running: true,
-        });
-    }
+    // No second is-it-running check needed here: `guard` has been held,
+    // uninterrupted, since before the first (and only) check above, so no
+    // other start_server call could have stored a child in the meantime.
     *guard = Some(child);
     drop(guard);
 
@@ -233,6 +244,21 @@ fn kill_and_reap(mut child: Child) {
 /// whisper_server.py behind. Force-quit is the one case this can't catch;
 /// the blueprint's own accepted-for-v1 answer for that is self-heal via
 /// adoption on next launch (risk register item 4), not attempted here.
+///
+/// ACCEPTED GAP (adversarial-review finding, kept as a documented
+/// decision, not an oversight): "adoption on next launch" is a TS-side
+/// concept (provisionMachine.ts's CHECKING -> HEALTHY probe path) — when
+/// it fires, this app never spawned the process it just started treating
+/// as its server, so there is no std::process::Child to put in
+/// ServerState for it. An adopted process is therefore never HELD: this
+/// function finds an empty slot and does nothing for it on a later
+/// graceful quit, and spawn_exit_monitor (only ever started from a fresh
+/// start_server spawn) never runs for it either, so no server://exit
+/// fires if it dies either. Net effect: a whisper_server.py orphaned by a
+/// force-quit and then adopted on the next launch survives every
+/// SUBSEQUENT graceful quit too, until it's killed manually or the OS
+/// reclaims it — v1 accepts this; real ownership of an adopted process
+/// (e.g. a pidfile this app can re-attach a kill to) is v1.5 material.
 pub fn kill_held_child_on_exit(app: &tauri::AppHandle) {
     let state = app.state::<ServerState>();
     // match + early return (not `if let Ok(...) = state.0.lock() {}`) —
