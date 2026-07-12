@@ -34,6 +34,7 @@ import { getBuiltinTheme } from "./theme/themes";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
 import { PREVIEW_TIER } from "./deployTier";
 import { diagLog } from "./diag/log";
+import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
 
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
@@ -191,6 +192,17 @@ interface AppState {
   // math that excludes paused time from the displayed elapsed timer.
   pausedAccumMs: number;
   pauseStartedAt: number | null;
+  // Transcript-timestamp fix: every COMPLETED pause this meeting, as
+  // {start, end} — pausedAccumMs above is enough for the live ticking
+  // readout (elapsedActiveMs only ever needs "how much has been paused
+  // so far, as of now"), but not enough to map an OLDER segment's own
+  // elapsed time, which must only exclude pauses that happened BEFORE
+  // it (see segmentElapsed.ts's segmentElapsedMs). Kept alongside
+  // (not instead of) pausedAccumMs so elapsedActiveMs's existing
+  // signature — Header.tsx's ElapsedTimer imports it directly — stays
+  // untouched. Reset alongside pausedAccumMs/pauseStartedAt in
+  // beginMeeting/newMeeting; one interval appended per resumeMeeting.
+  pauseIntervals: PauseInterval[];
   // realtime speaker diarization (beta): stable id -> user-chosen
   // display name, written only by renameSpeaker (see rename-wins in
   // applySpeakerUpdate/aliasesAfterRename above).
@@ -283,6 +295,11 @@ interface AppState {
   // sttSeg numbering restarts per engine session, so a stale update
   // could otherwise collide with an unrelated segment in the new
   // meeting that happens to reuse the same small sttSeg number).
+  // Post-stop diarization linger: the sidecar's own final pass can
+  // still deliver one of these after the session was already saved
+  // (up to POST_STOP_LINGER_MS later — see wsTransport.ts) — same
+  // top-up re-save as applyTranslations/applyDetection below, so the
+  // labels this update carries aren't lost from history.
   applySpeakerUpdate: (
     assignments: { segId: number; speaker: string }[],
     speakers: string[],
@@ -505,6 +522,31 @@ export function elapsedActiveMs(
   return Math.max(0, upTo - startedAt - pausedAccumMs);
 }
 
+/** Pause bookkeeping for a PERSISTED/exported session snapshot
+ *  (saveCurrentSession / currentSessionSnapshot below — codex v2
+ *  review finding F5): `pauseIntervals` only ever gets a completed
+ *  {start,end} entry appended by resumeMeeting() above — ending a
+ *  meeting WHILE paused (doStop() flips straight "paused" -> "stopped"
+ *  with no intervening resumeMeeting()), or exporting/copying mid-
+ *  pause (SummaryPanel's currentSessionSnapshot() call sites aren't
+ *  gated on status), snapshots the live array with the CURRENT pause
+ *  still open — its seconds would then read as active time forever in
+ *  that snapshot. Returns a NEW array with the open interval closed at
+ *  `snapshotAt` (a no-op passthrough when `pauseStartedAt` is null —
+ *  the common case). Snapshot-local only: NEVER mutates live state or
+ *  clears `pauseStartedAt` — a non-terminal snapshot taken mid-pause
+ *  (e.g. an export) must not disturb a LATER resumeMeeting() in the
+ *  SAME meeting, which still needs the real, still-open
+ *  `pauseStartedAt` to compute its own fold correctly. */
+export function pauseIntervalsForSnapshot(
+  pauseIntervals: PauseInterval[],
+  pauseStartedAt: number | null,
+  snapshotAt: number,
+): PauseInterval[] {
+  if (pauseStartedAt === null) return pauseIntervals;
+  return [...pauseIntervals, { start: pauseStartedAt, end: snapshotAt }];
+}
+
 export const useApp = create<AppState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   hydrated: false,
@@ -517,6 +559,7 @@ export const useApp = create<AppState>((set, get) => ({
   interim: null,
   pausedAccumMs: 0,
   pauseStartedAt: null,
+  pauseIntervals: [],
   speakerAliases: {},
   translations: {},
 
@@ -675,6 +718,7 @@ export const useApp = create<AppState>((set, get) => ({
       interim: null,
       pausedAccumMs: 0,
       pauseStartedAt: null,
+      pauseIntervals: [],
       speakerAliases: {},
       translations: {},
       cards: [],
@@ -690,12 +734,25 @@ export const useApp = create<AppState>((set, get) => ({
   pauseMeeting: () => set({ status: "paused", pauseStartedAt: Date.now() }),
 
   resumeMeeting: () =>
-    set((state) => ({
-      status: "listening",
-      pausedAccumMs:
-        state.pausedAccumMs + (Date.now() - (state.pauseStartedAt ?? Date.now())),
-      pauseStartedAt: null,
-    })),
+    set((state) => {
+      const now = Date.now();
+      const pausedAccumMs = state.pausedAccumMs + (now - (state.pauseStartedAt ?? now));
+      // Transcript-timestamp fix: record the completed interval too
+      // (see the AppState field's own doc) — skipped when
+      // pauseStartedAt was already null (the defensive tolerance this
+      // action has always had), same as pausedAccumMs staying
+      // unchanged in that case.
+      const pauseIntervals =
+        state.pauseStartedAt !== null
+          ? [...state.pauseIntervals, { start: state.pauseStartedAt, end: now }]
+          : state.pauseIntervals;
+      return {
+        status: "listening",
+        pausedAccumMs,
+        pauseStartedAt: null,
+        pauseIntervals,
+      };
+    }),
 
   addFinal: (text, opts) => {
     const { segments, settings } = get();
@@ -741,6 +798,17 @@ export const useApp = create<AppState>((set, get) => ({
         get().speakerAliases,
       ),
     });
+    // Post-stop diarization linger (see AppState.applySpeakerUpdate's
+    // own doc above): the sidecar's final pass can resolve after the
+    // session was already saved on stop — same top-up re-save as
+    // applyTranslations/applyDetection/renameSpeaker/updateSegmentText.
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
   },
 
   applyTranslations: (map, gen) => {
@@ -884,6 +952,15 @@ export const useApp = create<AppState>((set, get) => ({
         Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
       translations:
         Object.keys(s.translations).length > 0 ? s.translations : undefined,
+      // Transcript-timestamp fix: always persisted (even []) — unlike
+      // speakerAliases/translations above, emptiness here is NOT
+      // interchangeable with absence: presence (even []) means "this
+      // meeting's pause bookkeeping is known and complete", while
+      // absence means "unknown/legacy" (see MeetingSession's own doc
+      // and resolveSessionElapsedBasis in segmentElapsed.ts). Snapshot-
+      // closes a still-open pause (F5: End-from-paused) — see
+      // pauseIntervalsForSnapshot's own doc above.
+      pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
     };
     await storage.saveSession(session);
     const metas = await storage.listSessions();
@@ -915,13 +992,26 @@ export const useApp = create<AppState>((set, get) => ({
     // (applyDetection's filterSuppressed) and the hydrate-window
     // cleanup (filterSuppressedLiveCards, see hydrate() above) ever
     // drop a card for being suppressed.
+    // Transcript-timestamp fix: resolves the elapsed-time basis (zero
+    // point + completed pauses) this session should render with —
+    // see resolveSessionElapsedBasis's own doc for the legacy-session
+    // (no persisted pauseIntervals) fallback.
+    const { startedAt, pauseIntervals } = resolveSessionElapsedBasis(session);
     set((state) => ({
       status: "stopped",
       statusDetail: null,
-      startedAt: session.startedAt,
+      startedAt,
       meetingGen: state.meetingGen + 1,
       segments: session.segments,
       interim: null,
+      // A loaded/stopped session has no LIVE pause in progress and no
+      // further live pause bookkeeping to accumulate — reset both so
+      // neither carries over from whatever meeting the store was
+      // previously in (pauseIntervals above already carries this
+      // session's own history).
+      pausedAccumMs: 0,
+      pauseStartedAt: null,
+      pauseIntervals,
       speakerAliases: session.speakerAliases ?? {},
       translations: session.translations ?? {},
       cards: session.cards,
@@ -1144,6 +1234,7 @@ export const useApp = create<AppState>((set, get) => ({
       interim: null,
       pausedAccumMs: 0,
       pauseStartedAt: null,
+      pauseIntervals: [],
       speakerAliases: {},
       translations: {},
       cards: [],
@@ -1179,5 +1270,11 @@ export function currentSessionSnapshot(): MeetingSession | null {
       Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
     translations:
       Object.keys(s.translations).length > 0 ? s.translations : undefined,
+    // Transcript-timestamp fix: same "always present" posture as
+    // saveCurrentSession — see that field's own comment above. Also
+    // snapshot-closes a still-open pause the same way (F5) — this
+    // snapshot can be taken mid-pause too (e.g. SummaryPanel's export
+    // row shows whenever segments exist, regardless of status).
+    pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
   };
 }

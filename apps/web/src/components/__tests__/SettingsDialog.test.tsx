@@ -19,6 +19,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
+import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import SettingsDialog from "../SettingsDialog";
 
@@ -263,5 +264,227 @@ describe("SettingsDialog — 转录引擎 sidecar status line", () => {
     expect(container!.textContent).not.toContain("本地服务");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(useApp.getState().sidecarUp).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------
+// Settings redesign (owner ask 2026-07-11: "side navbar for each
+// category" + "freeze 保存/取消"): nav rail + page-per-section content
+// pane. activeCategory is local useState, NOT the zustand store — draft
+// (and every other piece of dialog-level state: showHfToken,
+// checkedPacks, exportStripKeys, …) already lives above the nav/content
+// split, so switching categories can never lose an unsaved edit.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — settings redesign: nav rail + page-per-section", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function navButtons(): HTMLButtonElement[] {
+    return Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+  }
+
+  function clickCategory(label: string) {
+    const btn = navButtons().find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav category "${label}" not found`);
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  // Finds the switch nested inside the <label> whose text includes
+  // labelText — mirrors every converted checkbox row's own markup
+  // (label wraps both the description text and the control, so a real
+  // <label> click also forwards to a nested ToggleSwitch — see
+  // ToggleSwitch.tsx's own "labelable element" test).
+  function findSwitchByLabel(labelText: string): HTMLButtonElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) =>
+      l.textContent?.includes(labelText),
+    );
+    if (!label) throw new Error(`label containing "${labelText}" not found`);
+    const btn = label.querySelector('button[role="switch"]');
+    if (!btn) throw new Error(`no switch inside label "${labelText}"`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("defaults to 转录引擎 active (aria-current=page) and lists one nav entry per visible category in simple mode", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "simple" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const buttons = navButtons();
+    // Simple-visible categories only: engine/display are whole-section
+    // "simple"; aiDetect (the one mixed section) always has at least
+    // one simple row, so it's always listed too. The four advanced-only
+    // whole sections (diarization/taskLlm/dataIntegration/
+    // subscriptionDirect) are absent.
+    expect(buttons.map((b) => b.textContent)).toEqual(["转录引擎", "AI 检测", "显示"]);
+    expect(buttons[0].getAttribute("aria-current")).toBe("page");
+    expect(buttons[1].getAttribute("aria-current")).toBeNull();
+    expect(buttons[2].getAttribute("aria-current")).toBeNull();
+  });
+
+  it("advanced mode reveals the advanced-only categories too, still excludes 订阅直连 while its build flag is unset", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(navButtons().map((b) => b.textContent)).toEqual([
+      "转录引擎",
+      "说话人分离",
+      "AI 检测",
+      "分任务模型（高级）",
+      "数据与联动",
+      "显示",
+    ]);
+  });
+
+  it("clicking a nav entry moves aria-current and swaps the content pane to ONLY that category — the previous category's own fields unmount, not just hide", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "simple" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.querySelector('input[placeholder="ws://localhost:8765"]')).not.toBeNull();
+
+    await act(async () => {
+      clickCategory("显示");
+    });
+
+    const buttons = navButtons();
+    expect(buttons.find((b) => b.textContent === "显示")!.getAttribute("aria-current")).toBe("page");
+    expect(buttons.find((b) => b.textContent === "转录引擎")!.getAttribute("aria-current")).toBeNull();
+    expect(container!.querySelector('input[placeholder="ws://localhost:8765"]')).toBeNull();
+    expect(container!.textContent).toContain("全局字号");
+  });
+
+  it("switching categories preserves an unsaved draft edit (draft lives at dialog level, not per-category)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "simple" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    // 实时转录预览 defaults to checked (DEFAULT_SETTINGS.partials === true).
+    expect(findSwitchByLabel("实时转录预览").getAttribute("aria-checked")).toBe("true");
+    await act(async () => {
+      findSwitchByLabel("实时转录预览").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(findSwitchByLabel("实时转录预览").getAttribute("aria-checked")).toBe("false");
+
+    // Navigate away — 转录引擎's own fields unmount entirely — then back.
+    await act(async () => {
+      clickCategory("显示");
+    });
+    await act(async () => {
+      clickCategory("转录引擎");
+    });
+
+    // The edit survived the round trip: still a plain useState draft at
+    // the dialog level, never reset by an activeCategory change.
+    expect(findSwitchByLabel("实时转录预览").getAttribute("aria-checked")).toBe("false");
+  });
+});
+
+// ---------------------------------------------------------------
+// data-ui-level completeness under page-per-section rendering.
+//
+// Pre-existing settingsSections.ts doc comment: "Keys are also used as
+// the JSX `data-ui-level` attribute value on the matching element, so
+// they double as light e2e/visual-QA hooks." The actual JSX previously
+// wrote `data-ui-level={SETTINGS_UI_LEVELS.xxx}` — the LEVEL ("simple"/
+// "advanced"), not the KEY — which collides across every row sharing a
+// level and can't identify any one row. Fixed alongside this redesign
+// (SettingsDialog.tsx now writes the literal key, e.g.
+// data-ui-level="aiDetectCore") so this completeness check — and the
+// same attribute's original "e2e/visual-QA hook" purpose — actually
+// works. Purely a data-* attribute; zero rendering/behavior change.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — data-ui-level completeness across nav categories (page-per-section)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllEnvs();
+  });
+
+  it("the union of data-ui-level values rendered across every nav category exactly equals SETTINGS_UI_LEVELS' keys — nothing missing, nothing stray", async () => {
+    // Advanced mode + the subscription-direct build flag on: every one
+    // of the 7 nav categories (including the build-gated one) gets a
+    // turn, so every SETTINGS_UI_LEVELS key has a chance to be found —
+    // a category/row that's unreachable at every uiMode would otherwise
+    // make an exact-union assertion impossible to satisfy honestly.
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT", "1");
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    expect(navButtons.length).toBe(7); // sanity: all 7 categories reachable this run
+
+    const found = new Set<string>();
+    for (const btn of navButtons) {
+      await act(async () => {
+        btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      container!.querySelectorAll("[data-ui-level]").forEach((el) => {
+        found.add(el.getAttribute("data-ui-level")!);
+      });
+    }
+
+    // aiDetectPreviewBanner is gated by PREVIEW_TIER (lib/deployTier.ts)
+    // — a module-level `const` frozen at import time from
+    // process.env.NEXT_PUBLIC_DEPLOY_TIER === "preview", evaluated long
+    // before this test body runs. A runtime vi.stubEnv here can't flip
+    // an already-evaluated const (unlike NEXT_PUBLIC_ENABLE_SUBSCRIPTION_
+    // DIRECT above, which SettingsDialog.tsx reads inline on every
+    // render — see its own doc comment on that distinction), so that one
+    // row is structurally unreachable from any render in this test file
+    // regardless of category/uiMode — a pre-existing constraint this
+    // redesign didn't introduce, not a real gap. Excluded here by name,
+    // not by weakening the assertion to a subset check: every OTHER key
+    // is still required to match exactly.
+    const reachableKeys = Object.keys(SETTINGS_UI_LEVELS).filter(
+      (k) => k !== "aiDetectPreviewBanner",
+    );
+    expect(Array.from(found).sort()).toEqual(reachableKeys.sort());
   });
 });

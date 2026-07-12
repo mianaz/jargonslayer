@@ -21,20 +21,31 @@ describe("isEngineControlBusy", () => {
   });
 });
 
-describe("canPause — pause-button availability by engine (B4)", () => {
-  it("allows pause only for webspeech — its stop() drains the working tail synchronously", () => {
-    expect(canPause("webspeech")).toBe(true);
+// canPause matrix (B4, STT protocol v2): demo -> false; webspeech ->
+// true; tabaudio -> true (soft pause, no re-picker); whisper -> true
+// EXCEPT when realtime diarization is on (seg_id namespace reset on
+// reattach would collide with pre-pause diarization ids).
+describe("canPause — pause-button availability by engine (B4, STT protocol v2)", () => {
+  it("allows pause for webspeech — its stop() drains the working tail synchronously", () => {
+    expect(canPause("webspeech", { realtimeDiarize: false })).toBe(true);
+    expect(canPause("webspeech", { realtimeDiarize: true })).toBe(true);
   });
 
-  it("hides pause for whisper — no stop-drain ack protocol yet (codex review 2026-07-10)", () => {
-    expect(canPause("whisper")).toBe(false);
+  it("allows pause for tabaudio — SOFT pause (wsTransport pauseFeed/resumeFeed), never re-opens the OS share picker", () => {
+    expect(canPause("tabaudio", { realtimeDiarize: false })).toBe(true);
+    expect(canPause("tabaudio", { realtimeDiarize: true })).toBe(true);
   });
 
-  it("hides pause for tabaudio — resume would have to re-open the OS share picker", () => {
-    expect(canPause("tabaudio")).toBe(false);
+  it("allows pause for whisper when realtime diarization is OFF", () => {
+    expect(canPause("whisper", { realtimeDiarize: false })).toBe(true);
+  });
+
+  it("hides pause for whisper when realtime diarization is ON — a teardown reattach resets the sidecar's seg_id namespace", () => {
+    expect(canPause("whisper", { realtimeDiarize: true })).toBe(false);
   });
 
   it("hides pause for demo — a scripted replay only knows how to restart, not resume", () => {
-    expect(canPause("demo")).toBe(false);
+    expect(canPause("demo", { realtimeDiarize: false })).toBe(false);
+    expect(canPause("demo", { realtimeDiarize: true })).toBe(false);
   });
 });

@@ -64,6 +64,61 @@ const RETRY_JITTER_MS = 300;
 // without spamming the diag ring buffer on every single segment.
 const DICT_DIAG_THROTTLE_MS = 60_000;
 
+// ---------------------------------------------------------------
+// AI over-extraction guard (fix: "ai detection is catching whole
+// sentences rather than phrases", soccer-stream field report) —
+// defense in depth alongside the prompt-level constraint
+// (packages/core/src/llm/prompts.ts's DETECT_SYSTEM_PROMPT rule 10).
+// Applied ONLY to "llm"-sourced expressions, right where they're
+// produced below (attemptDetect's success path) — dictionary hits
+// (scanDictionary, in pushSegment) and custom-glossary hits (store.ts's
+// addFinal) never pass through here, so neither can ever be silently
+// dropped by it.
+//
+// CJK-aware: Chinese has no whitespace word boundaries, so an
+// expression containing any CJK character is capped purely by
+// character count; otherwise capped by whitespace-separated word count
+// OR raw character count, whichever is stricter (catches a run-on
+// phrase with few but very long "words" too).
+// ---------------------------------------------------------------
+const AI_EXPRESSION_MAX_WORDS = 8;
+const AI_EXPRESSION_MAX_CHARS = 64;
+const AI_EXPRESSION_MAX_CJK_CHARS = 20;
+// CJK Unified Ideographs block, U+4E00-U+9FFF (covers the vast
+// majority of everyday Chinese characters).
+const CJK_RE = /[一-鿿]/;
+
+/** True when `expression` is implausibly long for a term/phrase (a
+ *  whole sentence, not what the detect contract asks for) — exported
+ *  for direct unit testing of the boundary cases. */
+export function isOversizedAiExpression(expression: string): boolean {
+  const trimmed = expression.trim();
+  if (CJK_RE.test(trimmed)) {
+    return trimmed.length > AI_EXPRESSION_MAX_CJK_CHARS;
+  }
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  return words.length > AI_EXPRESSION_MAX_WORDS || trimmed.length > AI_EXPRESSION_MAX_CHARS;
+}
+
+/** Drops oversized expressions from an LLM detect response; `terms`
+ *  passes through untouched (never oversized in the way this bug
+ *  reports — a term is already, by rule 4's own definition, a short
+ *  acronym/name/metric). Returns the SAME `res` reference when nothing
+ *  was dropped (cheap no-op on the common case, and lets callers use
+ *  `!==` as a "did anything change" check). `onDrop` receives only the
+ *  COUNT of dropped items, never their text — see
+ *  recordOversizedAiDiagHit's own privacy note below. */
+export function filterOversizedAiExpressions(
+  res: DetectResponse,
+  onDrop?: (droppedCount: number) => void,
+): DetectResponse {
+  const kept = res.expressions.filter((e) => !isOversizedAiExpression(e.expression));
+  const droppedCount = res.expressions.length - kept.length;
+  if (droppedCount === 0) return res;
+  onDrop?.(droppedCount);
+  return { expressions: kept, terms: res.terms };
+}
+
 interface Batch {
   context: string;
   new_text: string;
@@ -103,6 +158,13 @@ export class DetectionScheduler {
   private dictDiagSegments = 0;
   private dictDiagExpressions = 0;
   private dictDiagTerms = 0;
+
+  // Oversized-AI-expression observability (same "first hit immediate,
+  // then at most one entry per 60s" posture as the dictionary-floor
+  // counter above — see recordOversizedAiDiagHit below).
+  private oversizedAiDiagFirstHitLogged = false;
+  private lastOversizedAiDiagAt: number | null = null;
+  private oversizedAiDiagDropped = 0;
 
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private visibilityHandler: (() => void) | null = null;
@@ -209,6 +271,34 @@ export class DetectionScheduler {
     this.dictDiagSegments = 0;
     this.dictDiagExpressions = 0;
     this.dictDiagTerms = 0;
+  }
+
+  /** Fix: "ai detection is catching whole sentences rather than
+   *  phrases" — observability for the post-filter above (see
+   *  filterOversizedAiExpressions), same throttle posture as
+   *  recordDictDiagHit: counts only, no expression text (log.ts's
+   *  PRIVACY RULE), accumulated across hits and written at most once
+   *  per DICT_DIAG_THROTTLE_MS except the very FIRST hit of this
+   *  scheduler's lifetime, which writes immediately. */
+  private recordOversizedAiDiagHit(droppedCount: number): void {
+    this.oversizedAiDiagDropped += droppedCount;
+
+    const now = Date.now();
+    const isFirstHitEver = !this.oversizedAiDiagFirstHitLogged;
+    const throttleElapsed =
+      this.lastOversizedAiDiagAt === null ||
+      now - this.lastOversizedAiDiagAt >= DICT_DIAG_THROTTLE_MS;
+    if (!isFirstHitEver && !throttleElapsed) return;
+
+    this.oversizedAiDiagFirstHitLogged = true;
+    this.lastOversizedAiDiagAt = now;
+    diagLog(
+      "info",
+      "detect-ai-oversize",
+      "AI 表达超长已过滤",
+      `dropped=${this.oversizedAiDiagDropped}`,
+    );
+    this.oversizedAiDiagDropped = 0;
   }
 
   private armFlushTimer(): void {
@@ -323,7 +413,14 @@ export class DetectionScheduler {
         return;
       }
 
-      this.opts.onDetection(res, "llm", { batchWindowStart: batch.windowStart });
+      // Post-filter (defense in depth, see filterOversizedAiExpressions'
+      // own doc above): drops any expression the LLM returned anyway
+      // despite the prompt-level constraint. Dictionary/custom cards
+      // never reach this call — only this "llm" success path does.
+      const filtered = filterOversizedAiExpressions(res, (droppedCount) =>
+        this.recordOversizedAiDiagHit(droppedCount),
+      );
+      this.opts.onDetection(filtered, "llm", { batchWindowStart: batch.windowStart });
 
       this.opts.onModeChange("llm");
       this.consecutiveFailures = 0;

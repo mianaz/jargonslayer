@@ -88,6 +88,23 @@ export class TabAudioEngine implements STTEngine {
     }
   }
 
+  /** Soft pause (STT protocol v2, B4 pause matrix): gates PCM
+   * forwarding on the SAME transport/capture stream — the OS/browser
+   * share picker never re-opens on resume, and Chrome's own "sharing
+   * this tab" bar staying visible through the pause is honest (nothing
+   * was actually torn down). No-op if already stopping or if start()
+   * never got far enough to attach a transport. */
+  async pause(): Promise<void> {
+    if (this.stopping || !this.transport) return;
+    this.transport.pauseFeed();
+  }
+
+  /** Resume after pause() — same transport, no reconnect. */
+  async resume(): Promise<void> {
+    if (this.stopping || !this.transport) return;
+    this.transport.resumeFeed();
+  }
+
   private handleTrackEnded = (): void => {
     // User clicked the browser's native "停止共享" control.
     if (this.stopping) return;

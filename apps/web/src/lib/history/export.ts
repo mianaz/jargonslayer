@@ -10,6 +10,7 @@ import type {
   TermCard,
   TranslationPair,
 } from "@jargonslayer/core/types";
+import { formatElapsedClock, resolveSessionElapsedBasis, segmentElapsedMs } from "../segmentElapsed";
 
 const ENGINE_LABELS: Record<STTEngineKind, string> = {
   demo: "演示模式",
@@ -45,11 +46,6 @@ function formatDuration(startMs: number, endMs: number): string {
   const min = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
   return `${min} 分 ${sec} 秒`;
-}
-
-function formatClock(ms: number): string {
-  const d = new Date(ms);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
 function escapeMdTableCell(s: string): string {
@@ -123,9 +119,16 @@ export function buildMarkdownReport(session: MeetingSession): string {
     const translationByIndex = new Map<number, string>(
       (summary?.translations ?? []).map((t: TranslationPair) => [t.index, t.zh]),
     );
+    // Transcript-timestamp fix: exports now match the screen — elapsed
+    // since meeting start (paused spans excluded), not a wall-clock
+    // time. The session-level header above keeps the absolute date
+    // (formatDate(session.startedAt)); only this per-segment line
+    // switches.
+    const { startedAt: elapsedZero, pauseIntervals } = resolveSessionElapsedBasis(session);
     for (const seg of session.segments) {
       const speaker = seg.speaker || "Speaker";
-      lines.push(`**${speaker}** \`${formatClock(seg.startedAt)}\`  `);
+      const elapsed = formatElapsedClock(segmentElapsedMs(elapsedZero, seg.startedAt, pauseIntervals));
+      lines.push(`**${speaker}** \`${elapsed}\`  `);
       lines.push(`${seg.text}  `);
       const zh = translationByIndex.get(seg.index);
       if (zh) {

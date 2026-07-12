@@ -115,10 +115,10 @@ This is what unlocks the 本地 Whisper mic engine, 标签页音频 (tab/stream 
 cd sidecar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python whisper_server.py --model medium --partials
+python whisper_server.py --model medium
 ```
 
-(`--partials` streams gray interim text while someone is speaking — the typing effect; drop it if CPU is tight.) Wait for the banner. The first run downloads the model from Hugging Face; the port only opens once that download *and* the model load finish. Depending on the model size and your connection this can take a while before anything prints — that's normal, not a hang. You'll see something like:
+Wait for the banner. The first run downloads the model from Hugging Face; the port only opens once that download *and* the model load finish. Depending on the model size and your connection this can take a while before anything prints — that's normal, not a hang. You'll see something like:
 
 ```
 ============================================================
@@ -133,6 +133,8 @@ http://127.0.0.1:8766 录音上传任务 API — PUT /transcribe, POST /ingest-u
 ```
 
 Once that `ws://... 等待连接` line shows up, go back to the page: Settings → transcription engine → 本地 Whisper → 开始监听.
+
+Gray interim text while someone is speaking (the typing effect) is now app-controlled, on by default: Settings → transcription/engine → 「实时转录预览」 — toggle it per session without restarting the sidecar. The sidecar's own `--partials` flag still exists, but only as a server-side default for an old app build that never sends the setting.
 
 | Model | Quality | Speed | Best for |
 |---|---|---|---|
@@ -183,7 +185,7 @@ Get a key at [console.anthropic.com](https://console.anthropic.com/). Defaults: 
 
 Setup, the "ready" banner, model choice, and troubleshooting all live in [Local setup → Step 2](#step-2--the-local-whisper-sidecar-optional-but-recommended).
 
-Useful flags once it's running: `--language en` (default), `--partials` (gray interim text while speaking, more CPU), `--save-audio meeting.wav` (keep audio for post-meeting diarization).
+Useful flags once it's running: `--language en` (default), `--save-audio meeting.wav` (keep audio for post-meeting diarization). `--partials` (gray interim text while speaking, more CPU) is now controlled per session by the app's own 「实时转录预览」 setting (on by default) — the flag only matters as this sidecar's default for an old app build that never sends that setting.
 
 ### ⚠️ Hearing "the other side" (must-read for online meetings)
 

@@ -67,6 +67,31 @@ export function useMeeting(): UseMeetingResult {
   const lifecycleBusyRef = useRef(false);
   const pendingEndRef = useRef(false);
 
+  // Terminal-teardown race (codex v2 review F6): the error and
+  // capture_ended branches below call runStopFlow() UN-GATED (they
+  // deliberately never go through withLifecycleGate — gating them
+  // would deadlock: an error firing WHILE pause()/resume() itself
+  // holds the gate could otherwise never resolve). That means the
+  // lifecycle gate stays FREE for the whole up-to-8s drain, so if the
+  // meeting was "paused" (soft) when the error/capture_ended fired,
+  // Resume stays clickable the entire time: the still-alive-but-
+  // dying engine's own resume() would no-op (it's mid-`stopping`), yet
+  // resume() would unconditionally call resumeMeeting() anyway,
+  // producing a phantom "listening" over a dead capture. Set
+  // SYNCHRONOUSLY (before runStopFlow ever awaits) at the top of both
+  // branches, cleared in a finally once runStopFlow settles — pause()/
+  // resume() both plain-return while it's set, without touching the
+  // gate itself.
+  const terminalTeardownRef = useRef(false);
+
+  // Diar "ready" one-shot toast (STT protocol v2): reset per meeting
+  // (see start() below) so a hard-resume's fresh engine (which re-arms
+  // diarization from scratch on the sidecar) doesn't spam a second
+  // toast within the SAME meeting — a soft-paused/resumed connection
+  // never re-arms at all, so this also naturally covers "don't toast
+  // again on a within-meeting reconnect".
+  const diarReadyToastedRef = useRef(false);
+
   // Engine-creation/wiring block (pause/resume, B3): extracted out of
   // start() so resume() can reattach a FRESH engine instance to the
   // SAME meeting (same scheduler/translateQueue, same sessionGen)
@@ -92,12 +117,20 @@ export function useMeeting(): UseMeetingResult {
 
     const runStopFlow = async () => {
       await engine.stop();
+      // Stop-drain belt (STT protocol v2): the drain final's own
+      // onFinal already clears interim when one arrives, but a stop
+      // with no trailing final must not leave a stale gray interim on
+      // screen forever — see doStop's matching call for the full
+      // rationale.
+      useApp.getState().setInterim(null);
       scheduler.flushNow();
       const segCount = useApp.getState().segments.length;
       useApp.getState().setStatus(segCount ? "stopped" : "idle");
       // Persist whatever was transcribed — engine errors and demo
       // completion must not lose the session. Late detection results
-      // are re-saved by the store's post-stop debounced save.
+      // and a lingering speaker_update (see wsTransport.ts's
+      // POST_STOP_LINGER_MS) are both re-saved by the store's post-stop
+      // debounced save (store.ts's applyDetection/applySpeakerUpdate).
       if (segCount > 0) {
         await useApp.getState().saveCurrentSession();
       }
@@ -105,6 +138,21 @@ export function useMeeting(): UseMeetingResult {
 
     const events: STTEvents = {
       onInterim: (text, speaker) => {
+        // Late-partial belt (STT protocol v2 fix, codex v2 review
+        // F4): a "flush" (soft pause) doesn't cancel an in-flight
+        // partial transcription — its result can arrive AFTER pause
+        // already cleared the interim, with no new PCM ever coming to
+        // replace it, so it would otherwise stick on screen forever.
+        // Only accept interim text while the meeting is actually
+        // listening for one; this also belts a straggler arriving
+        // after End (stop()/runStopFlow already clear interim, but a
+        // late partial landing right after would otherwise repopulate
+        // it one more time).
+        const status = useApp.getState().status;
+        if (status !== "listening" && status !== "connecting") {
+          diagLog("info", "stt-lifecycle", "忽略非监听状态下到达的插字");
+          return;
+        }
         // Honest interim contract (fix #A4): the engine layer now
         // forwards `""` (a genuine retraction) instead of swallowing
         // it — map that to `null` here so InterimLine doesn't render
@@ -130,6 +178,15 @@ export function useMeeting(): UseMeetingResult {
           useApp
             .getState()
             .showToast(logAndToastError("stt-diar", "实时说话人分离出错，已停止本场自动标注", detail));
+        } else if (state === "ready") {
+          // Positive ack (STT protocol v2): arming actually succeeded
+          // on the sidecar. One-shot per meeting — see
+          // diarReadyToastedRef's own doc comment.
+          if (!diarReadyToastedRef.current) {
+            diarReadyToastedRef.current = true;
+            diagLog("info", "stt-diar", "实时说话人分离已开启");
+            useApp.getState().showToast("实时说话人分离已开启");
+          }
         } else {
           diagLog("warn", "stt-diar", "实时说话人分离不可用，已回退到纯转录", detail);
           useApp.getState().showToast("实时说话人分离不可用，已回退到纯转录");
@@ -148,22 +205,41 @@ export function useMeeting(): UseMeetingResult {
           // the user clicked End, no engine event may flip the meeting
           // upward while the intent awaits its drain.
           if (pendingEndRef.current) return;
+          // Soft-paused (STT protocol v2): a still-alive transport
+          // (tabaudio) can emit its own reconnect status events (e.g.
+          // a transient ws drop) while the meeting is soft-paused —
+          // that must never un-pause the UI out from under the user.
+          if (useApp.getState().status === "paused") {
+            diagLog("warn", "stt-lifecycle", `忽略暂停期间的引擎状态变化: ${status}`);
+            return;
+          }
           useApp.getState().setStatus(status, status === "connecting" ? detail : undefined);
         } else if (status === "error") {
           attachFailed = true;
+          // F6: set BEFORE runStopFlow's first await — see
+          // terminalTeardownRef's own doc above.
+          terminalTeardownRef.current = true;
           useApp.getState().showToast(logAndToastError("stt", detail ?? "转录引擎错误"));
-          void runStopFlow();
+          void runStopFlow().finally(() => {
+            terminalTeardownRef.current = false;
+          });
         } else if (
           status === "idle" &&
           (detail === "demo_finished" || detail === "capture_ended")
         ) {
+          // F6: same synchronous-before-await set as the error branch.
+          terminalTeardownRef.current = true;
           const endToast =
             detail === "capture_ended"
               ? "共享已结束，会议已保存到历史记录"
               : "演示结束，打开右侧「纪要」标签生成会后报告试试";
-          void runStopFlow().then(() => {
-            useApp.getState().showToast(endToast);
-          });
+          void runStopFlow()
+            .then(() => {
+              useApp.getState().showToast(endToast);
+            })
+            .finally(() => {
+              terminalTeardownRef.current = false;
+            });
         }
       },
     };
@@ -181,6 +257,13 @@ export function useMeeting(): UseMeetingResult {
     if (engine) {
       await engine.stop();
     }
+    // Stop-drain belt (STT protocol v2): the drain final's own onFinal
+    // already clears interim when one arrives (WsTransport.stop() now
+    // waits for the sidecar's drain ack before resolving — see
+    // wsTransport.ts), but a stop with no trailing final (nothing was
+    // being said, or the tail was pure silence) would otherwise leave
+    // a stale gray interim on screen forever.
+    useApp.getState().setInterim(null);
     // Scheduler stays alive so late responses still land; it is
     // replaced+stopped on the next start().
     scheduler?.flushNow();
@@ -213,6 +296,7 @@ export function useMeeting(): UseMeetingResult {
     const { status } = useApp.getState();
     if (status === "listening" || status === "connecting") return;
 
+    diarReadyToastedRef.current = false;
     useApp.getState().beginMeeting();
     // Captured once, right after beginMeeting() bumps meetingGen —
     // this is "this engine session's gen" for the meeting-boundary
@@ -247,32 +331,90 @@ export function useMeeting(): UseMeetingResult {
     await attachEngine(sessionGen);
   }), [attachEngine, withLifecycleGate]);
 
-  // Pause (B3): stop the LIVE engine only — scheduler/translateQueue
-  // stay alive (same meeting, same meetingGen; they read it via
-  // closures so nothing needs re-wiring). Ordering matters (codex
-  // review 2026-07-10): detach the ref and flip to "paused"
-  // SYNCHRONOUSLY, so every other lifecycle guard sees the new state
-  // before the (awaited) teardown; then stop the engine — webspeech's
-  // stop() drains the working tail into committed segments before it
-  // resolves; the interim display is cleared only after that drain.
+  // Pause (B3, soft branch added by STT protocol v2): two branches —
+  // SOFT (engine.pause exists, currently only tabaudio) keeps the
+  // engine/transport alive, so resume needs no reconnect and no
+  // re-picker; TEARDOWN (everything else, unchanged from B3) stops the
+  // engine outright and resume() reattaches a fresh one. Both branches
+  // share the same ordering rationale (codex review 2026-07-10): flip
+  // to "paused" SYNCHRONOUSLY before the awaited pause/stop call, so
+  // every other lifecycle guard sees the new state first.
   const pause = useCallback(async () => withLifecycleGate(async () => {
+    // F6: an un-gated error/capture_ended teardown is draining — see
+    // terminalTeardownRef's own doc above. Plain-return without
+    // touching the gate itself (the gate stays free for this whole
+    // window by design).
+    if (terminalTeardownRef.current) return;
     const { status } = useApp.getState();
     if (status !== "listening") return;
     const engine = engineRef.current;
+    if (engine?.pause) {
+      // Soft pause: KEEP engineRef.current — this is what distinguishes
+      // it from the teardown branch below (resume() branches on the
+      // very same `engineRef.current?.resume` check).
+      useApp.getState().pauseMeeting();
+      await engine.pause();
+      useApp.getState().setInterim(null);
+      return;
+    }
+    // Teardown pause: webspeech's stop() drains the working tail into
+    // committed segments before it resolves; the interim display is
+    // cleared only after that drain.
     engineRef.current = null;
     useApp.getState().pauseMeeting();
     await engine?.stop();
     useApp.getState().setInterim(null);
   }), [withLifecycleGate]);
 
-  // Resume (B3): same meeting, same meetingGen — attachEngine() FIRST
-  // (a FRESH engine instance; the paused one was fully torn down), and
-  // resumeMeeting() only once capture is attached, so the paused-time
-  // accounting also absorbs the connection delay instead of counting
-  // it as active meeting time (codex review 2026-07-10).
+  // Resume (B3, soft branch added by STT protocol v2): mirrors pause()'s
+  // two branches. SOFT (engineRef.current?.resume exists — the SAME
+  // still-alive engine from a soft pause): resume it in place, no
+  // re-attach, no re-picker. TEARDOWN (everything else, unchanged from
+  // B3): attachEngine() a FRESH engine instance (the paused one was
+  // fully torn down), and resumeMeeting() only once capture is
+  // attached, so the paused-time accounting also absorbs the
+  // connection delay instead of counting it as active meeting time
+  // (codex review 2026-07-10).
   const resume = useCallback(async () => withLifecycleGate(async () => {
-    const { status, meetingGen } = useApp.getState();
+    // F6: same plain-return as pause() above — see terminalTeardownRef's
+    // own doc.
+    if (terminalTeardownRef.current) return;
+    const { status, meetingGen, settings } = useApp.getState();
     if (status !== "paused") return;
+    let engine = engineRef.current;
+    // Engine switch during a retained soft pause (codex v2 review F7):
+    // pre-v2, EVERY pause was teardown, so switching engines in
+    // Settings while paused was already honored (resume's
+    // teardown-resume path below always attaches whatever
+    // settings.engine currently says). A RETAINED soft-paused engine
+    // (tabaudio) bypasses that entirely by design — it's the SAME
+    // instance, never re-attached — so it silently kept ignoring a
+    // mid-pause engine switch. If the live engine no longer matches
+    // the currently-selected one, fully tear it down (including its
+    // own stop drain) here, then fall through to the SAME
+    // teardown-resume path below so the newly selected engine attaches
+    // (the tab-audio picker reappearing when switching TO tabaudio is
+    // expected — same as any other fresh attach). Same pendingEnd
+    // guards as the paths below apply automatically once this falls
+    // through — nothing extra needed here.
+    if (engine && engine.kind !== settings.engine) {
+      engineRef.current = null;
+      await engine.stop();
+      engine = null;
+    }
+    if (engine?.resume) {
+      await engine.resume();
+      // A pending End equally wins over the fold here (mirrors the
+      // teardown branch's own guard below) — the gate's drain will
+      // stop this SAME engine the moment this call releases. Unlike
+      // the teardown branch, there is no attach-failure/stopped-or-
+      // idle race to also guard against: resume() on an already-live
+      // transport doesn't asynchronously fail the way attachEngine can.
+      if (!pendingEndRef.current) {
+        useApp.getState().resumeMeeting();
+      }
+      return;
+    }
     const attached = await attachEngine(meetingGen);
     // Fold accounting ONLY on an explicit successful attach (codex
     // round-3: the error stop flow is un-awaited, so global status is

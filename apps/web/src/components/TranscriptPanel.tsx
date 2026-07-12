@@ -16,6 +16,7 @@ import {
   MAX_HIGHLIGHT_PER_KIND,
   type HighlightHit,
 } from "../lib/highlight";
+import { formatElapsedClock, segmentElapsedMs } from "../lib/segmentElapsed";
 import type { ExpressionCard, TermCard, TranscriptSegment } from "@jargonslayer/core/types";
 import HoverGlossCard, { type GlossItem } from "./HoverGlossCard";
 
@@ -67,6 +68,10 @@ function hashSpeaker(name: string): number {
   return Math.abs(hash) % SPEAKER_PALETTE.length;
 }
 
+// Absolute wall-clock time — no longer the segment's VISIBLE timestamp
+// (see the elapsed-time fix below), kept as the `title` tooltip value
+// on that same span so the original real-world time is still one
+// hover away.
 function formatTime(ms: number): string {
   const d = new Date(ms);
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -385,6 +390,14 @@ interface SegmentRowProps {
   matcher: ReturnType<typeof buildHighlightMatcher>;
   translation: string | undefined;
   speakerCount: number;
+  // Elapsed-time fix: precomputed by the parent (TranscriptPanel) so
+  // this memoized row never needs `startedAt`/`pauseIntervals` as
+  // props of their own — both are plain strings, so React.memo's
+  // default per-prop Object.is comparison still bails out correctly
+  // whenever the parent recomputes the SAME value (see the parent's
+  // own segmentTimeLabels memo).
+  elapsedLabel: string;
+  absoluteTitle: string;
   onStartEdit: (segId: string, text: string) => void;
   onChangeEditValue: (v: string) => void;
   onSaveEdit: () => void;
@@ -403,6 +416,8 @@ export const SegmentRow = memo(function SegmentRow({
   matcher,
   translation,
   speakerCount,
+  elapsedLabel,
+  absoluteTitle,
   onStartEdit,
   onChangeEditValue,
   onSaveEdit,
@@ -426,7 +441,9 @@ export const SegmentRow = memo(function SegmentRow({
             {palette.glyph}
           </span>
         )}
-        <span className="block whitespace-nowrap">{formatTime(seg.startedAt)}</span>
+        <span className="block whitespace-nowrap" title={absoluteTitle}>
+          {elapsedLabel}
+        </span>
         {seg.speaker && palette && (
           <span
             onClick={
@@ -625,6 +642,13 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
   const status = useApp((s) => s.status);
+  // Elapsed-time fix: same fields loadSession/beginMeeting/resumeMeeting
+  // keep in sync for both a live meeting and a loaded history session
+  // (loadSession funnels a saved session's own basis into these SAME
+  // store fields — see store.ts) — bare selectors, matching segments/
+  // cards/terms above (direct store fields, not derived).
+  const startedAt = useApp((s) => s.startedAt);
+  const pauseIntervals = useApp((s) => s.pauseIntervals);
   const focusMode = useApp((s) => s.focusMode);
   const setFocusCard = useApp((s) => s.setFocusCard);
   const setLookup = useApp((s) => s.setLookup);
@@ -718,6 +742,25 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
     () => buildHighlightMatcher(cards, terms),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [vocabularyKey],
+  );
+  // Elapsed-time fix: one {elapsed, absolute} label pair per segment,
+  // index-aligned with `segments` — computed here (not inside
+  // SegmentRow) so it stays memoized on the actual inputs that can
+  // change it (segments/startedAt/pauseIntervals) rather than
+  // recomputing 200 Date constructions on every unrelated re-render
+  // (e.g. a cards/terms bump), matching the render-perf care already
+  // taken by vocabularyKey/matcher above. `startedAt` falls back to
+  // the first segment's own timestamp when the store hasn't set it
+  // (shouldn't happen once a meeting/session is loaded, but keeps this
+  // from ever computing a bogus negative elapsed against a null zero).
+  const elapsedZero = startedAt ?? segments[0]?.startedAt ?? 0;
+  const segmentTimeLabels = useMemo(
+    () =>
+      segments.map((seg) => ({
+        elapsed: formatElapsedClock(segmentElapsedMs(elapsedZero, seg.startedAt, pauseIntervals)),
+        absolute: formatTime(seg.startedAt),
+      })),
+    [segments, elapsedZero, pauseIntervals],
   );
   const cardsById = useMemo(() => {
     const map = new Map<string, ExpressionCard>();
@@ -982,7 +1025,7 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
           </div>
         ) : (
           <>
-            {segments.map((seg) => (
+            {segments.map((seg, i) => (
               <SegmentRow
                 key={seg.id}
                 seg={seg}
@@ -992,6 +1035,8 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
                 matcher={matcher}
                 translation={translations[seg.id]}
                 speakerCount={seg.speaker ? speakerCounts.get(seg.speaker) ?? 1 : 0}
+                elapsedLabel={segmentTimeLabels[i]?.elapsed ?? ""}
+                absoluteTitle={segmentTimeLabels[i]?.absolute ?? ""}
                 onStartEdit={startEditingSegment}
                 onChangeEditValue={setEditValue}
                 onSaveEdit={saveEditingSegment}

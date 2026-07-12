@@ -23,7 +23,7 @@ import {
   UploadSimple,
 } from "@phosphor-icons/react";
 import { elapsedActiveMs, useApp } from "@/lib/store";
-import type { MeetingStatus, STTEngineKind } from "@jargonslayer/core/types";
+import type { MeetingStatus, Settings, STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 
@@ -49,23 +49,27 @@ export function isEngineControlBusy(status: MeetingStatus): boolean {
   return status === "connecting" || status === "listening";
 }
 
-// Pause availability (B4): 暂停 is hidden entirely (end-only posture)
-// for engines where a resume can't safely reattach mid-meeting —
-// tabaudio (resuming would have to re-open the OS/browser tab-share
-// picker, a jarring interruption to re-request every pause), demo (a
-// scripted replay that only knows how to restart from line 0, not
-// "resume"), and whisper WITH realtime diarization on (the sidecar's
-// seg-id numbering isn't guaranteed stable across a stop()/reattach
-// pair — a post-resume diarization segment could collide with a
-// pre-pause one; known beta limitation). Exported so it's
-// independently unit-testable, same pattern as isEngineControlBusy.
-export function canPause(engine: STTEngineKind): boolean {
-  // webspeech ONLY for v1. whisper is deferred pending a stop-drain
-  // ack protocol — WsTransport.stop() closes right after {type:"stop"},
-  // so the sidecar's post-stop final can be dropped or interleave past
-  // a resume (codex review 2026-07-10); tabaudio would re-open the OS
-  // share picker on resume; demo restarts its script.
-  return engine === "webspeech";
+// Pause availability (B4, STT protocol v2 matrix): demo -> false (a
+// scripted replay only knows how to restart from line 0, not
+// "resume"); webspeech -> true (teardown pause — stop() drains the
+// working tail synchronously); tabaudio -> true (SOFT pause, see
+// TabAudioEngine.pause/wsTransport.ts's pauseFeed/resumeFeed — the
+// capture stream and ws both stay alive, so resume never re-opens the
+// OS/browser tab-share picker); whisper (mic) -> true EXCEPT when
+// realtime diarization is on. whisper has no soft pause (holding the
+// mic open while "paused" is bad optics — see whisperSocket.ts), so
+// its pause is teardown-only: a resume reattaches a FRESH sidecar
+// connection, whose seg_id namespace restarts at 0 and would collide
+// with pre-pause diarization ids (known beta limitation) — kept
+// hidden in that one case, documented here rather than silently
+// wrong. Exported so it's independently unit-testable, same pattern
+// as isEngineControlBusy.
+export function canPause(
+  engine: STTEngineKind,
+  settings: Pick<Settings, "realtimeDiarize">,
+): boolean {
+  if (engine === "whisper") return !settings.realtimeDiarize;
+  return engine === "webspeech" || engine === "tabaudio";
 }
 
 // Real capture engines only — demo is a scripted preview, not a peer
@@ -592,7 +596,7 @@ export default function Header({
             </button>
           )}
 
-          {status === "listening" && canPause(engine) && (
+          {status === "listening" && canPause(engine, { realtimeDiarize }) && (
             <button
               type="button"
               data-testid="btn-pause"
