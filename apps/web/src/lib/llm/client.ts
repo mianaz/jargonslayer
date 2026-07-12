@@ -20,7 +20,30 @@ import { withBase } from "../basePath";
 import { PREVIEW_TIER } from "../deployTier";
 import { diagLog } from "../diag/log";
 import { resolveTaskCreds } from "./taskConfig";
+import type { ResolvedTaskCreds } from "./taskConfig";
 import { renderProfileHint } from "@jargonslayer/core/llm/profileHint";
+// v0.4 S2 (PLAN-v0.4 §1A/§4) — client-side callProvider path: an
+// internal, default-OFF flag (llmTransport.ts's useClientTransport)
+// lets every *Api function below call the provider directly instead of
+// routing through /api/* — the path S3's Tauri desktop build runs
+// exclusively (no Node server there). BadOutputError/OpenAiCompatError
+// and the CallJsonOptions/ProviderCaller shapes are the same ones
+// anthropic.ts's SDK-based server path already uses (providerCore.ts,
+// S2's isomorphic extraction) — see throwForProviderError below for
+// how a caught error maps to this file's existing NoKeyError/
+// RateLimitApiError/UpstreamError taxonomy.
+import { useClientTransport } from "./llmTransport";
+import { callProviderDirect, ProviderHttpError } from "./clientProvider";
+import {
+  BadOutputError,
+  OpenAiCompatError,
+  type CallJsonOptions,
+  type ProviderCaller,
+} from "./providerCore";
+import { DEFAULT_DETECT_MODEL, runDetectTask } from "./tasks/detect";
+import { DEFAULT_DEFINE_MODEL, runDefineTask } from "./tasks/define";
+import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "./tasks/translate";
+import { DEFAULT_SUMMARIZE_MODEL, runSummarizeTask } from "./tasks/summarize";
 import {
   agentDetect,
   agentDefine,
@@ -151,6 +174,74 @@ async function throwForStatus(res: Response, ctx: RequestErrorContext): Promise<
   throw new UpstreamError(body?.error ?? `请求失败（${res.status}）`);
 }
 
+/** Direct-provider equivalent of throwForStatus above — the client-
+ *  side callProvider path (v0.4 S2) talks straight to the provider, so
+ *  there is no intermediate /api/* Response to parse; this maps
+ *  whatever clientProvider.ts's callProviderDirect (called from inside
+ *  a tasks/*.ts orchestration) threw onto the SAME NoKeyError/
+ *  RateLimitApiError/UpstreamError taxonomy instead.
+ *
+ *  Status-code bucketing deliberately treats 401 AND 403 as "no key"
+ *  (unlike throwForStatus's 401-only branch): throwForStatus reads an
+ *  ALREADY-NORMALIZED status from our own route (mapLlmError folds
+ *  upstream 403s into 401 before the client ever sees one — see
+ *  anthropic.ts's OpenAiCompatError branch), so a literal 403 reaching
+ *  throwForStatus is defensive-only. This function sees the RAW
+ *  provider status with no normalizing middle layer, where a genuine
+ *  403 (e.g. Anthropic's permission_error) is a real, expected case —
+ *  matching mapLlmError's own 401||403 bucketing exactly, and
+ *  diagMessageForStatus already anticipates this (see its own 403
+ *  branch/test).
+ *
+ *  Same privacy rule as diagMessageForStatus/throwForStatus: diagLog
+ *  only ever gets a FIXED short zh category message, never a raw
+ *  upstream body/model-output slice (OpenAiCompatError/
+ *  ProviderHttpError's `.message` can carry up to 500 raw upstream
+ *  chars — see providerCore.ts's requestChatContent) and never a zod
+ *  issue detail (BadOutputError's `.message` — mirrors mapLlmError's
+ *  OWN BadOutputError branch, which likewise discards the issue detail
+ *  before it ever reaches an HTTP body). */
+function throwForProviderError(
+  err: unknown,
+  ctx: RequestErrorContext,
+  messages: { timeout: string; network: string },
+): never {
+  if (err instanceof OpenAiCompatError || err instanceof ProviderHttpError) {
+    const detail = errorDetail(ctx, err.status);
+    diagLog("error", ctx.tag, diagMessageForStatus(err.status), detail);
+    if (err.status === 401 || err.status === 403) {
+      throw new NoKeyError("API Key 无效");
+    }
+    if (err.status === 429) {
+      throw new RateLimitApiError("请求过于频繁，请稍后重试");
+    }
+    throw new UpstreamError(err.message || `请求失败（${err.status}）`);
+  }
+  if (err instanceof BadOutputError) {
+    diagLog("error", ctx.tag, "模型输出解析失败", errorDetail(ctx));
+    throw new UpstreamError("模型输出解析失败");
+  }
+  if (err instanceof DOMException && err.name === "AbortError") {
+    diagLog("error", ctx.tag, messages.timeout, errorDetail(ctx));
+    throw new UpstreamError(messages.timeout);
+  }
+  diagLog("error", ctx.tag, messages.network, errorDetail(ctx));
+  throw new UpstreamError(messages.network);
+}
+
+/** Direct-provider paths have no server to fall back to, so an
+ *  unconfigured key must fail IMMEDIATELY — without dispatching a
+ *  request the provider is guaranteed to 401 anyway. Mirrors
+ *  resolveLlmConfig returning null server-side (the exact same
+ *  message + diag shape throwForStatus's own 401 default produces:
+ *  `body?.error ?? "未配置 API Key"`), just resolved locally instead of
+ *  over the wire. */
+function requireApiKey(apiKey: string, ctx: RequestErrorContext): void {
+  if (apiKey) return;
+  diagLog("error", ctx.tag, diagMessageForStatus(401), errorDetail(ctx, 401));
+  throw new NoKeyError("未配置 API Key");
+}
+
 /** Existing Next.js-routed detect call (BYOK / shared-key / Poe / …).
  *  Unchanged — see detectApi below for the subscription-direct
  *  pre-branch that wraps this. */
@@ -200,12 +291,68 @@ async function detectViaNext(
   return (await res.json()) as DetectResponse;
 }
 
+/** Client-side callProvider detect call (v0.4 S2) — used instead of
+ *  detectViaNext above when llmTransport.ts's useClientTransport() is
+ *  on. BYOK-only: server-only concerns (pickModel's allowlist, rate
+ *  limiting, the #61 fallback model) never apply here — see
+ *  tasks/detect.ts's header comment. `body.model ?? DEFAULT_DETECT_
+ *  MODEL` mirrors the server's pickModel BYOK branch exactly (see
+ *  anthropic.ts's pickModel: `requestedModel ?? fallbackDefault`) —
+ *  detectViaNext never injects `creds.model` into the wire body either
+ *  (only into the diag ctx label), so callers that don't set
+ *  body.model themselves (e.g. stt/upload.ts) get the same task
+ *  default here as they do server-side today. */
+async function detectViaClient(
+  body: DetectRequest,
+  settings: Settings,
+): Promise<DetectResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  // creds.provider directly, never ctxProvider(creds) — see
+  // summarizeViaClient's comment on why the "server" label doesn't
+  // apply to this BYOK-only path.
+  const ctx: RequestErrorContext = { tag: "llm-detect", provider: creds.provider, model: body.model ?? creds.model };
+  requireApiKey(creds.apiKey, ctx);
+  const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
+    // Same PREVIEW_TIER-aware budget as detectViaNext's fetch above —
+    // kept for consistency even though the direct path is BYOK-only
+    // (PREVIEW_TIER is a server-key/showroom-build concept) so the two
+    // paths never silently disagree on how long "too slow" means.
+    return callProviderDirect({ ...opts, timeoutMs: PREVIEW_TIER ? 25000 : 20000 });
+  };
+
+  try {
+    return await runDetectTask(
+      {
+        apiKey: creds.apiKey,
+        model: body.model ?? DEFAULT_DETECT_MODEL,
+        provider: creds.provider,
+        baseUrl: creds.baseUrl,
+        context: body.context,
+        new_text: body.new_text,
+        lang: settings.explainLanguage,
+        profile: renderProfileHint(settings.profile),
+      },
+      call,
+    );
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "检测请求超时，请稍后重试",
+      network: "检测请求失败，请检查网络连接",
+    });
+  }
+}
+
 export async function summarizeApi(
   body: SummarizeRequest,
   settings: Settings,
 ): Promise<SummaryResult> {
   const creds = resolveTaskCreds(settings, "summary");
   const ctx: RequestErrorContext = { tag: "llm-summary", provider: ctxProvider(creds), model: body.model ?? creds.model };
+
+  if (useClientTransport()) {
+    return summarizeViaClient(body, settings, creds);
+  }
+
   let res: Response;
   try {
     res = await fetch(withBase("/api/summarize"), {
@@ -235,6 +382,59 @@ export async function summarizeApi(
   }
 
   return (await res.json()) as SummaryResult;
+}
+
+/** Client-side callProvider summarize call (v0.4 S2) — used instead of
+ *  the fetch above when useClientTransport() is on. Runs the full
+ *  three-stage orchestration (summary + chunked/parallel translation +
+ *  sweep, see tasks/summarize.ts) as several direct provider calls —
+ *  exactly what the user's own BYOK key would do called any other way.
+ *  `body.model ?? DEFAULT_SUMMARIZE_MODEL` mirrors summarizeApi's own
+ *  wire contract: the existing fetch above sends `body.model` through
+ *  UNCHANGED (`{ ...body, lang, profile }` never touches `model`), and
+ *  the server's pickModel resolves an absent one to this exact
+ *  default in BYOK mode.
+ *
+ *  Builds its OWN ctx (creds.provider directly, never through
+ *  ctxProvider) rather than reusing summarizeApi's — ctxProvider's
+ *  apiKey-empty-means-"server" convention is specific to the Next.js
+ *  path (a keyless request there really is served by the route's own
+ *  env-managed key); the direct path is BYOK-only and has no such
+ *  fallback, so the diag label must always name the real configured
+ *  provider (design constraint #5) — see requireApiKey below for how a
+ *  genuinely missing key is handled instead. */
+async function summarizeViaClient(
+  body: SummarizeRequest,
+  settings: Settings,
+  creds: ResolvedTaskCreds,
+): Promise<SummaryResult> {
+  const ctx: RequestErrorContext = { tag: "llm-summary", provider: creds.provider, model: body.model ?? creds.model };
+  requireApiKey(creds.apiKey, ctx);
+
+  const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
+    return callProviderDirect({ ...opts, timeoutMs: 300000 });
+  };
+
+  try {
+    return await runSummarizeTask(
+      {
+        apiKey: creds.apiKey,
+        model: body.model ?? DEFAULT_SUMMARIZE_MODEL,
+        llm: { provider: creds.provider, baseUrl: creds.baseUrl },
+        segments: body.segments,
+        expressions: body.expressions,
+        terms: body.terms,
+        lang: settings.explainLanguage,
+        profile: renderProfileHint(settings.profile),
+      },
+      call,
+    );
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "报告生成超时，请稍后重试",
+      network: "报告生成失败，请检查网络连接",
+    });
+  }
 }
 
 /** Existing Next.js-routed define call. Unchanged — see defineApi
@@ -281,6 +481,48 @@ async function defineViaNext(
   }
 
   return (await res.json()) as DefineResult;
+}
+
+/** Client-side callProvider define call (v0.4 S2) — used instead of
+ *  defineViaNext above when useClientTransport() is on. Rides detect's
+ *  creds for provider/key routing, same as defineViaNext (see that
+ *  function's own comment) — DEFAULT_DEFINE_MODEL is its own constant
+ *  in tasks/define.ts even though it happens to equal detect's default
+ *  today (see that file's own comment on why they're not unified). */
+async function defineViaClient(
+  body: DefineRequest,
+  settings: Settings,
+): Promise<DefineResult> {
+  const creds = resolveTaskCreds(settings, "detect");
+  // creds.provider directly, never ctxProvider(creds) — see
+  // summarizeViaClient's comment on why the "server" label doesn't
+  // apply to this BYOK-only path.
+  const ctx: RequestErrorContext = { tag: "llm-define", provider: creds.provider, model: body.model ?? creds.model };
+  requireApiKey(creds.apiKey, ctx);
+  const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
+    return callProviderDirect({ ...opts, timeoutMs: 20000 });
+  };
+
+  try {
+    return await runDefineTask(
+      {
+        apiKey: creds.apiKey,
+        model: body.model ?? DEFAULT_DEFINE_MODEL,
+        provider: creds.provider,
+        baseUrl: creds.baseUrl,
+        phrase: body.phrase,
+        context: body.context,
+        lang: settings.explainLanguage,
+        profile: renderProfileHint(settings.profile),
+      },
+      call,
+    );
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "解释请求超时，请稍后重试",
+      network: "解释请求失败，请检查网络连接",
+    });
+  }
 }
 
 // ---------------------------------------------------------------
@@ -422,7 +664,10 @@ export async function detectApi(
     // undefined -> host unreachable; fall through to the existing
     // Next.js path below, silently.
   }
-  return detectViaNext(body, settings);
+  // v0.4 S2: independent of subscription-direct above — when on, this
+  // ALWAYS wins over the existing Next.js path (desktop has no /api/*
+  // to fall back to at all; see llmTransport.ts).
+  return useClientTransport() ? detectViaClient(body, settings) : detectViaNext(body, settings);
 }
 
 export async function defineApi(
@@ -441,7 +686,8 @@ export async function defineApi(
     }
     if (result !== undefined) return result;
   }
-  return defineViaNext(body, settings);
+  // v0.4 S2 — see detectApi's identical comment.
+  return useClientTransport() ? defineViaClient(body, settings) : defineViaNext(body, settings);
 }
 
 export async function translateApi(
@@ -461,6 +707,10 @@ export async function translateApi(
   // requestId (item 5's scope) — errorDetail/throwForStatus still work
   // fine, `requestId` just stays absent in the logged detail.
   const ctx: RequestErrorContext = { tag: "llm-translate", provider: ctxProvider(translateCreds), model: resolvedModel };
+
+  if (useClientTransport()) {
+    return translateViaClient(body, translateCreds);
+  }
 
   let res: Response;
   try {
@@ -489,6 +739,57 @@ export async function translateApi(
   }
 
   return (await res.json()) as TranslateResponse;
+}
+
+/** Client-side callProvider translate call (v0.4 S2) — used instead of
+ *  the fetch above when useClientTransport() is on.
+ *  `resolvedModel || body.model || DEFAULT_TRANSLATE_MODEL` is the
+ *  exact two-stage resolution translateApi's own outBody construction
+ *  above + the server's pickModel BYOK branch collapse to end-to-end
+ *  today: a truthy resolvedModel (taskLlm override or legacy field)
+ *  always wins; otherwise fall through to whatever body.model already
+ *  was (dead in practice per every current caller, see this function's
+ *  own comment above — kept for precision, not because any caller
+ *  relies on it); otherwise the task default.
+ *
+ *  Builds its own ctx (creds.provider directly) rather than reusing
+ *  translateApi's — see summarizeViaClient's identical comment. */
+async function translateViaClient(
+  body: TranslateRequest,
+  creds: ResolvedTaskCreds,
+): Promise<TranslateResponse> {
+  const ctx: RequestErrorContext = { tag: "llm-translate", provider: creds.provider, model: creds.model };
+  requireApiKey(creds.apiKey, ctx);
+
+  const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
+    // Same rationale as translateApi's own 30s fetch timeout above.
+    return callProviderDirect({ ...opts, timeoutMs: 30000 });
+  };
+
+  try {
+    return await runTranslateTask(
+      {
+        apiKey: creds.apiKey,
+        // creds.model || (body.model ?? DEFAULT): the `??` on the
+        // inner term (not `||`) matches the server's pickModel exactly
+        // — `requestedModel ?? fallbackDefault` where requestedModel IS
+        // body.model, so an explicit (if never-in-practice) empty-
+        // string body.model would stay "" server-side too, not silently
+        // upgrade to the default.
+        model: creds.model || (body.model ?? DEFAULT_TRANSLATE_MODEL),
+        provider: creds.provider,
+        baseUrl: creds.baseUrl,
+        segments: body.segments,
+        lang: body.lang,
+      },
+      call,
+    );
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "翻译请求超时，请稍后重试",
+      network: "翻译请求失败，请检查网络连接",
+    });
+  }
 }
 
 /** Probe the configured provider/key/baseUrl with a trivial detect
