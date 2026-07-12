@@ -16,6 +16,12 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       return new TabAudioEngine();
     case "demo":
       return new DemoEngine();
+    case "soniox":
+      // v0.4 S4 chunk 5 lands SonioxEngine here (blueprint decision E);
+      // the kind exists ahead of it only so the shared types prelude
+      // ships in one commit. Unreachable from the UI until chunk 6 adds
+      // the engine card — this throw guards a hand-edited settings blob.
+      throw new Error("createEngine: soniox engine not yet implemented (S4 chunk 5)");
     case "import":
       // "import" (#43) is never a live capture engine — imported
       // sessions are built fully offline by importText.ts and never
