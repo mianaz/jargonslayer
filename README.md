@@ -115,10 +115,10 @@ This is what unlocks the 本地 Whisper mic engine, 标签页音频 (tab/stream 
 cd sidecar
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python whisper_server.py --model medium
+python whisper_server.py --model medium --partials
 ```
 
-Wait for the banner. The first run downloads the model from Hugging Face; the port only opens once that download *and* the model load finish. Depending on the model size and your connection this can take a while before anything prints — that's normal, not a hang. You'll see something like:
+(`--partials` streams gray interim text while someone is speaking — the typing effect; drop it if CPU is tight.) Wait for the banner. The first run downloads the model from Hugging Face; the port only opens once that download *and* the model load finish. Depending on the model size and your connection this can take a while before anything prints — that's normal, not a hang. You'll see something like:
 
 ```
 ============================================================
@@ -158,7 +158,7 @@ Rule of thumb: Apple Silicon doing a live meeting → `medium`. Have an NVIDIA G
 
 The built-in dictionary only matches fixed phrases. An Anthropic API key adds context-aware detection plus post-meeting summaries and translation. Two ways:
 
-1. **In the UI**: ≡ menu → 「设置」 (Settings) → AI 检测 → API Key. Stored in your local browser (IndexedDB); each call is relayed once, in memory, through this app's own `/api/*` routes before reaching the model provider — never written to disk or logged, but it does pass through that server's memory, which is not the same claim as "never touches a server." If you're self-hosting, that server is your own machine.
+1. **In the UI**: ≡ menu → 「设置」 (Settings) → switch the top toggle to 「高级」 (Advanced) → AI 检测 → API Key. Stored in your local browser (IndexedDB); each call is relayed once, in memory, through this app's own `/api/*` routes before reaching the model provider — never written to disk or logged, but it does pass through that server's memory, which is not the same claim as "never touches a server." If you're self-hosting, that server is your own machine.
 2. **Environment variable** (recommended — the hardened, zero-browser-storage posture): the key never enters the browser at all, it only ever lives in the server process. Create `.env.local` in the project root:
    ```
    ANTHROPIC_API_KEY=sk-ant-...
