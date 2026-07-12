@@ -19,6 +19,7 @@
     "build:extension": "npm run build -w apps/extension",
     "build:desktop": "node scripts/build-desktop.mjs",
     "dev:desktop": "npm run dev -w apps/desktop",
+    "fetch:uv": "node scripts/fetch-uv.mjs",
     "tauri:build": "npm run build -w apps/desktop",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",

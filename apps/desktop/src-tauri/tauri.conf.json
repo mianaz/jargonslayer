@@ -5,8 +5,8 @@
   "build": {
     "frontendDist": "../../web/out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "npm run dev -w apps/web --prefix ../..",
-    "beforeBuildCommand": "npm run build:desktop --prefix ../.."
+    "beforeDevCommand": "npm run fetch:uv --prefix ../.. && npm run dev -w apps/web --prefix ../..",
+    "beforeBuildCommand": "npm run fetch:uv --prefix ../.. && npm run build:desktop --prefix ../.."
   },
   "app": {
     "windows": [
