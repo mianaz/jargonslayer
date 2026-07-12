@@ -31,15 +31,23 @@ pub struct AppPaths {
     pub venv_python: PathBuf,
     pub models_dir: PathBuf,
     pub script_path: PathBuf,
+    pub requirements_path: PathBuf,
     pub log_path: PathBuf,
     pub marker_path: PathBuf,
 }
 
 /// Pure path assembly — given the two Tauri-resolved base directories and
-/// the resolved bundled-resource script path, lays out every other path
-/// per the blueprint's App-data layout above. No filesystem access, no
-/// Tauri handle — fully unit-testable with a fake base dir.
-pub fn compute_app_paths(app_data_dir: &Path, log_dir: &Path, script_path: PathBuf) -> AppPaths {
+/// the two resolved bundled-resource paths (whisper_server.py,
+/// requirements-sidecar.txt — chunk 2's bundle.resources map-form
+/// entries), lays out every other path per the blueprint's App-data
+/// layout above. No filesystem access, no Tauri handle — fully unit-
+/// testable with a fake base dir.
+pub fn compute_app_paths(
+    app_data_dir: &Path,
+    log_dir: &Path,
+    script_path: PathBuf,
+    requirements_path: PathBuf,
+) -> AppPaths {
     let venv_dir = app_data_dir.join("venv");
     AppPaths {
         app_data: app_data_dir.to_path_buf(),
@@ -49,6 +57,7 @@ pub fn compute_app_paths(app_data_dir: &Path, log_dir: &Path, script_path: PathB
         venv_dir,
         models_dir: app_data_dir.join("models"),
         script_path,
+        requirements_path,
         log_path: log_dir.join("whisper_server.log"),
         marker_path: app_data_dir.join(".provisioned.json"),
     }
@@ -67,10 +76,10 @@ fn venv_python_path(venv_dir: &Path) -> PathBuf {
 }
 
 /// Tauri-coupled half: resolves the app-data dir, the app-log dir, and the
-/// bundled `$RESOURCE/sidecar/whisper_server.py` resource (the map-form
-/// `bundle.resources` entry in tauri.conf.json — chunk 2's deviation from
-/// the blueprint's plain-list form, preserved here) through `app.path()`,
-/// then hands off to `compute_app_paths`.
+/// two bundled `$RESOURCE/sidecar/*` resources (the map-form
+/// `bundle.resources` entries in tauri.conf.json — chunk 2's deviation
+/// from the blueprint's plain-list form, preserved here) through
+/// `app.path()`, then hands off to `compute_app_paths`.
 pub fn resolve_app_paths(app: &tauri::AppHandle) -> Result<AppPaths, String> {
     let app_data_dir = app
         .path()
@@ -84,7 +93,18 @@ pub fn resolve_app_paths(app: &tauri::AppHandle) -> Result<AppPaths, String> {
         .path()
         .resolve("sidecar/whisper_server.py", BaseDirectory::Resource)
         .map_err(|e| format!("could not resolve the bundled whisper_server.py resource: {e}"))?;
-    Ok(compute_app_paths(&app_data_dir, &log_dir, script_path))
+    let requirements_path = app
+        .path()
+        .resolve("sidecar/requirements-sidecar.txt", BaseDirectory::Resource)
+        .map_err(|e| {
+            format!("could not resolve the bundled requirements-sidecar.txt resource: {e}")
+        })?;
+    Ok(compute_app_paths(
+        &app_data_dir,
+        &log_dir,
+        script_path,
+        requirements_path,
+    ))
 }
 
 #[tauri::command]
@@ -101,7 +121,8 @@ mod tests {
         let app_data = Path::new("/fake/AppData");
         let log_dir = Path::new("/fake/Logs");
         let script = PathBuf::from("/fake/Resources/sidecar/whisper_server.py");
-        let paths = compute_app_paths(app_data, log_dir, script.clone());
+        let requirements = PathBuf::from("/fake/Resources/sidecar/requirements-sidecar.txt");
+        let paths = compute_app_paths(app_data, log_dir, script.clone(), requirements.clone());
 
         assert_eq!(paths.app_data, app_data);
         assert_eq!(paths.python_install_dir, app_data.join("python"));
@@ -111,6 +132,7 @@ mod tests {
         assert_eq!(paths.marker_path, app_data.join(".provisioned.json"));
         assert_eq!(paths.log_path, log_dir.join("whisper_server.log"));
         assert_eq!(paths.script_path, script);
+        assert_eq!(paths.requirements_path, requirements);
     }
 
     #[test]
@@ -119,6 +141,7 @@ mod tests {
             Path::new("/fake"),
             Path::new("/fake/logs"),
             PathBuf::from("/fake/script.py"),
+            PathBuf::from("/fake/requirements-sidecar.txt"),
         );
         let expected = if cfg!(windows) {
             Path::new("/fake")
