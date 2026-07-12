@@ -7,6 +7,7 @@ import {
   elapsedActiveMs,
   filterSuppressedLiveCards,
   migrateSettings,
+  pauseIntervalsForSnapshot,
   renameSpeakerInSegments,
   scheduleSessionSave,
   shouldApplySpeakerUpdate,
@@ -25,6 +26,7 @@ import * as learnsetModule from "../learn/store";
 import * as storageModule from "../history/storage";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
 import { clearDiag, getDiagEntries } from "../diag/log";
+import { segmentElapsedMs } from "../segmentElapsed";
 
 function makeSegment(overrides: Partial<TranscriptSegment> = {}): TranscriptSegment {
   return {
@@ -459,6 +461,7 @@ describe("saveCurrentSession / loadSession / currentSessionSnapshot — elapsed-
       segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
       startedAt: 1000,
       pauseIntervals: [],
+      pauseStartedAt: null,
       activeSessionId: null,
     });
 
@@ -477,6 +480,7 @@ describe("saveCurrentSession / loadSession / currentSessionSnapshot — elapsed-
       segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
       startedAt: 1000,
       pauseIntervals,
+      pauseStartedAt: null,
       activeSessionId: null,
     });
 
@@ -491,9 +495,94 @@ describe("saveCurrentSession / loadSession / currentSessionSnapshot — elapsed-
       segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
       startedAt: 1000,
       pauseIntervals: [{ start: 1050, end: 1060 }],
+      pauseStartedAt: null,
     });
     const snap = currentSessionSnapshot();
     expect(snap?.pauseIntervals).toEqual([{ start: 1050, end: 1060 }]);
+  });
+
+  // codex v2 review finding F5: ending (or exporting) WHILE paused
+  // must not persist an unclosed pause interval — see
+  // pauseIntervalsForSnapshot's own doc in store.ts.
+  describe("F5 — a still-open pause is closed in the PERSISTED/exported snapshot only, never in live state", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(20_000);
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("saveCurrentSession (End-from-paused) appends a closing interval ending at save time, without mutating live pauseIntervals/pauseStartedAt", async () => {
+      const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+      vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+      useApp.setState({
+        segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
+        startedAt: 1000,
+        pauseIntervals: [{ start: 5000, end: 8000 }], // one already-completed pause
+        pauseStartedAt: 15_000, // still open — e.g. End clicked while paused
+        activeSessionId: null,
+      });
+
+      await useApp.getState().saveCurrentSession();
+
+      const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+      expect(saved.pauseIntervals).toEqual([
+        { start: 5000, end: 8000 },
+        { start: 15_000, end: 20_000 }, // closed at save time (fake now)
+      ]);
+      // Snapshot-local: live state is untouched by building the snapshot.
+      expect(useApp.getState().pauseIntervals).toEqual([{ start: 5000, end: 8000 }]);
+      expect(useApp.getState().pauseStartedAt).toBe(15_000);
+    });
+
+    it("currentSessionSnapshot (export/copy mid-pause) closes the open interval the same way, also without mutating live state", () => {
+      useApp.setState({
+        segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
+        startedAt: 1000,
+        pauseIntervals: [],
+        pauseStartedAt: 12_000,
+      });
+
+      const snap = currentSessionSnapshot();
+
+      expect(snap?.pauseIntervals).toEqual([{ start: 12_000, end: 20_000 }]);
+      expect(useApp.getState().pauseIntervals).toEqual([]);
+      expect(useApp.getState().pauseStartedAt).toBe(12_000);
+    });
+
+    it("a non-terminal snapshot taken mid-pause does not corrupt a LATER resumeMeeting() in the same meeting", () => {
+      useApp.setState({
+        segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
+        startedAt: 1000,
+        pauseIntervals: [],
+        pauseStartedAt: 12_000,
+      });
+
+      currentSessionSnapshot(); // e.g. an export button clicked mid-pause
+
+      vi.setSystemTime(25_000);
+      useApp.getState().resumeMeeting();
+
+      // Exactly ONE interval — the snapshot must not have pre-closed it
+      // (which would otherwise leave resumeMeeting appending a SECOND,
+      // overlapping one on top).
+      expect(useApp.getState().pauseIntervals).toEqual([{ start: 12_000, end: 25_000 }]);
+      expect(useApp.getState().pauseStartedAt).toBeNull();
+      expect(useApp.getState().status).toBe("listening");
+    });
+
+    it("segmentElapsedMs on the reloaded session excludes the closed-at-save window — the persisted array is complete, not just present", () => {
+      const pauseIntervals = pauseIntervalsForSnapshot([], 12_000, 20_000);
+      // A hypothetical segment landing inside what USED to be an open
+      // (uncloseable-by-the-old-array) pause window: fully excluded,
+      // identical to a segment stamped right at the pause's own start —
+      // proving the window doesn't silently count as active time.
+      const atPauseStart = segmentElapsedMs(1000, 12_000, pauseIntervals);
+      const midOpenWindow = segmentElapsedMs(1000, 16_000, pauseIntervals);
+      expect(midOpenWindow).toBe(atPauseStart);
+    });
   });
 
   it("loadSession resolves the elapsed basis for a session already carrying pauseIntervals (post-fix save), and resets any leftover live pause state from a previous meeting", async () => {

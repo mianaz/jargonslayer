@@ -517,6 +517,31 @@ export function elapsedActiveMs(
   return Math.max(0, upTo - startedAt - pausedAccumMs);
 }
 
+/** Pause bookkeeping for a PERSISTED/exported session snapshot
+ *  (saveCurrentSession / currentSessionSnapshot below — codex v2
+ *  review finding F5): `pauseIntervals` only ever gets a completed
+ *  {start,end} entry appended by resumeMeeting() above — ending a
+ *  meeting WHILE paused (doStop() flips straight "paused" -> "stopped"
+ *  with no intervening resumeMeeting()), or exporting/copying mid-
+ *  pause (SummaryPanel's currentSessionSnapshot() call sites aren't
+ *  gated on status), snapshots the live array with the CURRENT pause
+ *  still open — its seconds would then read as active time forever in
+ *  that snapshot. Returns a NEW array with the open interval closed at
+ *  `snapshotAt` (a no-op passthrough when `pauseStartedAt` is null —
+ *  the common case). Snapshot-local only: NEVER mutates live state or
+ *  clears `pauseStartedAt` — a non-terminal snapshot taken mid-pause
+ *  (e.g. an export) must not disturb a LATER resumeMeeting() in the
+ *  SAME meeting, which still needs the real, still-open
+ *  `pauseStartedAt` to compute its own fold correctly. */
+export function pauseIntervalsForSnapshot(
+  pauseIntervals: PauseInterval[],
+  pauseStartedAt: number | null,
+  snapshotAt: number,
+): PauseInterval[] {
+  if (pauseStartedAt === null) return pauseIntervals;
+  return [...pauseIntervals, { start: pauseStartedAt, end: snapshotAt }];
+}
+
 export const useApp = create<AppState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   hydrated: false,
@@ -916,8 +941,10 @@ export const useApp = create<AppState>((set, get) => ({
       // interchangeable with absence: presence (even []) means "this
       // meeting's pause bookkeeping is known and complete", while
       // absence means "unknown/legacy" (see MeetingSession's own doc
-      // and resolveSessionElapsedBasis in segmentElapsed.ts).
-      pauseIntervals: s.pauseIntervals,
+      // and resolveSessionElapsedBasis in segmentElapsed.ts). Snapshot-
+      // closes a still-open pause (F5: End-from-paused) — see
+      // pauseIntervalsForSnapshot's own doc above.
+      pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
     };
     await storage.saveSession(session);
     const metas = await storage.listSessions();
@@ -1228,7 +1255,10 @@ export function currentSessionSnapshot(): MeetingSession | null {
     translations:
       Object.keys(s.translations).length > 0 ? s.translations : undefined,
     // Transcript-timestamp fix: same "always present" posture as
-    // saveCurrentSession — see that field's own comment above.
-    pauseIntervals: s.pauseIntervals,
+    // saveCurrentSession — see that field's own comment above. Also
+    // snapshot-closes a still-open pause the same way (F5) — this
+    // snapshot can be taken mid-pause too (e.g. SummaryPanel's export
+    // row shows whenever segments exist, regardless of status).
+    pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
   };
 }
