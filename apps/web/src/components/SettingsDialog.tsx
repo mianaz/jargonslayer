@@ -1096,6 +1096,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
+
+            {/* 实时转录预览 (STT protocol v2): app-controlled per-session
+               override of the sidecar's --partials CLI default — see
+               wsTransport.ts's config.partials + whisper_server.py's
+               _partials_enabled. Same row pattern as 实时说话人分离
+               below, but unconditionally enabled (no engine/token gate)
+               — mirrors 麦克风/识别语言's own "always shown, hint
+               explains scope" posture in this same section. */}
+            <label className="flex items-center justify-between gap-3 border-t border-edge pt-3 py-1">
+              <div>
+                <div className="text-sm text-fg">实时转录预览</div>
+                <div className="mt-0.5 text-xs leading-[26px] text-mut2">
+                  转录过程中先显示灰色临时文字（打字机效果），句子完成后落定。仅本地 Whisper 引擎生效。
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                checked={draft.partials}
+                onChange={(e) => patch({ partials: e.target.checked })}
+                className="h-4 w-4 shrink-0 accent-act"
+              />
+            </label>
           </section>
 
           {/* 说话人分离 — advanced. preview tier (#61): the entire
