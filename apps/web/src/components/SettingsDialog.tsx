@@ -38,6 +38,8 @@ import type {
   TaskLlmConfig,
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { initDesktop } from "@/lib/desktop/bootstrap";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import {
   isSectionVisible,
@@ -499,6 +501,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // while open, same "snapshot on open" posture as exportFolderName/
   // packSources above.
   const [diagEntries, setDiagEntries] = useState<DiagEntry[]>([]);
+  // v0.4 S3 chunk 7: desktop-only 「查看本地服务日志」 (read_sidecar_log)
+  // — null = not fetched yet this dialog-open, "" = fetched but empty
+  // (whisper_server.log doesn't exist yet, e.g. never provisioned).
+  const [sidecarLog, setSidecarLog] = useState<string | null>(null);
+  const [loadingSidecarLog, setLoadingSidecarLog] = useState(false);
+  // 转录引擎 category, desktop-only: 「重新运行安装向导」busy flag — see
+  // handleReprovisionDesktop below.
+  const [reprovisioningDesktop, setReprovisioningDesktop] = useState(false);
 
   // Settings redesign: which nav-rail category the content pane shows.
   // Local-only (NOT the zustand store, not part of draft) — pure
@@ -840,6 +850,46 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       useApp.getState().setSidecarUp(result.up);
     } finally {
       setCheckingSidecarStatus(false);
+    }
+  };
+
+  // v0.4 S3 chunk 6: managed-mode 「重新运行安装向导」 — reuses the SAME
+  // module-level bootstrap handle DesktopBootstrap.tsx already drives
+  // (initDesktop() is idempotent, see bootstrap.ts's own doc comment),
+  // so this dialog needs no lib/desktop/* wiring of its own beyond this
+  // one call.
+  const handleReprovisionDesktop = async () => {
+    setReprovisioningDesktop(true);
+    try {
+      const handle = await initDesktop();
+      await handle.reprovision();
+      showToast("已清空本地安装记录，正在重新打开安装向导…");
+    } catch (err) {
+      showToast(err instanceof Error ? `重新运行安装向导失败：${err.message}` : "重新运行安装向导失败");
+    } finally {
+      setReprovisioningDesktop(false);
+    }
+  };
+
+  // v0.4 S3 chunk 7: 诊断信息 面板的 「查看本地服务日志」 — desktop-only,
+  // reads whisper_server.log's tail via Rust's read_sidecar_log
+  // (provision.rs). Routed through the SAME module-level bootstrap
+  // handle DesktopBootstrap.tsx already drives (initDesktop() is
+  // idempotent) rather than calling tauriApi.ts's getInvoke() directly
+  // a second time — see bootstrap.ts's readSidecarLog doc comment for
+  // why a second independent caller of that exported function would
+  // reopen the exact web-bundle tree-shake leak this task's own gate
+  // caught and fixed.
+  const handleViewSidecarLog = async () => {
+    setLoadingSidecarLog(true);
+    try {
+      const handle = await initDesktop();
+      const text = await handle.readSidecarLog(200);
+      setSidecarLog(text);
+    } catch (err) {
+      showToast(err instanceof Error ? `读取本地服务日志失败：${err.message}` : "读取本地服务日志失败");
+    } finally {
+      setLoadingSidecarLog(false);
     }
   };
 
@@ -1205,6 +1255,58 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </select>
             </div>
 
+            {/* 托管模式 (v0.4 S3 chunk 6, desktop build only, blueprint
+               architecture decision 6): managed = the app itself
+               provisions+spawns the local sidecar (lib/desktop/
+               bootstrap.ts) and Whisper 地址 below is fixed/greyed
+               (reuses the SAME PREVIEW_TIER disabled/opacity idiom, not
+               PreviewLockedBadge's copy — this isn't a preview-tier
+               lock, it's "the app already knows the address"); external
+               = today's manual-install behavior, Whisper 地址 stays
+               editable. Meaningless on a web build (IS_DESKTOP false),
+               so the whole block — and its only effect on whisperUrl's
+               `disabled` below — compiles away to nothing there. */}
+            {IS_DESKTOP && (
+              <div className="space-y-2 border-t border-edge pt-3">
+                <div className="text-xs text-mut">托管模式</div>
+                <div className="flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
+                  <button
+                    type="button"
+                    onClick={() => patch({ sidecarMode: "managed" })}
+                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
+                      draft.sidecarMode === "managed" ? "bg-panel3 text-fg" : "text-mut hover:text-fg"
+                    }`}
+                  >
+                    由应用管理（推荐）
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => patch({ sidecarMode: "external" })}
+                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
+                      draft.sidecarMode === "external" ? "bg-panel3 text-fg" : "text-mut hover:text-fg"
+                    }`}
+                  >
+                    外部（自己启动）
+                  </button>
+                </div>
+                <div className="text-xs leading-[1.7] text-mut2">
+                  {draft.sidecarMode === "managed"
+                    ? "由应用管理本地识别服务：自动安装、启动，异常退出会自动重启；下方 Whisper 地址由应用固定，无需手动填写。"
+                    : "连接我自己启动的服务：按 README「本地版安装」手动跑 whisper_server.py，下方 Whisper 地址可以编辑。"}
+                </div>
+                {draft.sidecarMode === "managed" && (
+                  <button
+                    type="button"
+                    onClick={() => void handleReprovisionDesktop()}
+                    disabled={reprovisioningDesktop}
+                    className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {reprovisioningDesktop ? "处理中…" : "重新运行安装向导"}
+                  </button>
+                )}
+              </div>
+            )}
+
             <div>
               <div className="flex items-center gap-2">
                 <label className="text-xs text-mut">Whisper 地址</label>
@@ -1213,7 +1315,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <input
                 type="text"
                 value={draft.whisperUrl}
-                disabled={PREVIEW_TIER}
+                disabled={PREVIEW_TIER || (IS_DESKTOP && draft.sidecarMode === "managed")}
                 onChange={(e) => patch({ whisperUrl: e.target.value })}
                 placeholder="ws://localhost:8765"
                 className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
@@ -2087,7 +2189,31 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 >
                   清空
                 </button>
+                {/* v0.4 S3 chunk 7: desktop-only — tails whisper_server.log
+                   via Rust's read_sidecar_log (provision.rs), shown
+                   below in the same monospace box style as the diag
+                   entries list above. */}
+                {IS_DESKTOP && (
+                  <button
+                    type="button"
+                    onClick={() => void handleViewSidecarLog()}
+                    disabled={loadingSidecarLog}
+                    className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {loadingSidecarLog ? "读取中…" : "查看本地服务日志"}
+                  </button>
+                )}
               </div>
+
+              {IS_DESKTOP && sidecarLog !== null && (
+                <div className="max-h-40 overflow-y-auto border border-edge bg-panel2 p-2 font-mono text-xs text-mut2">
+                  {sidecarLog === "" ? (
+                    <div className="text-mut2">暂无日志（本地服务还没启动过）</div>
+                  ) : (
+                    <pre className="whitespace-pre-wrap break-all">{sidecarLog}</pre>
+                  )}
+                </div>
+              )}
             </div>
           </section>
           )}

@@ -13,7 +13,9 @@ import {
   type BootstrapDeps,
   type DesktopBootstrapHandle,
   type DesktopBootstrapState,
+  type DesktopLogLine,
 } from "../bootstrap";
+import { MAX_RESTARTS_PER_WINDOW } from "../provisionMachine";
 import type { InvokeFn, ListenFn, TauriEvent, TauriFetchFn } from "../tauriApi";
 import type { DesktopPaths } from "../uvCommands";
 
@@ -48,22 +50,71 @@ function makeFakeListen(): ListenFn {
   }) as ListenFn;
 }
 
+/** Like makeFakeListen, but actually retains handlers so a test can
+ *  fire an event (server://exit, uv://log) at will — mirrors
+ *  provisionRunner.test.ts's own richer fake-listen helper (same
+ *  ListenFn contract), kept as a SEPARATE helper here rather than
+ *  replacing makeFakeListen() everywhere so the many existing call
+ *  sites that don't need to emit anything stay untouched. */
+function makeEmittableListen() {
+  const active = new Map<string, Array<(event: TauriEvent<unknown>) => void>>();
+  const listen: ListenFn = (async <T>(event: string, handler: (event: TauriEvent<T>) => void) => {
+    const list = active.get(event) ?? [];
+    list.push(handler as (event: TauriEvent<unknown>) => void);
+    active.set(event, list);
+    return () => {
+      active.set(
+        event,
+        (active.get(event) ?? []).filter((h) => h !== handler),
+      );
+    };
+  }) as ListenFn;
+  function emit(event: string, payload: unknown): void {
+    for (const handler of active.get(event) ?? []) handler({ event, payload });
+  }
+  return { listen, emit };
+}
+
 const fakeTauriFetch = (async () => new Response("{}")) as unknown as TauriFetchFn;
 
 /** Subscribes and resolves once the machine reaches a stopping point —
- *  HEALTHY, TERMINAL_ERROR, or STEP&&ERROR ("NEEDS_PROVISION-wizard-
- *  required", see bootstrap.ts's header comment) — the exact pattern a
+ *  HEALTHY, TERMINAL_ERROR, STEP&&ERROR ("NEEDS_PROVISION-wizard-
+ *  required", see bootstrap.ts's header comment), or the LEAD
+ *  AMENDMENT's own WIZARD_CONSENT_REQUIRED pause — the exact pattern a
  *  real subscriber (chunk 6's wizard) would use, since bootstrapDesktop
  *  itself resolves before the drive loop finishes (see that file's own
  *  header comment on why). */
 function waitForStable(handle: DesktopBootstrapHandle): Promise<DesktopBootstrapState> {
   const isStable = (s: DesktopBootstrapState) =>
-    s.phase === "HEALTHY" || s.phase === "TERMINAL_ERROR" || (s.phase === "STEP" && s.status === "ERROR");
+    s.phase === "HEALTHY" ||
+    s.phase === "TERMINAL_ERROR" ||
+    s.phase === "WIZARD_CONSENT_REQUIRED" ||
+    (s.phase === "STEP" && s.status === "ERROR");
   const initialState = handle.currentState();
   if (isStable(initialState)) return Promise.resolve(initialState);
   return new Promise((resolve) => {
     const unsubscribe = handle.state$((state) => {
       if (isStable(state)) {
+        unsubscribe();
+        resolve(state);
+      }
+    });
+  });
+}
+
+/** Resolves on the FIRST future state$ notification matching
+ *  `predicate` — unlike waitForStable, this NEVER short-circuits on the
+ *  CURRENT snapshot, so it's the right tool for "wait for a state that
+ *  might recur later" (chunk 7's crash-restart tests: HEALTHY is both
+ *  the starting point AND the thing to wait for again after a
+ *  restart). */
+function waitForNextState(
+  handle: DesktopBootstrapHandle,
+  predicate: (s: DesktopBootstrapState) => boolean,
+): Promise<DesktopBootstrapState> {
+  return new Promise((resolve) => {
+    const unsubscribe = handle.state$((state) => {
+      if (predicate(state)) {
         unsubscribe();
         resolve(state);
       }
@@ -136,7 +187,7 @@ describe("bootstrapDesktop — machine-to-HEALTHY happy path", () => {
     expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
   });
 
-  it("full NEEDS_PROVISION pipeline (no marker, probe dead) drives every step through to HEALTHY", async () => {
+  it("full NEEDS_PROVISION pipeline (no marker, probe dead): pauses for consent, then — once given — drives every step through to HEALTHY", async () => {
     let probeCalls = 0;
     const deps: BootstrapDeps = {
       invoke: makeFakeInvoke(successfulPipelineHandlers),
@@ -152,6 +203,15 @@ describe("bootstrapDesktop — machine-to-HEALTHY happy path", () => {
       },
     };
     const handle = await bootstrapDesktop(deps);
+    // LEAD AMENDMENT: a fresh NEEDS_PROVISION pauses for consent BEFORE
+    // driving any step — see the dedicated describe block below for
+    // this pause's own direct coverage; beginProvision() here is what
+    // lets this test's existing "drives every step through to HEALTHY"
+    // assertion still hold.
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
     const finalState = await waitForStable(handle);
     expect(finalState).toEqual({ phase: "HEALTHY" });
   });
@@ -171,6 +231,10 @@ describe("bootstrapDesktop — NEEDS_PROVISION surfaces a wizard-required (STEP/
       probeSidecarFn: async () => ({ up: false }),
     };
     const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
     const finalState = await waitForStable(handle);
     expect(finalState).toEqual({
       phase: "STEP",
@@ -205,6 +269,10 @@ describe("bootstrapDesktop — NEEDS_PROVISION surfaces a wizard-required (STEP/
       },
     };
     const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+
     const errored = await waitForStable(handle);
     expect(errored).toMatchObject({ phase: "STEP", step: "INSTALL_PYTHON", status: "ERROR" });
 
@@ -225,6 +293,83 @@ describe("bootstrapDesktop — NEEDS_PROVISION surfaces a wizard-required (STEP/
     await waitForStable(handle); // -> HEALTHY
     const before = handle.currentState();
     handle.retryStep();
+    expect(handle.currentState()).toEqual(before);
+  });
+});
+
+describe("bootstrapDesktop — fresh-provision consent gate (LEAD AMENDMENT)", () => {
+  it("a fresh NEEDS_PROVISION (no marker, probe dead) pauses at WIZARD_CONSENT_REQUIRED and never calls run_uv until beginProvision()", async () => {
+    let runUvCalls = 0;
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        run_uv: () => {
+          runUvCalls += 1;
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        // 1st call = CHECKING's own probe (must be dead to enter
+        // NEEDS_PROVISION at all); every call after (POLLING_HEALTH)
+        // is healthy immediately.
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    expect(runUvCalls).toBe(0); // no uv command run before consent
+
+    handle.beginProvision();
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(runUvCalls).toBeGreaterThan(0);
+  });
+
+  it("PROVISIONED_DEAD (valid marker, probe dead) never pauses for consent — keeps auto-driving straight through to HEALTHY", async () => {
+    const validMarkerJson = JSON.stringify({
+      schema: 1,
+      model: "small",
+      py: "3.12",
+      deps: "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1",
+      ts: "2026-07-01T00:00:00.000Z",
+    });
+    let probeCalls = 0;
+    const seenPhases: string[] = [];
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ ...successfulPipelineHandlers, read_provision_marker: () => validMarkerJson }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    handle.state$((s) => seenPhases.push(s.phase));
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(seenPhases).not.toContain("WIZARD_CONSENT_REQUIRED");
+  });
+
+  it("beginProvision() is a no-op when the machine isn't currently paused for consent (e.g. already HEALTHY)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+    const before = handle.currentState();
+    handle.beginProvision();
     expect(handle.currentState()).toEqual(before);
   });
 });
@@ -258,7 +403,11 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
     const handle = await initDesktop();
     expect(handle.currentState()).toEqual({ phase: "NOT_DESKTOP" });
     handle.retryStep(); // must not throw
+    handle.beginProvision(); // must not throw
     expect(handle.currentState()).toEqual({ phase: "NOT_DESKTOP" });
+    await expect(handle.recheckHealth()).resolves.toBeUndefined();
+    await expect(handle.reprovision()).resolves.toBeUndefined();
+    await expect(handle.readSidecarLog(200)).resolves.toBe("");
   });
 
   it("is idempotent: two calls return the exact same cached promise, resolving to the exact same handle", async () => {
@@ -277,5 +426,280 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
     expect(p2).not.toBe(p1); // proves the cache was actually rebuilt, not just re-read
     const [h1, h2] = await Promise.all([p1, p2]);
     expect(h1).toEqual(h2); // same NOT_DESKTOP shape either way
+  });
+});
+
+describe("bootstrapDesktop — log$ subscription (chunk 6 wizard 详细日志 pane)", () => {
+  it("forwards uv://log lines emitted during a provisioning step to log$ subscribers", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        run_uv: () => {
+          emit("uv://log", { stream: "stdout", line: "Installed Python 3.12" });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const lines: DesktopLogLine[] = [];
+    handle.log$((line) => lines.push(line));
+
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(lines).toContainEqual({ stream: "stdout", line: "Installed Python 3.12" });
+  });
+
+  it("an unsubscribed log$ listener stops receiving lines", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted, nothing to log yet)
+    const lines: DesktopLogLine[] = [];
+    const unsubscribe = handle.log$((line) => lines.push(line));
+    unsubscribe();
+    emit("uv://log", { stream: "stdout", line: "should not arrive" });
+    expect(lines).toEqual([]);
+  });
+});
+
+describe("bootstrapDesktop — server://exit crash-restart policy wiring (chunk 7)", () => {
+  it("a server://exit while HEALTHY auto-restarts (re-invokes start_server) and returns to HEALTHY", async () => {
+    let startServerCalls = 0;
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        start_server: () => {
+          startServerCalls += 1;
+          return { alreadyRunning: false };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }), // adopt path -> HEALTHY immediately, never spawns
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+    expect(startServerCalls).toBe(0);
+
+    const healthyAgain = waitForNextState(handle, (s) => s.phase === "HEALTHY");
+    emit("server://exit", { code: 1 });
+    await healthyAgain;
+
+    expect(startServerCalls).toBe(1); // the restart's own STARTING step actually spawned
+  });
+
+  it("a server://exit received while NOT HEALTHY (still provisioning) is a silent no-op — no restart wiring fires", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let resolveRunUv: (() => void) | null = null;
+    const runUvGate = new Promise<void>((resolve) => {
+      resolveRunUv = resolve;
+    });
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: async () => {
+          await runUvGate;
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
+    // mid-INSTALL_PYTHON — run_uv's promise is deliberately held open.
+    expect(handle.currentState()).toEqual({ phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" });
+
+    emit("server://exit", { code: 1 }); // stray exit — must be a no-op
+    expect(handle.currentState()).toEqual({ phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" });
+
+    resolveRunUv!(); // let the held step finish (test cleanup, avoids a dangling promise)
+  });
+
+  it("the 4th server://exit within the 60s restart window exhausts the policy -> TERMINAL_ERROR", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let nowMs = 1_000_000;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        start_server: () => ({ alreadyRunning: false }),
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+      restartClock: () => nowMs,
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    for (let i = 0; i < MAX_RESTARTS_PER_WINDOW; i++) {
+      const healthyAgain = waitForNextState(handle, (s) => s.phase === "HEALTHY");
+      nowMs += 1000; // stays well within the 60s window throughout
+      emit("server://exit", { code: 1 });
+      await healthyAgain;
+    }
+
+    const terminal = waitForNextState(handle, (s) => s.phase === "TERMINAL_ERROR");
+    nowMs += 1000;
+    emit("server://exit", { code: 1 });
+    const finalState = await terminal;
+    expect(finalState).toMatchObject({ phase: "TERMINAL_ERROR" });
+  });
+});
+
+describe("bootstrapDesktop — readSidecarLog() (chunk 7 SettingsDialog「查看本地服务日志」)", () => {
+  it('invokes "read_sidecar_log" with the given tailLines and returns the result verbatim — reuses deps.invoke, no second getInvoke() call site', async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        read_sidecar_log: (args) => `log tail for ${args?.tailLines} lines`,
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    const text = await handle.readSidecarLog(200);
+    expect(text).toBe("log tail for 200 lines");
+  });
+});
+
+describe("bootstrapDesktop — reprovision() (chunk 7 SettingsDialog「重新运行安装向导」)", () => {
+  it("from HEALTHY: stops the server, clears the marker, and re-drives back to WIZARD_CONSENT_REQUIRED", async () => {
+    let stopServerCalls = 0;
+    let writtenMarkerJson: unknown;
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => {
+          stopServerCalls += 1;
+          return undefined;
+        },
+        write_provision_marker: (args) => {
+          writtenMarkerJson = args?.json;
+          return undefined;
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        // Only the very first CHECKING probe (initial adopt) is
+        // healthy — every later probe (the post-reprovision CHECKING)
+        // reflects the server this call just stopped.
+        return { up: probeCalls === 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    await handle.reprovision();
+    expect(stopServerCalls).toBe(1);
+    expect(writtenMarkerJson).toBe("null");
+
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+  });
+
+  it("rejects (does not swallow) a stop_server failure, leaving the caller to handle it", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => {
+          throw new Error("boom");
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+    await expect(handle.reprovision()).rejects.toThrow("boom");
+  });
+});
+
+describe("bootstrapDesktop — recheckHealth() (chunk 6 wizard escape hatch)", () => {
+  it("on error, a positive re-probe jumps straight to HEALTHY, bypassing the stuck step entirely", async () => {
+    // A mutable flag (not a reassigned deps.probeSidecarFn) — bootstrapDesktop
+    // captures ITS OWN `probe` closure once, at setup time, so a later
+    // `deps.probeSidecarFn = ...` reassignment would never be observed;
+    // toggling behavior BEHIND the same captured function reference is
+    // the correct way to simulate "the situation changed since setup".
+    let manualInstallDone = false;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: 1 }),
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: manualInstallDone }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+    const errored = await waitForStable(handle);
+    expect(errored).toMatchObject({ phase: "STEP", step: "INSTALL_PYTHON", status: "ERROR" });
+
+    manualInstallDone = true; // simulate the user's own manual install now answering
+    await handle.recheckHealth();
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+  });
+
+  it("is a no-op outside a STEP/ERROR state (e.g. already HEALTHY)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+    const before = handle.currentState();
+    await handle.recheckHealth();
+    expect(handle.currentState()).toEqual(before);
   });
 });
