@@ -34,6 +34,7 @@ import { getBuiltinTheme } from "./theme/themes";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
 import { PREVIEW_TIER } from "./deployTier";
 import { diagLog } from "./diag/log";
+import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
 
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
@@ -191,6 +192,17 @@ interface AppState {
   // math that excludes paused time from the displayed elapsed timer.
   pausedAccumMs: number;
   pauseStartedAt: number | null;
+  // Transcript-timestamp fix: every COMPLETED pause this meeting, as
+  // {start, end} — pausedAccumMs above is enough for the live ticking
+  // readout (elapsedActiveMs only ever needs "how much has been paused
+  // so far, as of now"), but not enough to map an OLDER segment's own
+  // elapsed time, which must only exclude pauses that happened BEFORE
+  // it (see segmentElapsed.ts's segmentElapsedMs). Kept alongside
+  // (not instead of) pausedAccumMs so elapsedActiveMs's existing
+  // signature — Header.tsx's ElapsedTimer imports it directly — stays
+  // untouched. Reset alongside pausedAccumMs/pauseStartedAt in
+  // beginMeeting/newMeeting; one interval appended per resumeMeeting.
+  pauseIntervals: PauseInterval[];
   // realtime speaker diarization (beta): stable id -> user-chosen
   // display name, written only by renameSpeaker (see rename-wins in
   // applySpeakerUpdate/aliasesAfterRename above).
@@ -517,6 +529,7 @@ export const useApp = create<AppState>((set, get) => ({
   interim: null,
   pausedAccumMs: 0,
   pauseStartedAt: null,
+  pauseIntervals: [],
   speakerAliases: {},
   translations: {},
 
@@ -675,6 +688,7 @@ export const useApp = create<AppState>((set, get) => ({
       interim: null,
       pausedAccumMs: 0,
       pauseStartedAt: null,
+      pauseIntervals: [],
       speakerAliases: {},
       translations: {},
       cards: [],
@@ -690,12 +704,25 @@ export const useApp = create<AppState>((set, get) => ({
   pauseMeeting: () => set({ status: "paused", pauseStartedAt: Date.now() }),
 
   resumeMeeting: () =>
-    set((state) => ({
-      status: "listening",
-      pausedAccumMs:
-        state.pausedAccumMs + (Date.now() - (state.pauseStartedAt ?? Date.now())),
-      pauseStartedAt: null,
-    })),
+    set((state) => {
+      const now = Date.now();
+      const pausedAccumMs = state.pausedAccumMs + (now - (state.pauseStartedAt ?? now));
+      // Transcript-timestamp fix: record the completed interval too
+      // (see the AppState field's own doc) — skipped when
+      // pauseStartedAt was already null (the defensive tolerance this
+      // action has always had), same as pausedAccumMs staying
+      // unchanged in that case.
+      const pauseIntervals =
+        state.pauseStartedAt !== null
+          ? [...state.pauseIntervals, { start: state.pauseStartedAt, end: now }]
+          : state.pauseIntervals;
+      return {
+        status: "listening",
+        pausedAccumMs,
+        pauseStartedAt: null,
+        pauseIntervals,
+      };
+    }),
 
   addFinal: (text, opts) => {
     const { segments, settings } = get();
@@ -884,6 +911,13 @@ export const useApp = create<AppState>((set, get) => ({
         Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
       translations:
         Object.keys(s.translations).length > 0 ? s.translations : undefined,
+      // Transcript-timestamp fix: always persisted (even []) — unlike
+      // speakerAliases/translations above, emptiness here is NOT
+      // interchangeable with absence: presence (even []) means "this
+      // meeting's pause bookkeeping is known and complete", while
+      // absence means "unknown/legacy" (see MeetingSession's own doc
+      // and resolveSessionElapsedBasis in segmentElapsed.ts).
+      pauseIntervals: s.pauseIntervals,
     };
     await storage.saveSession(session);
     const metas = await storage.listSessions();
@@ -915,13 +949,26 @@ export const useApp = create<AppState>((set, get) => ({
     // (applyDetection's filterSuppressed) and the hydrate-window
     // cleanup (filterSuppressedLiveCards, see hydrate() above) ever
     // drop a card for being suppressed.
+    // Transcript-timestamp fix: resolves the elapsed-time basis (zero
+    // point + completed pauses) this session should render with —
+    // see resolveSessionElapsedBasis's own doc for the legacy-session
+    // (no persisted pauseIntervals) fallback.
+    const { startedAt, pauseIntervals } = resolveSessionElapsedBasis(session);
     set((state) => ({
       status: "stopped",
       statusDetail: null,
-      startedAt: session.startedAt,
+      startedAt,
       meetingGen: state.meetingGen + 1,
       segments: session.segments,
       interim: null,
+      // A loaded/stopped session has no LIVE pause in progress and no
+      // further live pause bookkeeping to accumulate — reset both so
+      // neither carries over from whatever meeting the store was
+      // previously in (pauseIntervals above already carries this
+      // session's own history).
+      pausedAccumMs: 0,
+      pauseStartedAt: null,
+      pauseIntervals,
       speakerAliases: session.speakerAliases ?? {},
       translations: session.translations ?? {},
       cards: session.cards,
@@ -1144,6 +1191,7 @@ export const useApp = create<AppState>((set, get) => ({
       interim: null,
       pausedAccumMs: 0,
       pauseStartedAt: null,
+      pauseIntervals: [],
       speakerAliases: {},
       translations: {},
       cards: [],
@@ -1179,5 +1227,8 @@ export function currentSessionSnapshot(): MeetingSession | null {
       Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
     translations:
       Object.keys(s.translations).length > 0 ? s.translations : undefined,
+    // Transcript-timestamp fix: same "always present" posture as
+    // saveCurrentSession — see that field's own comment above.
+    pauseIntervals: s.pauseIntervals,
   };
 }

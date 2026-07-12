@@ -500,6 +500,18 @@ export interface MeetingSession {
   // for segments translated while the meeting was live. Absent when
   // the feature was off or a segment's translation never landed.
   translations?: Record<string, string>;
+  // Transcript-timestamp fix: completed pause intervals (B2 pause/
+  // resume) this meeting, so a saved session's per-segment elapsed
+  // time can exclude paused spans the same way the live view does —
+  // see apps/web/src/lib/segmentElapsed.ts's segmentElapsedMs.
+  // Persisted going forward from store.ts's `pauseIntervals` on every
+  // save (even []); ABSENT (not merely []) marks a session saved
+  // BEFORE this field existed — resolveSessionElapsedBasis treats
+  // that as "no pause bookkeeping available" and falls back to
+  // segments[0].startedAt as the elapsed zero point instead of this
+  // session's own startedAt (any real pause gap then just shows as a
+  // jump between segments — not recoverable after the fact).
+  pauseIntervals?: { start: number; end: number }[];
 }
 
 export interface SessionMeta {
