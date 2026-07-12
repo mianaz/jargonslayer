@@ -338,3 +338,88 @@ describe("summarizeApi — client transport", () => {
     ).rejects.toBeInstanceOf(UpstreamError);
   });
 });
+
+// ---------------------------------------------------------------
+// F1 (codex v04-integration review) — an echoing/hostile endpoint on
+// the client (BYOK) path must never leak the caller's own API key
+// through ANY observable surface: the thrown error's message (user-
+// facing toast), the diag ring buffer, or a fail-soft console.warn.
+// Complements clientProvider.test.ts/providerCore.test.ts, which prove
+// the sanitation at its actual construction seam — this proves it
+// holds end-to-end through client.ts's real error-mapping/diag-logging
+// glue and tasks/summarize.ts's real fail-soft catches, not just at
+// the seam in isolation.
+// ---------------------------------------------------------------
+
+describe("detectApi — client transport — echoing endpoint never leaks the BYOK key (F1)", () => {
+  const SECRET = "sk-ant-BYOK-key-that-must-never-leak";
+
+  it("thrown UpstreamError.message never contains the key, and no diag entry (message or detail) contains it either", async () => {
+    mockFetch.mockResolvedValue(
+      anthropicErrorResponse(502, `upstream said your header was: Authorization: Bearer ${SECRET}`),
+    );
+
+    const err = await detectApi(
+      { context: "", new_text: "hi" },
+      makeSettings({ apiKey: SECRET }),
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UpstreamError);
+    expect((err as Error).message).not.toContain(SECRET);
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries.length).toBeGreaterThan(0);
+    for (const entry of entries) {
+      expect(entry.message).not.toContain(SECRET);
+      expect(entry.detail ?? "").not.toContain(SECRET);
+    }
+  });
+});
+
+describe("summarizeApi — client transport — echoing endpoint never leaks the BYOK key into console.warn (F1, tasks/summarize.ts's fail-soft catches)", () => {
+  const SECRET = "sk-ant-BYOK-summarize-key-must-never-leak";
+
+  it("translation-chunk + repair-pass + sweep stage failures still resolve (fail-soft, unchanged behavior) and never put the key into any console.warn call", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      mockFetch.mockImplementation(async (_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string) as { system: string };
+        if (body.system === SUMMARY_SYSTEM_PROMPT) {
+          return anthropicMessage(
+            '{"topic":{"en":"t","zh":"t"},"key_points":[],"decisions":[],"action_items":[]}',
+          );
+        }
+        // Translation (both the main pass and its repair pass) and
+        // sweep all hit an echoing 502 — every one of tasks/
+        // summarize.ts's three console.warn(..., err) fail-soft sites
+        // fires for this single call.
+        return anthropicErrorResponse(502, `leaked header: X-Api-Key: ${SECRET}`);
+      });
+
+      const result = await summarizeApi(
+        {
+          segments: [{ index: 0, text: "We shipped the feature." }],
+          expressions: [],
+          terms: [],
+        },
+        makeSettings({ apiKey: SECRET }),
+      );
+
+      // Fail-soft, unchanged behavior: still resolves despite
+      // translation/sweep failing entirely.
+      expect(result.summary.topic).toEqual({ en: "t", zh: "t" });
+      expect(result.translations).toEqual([{ index: 0, zh: "（翻译缺失）" }]);
+      expect(result.flashcards).toEqual([]);
+
+      expect(warnSpy).toHaveBeenCalled();
+      for (const call of warnSpy.mock.calls) {
+        for (const arg of call) {
+          const rendered = arg instanceof Error ? `${arg.message} ${arg.stack ?? ""}` : String(arg);
+          expect(rendered).not.toContain(SECRET);
+        }
+      }
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});

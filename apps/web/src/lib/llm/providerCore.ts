@@ -479,6 +479,62 @@ async function postChatCompletions(
   });
 }
 
+// ---------------------------------------------------------------
+// Raw-response-excerpt sanitation (F1, codex v04-integration review):
+// requestChatContent below (openai-compat — used by BOTH the server
+// route path, via anthropic.ts's callJsonOpenAiCompat re-export, AND
+// the client-side callProvider path, via clientProvider.ts) and
+// clientProvider.ts's own callAnthropicDirect each embed up to 500
+// chars of a non-2xx provider response body into an Error message —
+// genuinely useful for surfacing a plain-text upstream error. A
+// misconfigured or hostile endpoint that echoes request headers back
+// into its response body would otherwise put the caller's own API key
+// straight into that excerpt, which then propagates UNFILTERED into
+// OpenAiCompatError/ProviderHttpError.message, mapLlmError's HTTP
+// error body (server path — including the server's OWN shared key
+// when JARGONSLAYER_PROVIDER=openai-compat, a pre-existing risk now
+// fixed here since providerCore is the shared seam both paths call
+// through), client.ts's thrown UpstreamError (both the server-routed
+// and direct client paths — see throwForStatus/throwForProviderError,
+// which deliberately let body.error/err.message through verbatim to
+// the user-facing toast), and every `console.warn(..., err)` call site
+// that logs the raw Error object (detect/scheduler.ts, translate/
+// queue.ts, tasks/summarize.ts's fail-soft catches) — all of those
+// just read this SAME Error's `.message` after the fact. Sanitizing
+// once, here, at construction time (both call sites below route the
+// raw response text through this before building the Error) closes
+// every one of those downstream sites without touching any of them
+// individually — see tasks/summarize.ts's own comment on its
+// console.warn sites for why nothing changed there either.
+// ---------------------------------------------------------------
+
+/** Authorization/X-Api-Key-shaped header echoes — catches a hostile or
+ *  misconfigured endpoint mirroring request headers back into its
+ *  response body even when the echoed value doesn't byte-for-byte
+ *  match a known secret (re-quoted, re-cased, or truncated). Applied
+ *  IN ADDITION to the exact-secret replacement below, never instead
+ *  of it. */
+const SECRET_HEADER_RE = /(authorization|x-api-key)\s*[:=]\s*\S+/gi;
+
+/** Redact every occurrence of each non-empty entry in `secrets` from
+ *  `text`, then strip Authorization/X-Api-Key header-shaped patterns.
+ *  Every call site that turns a raw provider response body into an
+ *  Error message must route the text through this FIRST, on the FULL
+ *  (untruncated) text — sanitizing before the caller's char-count cap
+ *  is applied, rather than after, so a secret that straddles or falls
+ *  past that cap boundary is still caught, and the cap never leaves a
+ *  partial-but-recognizable secret fragment visible. Plain string
+ *  split/join (not RegExp) for the exact-secret pass, so a key
+ *  containing regex metacharacters never needs escaping. */
+export function sanitizeProviderExcerpt(text: string, secrets: readonly string[]): string {
+  let sanitized = text;
+  for (const secret of secrets) {
+    if (!secret) continue;
+    sanitized = sanitized.split(secret).join("[REDACTED]");
+  }
+  return sanitized.replace(SECRET_HEADER_RE, "$1: [REDACTED]");
+}
+
 /** Extra instruction appended to `system` on the single repair retry
  *  below, to steer a non-compliant model away from the three failure
  *  modes extractJsonValue already tolerates but which are cheaper to
@@ -518,8 +574,11 @@ async function requestChatContent(opts: CallJsonOptions<unknown>, system: string
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    // F1 (codex v04-integration review): sanitize BEFORE truncating —
+    // see sanitizeProviderExcerpt's own comment above.
+    const safeText = sanitizeProviderExcerpt(text, [opts.apiKey]).slice(0, 500);
     throw new OpenAiCompatError(
-      text.slice(0, 500) || `请求失败（${res.status}）`,
+      safeText || `请求失败（${res.status}）`,
       res.status,
     );
   }

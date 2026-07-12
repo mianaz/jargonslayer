@@ -179,6 +179,62 @@ describe("callProviderDirect (anthropic) — 401/403/429/5xx map to ProviderHttp
   });
 });
 
+// ---------------------------------------------------------------
+// F1 (codex v04-integration review) — an echoing/hostile
+// api.anthropic.com-shaped endpoint must never get the caller's own
+// Anthropic key into ProviderHttpError.message (this is the client-
+// side "anthropic key path" the finding calls out; see
+// providerCore.test.ts for the openai-compat key path's equivalent
+// coverage against callJsonOpenAiCompat).
+// ---------------------------------------------------------------
+
+describe("callProviderDirect (anthropic) — echoing endpoint never leaks the API key into ProviderHttpError.message", () => {
+  const SECRET = "sk-ant-BYOK-SUPER-SECRET-do-not-leak";
+
+  it("a non-2xx response that echoes the X-Api-Key header verbatim in its body never surfaces the key in the thrown error", async () => {
+    setTransport(
+      vi.fn().mockResolvedValue(
+        new Response(
+          `invalid request. headers received: {"x-api-key":"${SECRET}","content-type":"application/json"}`,
+          { status: 400 },
+        ),
+      ),
+    );
+
+    const err = await callProviderDirect(baseAnthropicOpts({ apiKey: SECRET })).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProviderHttpError);
+    const message = (err as ProviderHttpError).message;
+    expect(message).not.toContain(SECRET);
+    expect(message).toContain("[REDACTED]");
+  });
+
+  it("a non-2xx response that embeds the raw key with no header framing at all still never leaks it", async () => {
+    setTransport(
+      vi.fn().mockResolvedValue(
+        new Response(`authentication_error: key ${SECRET} is invalid or revoked`, { status: 401 }),
+      ),
+    );
+
+    const err = await callProviderDirect(baseAnthropicOpts({ apiKey: SECRET })).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProviderHttpError);
+    expect((err as ProviderHttpError).status).toBe(401);
+    expect((err as ProviderHttpError).message).not.toContain(SECRET);
+  });
+
+  it("a normal (non-leaking) upstream error body is unaffected — still surfaces for genuine debugging", async () => {
+    setTransport(
+      vi.fn().mockResolvedValue(new Response("overloaded_error: the model is overloaded", { status: 529 })),
+    );
+
+    const err = await callProviderDirect(baseAnthropicOpts({ apiKey: SECRET })).catch((e) => e);
+
+    expect(err).toBeInstanceOf(ProviderHttpError);
+    expect((err as ProviderHttpError).message).toBe("overloaded_error: the model is overloaded");
+  });
+});
+
 describe("callProviderDirect (anthropic) — malformed output maps to BadOutputError", () => {
   it("no text block in content -> BadOutputError", async () => {
     setTransport(vi.fn().mockResolvedValue(

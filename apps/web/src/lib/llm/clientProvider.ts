@@ -36,6 +36,7 @@ import {
   buildAnthropicMessagesRequestBody,
   callJsonOpenAiCompat,
   parseJsonContent,
+  sanitizeProviderExcerpt,
   BadOutputError,
   type CallJsonOptions,
 } from "./providerCore";
@@ -90,7 +91,12 @@ async function callAnthropicDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new ProviderHttpError(text.slice(0, 500) || `请求失败（${res.status}）`, res.status);
+    // F1 (codex v04-integration review): sanitize BEFORE truncating —
+    // see providerCore.ts's sanitizeProviderExcerpt for the full
+    // rationale (an echoing/hostile endpoint must never get the
+    // caller's own Anthropic key into this Error's message).
+    const safeText = sanitizeProviderExcerpt(text, [opts.apiKey]).slice(0, 500);
+    throw new ProviderHttpError(safeText || `请求失败（${res.status}）`, res.status);
   }
 
   let payload: AnthropicDirectMessageResponse;

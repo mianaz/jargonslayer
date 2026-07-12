@@ -173,6 +173,25 @@ async function translateChunk(
   return map;
 }
 
+// F1 (codex v04-integration review) — the console.warn(..., err) calls
+// in this stage and in runSweepStage below log `err` RAW (not just a
+// derived message), and `call` here can throw providerCore.ts's
+// OpenAiCompatError or clientProvider.ts's ProviderHttpError directly
+// (unlike client.ts's *Api callers, this module's ProviderCaller is
+// injected by the route/client caller and its errors are never first
+// re-wrapped into client.ts's UpstreamError taxonomy). That is
+// deliberately left as-is here rather than re-sanitizing a second
+// time: both error classes' `.message` are already sanitized at
+// construction (providerCore.ts's requestChatContent /
+// clientProvider.ts's callAnthropicDirect route every raw response
+// excerpt through sanitizeProviderExcerpt before it ever reaches an
+// Error), so logging the raw `err` object here just re-logs an
+// already-safe message — verified by a dedicated regression test
+// (clientTransport.test.ts). Re-sanitizing here too would need this
+// isomorphic, provider-caller-agnostic module to import a SPECIFIC
+// caller implementation (clientProvider.ts's ProviderHttpError) just
+// to type-check an instanceof, which is exactly the layering this
+// module's header comment says to avoid.
 async function runTranslationStage(
   apiKey: string,
   model: string,
