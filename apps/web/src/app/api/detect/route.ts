@@ -2,16 +2,9 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import * as z from "zod";
-import {
-  callJsonWithFallback,
-  clampConfidence,
-  DetectResponseSchema,
-  mapLlmError,
-  pickModel,
-  resolveLlmConfig,
-} from "@/lib/llm/anthropic";
+import { mapLlmError, pickModel, resolveLlmConfig, withFallback } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
-import { buildDetectSystemPrompt, buildDetectUserMessage } from "@jargonslayer/core/llm/prompts";
+import { DEFAULT_DETECT_MODEL, runDetectTask } from "@/lib/llm/tasks/detect";
 import { PROFILE_HINT_MAX_CHARS } from "@jargonslayer/core/llm/profileHint";
 import { newRequestId } from "@/lib/diag/requestId";
 import type { ApiErrorBody, DetectResponse } from "@jargonslayer/core/types";
@@ -29,9 +22,6 @@ const BodySchema = z.object({
   profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
 });
 
-const MAX_EXPRESSIONS = 6;
-const MAX_TERMS = 4;
-
 // Diagnostics (item 5): every error response carries a short
 // requestId so a user's diag ref (client-side) can chain to this
 // exact server-side response — see lib/diag/requestId.ts.
@@ -39,22 +29,6 @@ function errorBody(body: ApiErrorBody, status: number) {
   return NextResponse.json({ ...body, requestId: newRequestId() } satisfies ApiErrorBody, {
     status,
   });
-}
-
-/** Anti-hallucination post-filter: drop any expression whose
- *  `expression` string doesn't actually appear (case-insensitively)
- *  in the analyzed text, then clamp counts/confidence. */
-function postFilter(res: DetectResponse, newText: string): DetectResponse {
-  const haystack = newText.toLowerCase();
-
-  const expressions = res.expressions
-    .filter((e) => haystack.includes(e.expression.toLowerCase()))
-    .map((e) => ({ ...e, confidence: clampConfidence(e.confidence) }))
-    .slice(0, MAX_EXPRESSIONS);
-
-  const terms = res.terms.slice(0, MAX_TERMS);
-
-  return { expressions, terms };
 }
 
 export async function POST(req: Request) {
@@ -87,23 +61,25 @@ export async function POST(req: Request) {
   try {
     // pickModel (#61): client model honored only inside the server-side
     // allowlist when the shared key serves the request; BYOK unchanged.
-    const raw = await callJsonWithFallback(
+    // Prompt assembly + provider call + post-filter now live in the
+    // shared tasks/detect.ts module (v0.4 S2) — this route stays a
+    // thin HTTP adapter: validate, resolve server-only config
+    // (pickModel/rate limiting/fallback), delegate, map errors.
+    const filtered = await runDetectTask(
       {
         apiKey: cfg.apiKey,
-        model: pickModel(cfg, model, "claude-haiku-4-5"),
-        system: buildDetectSystemPrompt(lang ?? "zh"),
-        user: buildDetectUserMessage(context, new_text, profile),
-        schema: DetectResponseSchema,
-        maxTokens: 1000,
-        cacheSystem: true,
+        model: pickModel(cfg, model, DEFAULT_DETECT_MODEL),
         provider: cfg.provider,
         baseUrl: cfg.baseUrl,
         extraBody: cfg.extraBody,
+        context,
+        new_text,
+        lang,
+        profile,
       },
-      cfg.fallbackModel,
+      withFallback(cfg.fallbackModel),
     );
 
-    const filtered = postFilter(raw, new_text);
     return NextResponse.json(filtered satisfies DetectResponse);
   } catch (err) {
     const mapped = mapLlmError(err);
