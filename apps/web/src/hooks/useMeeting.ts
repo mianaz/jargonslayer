@@ -119,6 +119,21 @@ export function useMeeting(): UseMeetingResult {
 
     const events: STTEvents = {
       onInterim: (text, speaker) => {
+        // Late-partial belt (STT protocol v2 fix, codex v2 review
+        // F4): a "flush" (soft pause) doesn't cancel an in-flight
+        // partial transcription — its result can arrive AFTER pause
+        // already cleared the interim, with no new PCM ever coming to
+        // replace it, so it would otherwise stick on screen forever.
+        // Only accept interim text while the meeting is actually
+        // listening for one; this also belts a straggler arriving
+        // after End (stop()/runStopFlow already clear interim, but a
+        // late partial landing right after would otherwise repopulate
+        // it one more time).
+        const status = useApp.getState().status;
+        if (status !== "listening" && status !== "connecting") {
+          diagLog("info", "stt-lifecycle", "忽略非监听状态下到达的插字");
+          return;
+        }
         // Honest interim contract (fix #A4): the engine layer now
         // forwards `""` (a genuine retraction) instead of swallowing
         // it — map that to `null` here so InterimLine doesn't render

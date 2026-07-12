@@ -21,6 +21,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 type AnyEvents = {
   onStatus: (status: string, detail?: string) => void;
+  onInterim: (text: string, speaker?: string) => void;
   [k: string]: unknown;
 };
 
@@ -350,6 +351,21 @@ describe("useMeeting — lifecycle races", () => {
       engine.events!.onStatus("connecting");
     });
     expect(useApp.getState().status).toBe("paused");
+  });
+
+  it("an interim arriving while paused (a late pre-pause partial finishing after flush) is dropped, not repopulated onto the store (codex v2 review F4)", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+    expect(useApp.getState().status).toBe("paused");
+    expect(useApp.getState().interim).toBeNull();
+
+    await act(async () => {
+      engine.events!.onInterim("late partial text");
+    });
+
+    expect(useApp.getState().interim).toBeNull();
   });
 
   it("End while soft-paused stops the SAME engine and lands on stopped", async () => {
