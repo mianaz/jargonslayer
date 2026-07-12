@@ -175,18 +175,24 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).toContain('"micId": "distinctive-mic-device-id"');
     });
 
-    describe("URL-valued keys — included but query string + userinfo stripped", () => {
-      it("whisperUrl keeps its origin+path but strips an embedded query string", () => {
+    describe("URL-valued keys — included but reduced to origin + a '/…' marker for any non-root path (codex v2 review F3)", () => {
+      it("whisperUrl keeps its origin verbatim but collapses a non-root path to '/…', dropping an embedded query string with it", () => {
         const report = buildDiagnosticReport({
           ...DEFAULT_SETTINGS,
           whisperUrl: "ws://localhost:8765/some/path?SENTINEL_QUERY=leak-me",
         });
         expect(report).not.toContain("SENTINEL_QUERY");
         expect(report).not.toContain("leak-me");
-        expect(report).toContain("ws://localhost:8765/some/path");
+        expect(report).not.toContain("/some/path");
+        expect(report).toContain("ws://localhost:8765/…");
       });
 
-      it("agentUrl and baseUrl are likewise query/userinfo-stripped, not treated as secret", () => {
+      it("a root-path whisperUrl (the default shape) renders as the bare origin — no '/…' marker for a path that carries nothing", () => {
+        const report = buildDiagnosticReport({ ...DEFAULT_SETTINGS, whisperUrl: "ws://localhost:8765" });
+        expect(report).toContain('"whisperUrl": "ws://localhost:8765"');
+      });
+
+      it("agentUrl and baseUrl are likewise userinfo-stripped and path-collapsed, not treated as secret", () => {
         const report = buildDiagnosticReport({
           ...DEFAULT_SETTINGS,
           agentUrl: "http://user:SENTINEL_PASS@127.0.0.1:8767?SENTINEL_Q=1",
@@ -195,11 +201,42 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
         expect(report).not.toContain("SENTINEL_PASS");
         expect(report).not.toContain("SENTINEL_Q");
         expect(report).not.toContain("SENTINEL_KEY");
-        expect(report).toContain("api.deepseek.com/v1");
+        expect(report).not.toContain("/v1"); // baseUrl's path is non-root — collapsed
+        expect(report).toContain("http://127.0.0.1:8767"); // agentUrl: root path, no marker
+        expect(report).toContain("https://api.deepseek.com/…"); // baseUrl: non-root path collapsed
         // Confirms this field wasn't collapsed to a has* presence
         // boolean (that's the secret-key branch, a different one).
         expect(report).not.toContain("hasBaseUrl");
         expect(report).not.toContain("hasAgentUrl");
+      });
+
+      it("a scheme-less URL with an embedded key is recovered via the https:// retry — sentinel absent, '/…' redaction marker present (codex v2 review F3)", () => {
+        const report = buildDiagnosticReport({
+          ...DEFAULT_SETTINGS,
+          baseUrl: "api.example.com/v1?api_key=sk-live",
+        });
+        expect(report).not.toContain("sk-live");
+        expect(report).not.toContain("api_key");
+        expect(report).toContain("https://api.example.com/…");
+      });
+
+      it("a value that still doesn't yield a real host even after the https:// retry collapses to the literal unparseable marker, never the raw value (codex v2 review F3)", () => {
+        const report = buildDiagnosticReport({
+          ...DEFAULT_SETTINGS,
+          baseUrl: "not a url with spaces",
+        });
+        expect(report).not.toContain("not a url with spaces");
+        expect(report).toContain('"baseUrl": "(无法解析的地址，已隐去)"');
+      });
+
+      it("a path-embedded token/credential (no query string at all) is stripped too — origin + '/…' only", () => {
+        const report = buildDiagnosticReport({
+          ...DEFAULT_SETTINGS,
+          baseUrl: "https://host/token/sk-live",
+        });
+        expect(report).not.toContain("sk-live");
+        expect(report).not.toContain("/token/");
+        expect(report).toContain("https://host/…");
       });
 
       it("webhookUrl is the documented exception: presence-only, NOT query-stripped-and-included — its path can itself embed a capability token (n8n/飞书-style), unlike a plain connection endpoint", () => {
@@ -266,7 +303,7 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).not.toContain(SENTINELS.taskApiKey);
       expect(report).not.toContain("SENTINEL_NESTED_Q");
       expect(report).toContain('"hasApiKey": true');
-      expect(report).toContain("https://x.example.com/");
+      expect(report).toContain('"baseUrl": "https://x.example.com"'); // root path — no marker
       expect(report).toContain('"distinctive-nested-model-id"');
     });
   });

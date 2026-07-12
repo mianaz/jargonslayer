@@ -46,8 +46,14 @@ function capitalizeFirst(s: string): string {
 //       that. Matches history/autoExport.ts's stripKeyMaterial, which
 //       treats it identically for the same reason.
 //  2. URL-shaped key (name ends in "url", e.g. whisperUrl/agentUrl/
-//     baseUrl) → included, but with the query string and any userinfo
-//     stripped (sanitizeUrl below).
+//     baseUrl) → included, but reduced to origin + (a "/…" marker for
+//     any non-root path) — query string and userinfo are dropped too,
+//     just implicitly (see sanitizeUrl below: it builds the result
+//     from URL.origin, which never carries them in the first place).
+//     A value that doesn't parse to a real host (even after a retried
+//     "https://" prefix — codex v2 review finding F3, e.g. a
+//     scheme-less "api.example.com/v1?api_key=...") collapses to the
+//     literal marker "(无法解析的地址，已隐去)" — never the raw string.
 //  3. Plain nested settings object (taskLlm's per-domain overrides,
 //     profile) → recurse this SAME policy over its own keys, so a
 //     nested apiKey/url is caught exactly like a top-level one.
@@ -89,21 +95,50 @@ function isUrlShapedKey(key: string): boolean {
   return URL_KEY_RE.test(key);
 }
 
-/** Strips the query string and any embedded userinfo (user:pass@) from
- *  a URL-shaped setting — keeps origin+path only. Falls back to the
- *  raw string when it doesn't parse as an absolute URL (e.g. a
- *  malformed/relative value) rather than throwing. */
-function sanitizeUrl(value: string): string {
-  if (!value) return value;
+// Never the raw value — codex v2 review finding F3's fallback for a
+// URL-shaped setting that doesn't parse to a real host even after the
+// "https://" retry below.
+const UNPARSEABLE_URL_MARKER = "(无法解析的地址，已隐去)";
+
+/** Parses `value` as an absolute URL with a genuine host. `new URL()`
+ *  alone is too lenient for this purpose — e.g. a bare "localhost:8765"
+ *  (a user dropping the scheme by habit) "successfully" parses as an
+ *  OPAQUE url with scheme "localhost:" and NO host at all, rather than
+ *  throwing — so a parse only counts here if it yields a non-empty
+ *  `host`. Returns null on any failure. */
+function parseHostedUrl(value: string): URL | null {
   try {
     const u = new URL(value);
-    u.search = "";
-    u.username = "";
-    u.password = "";
-    return u.toString();
+    return u.host ? u : null;
   } catch {
-    return value;
+    return null;
   }
+}
+
+/** Redacts a URL-shaped setting for the report — keeps just enough to
+ *  recognize which endpoint is configured, never anything that could
+ *  identify a specific account/credential embedded in it:
+ *   - a scheme-less or otherwise-unparseable value (codex v2 review
+ *     finding F3, e.g. a pasted "api.example.com/v1?api_key=sk-live")
+ *     is retried once with an "https://" prefix — recovers the common
+ *     "forgot the scheme" case instead of the old behavior of leaking
+ *     the raw string wholesale. If parsing still can't produce a real
+ *     host even after that retry, UNPARSEABLE_URL_MARKER stands in —
+ *     the raw value is NEVER returned, not even partially.
+ *   - once parsed, only the ORIGIN (scheme + host [+ port]) is kept
+ *     verbatim, built from `URL.origin` itself — which by spec never
+ *     carries userinfo/path/query/hash, so those are dropped simply by
+ *     never using the full serialization. Any path beyond the bare
+ *     root ("/") collapses to the literal "/…" marker instead of being
+ *     kept: a path segment can itself embed a credential (e.g.
+ *     "https://host/token/sk-live" — query-string stripping alone
+ *     doesn't catch that). A bare root path needs no marker — the
+ *     origin alone already says everything a root path would. */
+function sanitizeUrl(value: string): string {
+  if (!value) return value;
+  const u = parseHostedUrl(value) ?? parseHostedUrl(`https://${value}`);
+  if (!u) return UNPARSEABLE_URL_MARKER;
+  return u.pathname && u.pathname !== "/" ? `${u.origin}/…` : u.origin;
 }
 
 /** Redacts one settings object generically, field by field, per the
