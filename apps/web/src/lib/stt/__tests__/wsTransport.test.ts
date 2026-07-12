@@ -29,6 +29,7 @@ describe("WsTransport — protocol v2", () => {
   let onInterim: ReturnType<typeof vi.fn>;
   let onFinal: ReturnType<typeof vi.fn>;
   let onStatus: ReturnType<typeof vi.fn>;
+  let onSpeakerUpdate: ReturnType<typeof vi.fn>;
   let events: STTEvents;
 
   beforeEach(() => {
@@ -37,10 +38,12 @@ describe("WsTransport — protocol v2", () => {
     onInterim = vi.fn();
     onFinal = vi.fn();
     onStatus = vi.fn();
+    onSpeakerUpdate = vi.fn();
     events = {
       onInterim,
       onFinal,
       onStatus,
+      onSpeakerUpdate,
     } as unknown as STTEvents;
   });
 
@@ -145,7 +148,9 @@ describe("WsTransport — protocol v2", () => {
 
     const stopP = transport.stop();
     ws.simulateMessage({ type: "final", text: "trailing words", seg_id: 7 });
-    expect(onFinal).toHaveBeenCalledWith("trailing words", { sttSeg: 7 });
+    // sttSeg is epoch-mapped (F2 fix) — this is the transport's first
+    // (and only) connection, so epoch 1: 1_000_000 * 1 + 7.
+    expect(onFinal).toHaveBeenCalledWith("trailing words", { sttSeg: 1_000_007 });
 
     ws.simulateMessage({ type: "stopped" });
     await stopP;
@@ -278,5 +283,44 @@ describe("WsTransport — protocol v2", () => {
     transport.resumeFeed();
     worklet.port.onmessage?.({ data: chunk });
     expect(ws2.sent).toEqual([chunk]);
+  });
+
+  // ---------------------------------------------------------------
+  // seg_id reconnect-epoch mapping (F2, codex v2 review)
+  // ---------------------------------------------------------------
+
+  it("a reconnect's raw seg_id 0 does not collide with a pre-reconnect segment's own mapped sttSeg", async () => {
+    vi.useFakeTimers();
+    const transport = makeTransport();
+    await transport.attachStream(fakeMediaStream());
+    const ws1 = wsInstances[0];
+    ws1.simulateOpen();
+
+    ws1.simulateMessage({ type: "final", text: "before drop", seg_id: 0 });
+    const firstMappedSeg = onFinal.mock.calls[0][1].sttSeg as number;
+
+    ws1.simulateServerClose(); // transient drop — not a user stop()
+    await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS);
+    expect(wsInstances.length).toBe(2);
+    const ws2 = wsInstances[1];
+    ws2.simulateOpen();
+
+    // Fresh sidecar connection — its own seg_id namespace restarts at 0.
+    ws2.simulateMessage({ type: "final", text: "after reconnect", seg_id: 0 });
+    const secondMappedSeg = onFinal.mock.calls[1][1].sttSeg as number;
+
+    expect(secondMappedSeg).not.toBe(firstMappedSeg);
+
+    // Same collision risk on the speaker_update path store.ts actually
+    // matches by (applySpeakerUpdateToSegments's bySegId.get(s.sttSeg)).
+    ws2.simulateMessage({
+      type: "speaker_update",
+      gen: 1,
+      assignments: [{ seg_id: 0, speaker: "SPEAKER_1" }],
+      speakers: ["SPEAKER_1"],
+    });
+    const [updateAssignments] = onSpeakerUpdate.mock.calls[0];
+    expect(updateAssignments[0].segId).toBe(secondMappedSeg);
+    expect(updateAssignments[0].segId).not.toBe(firstMappedSeg);
   });
 });

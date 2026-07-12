@@ -104,6 +104,37 @@ export class WsTransport {
   // at 0 for a fresh connection.
   private lastDiarGen = 0;
 
+  // Reconnect epoch (STT protocol v2 fix, codex v2 review F2): the
+  // sidecar's own per-connection `next_seg_id` restarts at 0 on every
+  // fresh connection (pre-existing sidecar behavior, NOT changed here
+  // — this fix works against old AND new sidecars) — a mid-meeting
+  // reconnect (transient drop, or one during a soft pause, which stays
+  // on this SAME WsTransport instance) would otherwise make a new
+  // connection's `seg_id`s collide with an EARLIER connection's
+  // already-mapped `sttSeg`/`segId` values (store.ts's
+  // applySpeakerUpdate/addFinal match purely by that id), silently
+  // relabeling/misattributing unrelated rows. Incremented once per
+  // connect() (starts at 0, so the first connection's own epoch is
+  // already 1 by the time any message can arrive) and folded into
+  // EVERY raw seg_id via mapSegId() before it ever reaches STTEvents —
+  // the raw sidecar id must never leave this class unmapped (every
+  // message field that carries one goes through mapSegId:
+  // FinalMessage.seg_id and SpeakerUpdateMessage.assignments[].seg_id,
+  // the only two places a seg_id is read from the wire).
+  // Deliberately NOT reset anywhere (unlike lastDiarGen above) — it
+  // must stay monotonic ACROSS reconnects within one meeting, since
+  // the whole point is keeping every reconnect's ids in a disjoint
+  // range from every earlier one in the SAME WsTransport instance's
+  // lifetime. A hard pause/resume that tears down this instance and
+  // attaches a brand new WsTransport is a separate, still-open gap
+  // (mapping restarts with the new instance) — see Header.tsx's
+  // canPause doc for that known limitation.
+  private connEpoch = 0;
+
+  private mapSegId(segId: number): number {
+    return this.connEpoch * 1_000_000 + segId;
+  }
+
   constructor(cb: WsTransportCallbacks) {
     this.events = cb.events;
     this.settings = cb.settings;
@@ -159,6 +190,9 @@ export class WsTransport {
 
     events.onStatus("connecting");
     this.lastDiarGen = 0; // fresh connection -> sidecar's diar_gen also starts at 0
+    // F2 fix: bump BEFORE this connection can send/receive anything —
+    // see connEpoch's own doc above.
+    this.connEpoch += 1;
 
     let ws: WebSocket;
     try {
@@ -208,7 +242,13 @@ export class WsTransport {
         events.onInterim((msg as PartialMessage).text);
       } else if (msg.type === "final") {
         const final = msg as FinalMessage;
-        events.onFinal(final.text, { sttSeg: final.seg_id });
+        events.onFinal(final.text, {
+          // F2 fix: map through this connection's epoch — see
+          // connEpoch's own doc above. Absent seg_id stays absent
+          // (nothing to map — matches today's behavior for a final
+          // with no seg_id at all).
+          sttSeg: final.seg_id !== undefined ? this.mapSegId(final.seg_id) : undefined,
+        });
       } else if (msg.type === "stopped") {
         // Drain ack for stop()'s wait — see stop() below. Resolving
         // here (rather than closing anything) is exactly why onmessage
@@ -221,7 +261,9 @@ export class WsTransport {
         if (update.gen <= this.lastDiarGen) return; // stale/out-of-order — drop
         this.lastDiarGen = update.gen;
         events.onSpeakerUpdate?.(
-          update.assignments.map((a) => ({ segId: a.seg_id, speaker: a.speaker })),
+          // F2 fix: map through this connection's epoch too — see
+          // connEpoch's own doc above.
+          update.assignments.map((a) => ({ segId: this.mapSegId(a.seg_id), speaker: a.speaker })),
           update.speakers,
         );
       } else if (msg.type === "diar_status") {
