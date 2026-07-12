@@ -225,6 +225,17 @@ interface AppState {
   toast: ToastState;
   focusMode: boolean; // 专注模式：折叠右栏，hover 看高亮释义
 
+  // Sidecar status (owner ask 2026-07-11: "I cannot see in the GUI if
+  // the local side got set up at all"): last known GET /health result
+  // for the local Whisper sidecar, written by SettingsDialog's 转录引擎
+  // status line (see lib/stt/sidecarHealth.ts's probeSidecar) so
+  // StatusLine's privacy-segment tooltip can hint when the CURRENTLY
+  // SELECTED engine's sidecar isn't reachable without StatusLine
+  // running its own duplicate probe. Nothing here polls on its own —
+  // this is just the last probe's outcome, whenever one last ran.
+  // null = not probed yet this session.
+  sidecarUp: boolean | null;
+
   // Subscription-direct (v0.2.2, experimental) kill-switch layer 3
   // race guard: true once hydrate()'s isRemotelyKilled() check has
   // resolved (success OR failure — isRemotelyKilled itself never
@@ -328,6 +339,7 @@ interface AppState {
   showToast: (toast: Exclude<ToastState, null>) => void;
   clearToast: () => void;
   setFocusMode: (v: boolean) => void;
+  setSidecarUp: (up: boolean | null) => void;
 }
 
 /** Preview tier (#61) engine defaults — pure so it's unit-testable
@@ -526,6 +538,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   toast: null,
   focusMode: false,
+  sidecarUp: null,
 
   subscriptionKillCheckSettled: false,
 
@@ -1145,6 +1158,7 @@ export const useApp = create<AppState>((set, get) => ({
   showToast: (toast) => set({ toast }),
   clearToast: () => set({ toast: null }),
   setFocusMode: (focusMode) => set({ focusMode }),
+  setSidecarUp: (sidecarUp) => set({ sidecarUp }),
 }));
 
 /** Meta helper kept here so UI code doesn't rebuild it. */

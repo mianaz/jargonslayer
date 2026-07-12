@@ -28,6 +28,7 @@ import {
   restoreFullBackup,
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
+import { probeSidecar, type SidecarProbeResult } from "@/lib/stt/sidecarHealth";
 import type {
   EnglishLevel,
   ExplainLanguage,
@@ -418,6 +419,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 说话人分离 (speaker diarization, HF token) section.
   const [showHfToken, setShowHfToken] = useState(false);
   const [checkingDiarization, setCheckingDiarization] = useState(false);
+  // 转录引擎 sidecar status line (owner ask 2026-07-11: "I cannot see in
+  // the GUI if the local side got set up at all") — a lightweight GET
+  // /health readout shown directly under the engine picker whenever the
+  // draft engine is whisper/tabaudio, separate from 说话人分离's own
+  // fetchSidecarHealth probe below (that one is diarization-specific,
+  // toast-only). null = not probed yet this dialog-open/engine
+  // selection — rendered the same as a confirmed-down result (mirrors
+  // 订阅直连's agentHealthState `!agentHealthState` idiom below).
+  const [sidecarStatus, setSidecarStatus] = useState<SidecarProbeResult | null>(null);
+  const [checkingSidecarStatus, setCheckingSidecarStatus] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -561,6 +572,37 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
+  // 转录引擎 sidecar status line: probes GET /health whenever this
+  // section becomes relevant — the dialog opens with the draft engine
+  // already whisper/tabaudio, or the user switches an engine card to
+  // one of those while the dialog stays open — and again whenever
+  // draft.engine changes between the two (cheap: same sidecar either
+  // way). Preview tier (#61) never probes, matching every other
+  // sidecar-dependent affordance's showroom posture (no probing to
+  // unlock). Cancellation-guarded like ImportHub's own open-gated
+  // probe (its own doc explains why) — this one can additionally be
+  // interrupted by an engine switch, not just a close.
+  useEffect(() => {
+    if (!open || PREVIEW_TIER) return;
+    if (draft.engine !== "whisper" && draft.engine !== "tabaudio") return;
+    setSidecarStatus(null);
+    setCheckingSidecarStatus(true);
+    let cancelled = false;
+    void probeSidecar(draft).then((result) => {
+      if (cancelled) return;
+      setSidecarStatus(result);
+      setCheckingSidecarStatus(false);
+      // Mirrored into the store so StatusLine's privacy-segment tooltip
+      // (main screen) can reflect the same last-known result — see
+      // AppState.sidecarUp's own doc.
+      useApp.getState().setSidecarUp(result.up);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draft.engine]);
+
   if (!open) return null;
 
   const patch = (p: Partial<Settings>) => setDraft((d) => ({ ...d, ...p }));
@@ -697,6 +739,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       showToast(res.message);
     } finally {
       setTestingConnection(false);
+    }
+  };
+
+  // 转录引擎 sidecar status line: manual 重新检测 — same probe the
+  // open/engine-switch effect above already ran once; useful after
+  // editing Whisper 地址 or actually starting the sidecar process
+  // without re-selecting the engine card (which is the effect's only
+  // other trigger).
+  const handleCheckSidecarStatus = async () => {
+    setCheckingSidecarStatus(true);
+    try {
+      const result = await probeSidecar(draft);
+      setSidecarStatus(result);
+      useApp.getState().setSidecarUp(result.up);
+    } finally {
+      setCheckingSidecarStatus(false);
     }
   };
 
@@ -940,6 +998,57 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 );
               })}
             </div>
+
+            {/* 本地服务 status line (owner ask 2026-07-11): only for the
+               two sidecar-backed engines — probed by the useEffect/
+               handleCheckSidecarStatus above. sidecarStatus === null
+               (not probed yet) renders identically to a confirmed-down
+               result, mirroring 订阅直连's own agentHealthState
+               `!agentHealthState` idiom below rather than adding a
+               third "checking" visual state. */}
+            {!PREVIEW_TIER && (draft.engine === "whisper" || draft.engine === "tabaudio") && (
+              <div className="space-y-2 border border-edge bg-panel2 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 text-sm text-fg">
+                    本地服务：
+                    {sidecarStatus?.up ? (
+                      <span className="text-lab-green">
+                        ● 已连接{sidecarStatus.model ? ` · 模型 ${sidecarStatus.model}` : ""}
+                        {sidecarStatus.diarize !== undefined && (
+                          <span className={sidecarStatus.diarize ? "text-lab-cyan" : "text-mut2"}>
+                            {" "}
+                            · {sidecarStatus.diarize ? "说话人分离已就绪" : "说话人分离未启用"}
+                          </span>
+                        )}
+                      </span>
+                    ) : (
+                      <span className="text-lab-orange">○ 未检测到本地服务</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void handleCheckSidecarStatus()}
+                    disabled={checkingSidecarStatus}
+                    className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {checkingSidecarStatus ? "检测中…" : "重新检测"}
+                  </button>
+                </div>
+                {!sidecarStatus?.up && (
+                  <div className="text-xs leading-[1.7] text-mut2">
+                    需要本地 Whisper sidecar——见{" "}
+                    <a
+                      href="https://github.com/mianaz/jargonslayer#readme"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      README「本地版安装」
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="text-xs text-mut">麦克风</label>
