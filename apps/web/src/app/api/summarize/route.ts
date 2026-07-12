@@ -5,7 +5,14 @@ import { NextResponse } from "next/server";
 import * as z from "zod";
 import { callJson, mapLlmError, pickModel, resolveLlmConfig } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
-import { DEFAULT_SUMMARIZE_MODEL, runSummarizeTask } from "@/lib/llm/tasks/summarize";
+import {
+  DEFAULT_SUMMARIZE_MODEL,
+  MAX_SEGMENTS,
+  MAX_TOTAL_SEGMENT_CHARS,
+  runSummarizeTask,
+  SUMMARIZE_TOO_LARGE_MESSAGE,
+  totalSegmentChars,
+} from "@/lib/llm/tasks/summarize";
 import { PROFILE_HINT_MAX_CHARS } from "@jargonslayer/core/llm/profileHint";
 import { newRequestId } from "@/lib/diag/requestId";
 import type { ApiErrorBody, SummarizeRequest, SummaryResult } from "@jargonslayer/core/types";
@@ -61,23 +68,18 @@ function errorBody(body: ApiErrorBody, status: number) {
 // ---------------------------------------------------------------
 // Request size caps — reject oversized bodies before any LLM dispatch
 // (chunking/translation/sweep all fan out into multiple provider
-// calls, so an unbounded transcript is effectively a cost/DoS vector).
-// This guard is Next.js-request-specific (arbitrary HTTP callers) —
-// it does NOT move into tasks/summarize.ts, see that module's header
-// comment.
-// ---------------------------------------------------------------
-
-const MAX_SEGMENTS = 2000;
-const MAX_TOTAL_SEGMENT_CHARS = 400_000;
-
-function totalSegmentChars(segments: SummarizeRequest["segments"]): number {
-  let total = 0;
-  for (const s of segments) total += s.text.length;
-  return total;
-}
-
-// ---------------------------------------------------------------
-// Route handler
+// calls, so an unbounded transcript is effectively a cost/DoS vector
+// here — this is an HTTP-input-validation guard against ARBITRARY
+// callers of our own route). MAX_SEGMENTS/MAX_TOTAL_SEGMENT_CHARS/
+// totalSegmentChars/the exact error message are single-sourced in
+// tasks/summarize.ts (F4, codex v04-integration review — see that
+// module's header comment): client.ts's summarizeViaClient applies the
+// SAME caps for a different reason (self-protection against an
+// unbounded marathon meeting freezing the UI, not DoS defense), and
+// must throw byte-identical user-facing text, so the values and
+// message can never drift apart between the two enforcement points.
+//
+// Route handler below.
 // ---------------------------------------------------------------
 
 export async function POST(req: Request) {
@@ -98,7 +100,7 @@ export async function POST(req: Request) {
     segments.length > MAX_SEGMENTS ||
     totalSegmentChars(segments) > MAX_TOTAL_SEGMENT_CHARS
   ) {
-    return errorBody({ error: "会议内容过长，超出报告生成上限", code: "bad_request" }, 413);
+    return errorBody({ error: SUMMARIZE_TOO_LARGE_MESSAGE, code: "bad_request" }, 413);
   }
 
   const cfg = resolveLlmConfig(req, "summary");

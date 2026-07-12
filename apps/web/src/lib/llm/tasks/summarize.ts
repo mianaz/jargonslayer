@@ -4,13 +4,22 @@
 // app/api/summarize/route.ts and lib/llm/client.ts's client-side path.
 // See tasks/detect.ts's header comment for the general contract.
 //
-// Request-size caps (MAX_SEGMENTS/MAX_TOTAL_SEGMENT_CHARS) are NOT
-// here — those are an HTTP-input-validation/DoS guard against
-// ARBITRARY untrusted callers of our own route (see route.ts's own
-// comment), which doesn't apply the same way to the client path (our
-// own code, invoked with the user's own already-in-memory session
-// data, spending the user's own key) — see task report for this
-// deliberate scope note.
+// Request-size caps (MAX_SEGMENTS/MAX_TOTAL_SEGMENT_CHARS below) are
+// single-sourced here but their ENFORCEMENT (the actual `if (...)
+// throw`) deliberately does NOT live here — this module is shared by
+// BOTH callers, and each applies its own guard at its own natural
+// entry point instead of a third copy inside runSummarizeTask itself
+// (which would make the route path guard twice for no benefit). This
+// used to be a route.ts-only guard (HTTP-input-validation/DoS defense
+// against ARBITRARY untrusted callers of our own route) — F4 (codex
+// v04-integration review) added the SAME caps to client.ts's
+// summarizeViaClient too, for a DIFFERENT reason: even our own code,
+// running with the user's own already-in-memory session data, can
+// freeze the UI thread building unbounded strings/chunk lists for a
+// long enough marathon meeting. Self-protection + behavior parity
+// (byte-identical user-facing error), not DoS defense — see that call
+// site's own comment. Graceful truncation instead of a hard reject is
+// a deliberate non-goal until the desktop UX pass.
 
 import type {
   DetectedExpression,
@@ -38,6 +47,29 @@ import {
 } from "../providerCore";
 
 export const DEFAULT_SUMMARIZE_MODEL = "claude-sonnet-5";
+
+// ---------------------------------------------------------------
+// Request-size caps — see this file's header comment for why the
+// VALUES live here (single-sourced) while the ENFORCEMENT lives in
+// each caller instead.
+// ---------------------------------------------------------------
+
+export const MAX_SEGMENTS = 2000;
+export const MAX_TOTAL_SEGMENT_CHARS = 400_000;
+
+export function totalSegmentChars(segments: SummarizeRequest["segments"]): number {
+  let total = 0;
+  for (const s of segments) total += s.text.length;
+  return total;
+}
+
+/** The exact zh message (+ HTTP 413/"bad_request" on the route) for
+ *  over-cap input — single-sourced so client.ts's self-protection
+ *  guard throws byte-identical user-facing text to what a request
+ *  that hit the SAME cap server-side already produces today (see
+ *  client.ts's throwForStatus, which maps a 413 to this exact string
+ *  via UpstreamError). */
+export const SUMMARIZE_TOO_LARGE_MESSAGE = "会议内容过长，超出报告生成上限";
 
 /** Provider/baseUrl/extraBody threaded through every callJson call in
  *  this module so all three stages hit the same configured endpoint —

@@ -43,7 +43,14 @@ import {
 import { DEFAULT_DETECT_MODEL, runDetectTask } from "./tasks/detect";
 import { DEFAULT_DEFINE_MODEL, runDefineTask } from "./tasks/define";
 import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "./tasks/translate";
-import { DEFAULT_SUMMARIZE_MODEL, runSummarizeTask } from "./tasks/summarize";
+import {
+  DEFAULT_SUMMARIZE_MODEL,
+  MAX_SEGMENTS,
+  MAX_TOTAL_SEGMENT_CHARS,
+  runSummarizeTask,
+  SUMMARIZE_TOO_LARGE_MESSAGE,
+  totalSegmentChars,
+} from "./tasks/summarize";
 import {
   agentDetect,
   agentDefine,
@@ -409,6 +416,30 @@ async function summarizeViaClient(
   creds: ResolvedTaskCreds,
 ): Promise<SummaryResult> {
   const ctx: RequestErrorContext = { tag: "llm-summary", provider: creds.provider, model: body.model ?? creds.model };
+
+  // F4 (codex v04-integration review): the Next.js route enforces
+  // MAX_SEGMENTS/MAX_TOTAL_SEGMENT_CHARS as an HTTP-input-validation
+  // guard against arbitrary callers (route.ts's own comment) — this
+  // direct-provider path has no such guard by default, so an unbounded
+  // marathon meeting would otherwise build unbounded strings/chunk
+  // lists straight on the UI thread. Self-protection + behavior
+  // parity, not DoS defense: same caps, same order (before key
+  // resolution, matching the route), same user-facing error shape —
+  // UpstreamError with the route's own exact zh message, byte-
+  // identical to what a request that hit this cap server-side already
+  // throws today (see throwForStatus's else-branch, which is what a
+  // 413 maps to on the Next.js-routed summarizeApi path). Graceful
+  // truncation is a deliberate non-goal until the desktop UX pass —
+  // this only prevents a freeze, it doesn't salvage an over-cap
+  // meeting.
+  if (
+    body.segments.length > MAX_SEGMENTS ||
+    totalSegmentChars(body.segments) > MAX_TOTAL_SEGMENT_CHARS
+  ) {
+    diagLog("error", ctx.tag, SUMMARIZE_TOO_LARGE_MESSAGE, errorDetail(ctx));
+    throw new UpstreamError(SUMMARIZE_TOO_LARGE_MESSAGE);
+  }
+
   requireApiKey(creds.apiKey, ctx);
 
   const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {

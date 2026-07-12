@@ -26,6 +26,7 @@ import {
 import { clearDiag, getDiagEntries } from "../../diag/log";
 import { setClientTransportOverride } from "../llmTransport";
 import { SUMMARY_SYSTEM_PROMPT, TRANSLATE_SYSTEM_PROMPT } from "@jargonslayer/core/llm/prompts";
+import { MAX_SEGMENTS, MAX_TOTAL_SEGMENT_CHARS, SUMMARIZE_TOO_LARGE_MESSAGE } from "../tasks/summarize";
 
 const mockFetch = vi.fn();
 
@@ -336,6 +337,109 @@ describe("summarizeApi — client transport", () => {
     await expect(
       summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings()),
     ).rejects.toBeInstanceOf(UpstreamError);
+  });
+});
+
+// ---------------------------------------------------------------
+// F4 (codex v04-integration review) — the Next.js route enforces
+// MAX_SEGMENTS/MAX_TOTAL_SEGMENT_CHARS as an HTTP-input-validation
+// guard (app/api/summarize/route.ts); the client (BYOK) path had none
+// at all, so an unbounded marathon meeting could freeze the UI thread
+// building unbounded strings/chunk lists. Both caps are enforced
+// BEFORE requireApiKey (matching the route's own ordering — see
+// summarizeViaClient) and BEFORE any network dispatch, so these tests
+// assert zero fetch calls too, not just the thrown error shape.
+// ---------------------------------------------------------------
+
+describe("summarizeApi — client transport — request-size caps (F4)", () => {
+  it(`rejects more than ${MAX_SEGMENTS} segments with the route's exact user-facing message, no provider call dispatched`, async () => {
+    const segments = Array.from({ length: MAX_SEGMENTS + 1 }, (_, i) => ({ index: i, text: "a" }));
+
+    const err = await summarizeApi(
+      { segments, expressions: [], terms: [] },
+      makeSettings(),
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UpstreamError);
+    expect((err as Error).message).toBe(SUMMARIZE_TOO_LARGE_MESSAGE);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it(`exactly ${MAX_SEGMENTS} segments is NOT rejected by the segment-count cap (dispatches normally)`, async () => {
+    // mockImplementation (fresh Response per call), not
+    // mockResolvedValue (same Response instance reused) — summarize
+    // dispatches 3 concurrent-ish upstream calls per attempt, and a
+    // shared Response's body can only be read once.
+    mockFetch.mockImplementation(async () =>
+      anthropicMessage('{"topic":{"en":"t","zh":"t"},"key_points":[],"decisions":[],"action_items":[]}'),
+    );
+    const segments = Array.from({ length: MAX_SEGMENTS }, (_, i) => ({ index: i, text: "a" }));
+
+    // Not rejected by THIS cap: the size guard runs BEFORE any
+    // dispatch (see summarizeViaClient), so "the guard didn't block
+    // it" is provable directly — mockFetch WAS reached — regardless of
+    // whatever happens afterward (success/some other unrelated error).
+    await summarizeApi({ segments, expressions: [], terms: [] }, makeSettings()).catch(() => {});
+
+    expect(mockFetch).toHaveBeenCalled();
+  });
+
+  it(`rejects a total segment length over ${MAX_TOTAL_SEGMENT_CHARS} chars with the route's exact user-facing message, no provider call dispatched`, async () => {
+    // 500 segments * 900 chars = 450,000 > 400,000, segment COUNT well
+    // under MAX_SEGMENTS — isolates the char-total cap specifically.
+    const segments = Array.from({ length: 500 }, (_, i) => ({ index: i, text: "a".repeat(900) }));
+
+    const err = await summarizeApi(
+      { segments, expressions: [], terms: [] },
+      makeSettings(),
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UpstreamError);
+    expect((err as Error).message).toBe(SUMMARIZE_TOO_LARGE_MESSAGE);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects even when no apiKey is configured — the size guard fires BEFORE key resolution, matching the route's own order", async () => {
+    const segments = Array.from({ length: MAX_SEGMENTS + 1 }, (_, i) => ({ index: i, text: "a" }));
+
+    const err = await summarizeApi(
+      { segments, expressions: [], terms: [] },
+      makeSettings({ apiKey: "" }),
+    ).catch((e) => e);
+
+    // NOT NoKeyError — the size cap is checked first (see
+    // summarizeViaClient's own ordering comment).
+    expect(err).toBeInstanceOf(UpstreamError);
+    expect((err as Error).message).toBe(SUMMARIZE_TOO_LARGE_MESSAGE);
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it("logs a diag entry for the rejection, tagged llm-summary", async () => {
+    const segments = Array.from({ length: MAX_SEGMENTS + 1 }, (_, i) => ({ index: i, text: "a" }));
+
+    await summarizeApi({ segments, expressions: [], terms: [] }, makeSettings()).catch(() => {});
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-summary");
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries[entries.length - 1].message).toBe(SUMMARIZE_TOO_LARGE_MESSAGE);
+  });
+
+  it("a well-under-cap request is never rejected by either cap (sanity check the guard isn't overly aggressive)", async () => {
+    // mockImplementation (fresh Response per call), not
+    // mockResolvedValue (same Response instance reused) — summarize
+    // dispatches 3 concurrent-ish upstream calls per attempt, and a
+    // shared Response's body can only be read once.
+    mockFetch.mockImplementation(async () =>
+      anthropicMessage('{"topic":{"en":"t","zh":"t"},"key_points":[],"decisions":[],"action_items":[]}'),
+    );
+
+    const result = await summarizeApi(
+      { segments: [{ index: 0, text: "a small meeting" }], expressions: [], terms: [] },
+      makeSettings(),
+    );
+
+    expect(result.summary.topic).toEqual({ en: "t", zh: "t" });
+    expect(mockFetch).toHaveBeenCalled();
   });
 });
 
