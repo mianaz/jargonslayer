@@ -68,13 +68,31 @@
 // provision-step start/done/error and server start/exit/restart —
 // labels only, matching that module's own "never transcript content"
 // privacy rule.
+//
+// S4 chunk 2 addition (docs/design-explorations/s4-model-wizard-
+// blueprint.md, decision B): a downloadProgress$ subscription surface +
+// currentDownloadProgress() snapshot getter — mirrors log$/notifyLog's
+// own shape exactly (a listener Set + a notify function), fed by
+// provisionRunner.ts's runnerDeps.onDownloadProgress the same way onLog
+// feeds notifyLog below. The snapshot resets to null the instant a
+// DOWNLOAD_MODEL step starts OR ends (STEP_OK or STEP_ERROR) — anchored
+// on drive()'s own existing per-step diagLog transitions, so a stale
+// 100%-from-last-time (or a stale error-time percentage) never survives
+// into STARTING/POLLING_HEALTH/HEALTHY or a later, different step.
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 
 import { diagLog } from "../diag/log";
 import { setTransport, type Transport } from "../llm/llmTransport";
 import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
 import { getInvoke, getListen, getTauriFetch, type InvokeFn, type ListenFn, type TauriFetchFn } from "./tauriApi";
-import { getAppPaths, runEffects, stopServer, type LogStream, type OnLog } from "./provisionRunner";
+import {
+  getAppPaths,
+  runEffects,
+  stopServer,
+  type LogStream,
+  type OnLog,
+  type PrewarmProgressEvent,
+} from "./provisionRunner";
 import type { DesktopPaths } from "./uvCommands";
 import {
   decideRestart,
@@ -183,6 +201,18 @@ export interface DesktopBootstrapHandle {
    *  (mirrors state$'s own "call currentState() first" contract) —
    *  callers keep their own capped buffer. */
   log$: (listener: (line: DesktopLogLine) => void) => () => void;
+  /** Subscribe to every prewarm download-progress update (S4 chunk 2's
+   *  `prewarm://progress` event, via provisionRunner.ts's own
+   *  onDownloadProgress wiring below) — chunk 3's wizard progress bar
+   *  for the 下载模型 row. Does NOT replay past updates (mirrors log$'s
+   *  own "call currentDownloadProgress() first" contract). */
+  downloadProgress$: (listener: (progress: PrewarmProgressEvent | null) => void) => () => void;
+  /** Snapshot of the LATEST download-progress update, or null outside
+   *  an active DOWNLOAD_MODEL step — reset the instant that step starts
+   *  OR ends (see drive()'s own per-step diagLog transitions, which
+   *  this reset is anchored to), so a stale value never survives into a
+   *  later step. */
+  currentDownloadProgress: () => PrewarmProgressEvent | null;
   /** app_paths(), resolved once during bootstrap and exposed verbatim —
    *  chunk 6's wizard escape hatch shows these ("the exact app-data
    *  paths") on a STEP/ERROR screen. Immutable for the handle's whole
@@ -242,6 +272,8 @@ const NOT_DESKTOP_HANDLE: DesktopBootstrapHandle = {
   retryStep: () => {},
   beginProvision: () => {},
   log$: () => () => {},
+  downloadProgress$: () => () => {},
+  currentDownloadProgress: () => null,
   paths: NOT_DESKTOP_PATHS,
   recheckHealth: async () => {},
   reprovision: async () => {},
@@ -332,6 +364,23 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     for (const listener of logListeners) listener({ stream, line });
   }
 
+  // S4 chunk 2 — mirrors logListeners/notifyLog exactly (a listener Set
+  // + a notify function over a single held snapshot); see
+  // DesktopBootstrapHandle.downloadProgress$/currentDownloadProgress's
+  // own doc comments and drive()'s reset-on-step-start/end below.
+  let downloadProgress: PrewarmProgressEvent | null = null;
+  const downloadProgressListeners = new Set<(progress: PrewarmProgressEvent | null) => void>();
+  function notifyDownloadProgress(): void {
+    for (const listener of downloadProgressListeners) listener(downloadProgress);
+  }
+  /** Used by drive() below at the two DOWNLOAD_MODEL boundaries (step
+   *  start, step end) — see this file's header comment on why both
+   *  ends reset, not just one. */
+  function resetDownloadProgress(): void {
+    downloadProgress = null;
+    notifyDownloadProgress();
+  }
+
   const runnerDeps = {
     invoke: deps.invoke,
     listen: deps.listen,
@@ -348,6 +397,15 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     onLog: (stream: LogStream, line: string) => {
       deps.onLog?.(stream, line);
       notifyLog(stream, line);
+    },
+    // S4 chunk 2: every prewarm://progress update (only ever emitted
+    // while a DOWNLOAD_MODEL step's prewarmModel effect is in flight —
+    // see provisionRunner.ts's withDownloadProgress) updates the held
+    // snapshot and fans it out to downloadProgress$ subscribers, same
+    // "wrap the callback, notify a listener Set" shape as onLog above.
+    onDownloadProgress: (progress: PrewarmProgressEvent) => {
+      downloadProgress = progress;
+      notifyDownloadProgress();
     },
     probeSidecarFn: deps.probeSidecarFn,
     now: deps.now,
@@ -423,14 +481,22 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     while (isAutoAdvancing(current.state)) {
       if (current.state.phase === "STEP" && current.state.status === "RUNNING") {
         diagLog("info", "desktop-provision", `${PROVISION_STEP_LABELS[current.state.step]} 开始`);
+        // A fresh entry OR a RETRY re-entry into DOWNLOAD_MODEL both
+        // land here (current.state.step is checked fresh every
+        // iteration) — reset BEFORE its prewarmModel effect runs, so a
+        // retry never starts from a stale progress value left over from
+        // the failed attempt.
+        if (current.state.step === "DOWNLOAD_MODEL") resetDownloadProgress();
       }
       const event = await runEffects(current.state, current.effects, runnerDeps);
       if (generation !== myGeneration) return; // superseded — apply nothing further.
       current = transition(ctx, current.state, event);
       if (event.type === "STEP_OK") {
         diagLog("info", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 完成`);
+        if (event.step === "DOWNLOAD_MODEL") resetDownloadProgress();
       } else if (event.type === "STEP_ERROR") {
         diagLog("error", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 失败`, redactHomePath(event.error));
+        if (event.step === "DOWNLOAD_MODEL") resetDownloadProgress();
       }
       if (event.type === "CHECK_RESULT" && isFreshProvisionEntry(current.state)) {
         awaitingConsent = true;
@@ -561,6 +627,13 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     log$(listener) {
       logListeners.add(listener);
       return () => logListeners.delete(listener);
+    },
+    downloadProgress$(listener) {
+      downloadProgressListeners.add(listener);
+      return () => downloadProgressListeners.delete(listener);
+    },
+    currentDownloadProgress() {
+      return downloadProgress;
     },
     paths,
     async recheckHealth() {

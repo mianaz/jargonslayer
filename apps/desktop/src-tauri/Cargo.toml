@@ -26,6 +26,11 @@ tauri-plugin-http = "2"
 # UvLogEvent, ...) — already resolved transitively via tauri itself, made
 # explicit here since this crate's own code derives Serialize directly.
 serde = { version = "1", features = ["derive"] }
+# S4 chunk 2 — was ONLY a transitive dependency (via tauri and others,
+# see Cargo.lock) until server.rs's classify_download_line started
+# parsing --download-only's NDJSON stdout lines directly; made explicit
+# now that this crate's own code calls serde_json::from_str itself.
+serde_json = "1"
 
 # Single-instance is desktop-only (no Android/iOS support) — same
 # target gate the plugin's own setup docs recommend for `cargo add`.

@@ -6,6 +6,24 @@
 // actual server process. Both prewarm_model and start_server spawn the
 // SAME execution tool (architecture decision 3): the venv's own python,
 // never a bare `python` off $PATH.
+//
+// S4 chunk 2 (docs/design-explorations/s4-model-wizard-blueprint.md,
+// decision B's first-run one-shot path) — prewarm_model no longer runs a
+// bare `-c "WhisperModel(...)"` script: it spawns whisper_server.py's own
+// `--download-only` mode (chunk 1's run_download_only), which prints
+// newline-delimited JSON progress lines to stdout
+// ({"type":"download_progress","downloaded":N,"total":M}, throttled to
+// ~500ms-or-whole-percent — see should_emit_download_progress) then a
+// final download_done/download_error line, exit 0/1. classify_download_
+// line below is the pure parser for those lines; every line — parsed or
+// not — keeps flowing to uv://log exactly as before (run_venv_python_
+// streaming's on_stdout_line callback ADDS the classification, it never
+// replaces the log forwarding), so the wizard's 详细日志 pane is
+// unaffected. A download_progress line additionally emits a
+// prewarm://progress Tauri event; a download_error line is captured and,
+// if the process then exits non-zero, becomes this command's own Err (a
+// specific message) instead of the generic "exited with code N" a bare
+// non-zero/null exit still falls back to when no such line was ever seen.
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command as StdCommand, Stdio};
@@ -13,7 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
 use crate::paths::resolve_app_paths;
@@ -56,6 +74,18 @@ pub struct ServerExitEvent {
     pub code: Option<i32>,
 }
 
+/// `prewarm://progress` event payload — emitted once per accepted
+/// download_progress line (see classify_download_line and
+/// should_emit_download_progress's own throttle in
+/// sidecar/whisper_server.py). Field names are already camelCase
+/// (single words), same as ServerExitEvent/StartServerResult above.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrewarmProgressEvent {
+    pub downloaded: u64,
+    pub total: u64,
+}
+
 fn poison_err<T>(_: std::sync::PoisonError<T>) -> String {
     "server state lock was poisoned by an earlier panic".to_string()
 }
@@ -66,6 +96,55 @@ fn path_to_string(path: &std::path::Path) -> String {
 
 // ---- prewarm_model ----
 
+/// The parsed shape of one stdout line from `whisper_server.py
+/// --download-only` (sidecar/whisper_server.py's run_download_only/
+/// should_emit_download_progress — newline-delimited JSON, throttled to
+/// ~1 line/500ms-or-whole-percent-change). `Other` covers every line
+/// that ISN'T one of the three known shapes: not valid JSON at all (a
+/// Python traceback line, a blank line, ...), valid JSON with an
+/// unrecognized/missing "type", or a truncated/partial JSON object (a
+/// line split mid-write) — classify_download_line never panics on any
+/// of these, it just falls back to Other. See classify_download_line's
+/// own #[cfg(test)] cases below.
+#[derive(Debug, Clone, PartialEq)]
+enum DownloadLine {
+    Progress { downloaded: u64, total: u64 },
+    Done,
+    Error { message: String },
+    Other,
+}
+
+/// Wire shape, internally tagged on "type" — exactly what
+/// run_download_only prints (`json.dumps({"type": "download_progress",
+/// "downloaded": N, "total": M})`, etc.). Private/wire-only:
+/// classify_download_line is the only thing that ever sees this,
+/// converting to the richer DownloadLine enum above.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type")]
+enum RawDownloadLine {
+    #[serde(rename = "download_progress")]
+    Progress { downloaded: u64, total: u64 },
+    #[serde(rename = "download_done")]
+    Done,
+    #[serde(rename = "download_error")]
+    Error { message: String },
+}
+
+/// Pure line classifier — no I/O, no process spawn. Rust tests exercise
+/// this directly (never a real whisper_server.py child — see this
+/// module's own #[cfg(test)] block); prewarm_model below is the only
+/// caller in production, applying it to every stdout line ALONGSIDE
+/// (never instead of) the unconditional uv://log forwarding every
+/// prewarm_model line has always gotten (see run_venv_python_streaming).
+fn classify_download_line(line: &str) -> DownloadLine {
+    match serde_json::from_str::<RawDownloadLine>(line) {
+        Ok(RawDownloadLine::Progress { downloaded, total }) => DownloadLine::Progress { downloaded, total },
+        Ok(RawDownloadLine::Done) => DownloadLine::Done,
+        Ok(RawDownloadLine::Error { message }) => DownloadLine::Error { message },
+        Err(_) => DownloadLine::Other,
+    }
+}
+
 #[tauri::command]
 pub async fn prewarm_model(app: tauri::AppHandle, model: String) -> Result<ProcessResult, String> {
     validate_model(&model)?;
@@ -74,16 +153,35 @@ pub async fn prewarm_model(app: tauri::AppHandle, model: String) -> Result<Proce
     std::fs::create_dir_all(&paths.models_dir)
         .map_err(|e| format!("failed to create {}: {e}", paths.models_dir.display()))?;
 
-    // Matches the blueprint's literal snippet — model is already allow-
-    // listed above, so plain interpolation into the Python source is safe
-    // (no quote/injection characters possible from the fixed model set).
-    let script = format!(
-        "from faster_whisper import WhisperModel; WhisperModel('{model}', device='auto', compute_type='int8')"
-    );
-    let args = vec!["-c".to_string(), script];
+    // Decision B (s4-model-wizard-blueprint.md) — first-run is a Rust
+    // one-shot spawn of whisper_server.py's own --download-only mode
+    // (chunk 1's run_download_only), not a bare `-c "WhisperModel(...)"`
+    // script: the sidecar module already owns the real download logic
+    // (disk precheck, resumable snapshot_download, progress accounting
+    // via download_model_snapshot) and is the SAME helper the :8766
+    // model-switch job (chunk 1's JobManager.start_download_job) reuses
+    // — "one shared helper, only invocation + progress transport
+    // differ." Bonus (per the blueprint): no longer instantiates+
+    // discards a CT2 model, pure download.
+    let args = vec![
+        path_to_string(&paths.script_path),
+        "--model".to_string(),
+        model,
+        "--download-only".to_string(),
+    ];
     let extra_env = vec![("HF_HOME".to_string(), path_to_string(&paths.models_dir))];
     let venv_python = paths.venv_python.clone();
     let app_for_blocking = app.clone();
+
+    // Captures the download_error line's message (if any) seen on
+    // stdout while the child runs, read back once spawn_blocking below
+    // settles. A Mutex, not a plain Cell: the per-line classification
+    // runs on spawn_streamed's own stdout reader thread (see
+    // run_venv_python_streaming) — a DIFFERENT thread than the one that
+    // reads it back here.
+    let download_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let download_error_for_lines = download_error.clone();
+    let app_for_progress = app.clone();
 
     // Blocking model download/load lives on its own std::process::Child
     // wait() — spawn_blocking so this async command's own await never
@@ -91,24 +189,62 @@ pub async fn prewarm_model(app: tauri::AppHandle, model: String) -> Result<Proce
     // first-run) download takes; see architecture decision 4 / risk
     // register item 6 (load-before-bind).
     let code = tauri::async_runtime::spawn_blocking(move || {
-        run_venv_python_streaming(&app_for_blocking, &venv_python, &args, &extra_env)
+        run_venv_python_streaming(&app_for_blocking, &venv_python, &args, &extra_env, move |line| {
+            // ADDS to the unconditional uv://log forwarding every line
+            // already gets (run_venv_python_streaming calls emit_uv_log
+            // itself, before this closure ever runs) — never replaces
+            // it, so the wizard's 详细日志 pane keeps showing the raw
+            // --download-only output exactly like every other
+            // provisioning step.
+            match classify_download_line(line) {
+                DownloadLine::Progress { downloaded, total } => {
+                    let _ = app_for_progress.emit("prewarm://progress", PrewarmProgressEvent { downloaded, total });
+                }
+                DownloadLine::Error { message } => {
+                    if let Ok(mut guard) = download_error_for_lines.lock() {
+                        *guard = Some(message);
+                    }
+                }
+                DownloadLine::Done | DownloadLine::Other => {}
+            }
+        })
     })
     .await
     .map_err(|e| format!("prewarm task panicked: {e}"))??;
+
+    // A download_error line -> this command's own Err carrying that
+    // specific message (e.g. a disk-full/offline zh error raised by
+    // download_model_snapshot), rather than the generic "exited with
+    // code N" processResultToEvent (provisionRunner.ts) would otherwise
+    // synthesize from a bare non-zero ProcessResult. A non-zero/null
+    // exit with NO download_error line ever seen (a crash outside
+    // run_download_only's own try/except, a killed process, ...) keeps
+    // today's generic path unchanged.
+    if code != Some(0) {
+        let message = download_error.lock().map_err(poison_err)?.clone();
+        if let Some(message) = message {
+            return Err(message);
+        }
+    }
 
     Ok(ProcessResult { code })
 }
 
 /// Runs `program args…` to completion with the given extra env vars,
 /// streaming stdout/stderr lines to `uv://log` (reusing run_uv's event —
-/// see uv::emit_uv_log) tagged "stdout"/"stderr". Blocking — callers on
-/// the async runtime must wrap this in spawn_blocking (see prewarm_model
-/// above).
+/// see uv::emit_uv_log) tagged "stdout"/"stderr", and additionally
+/// invoking `on_stdout_line` with every RAW stdout line as it arrives —
+/// ALONGSIDE the unconditional emit_uv_log call, never instead of it
+/// (prewarm_model's own download-progress classification is the one
+/// caller that needs this; a no-op closure costs nothing for any other
+/// call shape). Blocking — callers on the async runtime must wrap this
+/// in spawn_blocking (see prewarm_model above).
 fn run_venv_python_streaming(
     app: &tauri::AppHandle,
     program: &std::path::Path,
     args: &[String],
     extra_env: &[(String, String)],
+    on_stdout_line: impl Fn(&str) + Send + 'static,
 ) -> Result<Option<i32>, String> {
     let mut cmd = StdCommand::new(program);
     cmd.args(args)
@@ -118,7 +254,10 @@ fn run_venv_python_streaming(
     let app_err = app.clone();
     let (mut child, out_handle, err_handle) = spawn_streamed(
         cmd,
-        move |line| emit_uv_log(&app_out, "stdout", line),
+        move |line| {
+            emit_uv_log(&app_out, "stdout", line);
+            on_stdout_line(line);
+        },
         move |line| emit_uv_log(&app_err, "stderr", line),
     )
     .map_err(|e| format!("failed to spawn {}: {e}", program.display()))?;
@@ -369,5 +508,87 @@ mod tests {
         for model in ["large-v2", "large", "turbo", "gpt-4", ""] {
             assert!(validate_model(model).is_err(), "{model} should be rejected");
         }
+    }
+
+    // ---- classify_download_line (S4 chunk 2's --download-only line
+    // parser) — pure, no process ever spawned. ----
+
+    #[test]
+    fn classifies_a_download_progress_line() {
+        let line = r#"{"type":"download_progress","downloaded":1048576,"total":3145728}"#;
+        assert_eq!(
+            classify_download_line(line),
+            DownloadLine::Progress {
+                downloaded: 1_048_576,
+                total: 3_145_728
+            }
+        );
+    }
+
+    #[test]
+    fn classifies_a_download_done_line() {
+        assert_eq!(classify_download_line(r#"{"type":"download_done"}"#), DownloadLine::Done);
+    }
+
+    #[test]
+    fn classifies_a_download_error_line() {
+        let line = r#"{"type":"download_error","message":"磁盘空间不足"}"#;
+        assert_eq!(
+            classify_download_line(line),
+            DownloadLine::Error {
+                message: "磁盘空间不足".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn classifies_garbage_text_as_other() {
+        for line in [
+            "",
+            "not json at all",
+            "Downloading... 45%",
+            "Traceback (most recent call last):",
+            "null",
+            "42",
+        ] {
+            assert_eq!(
+                classify_download_line(line),
+                DownloadLine::Other,
+                "{line:?} should classify as Other"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_partial_or_truncated_json_as_other() {
+        // A line split mid-write (e.g. the reader thread observed a
+        // not-yet-flushed prefix) must never panic or be misread as a
+        // different known shape — falls back to Other exactly like
+        // garbage text.
+        for line in [
+            r#"{"type":"download_progress","downloaded":123"#,
+            r#"{"type":"download_progress""#,
+            r#"{"type": "download_"#,
+            "{",
+        ] {
+            assert_eq!(
+                classify_download_line(line),
+                DownloadLine::Other,
+                "{line:?} should classify as Other"
+            );
+        }
+    }
+
+    #[test]
+    fn classifies_valid_json_with_an_unrecognized_type_as_other() {
+        assert_eq!(
+            classify_download_line(r#"{"type":"something_else","x":1}"#),
+            DownloadLine::Other
+        );
+    }
+
+    #[test]
+    fn classifies_valid_json_missing_the_type_field_as_other() {
+        assert_eq!(classify_download_line(r#"{"downloaded":1,"total":2}"#), DownloadLine::Other);
     }
 }

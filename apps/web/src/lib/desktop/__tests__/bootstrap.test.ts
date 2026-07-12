@@ -17,6 +17,7 @@ import {
   type DesktopLogLine,
 } from "../bootstrap";
 import { MAX_RESTARTS_PER_WINDOW } from "../provisionMachine";
+import type { PrewarmProgressEvent } from "../provisionRunner";
 import type { InvokeFn, ListenFn, TauriEvent, TauriFetchFn } from "../tauriApi";
 import type { DesktopPaths } from "../uvCommands";
 import { clearDiag, getDiagEntries } from "../../diag/log";
@@ -411,6 +412,14 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
     await expect(handle.recheckHealth()).resolves.toBeUndefined();
     await expect(handle.reprovision()).resolves.toBeUndefined();
     await expect(handle.readSidecarLog(200)).resolves.toBe("");
+    // S4 chunk 2: downloadProgress$/currentDownloadProgress are inert
+    // outside a desktop build too — same posture as every other handle
+    // method above.
+    expect(handle.currentDownloadProgress()).toBeNull();
+    const unsubscribeDownloadProgress = handle.downloadProgress$(() => {
+      throw new Error("should never be called on NOT_DESKTOP");
+    });
+    unsubscribeDownloadProgress(); // must not throw
   });
 
   it("is idempotent: two calls return the exact same cached promise, resolving to the exact same handle", async () => {
@@ -480,6 +489,158 @@ describe("bootstrapDesktop — log$ subscription (chunk 6 wizard 详细日志 pa
     unsubscribe();
     emit("uv://log", { stream: "stdout", line: "should not arrive" });
     expect(lines).toEqual([]);
+  });
+});
+
+describe("bootstrapDesktop — downloadProgress$ / currentDownloadProgress() (S4 chunk 2 prewarm://progress)", () => {
+  it("forwards prewarm://progress updates emitted during DOWNLOAD_MODEL to downloadProgress$ subscribers and the snapshot getter", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 1000, total: 4000 });
+          emit("prewarm://progress", { downloaded: 4000, total: 4000 });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const updates: Array<PrewarmProgressEvent | null> = [];
+    handle.downloadProgress$((p) => updates.push(p));
+
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    expect(handle.currentDownloadProgress()).toBeNull(); // nothing has downloaded yet
+
+    handle.beginProvision();
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(updates).toContainEqual({ downloaded: 1000, total: 4000 });
+    expect(updates).toContainEqual({ downloaded: 4000, total: 4000 });
+  });
+
+  it("resets the snapshot to null once the DOWNLOAD_MODEL step completes (moves on to STARTING)", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 2000, total: 4000 });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
+    // Waits for the STARTING row specifically (rather than jumping
+    // straight to waitForStable's HEALTHY) so this test actually
+    // observes the reset AT the DOWNLOAD_MODEL -> STARTING boundary,
+    // not just "eventually null once everything is done".
+    const starting = await waitForNextState(
+      handle,
+      (s) => s.phase === "STEP" && s.step === "STARTING" && s.status === "RUNNING",
+    );
+    expect(starting).toMatchObject({ step: "STARTING" });
+    expect(handle.currentDownloadProgress()).toBeNull();
+
+    await waitForStable(handle); // -> HEALTHY
+    expect(handle.currentDownloadProgress()).toBeNull();
+  });
+
+  it("resets the snapshot to null once the DOWNLOAD_MODEL step errors out too", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: 0 }), // INSTALL_PYTHON/CREATE_VENV/INSTALL_DEPS all succeed
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 500, total: 4000 });
+          return { code: 1 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
+    const errored = await waitForStable(handle);
+    expect(errored).toMatchObject({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR" });
+    expect(handle.currentDownloadProgress()).toBeNull();
+  });
+
+  it("an unsubscribed downloadProgress$ listener stops receiving updates", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted, nothing to report yet)
+    const updates: Array<PrewarmProgressEvent | null> = [];
+    const unsubscribe = handle.downloadProgress$((p) => updates.push(p));
+    unsubscribe();
+    emit("prewarm://progress", { downloaded: 1, total: 2 });
+    expect(updates).toEqual([]);
+  });
+
+  it("does not replay past updates to a late subscriber — a listener added after DOWNLOAD_MODEL finished sees nothing, and the snapshot is already back to null", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 1000, total: 4000 });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+    await waitForStable(handle); // -> HEALTHY, DOWNLOAD_MODEL long since finished
+
+    const updates: Array<PrewarmProgressEvent | null> = [];
+    handle.downloadProgress$((p) => updates.push(p));
+    expect(updates).toEqual([]); // no replay
+    expect(handle.currentDownloadProgress()).toBeNull();
   });
 });
 
