@@ -49,6 +49,7 @@ import { PREVIEW_LIVE_MODELS, PREVIEW_SUMMARY_MODELS, PREVIEW_TIER } from "@/lib
 import { clearDiag, getDiagEntries, type DiagEntry } from "@/lib/diag/log";
 import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
+import ToggleSwitch from "@/components/ToggleSwitch";
 import CredentialFields, {
   presetIdFor,
   type ProviderPreset,
@@ -184,6 +185,48 @@ const TRANSCRIPT_LEADING_OPTIONS: { value: Settings["transcriptLeading"]; label:
 const UI_MODE_OPTIONS: { value: Settings["uiMode"]; label: string }[] = [
   { value: "simple", label: "简单" },
   { value: "advanced", label: "高级" },
+];
+
+// Settings redesign (owner ask 2026-07-11: "side navbar for each
+// category"): one nav entry per existing <section> — id per category,
+// label copied verbatim from that section's own <SectionHeading>. Order
+// matches the dialog's previous top-to-bottom section order exactly.
+type SettingsCategoryId =
+  | "engine"
+  | "diarization"
+  | "aiDetect"
+  | "taskLlm"
+  | "dataIntegration"
+  | "subscriptionDirect"
+  | "display";
+
+const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = [
+  { id: "engine", label: "转录引擎" },
+  { id: "diarization", label: "说话人分离" },
+  { id: "aiDetect", label: "AI 检测" },
+  { id: "taskLlm", label: "分任务模型（高级）" },
+  { id: "dataIntegration", label: "数据与联动" },
+  { id: "subscriptionDirect", label: "订阅直连（实验性）" },
+  { id: "display", label: "显示" },
+];
+
+// "AI 检测" is settingsSections.ts's one MIXED section (tagged row-by-
+// row, not one whole-section key) — every row-level key that lives
+// under it, used only to decide whether the CATEGORY itself belongs in
+// the nav at the current uiMode (visible whenever at least one of its
+// own rows would be; individual rows keep their own existing
+// isSectionVisible calls below, untouched).
+const AI_DETECT_ROW_LEVELS = [
+  SETTINGS_UI_LEVELS.aiDetectPreviewBanner,
+  SETTINGS_UI_LEVELS.aiDetectCredentials,
+  SETTINGS_UI_LEVELS.aiDetectAutoDetect,
+  SETTINGS_UI_LEVELS.aiDetectCore,
+  SETTINGS_UI_LEVELS.aiDetectConfidence,
+  SETTINGS_UI_LEVELS.aiDetectExplainLanguage,
+  SETTINGS_UI_LEVELS.aiDetectBilingual,
+  SETTINGS_UI_LEVELS.aiDetectProfile,
+  SETTINGS_UI_LEVELS.aiDetectPacks,
+  SETTINGS_UI_LEVELS.aiDetectPackSources,
 ];
 
 // Primary-only preset extras: applied to draft.detectModel/
@@ -334,12 +377,10 @@ function TaskDomainBlock({
           <div className="text-sm text-fg">{label}</div>
           {hint && <div className="text-xs text-mut2">{hint}</div>}
         </div>
-        <input
-          type="checkbox"
+        <ToggleSwitch
           checked={enabled}
           disabled={disabled}
-          onChange={(e) => patchConfig({ enabled: e.target.checked })}
-          className="h-4 w-4 shrink-0 accent-act disabled:opacity-50"
+          onChange={(checked) => patchConfig({ enabled: checked })}
         />
       </label>
 
@@ -458,6 +499,50 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // while open, same "snapshot on open" posture as exportFolderName/
   // packSources above.
   const [diagEntries, setDiagEntries] = useState<DiagEntry[]>([]);
+
+  // Settings redesign: which nav-rail category the content pane shows.
+  // Local-only (NOT the zustand store, not part of draft) — pure
+  // navigation state; draft itself already lives at this same dialog
+  // level regardless of which category is active, so switching
+  // categories can never lose an unsaved edit. Default "engine": the
+  // first entry in SETTINGS_CATEGORIES, always visible (its own
+  // section level is "simple").
+  const [activeCategory, setActiveCategory] = useState<SettingsCategoryId>("engine");
+
+  // Nav-rail visibility per category — reuses isSectionVisible/
+  // SETTINGS_UI_LEVELS exactly as every row below already does (never
+  // forked). engine/display's own section level is "simple" (so these
+  // evaluate true regardless of uiMode); aiDetect has no single
+  // matching key (the one mixed section) so it's visible whenever ANY
+  // of its own rows would be, mirroring the general "a category whose
+  // every row is advanced-only disappears from the nav" rule.
+  const categoryVisible: Record<SettingsCategoryId, boolean> = {
+    engine: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.engine),
+    diarization: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.diarization),
+    aiDetect: AI_DETECT_ROW_LEVELS.some((l) => isSectionVisible(settings.uiMode, l)),
+    taskLlm: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.taskLlm),
+    dataIntegration: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.dataIntegration),
+    subscriptionDirect:
+      process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" &&
+      isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.subscriptionDirect),
+    display: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.display),
+  };
+  const visibleCategories = SETTINGS_CATEGORIES.filter((c) => categoryVisible[c.id]);
+
+  // Keeps the active nav selection valid if uiMode flips live (header
+  // 简单/高级 toggle, immediate-apply — see that control below) while
+  // the dialog is open and hides whatever category the user was on;
+  // falls back to the first still-visible category instead of leaving
+  // the content pane blank. settings.uiMode is the only thing that can
+  // ever change categoryVisible/visibleCategories at runtime (the
+  // category list and the build-time env flag never do), so that's the
+  // only real dependency.
+  useEffect(() => {
+    if (!categoryVisible[activeCategory]) {
+      setActiveCategory(visibleCategories[0]?.id ?? "engine");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings.uiMode]);
 
   // #62 progressive disclosure: auto-promote simple → advanced if the
   // user already relies on an advanced-only setting (BYOK key, task
@@ -930,8 +1015,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="scroll-thin max-h-[85vh] w-[540px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-5">
-        <div className="mb-4 flex items-center justify-between">
+      <div className="flex max-h-[85vh] w-[700px] max-w-[92vw] flex-col rounded-none border border-edge2 bg-panel">
+        <div className="flex shrink-0 items-center justify-between border-b border-edge p-5">
           <div className="text-lg font-semibold text-fg">设置</div>
           {/* 简单/高级 segmented control (#62): applied + persisted
              immediately via updateSettings, deliberately OUT of the
@@ -956,9 +1041,47 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           </div>
         </div>
 
+        <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
+          {/* Nav rail (owner ask 2026-07-11: "side navbar for each
+             category") — one entry per category, each mapping to the
+             dialog's own existing <section> blocks below, filtered to
+             whichever are visible at the current uiMode (categoryVisible
+             above, reusing SETTINGS_UI_LEVELS/isSectionVisible exactly
+             as every row already did — never forked). Narrow/mobile: a
+             horizontal scrollable strip above the content pane; sm: and
+             up: a fixed-width vertical rail to its left. The content
+             pane below is the ONLY scrolling region either way — 保存/
+             取消 in the footer stay pinned outside of it. */}
+          <nav
+            aria-label="设置分类"
+            className="flex shrink-0 flex-row gap-0.5 overflow-x-auto border-b border-edge p-2 sm:w-[168px] sm:flex-col sm:overflow-x-visible sm:border-b-0 sm:border-r"
+          >
+            {visibleCategories.map((c) => {
+              const isActive = activeCategory === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setActiveCategory(c.id)}
+                  aria-current={isActive ? "page" : undefined}
+                  className={`btn-tactile shrink-0 whitespace-nowrap border-b-2 px-2.5 py-1.5 text-left text-sm transition-colors sm:w-full sm:whitespace-normal sm:border-b-0 sm:border-l-2 ${
+                    isActive
+                      ? "border-act bg-panel3 text-fg"
+                      : "border-transparent text-mut hover:bg-panel3 hover:text-fg"
+                  }`}
+                >
+                  {c.label}
+                </button>
+              );
+            })}
+          </nav>
+
+          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-5">
         <div className="space-y-6">
+          {activeCategory === "engine" && (
+          <>
           {/* 转录引擎 — simple */}
-          <section className="space-y-3" data-ui-level={SETTINGS_UI_LEVELS.engine}>
+          <section className="space-y-3" data-ui-level="engine">
             <SectionHeading>转录引擎</SectionHeading>
             <div className="grid grid-cols-2 gap-2">
               {ENGINE_CARDS.map((opt) => {
@@ -1111,14 +1234,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   转录过程中先显示灰色临时文字（打字机效果），句子完成后落定。仅本地 Whisper 引擎生效。
                 </div>
               </div>
-              <input
-                type="checkbox"
-                checked={draft.partials}
-                onChange={(e) => patch({ partials: e.target.checked })}
-                className="h-4 w-4 shrink-0 accent-act"
-              />
+              <ToggleSwitch checked={draft.partials} onChange={(checked) => patch({ partials: checked })} />
             </label>
           </section>
+          </>
+          )}
 
           {/* 说话人分离 — advanced. preview tier (#61): the entire
              section needs the local sidecar (HF Token pairs with
@@ -1126,10 +1246,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              分离 only runs through the sidecar's ws pass), so it's
              disabled as ONE group with a single badge on the heading
              rather than per-field. */}
-          {isSectionVisible(level, SETTINGS_UI_LEVELS.diarization) && (
+          {activeCategory === "diarization" && isSectionVisible(level, SETTINGS_UI_LEVELS.diarization) && (
           <section
             className="space-y-3 border-t border-edge pt-5"
-            data-ui-level={SETTINGS_UI_LEVELS.diarization}
+            data-ui-level="diarization"
           >
             <div className="flex items-center gap-2">
               <SectionHeading>说话人分离</SectionHeading>
@@ -1231,18 +1351,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       : "需先配置 HF Token"}
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ToggleSwitch
                 checked={draft.realtimeDiarize}
                 disabled={!realtimeDiarizeAvailable}
-                onChange={(e) => patch({ realtimeDiarize: e.target.checked })}
-                className="h-4 w-4 shrink-0 accent-act disabled:opacity-50"
+                onChange={(checked) => patch({ realtimeDiarize: checked })}
               />
             </label>
           </section>
           )}
 
           {/* AI 检测 — mixed section, tagged row-by-row below */}
+          {activeCategory === "aiDetect" && (
           <section className="space-y-3 border-t border-edge pt-5">
             <SectionHeading>AI 检测</SectionHeading>
 
@@ -1252,7 +1371,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                unmounted — because the hosted build's detect/summarize
                calls run on OUR server key, not the visitor's own. */}
             {PREVIEW_TIER && (
-              <div className="space-y-1" data-ui-level={SETTINGS_UI_LEVELS.aiDetectPreviewBanner}>
+              <div className="space-y-1" data-ui-level="aiDetectPreviewBanner">
                 <div className="flex items-center gap-2">
                   <PreviewLockedBadge />
                   <span className="text-xs leading-[1.7] text-mut2">
@@ -1277,7 +1396,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectCredentials) && (
               <div
                 className="space-y-3"
-                data-ui-level={SETTINGS_UI_LEVELS.aiDetectCredentials}
+                data-ui-level="aiDetectCredentials"
               >
                 <CredentialFields
                   idPrefix="primary"
@@ -1334,20 +1453,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <label
               className="flex items-center justify-between gap-3 py-1"
-              data-ui-level={SETTINGS_UI_LEVELS.aiDetectAutoDetect}
+              data-ui-level="aiDetectAutoDetect"
             >
               <span className="text-sm text-fg">实时检测</span>
-              <input
-                type="checkbox"
-                checked={draft.autoDetect}
-                onChange={(e) => patch({ autoDetect: e.target.checked })}
-                className="h-4 w-4 accent-act"
-              />
+              <ToggleSwitch checked={draft.autoDetect} onChange={(checked) => patch({ autoDetect: checked })} />
             </label>
 
             <label
               className="flex items-center justify-between gap-3 py-1"
-              data-ui-level={SETTINGS_UI_LEVELS.aiDetectCore}
+              data-ui-level="aiDetectCore"
             >
               <div>
                 <div className="text-sm text-fg">AI 检测</div>
@@ -1355,16 +1469,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   内置词典始终即时检测；开启后 AI 并行分析并就地升级词典结果。关闭则完全离线，不调用任何 API
                 </div>
               </div>
-              <input
-                type="checkbox"
-                checked={draft.aiDetect}
-                onChange={(e) => patch({ aiDetect: e.target.checked })}
-                className="h-4 w-4 accent-act"
-              />
+              <ToggleSwitch checked={draft.aiDetect} onChange={(checked) => patch({ aiDetect: checked })} />
             </label>
 
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectConfidence) && (
-              <div data-ui-level={SETTINGS_UI_LEVELS.aiDetectConfidence}>
+              <div data-ui-level="aiDetectConfidence">
                 <div className="flex items-center justify-between">
                   <label className="text-xs text-mut">AI 检测置信度阈值</label>
                   <span className="font-mono text-xs tabular-nums text-fg">
@@ -1400,7 +1509,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            <div data-ui-level={SETTINGS_UI_LEVELS.aiDetectExplainLanguage}>
+            <div data-ui-level="aiDetectExplainLanguage">
               <label className="text-xs text-mut">解释语言</label>
               <select
                 value={draft.explainLanguage}
@@ -1422,7 +1531,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <label
               className="flex items-center justify-between gap-3 py-1"
-              data-ui-level={SETTINGS_UI_LEVELS.aiDetectBilingual}
+              data-ui-level="aiDetectBilingual"
             >
               <div>
                 <div className={`text-sm ${bilingualTranscriptAvailable ? "text-fg" : "text-mut2"}`}>
@@ -1434,12 +1543,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     : "解释语言为 English 时不可用"}
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ToggleSwitch
                 checked={draft.bilingualTranscript}
                 disabled={!bilingualTranscriptAvailable}
-                onChange={(e) => patch({ bilingualTranscript: e.target.checked })}
-                className="h-4 w-4 shrink-0 accent-act disabled:opacity-50"
+                onChange={(checked) => patch({ bilingualTranscript: checked })}
               />
             </label>
 
@@ -1451,7 +1558,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                path, not a credential). */}
             <div
               className="space-y-2 border-t border-edge pt-3"
-              data-ui-level={SETTINGS_UI_LEVELS.aiDetectProfile}
+              data-ui-level="aiDetectProfile"
             >
               <label className="flex items-center justify-between gap-3 py-1">
                 <div>
@@ -1461,13 +1568,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     默认关闭，内容随请求发送到你配置的端点
                   </div>
                 </div>
-                <input
-                  type="checkbox"
+                <ToggleSwitch
                   checked={draft.profile?.enabled ?? false}
-                  onChange={(e) =>
-                    patch({ profile: { ...draft.profile, enabled: e.target.checked } })
+                  onChange={(checked) =>
+                    patch({ profile: { ...draft.profile, enabled: checked } })
                   }
-                  className="h-4 w-4 shrink-0 accent-act"
                 />
               </label>
 
@@ -1562,7 +1667,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPacks) && (
             <div
               className="space-y-2 border-t border-edge pt-3"
-              data-ui-level={SETTINGS_UI_LEVELS.aiDetectPacks}
+              data-ui-level="aiDetectPacks"
             >
               <div className="text-xs text-mut">词典主题包</div>
               <label className="flex items-center justify-between gap-3 py-1">
@@ -1572,12 +1677,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     内置必备表达与商务黑话（{packEntryCounts.core ?? 0} 条）
                   </div>
                 </div>
-                <input
-                  type="checkbox"
-                  checked
-                  disabled
-                  className="h-4 w-4 accent-act disabled:opacity-50"
-                />
+                <ToggleSwitch checked disabled />
               </label>
               {allPacks.filter((p) => p.id !== "core").map((p) => (
                 <label
@@ -1597,11 +1697,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       {p.description}（{packEntryCounts[p.id] ?? 0} 条）
                     </div>
                   </div>
-                  <input
-                    type="checkbox"
+                  <ToggleSwitch
                     checked={checkedPacks.has(p.id)}
-                    onChange={(e) => togglePack(p.id, e.target.checked)}
-                    className="h-4 w-4 accent-act"
+                    onChange={(checked) => togglePack(p.id, checked)}
                   />
                 </label>
               ))}
@@ -1615,7 +1713,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPackSources) && (
             <div
               className="space-y-2 border-t border-edge pt-3"
-              data-ui-level={SETTINGS_UI_LEVELS.aiDetectPackSources}
+              data-ui-level="aiDetectPackSources"
             >
               <div className="text-xs text-mut">词典源</div>
 
@@ -1692,6 +1790,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
             )}
           </section>
+          )}
 
           {/* 分任务模型（高级）(#56, BYOK-only): a self-contained section
              (design Q5's #62 fit note — advanced-mode visibility gating
@@ -1703,10 +1802,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              above — BYOK has no meaning when the hosted build's calls
              run on our own server key. #62: advanced-only, per the fit
              note above. */}
-          {isSectionVisible(level, SETTINGS_UI_LEVELS.taskLlm) && (
+          {activeCategory === "taskLlm" && isSectionVisible(level, SETTINGS_UI_LEVELS.taskLlm) && (
           <section
             className="space-y-3 border-t border-edge pt-5"
-            data-ui-level={SETTINGS_UI_LEVELS.taskLlm}
+            data-ui-level="taskLlm"
           >
             <button
               type="button"
@@ -1748,21 +1847,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           )}
 
           {/* 数据与联动 — advanced */}
-          {isSectionVisible(level, SETTINGS_UI_LEVELS.dataIntegration) && (
+          {activeCategory === "dataIntegration" && isSectionVisible(level, SETTINGS_UI_LEVELS.dataIntegration) && (
           <section
             className="space-y-3 border-t border-edge pt-5"
-            data-ui-level={SETTINGS_UI_LEVELS.dataIntegration}
+            data-ui-level="dataIntegration"
           >
             <SectionHeading>数据与联动</SectionHeading>
 
             <label className="flex items-center justify-between gap-3 py-1">
               <span className="text-sm text-fg">自动导出</span>
-              <input
-                type="checkbox"
-                checked={draft.autoExport}
-                onChange={(e) => patch({ autoExport: e.target.checked })}
-                className="h-4 w-4 accent-act"
-              />
+              <ToggleSwitch checked={draft.autoExport} onChange={(checked) => patch({ autoExport: checked })} />
             </label>
 
             <div>
@@ -1815,11 +1909,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   导出的 Markdown 带 YAML frontmatter
                 </div>
               </div>
-              <input
-                type="checkbox"
+              <ToggleSwitch
                 checked={draft.exportFrontmatter}
-                onChange={(e) => patch({ exportFrontmatter: e.target.checked })}
-                className="h-4 w-4 accent-act"
+                onChange={(checked) => patch({ exportFrontmatter: checked })}
               />
             </label>
 
@@ -1841,11 +1933,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     连接码），请妥善保管
                   </div>
                 </div>
-                <input
-                  type="checkbox"
+                <ToggleSwitch
                   checked={exportStripKeys}
-                  onChange={(e) => setExportStripKeys(e.target.checked)}
-                  className="h-4 w-4 shrink-0 accent-act"
+                  onChange={(checked) => setExportStripKeys(checked)}
                 />
               </label>
 
@@ -1994,11 +2084,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              BYOK-vs-shared-key architecture (see anthropic.ts's own
              comment on that boundary). #62: advanced-only, AND-ed with
              the build flag above. */}
-          {process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" &&
+          {activeCategory === "subscriptionDirect" &&
+            process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" &&
             isSectionVisible(level, SETTINGS_UI_LEVELS.subscriptionDirect) && (
             <section
               className="space-y-3 border-t border-edge pt-5"
-              data-ui-level={SETTINGS_UI_LEVELS.subscriptionDirect}
+              data-ui-level="subscriptionDirect"
             >
               <SectionHeading>订阅直连（实验性）</SectionHeading>
               <div className="text-xs leading-[1.7] text-mut2">
@@ -2008,11 +2099,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
               <label className="flex items-center justify-between gap-3 py-1">
                 <span className="text-sm text-fg">启用订阅直连（仅 detect/define，限本地版）</span>
-                <input
-                  type="checkbox"
+                <ToggleSwitch
                   checked={draft.subscriptionDirect}
-                  onChange={(e) => patch({ subscriptionDirect: e.target.checked })}
-                  className="h-4 w-4 accent-act"
+                  onChange={(checked) => patch({ subscriptionDirect: checked })}
                 />
               </label>
 
@@ -2136,9 +2225,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           )}
 
           {/* 显示 (v0.2.1: 主题 + 字号/行距，独立于其他设置，切主题不丢) — simple */}
+          {activeCategory === "display" && (
           <section
             className="space-y-3 border-t border-edge pt-5"
-            data-ui-level={SETTINGS_UI_LEVELS.display}
+            data-ui-level="display"
           >
             <SectionHeading>显示</SectionHeading>
 
@@ -2231,9 +2321,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
           </section>
+          )}
+        </div>
+          </div>
         </div>
 
-        <div className="mt-6 flex justify-end gap-2 border-t border-edge pt-4">
+        {/* Sticky footer (owner ask 2026-07-11: "freeze 保存/取消 so the
+           user can click anytime") — a normal flex-col sibling OUTSIDE
+           the scrolling content pane above, so it's always visible
+           regardless of scroll position or which category is active.
+           Exact same handlers/semantics as before. */}
+        <div className="flex shrink-0 justify-end gap-2 border-t border-edge p-4">
           <button
             type="button"
             onClick={onClose}
