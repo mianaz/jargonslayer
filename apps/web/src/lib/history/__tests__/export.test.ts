@@ -180,6 +180,59 @@ describe("buildMarkdownReport — sections", () => {
     expect(report).toContain("（无转录内容）");
     expect(report).toContain("（无）"); // cards/terms placeholder(s)
   });
+
+  // Transcript-timestamp fix: exports match the screen — elapsed since
+  // meeting start (paused spans excluded), not a wall-clock time. Only
+  // the session-level header keeps the absolute date (already covered
+  // implicitly — formatDate is untouched by this fix).
+  describe("per-segment timestamps — elapsed since meeting start, not wall-clock (transcript-timestamp fix)", () => {
+    it("renders M:SS elapsed since session.startedAt, not a wall-clock time", () => {
+      const session = makeSession({
+        startedAt: 1000,
+        pauseIntervals: [],
+        segments: [
+          { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+          { id: "seg2", index: 1, startedAt: 66_000, endedAt: 67_000, text: "One minute in.", engine: "demo" },
+        ],
+      });
+      const report = buildMarkdownReport(session);
+      expect(report).toContain("`0:00`");
+      expect(report).toContain("`1:05`");
+    });
+
+    it("excludes a paused span from the exported elapsed timestamp, same as the live view", () => {
+      const session = makeSession({
+        startedAt: 0,
+        pauseIntervals: [{ start: 1000, end: 4000 }], // 3s pause, before segment 2
+        segments: [
+          { id: "seg1", index: 0, startedAt: 500, endedAt: 900, text: "Before the pause.", engine: "demo" },
+          { id: "seg2", index: 1, startedAt: 5000, endedAt: 5500, text: "After the pause.", engine: "demo" },
+        ],
+      });
+      const report = buildMarkdownReport(session);
+      // Without exclusion segment 2 would read `0:05` (5000ms wall
+      // clock); with the 3s pause excluded it's `0:02`.
+      expect(report).toContain("`0:00`"); // seg1: 500ms, unaffected (pause starts later)
+      expect(report).toContain("`0:02`"); // seg2: (5000 - 3000) / 1000 = 2s
+      expect(report).not.toContain("`0:05`");
+    });
+
+    it("a legacy session (no pauseIntervals persisted) still renders sensible, non-negative elapsed timestamps — never crashes", () => {
+      const session = makeSession({
+        startedAt: 9999, // deliberately AHEAD of the first segment, as a pre-fix session's could be
+        segments: [
+          { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "First line.", engine: "demo" },
+          { id: "seg2", index: 1, startedAt: 3000, endedAt: 3500, text: "Second line.", engine: "demo" },
+        ],
+        // no pauseIntervals override — makeSession's base shape omits it
+      });
+      expect(session.pauseIntervals).toBeUndefined();
+      expect(() => buildMarkdownReport(session)).not.toThrow();
+      const report = buildMarkdownReport(session);
+      expect(report).toContain("`0:00`"); // seg1 becomes its own zero point (segments[0].startedAt fallback)
+      expect(report).toContain("`0:02`"); // seg2: 3000 - 1000 = 2000ms
+    });
+  });
 });
 
 describe("buildObsidianFrontmatter — YAML", () => {

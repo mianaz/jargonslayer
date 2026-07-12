@@ -3,6 +3,7 @@ import {
   aliasesAfterRename,
   applySpeakerUpdateToSegments,
   applyTierDefaults,
+  currentSessionSnapshot,
   elapsedActiveMs,
   filterSuppressedLiveCards,
   migrateSettings,
@@ -15,11 +16,13 @@ import {
   DEFAULT_SETTINGS,
   type CustomEntry,
   type DetectResponse,
+  type MeetingSession,
   type Settings,
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
 import * as learnsetModule from "../learn/store";
+import * as storageModule from "../history/storage";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
 import { clearDiag, getDiagEntries } from "../diag/log";
 
@@ -336,6 +339,7 @@ describe("pauseMeeting / resumeMeeting — store actions (B2)", () => {
       startedAt: 0,
       pausedAccumMs: 0,
       pauseStartedAt: null,
+      pauseIntervals: [],
     });
   });
 
@@ -394,6 +398,160 @@ describe("pauseMeeting / resumeMeeting — store actions (B2)", () => {
     useApp.getState().newMeeting();
     expect(useApp.getState().pausedAccumMs).toBe(0);
     expect(useApp.getState().pauseStartedAt).toBeNull();
+  });
+
+  // Transcript-timestamp fix: pauseIntervals records each completed
+  // pause's own {start,end} — pausedAccumMs alone (a running total)
+  // can't tell a later per-segment elapsed mapping which pauses
+  // happened BEFORE a given segment (see segmentElapsed.ts).
+  it("resumeMeeting appends the completed {start,end} interval to pauseIntervals", () => {
+    useApp.getState().pauseMeeting(); // pauseStartedAt = 10_000
+    vi.setSystemTime(13_500);
+    useApp.getState().resumeMeeting();
+
+    expect(useApp.getState().pauseIntervals).toEqual([{ start: 10_000, end: 13_500 }]);
+  });
+
+  it("a second pause/resume cycle appends a second interval, preserving the first", () => {
+    useApp.getState().pauseMeeting(); // t=10_000
+    vi.setSystemTime(12_000);
+    useApp.getState().resumeMeeting();
+
+    vi.setSystemTime(20_000);
+    useApp.getState().pauseMeeting();
+    vi.setSystemTime(21_500);
+    useApp.getState().resumeMeeting();
+
+    expect(useApp.getState().pauseIntervals).toEqual([
+      { start: 10_000, end: 12_000 },
+      { start: 20_000, end: 21_500 },
+    ]);
+  });
+
+  it("resumeMeeting does not append a bogus interval when pauseStartedAt was already null (same defensive tolerance as pausedAccumMs)", () => {
+    useApp.setState({ pauseStartedAt: null, pausedAccumMs: 1_000, pauseIntervals: [] });
+    useApp.getState().resumeMeeting();
+    expect(useApp.getState().pauseIntervals).toEqual([]);
+  });
+
+  it("beginMeeting resets pauseIntervals for a fresh meeting", () => {
+    useApp.setState({ pauseIntervals: [{ start: 1, end: 2 }] });
+    useApp.getState().beginMeeting();
+    expect(useApp.getState().pauseIntervals).toEqual([]);
+  });
+
+  it("newMeeting resets pauseIntervals too", () => {
+    useApp.setState({ pauseIntervals: [{ start: 1, end: 2 }] });
+    useApp.getState().newMeeting();
+    expect(useApp.getState().pauseIntervals).toEqual([]);
+  });
+});
+
+describe("saveCurrentSession / loadSession / currentSessionSnapshot — elapsed-time basis persistence (transcript-timestamp fix)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("saveCurrentSession always persists pauseIntervals, even [] for a never-paused meeting — presence (even empty) distinguishes 'known: zero pauses' from a legacy session's absence", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
+      startedAt: 1000,
+      pauseIntervals: [],
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.pauseIntervals).toEqual([]);
+  });
+
+  it("saveCurrentSession persists the exact pauseIntervals recorded during the meeting", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    const pauseIntervals = [{ start: 1200, end: 1500 }];
+    useApp.setState({
+      segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
+      startedAt: 1000,
+      pauseIntervals,
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.pauseIntervals).toEqual(pauseIntervals);
+  });
+
+  it("currentSessionSnapshot includes the live pauseIntervals", () => {
+    useApp.setState({
+      segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
+      startedAt: 1000,
+      pauseIntervals: [{ start: 1050, end: 1060 }],
+    });
+    const snap = currentSessionSnapshot();
+    expect(snap?.pauseIntervals).toEqual([{ start: 1050, end: 1060 }]);
+  });
+
+  it("loadSession resolves the elapsed basis for a session already carrying pauseIntervals (post-fix save), and resets any leftover live pause state from a previous meeting", async () => {
+    const session: MeetingSession = {
+      id: "sess-1",
+      title: "t",
+      startedAt: 5000,
+      endedAt: 9000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1", startedAt: 5200 })],
+      cards: [],
+      terms: [],
+      pauseIntervals: [{ start: 6000, end: 6500 }],
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(session);
+    // Leftover live pause state the store hadn't cleared from whatever
+    // it was doing before — loadSession must reset it regardless.
+    useApp.setState({ pausedAccumMs: 42_000, pauseStartedAt: 99_000 });
+
+    await useApp.getState().loadSession("sess-1");
+
+    const s = useApp.getState();
+    expect(s.status).toBe("stopped");
+    expect(s.startedAt).toBe(5000); // session.startedAt — pauseIntervals is present, not legacy
+    expect(s.pauseIntervals).toEqual([{ start: 6000, end: 6500 }]);
+    expect(s.pausedAccumMs).toBe(0);
+    expect(s.pauseStartedAt).toBeNull();
+  });
+
+  it("loadSession falls back to segments[0].startedAt for a legacy session lacking pauseIntervals, with no pause exclusion, and never crashes/goes negative", async () => {
+    const session: MeetingSession = {
+      id: "sess-legacy",
+      title: "t",
+      startedAt: 500, // pre-fix session.startedAt (meeting-start, ahead of the first segment)
+      endedAt: 9000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1", startedAt: 1000 })],
+      cards: [],
+      terms: [],
+      // no pauseIntervals key at all — legacy data, saved before this fix
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(session);
+
+    await useApp.getState().loadSession("sess-legacy");
+
+    const s = useApp.getState();
+    expect(s.startedAt).toBe(1000); // segments[0].startedAt, NOT session.startedAt (500)
+    expect(s.pauseIntervals).toEqual([]);
+  });
+
+  it("loadSession's session-not-found path is unaffected by the elapsed-basis change", async () => {
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(null);
+    const genBefore = useApp.getState().meetingGen;
+
+    await useApp.getState().loadSession("missing");
+
+    expect(useApp.getState().toast).toBe("会话不存在或已删除");
+    expect(useApp.getState().meetingGen).toBe(genBefore); // unchanged — no session applied
   });
 });
 
