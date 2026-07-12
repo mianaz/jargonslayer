@@ -52,6 +52,16 @@ const nextConfig = {
     // NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT above (an unset var isn't
     // reliably inlined by DefinePlugin) — see src/lib/deployTier.ts.
     NEXT_PUBLIC_DEPLOY_TIER: process.env.NEXT_PUBLIC_DEPLOY_TIER ?? "",
+    // v0.4 S2 (PLAN-v0.4 §1A/§4) — client-side callProvider path:
+    // "client" routes detect/define/translate/summarize straight to
+    // the LLM provider (BYOK only) instead of /api/*; unset/anything
+    // else keeps today's behavior byte-identical. Same explicit-
+    // default-via-`env` requirement as the two vars above — see
+    // src/lib/llm/llmTransport.ts's useClientTransport. S3 (Tauri) is
+    // expected to set this alongside BUILD_TARGET=desktop, since that
+    // target has no /api/* to fall back to at all; S2 itself never sets
+    // it by default.
+    NEXT_PUBLIC_LLM_TRANSPORT: process.env.NEXT_PUBLIC_LLM_TRANSPORT ?? "",
   },
 };
 
