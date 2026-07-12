@@ -30,6 +30,7 @@ export default function StatusLine() {
   const detectMode = useApp((s) => s.detectMode);
   const engine = useApp((s) => s.settings.engine);
   const aiDetect = useApp((s) => s.settings.aiDetect);
+  const sidecarUp = useApp((s) => s.sidecarUp);
   const updateSettings = useApp((s) => s.updateSettings);
   const setDetectMode = useApp((s) => s.setDetectMode);
 
@@ -64,6 +65,17 @@ export default function StatusLine() {
     posture === "local" ? "音频未离开本机" : "音频将经过浏览器厂商云端识别";
   const privacyLabelShort =
     posture === "local" ? "音频未离开本机" : "音频将经厂商云端";
+  // Sidecar-down hint (owner ask 2026-07-11): the selected engine needs
+  // the local sidecar, nothing is currently running (an active meeting
+  // already proves the engine works — never override a live/paused
+  // status with a stale probe result), and the last known probe (see
+  // SettingsDialog's 转录引擎 status line, lib/stt/sidecarHealth.ts)
+  // failed. v1 deliberately stays tooltip-only — no new always-on chip
+  // in an already-crowded status bar; see setSidecarUp's own doc.
+  const sidecarDownHint =
+    (engine === "whisper" || engine === "tabaudio") && status === "idle" && sidecarUp === false
+      ? "本地 Whisper sidecar 未连接——见 设置 → 转录引擎"
+      : undefined;
 
   const count = cards.length + terms.length;
 
@@ -113,6 +125,7 @@ export default function StatusLine() {
       )}
       <span className="text-mut2">|</span>
       <span
+        title={sidecarDownHint}
         className={`min-w-0 truncate px-2 sm:px-3 ${
           posture === "local" ? "text-lab-green" : "text-warn-soft"
         }`}
