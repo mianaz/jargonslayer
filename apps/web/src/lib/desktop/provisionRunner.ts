@@ -1,0 +1,274 @@
+// v0.4 S3 chunk 5 (docs/design-explorations/s3-tauri-uv-blueprint.md,
+// §Chunk 5) — the effect interpreter: turns provisionMachine.ts's
+// declarative Effect[] into real invoke()/listen() calls against the
+// Rust commands chunk 3 shipped (apps/desktop/src-tauri/src/{paths,uv,
+// server,provision}.rs), and folds the results back into the
+// MachineEvent shapes transition() expects. invoke/listen arrive as
+// plain injected function values (RunnerDeps) — this file has ZERO
+// static or dynamic `@tauri-apps/*` imports of its own, so it unit-
+// tests with fakes exactly like provisionMachine.ts/uvCommands.ts do
+// (chunk 4); tauriApi.ts is the only thing that ever supplies the REAL
+// invoke/listen (see bootstrap.ts).
+//
+// Command <-> effect mapping (arg names verified against each Rust
+// `#[tauri::command]` signature — Tauri auto-camelCases a snake_case
+// Rust param name for the JS-side arg object):
+//   probeHealth  -> reuses stt/sidecarHealth.ts's probeSidecar verbatim
+//                   (NOT an invoke() call — the sidecar's own :8766
+//                   /health HTTP endpoint, unchanged from the web path)
+//   readMarker   -> invoke("read_provision_marker")            -> string | null
+//   writeMarker  -> invoke("write_provision_marker", { json }) -> void
+//   runUv        -> invoke("run_uv", { args, env })             -> ProcessResult, uv://log-streamed
+//   prewarmModel -> invoke("prewarm_model", { model })          -> ProcessResult, uv://log-streamed
+//   startServer  -> invoke("start_server", { model })           -> StartServerResult
+// stopServer isn't a provisionMachine Effect (nothing in chunk 4's
+// machine emits it — it's a plain lifecycle action a future caller,
+// e.g. chunk 6/7's settings "切换到外部 sidecar" or app-quit handling,
+// invokes directly) — exported as its own small helper below so it
+// still matches this chunk's Rust-command-name-parity mandate.
+
+import type { Settings } from "@jargonslayer/core/types";
+import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
+import type { InvokeFn, ListenFn } from "./tauriApi";
+import type { DesktopPaths } from "./uvCommands";
+import type { Effect, MachineEvent, MachineState, ProvisionMarker, ProvisionStep } from "./provisionMachine";
+
+export type LogStream = "stdout" | "stderr";
+export type OnLog = (stream: LogStream, line: string) => void;
+
+/** Mirrors apps/desktop/src-tauri/src/uv.rs's `ProcessResult` (also
+ *  reused verbatim by server.rs's prewarm_model). */
+export interface ProcessResult {
+  code: number | null;
+}
+
+/** Mirrors apps/desktop/src-tauri/src/server.rs's `StartServerResult`. */
+export interface StartServerResult {
+  alreadyRunning: boolean;
+}
+
+/** Mirrors apps/desktop/src-tauri/src/uv.rs's `UvLogEvent` payload —
+ *  the `uv://log` event both run_uv and prewarm_model emit. */
+export interface UvLogEvent {
+  stream: LogStream;
+  line: string;
+}
+
+export interface RunnerDeps {
+  invoke: InvokeFn;
+  listen: ListenFn;
+  /** Fixed managed-mode probe target (blueprint architecture decision
+   *  6: managed mode's whisperUrl is fixed, not user-editable) — the
+   *  ONLY field of Settings probeSidecar actually reads. Callers thread
+   *  the real Settings.DEFAULT_SETTINGS through today (its whisperUrl
+   *  already matches start_server's fixed --host 127.0.0.1 --port
+   *  8765 — see bootstrap.ts); a future sidecarMode-aware caller can
+   *  pass a different Settings without this file changing. */
+  settings: Settings;
+  /** uv/prewarm combined stdout+stderr line sink — omitted (a no-op) in
+   *  tests that don't care about log output. */
+  onLog?: OnLog;
+  /** Swappable purely for hermetic unit tests (default: the real
+   *  probeSidecar import) — NOT a duplicate implementation, still the
+   *  exact same probe this file "reuses, does not duplicate". */
+  probeSidecarFn?: (settings: Settings) => Promise<SidecarProbeResult>;
+  /** Swappable clock for the marker's `ts` field — provisionMachine.ts
+   *  deliberately excludes `ts` from its own (pure, deterministic)
+   *  writeMarker effect payload; this is the one place that stamps it,
+   *  same "explicit nowMs, never Date.now() internally" contract
+   *  provisionMachine.ts's own decideRestart already uses. */
+  now?: () => string;
+}
+
+const noopLog: OnLog = () => {};
+const defaultNow = () => new Date().toISOString();
+
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function readMarkerEffect(deps: RunnerDeps): Promise<string | null> {
+  try {
+    return await deps.invoke<string | null>("read_provision_marker");
+  } catch (error) {
+    // Fail OPEN to "no marker" (same as an absent file) rather than
+    // ever hard-failing CHECKING itself — mirrors parseMarker's own
+    // "bad marker -> NEEDS_PROVISION, never throws" contract and every
+    // other probe in this codebase's "never throws, always resolves"
+    // convention (probeSidecar/agentHealth/isRemotelyKilled).
+    void describeError(error);
+    return null;
+  }
+}
+
+async function invokeWriteMarker(
+  deps: RunnerDeps,
+  marker: Omit<ProvisionMarker, "ts">,
+  now: () => string,
+): Promise<void> {
+  const full: ProvisionMarker = { ...marker, ts: now() };
+  await deps.invoke<void>("write_provision_marker", { json: JSON.stringify(full) });
+}
+
+/** Wraps a run_uv/prewarm_model invoke() with a uv://log subscription
+ *  that's active for the FULL duration of the call — listen() is
+ *  awaited (subscribed) BEFORE the invoke starts and unlistened only
+ *  after it settles, so no early log line is ever missed. */
+async function withUvLog<T>(deps: RunnerDeps, onLog: OnLog, run: () => Promise<T>): Promise<T> {
+  const unlisten = await deps.listen<UvLogEvent>("uv://log", (event) => {
+    onLog(event.payload.stream, event.payload.line);
+  });
+  try {
+    return await run();
+  } finally {
+    unlisten();
+  }
+}
+
+function processResultToEvent(step: ProvisionStep, result: ProcessResult): MachineEvent {
+  if (result.code === 0) return { type: "STEP_OK", step };
+  return {
+    type: "STEP_ERROR",
+    step,
+    error: `exited with code ${result.code === null ? "null (killed or crashed)" : result.code}`,
+    retriable: true,
+  };
+}
+
+/** Runs the ONE step-producing effect (runUv | prewarmModel |
+ *  startServer) a STEP/RUNNING transition carries and maps its outcome
+ *  to STEP_OK/STEP_ERROR for `step`. All failure modes here — a
+ *  rejected invoke() (spawn-level/IPC/allowlist failure) or a resolved
+ *  ProcessResult with a non-zero/null exit code — are reported
+ *  retriable:true: every command this app ever issues is either
+ *  already allow-list-validated by our own correct-by-construction
+ *  builders (uvCommands.ts) or a fixed, non-malformed invocation, so in
+ *  practice the only failures reachable here are transient (uv/network/
+ *  disk) — exactly the class the blueprint's escape-hatch/retry UX is
+ *  for. */
+async function runStepEffect(
+  step: ProvisionStep,
+  effect: Extract<Effect, { kind: "runUv" | "prewarmModel" | "startServer" }>,
+  deps: RunnerDeps,
+  onLog: OnLog,
+): Promise<MachineEvent> {
+  try {
+    switch (effect.kind) {
+      case "runUv": {
+        const result = await withUvLog(deps, onLog, () =>
+          deps.invoke<ProcessResult>("run_uv", { args: effect.command.args, env: effect.command.env }),
+        );
+        return processResultToEvent(step, result);
+      }
+      case "prewarmModel": {
+        const result = await withUvLog(deps, onLog, () =>
+          deps.invoke<ProcessResult>("prewarm_model", { model: effect.model }),
+        );
+        return processResultToEvent(step, result);
+      }
+      case "startServer": {
+        // No uv://log for this one — whisper_server.py's own
+        // stdout/stderr go to whisper_server.log (server.rs's
+        // start_server), not the uv://log event; StartServerResult
+        // carries no exit code to interpret (the server is meant to
+        // keep running) — resolving at all IS success.
+        await deps.invoke<StartServerResult>("start_server", { model: effect.model });
+        return { type: "STEP_OK", step };
+      }
+    }
+  } catch (error) {
+    return { type: "STEP_ERROR", step, error: describeError(error), retriable: true };
+  }
+}
+
+function isStepRunningEffect(
+  effect: Effect,
+): effect is Extract<Effect, { kind: "runUv" | "prewarmModel" | "startServer" }> {
+  return effect.kind === "runUv" || effect.kind === "prewarmModel" || effect.kind === "startServer";
+}
+
+/** The interpreter: given the machine's CURRENT state (needed only to
+ *  disambiguate what the given effects mean — see below) and the
+ *  effects `transition()`/`initial()` just returned, performs them and
+ *  resolves the ONE MachineEvent to feed back into `transition()`.
+ *  State-aware because the SAME `{kind:"probeHealth"}` effect means two
+ *  different things depending on when it's issued: CHECKING pairs it
+ *  with readMarker and expects a combined CHECK_RESULT back; POLLING_
+ *  HEALTH issues it alone and expects a HEALTH_POLL_RESULT instead —
+ *  provisionMachine.ts's own CHECK_RESULT doc comment spells out the
+ *  same "await BOTH together" contract this implements. */
+export async function runEffects(state: MachineState, effects: Effect[], deps: RunnerDeps): Promise<MachineEvent> {
+  const probe = deps.probeSidecarFn ?? probeSidecar;
+  const now = deps.now ?? defaultNow;
+  const onLog = deps.onLog ?? noopLog;
+
+  if (state.phase === "CHECKING") {
+    let probeHealthy = false;
+    let markerRaw: string | null = null;
+    await Promise.all(
+      effects.map(async (effect) => {
+        if (effect.kind === "probeHealth") {
+          probeHealthy = (await probe(deps.settings)).up;
+        } else if (effect.kind === "readMarker") {
+          markerRaw = await readMarkerEffect(deps);
+        }
+      }),
+    );
+    return { type: "CHECK_RESULT", probeHealthy, markerRaw };
+  }
+
+  if (state.phase === "STEP" && state.step === "POLLING_HEALTH" && state.status === "POLLING") {
+    const healthy = (await probe(deps.settings)).up;
+    return { type: "HEALTH_POLL_RESULT", healthy };
+  }
+
+  if (state.phase === "STEP" && state.status === "RUNNING") {
+    // A DOWNLOAD_MODEL -> STARTING transition bundles a leading
+    // writeMarker alongside the real (startServer) step effect — see
+    // provisionMachine.ts's handleStepOk. Perform it first; if it
+    // fails, the pipeline genuinely isn't done (the marker is what lets
+    // a future launch adopt/skip-provision), so it fails the CURRENT
+    // step (`state.step`, e.g. "STARTING") rather than being silently
+    // swallowed.
+    const writeMarkerEffect = effects.find(
+      (effect): effect is Extract<Effect, { kind: "writeMarker" }> => effect.kind === "writeMarker",
+    );
+    if (writeMarkerEffect) {
+      try {
+        await invokeWriteMarker(deps, writeMarkerEffect.marker, now);
+      } catch (error) {
+        return { type: "STEP_ERROR", step: state.step, error: describeError(error), retriable: true };
+      }
+    }
+
+    const stepEffect = effects.find(isStepRunningEffect);
+    if (!stepEffect) {
+      // No step-running effect alongside (shouldn't happen — every
+      // STEP/RUNNING transition pairs with exactly one) — treat as a
+      // trivial success rather than stalling the machine forever.
+      return { type: "STEP_OK", step: state.step };
+    }
+    return runStepEffect(state.step, stepEffect, deps, onLog);
+  }
+
+  throw new Error(
+    `runEffects: no interpretation for state ${JSON.stringify(state)} with effects ${JSON.stringify(effects)}`,
+  );
+}
+
+/** stop_server — not a provisionMachine Effect (see this file's header
+ *  comment); exposed directly for callers that need it outside the
+ *  machine's own driven flow. */
+export async function stopServer(invoke: InvokeFn): Promise<void> {
+  await invoke<void>("stop_server");
+}
+
+/** app_paths() — also not a provisionMachine Effect (it's the
+ *  prerequisite bootstrap.ts resolves BEFORE building the machine's own
+ *  ProvisionContext, see the blueprint's Data flow section: "fetch
+ *  app_paths -> build machine initial()"); exposed here so its Rust-
+ *  command-name/shape (paths.rs's `app_paths()`, no args) lives beside
+ *  every other command this file already mirrors. */
+export async function getAppPaths(invoke: InvokeFn): Promise<DesktopPaths> {
+  return invoke<DesktopPaths>("app_paths");
+}
