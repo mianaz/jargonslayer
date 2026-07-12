@@ -69,7 +69,11 @@ export interface STTEvents {
     assignments: { segId: number; speaker: string }[],
     speakers: string[],
   ) => void;
-  onDiarStatus?: (state: "unavailable" | "error", detail?: string) => void;
+  // "ready" (STT protocol v2): the sidecar's diarization arming
+  // actually succeeded (diarize + token + pyannote all held) — see
+  // wsTransport.ts's DiarStatusMessage and useMeeting.ts's one-shot
+  // toast for it.
+  onDiarStatus?: (state: "unavailable" | "error" | "ready", detail?: string) => void;
   // STT VAD supervisor (docs/design-explorations/stt-vad-supervisor.md):
   // a one-time "steer to a different engine" toast — e.g. Web Speech
   // hearing continuous speech it can't transcribe (language mismatch).
@@ -82,6 +86,17 @@ export interface STTEngine {
   readonly kind: STTEngineKind;
   start(events: STTEvents, settings: Settings): Promise<void>;
   stop(): Promise<void>;
+  // Soft pause/resume (STT protocol v2, B4 pause matrix): OPTIONAL —
+  // only engines that can keep their capture/transport alive through a
+  // pause (tabaudio) implement these. useMeeting.ts's pause()/resume()
+  // branch on `engineRef.current?.pause`/`?.resume` at call time: when
+  // present, the engine instance is KEPT (not torn down/recreated) —
+  // when absent, the existing teardown-pause branch (stop the engine,
+  // reattach a fresh one on resume) is used instead, unchanged. See
+  // Header.tsx's canPause for which engines get a pause affordance at
+  // all.
+  pause?(): Promise<void>;
+  resume?(): Promise<void>;
 }
 
 // ---------- detection (wire format, field names are part of the
@@ -352,6 +367,16 @@ export interface Settings {
   // wsTransport.ts). Requires hfToken; default off (existing behavior
   // unchanged when off).
   realtimeDiarize: boolean;
+  // Rolling partial transcriptions (STT protocol v2, whisper/tabaudio
+  // only — see wsTransport.ts's config.partials): the sidecar shows
+  // gray interim text (typewriter effect) every ~2s during active
+  // speech before a sentence finalizes. Always sent explicitly in the
+  // ws config so the app — not the sidecar's own --partials CLI flag —
+  // controls this per session; default on (a plainly better default
+  // than v1's off, now that the sidecar's tail-window scheduling makes
+  // it CPU-cheap regardless of segment length). See SettingsDialog.
+  // tsx's 实时转录预览 row.
+  partials: boolean;
   // Live bilingual transcript (#42): translate each FINALIZED segment
   // into explainLanguage and render it as a secondary line under the
   // English text (see translate/queue.ts). Only meaningful when
@@ -452,6 +477,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enabledPacks: null,
   hfToken: "",
   realtimeDiarize: false,
+  partials: true,
   bilingualTranscript: false,
   profile: { enabled: false },
   themeId: "terminal",

@@ -10,6 +10,14 @@ import { withBase } from "../basePath";
 
 const RECONNECT_DELAY_MS = 1000;
 
+// STT protocol v2: stop() sends {"type":"stop"} and waits for the
+// sidecar's drain ack ({"type":"stopped"}, sent once its tail final —
+// if any — has actually gone out) before closing, so the last gray
+// interim never gets stuck. This bounds that wait — a sidecar that
+// never acks (crashed mid-drain, very old server build predating the
+// protocol) must not hang the UI's End button forever.
+const STOP_DRAIN_TIMEOUT_MS = 8000;
+
 interface PartialMessage {
   type: "partial";
   text: string;
@@ -21,6 +29,10 @@ interface FinalMessage {
   end?: number;
   seg_id?: number;
 }
+// STT protocol v2: drain ack for a {"type":"stop"} — see stop() below.
+interface StoppedMessage {
+  type: "stopped";
+}
 // Realtime speaker diarization (beta) — see whisper_server.py's
 // run_realtime_diar / _maybe_trigger_realtime_diar.
 interface SpeakerUpdateMessage {
@@ -31,12 +43,15 @@ interface SpeakerUpdateMessage {
 }
 interface DiarStatusMessage {
   type: "diar_status";
-  state: "unavailable" | "error";
+  // "ready" (STT protocol v2 item f): diarization arming actually
+  // succeeded on the sidecar (diarize + token + pyannote all held).
+  state: "unavailable" | "error" | "ready";
   detail?: string;
 }
 type ServerMessage =
   | PartialMessage
   | FinalMessage
+  | StoppedMessage
   | SpeakerUpdateMessage
   | DiarStatusMessage
   | { type: string };
@@ -66,6 +81,21 @@ export class WsTransport {
   private reconnectAttempted = false;
   private stopping = false;
 
+  // Soft pause (STT protocol v2, tabaudio only — see pauseFeed/
+  // resumeFeed below): gates the worklet's PCM forwarding without
+  // touching the ws or audio graph. Deliberately NOT reset in
+  // connect() — a reconnect landing while soft-paused (e.g. a
+  // transient network drop) must stay paused, not silently resume
+  // sending audio.
+  private feedPaused = false;
+
+  // stop()'s drain wait (STT protocol v2): resolved by the "stopped"
+  // ack (see connect()'s onmessage), by the ws closing on its own
+  // during the wait (see connect()'s onclose), or by STOP_DRAIN_
+  // TIMEOUT_MS, whichever first. null whenever no stop() is currently
+  // waiting on it.
+  private stopDrainResolve: (() => void) | null = null;
+
   // Realtime speaker diarization (beta): drop any speaker_update whose
   // gen is <= the last one we accepted (out-of-order delivery isn't
   // expected over a single ws, but this also cleanly ignores a stray
@@ -93,6 +123,7 @@ export class WsTransport {
     this.workletNode = new AudioWorkletNode(ctx, "pcm-processor");
 
     this.workletNode.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
+      if (this.feedPaused) return; // soft pause — keep the graph running, drop PCM
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(ev.data);
       }
@@ -135,6 +166,11 @@ export class WsTransport {
         type: "config",
         sampleRate: 16000,
         language: settings.language.split("-")[0],
+        // STT protocol v2: always sent explicitly (never omitted) —
+        // this is what lets the app's own 实时转录预览 setting override
+        // the sidecar's --partials CLI default per connection instead
+        // of only at server-launch time.
+        partials: settings.partials,
       };
       // Realtime speaker diarization (beta): only sent when enabled —
       // the sidecar only arms it when BOTH diarize is truthy AND a
@@ -163,6 +199,13 @@ export class WsTransport {
       } else if (msg.type === "final") {
         const final = msg as FinalMessage;
         events.onFinal(final.text, { sttSeg: final.seg_id });
+      } else if (msg.type === "stopped") {
+        // Drain ack for stop()'s wait — see stop() below. Resolving
+        // here (rather than closing anything) is exactly why onmessage
+        // must stay wired through the whole wait: this branch IS that
+        // "stay live" contract.
+        this.stopDrainResolve?.();
+        this.stopDrainResolve = null;
       } else if (msg.type === "speaker_update") {
         const update = msg as SpeakerUpdateMessage;
         if (update.gen <= this.lastDiarGen) return; // stale/out-of-order — drop
@@ -177,7 +220,18 @@ export class WsTransport {
       }
     };
 
-    ws.onclose = () => this.handleDisconnect();
+    ws.onclose = () => {
+      // stop()'s drain wait must also resolve if the ws closes on its
+      // own during the wait (crash, network drop mid-drain) — never
+      // hang the wait until STOP_DRAIN_TIMEOUT_MS for that case.
+      if (this.stopDrainResolve) {
+        const resolve = this.stopDrainResolve;
+        this.stopDrainResolve = null;
+        resolve();
+        return;
+      }
+      this.handleDisconnect();
+    };
     ws.onerror = () => {
       // onclose fires right after onerror for WebSocket failures;
       // let onclose drive the reconnect/error flow to avoid double
@@ -208,6 +262,28 @@ export class WsTransport {
     );
   }
 
+  /** Soft pause (STT protocol v2, tabaudio only): stop forwarding PCM
+   * — the ws connection and audio graph both stay alive, so resume
+   * needs no reconnect and no re-picker. Best-effort "flush" so the
+   * sidecar finalizes whatever it was mid-segment on, rather than
+   * leaving it hanging until resume's next frame; the flush itself is
+   * fire-and-forget (no ack — see wsTransport's protocol). */
+  pauseFeed(): void {
+    this.feedPaused = true;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try {
+        this.ws.send(JSON.stringify({ type: "flush" }));
+      } catch {
+        // ignore — best-effort
+      }
+    }
+  }
+
+  /** Resume forwarding PCM after pauseFeed(). */
+  resumeFeed(): void {
+    this.feedPaused = false;
+  }
+
   /** Tear down the WS + audio graph. Safe to call multiple times —
    * only the first call has effect. Does NOT touch the source
    * MediaStream's tracks; the caller (which acquired the stream) owns
@@ -220,12 +296,28 @@ export class WsTransport {
     const ws = this.ws;
     this.ws = null;
     if (ws) {
-      try {
-        if (ws.readyState === WebSocket.OPEN) {
+      if (ws.readyState === WebSocket.OPEN) {
+        try {
           ws.send(JSON.stringify({ type: "stop" }));
+          // Wait for the sidecar's drain ack ({"type":"stopped"}) or
+          // STOP_DRAIN_TIMEOUT_MS, whichever first — onmessage (still
+          // wired to this same `ws`, untouched here) stays live for
+          // the whole wait, so a trailing drain final flows through
+          // the normal onFinal path exactly like any other final. The
+          // wait also resolves if `ws` closes on its own (see
+          // connect()'s onclose).
+          await new Promise<void>((resolve) => {
+            this.stopDrainResolve = resolve;
+            setTimeout(() => {
+              if (this.stopDrainResolve === resolve) {
+                this.stopDrainResolve = null;
+                resolve();
+              }
+            }, STOP_DRAIN_TIMEOUT_MS);
+          });
+        } catch {
+          // ignore — closing anyway
         }
-      } catch {
-        // ignore — closing anyway
       }
       try {
         ws.close();
