@@ -20,6 +20,7 @@ import {
 } from "@jargonslayer/core/types";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
 import type { DetectMode } from "./detect/scheduler";
+import type { OnDeviceMode } from "./stt/onDeviceSpeech";
 import * as storage from "./history/storage";
 import * as glossary from "./history/glossary";
 import * as learnset from "./learn/store";
@@ -175,6 +176,18 @@ interface AppState {
   // live meeting
   status: MeetingStatus;
   statusDetail: string | null;
+  // On-device Web Speech (Chrome 139+, `processLocally` — see
+  // docs/research/stt-live-engines-2026-07.md item #1 and
+  // lib/stt/onDeviceSpeech.ts): which mode the ACTIVE webspeech
+  // session actually reported at start (STTEvents.onEngineMode, wired
+  // through useMeeting.ts). Lets StatusLine's privacy indicator show
+  // the same green "音频未离开本机" posture whisper/tabaudio use instead
+  // of the amber cloud warning. null = no active webspeech session has
+  // reported a mode yet this meeting — every other engine never calls
+  // onEngineMode, so StatusLine falls back to its existing
+  // ENGINE_POSTURE map. Reset alongside the rest of the live-meeting
+  // slice in beginMeeting/newMeeting.
+  sttEngineMode: OnDeviceMode | null;
   startedAt: number | null;
   // Monotonically increasing generation counter — bumped whenever a
   // fresh meeting/session context begins (beginMeeting/newMeeting/
@@ -272,6 +285,7 @@ interface AppState {
   updateSettings: (patch: Partial<Settings>) => void;
 
   setStatus: (status: MeetingStatus, detail?: string | null) => void;
+  setSttEngineMode: (mode: OnDeviceMode | null) => void;
   beginMeeting: () => void; // clears live state, stamps startedAt
   // Pause/resume (B2): pauseMeeting stamps pauseStartedAt and flips to
   // "paused"; resumeMeeting folds (now - pauseStartedAt) into
@@ -553,6 +567,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   status: "idle",
   statusDetail: null,
+  sttEngineMode: null,
   startedAt: null,
   meetingGen: 0,
   segments: [],
@@ -707,11 +722,13 @@ export const useApp = create<AppState>((set, get) => ({
 
   setStatus: (status, detail = null) =>
     set({ status, statusDetail: detail ?? null }),
+  setSttEngineMode: (sttEngineMode) => set({ sttEngineMode }),
 
   beginMeeting: () =>
     set((state) => ({
       status: "connecting",
       statusDetail: null,
+      sttEngineMode: null,
       startedAt: Date.now(),
       meetingGen: state.meetingGen + 1,
       segments: [],
@@ -1228,6 +1245,7 @@ export const useApp = create<AppState>((set, get) => ({
     set((state) => ({
       status: "idle",
       statusDetail: null,
+      sttEngineMode: null,
       startedAt: null,
       meetingGen: state.meetingGen + 1,
       segments: [],

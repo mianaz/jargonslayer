@@ -1236,6 +1236,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
               <ToggleSwitch checked={draft.partials} onChange={(checked) => patch({ partials: checked })} />
             </label>
+
+            {/* 设备端识别 (docs/research/stt-live-engines-2026-07.md
+               item #1): Chrome 139+ processLocally — recognition runs
+               on this machine instead of the browser vendor's cloud
+               STT whenever the browser reports a local model available
+               for 识别语言; automatic cloud fallback otherwise. Same row
+               pattern as 实时转录预览 above, webspeech's own engine-scope
+               toggle. */}
+            <label className="flex items-center justify-between gap-3 py-1">
+              <div>
+                <div className="text-sm text-fg">设备端识别（推荐）</div>
+                <div className="mt-0.5 text-xs leading-[1.7] text-mut2">
+                  浏览器支持时在本机识别语音，音频不再发送到浏览器厂商云端；不支持时自动回退云端识别。仅浏览器识别引擎生效。
+                </div>
+              </div>
+              <ToggleSwitch
+                checked={draft.preferOnDeviceSpeech}
+                onChange={(checked) => patch({ preferOnDeviceSpeech: checked })}
+              />
+            </label>
           </section>
           </>
           )}

@@ -29,6 +29,7 @@ export default function StatusLine() {
   const terms = useApp((s) => s.terms);
   const detectMode = useApp((s) => s.detectMode);
   const engine = useApp((s) => s.settings.engine);
+  const sttEngineMode = useApp((s) => s.sttEngineMode);
   const aiDetect = useApp((s) => s.settings.aiDetect);
   const sidecarUp = useApp((s) => s.sidecarUp);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -60,7 +61,20 @@ export default function StatusLine() {
             ? "--CONN--"
             : "--IDLE--";
 
-  const posture = ENGINE_POSTURE[engine] ?? "local";
+  // On-device Web Speech (Chrome 139+, `processLocally` — see
+  // docs/research/stt-live-engines-2026-07.md item #1): when the
+  // ACTIVE webspeech session reported "on-device" (store.sttEngineMode,
+  // written by useMeeting.ts's onEngineMode handler), audio never
+  // leaves this machine either — same green posture as whisper/
+  // tabaudio, reusing their exact copy/token below verbatim rather
+  // than adding a third label. Guarded on engine==="webspeech" too
+  // (belt-and-suspenders against a stale value briefly surviving an
+  // engine switch — sttEngineMode is only ever set by the webspeech
+  // engine and reset at the start of every new meeting).
+  const posture: "local" | "cloud" =
+    engine === "webspeech" && sttEngineMode === "on-device"
+      ? "local"
+      : (ENGINE_POSTURE[engine] ?? "local");
   const privacyLabel =
     posture === "local" ? "音频未离开本机" : "音频将经过浏览器厂商云端识别";
   const privacyLabelShort =
