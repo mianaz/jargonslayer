@@ -124,6 +124,16 @@ export class WsTransport {
 
     this.workletNode.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
       if (this.feedPaused) return; // soft pause — keep the graph running, drop PCM
+      // stop()'s drain wait (STT protocol v2 fix): `stopping` flips
+      // SYNCHRONOUSLY before stop() ever awaits anything, but the
+      // worklet keeps running (and this port keeps posting frames)
+      // for the whole up-to-8s drain since the audio graph itself
+      // isn't torn down until AFTER the wait — without this check,
+      // PCM captured during that wait would keep streaming to a
+      // sidecar that's already draining, enqueuing behind (or, on an
+      // old server predating protocol v2, getting transcribed after)
+      // the stop sentinel.
+      if (this.stopping) return;
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(ev.data);
       }

@@ -234,6 +234,26 @@ describe("WsTransport — protocol v2", () => {
     expect(ws.closeCalls).toBe(1);
   });
 
+  it("stop() gates the worklet too — no PCM is sent for a frame delivered during the drain wait (F1)", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+    const worklet = workletNodes[workletNodes.length - 1];
+
+    const stopP = transport.stop();
+    await Promise.resolve();
+    ws.sent = []; // drop the {"type":"stop"} send for a clean assertion
+
+    // A PCM chunk delivered while the drain wait is still in flight —
+    // the worklet/audio graph isn't torn down until AFTER the wait, so
+    // this can genuinely still happen.
+    const chunk = new ArrayBuffer(4);
+    worklet.port.onmessage?.({ data: chunk });
+    expect(ws.sent).toEqual([]); // never forwarded
+
+    ws.simulateMessage({ type: "stopped" });
+    await stopP;
+  });
+
   it("a reconnect while soft-paused does not resume sending audio (feedPaused survives connect())", async () => {
     vi.useFakeTimers();
     const transport = makeTransport();

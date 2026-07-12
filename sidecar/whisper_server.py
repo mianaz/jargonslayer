@@ -24,7 +24,12 @@ Protocol v2 (per connection):
       been sent, the server sends {"type": "stopped"}. The client is
       expected to keep its socket open and `onmessage` live until it
       sees "stopped" (or its own timeout) before closing — see
-      apps/web/src/lib/stt/wsTransport.ts's stop().
+      apps/web/src/lib/stt/wsTransport.ts's stop(). Idempotent (a
+      second "stop" never enqueues a second sentinel), and once
+      accepted every later frame on the connection — binary PCM
+      included — is silently ignored (ConnectionState.stop_accepted),
+      since the client's own stop-drain wait can still have PCM
+      in-flight for up to its own timeout after sending this.
     - text frame: JSON {"type": "flush"} — force-finalizes any
       in-progress speech WITHOUT closing anything and WITHOUT an ack
       (no "stopped" is ever sent for a flush). For a soft pause: the
@@ -89,6 +94,22 @@ sends `diar_status: "ready"` once — arming itself (the config-time
 diar_armed gate) never confirms pyannote is actually importable, only
 an attempted load does, which is why this ack fires from the first
 background pass rather than at config time.
+
+Known limits (codex v2 review finding F8): the finalize queue's
+FIFO-with-priority-over-partials scheduling (see "Finalize scheduling"
+above) is a per-connection admission control only — it guarantees THIS
+connection's own finals never queue up behind ITS OWN partials, and
+that a stop-drain's tail final gets sent, but an in-flight partial
+transcription, a DIFFERENT connection's finalize queue, or an HTTP
+upload/import job (see "Upload-a-recording HTTP job API" below) can
+all still contend for the one shared model (load_model() below calls
+faster-whisper's WhisperModel with no num_workers override, i.e. its
+own single-worker default). A heavy concurrent import job in
+particular can push a stop-drain past the client's own
+STOP_DRAIN_TIMEOUT_MS (wsTransport.ts) bound, in which case the client
+gives up waiting and closes without ever seeing "stopped" (harmless —
+just an earlier close than ideal). A global cross-connection/cross-job
+priority scheduler is future work.
 """
 
 from __future__ import annotations
@@ -486,6 +507,19 @@ class ConnectionState:
     # tick is skipped entirely (never queued up) while a previous one
     # is still transcribing.
     partial_in_flight: bool = False
+    # Stop-drain race (codex v2 review finding F1): once "stop" has
+    # been accepted, every later binary frame and config/flush message
+    # on this connection is ignored (checked at the top of
+    # _handle_binary/_handle_text) — PCM the client is still mid-flight
+    # sending during its own stop-drain wait (wsTransport.ts's stop())
+    # would otherwise enqueue behind the sentinel already put() below
+    # and either get silently lost or (worse, against an old client
+    # that never learned to stop sending) get transcribed as a bogus
+    # post-"stopped" final. Also makes "stop" itself idempotent: a
+    # second "stop" must never enqueue a second sentinel (the consumer
+    # only ever sends one "stopped" and then returns — see
+    # _consume_finalize_queue).
+    stop_accepted: bool = False
 
     # ---- realtime speaker diarization (beta) ----
     diar_armed: bool = False  # config.diarize truthy AND a token is available
@@ -585,6 +619,11 @@ class WhisperServer:
     async def _handle_text(
         self, ws: WebSocketServerProtocol, state: ConnectionState, raw: str
     ) -> None:
+        # See ConnectionState.stop_accepted's own doc — a stopped
+        # connection ignores every later text message, "stop" included
+        # (idempotent: no second sentinel).
+        if state.stop_accepted:
+            return
         try:
             msg = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
@@ -622,6 +661,7 @@ class WhisperServer:
             # (None) is what makes the consumer send {"type":"stopped"}
             # once every job ahead of it — including that tail one — has
             # actually been sent. See module docstring.
+            state.stop_accepted = True
             await self._finalize_segment(ws, state, force=True)
             await state.finalize_queue.put(None)
         elif msg_type == "flush":
@@ -633,6 +673,9 @@ class WhisperServer:
     async def _handle_binary(
         self, ws: WebSocketServerProtocol, state: ConnectionState, data: bytes
     ) -> None:
+        # See ConnectionState.stop_accepted's own doc.
+        if state.stop_accepted:
+            return
         if state.wav_writer is not None:
             state.wav_writer.writeframes(data)
 

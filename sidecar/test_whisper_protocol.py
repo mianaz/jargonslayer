@@ -112,6 +112,15 @@ def speech_frame() -> np.ndarray:
     return np.zeros(FRAME_SAMPLES, dtype=np.float32)
 
 
+def loud_pcm_bytes(n_frames: int = 1) -> bytes:
+    """Real int16 PCM bytes, loud enough to clear the VAD threshold —
+    for feeding _handle_binary itself (unlike speech_frame() above,
+    which is a float32 VAD-bypass fixture for injecting directly into
+    ConnectionState.speech_buf)."""
+    samples = np.full(FRAME_SAMPLES * n_frames, 16000, dtype=np.int16)
+    return samples.tobytes()
+
+
 def mark_pending_speech(
     state: ConnectionState, started_at: float = 0.0, speech_ms: float = 400.0
 ) -> None:
@@ -191,6 +200,79 @@ async def test_stop_with_no_pending_speech_sends_only_stopped() -> None:
         )
     finally:
         await stop_consumer(consumer)
+
+
+# =================================================================
+# stop_accepted (codex v2 review finding F1): once "stop" lands,
+# every later binary frame and config/flush message is ignored, and a
+# second "stop" is idempotent (never enqueues a second sentinel).
+# =================================================================
+
+
+async def test_binary_after_stop_accepted_is_ignored() -> None:
+    server = make_server()
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    state.stop_accepted = True
+
+    await server._handle_binary(ws, state, loud_pcm_bytes())
+
+    check(
+        "binary after stop_accepted: VAD never runs — in_speech stays False",
+        state.in_speech is False,
+    )
+    check(
+        "binary after stop_accepted: no leftover bytes buffered either — a true no-op",
+        state.leftover == b"",
+    )
+
+
+async def test_double_stop_enqueues_only_one_sentinel() -> None:
+    server = make_server()
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+
+    await server._handle_text(ws, state, json.dumps({"type": "stop"}))
+    await server._handle_text(ws, state, json.dumps({"type": "stop"}))
+
+    check("double stop: stop_accepted latches True", state.stop_accepted is True)
+    check(
+        "double stop: exactly one job (the sentinel) was ever enqueued",
+        state.finalize_queue.qsize() == 1,
+    )
+
+    consumer = await start_consumer(server, ws, state)
+    try:
+        await asyncio.wait_for(consumer, timeout=2.0)
+        check(
+            "double stop: exactly one 'stopped' ack is ever sent, and the consumer exits cleanly",
+            [m["type"] for m in ws.sent] == ["stopped"],
+        )
+    finally:
+        await stop_consumer(consumer)
+
+
+async def test_config_and_flush_after_stop_accepted_are_ignored() -> None:
+    server = make_server(stub_text="should never be sent")
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+
+    await server._handle_text(ws, state, json.dumps({"type": "stop"}))
+
+    # A flush after stop: no extra job, even with pending speech to force-finalize.
+    mark_pending_speech(state)
+    await server._handle_text(ws, state, json.dumps({"type": "flush"}))
+    check(
+        "flush after stop_accepted: ignored — still just the one stop sentinel enqueued",
+        state.finalize_queue.qsize() == 1,
+    )
+
+    # A config after stop: ignored — no override applied.
+    await server._handle_text(ws, state, json.dumps({"type": "config", "language": "fr"}))
+    check(
+        "config after stop_accepted: ignored — language override never applied",
+        state.language == "en",
+    )
 
 
 # =================================================================
@@ -411,6 +493,9 @@ async def test_finalize_queue_preserves_send_order() -> None:
 ASYNC_TESTS = [
     test_stop_drains_tail_final_then_stopped,
     test_stop_with_no_pending_speech_sends_only_stopped,
+    test_binary_after_stop_accepted_is_ignored,
+    test_double_stop_enqueues_only_one_sentinel,
+    test_config_and_flush_after_stop_accepted_are_ignored,
     test_flush_finalizes_without_ack_and_stays_alive,
     test_config_message_sets_partials_override,
     test_partial_single_flight_skip,
