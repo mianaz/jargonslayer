@@ -23,3 +23,7 @@ sidecar/*.wav
 
 # internal working docs (strategy/research/spec drafts) — private nested repo, never public
 /docs/
+
+# CRXJS/Vite build output (S6) — the loadable unpacked extension,
+# rebuilt on demand via `npm run build:extension`; not source.
+/apps/extension/dist/

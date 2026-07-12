@@ -1,0 +1,25 @@
+{
+  "name": "@jargonslayer/extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Chrome MV3 side-panel extension — Plugin Lite: dictionary + Translator API core loop (PLAN-v0.4 S6). Paste English text, get zh explanations from @jargonslayer/core plus on-device translation when Chrome's Translator API is available.",
+  "license": "MIT",
+  "author": "Miana Zeng",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@jargonslayer/core": "*"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.7.1",
+    "@types/chrome": "^0.2.2",
+    "@types/dom-chromium-ai": "^0.0.17",
+    "vite": "^8.1.4"
+  }
+}
