@@ -138,10 +138,12 @@ priority scheduler is future work.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -1513,6 +1515,46 @@ class JobManager:
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
+    def start_download_job(self, model: str) -> str:
+        """Register a queued model-download job and kick off its
+        background worker thread — decision B's :8766 model-switch
+        path (docs/design-explorations/s4-model-wizard-blueprint.md):
+        the server is already healthy/live here (unlike first-run,
+        which uses --download-only instead — see run_download_only),
+        so this reuses the same job/poll surface as start_job/
+        start_url_job. Returns the job id immediately (non-blocking).
+        Runs concurrently with the live server (disk-only, no port/
+        model conflict) — the caller keeps transcribing on the current
+        model until the new one finishes downloading. `model` is
+        trusted to already be MODEL_CHOICES-valid (the do_POST
+        /download-model handler validates it first, same as
+        start_url_job trusts do_POST /ingest-url's own
+        validate_ingest_url call)."""
+        job = new_job(False, display_name=model, kind="download")
+        job_id = job["id"]
+        with self.lock:
+            self.jobs[job_id] = job
+
+        thread = threading.Thread(
+            target=self._run_download_job,
+            args=(job_id, model),
+            daemon=True,
+        )
+        thread.start()
+        return job_id
+
+    def _run_download_job(self, job_id: str, model: str) -> None:
+        def on_progress(downloaded: int, total: int) -> None:
+            progress = min(downloaded / total, 1.0) if total else 0.0
+            self._set(job_id, progress=progress)
+
+        try:
+            self._set(job_id, status="running", status_detail="下载中")
+            download_model_snapshot(model, on_progress)
+            self._set(job_id, status="done", progress=1.0, status_detail=None)
+        except Exception as exc:  # noqa: BLE001 - report any failure to the client
+            self._set(job_id, status="error", error=str(exc))
+
     def _download_via_ytdlp(self, job_id: str, url: str, tmp_dir: str) -> tuple[str, Optional[str]]:
         """Run yt-dlp synchronously (this method itself runs inside the
         job's background thread) to fetch+extract 16kHz mono WAV audio
@@ -1833,6 +1875,38 @@ def make_job_http_handler(
 
         def do_POST(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)
+
+            if parsed.path == "/download-model":
+                # decision B's :8766 model-switch job (see JobManager.
+                # start_download_job) — server already healthy/live, so
+                # this endpoint (unlike --download-only's first-run
+                # one-shot) is reachable. Mirrors /ingest-url's own
+                # body-parsing shape below.
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST, {"error": "empty request body"}
+                    )
+                    return
+                try:
+                    raw = self.rfile.read(length)
+                    payload = json.loads(raw)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST, {"error": f"请求体不是合法 JSON: {exc}"}
+                    )
+                    return
+
+                model = payload.get("model") if isinstance(payload, dict) else None
+                model_error = validate_download_model(model)
+                if model_error is not None:
+                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": model_error})
+                    return
+
+                job_id = job_manager.start_download_job(model)
+                self._send_json(HTTPStatus.ACCEPTED, {"job_id": job_id})
+                return
+
             if parsed.path != "/ingest-url":
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
@@ -1965,6 +2039,248 @@ def run_http_server(
     return httpd
 
 
+# =================================================================
+# Model download (S4): MODEL_CHOICES is the single source of truth for
+# every valid --model value — argparse's own choices=, POST
+# /download-model's validator, and --download-only all read from this
+# one list (previously hand-duplicated inline in argparse's choices=).
+# download_model_snapshot is the one shared helper behind BOTH
+# download paths (decision B, docs/design-explorations/
+# s4-model-wizard-blueprint.md): --download-only (first-run one-shot,
+# see run_download_only) and JobManager.start_download_job (:8766
+# model-switch job) — "one shared helper, only invocation + progress
+# transport differ." Every huggingface_hub/faster_whisper/tqdm import
+# below is deferred into the function that needs it (mirrors
+# load_model()'s own lazy `from faster_whisper import WhisperModel`)
+# so importing this module itself stays independent of the ML stack —
+# every OTHER test file relies on that already.
+# =================================================================
+
+MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
+
+# The SAME allow_patterns faster_whisper.utils.download_model uses
+# internally (verified against the pinned faster-whisper==1.2.1's
+# installed source) — this is exactly the file set WhisperModel(model)
+# itself downloads/needs. Mirroring it here means a pre-download
+# populates precisely the cache a later load_model() call reads (no
+# wasted bytes on e.g. a repo's README.md/.gitattributes, and our
+# upfront size total below matches what actually gets fetched).
+MODEL_DOWNLOAD_ALLOW_PATTERNS = [
+    "config.json",
+    "preprocessor_config.json",
+    "model.bin",
+    "tokenizer.json",
+    "vocabulary.*",
+]
+
+
+def validate_download_model(model: Any) -> Optional[str]:
+    """Returns a zh error message if `model` isn't a MODEL_CHOICES
+    entry, else None. Mirrors validate_ingest_url's pattern; do_POST
+    /download-model uses this for its 400 response."""
+    if not isinstance(model, str) or model not in MODEL_CHOICES:
+        return f"未知模型：{model}"
+    return None
+
+
+def check_disk_space(total_bytes: int, check_dir: str) -> None:
+    """Raises RuntimeError with a zh message if free space at
+    check_dir is under total_bytes * 1.2. Called BEFORE any write by
+    download_model_snapshot (decision B's disk precheck). `total_bytes`
+    is already resolved by the caller (HfApi().model_info(...)) — this
+    function only creates check_dir if needed (shutil.disk_usage
+    requires an existing path) and does the disk_usage/compare/raise."""
+    os.makedirs(check_dir, exist_ok=True)
+    free = shutil.disk_usage(check_dir).free
+    needed = total_bytes * 1.2
+    if free < needed:
+        raise RuntimeError(
+            "磁盘空间不足：下载该模型预计需要约 "
+            f"{needed / (1 << 30):.1f}GB 可用空间，当前仅剩 "
+            f"{free / (1 << 30):.1f}GB / not enough disk space to "
+            "download this model"
+        )
+
+
+def _repo_id_for_model(model: str) -> str:
+    """Resolve `model` to its Hugging Face Hub repo id the SAME way
+    faster-whisper's own WhisperModel(model) does internally — reuses
+    faster_whisper.utils._MODELS directly (verified against the pinned
+    faster-whisper==1.2.1: utils.download_model looks up this exact
+    dict) rather than hand-duplicating the mapping, so a future
+    faster-whisper bump that changes an entry can't silently drift the
+    two out of sync."""
+    from faster_whisper.utils import _MODELS
+
+    repo_id = _MODELS.get(model)
+    if repo_id is None:
+        raise ValueError(f"未知模型：{model}")
+    return repo_id
+
+
+def _make_progress_bar_class(total: int, on_progress):
+    """Build a `tqdm_class` for huggingface_hub.snapshot_download's
+    `tqdm_class=` kwarg — verified LIVE against the pinned
+    huggingface-hub version (see requirements-sidecar.txt) by actually
+    downloading a small real repo with an instrumented shim:
+    snapshot_download instantiates the class we pass for THREE
+    distinct roles —
+      1. a per-file "Fetching N files" counter, from tqdm.contrib.
+         concurrent.thread_map, which wraps it around an iterable and
+         needs the FULL real-tqdm protocol (__iter__, get_lock/
+         set_lock classmethods) — this is why we subclass real tqdm
+         rather than hand-roll a mimic;
+      2. a network "Downloading bytes" transfer bar whose total is
+         dedup/xet-adjusted and dynamically grown/snapped — NOT a
+         stable denominator;
+      3. a "Reconstructing (incomplete total...)" bar fed via a plain
+         update(n) once per file (whether or not xet applies) for that
+         file's full size, reaching a stable total = sum of file sizes.
+    We forward only #3 (identified by its desc) into
+    on_progress(downloaded, total) — `total` here is OUR OWN
+    precomputed figure (HfApi().model_info, same number check_disk_space
+    used), not the bar's own (which starts at 0 and grows as
+    snapshot_download discovers each file). If a future huggingface_hub
+    bump ever changes that desc string, on_progress simply stops firing
+    mid-download (falls back to the single 100% call
+    download_model_snapshot makes after snapshot_download returns) —
+    a degraded-but-safe failure mode, not a crash; re-verify live
+    (a small repo, no need for a real model) after bumping the pin.
+
+    Must NOT set disable=True to silence rendering: real tqdm's
+    update() short-circuits its `self.n += n` bookkeeping entirely
+    when disabled (verified against the pinned tqdm's tqdm.std.tqdm.
+    update source: `if self.disable: return` precedes it) — silently
+    freezing every bar's progress at 0. Redirecting `file=` to a null
+    sink suppresses the actual bar output instead, without touching
+    that bookkeeping.
+    """
+    from tqdm.auto import tqdm as _tqdm
+
+    devnull = open(os.devnull, "w")
+
+    class _ProgressBar(_tqdm):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("file", devnull)
+            super().__init__(*args, **kwargs)
+            self._is_bytes = kwargs.get("unit") == "B" and str(
+                kwargs.get("desc", "")
+            ).startswith("Reconstructing")
+
+        def update(self, n=1):
+            result = super().update(n)
+            if self._is_bytes:
+                on_progress(self.n, total)
+            return result
+
+    return _ProgressBar
+
+
+def download_model_snapshot(model: str, on_progress=None) -> str:
+    """Download one faster-whisper model's CT2 snapshot from the
+    Hugging Face Hub, reporting cumulative progress via
+    on_progress(downloaded_bytes, total_bytes) as it goes (best-effort
+    granularity — see _make_progress_bar_class; always called once
+    more with (total, total) at the very end, so a caller always sees
+    100% on success even if no finer-grained call ever fired). Shared
+    by --download-only (first-run one-shot, see run_download_only) and
+    JobManager.start_download_job (:8766 model-switch job) — decision B
+    of docs/design-explorations/s4-model-wizard-blueprint.md: "one
+    shared helper, only invocation + progress transport differ."
+
+    Runs under the process's own HF_HOME (set by the Rust launcher
+    exactly like load_model()'s WhisperModel(...) call already relies
+    on) — no explicit cache_dir override here, for the same reason; a
+    later load_model() call finds this snapshot already cached.
+
+    Raises RuntimeError with a zh message if free disk space is short
+    (checked BEFORE any write — see check_disk_space), or re-raises
+    whatever huggingface_hub/httpx raises on a network/repo failure —
+    the caller (JobManager._run_download_job or run_download_only)
+    turns either into job.error / a download_error line."""
+    from huggingface_hub import HfApi
+    from huggingface_hub import constants as hf_constants
+    from huggingface_hub import snapshot_download as hf_snapshot_download
+
+    repo_id = _repo_id_for_model(model)
+
+    info = HfApi().model_info(repo_id, files_metadata=True)
+    total = sum(
+        sibling.size or 0
+        for sibling in info.siblings or []
+        if any(
+            fnmatch.fnmatch(sibling.rfilename, pattern)
+            for pattern in MODEL_DOWNLOAD_ALLOW_PATTERNS
+        )
+    )
+
+    # Disk precheck — BEFORE any write. hf_constants.HF_HUB_CACHE is
+    # exactly the directory snapshot_download itself resolves to below
+    # (we don't pass cache_dir, so it defaults the same way), which is
+    # itself derived from HF_HOME — respected exactly as load_model()'s
+    # WhisperModel(...) call already relies on.
+    check_disk_space(total, hf_constants.HF_HUB_CACHE)
+
+    progress_bar_cls = _make_progress_bar_class(total, on_progress or (lambda d, t: None))
+    hf_snapshot_download(
+        repo_id,
+        allow_patterns=MODEL_DOWNLOAD_ALLOW_PATTERNS,
+        tqdm_class=progress_bar_cls,
+    )
+    if on_progress is not None:
+        on_progress(total, total)
+    return repo_id
+
+
+def should_emit_download_progress(
+    *, now: float, last_emit: float, percent: int, last_percent: int
+) -> bool:
+    """Throttle rule for --download-only's NDJSON progress lines: "~1
+    line/500ms or on whole-percent change" (the Rust side parses
+    stdout line-by-line — see run_download_only) — emit if EITHER at
+    least 500ms have passed since the last line OR the whole-percent
+    value actually changed, so a percent transition is never silently
+    dropped even if it lands inside the same 500ms window as the
+    previous emit."""
+    return (now - last_emit >= 0.5) or (percent != last_percent)
+
+
+def run_download_only(model: str) -> bool:
+    """--download-only mode body (decision B's first-run one-shot
+    path, see main()): run download_model_snapshot, emitting
+    newline-delimited JSON progress lines to stdout for the Rust
+    launcher to parse (line-based — see docs/design-explorations/
+    s4-model-wizard-blueprint.md's Anchors: tqdm's own \\r bars won't
+    survive run_venv_python_streaming), then a final download_done/
+    download_error line. Returns True on success, False on failure —
+    main() turns this into the process exit code."""
+    last_emit = 0.0
+    last_percent = -1
+
+    def on_progress(downloaded: int, total: int) -> None:
+        nonlocal last_emit, last_percent
+        now = time.monotonic()
+        percent = int(downloaded * 100 / total) if total else 0
+        if not should_emit_download_progress(
+            now=now, last_emit=last_emit, percent=percent, last_percent=last_percent
+        ):
+            return
+        last_emit = now
+        last_percent = percent
+        print(
+            json.dumps({"type": "download_progress", "downloaded": downloaded, "total": total}),
+            flush=True,
+        )
+
+    try:
+        download_model_snapshot(model, on_progress)
+    except Exception as exc:  # noqa: BLE001 - report any failure to the launcher
+        print(json.dumps({"type": "download_error", "message": str(exc)}), flush=True)
+        return False
+    print(json.dumps({"type": "download_done"}), flush=True)
+    return True
+
+
 def load_model(model_name: str, device: str, compute_type: str):
     """Load the faster-whisper model once at startup and time it."""
     from faster_whisper import WhisperModel
@@ -1986,7 +2302,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="small",
-        choices=["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
+        choices=MODEL_CHOICES,
         help="Whisper 模型大小 / model size (default: small)",
     )
     parser.add_argument(
@@ -2059,6 +2375,18 @@ def parse_args() -> argparse.Namespace:
             "model license on Hugging Face)"
         ),
     )
+    parser.add_argument(
+        "--download-only",
+        action="store_true",
+        default=False,
+        help=(
+            "仅下载 --model 指定的模型后退出，不启动服务、不占用端口 / "
+            "download the --model snapshot and exit, without starting "
+            "the server or binding any port (first-run one-shot path — "
+            "see download_model_snapshot/run_download_only; prints "
+            "newline-delimited JSON progress to stdout)"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -2087,6 +2415,13 @@ def print_banner(
 
 async def main() -> None:
     args = parse_args()
+
+    if args.download_only:
+        # First-run one-shot (decision B) — pure download, no server/
+        # port at all; skips load_model()/run_http_server()/
+        # websockets.serve() entirely. See run_download_only.
+        ok = run_download_only(args.model)
+        sys.exit(0 if ok else 1)
 
     model, load_seconds = load_model(args.model, args.device, args.compute)
     print_banner(

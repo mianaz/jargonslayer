@@ -204,7 +204,7 @@ describe("transition — the full NEEDS_PROVISION chain", () => {
           schema: MARKER_SCHEMA_VERSION,
           model: "small",
           py: "3.12",
-          deps: "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1",
+          deps: "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1,huggingface-hub==1.23.0",
         },
       },
       { kind: "startServer", model: "small" },
