@@ -32,22 +32,58 @@ export async function getSavedLookups(): Promise<SavedLookup[]> {
   return Array.isArray(list) ? (list as SavedLookup[]) : [];
 }
 
+// ---------------------------------------------------------------
+// Write serialization (F5, codex v04-integration review): saveLookup/
+// removeSavedLookup below both do a read-modify-write against the SAME
+// chrome.storage.local key — two near-simultaneous 收藏 clicks (or a
+// save racing a remove) could both read the same pre-write list, and
+// whichever set() call lands second would silently drop the other's
+// change. Every mutation here is already async, so a simple module-
+// level promise chain is enough to serialize without a real lock:
+// queue this call behind whatever's currently running, so by the time
+// its body actually executes, the previous call's set() has already
+// landed and getSavedLookups() sees fresh state. Same idea as the web
+// app's per-learnKey lock (apps/web/src/lib/store.ts's
+// withLearnKeyLock) — simplified to a single chain rather than a
+// Map<key, Promise> since every mutation here already contends on the
+// ONE shared storage key, not a per-entry key.
+// ---------------------------------------------------------------
+
+let writeChain: Promise<unknown> = Promise.resolve();
+
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeChain.then(fn, fn);
+  // Rejection-swallowing tail so one failed mutation never
+  // permanently wedges the queue for every write after it — the real
+  // result (including any rejection) still flows to THIS call's own
+  // returned promise via `run` above.
+  writeChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 /** Appends a new saved-lookup record and persists the whole list —
  *  minimal but REAL end-to-end persistence: a fresh call to
  *  getSavedLookups() after this (e.g. on panel reopen) sees it. */
 export async function saveLookup(
   entry: Omit<SavedLookup, "id" | "savedAt">,
 ): Promise<SavedLookup> {
-  const existing = await getSavedLookups();
-  const record: SavedLookup = { ...entry, id: newId(), savedAt: Date.now() };
-  await chrome.storage.local.set({ [STORAGE_KEY]: [...existing, record] });
-  return record;
+  return withWriteLock(async () => {
+    const existing = await getSavedLookups();
+    const record: SavedLookup = { ...entry, id: newId(), savedAt: Date.now() };
+    await chrome.storage.local.set({ [STORAGE_KEY]: [...existing, record] });
+    return record;
+  });
 }
 
 export async function removeSavedLookup(id: string): Promise<void> {
-  const existing = await getSavedLookups();
-  const next = existing.filter((e) => e.id !== id);
-  await chrome.storage.local.set({ [STORAGE_KEY]: next });
+  return withWriteLock(async () => {
+    const existing = await getSavedLookups();
+    const next = existing.filter((e) => e.id !== id);
+    await chrome.storage.local.set({ [STORAGE_KEY]: next });
+  });
 }
 
 /** Case/whitespace-insensitive membership check so the panel can grey
