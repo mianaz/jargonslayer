@@ -108,7 +108,11 @@ override, so MV3's default (no remote code, no eval) applies as-is.
   (avoids pulling in web-app/SRS-specific bookkeeping fields that don't
   apply to a one-shot paste-and-scan yet), while still mirroring
   `CustomEntry`'s field naming so a future shared-shape unification is a
-  mapping, not a redesign.
+  mapping, not a redesign. Saves are **local-only** (`chrome.storage.local`
+  on this device/profile, never synced anywhere) and intentionally store
+  the verbatim example sentence a card was matched in — correct product
+  behavior, matching the web app's own local-first history/glossary, not
+  something to strip on a future pass.
 - Styling (`src/sidepanel/panel.css`) hand-copies `apps/web`'s terminal
   theme's hex tokens and its expression/term card color-bar convention, but
   does **not** port the CSS-variable theme engine, Tailwind, or the

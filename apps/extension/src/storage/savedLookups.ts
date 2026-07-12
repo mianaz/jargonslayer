@@ -15,6 +15,16 @@
 import { newId } from "@jargonslayer/core/types";
 import type { CustomEntryKind } from "@jargonslayer/core/types";
 
+// F6 (doc-only stance, codex v04-integration review): every SavedLookup
+// below is LOCAL-ONLY — chrome.storage.local on this device/profile,
+// never synced anywhere (no server, no chrome.storage.sync, no
+// analytics/telemetry pipeline). source_sentence intentionally stores
+// the VERBATIM sentence a card was matched in — this is CORRECT product
+// behavior, matching the web app's own local-first history/glossary
+// (CustomEntry.context in packages/core/src/types.ts plays the exact
+// same "original capture-time sentence" role, persisted the same
+// browser-local way via idb-keyval — see apps/web/src/lib/history/
+// glossary.ts), not an oversight to strip or minimize on a future pass.
 export interface SavedLookup {
   id: string;
   kind: CustomEntryKind; // "expression" | "term"
