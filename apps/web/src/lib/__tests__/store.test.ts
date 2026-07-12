@@ -821,6 +821,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
   it("full tier (isPreview:false) never coerces, regardless of engine or hadSavedEngine", () => {
     expect(applyTierDefaults(withEngine("whisper"), false, true).engine).toBe("whisper");
     expect(applyTierDefaults(withEngine("tabaudio"), false, true).engine).toBe("tabaudio");
+    expect(applyTierDefaults(withEngine("soniox"), false, true).engine).toBe("soniox");
     expect(applyTierDefaults(withEngine("demo"), false, false).engine).toBe("demo");
   });
 
@@ -831,6 +832,11 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
 
   it("preview tier coerces a saved sidecar-only engine (tabaudio) to webspeech", () => {
     const s = applyTierDefaults(withEngine("tabaudio"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier coerces a saved BYOK cloud engine (soniox) to webspeech — v0.4 S4 blueprint decision E / risk 4, same lock as whisper/tabaudio", () => {
+    const s = applyTierDefaults(withEngine("soniox"), true, true);
     expect(s.engine).toBe("webspeech");
   });
 

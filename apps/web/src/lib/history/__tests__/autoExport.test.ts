@@ -70,6 +70,9 @@ const keyedSettings: Settings = {
   ...DEFAULT_SETTINGS,
   apiKey: "sk-ant-secret",
   hfToken: "hf_secret",
+  // v0.4 S4 (blueprint decision E): Soniox BYOK key — hand-listed
+  // stripped field, same as hfToken/agentToken (see stripKeyMaterial).
+  sonioxKey: "soniox-secret",
   agentToken: "agent-secret",
   taskLlm: {
     detect: { enabled: true, apiKey: "sk-detect-secret", provider: "anthropic" },
@@ -439,7 +442,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
   });
 
   describe("includeKeys / key-stripping checkbox logic", () => {
-    it("includeKeys:true (or omitted) — the export carries apiKey/hfToken/agentToken/taskLlm[*].apiKey as-is", async () => {
+    it("includeKeys:true (or omitted) — the export carries apiKey/hfToken/sonioxKey/agentToken/taskLlm[*].apiKey as-is", async () => {
       const storage = await import("../storage");
       await storage.saveSettings(keyedSettings);
 
@@ -451,6 +454,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         const parsed = JSON.parse(json) as { settings: Settings };
         expect(parsed.settings.apiKey).toBe("sk-ant-secret");
         expect(parsed.settings.hfToken).toBe("hf_secret");
+        expect(parsed.settings.sonioxKey).toBe("soniox-secret");
         expect(parsed.settings.agentToken).toBe("agent-secret");
         expect(parsed.settings.taskLlm?.detect?.apiKey).toBe("sk-detect-secret");
       }
@@ -466,6 +470,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
 
       expect(parsed.settings.apiKey).toBe("");
       expect(parsed.settings.hfToken).toBe("");
+      expect(parsed.settings.sonioxKey).toBe("");
       expect(parsed.settings.agentToken).toBe("");
       expect(parsed.settings.taskLlm?.detect?.apiKey).toBeUndefined();
       // Non-key fields on the stripped domain block must survive.

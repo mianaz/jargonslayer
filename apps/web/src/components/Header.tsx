@@ -69,6 +69,15 @@ export function canPause(
   settings: Pick<Settings, "realtimeDiarize">,
 ): boolean {
   if (engine === "whisper") return !settings.realtimeDiarize;
+  // v0.4 S4 (blueprint decision E, risk 4): Soniox (soniox.ts)
+  // implements no pause()/resume() — explicit false rather than
+  // relying on the trailing webspeech/tabaudio check below, so a
+  // future STTEngineKind added to that OR can't silently start
+  // returning true for soniox by omission. useMeeting.ts's own
+  // pause()/resume() are unaffected either way (capability-derived —
+  // `engineRef.current?.pause`/`?.resume` — not this hardcoded
+  // matrix), so soniox already falls back to teardown-pause there.
+  if (engine === "soniox") return false;
   return engine === "webspeech" || engine === "tabaudio";
 }
 
@@ -79,19 +88,28 @@ export function canPause(
 // sidecarOnly (#61 preview tier): whisper/tabaudio require the local
 // sidecar process, which the hosted preview build never has — greyed
 // out there rather than removed (showroom posture: show everything,
-// no dead ends).
+// no dead ends). byokOnly (v0.4 S4, blueprint decision E): soniox is
+// an unproven BYOK cloud engine (no local sidecar involved, but not
+// benchmark-cleared either) — same preview lock as sidecarOnly, see
+// previewLocked below.
 const ENGINE_OPTIONS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   posture: "local" | "cloud";
   sidecarOnly?: boolean;
+  byokOnly?: boolean;
 }[] = [
   { value: "webspeech", label: "浏览器识别", posture: "cloud" },
   { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true },
   { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
+  { value: "soniox", label: "Soniox 云端识别", posture: "cloud", byokOnly: true },
 ];
 
-const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 sidecar";
+// v0.4 S4: renamed from PREVIEW_SIDECAR_TITLE — now covers TWO
+// distinct preview-lock reasons (sidecarOnly: needs the local sidecar;
+// byokOnly: needs a BYOK credential preview doesn't collect), so the
+// copy stays reason-agnostic rather than claiming "sidecar" for both.
+const PREVIEW_LOCKED_TITLE = "本地版功能：体验版暂未开放";
 
 const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",
@@ -211,9 +229,10 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
   return (
     <div className="hidden items-center gap-0.5 border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
       {ENGINE_OPTIONS.map((opt) => {
-        // Preview tier (#61): sidecar-only pills stay visible but
-        // disabled — never removed (showroom posture).
-        const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
+        // Preview tier (#61): sidecar-only AND byokOnly (v0.4 S4)
+        // pills stay visible but disabled — never removed (showroom
+        // posture).
+        const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
         const disabled = busy || previewLocked;
         return (
           <button
@@ -223,7 +242,7 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
             onClick={() => updateSettings({ engine: opt.value })}
             title={
               previewLocked
-                ? PREVIEW_SIDECAR_TITLE
+                ? PREVIEW_LOCKED_TITLE
                 : opt.posture === "local"
                   ? "本地：音频不出本机"
                   : "云端：音频会离开设备"
@@ -289,17 +308,17 @@ function MobileEngineSelect() {
         </option>
       )}
       {ENGINE_OPTIONS.map((opt) => {
-        // Preview tier (#61): same sidecar-only lock as the pill group
-        // above, applied per-<option> since a native <select> can't
-        // grey a single option's styling — disabled + title is the
-        // full affordance a native option supports.
-        const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
+        // Preview tier (#61): same sidecarOnly/byokOnly lock as the
+        // pill group above, applied per-<option> since a native
+        // <select> can't grey a single option's styling — disabled +
+        // title is the full affordance a native option supports.
+        const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
         return (
           <option
             key={opt.value}
             value={opt.value}
             disabled={previewLocked}
-            title={previewLocked ? PREVIEW_SIDECAR_TITLE : undefined}
+            title={previewLocked ? PREVIEW_LOCKED_TITLE : undefined}
           >
             {opt.label}
           </option>

@@ -86,6 +86,13 @@ const ENGINE_CARDS: {
   // and dead-end on ws://localhost until the next reload's
   // applyTierDefaults coercion).
   sidecarOnly?: boolean;
+  // v0.4 S4 (blueprint decision E): a BYOK cloud engine that hasn't
+  // cleared the zh-en benchmark gate yet — same preview lock as
+  // sidecarOnly (preview never collects a visitor's own credentials),
+  // AND doubles as this card's "实验" tag trigger below (every byokOnly
+  // engine is, by definition, still opt-in experimental — see soniox's
+  // own hint copy).
+  byokOnly?: boolean;
 }[] = [
   {
     value: "webspeech",
@@ -112,6 +119,16 @@ const ENGINE_CARDS: {
     posture: "local",
     disabled: true,
     sidecarOnly: true,
+  },
+  {
+    value: "soniox",
+    label: "Soniox 云端识别",
+    // Honest per the blueprint's benchmark gate (decision E) — BYOK,
+    // opt-in, NOT claimed to beat local Whisper until Miana's zh-en
+    // clip benchmark clears it.
+    hint: "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
+    posture: "cloud",
+    byokOnly: true,
   },
 ];
 
@@ -472,6 +489,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 订阅直连's agentHealthState `!agentHealthState` idiom below).
   const [sidecarStatus, setSidecarStatus] = useState<SidecarProbeResult | null>(null);
   const [checkingSidecarStatus, setCheckingSidecarStatus] = useState(false);
+  // Soniox API Key masked-input toggle (v0.4 S4 chunk 6) — same
+  // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
+  // field itself only renders when draft.engine === "soniox".
+  const [showSonioxKey, setShowSonioxKey] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -1141,14 +1162,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <SectionHeading>转录引擎</SectionHeading>
             <div className="grid grid-cols-2 gap-2">
               {ENGINE_CARDS.map((opt) => {
-                const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
+                // v0.4 S4 (blueprint decision E, risk 4): byokOnly
+                // joins sidecarOnly in the preview lock — see
+                // ENGINE_CARDS' own byokOnly doc comment above.
+                const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
                 return (
                   <button
                     key={opt.value}
                     type="button"
                     disabled={opt.disabled || previewLocked}
                     onClick={() => patch({ engine: opt.value })}
-                    title={previewLocked ? "本地版功能：需要本地 sidecar" : undefined}
+                    title={previewLocked ? "本地版功能：体验版暂未开放" : undefined}
                     className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                       draft.engine === opt.value
                         ? "border-act bg-panel3 text-fg"
@@ -1159,6 +1183,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <span className="font-medium">{opt.label}</span>
                       <span className="flex shrink-0 items-center gap-1.5">
                         {previewLocked && <PreviewLockedBadge />}
+                        {/* 实验 tag (v0.4 S4): every byokOnly engine is,
+                           by definition, opt-in experimental until its
+                           own benchmark gate clears — reuses this same
+                           card's posture-chip idiom (bordered, 10px),
+                           just a different color so it doesn't blend
+                           with 云端/本地 next to it. */}
+                        {opt.byokOnly && (
+                          <span className="shrink-0 border border-lab-purple/30 px-1.5 py-0 text-[10px] text-lab-purple">
+                            实验
+                          </span>
+                        )}
                         <span
                           className={`shrink-0 border px-1.5 py-0 text-[10px] ${
                             opt.posture === "local"
@@ -1226,6 +1261,48 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     </a>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Soniox API Key (v0.4 S4 chunk 6, blueprint decision E):
+               engine-conditional like 本地服务 above — unlike 麦克风/识别
+               语言/Whisper 地址 below (always shown, scope explained by
+               their own hint text), this field is meaningless for any
+               engine but soniox, so it only mounts once picked. Same
+               hand-rolled masked-input pattern as HF Token (说话人分离
+               section below): showSonioxKey toggle, disabled={PREVIEW_
+               TIER} — preview-tier gate 3 of 3, alongside ENGINE_CARDS'
+               byokOnly lock above and store.ts applyTierDefaults'
+               coercion. */}
+            {draft.engine === "soniox" && (
+              <div>
+                <label className="text-xs text-mut">Soniox API Key</label>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type={showSonioxKey ? "text" : "password"}
+                    value={draft.sonioxKey}
+                    disabled={PREVIEW_TIER}
+                    onChange={(e) => patch({ sonioxKey: e.target.value })}
+                    placeholder="粘贴你的 Soniox API Key"
+                    className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    disabled={PREVIEW_TIER}
+                    onClick={() => setShowSonioxKey((v) => !v)}
+                    aria-label={showSonioxKey ? "隐藏" : "显示"}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {showSonioxKey ? (
+                      <EyeSlash size={18} weight="regular" />
+                    ) : (
+                      <Eye size={18} weight="regular" />
+                    )}
+                  </button>
+                </div>
+                <div className="mt-1 text-xs text-mut2">
+                  按量计费；Key 随会话直接发给 Soniox 云端（wss://stt-rt.soniox.com），不经我们的服务器
+                </div>
               </div>
             )}
 
@@ -2057,8 +2134,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div>
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
-                    取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Webhook /
-                    连接码），请妥善保管
+                    取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Soniox Key /
+                    Webhook / 连接码），请妥善保管
                   </div>
                 </div>
                 <ToggleSwitch
