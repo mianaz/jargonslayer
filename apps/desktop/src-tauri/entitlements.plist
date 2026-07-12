@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- REQUIRED: the uv-provisioned CPython/ctranslate2/numpy dylibs
+	     under ~/Library/Application Support are downloaded, not signed
+	     by us — a hardened-runtime signed app refuses to load unsigned
+	     dylibs without this entitlement (S8-blocking if omitted; see
+	     docs/design-explorations/s3-tauri-uv-blueprint.md's risk
+	     register item 2). -->
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<!-- Required for microphone access (live meeting transcription). -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

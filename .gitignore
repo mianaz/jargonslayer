@@ -27,3 +27,8 @@ sidecar/*.wav
 # CRXJS/Vite build output (S6) — the loadable unpacked extension,
 # rebuilt on demand via `npm run build:extension`; not source.
 /apps/extension/dist/
+
+# Tauri desktop shell (S3) — the uv sidecar binary, downloaded per-
+# machine by `node scripts/fetch-uv.mjs` (pinned version tracked in
+# that script, not git).
+/apps/desktop/src-tauri/binaries/

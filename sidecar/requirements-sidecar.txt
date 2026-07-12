@@ -1,0 +1,20 @@
+# Desktop sidecar dependencies (v0.4 S3 chunk 2) — the subset of
+# sidecar/requirements.txt this project's Tauri shell actually bundles
+# and provisions via uv for the desktop STT path (whisper_server.py
+# only — see docs/design-explorations/s3-tauri-uv-blueprint.md's
+# Anchors section: "agent_server.py / pyannote / claude-agent-sdk NOT
+# on the desktop STT path").
+#
+# Exact pins (not ranges), chosen INSIDE requirements.txt's own ranges
+# so `uv pip install --python <venv> -r requirements-sidecar.txt` is
+# reproducible across every user's machine. Verified 2026-07-11: this
+# exact set resolves and installs cleanly with uv 0.11.28 (25 packages,
+# no conflicts) and `from faster_whisper import WhisperModel` imports
+# successfully on aarch64-apple-darwin / Python 3.12.12.
+#
+# Deliberately excludes claude-agent-sdk (subscription-direct agent
+# sidecar, LOCAL DEV ONLY — not on the desktop STT path at all) and
+# pyannote.audio (optional diarization — S5's job, not S3's).
+faster-whisper==1.2.1
+websockets==13.1
+numpy==2.5.1
