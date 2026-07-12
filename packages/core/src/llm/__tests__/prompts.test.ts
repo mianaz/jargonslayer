@@ -45,6 +45,20 @@ describe("buildDetectSystemPrompt", () => {
     buildDetectSystemPrompt("en");
     expect(warnSpy).not.toHaveBeenCalled();
   });
+
+  // Fix: "ai detection is catching whole sentences rather than
+  // phrases" — the prompt-level half of the two-layer defense (the
+  // scheduler.ts post-filter is the other). Both "zh" and "en" share
+  // this rule verbatim (it isn't one of applyLangVariant's splice
+  // anchors), so it must appear unchanged in both variants.
+  it('rule 10 caps "expression" at a short phrase (word/char limits), never a full sentence, for both zh and en', () => {
+    for (const lang of ["zh", "en"] as const) {
+      const prompt = buildDetectSystemPrompt(lang);
+      expect(prompt).toContain("short phrase, never a full clause or sentence");
+      expect(prompt).toContain("~6 words");
+      expect(prompt).toContain("~12 characters");
+    }
+  });
 });
 
 describe("buildDefineSystemPrompt", () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_SETTINGS,
+  type DetectedExpression,
   type DetectResponse,
   type DetectionSource,
   type Settings,
@@ -29,7 +30,12 @@ vi.mock("@jargonslayer/core/detect/dictionary", () => ({
 
 import { detectApi, NoKeyError } from "../../llm/client";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
-import { DetectionScheduler, type DetectMode } from "../scheduler";
+import {
+  DetectionScheduler,
+  filterOversizedAiExpressions,
+  isOversizedAiExpression,
+  type DetectMode,
+} from "../scheduler";
 import { clearDiag, getDiagEntries } from "../../diag/log";
 
 const mockDetectApi = vi.mocked(detectApi);
@@ -56,6 +62,20 @@ function makeSegment(text: string): TranscriptSegment {
     endedAt: Date.now(),
     text,
     engine: "demo",
+  };
+}
+
+function makeExpr(expression: string, overrides: Partial<DetectedExpression> = {}): DetectedExpression {
+  return {
+    expression,
+    category: "phrase",
+    meaning: "m",
+    chinese_explanation: "z",
+    plain_english: "p",
+    tone: "t",
+    confidence: 0.9,
+    source_sentence: expression,
+    ...overrides,
   };
 }
 
@@ -567,6 +587,284 @@ describe("DetectionScheduler", () => {
       secondScheduler.stop();
 
       expect(dictFloorEntries()).toHaveLength(2); // both wrote immediately, independently
+    });
+  });
+});
+
+// ---------------------------------------------------------------
+// Fix: "ai detection is catching whole sentences rather than phrases"
+// (soccer-stream field report). Two layers tested here:
+//  1. isOversizedAiExpression/filterOversizedAiExpressions — pure,
+//     directly unit-tested boundary cases.
+//  2. Through the real scheduler — proves the filter is wired ONLY
+//     into the "llm" success path (dictionary hits are untouched) and
+//     that the detect-ai-oversize diag counter follows the same
+//     throttle posture as detect-dict-floor.
+// ---------------------------------------------------------------
+
+describe("isOversizedAiExpression — boundary cases", () => {
+  it("Latin: exactly 8 words is NOT oversized (the cap is 'exceeds 8', not '>=8')", () => {
+    expect(isOversizedAiExpression("one two three four five six seven eight")).toBe(false);
+  });
+
+  it("Latin: 9 words IS oversized", () => {
+    expect(isOversizedAiExpression("one two three four five six seven eight nine")).toBe(true);
+  });
+
+  it("Latin: exactly 64 characters (few long words) is NOT oversized", () => {
+    const expr = "a".repeat(64);
+    expect(expr.length).toBe(64);
+    expect(isOversizedAiExpression(expr)).toBe(false);
+  });
+
+  it("Latin: 65 characters IS oversized, even as a single 'word' with no spaces", () => {
+    const expr = "a".repeat(65);
+    expect(isOversizedAiExpression(expr)).toBe(true);
+  });
+
+  it("CJK: exactly 20 characters is NOT oversized", () => {
+    const expr = "把".repeat(20);
+    expect(expr.length).toBe(20);
+    expect(isOversizedAiExpression(expr)).toBe(false);
+  });
+
+  it("CJK: 21 characters IS oversized", () => {
+    const expr = "把".repeat(21);
+    expect(isOversizedAiExpression(expr)).toBe(true);
+  });
+
+  it("mixed CJK+Latin uses the stricter CJK cap (20 chars), not the Latin word/char caps", () => {
+    // 22 chars total, well under the 64-char/8-word Latin caps, but
+    // over the 20-char CJK cap once any CJK character is present.
+    const expr = "ARR 拉起来" + "把".repeat(15);
+    expect(expr.length).toBeGreaterThan(20);
+    expect(isOversizedAiExpression(expr)).toBe(true);
+  });
+
+  it("a whole sentence (the reported bug) is correctly flagged oversized", () => {
+    const wholeSentence =
+      "The referee made a controversial offside call in the final minute of the match";
+    expect(isOversizedAiExpression(wholeSentence)).toBe(true);
+  });
+
+  it("a genuine short phrase is not flagged", () => {
+    expect(isOversizedAiExpression("circle back")).toBe(false);
+    expect(isOversizedAiExpression("table this")).toBe(false);
+  });
+
+  it("trims surrounding whitespace before measuring (a boundary-adjacent value shouldn't flip on incidental padding)", () => {
+    const expr = `  ${"a".repeat(64)}  `;
+    expect(isOversizedAiExpression(expr)).toBe(false);
+  });
+});
+
+describe("filterOversizedAiExpressions — pure post-filter", () => {
+  it("drops only the oversized expressions, keeping short ones untouched", () => {
+    const res: DetectResponse = {
+      expressions: [
+        makeExpr("circle back"),
+        makeExpr("one two three four five six seven eight nine ten"),
+        makeExpr("table this"),
+      ],
+      terms: [],
+    };
+    const filtered = filterOversizedAiExpressions(res);
+    expect(filtered.expressions.map((e) => e.expression)).toEqual(["circle back", "table this"]);
+  });
+
+  it("dictionary/custom cards are never even seen by this function — 'AI expression cards only' is enforced by the SCHEDULER'S call site, not this function's own logic; this test documents that the function itself has no source-awareness, it just filters whatever DetectResponse it's given", () => {
+    // Calling it directly on a dictionary-shaped payload WOULD filter
+    // it too (proving the safety property lives in scheduler.ts only
+    // calling this for "llm" — see the scheduler-level test below).
+    const res: DetectResponse = {
+      expressions: [makeExpr("one two three four five six seven eight nine ten")],
+      terms: [],
+    };
+    expect(filterOversizedAiExpressions(res).expressions).toHaveLength(0);
+  });
+
+  it("terms always pass through untouched, regardless of length", () => {
+    const res: DetectResponse = {
+      expressions: [],
+      terms: [{ term: "a very long term that would be oversized if it were an expression", type: "other", gloss_en: "e", gloss_zh: "z" }],
+    };
+    const filtered = filterOversizedAiExpressions(res);
+    expect(filtered.terms).toEqual(res.terms);
+  });
+
+  it("returns the SAME object reference when nothing was dropped (cheap no-op path)", () => {
+    const res: DetectResponse = { expressions: [makeExpr("circle back")], terms: [] };
+    expect(filterOversizedAiExpressions(res)).toBe(res);
+  });
+
+  it("calls onDrop with the exact dropped count, and never calls it when nothing was dropped", () => {
+    const onDrop = vi.fn();
+    const res: DetectResponse = {
+      expressions: [
+        makeExpr("circle back"),
+        makeExpr("one two three four five six seven eight nine ten"),
+        makeExpr("another one two three four five six seven eight nine"),
+      ],
+      terms: [],
+    };
+    filterOversizedAiExpressions(res, onDrop);
+    expect(onDrop).toHaveBeenCalledTimes(1);
+    expect(onDrop).toHaveBeenCalledWith(2);
+
+    onDrop.mockClear();
+    filterOversizedAiExpressions({ expressions: [makeExpr("circle back")], terms: [] }, onDrop);
+    expect(onDrop).not.toHaveBeenCalled();
+  });
+});
+
+describe("DetectionScheduler — oversized-AI-expression post-filter wiring", () => {
+  let settings: Settings;
+  let meetingGen: number;
+  let onDetection: ReturnType<typeof vi.fn<(res: DetectResponse, source: DetectionSource, meta?: { batchWindowStart?: number }) => void>>;
+  let onBusyChange: ReturnType<typeof vi.fn<(busy: boolean) => void>>;
+  let onModeChange: ReturnType<typeof vi.fn<(mode: DetectMode) => void>>;
+  let onError: ReturnType<typeof vi.fn<(msg: string) => void>>;
+  let scheduler: DetectionScheduler;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    segIndex = 0;
+    settings = makeSettings();
+    meetingGen = 0;
+    onDetection = vi.fn();
+    onBusyChange = vi.fn();
+    onModeChange = vi.fn();
+    onError = vi.fn();
+    mockDetectApi.mockReset();
+    mockScanDictionary.mockReset();
+    mockScanDictionary.mockReturnValue(emptyRes());
+    clearDiag();
+    scheduler = new DetectionScheduler({
+      getSettings: () => settings,
+      getMeetingGen: () => meetingGen,
+      onDetection,
+      onBusyChange,
+      onModeChange,
+      onError,
+    });
+  });
+
+  afterEach(() => {
+    scheduler.stop();
+    vi.useRealTimers();
+  });
+
+  it("an oversized expression from the LLM is filtered out before onDetection fires; a normal one in the same batch survives", async () => {
+    mockDetectApi.mockResolvedValue({
+      expressions: [
+        makeExpr("circle back"),
+        makeExpr("one two three four five six seven eight nine ten eleven"),
+      ],
+      terms: [],
+    });
+
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(onDetection).toHaveBeenCalledTimes(1);
+    const [res, source] = onDetection.mock.calls[0];
+    expect(source).toBe("llm");
+    expect((res as DetectResponse).expressions.map((e) => e.expression)).toEqual(["circle back"]);
+  });
+
+  it("dictionary-sourced hits are NEVER filtered, even if artificially oversized — proves the filter is scoped to the llm success path only", () => {
+    mockScanDictionary.mockReturnValue({
+      expressions: [makeExpr("one two three four five six seven eight nine ten eleven twelve")],
+      terms: [],
+    });
+
+    scheduler.pushSegment(makeSegment("short text"));
+
+    expect(onDetection).toHaveBeenCalledTimes(1);
+    const [res, source] = onDetection.mock.calls[0];
+    expect(source).toBe("dictionary");
+    expect((res as DetectResponse).expressions).toHaveLength(1); // NOT dropped
+  });
+
+  describe("detect-ai-oversize diag counter (same throttle posture as detect-dict-floor)", () => {
+    function oversizeEntries() {
+      return getDiagEntries().filter((e) => e.tag === "detect-ai-oversize");
+    }
+
+    it("writes an entry on the very FIRST drop, immediately", async () => {
+      mockDetectApi.mockResolvedValue({
+        expressions: [makeExpr("one two three four five six seven eight nine ten")],
+        terms: [],
+      });
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      const entries = oversizeEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].level).toBe("info");
+      expect(entries[0].detail).toBe("dropped=1");
+    });
+
+    it("writes no entry at all when nothing is dropped", async () => {
+      mockDetectApi.mockResolvedValue({ expressions: [makeExpr("circle back")], terms: [] });
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(oversizeEntries()).toHaveLength(0);
+    });
+
+    it("accumulates subsequent drops silently — no second entry within 60s of the first write", async () => {
+      mockDetectApi.mockResolvedValue({
+        expressions: [makeExpr("one two three four five six seven eight nine ten")],
+        terms: [],
+      });
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0); // first drop -> immediate write
+
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0); // second drop, within 60s -> silent
+
+      expect(oversizeEntries()).toHaveLength(1);
+    });
+
+    it("writes a second entry once 60s have elapsed, carrying only the count accumulated since then", async () => {
+      mockDetectApi.mockResolvedValue({
+        expressions: [makeExpr("one two three four five six seven eight nine ten")],
+        terms: [],
+      });
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0); // first drop -> immediate write, resets accumulator
+
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      mockDetectApi.mockResolvedValue({
+        expressions: [
+          makeExpr("one two three four five six seven eight nine ten"),
+          makeExpr("another one two three four five six seven eight nine"),
+        ],
+        terms: [],
+      });
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      const entries = oversizeEntries();
+      expect(entries).toHaveLength(2);
+      expect(entries[0].detail).toBe("dropped=1");
+      expect(entries[1].detail).toBe("dropped=2");
+    });
+
+    it("counts only — the diag entry never contains the dropped expression's text (privacy)", async () => {
+      mockDetectApi.mockResolvedValue({
+        expressions: [makeExpr("this is a very long sentence about the soccer match today")],
+        terms: [],
+      });
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      const entries = oversizeEntries();
+      expect(entries).toHaveLength(1);
+      expect(entries[0].message).not.toContain("soccer");
+      expect(entries[0].detail ?? "").not.toContain("soccer");
     });
   });
 });
