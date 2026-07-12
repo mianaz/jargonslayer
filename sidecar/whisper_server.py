@@ -9,25 +9,73 @@ machine.
 Usage:
     python whisper_server.py --model small --port 8765
 
-Protocol (per connection):
+Protocol v2 (per connection):
   Client -> Server:
-    - text frame: JSON {"type": "config", ...}  (may override language;
-                        optional "diarize": bool + "hf_token": str arm
-                        realtime speaker diarization (beta), see below)
-    - text frame: JSON {"type": "stop"}
+    - text frame: JSON {"type": "config", ...}
+        - "language": str, optional override
+        - "diarize": bool + "hf_token": str — arm realtime speaker
+          diarization (beta), see below
+        - "partials": bool, optional — per-connection override of this
+          process's --partials default (absent = server default, see
+          WhisperServer.emit_partials / _partials_enabled)
+    - text frame: JSON {"type": "stop"} — force-finalizes any
+      in-progress speech, then drains: once every already-enqueued
+      final (including the just-forced tail one, if any) has actually
+      been sent, the server sends {"type": "stopped"}. The client is
+      expected to keep its socket open and `onmessage` live until it
+      sees "stopped" (or its own timeout) before closing — see
+      apps/web/src/lib/stt/wsTransport.ts's stop().
+    - text frame: JSON {"type": "flush"} — force-finalizes any
+      in-progress speech WITHOUT closing anything and WITHOUT an ack
+      (no "stopped" is ever sent for a flush). For a soft pause: the
+      client stops sending audio frames but keeps the connection (and
+      this server-side state) alive so resume needs no reconnect and
+      no fresh seg_id namespace. See TabAudioEngine.pause()/resume().
     - binary frame: 16kHz mono int16 PCM chunks
   Server -> Client:
     - text frame: JSON {"type": "partial", "text": "..."}      (optional)
     - text frame: JSON {"type": "final", "text": "...",
                          "start": <seconds>, "end": <seconds>,
                          "seg_id": <int>}
+    - text frame: JSON {"type": "stopped"} — drain-ack for a "stop"
+      (see above); never sent for any other reason.
     - text frame: JSON {"type": "speaker_update", "gen": <int>,
                          "assignments": [{"seg_id": <int>,
                                            "speaker": "SPEAKER_2"}, ...],
                          "speakers": ["SPEAKER_1", "SPEAKER_2", ...]}
     - text frame: JSON {"type": "diar_status",
-                         "state": "unavailable" | "error",
-                         "detail": "..."}
+                         "state": "unavailable" | "error" | "ready",
+                         "detail": "..."}  ("ready"'s detail is always
+                         absent — see below)
+
+Finalize scheduling (protocol v2's core fix): each connection owns an
+asyncio.Queue of finalize jobs + one background consumer task. The
+recv loop (_handle_binary/_handle_text) NEVER awaits transcription —
+_finalize_segment does the MIN_SPEECH_MS check, assigns this segment's
+seg_id (monotonic per connection, assigned at ENQUEUE time — a job
+whose transcription later comes back empty still consumes a seg_id,
+leaving an intentional gap; diarization maps purely by seg_id and the
+queue's FIFO order guarantees `final`s are sent in that same order
+regardless), resets VAD state, and enqueues. Only the consumer task
+(_consume_finalize_queue) ever calls the (potentially slow)
+_transcribe, off the recv loop entirely — so on a CPU host where
+transcription can't keep up with continuous speech, incoming audio
+frames are never blocked and MAX_SEGMENT_MS force-finalize keeps
+firing on real wall-clock-derived elapsed time, instead of receding
+indefinitely (the "fragmented after ~3 min" bug this version fixes).
+A `None` job is the stop-drain sentinel (see "stop" above). Partials
+(_emit_partial/_run_partial) are transcribed from only the trailing
+PARTIAL_TAIL_WINDOW_S of the current segment (not the whole, ever-
+growing buffer), fired via asyncio.create_task under a single-flight
+flag, and skipped entirely whenever the finalize queue is non-empty —
+finals always get CPU priority over a partial preview.
+
+Concurrent sends: the `websockets` library documents `send()`/`recv()`
+as needing to be serialized per connection (concurrent calls raise
+ConcurrencyError) — since the consumer task, the recv loop's partial
+trigger, and a realtime-diarization pass can all send on the same
+connection, every outgoing frame goes through _safe_send, which holds
+a per-connection asyncio.Lock for the duration of the send.
 
 Realtime speaker diarization (beta): when armed (config.diarize truthy
 + a token available), every ~20s the connection runs the shared
@@ -35,7 +83,12 @@ pyannote pipeline over a rolling window of its own buffered audio in a
 background thread (asyncio.to_thread) and emits a `speaker_update`
 that back-labels already-sent `final` segments by `seg_id`. It never
 blocks the transcription/VAD path and degrades to `diar_status` on any
-failure — transcription itself is unaffected.
+failure — transcription itself is unaffected. The first pass that
+successfully loads the pipeline (diarize + token + pyannote all held)
+sends `diar_status: "ready"` once — arming itself (the config-time
+diar_armed gate) never confirms pyannote is actually importable, only
+an attempted load does, which is why this ack fires from the first
+background pass rather than at config time.
 """
 
 from __future__ import annotations
@@ -79,6 +132,13 @@ MAX_SEGMENT_MS = 25_000
 MAX_UPLOAD_BYTES = 500 * (1 << 20)  # job-API upload cap (protects /tmp)
 NOISE_EMA_ALPHA = 0.05  # smoothing factor for the noise-floor EMA
 PARTIAL_INTERVAL_S = 2.0
+# Protocol v2: a partial only ever transcribes this trailing window of
+# the current (possibly much longer) in-progress segment — keeps each
+# partial's transcription cost roughly constant regardless of how long
+# the segment has run, instead of re-transcribing the whole growing
+# buffer every tick (the CPU-starves-the-recv-loop bug this version
+# fixes; see module docstring).
+PARTIAL_TAIL_WINDOW_S = 10.0
 
 # VAD operates on ~32ms analysis frames (512 samples @ 16kHz) — small
 # enough for responsive onset/offset detection.
@@ -374,6 +434,21 @@ class SegmentLogEntry:
 
 
 @dataclass
+class FinalizeJob:
+    """One finalized-segment transcription job (protocol v2): enqueued
+    by _finalize_segment (recv loop, never awaits transcription) and
+    consumed strictly in order by the connection's one background
+    _consume_finalize_queue task (the only place _transcribe is ever
+    called for a final) — see module docstring."""
+
+    audio: np.ndarray
+    t0: float
+    t1: float
+    seg_id: int
+    speech_ms: float
+
+
+@dataclass
 class ConnectionState:
     """Per-connection VAD + buffering state, kept fully isolated so
     concurrent/sequential clients never share state."""
@@ -389,6 +464,28 @@ class ConnectionState:
     last_partial_at: float = 0.0
     leftover: bytes = b""  # undersized tail of a binary frame, held for next frame
     wav_writer: Optional[wave.Wave_write] = None
+    # Per-connection override of --partials (protocol v2 item e): None
+    # (default) falls back to WhisperServer.emit_partials — the server-
+    # wide CLI default; a connection's own config.partials (true/false)
+    # wins when present. See WhisperServer._partials_enabled.
+    partials_override: Optional[bool] = None
+
+    # ---- protocol v2: per-connection finalize queue + send lock ----
+    # Unbounded (maxsize=0) — put() on a finalize job never actually
+    # blocks the recv loop; the queue only ever provides backpressure
+    # against the CONSUMER falling behind, never against ingestion.
+    finalize_queue: "asyncio.Queue[Optional[FinalizeJob]]" = field(
+        default_factory=asyncio.Queue
+    )
+    # Guards every outgoing frame on this connection (_safe_send) — the
+    # consumer task, the recv loop's partial trigger, and a realtime-
+    # diarization pass can all send concurrently otherwise (see module
+    # docstring's "Concurrent sends" section).
+    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    # Single-flight guard for _emit_partial/_run_partial — a partial
+    # tick is skipped entirely (never queued up) while a previous one
+    # is still transcribing.
+    partial_in_flight: bool = False
 
     # ---- realtime speaker diarization (beta) ----
     diar_armed: bool = False  # config.diarize truthy AND a token is available
@@ -405,6 +502,7 @@ class ConnectionState:
     # only includes segments whose label actually changed.
     diar_last_sent: dict[int, str] = field(default_factory=dict)
     diar_status_sent: bool = False  # "unavailable"/"error" is sent at most once
+    diar_ready_sent: bool = False  # positive "ready" ack is sent at most once
 
     def elapsed(self) -> float:
         return time.monotonic() - self.connected_at
@@ -457,6 +555,11 @@ class WhisperServer:
         if self.save_audio_path:
             state.wav_writer = open_wav_writer(self.save_audio_path)
 
+        # Protocol v2: one background consumer per connection owns every
+        # call to _transcribe for finalized segments — see module
+        # docstring's "Finalize scheduling" section.
+        consumer_task = asyncio.create_task(self._consume_finalize_queue(ws, state))
+
         try:
             async for message in ws:
                 if isinstance(message, (bytes, bytearray)):
@@ -466,8 +569,16 @@ class WhisperServer:
         except ConnectionClosed:
             pass
         finally:
-            # Flush any in-progress speech before the client goes away.
+            # Flush any in-progress speech before the client goes away
+            # (a connection that closes WITHOUT ever sending {"type":
+            # "stop"} — e.g. a crashed tab — gets no "stopped" ack, and
+            # none is expected), then cancel the consumer cleanly.
             await self._finalize_segment(ws, state, force=True)
+            consumer_task.cancel()
+            try:
+                await consumer_task
+            except asyncio.CancelledError:
+                pass
             if state.wav_writer is not None:
                 state.wav_writer.close()
 
@@ -485,6 +596,15 @@ class WhisperServer:
             if isinstance(language, str) and language:
                 state.language = language
 
+            # Per-connection --partials override (protocol v2 item e):
+            # absent (no "partials" key, or a non-bool value) leaves
+            # partials_override at None, which _partials_enabled falls
+            # back to the server-wide default for — today's behavior
+            # for any client that never sends the field.
+            partials = msg.get("partials")
+            if isinstance(partials, bool):
+                state.partials_override = partials
+
             # Realtime speaker diarization (beta) gate: only arms when
             # the client asked for it AND a token is available (config's
             # own hf_token, or this process's --hf-token/$HF_TOKEN
@@ -498,6 +618,16 @@ class WhisperServer:
                 state.diar_armed = True
                 state.diar_hf_token = token
         elif msg_type == "stop":
+            # Force-finalize enqueues the tail job (if any); the sentinel
+            # (None) is what makes the consumer send {"type":"stopped"}
+            # once every job ahead of it — including that tail one — has
+            # actually been sent. See module docstring.
+            await self._finalize_segment(ws, state, force=True)
+            await state.finalize_queue.put(None)
+        elif msg_type == "flush":
+            # Pause support (protocol v2 item d): force-finalize WITHOUT
+            # closing anything and WITHOUT an ack — the connection keeps
+            # living; a paused client just stops sending audio frames.
             await self._finalize_segment(ws, state, force=True)
 
     async def _handle_binary(
@@ -543,10 +673,10 @@ class WhisperServer:
                 state.silence_ms = 0.0
 
                 if (
-                    self.emit_partials
+                    self._partials_enabled(state)
                     and state.elapsed() - state.last_partial_at >= PARTIAL_INTERVAL_S
                 ):
-                    await self._emit_partial(ws, state)
+                    self._emit_partial(ws, state)
                     state.last_partial_at = state.elapsed()
 
                 if state.speech_ms >= MAX_SEGMENT_MS:
@@ -566,17 +696,59 @@ class WhisperServer:
                     if state.silence_ms >= SILENCE_HANG_MS:
                         await self._finalize_segment(ws, state, force=False)
 
-    async def _emit_partial(self, ws: WebSocketServerProtocol, state: ConnectionState) -> None:
+    def _partials_enabled(self, state: ConnectionState) -> bool:
+        """Effective partials setting for this connection (protocol v2
+        item e): its own config.partials override if it sent one, else
+        this process's --partials/emit_partials default."""
+        return self.emit_partials if state.partials_override is None else state.partials_override
+
+    def _emit_partial(self, ws: WebSocketServerProtocol, state: ConnectionState) -> None:
+        """Trigger one partial transcription pass — called from the
+        recv loop, which must never itself await transcription (see
+        module docstring). Skips the tick entirely (never queues up a
+        backlog) when a partial is already in flight OR the finalize
+        queue is non-empty — finals always get CPU priority over a
+        partial preview."""
         if not state.speech_buf:
             return
-        audio = np.concatenate(state.speech_buf)
-        text = await asyncio.to_thread(self._transcribe, audio, state.language)
-        if text:
-            await self._safe_send(ws, {"type": "partial", "text": text})
+        if state.partial_in_flight or not state.finalize_queue.empty():
+            return
+        state.partial_in_flight = True
+        asyncio.create_task(self._run_partial(ws, state))
+
+    async def _run_partial(self, ws: WebSocketServerProtocol, state: ConnectionState) -> None:
+        """Background task body for one partial pass (see
+        _emit_partial). Tail-window only (PARTIAL_TAIL_WINDOW_S):
+        transcribing the ENTIRE growing speech_buf every tick is what
+        let a long continuous-speech segment's partial cost outgrow
+        PARTIAL_INTERVAL_S and starve the recv loop — the tail window
+        keeps each partial's cost roughly constant regardless of how
+        long the current segment has been running."""
+        try:
+            if not state.speech_buf:
+                return  # finalized between task creation and this task running
+            audio = np.concatenate(state.speech_buf)
+            tail_samples = int(PARTIAL_TAIL_WINDOW_S * SAMPLE_RATE)
+            if audio.shape[0] > tail_samples:
+                audio = audio[-tail_samples:]
+            try:
+                text = await asyncio.to_thread(self._transcribe, audio, state.language)
+            except Exception as exc:  # noqa: BLE001 - a partial preview is best-effort;
+                # never worth tearing down the connection over.
+                print(f"[whisper_server] partial transcription failed: {exc}")
+                return
+            if text:
+                await self._safe_send(ws, state, {"type": "partial", "text": text})
+        finally:
+            state.partial_in_flight = False
 
     async def _finalize_segment(
         self, ws: WebSocketServerProtocol, state: ConnectionState, force: bool
     ) -> None:
+        """Protocol v2: enqueue-only — never calls _transcribe itself
+        (see _consume_finalize_queue, the only caller). Safe to call
+        from the recv loop without stalling it: `put()` on the
+        connection's unbounded finalize_queue never blocks."""
         if not state.in_speech or not state.speech_buf:
             if force:
                 state.in_speech = False
@@ -591,8 +763,9 @@ class WhisperServer:
 
         audio = np.concatenate(state.speech_buf)
 
-        # Reset VAD state before the (potentially slow) transcription
-        # call so incoming frames aren't dropped while we transcribe.
+        # Reset VAD state before enqueuing so incoming frames are never
+        # dropped/misattributed while the (now background, but still
+        # good practice to reset promptly) transcription eventually runs.
         state.in_speech = False
         state.speech_buf = []
         state.silence_ms = 0.0
@@ -600,26 +773,71 @@ class WhisperServer:
         state.speech_started_at = None
 
         if speech_ms < MIN_SPEECH_MS:
-            return  # too short — likely a blip, discard
+            return  # too short — likely a blip, discard; no seg_id consumed
 
-        text = await asyncio.to_thread(self._transcribe, audio, state.language)
-        if text:
-            seg_id = state.next_seg_id
-            state.next_seg_id += 1
-            state.segment_log.append(SegmentLogEntry(seg_id=seg_id, start=t0, end=t1))
+        # seg_id assigned HERE, at enqueue time — monotonic per
+        # connection regardless of whether this job's eventual
+        # transcription comes back empty (a gap is fine; see module
+        # docstring — diarization maps purely by seg_id, and the
+        # queue's FIFO order is what keeps `final` send order correct,
+        # not the seg_id values themselves).
+        seg_id = state.next_seg_id
+        state.next_seg_id += 1
+        await state.finalize_queue.put(
+            FinalizeJob(audio=audio, t0=t0, t1=t1, seg_id=seg_id, speech_ms=speech_ms)
+        )
 
+    async def _consume_finalize_queue(
+        self, ws: WebSocketServerProtocol, state: ConnectionState
+    ) -> None:
+        """The ONLY coroutine that ever calls _transcribe for a
+        finalized segment — one per connection, started by handle() and
+        cancelled in its finally block. Processes FinalizeJob entries
+        strictly in enqueue (FIFO) order, so `final` send order always
+        matches seg_id order. A `None` entry is the stop-drain sentinel
+        (see _handle_text's "stop" branch): reaching it sends
+        {"type": "stopped"} and ends the loop — a connection that never
+        sends "stop" simply gets cancelled instead, with no ack, which
+        is correct (none was promised). Calls task_done() for every
+        get() (real job or sentinel alike) — standard Queue hygiene,
+        and what lets a caller `await state.finalize_queue.join()` to
+        deterministically wait for full drainage (used by this file's
+        own tests; a flush has no ack to await otherwise)."""
+        while True:
+            job = await state.finalize_queue.get()
+            if job is None:
+                await self._safe_send(ws, state, {"type": "stopped"})
+                state.finalize_queue.task_done()
+                return
+            try:
+                text = await asyncio.to_thread(self._transcribe, job.audio, state.language)
+            except Exception as exc:  # noqa: BLE001 - one bad segment must never
+                # permanently stop every later final on this connection —
+                # the whole point of decoupling this consumer from the
+                # recv loop is long-meeting robustness (see module
+                # docstring). Logged, not surfaced to the client.
+                print(f"[whisper_server] transcription failed for seg_id={job.seg_id}: {exc}")
+                state.finalize_queue.task_done()
+                continue
+            if not text:
+                state.finalize_queue.task_done()
+                continue
+            state.segment_log.append(
+                SegmentLogEntry(seg_id=job.seg_id, start=job.t0, end=job.t1)
+            )
             await self._safe_send(
                 ws,
+                state,
                 {
                     "type": "final",
                     "text": text,
-                    "start": t0,
-                    "end": t1,
-                    "seg_id": seg_id,
+                    "start": job.t0,
+                    "end": job.t1,
+                    "seg_id": job.seg_id,
                 },
             )
-
             self._maybe_trigger_realtime_diar(ws, state)
+            state.finalize_queue.task_done()
 
     def _maybe_trigger_realtime_diar(
         self, ws: WebSocketServerProtocol, state: ConnectionState
@@ -658,6 +876,7 @@ class WhisperServer:
                     state.diar_status_sent = True
                     await self._safe_send(
                         ws,
+                        state,
                         {
                             "type": "diar_status",
                             "state": "unavailable",
@@ -665,6 +884,17 @@ class WhisperServer:
                         },
                     )
                 return
+
+            # Positive ack (protocol v2 item f): the pipeline is
+            # confirmed loaded — diarize + token + pyannote-importable
+            # all held — so tell the client arming actually succeeded,
+            # once per connection. Fires HERE (not at config time)
+            # because pyannote importability is only ever established
+            # by actually loading it, which happens lazily on this
+            # first background pass — see module docstring.
+            if not state.diar_ready_sent:
+                state.diar_ready_sent = True
+                await self._safe_send(ws, state, {"type": "diar_status", "state": "ready"})
 
             # Snapshot + trim the rolling window under the connection's
             # own async context (no lock needed — this coroutine and
@@ -725,6 +955,7 @@ class WhisperServer:
                 state.diar_gen += 1
                 await self._safe_send(
                     ws,
+                    state,
                     {
                         "type": "speaker_update",
                         "gen": state.diar_gen,
@@ -738,6 +969,7 @@ class WhisperServer:
                 state.diar_status_sent = True
                 await self._safe_send(
                     ws,
+                    state,
                     {
                         "type": "diar_status",
                         "state": "error",
@@ -790,9 +1022,19 @@ class WhisperServer:
         return " ".join(seg.text.strip() for seg in segments).strip()
 
     @staticmethod
-    async def _safe_send(ws: WebSocketServerProtocol, payload: dict) -> None:
+    async def _safe_send(
+        ws: WebSocketServerProtocol, state: ConnectionState, payload: dict
+    ) -> None:
+        """Send one JSON frame, serialized against every other sender on
+        this SAME connection (the consumer task, the recv loop's partial
+        trigger, and a realtime-diarization pass can all reach this) —
+        `websockets` documents concurrent send()/recv() on one
+        connection as raising ConcurrencyError; reads and writes may
+        overlap each other, but writes must be serialized against
+        writes. See module docstring's "Concurrent sends" section."""
         try:
-            await ws.send(json.dumps(payload))
+            async with state.send_lock:
+                await ws.send(json.dumps(payload))
         except ConnectionClosed:
             pass
 
@@ -1684,8 +1926,13 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         default=False,
         help=(
-            "启用滚动中间转录（每 ~2 秒一次）/ enable rolling partial "
-            "transcriptions every ~2s during active speech (default: off)"
+            "启用滚动中间转录（每 ~2 秒一次）的服务端默认值——现由 App 内设置"
+            "「实时转录预览」按连接控制（config 消息的 partials 字段），本参数"
+            "仅在旧版 App 未发送该字段时生效 / server-wide default for rolling "
+            "partial transcriptions every ~2s during active speech; the app's "
+            "own 实时转录预览 setting now overrides this per connection (config "
+            "message's partials field) — this flag only matters as the "
+            "fallback for an old app build that never sends it (default: off)"
         ),
     )
     parser.add_argument(
