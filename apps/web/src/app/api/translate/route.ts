@@ -2,15 +2,9 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import * as z from "zod";
-import {
-  callJsonWithFallback,
-  mapLlmError,
-  pickModel,
-  resolveLlmConfig,
-  TranslateSegmentsSchema,
-} from "@/lib/llm/anthropic";
+import { mapLlmError, pickModel, resolveLlmConfig, withFallback } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
-import { buildTranslateSystemPrompt, buildTranslateUserMessage } from "@jargonslayer/core/llm/prompts";
+import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "@/lib/llm/tasks/translate";
 import type { ApiErrorBody, TranslateResponse } from "@jargonslayer/core/types";
 
 const SegmentSchema = z.object({
@@ -37,18 +31,6 @@ const BodySchema = z.object({
 
 function errorBody(body: ApiErrorBody, status: number) {
   return NextResponse.json(body, { status });
-}
-
-/** Drop any model-returned item whose id wasn't in the request — a
- *  missing segment in the model output is simply omitted (client
- *  treats it as failed-soft, see translate/queue.ts). */
-function postFilter(
-  res: TranslateResponse,
-  requestedIds: Set<string>,
-): TranslateResponse {
-  return {
-    translations: res.translations.filter((t) => requestedIds.has(t.id)),
-  };
 }
 
 export async function POST(req: Request) {
@@ -85,7 +67,7 @@ export async function POST(req: Request) {
     // server-side allowlist when the shared key serves the request;
     // BYOK unchanged. Absent/"" falls through to the env-forced model
     // exactly as before #56 existed.
-    const chosenModel = pickModel(cfg, model, "claude-haiku-4-5");
+    const chosenModel = pickModel(cfg, model, DEFAULT_TRANSLATE_MODEL);
     // Reasoning-off is a MINIMAX-specific translate optimization
     // (measured 2026-07-06: 4.0s → 1.7s, ~1/4 cost) — other models
     // hard-fail on the param upstream (deepseek-v4-flash 502'd through
@@ -97,26 +79,23 @@ export async function POST(req: Request) {
       cfg.isServerKey && cfg.extraBody && chosenModel.startsWith("minimax/")
         ? { ...cfg.extraBody, reasoning: { enabled: false } }
         : cfg.extraBody;
-    const raw = await callJsonWithFallback(
+
+    // Prompt assembly + provider call + id-filter now live in the
+    // shared tasks/translate.ts module (v0.4 S2) — see detect/route.ts's
+    // identical comment.
+    const filtered = await runTranslateTask(
       {
         apiKey: cfg.apiKey,
         model: chosenModel,
-        system: buildTranslateSystemPrompt(lang),
-        user: buildTranslateUserMessage(segments),
-        schema: TranslateSegmentsSchema,
-        maxTokens: 2000,
         provider: cfg.provider,
         baseUrl: cfg.baseUrl,
-        // The hosted model wraps output in ```json fences and/or a bare
-        // top-level array; extractJsonValue + arrayKey already tolerate
-        // both (see anthropic.ts).
-        arrayKey: "translations",
         extraBody,
+        segments,
+        lang,
       },
-      cfg.fallbackModel,
+      withFallback(cfg.fallbackModel),
     );
 
-    const filtered = postFilter(raw, new Set(segments.map((s) => s.id)));
     return NextResponse.json(filtered satisfies TranslateResponse);
   } catch (err) {
     const mapped = mapLlmError(err);
