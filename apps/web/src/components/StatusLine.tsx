@@ -7,6 +7,7 @@
 // dragon lives (overflow-visible so it stands taller than the bar).
 
 import { useApp } from "@/lib/store";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
 
@@ -31,6 +32,7 @@ export default function StatusLine() {
   const engine = useApp((s) => s.settings.engine);
   const sttEngineMode = useApp((s) => s.sttEngineMode);
   const aiDetect = useApp((s) => s.settings.aiDetect);
+  const sidecarMode = useApp((s) => s.settings.sidecarMode);
   const sidecarUp = useApp((s) => s.sidecarUp);
   const updateSettings = useApp((s) => s.updateSettings);
   const setDetectMode = useApp((s) => s.setDetectMode);
@@ -86,9 +88,18 @@ export default function StatusLine() {
   // SettingsDialog's 转录引擎 status line, lib/stt/sidecarHealth.ts)
   // failed. v1 deliberately stays tooltip-only — no new always-on chip
   // in an already-crowded status bar; see setSidecarUp's own doc.
+  //
+  // v0.4 S3 chunk 7: on a desktop build, the wording additionally
+  // reflects 托管模式 (settings.sidecarMode) — 本地服务·托管 (the app
+  // itself manages the sidecar, see lib/desktop/bootstrap.ts) vs
+  // 本地服务·外部 (today's manual-install behavior) — reusing this same
+  // sidecarUp plumbing, no new probe/state added. Web build copy is
+  // byte-identical to before (sidecarMode is meaningless there).
   const sidecarDownHint =
     (engine === "whisper" || engine === "tabaudio") && status === "idle" && sidecarUp === false
-      ? "本地 Whisper sidecar 未连接——见 设置 → 转录引擎"
+      ? IS_DESKTOP
+        ? `本地服务·${sidecarMode === "managed" ? "托管" : "外部"}未连接——见 设置 → 转录引擎`
+        : "本地 Whisper sidecar 未连接——见 设置 → 转录引擎"
       : undefined;
 
   const count = cards.length + terms.length;

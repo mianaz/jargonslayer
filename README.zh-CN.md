@@ -154,7 +154,22 @@ http://127.0.0.1:8766 录音上传任务 API — PUT /transcribe, POST /ingest-u
 - **`npm start` 报错**，提示 "Could not find a production build in the '.next' directory" —— 先跑一遍 `npm run build`；`start` 只负责启动已经打包好的产物。
 - **端口被占用** —— 给 `whisper_server.py` 传 `--port <n>`，然后去 设置 → 转录引擎 → Whisper 地址 里改成一致的地址。
 
-> **后续**：打包版桌面应用（v0.4 规划中）会用一键安装 + 首次启动向导取代上面这一整套手动步骤，不用碰终端。这份指南说的是现在的手动安装方式。
+> **桌面版**：已经有早期开发版可以跑了，见下面的[桌面版（开发中）](#桌面版开发中)。免终端的正式安装包会在 v0.4 后续（S8）发布。
+
+### 桌面版（开发中）
+
+原生桌面外壳（Tauri）把同一个应用包起来，本地 Whisper sidecar 由应用自己托管——上面第二步的 `pip`/终端操作都不用手动做了。目前还在开发中（v0.4 S3），走的是开发者路线，还不是签名安装包。
+
+```bash
+npm ci
+npm run dev:desktop
+```
+
+第一次打开会弹出一个全屏向导，先征求同意（点「开始安装」之前什么都不会下载），然后把独立的 Python 运行环境、faster-whisper、一个较小的 Whisper 模型全部装进应用自己的数据目录——不碰系统 Python，把那个目录删掉就是干净卸载：
+
+- macOS：`~/Library/Application Support/com.bioinfospace.jargonslayer/`（Python/venv、模型缓存、安装记录）和 `~/Library/Logs/com.bioinfospace.jargonslayer/whisper_server.log`
+
+这个版本的 设置 → 转录引擎 里会多一个「托管模式」开关：**由应用管理**（默认——应用自己安装/启动/异常退出后自动重启 sidecar，Whisper 地址固定）或**外部**——照旧用上面第二步自己启动的 sidecar，跟普通网页版一样。
 
 ## 配置 API Key（解锁 AI 检测与会后报告）
 
