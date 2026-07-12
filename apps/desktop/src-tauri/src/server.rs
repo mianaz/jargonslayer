@@ -22,7 +22,7 @@ use crate::uv::{emit_uv_log, ProcessResult};
 /// Whisper model sizes sidecar/whisper_server.py's own `--model` argparse
 /// choices accept (parse_args' `choices=[...]`) — kept in lock-step with
 /// that list, not the full faster-whisper model zoo.
-const ALLOWED_MODELS: [&str; 5] = ["tiny", "base", "small", "medium", "large-v3"];
+const ALLOWED_MODELS: [&str; 6] = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 
 pub fn validate_model(model: &str) -> Result<(), String> {
     if ALLOWED_MODELS.contains(&model) {

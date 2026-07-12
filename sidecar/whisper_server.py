@@ -1986,7 +1986,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="small",
-        choices=["tiny", "base", "small", "medium", "large-v3"],
+        choices=["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
         help="Whisper 模型大小 / model size (default: small)",
     )
     parser.add_argument(

@@ -99,7 +99,7 @@ function buildMarker(ctx: ProvisionContext): Omit<ProvisionMarker, "ts"> {
 // A cheap shape guard ONLY — NOT the deliberately-avoided pin
 // comparison against ctx.model (see handleCheckResult below: a
 // marker's OWN model is meant to win over ctx's fixed default).
-const ALLOWED_MARKER_MODELS: readonly string[] = ["tiny", "base", "small", "medium", "large-v3"];
+const ALLOWED_MARKER_MODELS: readonly string[] = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

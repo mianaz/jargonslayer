@@ -100,6 +100,14 @@ describe("parseMarker", () => {
       ts: "2026-07-01T00:00:00.000Z",
     });
   });
+
+  it("accepts large-v3-turbo (added S4 chunk 0) as a valid marker model", () => {
+    expect(
+      parseMarker(
+        JSON.stringify({ schema: MARKER_SCHEMA_VERSION, model: "large-v3-turbo", py: "3.12", deps: "x", ts: "t" }),
+      ),
+    ).toEqual({ schema: MARKER_SCHEMA_VERSION, model: "large-v3-turbo", py: "3.12", deps: "x", ts: "t" });
+  });
 });
 
 describe("transition — CHECK_RESULT", () => {
