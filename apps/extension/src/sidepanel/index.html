@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <title>JargonSlayer Lite</title>
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="js-header">
+        <h1 class="js-title">JargonSlayer <span class="js-tag">Lite</span></h1>
+        <p class="js-sub">粘贴英文商务文本，秒查黑话与术语</p>
+      </header>
+
+      <section class="js-input-section">
+        <textarea
+          id="js-input"
+          class="js-input"
+          rows="6"
+          placeholder="Paste English text here… e.g. &quot;Let's circle back on the ARR numbers before we table this.&quot;"
+        ></textarea>
+        <div class="js-row">
+          <button id="js-scan-btn" type="button" class="js-btn js-btn-primary">检测 · Scan</button>
+          <span id="js-scan-status" class="js-status"></span>
+        </div>
+      </section>
+
+      <section id="js-translate-section" class="js-translate-section" hidden>
+        <div class="js-row">
+          <button id="js-translate-btn" type="button" class="js-btn">翻译 · Translate</button>
+          <span id="js-translate-status" class="js-status"></span>
+        </div>
+        <p id="js-translate-output" class="js-translate-output" hidden></p>
+      </section>
+
+      <section id="js-results" class="js-results">
+        <p id="js-empty-hint" class="js-empty-hint">检测结果会显示在这里。</p>
+      </section>
+
+      <footer class="js-footer">
+        <span>内置词典 · 428/11 packs</span>
+        <span class="js-footer-sep">·</span>
+        <span>本地存储，不上传</span>
+      </footer>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

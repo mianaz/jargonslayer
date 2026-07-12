@@ -1,0 +1,271 @@
+/* Minimal terminal-flavored styling consistent with JargonSlayer's
+   identity — monospace, dark panel, 0px corners everywhere — WITHOUT
+   porting apps/web's full CSS-variable theme engine (lib/theme/*,
+   Tailwind tokens, JetBrains Mono self-hosting). Hex values below are
+   copied 1:1 from apps/web/src/app/globals.css's terminal theme
+   (--ink/--panel/--edge/--fg/--mut/--lab-*) so the two surfaces read
+   as the same product; the expression-card category-color-bar +
+   term-card cyan-bar convention mirrors apps/web/src/components/
+   CardsPanel.tsx's CATEGORY_COLOR/TERM_COLOR maps exactly. Font stack
+   drops the self-hosted JetBrains Mono variable and keeps only its
+   system-font fallback chain (no network font fetch inside an
+   extension). See the S6 report for the full reasoning. */
+
+:root {
+  --ink: #0a0a0a;
+  --panel: #121212;
+  --panel2: #1a1a1a;
+  --panel3: #202020;
+  --edge: #262626;
+  --edge2: #333333;
+  --fg: #ededed;
+  --mut: #9a9a9a;
+  --mut2: #8c8c8c;
+  --lab-red: #ff5f56;
+  --lab-orange: #ffaa44;
+  --lab-yellow: #f7d51d;
+  --lab-green: #4ade80;
+  --lab-purple: #c084fc;
+  --lab-cyan: #22d3ee;
+
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0 !important; /* sharp edges everywhere, no rounded classes */
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--ink);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  min-height: 100vh;
+}
+
+.js-header {
+  border-bottom: 1px solid var(--edge);
+  padding-bottom: 10px;
+}
+
+.js-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.js-tag {
+  color: var(--lab-green);
+  font-weight: 400;
+}
+
+.js-sub {
+  margin: 4px 0 0;
+  color: var(--mut);
+  font-size: 12px;
+}
+
+.js-input-section,
+.js-translate-section,
+.js-results {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.js-input {
+  width: 100%;
+  resize: vertical;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  padding: 8px;
+}
+
+.js-input:focus-visible {
+  outline: 1px solid var(--lab-cyan);
+  outline-offset: -1px;
+}
+
+.js-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.js-btn {
+  background: var(--panel2);
+  border: 1px solid var(--edge2);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.js-btn:hover:not(:disabled) {
+  background: var(--panel3);
+  border-color: var(--mut);
+}
+
+.js-btn:disabled {
+  color: var(--mut2);
+  cursor: default;
+}
+
+.js-btn-primary {
+  border-color: var(--lab-green);
+  color: var(--lab-green);
+}
+
+.js-btn-primary:hover:not(:disabled) {
+  background: var(--panel3);
+}
+
+.js-status {
+  color: var(--mut);
+  font-size: 11.5px;
+}
+
+.js-translate-output {
+  margin: 0;
+  background: var(--panel2);
+  border-left: 2px solid var(--lab-cyan);
+  padding: 8px;
+  font-size: 12.5px;
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+
+.js-empty-hint {
+  color: var(--mut2);
+  font-size: 12px;
+}
+
+/* ---- cards ---- */
+
+.js-card {
+  background: var(--panel);
+  border-bottom: 1px solid var(--edge);
+  border-left: 2px solid var(--mut);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.js-card:hover {
+  background: var(--panel3);
+}
+
+/* category color bar — mirrors apps/web CardsPanel.tsx's
+   CATEGORY_COLOR map 1:1 (idiom/slang/phrase/metaphor/indirect/other),
+   plus a uniform cyan bar for every term card (TERM_COLOR there). */
+.js-card--idiom {
+  border-left-color: var(--lab-orange);
+}
+.js-card--slang {
+  border-left-color: var(--lab-red);
+}
+.js-card--phrase {
+  border-left-color: var(--lab-green);
+}
+.js-card--metaphor {
+  border-left-color: var(--lab-purple);
+}
+.js-card--indirect {
+  border-left-color: var(--lab-yellow);
+}
+.js-card--other {
+  border-left-color: var(--mut);
+}
+.js-card--term {
+  border-left-color: var(--lab-cyan);
+}
+
+.js-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.js-card-headword {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.js-card-badge {
+  border: 1px solid var(--edge);
+  padding: 1px 6px;
+  font-size: 10px;
+  color: var(--mut);
+  white-space: nowrap;
+}
+
+.js-card-gloss {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+.js-card-sentence {
+  margin: 0;
+  border-left: 2px solid var(--edge);
+  background: var(--panel2);
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--mut);
+  font-style: normal;
+}
+
+.js-save-btn {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--edge2);
+  color: var(--mut);
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.js-save-btn:hover:not(:disabled) {
+  border-color: var(--lab-green);
+  color: var(--lab-green);
+}
+
+.js-save-btn:disabled {
+  border-color: var(--edge);
+  color: var(--lab-green);
+  cursor: default;
+}
+
+.js-footer {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+  color: var(--mut2);
+  font-size: 10.5px;
+  display: flex;
+  gap: 6px;
+}
+
+.js-footer-sep {
+  color: var(--edge2);
+}
