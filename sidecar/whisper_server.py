@@ -21,9 +21,19 @@ Protocol v2 (per connection):
     - text frame: JSON {"type": "stop"} — force-finalizes any
       in-progress speech, then drains: once every already-enqueued
       final (including the just-forced tail one, if any) has actually
-      been sent, the server sends {"type": "stopped"}. The client is
-      expected to keep its socket open and `onmessage` live until it
-      sees "stopped" (or its own timeout) before closing — see
+      been sent, the server sends {"type": "stopped"}. Post-stop
+      diarization linger: if realtime diarization is armed and has any
+      buffered audio, the server then runs ONE final diarization pass
+      over it (bypassing the normal DIAR_INTERVAL_S spacing — see
+      "Realtime speaker diarization" below) and sends its
+      `speaker_update`; either way, the server then closes the
+      connection itself — the client no longer has to be the one to
+      close. The client is expected to keep its socket open and
+      `onmessage` live at least until it sees "stopped" (or its own
+      timeout), and — when diarization is on — a bit longer still (its
+      own POST_STOP_LINGER_MS-bounded "linger", only listening for a
+      trailing `speaker_update` by then) until the server's own close
+      arrives or that linger itself times out — see
       apps/web/src/lib/stt/wsTransport.ts's stop(). Idempotent (a
       second "stop" never enqueues a second sentinel), and once
       accepted every later frame on the connection — binary PCM
@@ -94,6 +104,19 @@ sends `diar_status: "ready"` once — arming itself (the config-time
 diar_armed gate) never confirms pyannote is actually importable, only
 an attempted load does, which is why this ack fires from the first
 background pass rather than at config time.
+
+Post-stop diarization linger: the ~20s periodic cadence above means the
+last few seconds of a meeting can still be unlabeled by the time the
+user ends it. See "stop" above and _consume_finalize_queue's
+stop-sentinel branch (_finalize_diar_then_close): once the drain-ack
+("stopped") is sent, if diarization is armed and has any buffered
+audio, one MORE pass runs — bypassing DIAR_INTERVAL_S (calling
+run_realtime_diar directly, rather than through
+_maybe_trigger_realtime_diar, skips that gate entirely) — before the
+server closes the connection. If a periodic pass is already in flight
+at that point, it's awaited first (its window covers strictly less
+audio than what's buffered by now) and this final pass still runs
+afterward rather than reusing its result.
 
 Known limits (codex v2 review finding F8): the finalize queue's
 FIFO-with-priority-over-partials scheduling (see "Finalize scheduling"
@@ -530,6 +553,12 @@ class ConnectionState:
     segment_log: list[SegmentLogEntry] = field(default_factory=list)
     last_diar_at: float = float("-inf")
     diar_in_flight: bool = False
+    # The background task for an in-flight periodic pass (see
+    # _maybe_trigger_realtime_diar) — stashed so the post-stop final
+    # pass (_finalize_diar_then_close) can await it finishing before
+    # running its own, rather than racing it. None whenever no
+    # periodic pass is currently in flight.
+    diar_task: "Optional[asyncio.Task[None]]" = None
     diar_gen: int = 0  # monotonic counter for outgoing speaker_update.gen
     diar_registry: dict[str, list[tuple[float, float]]] = field(default_factory=dict)
     # seg_id -> last speaker label sent to the client, so speaker_update
@@ -839,18 +868,21 @@ class WhisperServer:
         strictly in enqueue (FIFO) order, so `final` send order always
         matches seg_id order. A `None` entry is the stop-drain sentinel
         (see _handle_text's "stop" branch): reaching it sends
-        {"type": "stopped"} and ends the loop — a connection that never
-        sends "stop" simply gets cancelled instead, with no ack, which
-        is correct (none was promised). Calls task_done() for every
-        get() (real job or sentinel alike) — standard Queue hygiene,
-        and what lets a caller `await state.finalize_queue.join()` to
-        deterministically wait for full drainage (used by this file's
-        own tests; a flush has no ack to await otherwise)."""
+        {"type": "stopped"}, runs the post-stop diarization final pass
+        if applicable and closes the connection (see
+        _finalize_diar_then_close), then ends the loop — a connection
+        that never sends "stop" simply gets cancelled instead, with no
+        ack, which is correct (none was promised). Calls task_done()
+        for every get() (real job or sentinel alike) — standard Queue
+        hygiene, and what lets a caller `await state.finalize_queue.
+        join()` to deterministically wait for full drainage (used by
+        this file's own tests; a flush has no ack to await otherwise)."""
         while True:
             job = await state.finalize_queue.get()
             if job is None:
                 await self._safe_send(ws, state, {"type": "stopped"})
                 state.finalize_queue.task_done()
+                await self._finalize_diar_then_close(ws, state)
                 return
             try:
                 text = await asyncio.to_thread(self._transcribe, job.audio, state.language)
@@ -890,13 +922,45 @@ class WhisperServer:
         this connection, kick off a background pass. Single-flight per
         connection via `diar_in_flight` — never overlaps a running pass
         with a new one. Fire-and-forget: the task manages its own
-        completion/error reporting (see run_realtime_diar)."""
+        completion/error reporting (see run_realtime_diar). The task is
+        stashed on `state.diar_task` so a post-stop final pass
+        (_finalize_diar_then_close) can await this one finishing first
+        instead of racing it."""
         if not state.diar_armed or state.diar_in_flight:
             return
         if state.elapsed() - state.last_diar_at < DIAR_INTERVAL_S:
             return
         state.diar_in_flight = True
-        asyncio.create_task(self.run_realtime_diar(ws, state))
+        state.diar_task = asyncio.create_task(self.run_realtime_diar(ws, state))
+
+    async def _finalize_diar_then_close(
+        self, ws: WebSocketServerProtocol, state: ConnectionState
+    ) -> None:
+        """Post-stop diarization linger (server side): called exactly
+        once, right after the drain-ack ("stopped") for a "stop" has
+        been sent (see _consume_finalize_queue). If realtime
+        diarization is armed and has ever buffered any audio, run ONE
+        final pass over the current rolling window before closing —
+        calling run_realtime_diar directly (never through
+        _maybe_trigger_realtime_diar) bypasses DIAR_INTERVAL_S's normal
+        spacing gate entirely, since that gate only lives in the
+        trigger function, not in run_realtime_diar itself. If a
+        periodic pass is already in flight when "stopped" is reached,
+        its window covers strictly LESS audio than what's buffered by
+        now (it started earlier), so it's awaited first and this final
+        pass still runs afterward on top of it, rather than reusing its
+        (incomplete) result. Either way the connection is then closed
+        server-side — see module docstring's "stop" bullet; the
+        client's own post-stop linger (wsTransport.ts's
+        POST_STOP_LINGER_MS) exists mainly as a fallback for this close
+        never arriving. Not armed, or armed but nothing was ever
+        buffered: close right away, no pass, no diar_status."""
+        if state.diar_armed and state.diar_audio_buf:
+            if state.diar_in_flight and state.diar_task is not None:
+                await state.diar_task
+            state.diar_in_flight = True
+            await self.run_realtime_diar(ws, state)
+        await ws.close()
 
     async def run_realtime_diar(
         self, ws: WebSocketServerProtocol, state: ConnectionState
@@ -907,7 +971,11 @@ class WhisperServer:
         match its clusters against the connection's speaker registry,
         back-assign segment_log entries, and send a `speaker_update`
         with only the segments whose label changed. Single-flight per
-        connection (see _maybe_trigger_realtime_diar); on any exception
+        connection when triggered periodically (see
+        _maybe_trigger_realtime_diar, which never overlaps a running
+        pass with a new one via `diar_in_flight`); also called once
+        more directly (bypassing DIAR_INTERVAL_S) by the post-stop
+        final pass, see _finalize_diar_then_close. On any exception
         sends `diar_status` (state=error) once and backs off 60s —
         never crashes the connection or affects transcription."""
         state.last_diar_at = state.elapsed()

@@ -25,8 +25,9 @@ Run:
     imported, since every test stubs `_transcribe` directly.)
 
 Covers (protocol v2, see whisper_server.py's own module docstring):
-  - stop -> tail-final (if any) THEN stopped, in that exact order
-  - stop with nothing pending sends only stopped, no final
+  - stop -> tail-final (if any) THEN stopped THEN the connection
+    closes, in that exact order
+  - stop with nothing pending sends only stopped (then closes), no final
   - flush finalizes without any ack, and the connection stays usable
     for a later segment afterward (seg_id keeps advancing, not reset)
   - config.partials overrides the server-wide --partials default, both
@@ -39,6 +40,12 @@ Covers (protocol v2, see whisper_server.py's own module docstring):
     transcription in between comes back empty (an intentional gap)
   - the finalize queue's single sequential consumer preserves send
     order across several enqueued segments
+  - post-stop diarization linger (_finalize_diar_then_close): armed +
+    buffered audio runs one final pass (order: final, stopped,
+    speaker_update, closed); not armed, or armed with nothing ever
+    buffered, closes right after stopped with no pass; an already-
+    in-flight periodic pass is awaited before the final pass itself
+    runs (never overlapped/skipped)
 """
 
 from __future__ import annotations
@@ -83,13 +90,22 @@ class FakeWs:
     socket, no ConnectionClosed simulation: none of the tests below
     need it (that swallow-on-close behavior is untouched by protocol
     v2, and is already exercised implicitly by every send() call
-    succeeding against this fake)."""
+    succeeding against this fake). close() is recorded onto the SAME
+    `sent` list (as a synthetic {"type": "closed"} entry, close_calls
+    counts separately) so a test can assert send/close ORDERING with
+    the exact same `[m["type"] for m in ws.sent] == [...]` idiom used
+    for real frames below — see the post-stop diarization tests."""
 
     def __init__(self) -> None:
         self.sent: list[dict] = []
+        self.close_calls = 0
 
     async def send(self, raw: str) -> None:
         self.sent.append(json.loads(raw))
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        self.sent.append({"type": "closed"})
 
 
 def make_server(emit_partials: bool = False, stub_text: str = "text") -> WhisperServer:
@@ -176,8 +192,8 @@ async def test_stop_drains_tail_final_then_stopped() -> None:
         await asyncio.wait_for(consumer, timeout=2.0)
 
         check(
-            "stop: client sees the tail final THEN stopped, in that exact order",
-            [m["type"] for m in ws.sent] == ["final", "stopped"],
+            "stop: client sees the tail final THEN stopped THEN the connection closes, in that exact order",
+            [m["type"] for m in ws.sent] == ["final", "stopped", "closed"],
         )
         check("stop: the tail final carries seg_id 0", ws.sent[0].get("seg_id") == 0)
         check("stop: the tail final's text is the transcribed text", ws.sent[0].get("text") == "final tail text")
@@ -195,8 +211,8 @@ async def test_stop_with_no_pending_speech_sends_only_stopped() -> None:
         await server._handle_text(ws, state, json.dumps({"type": "stop"}))
         await asyncio.wait_for(consumer, timeout=2.0)
         check(
-            "stop with nothing pending: only 'stopped' is sent, no final",
-            [m["type"] for m in ws.sent] == ["stopped"],
+            "stop with nothing pending: only 'stopped' is sent (then closed), no final",
+            [m["type"] for m in ws.sent] == ["stopped", "closed"],
         )
     finally:
         await stop_consumer(consumer)
@@ -245,8 +261,8 @@ async def test_double_stop_enqueues_only_one_sentinel() -> None:
     try:
         await asyncio.wait_for(consumer, timeout=2.0)
         check(
-            "double stop: exactly one 'stopped' ack is ever sent, and the consumer exits cleanly",
-            [m["type"] for m in ws.sent] == ["stopped"],
+            "double stop: exactly one 'stopped' ack is ever sent, the connection closes once, and the consumer exits cleanly",
+            [m["type"] for m in ws.sent] == ["stopped", "closed"],
         )
     finally:
         await stop_consumer(consumer)
@@ -273,6 +289,185 @@ async def test_config_and_flush_after_stop_accepted_are_ignored() -> None:
         "config after stop_accepted: ignored — language override never applied",
         state.language == "en",
     )
+
+
+# =================================================================
+# post-stop diarization linger (_finalize_diar_then_close): after
+# "stopped", one more diarization pass runs (bypassing DIAR_INTERVAL_S)
+# if armed + buffered, then the server closes the connection itself.
+# run_realtime_diar is stubbed on the SERVER INSTANCE (same "bypasses
+# the descriptor protocol" trick make_server() already uses for
+# _transcribe — see its own doc comment) so these tests exercise only
+# the NEW orchestration in _finalize_diar_then_close/
+# _maybe_trigger_realtime_diar, not the (unchanged, pyannote-dependent)
+# internals of run_realtime_diar itself.
+# =================================================================
+
+
+async def test_stop_with_diar_armed_runs_final_pass_then_closes() -> None:
+    server = make_server(stub_text="final tail text")
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    state.diar_armed = True
+    state.diar_audio_buf = bytearray(b"\x00\x00")  # any buffered audio at all
+    # Keep this test focused on JUST the post-stop pass: without this,
+    # the tail final below would ALSO trip _maybe_trigger_realtime_diar
+    # (last_diar_at defaults to -inf, i.e. "never run", so the very
+    # first final always fires one) — that periodic-vs-post-stop
+    # interaction is covered on its own by
+    # test_stop_waits_for_an_in_flight_pass_before_running_the_final_one.
+    state.last_diar_at = state.elapsed()
+
+    calls: list[int] = []
+
+    async def fake_run_realtime_diar(ws_arg: object, state_arg: ConnectionState) -> None:
+        calls.append(1)
+        await server._safe_send(
+            ws_arg,
+            state_arg,
+            {"type": "speaker_update", "gen": 1, "assignments": [], "speakers": []},
+        )
+
+    server.run_realtime_diar = fake_run_realtime_diar  # type: ignore[method-assign]
+
+    consumer = await start_consumer(server, ws, state)
+    try:
+        mark_pending_speech(state)
+        await server._handle_text(ws, state, json.dumps({"type": "stop"}))
+        await asyncio.wait_for(consumer, timeout=2.0)
+
+        check(
+            "post-stop diar (armed + buffered): order is tail final, stopped, speaker_update, closed",
+            [m["type"] for m in ws.sent] == ["final", "stopped", "speaker_update", "closed"],
+        )
+        check("post-stop diar (armed + buffered): the final pass ran exactly once", calls == [1])
+    finally:
+        await stop_consumer(consumer)
+
+
+async def test_stop_with_diar_not_armed_closes_without_a_pass() -> None:
+    server = make_server()
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    # diar_armed stays False (default) even though audio was buffered —
+    # an unarmed connection must never attempt a pass.
+    state.diar_audio_buf = bytearray(b"\x00\x00")
+
+    calls: list[int] = []
+
+    async def fake_run_realtime_diar(ws_arg: object, state_arg: ConnectionState) -> None:
+        calls.append(1)
+
+    server.run_realtime_diar = fake_run_realtime_diar  # type: ignore[method-assign]
+
+    consumer = await start_consumer(server, ws, state)
+    try:
+        await server._handle_text(ws, state, json.dumps({"type": "stop"}))
+        await asyncio.wait_for(consumer, timeout=2.0)
+
+        check(
+            "post-stop diar (not armed): only stopped then closed — no speaker_update",
+            [m["type"] for m in ws.sent] == ["stopped", "closed"],
+        )
+        check("post-stop diar (not armed): the final pass never runs", calls == [])
+    finally:
+        await stop_consumer(consumer)
+
+
+async def test_stop_with_diar_armed_but_no_buffered_audio_closes_without_a_pass() -> None:
+    server = make_server()
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    state.diar_armed = True
+    # diar_audio_buf stays at its default empty bytearray — e.g. armed
+    # then stopped before any binary frame ever arrived.
+
+    calls: list[int] = []
+
+    async def fake_run_realtime_diar(ws_arg: object, state_arg: ConnectionState) -> None:
+        calls.append(1)
+
+    server.run_realtime_diar = fake_run_realtime_diar  # type: ignore[method-assign]
+
+    consumer = await start_consumer(server, ws, state)
+    try:
+        await server._handle_text(ws, state, json.dumps({"type": "stop"}))
+        await asyncio.wait_for(consumer, timeout=2.0)
+
+        check(
+            "post-stop diar (armed, nothing buffered): only stopped then closed",
+            [m["type"] for m in ws.sent] == ["stopped", "closed"],
+        )
+        check(
+            "post-stop diar (armed, nothing buffered): the final pass never runs",
+            calls == [],
+        )
+    finally:
+        await stop_consumer(consumer)
+
+
+async def test_stop_waits_for_an_in_flight_pass_before_running_the_final_one() -> None:
+    server = make_server()
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    state.diar_armed = True
+    state.diar_audio_buf = bytearray(b"\x00\x00")
+
+    order: list[str] = []
+    call_count = 0
+    in_flight_may_finish = asyncio.Event()
+
+    async def fake_run_realtime_diar(ws_arg: object, state_arg: ConnectionState) -> None:
+        nonlocal call_count
+        call_count += 1
+        this_call = call_count
+        order.append(f"start-{this_call}")
+        if this_call == 1:
+            # The already-in-flight (periodic) pass — blocks until the
+            # test explicitly lets it finish, so the assertions below
+            # can prove the final pass hasn't started yet.
+            await in_flight_may_finish.wait()
+        order.append(f"end-{this_call}")
+
+    server.run_realtime_diar = fake_run_realtime_diar  # type: ignore[method-assign]
+
+    # Simulate a periodic pass already in flight when "stop" arrives —
+    # exactly what _maybe_trigger_realtime_diar sets up.
+    state.diar_in_flight = True
+    state.diar_task = asyncio.create_task(server.run_realtime_diar(ws, state))
+    await asyncio.sleep(0)  # let it actually start and reach the .wait()
+    check("in-flight setup: the periodic pass has started", order == ["start-1"])
+
+    consumer = await start_consumer(server, ws, state)
+    try:
+        await server._handle_text(ws, state, json.dumps({"type": "stop"}))
+        # Give the post-stop path a moment to reach (and block on) the
+        # in-flight task — the final pass must NOT have started yet.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        check(
+            "post-stop diar: the final pass has not started while the in-flight one is still running",
+            order == ["start-1"],
+        )
+
+        in_flight_may_finish.set()
+        await asyncio.wait_for(consumer, timeout=2.0)
+
+        check(
+            "post-stop diar: the in-flight pass fully finishes before the final pass starts",
+            order == ["start-1", "end-1", "start-2", "end-2"],
+        )
+        check(
+            "post-stop diar: exactly 2 passes ran (the in-flight one, then the final one)",
+            call_count == 2,
+        )
+        check(
+            "post-stop diar: 'stopped' is sent before the final pass's own speaker_update timing"
+            " point (this stub sends none), and the connection still closes afterward",
+            [m["type"] for m in ws.sent] == ["stopped", "closed"],
+        )
+    finally:
+        await stop_consumer(consumer)
 
 
 # =================================================================
@@ -496,6 +691,10 @@ ASYNC_TESTS = [
     test_binary_after_stop_accepted_is_ignored,
     test_double_stop_enqueues_only_one_sentinel,
     test_config_and_flush_after_stop_accepted_are_ignored,
+    test_stop_with_diar_armed_runs_final_pass_then_closes,
+    test_stop_with_diar_not_armed_closes_without_a_pass,
+    test_stop_with_diar_armed_but_no_buffered_audio_closes_without_a_pass,
+    test_stop_waits_for_an_in_flight_pass_before_running_the_final_one,
     test_flush_finalizes_without_ack_and_stays_alive,
     test_config_message_sets_partials_override,
     test_partial_single_flight_skip,

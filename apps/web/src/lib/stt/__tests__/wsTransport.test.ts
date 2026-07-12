@@ -22,6 +22,7 @@ import { WsTransport } from "../wsTransport";
 // by the tests below that specifically exercise the boundary.
 const STOP_DRAIN_TIMEOUT_MS = 8000;
 const RECONNECT_DELAY_MS = 1000;
+const POST_STOP_LINGER_MS = 12000;
 
 describe("WsTransport — protocol v2", () => {
   let wsInstances: FakeWebSocket[];
@@ -176,6 +177,152 @@ describe("WsTransport — protocol v2", () => {
       false,
     );
     await stopP;
+  });
+
+  // ---------------------------------------------------------------
+  // post-stop diarization linger (realtimeDiarize on): after the
+  // drain-ack, stop() resolves immediately (the audio graph is torn
+  // down as usual) but the ws is kept open a bit longer so a trailing
+  // speaker_update from the sidecar's own post-stop final diar pass
+  // (whisper_server.py's _finalize_diar_then_close) still reaches
+  // onSpeakerUpdate. See POST_STOP_LINGER_MS's own doc in wsTransport.ts.
+  // ---------------------------------------------------------------
+
+  it("realtimeDiarize on: stop() resolves right after the ack WITHOUT closing the ws, and a late speaker_update still reaches onSpeakerUpdate during the linger", async () => {
+    const transport = makeTransport({ realtimeDiarize: true });
+    const ws = await attachAndOpen(transport);
+
+    let resolved = false;
+    const stopP = transport.stop().then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    ws.simulateMessage({ type: "stopped" });
+    await stopP;
+
+    // stop() already resolved, and — unlike realtimeDiarize off — the
+    // ws was NOT closed alongside it.
+    expect(resolved).toBe(true);
+    expect(ws.closeCalls).toBe(0);
+
+    // A trailing speaker_update arrives strictly AFTER stop() settled.
+    ws.simulateMessage({
+      type: "speaker_update",
+      gen: 1,
+      assignments: [{ seg_id: 3, speaker: "SPEAKER_1" }],
+      speakers: ["SPEAKER_1"],
+    });
+    expect(onSpeakerUpdate).toHaveBeenCalledTimes(1);
+    // connEpoch mapping (F2) still applies to a lingering update — this
+    // is the transport's first (and only) connection, epoch 1.
+    expect(onSpeakerUpdate).toHaveBeenCalledWith(
+      [{ segId: 1_000_003, speaker: "SPEAKER_1" }],
+      ["SPEAKER_1"],
+    );
+  });
+
+  it("realtimeDiarize on: the linger ends when the server closes the ws (expected path) — handlers are nulled and no reconnect is attempted", async () => {
+    const transport = makeTransport({ realtimeDiarize: true });
+    const ws = await attachAndOpen(transport);
+
+    const stopP = transport.stop();
+    ws.simulateMessage({ type: "stopped" });
+    await stopP;
+    expect(ws.closeCalls).toBe(0);
+
+    ws.simulateServerClose(); // the sidecar's own final pass finished, closes its side
+
+    expect(ws.onmessage).toBeNull();
+    expect(ws.onclose).toBeNull();
+    // No new connection was opened — a post-linger close must never
+    // trigger the reconnect path (stopping is set for the whole linger).
+    expect(wsInstances.length).toBe(1);
+
+    // A message somehow still delivered after the handler was nulled
+    // (shouldn't happen once truly closed) is a genuine no-op, proving
+    // the linger is really over, not just about to end.
+    ws.simulateMessage({
+      type: "speaker_update",
+      gen: 1,
+      assignments: [{ seg_id: 0, speaker: "SPEAKER_1" }],
+      speakers: ["SPEAKER_1"],
+    });
+    expect(onSpeakerUpdate).not.toHaveBeenCalled();
+  });
+
+  it("realtimeDiarize on: the linger ends at POST_STOP_LINGER_MS if the sidecar never closes its side", async () => {
+    vi.useFakeTimers();
+    const transport = makeTransport({ realtimeDiarize: true });
+    await transport.attachStream(fakeMediaStream());
+    const ws = wsInstances[wsInstances.length - 1];
+    ws.simulateOpen();
+
+    const stopP = transport.stop();
+    ws.simulateMessage({ type: "stopped" });
+    await stopP;
+    expect(ws.closeCalls).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(POST_STOP_LINGER_MS - 1);
+    expect(ws.closeCalls).toBe(0); // not yet
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ws.closeCalls).toBe(1);
+  });
+
+  it("realtimeDiarize on: a reentrant stop() call ends an active linger immediately (transport reused/re-stopped)", async () => {
+    const transport = makeTransport({ realtimeDiarize: true });
+    const ws = await attachAndOpen(transport);
+
+    const stopP = transport.stop();
+    ws.simulateMessage({ type: "stopped" });
+    await stopP;
+    expect(ws.closeCalls).toBe(0);
+
+    await transport.stop(); // reentrant — must end the linger right away
+    expect(ws.closeCalls).toBe(1);
+  });
+
+  it("realtimeDiarize on: during the linger, every message except speaker_update is silently ignored", async () => {
+    const transport = makeTransport({ realtimeDiarize: true });
+    const ws = await attachAndOpen(transport);
+
+    const stopP = transport.stop();
+    ws.simulateMessage({ type: "stopped" });
+    await stopP;
+
+    ws.simulateMessage({ type: "final", text: "must not land during the linger", seg_id: 9 });
+    ws.simulateMessage({ type: "partial", text: "must not land either" });
+    expect(onFinal).not.toHaveBeenCalled();
+    expect(onInterim).not.toHaveBeenCalled();
+
+    // speaker_update is the one exception — still gets through.
+    ws.simulateMessage({
+      type: "speaker_update",
+      gen: 1,
+      assignments: [{ seg_id: 1, speaker: "SPEAKER_1" }],
+      speakers: ["SPEAKER_1"],
+    });
+    expect(onSpeakerUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("realtimeDiarize off: stop() closes the ws immediately after the ack — no linger", async () => {
+    const transport = makeTransport({ realtimeDiarize: false });
+    const ws = await attachAndOpen(transport);
+
+    let resolved = false;
+    const stopP = transport.stop().then(() => {
+      resolved = true;
+    });
+    ws.simulateMessage({ type: "stopped" });
+    await stopP;
+
+    expect(resolved).toBe(true);
+    // Same as pre-linger behavior: closed right alongside resolving,
+    // not kept open — this is the exact "no linger" contract.
+    expect(ws.closeCalls).toBe(1);
   });
 
   // ---------------------------------------------------------------

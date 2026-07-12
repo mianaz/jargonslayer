@@ -18,6 +18,23 @@ const RECONNECT_DELAY_MS = 1000;
 // protocol) must not hang the UI's End button forever.
 const STOP_DRAIN_TIMEOUT_MS = 8000;
 
+// Post-stop diarization linger: when realtime diarization is on, the
+// sidecar's own drain-ack handling (whisper_server.py's
+// _finalize_diar_then_close) runs one final diarization pass — over
+// whatever trailing audio the periodic ~20s cadence never caught up to
+// — AFTER sending "stopped", then closes the connection itself. stop()
+// resolves as soon as the ack arrives (the audio graph is already torn
+// down by then — see stop() below) instead of waiting for that pass,
+// but keeps THIS SAME ws open just long enough to still receive its
+// speaker_update. Bounds how long a sidecar that never closes (crashed
+// mid-pass, an old server build predating this) is allowed to hold the
+// connection open for.
+const POST_STOP_LINGER_MS = 12000;
+
+/** Why stop()'s drain wait resolved — see stopDrainResolve's own doc
+ *  and stop() below (only the "ack" case starts a post-stop linger). */
+type DrainReason = "ack" | "timeout" | "closed";
+
 interface PartialMessage {
   type: "partial";
   text: string;
@@ -34,7 +51,10 @@ interface StoppedMessage {
   type: "stopped";
 }
 // Realtime speaker diarization (beta) — see whisper_server.py's
-// run_realtime_diar / _maybe_trigger_realtime_diar.
+// run_realtime_diar / _maybe_trigger_realtime_diar. Post-stop
+// diarization linger (see POST_STOP_LINGER_MS above): the sidecar's
+// own final pass after "stopped" can still send exactly one more of
+// these before it closes the ws itself — see stop() below.
 interface SpeakerUpdateMessage {
   type: "speaker_update";
   gen: number;
@@ -92,9 +112,33 @@ export class WsTransport {
   // stop()'s drain wait (STT protocol v2): resolved by the "stopped"
   // ack (see connect()'s onmessage), by the ws closing on its own
   // during the wait (see connect()'s onclose), or by STOP_DRAIN_
-  // TIMEOUT_MS, whichever first. null whenever no stop() is currently
+  // TIMEOUT_MS, whichever first — the resolved DrainReason itself
+  // gates the post-stop diarization linger below (only an actual "ack"
+  // starts one; see stop()). null whenever no stop() is currently
   // waiting on it.
-  private stopDrainResolve: (() => void) | null = null;
+  private stopDrainResolve: ((reason: DrainReason) => void) | null = null;
+
+  // Post-stop diarization linger (see POST_STOP_LINGER_MS's own doc):
+  // true for the whole window between stop()'s drain-ack resolving
+  // (with realtimeDiarize on) and the linger actually ending. Gates
+  // onmessage (see connect()) down to speaker_update only — every
+  // other message type is silently ignored while lingering, matching
+  // the fact that transcription/audio capture are already fully torn
+  // down by this point.
+  private lingering = false;
+
+  // The ws kept alive for the linger — a SEPARATE field from `ws`
+  // (which is nulled the moment stop() starts, same as always) so
+  // nothing else on this class ever mistakes a lingering connection
+  // for a live/attached one (pauseFeed/resumeFeed, a future reconnect,
+  // etc.). Non-null exactly while `lingering` is true.
+  private lingerWs: WebSocket | null = null;
+
+  // Caps the linger — see POST_STOP_LINGER_MS's own doc. Cleared the
+  // moment any of the linger's end conditions fires first (server
+  // close, this timeout, or the transport being re-stopped); see
+  // endLinger().
+  private lingerTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // Realtime speaker diarization (beta): drop any speaker_update whose
   // gen is <= the last one we accepted (out-of-order delivery isn't
@@ -238,6 +282,11 @@ export class WsTransport {
       } catch {
         return;
       }
+      // Post-stop diarization linger (see POST_STOP_LINGER_MS above):
+      // once lingering, every message except a trailing speaker_update
+      // is silently ignored — transcription/audio capture are already
+      // fully torn down by this point, so nothing else is meaningful.
+      if (this.lingering && msg.type !== "speaker_update") return;
       if (msg.type === "partial") {
         events.onInterim((msg as PartialMessage).text);
       } else if (msg.type === "final") {
@@ -254,7 +303,7 @@ export class WsTransport {
         // here (rather than closing anything) is exactly why onmessage
         // must stay wired through the whole wait: this branch IS that
         // "stay live" contract.
-        this.stopDrainResolve?.();
+        this.stopDrainResolve?.("ack");
         this.stopDrainResolve = null;
       } else if (msg.type === "speaker_update") {
         const update = msg as SpeakerUpdateMessage;
@@ -279,7 +328,17 @@ export class WsTransport {
       if (this.stopDrainResolve) {
         const resolve = this.stopDrainResolve;
         this.stopDrainResolve = null;
-        resolve();
+        resolve("closed");
+        return;
+      }
+      // Post-stop diarization linger (see POST_STOP_LINGER_MS above):
+      // the sidecar closing the ws itself, after its own final diar
+      // pass, is the EXPECTED end of the linger — not a disconnect to
+      // reconnect from (handleDisconnect() would already no-op here too,
+      // since `stopping` is set for the whole linger, but this is what
+      // actually ends the linger's own bookkeeping/timeout).
+      if (this.lingering) {
+        this.endLinger();
         return;
       }
       this.handleDisconnect();
@@ -337,17 +396,22 @@ export class WsTransport {
   }
 
   /** Tear down the WS + audio graph. Safe to call multiple times —
-   * only the first call has effect. Does NOT touch the source
-   * MediaStream's tracks; the caller (which acquired the stream) owns
-   * stopping those. */
+   * only the first call has effect; a second/reentrant call instead
+   * ends an active post-stop diarization linger, if one is running
+   * (see endLinger()). Does NOT touch the source MediaStream's tracks
+   * — the caller (which acquired the stream) owns stopping those. */
   async stop(): Promise<void> {
-    if (this.stopping) return;
+    if (this.stopping) {
+      this.endLinger();
+      return;
+    }
     this.stopping = true;
     this.userStopped = true;
 
     const ws = this.ws;
     this.ws = null;
     if (ws) {
+      let drainReason: DrainReason | null = null;
       if (ws.readyState === WebSocket.OPEN) {
         try {
           ws.send(JSON.stringify({ type: "stop" }));
@@ -357,13 +421,14 @@ export class WsTransport {
           // the whole wait, so a trailing drain final flows through
           // the normal onFinal path exactly like any other final. The
           // wait also resolves if `ws` closes on its own (see
-          // connect()'s onclose).
-          await new Promise<void>((resolve) => {
+          // connect()'s onclose). WHICH of the three ways it resolved
+          // is what gates the post-stop diarization linger below.
+          drainReason = await new Promise<DrainReason>((resolve) => {
             this.stopDrainResolve = resolve;
             setTimeout(() => {
               if (this.stopDrainResolve === resolve) {
                 this.stopDrainResolve = null;
-                resolve();
+                resolve("timeout");
               }
             }, STOP_DRAIN_TIMEOUT_MS);
           });
@@ -371,10 +436,20 @@ export class WsTransport {
           // ignore — closing anyway
         }
       }
-      try {
-        ws.close();
-      } catch {
-        // already closed
+      // Post-stop diarization linger (see POST_STOP_LINGER_MS's own
+      // doc): only the ACK case means the sidecar is actually still
+      // there to run its own final pass — a timeout or the ws closing
+      // on its own mid-wait both mean there's nothing left to linger
+      // on, so those fall through to the same immediate close as when
+      // diarization is off.
+      if (drainReason === "ack" && this.settings.realtimeDiarize) {
+        this.startLinger(ws);
+      } else {
+        try {
+          ws.close();
+        } catch {
+          // already closed
+        }
       }
     }
 
@@ -409,6 +484,45 @@ export class WsTransport {
     if (ctx) {
       try {
         await ctx.close();
+      } catch {
+        // already closed
+      }
+    }
+  }
+
+  /** Starts the post-stop diarization linger on `ws` (still OPEN at
+   * this point, and not yet closed by the caller) — see
+   * POST_STOP_LINGER_MS's own doc. Purely synchronous bookkeeping: does
+   * NOT delay stop()'s own resolution — the audio graph teardown right
+   * after this call (still inside stop()) runs immediately regardless. */
+  private startLinger(ws: WebSocket): void {
+    this.lingering = true;
+    this.lingerWs = ws;
+    this.lingerTimeoutId = setTimeout(() => this.endLinger(), POST_STOP_LINGER_MS);
+  }
+
+  /** Ends the post-stop diarization linger — idempotent (safe to call
+   * from any of its 3 end conditions: the sidecar closing the ws, this
+   * linger's own POST_STOP_LINGER_MS timeout, or a reentrant stop()),
+   * and a no-op if no linger is currently active. Nulls every handler
+   * on the lingering ws BEFORE closing it client-side, so this class's
+   * own close() call below never re-triggers the very onclose it's
+   * called from (the server-close end condition). */
+  private endLinger(): void {
+    if (!this.lingering) return;
+    this.lingering = false;
+    if (this.lingerTimeoutId) {
+      clearTimeout(this.lingerTimeoutId);
+      this.lingerTimeoutId = null;
+    }
+    const ws = this.lingerWs;
+    this.lingerWs = null;
+    if (ws) {
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onerror = null;
+      try {
+        ws.close();
       } catch {
         // already closed
       }
