@@ -67,6 +67,23 @@ export function useMeeting(): UseMeetingResult {
   const lifecycleBusyRef = useRef(false);
   const pendingEndRef = useRef(false);
 
+  // Terminal-teardown race (codex v2 review F6): the error and
+  // capture_ended branches below call runStopFlow() UN-GATED (they
+  // deliberately never go through withLifecycleGate — gating them
+  // would deadlock: an error firing WHILE pause()/resume() itself
+  // holds the gate could otherwise never resolve). That means the
+  // lifecycle gate stays FREE for the whole up-to-8s drain, so if the
+  // meeting was "paused" (soft) when the error/capture_ended fired,
+  // Resume stays clickable the entire time: the still-alive-but-
+  // dying engine's own resume() would no-op (it's mid-`stopping`), yet
+  // resume() would unconditionally call resumeMeeting() anyway,
+  // producing a phantom "listening" over a dead capture. Set
+  // SYNCHRONOUSLY (before runStopFlow ever awaits) at the top of both
+  // branches, cleared in a finally once runStopFlow settles — pause()/
+  // resume() both plain-return while it's set, without touching the
+  // gate itself.
+  const terminalTeardownRef = useRef(false);
+
   // Diar "ready" one-shot toast (STT protocol v2): reset per meeting
   // (see start() below) so a hard-resume's fresh engine (which re-arms
   // diarization from scratch on the sidecar) doesn't spam a second
@@ -197,19 +214,30 @@ export function useMeeting(): UseMeetingResult {
           useApp.getState().setStatus(status, status === "connecting" ? detail : undefined);
         } else if (status === "error") {
           attachFailed = true;
+          // F6: set BEFORE runStopFlow's first await — see
+          // terminalTeardownRef's own doc above.
+          terminalTeardownRef.current = true;
           useApp.getState().showToast(logAndToastError("stt", detail ?? "转录引擎错误"));
-          void runStopFlow();
+          void runStopFlow().finally(() => {
+            terminalTeardownRef.current = false;
+          });
         } else if (
           status === "idle" &&
           (detail === "demo_finished" || detail === "capture_ended")
         ) {
+          // F6: same synchronous-before-await set as the error branch.
+          terminalTeardownRef.current = true;
           const endToast =
             detail === "capture_ended"
               ? "共享已结束，会议已保存到历史记录"
               : "演示结束，打开右侧「纪要」标签生成会后报告试试";
-          void runStopFlow().then(() => {
-            useApp.getState().showToast(endToast);
-          });
+          void runStopFlow()
+            .then(() => {
+              useApp.getState().showToast(endToast);
+            })
+            .finally(() => {
+              terminalTeardownRef.current = false;
+            });
         }
       },
     };
@@ -310,6 +338,11 @@ export function useMeeting(): UseMeetingResult {
   // to "paused" SYNCHRONOUSLY before the awaited pause/stop call, so
   // every other lifecycle guard sees the new state first.
   const pause = useCallback(async () => withLifecycleGate(async () => {
+    // F6: an un-gated error/capture_ended teardown is draining — see
+    // terminalTeardownRef's own doc above. Plain-return without
+    // touching the gate itself (the gate stays free for this whole
+    // window by design).
+    if (terminalTeardownRef.current) return;
     const { status } = useApp.getState();
     if (status !== "listening") return;
     const engine = engineRef.current;
@@ -341,6 +374,9 @@ export function useMeeting(): UseMeetingResult {
   // connection delay instead of counting it as active meeting time
   // (codex review 2026-07-10).
   const resume = useCallback(async () => withLifecycleGate(async () => {
+    // F6: same plain-return as pause() above — see terminalTeardownRef's
+    // own doc.
+    if (terminalTeardownRef.current) return;
     const { status, meetingGen } = useApp.getState();
     if (status !== "paused") return;
     const engine = engineRef.current;

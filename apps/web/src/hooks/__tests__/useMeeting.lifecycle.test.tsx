@@ -438,4 +438,89 @@ describe("useMeeting — lifecycle races", () => {
     // pendingEnd guard should have suppressed it.
     expect(statuses.slice(statuses.indexOf("paused"))).not.toContain("listening");
   });
+
+  // ---------------------------------------------------------------
+  // Terminal-teardown races Resume while paused (codex v2 review F6):
+  // error/capture_ended call runStopFlow() UN-GATED (deadlock risk if
+  // gated — see useMeeting.ts's own comment), so the lifecycle gate
+  // stays free for the whole drain; Resume clicked during that window
+  // must not flip the meeting back to "listening" over a dying engine.
+  // ---------------------------------------------------------------
+
+  it("capture_ended while soft-paused: resume clicked mid-teardown does not flip to listening; the meeting lands stopped exactly once", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+    expect(useApp.getState().status).toBe("paused");
+
+    // A real meeting has segments by the time capture ends — lets
+    // runStopFlow's own segCount branch land on "stopped" (not "idle")
+    // without needing real IndexedDB storage in this test.
+    useApp.setState({
+      segments: [
+        { id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "tabaudio" },
+      ],
+    });
+    const saveSpy = vi.spyOn(useApp.getState(), "saveCurrentSession").mockResolvedValue(null);
+
+    engine.deferStop(); // holds runStopFlow's engine.stop() open — the up-to-8s drain window
+
+    await act(async () => {
+      engine.events!.onStatus("idle", "capture_ended");
+      await flush();
+    });
+    expect(useApp.getState().status).toBe("paused"); // drain still in flight
+
+    await act(async () => {
+      await api!.resume(); // clicked mid-teardown — must plain-return
+    });
+    expect(useApp.getState().status).toBe("paused");
+    expect(engine.resumeCalls).toBe(0); // never even reached the soft-resume call
+
+    await act(async () => {
+      engine.stopResolve!();
+      await flush();
+      await flush();
+    });
+
+    expect(useApp.getState().status).toBe("stopped");
+    expect(statuses.filter((s) => s === "stopped")).toHaveLength(1);
+    expect(statuses.slice(statuses.indexOf("paused"))).not.toContain("listening");
+
+    saveSpy.mockRestore();
+  });
+
+  it("error while soft-paused: pause() clicked mid-teardown is also a plain no-op", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+    expect(useApp.getState().status).toBe("paused");
+
+    engine.deferStop();
+
+    await act(async () => {
+      engine.events!.onStatus("error", "sidecar crashed");
+      await flush();
+    });
+    expect(useApp.getState().status).toBe("paused");
+    const pauseCallsBeforeRetry = engine.pauseCalls; // 1, from the initial pause() above
+
+    // Already paused, so pause() would no-op anyway via its OWN
+    // status!=="listening" check — this asserts the terminalTeardownRef
+    // guard fires FIRST (before that check ever runs) by confirming
+    // the engine's own pause() is never called AGAIN either.
+    await act(async () => {
+      await api!.pause();
+    });
+    expect(engine.pauseCalls).toBe(pauseCallsBeforeRetry);
+
+    await act(async () => {
+      engine.stopResolve!();
+      await flush();
+      await flush();
+    });
+    expect(useApp.getState().status).toBe("idle"); // 0 segments — runStopFlow's own branch
+  });
 });
