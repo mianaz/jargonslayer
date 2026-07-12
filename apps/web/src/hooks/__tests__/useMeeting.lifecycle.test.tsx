@@ -45,10 +45,45 @@ class FakeEngine {
   }
 }
 
+// Soft-pause capable fake (STT protocol v2, e.g. tabaudio): adds
+// pause()/resume(). useMeeting.ts branches on `engineRef.current?.
+// pause`/`?.resume` PURELY by property presence at call time — a
+// plain FakeEngine (no pause/resume at all) always takes the teardown
+// branch, so every existing test below is untouched by this addition.
+class FakeSoftPauseEngine extends FakeEngine {
+  pauseCalls = 0;
+  resumeCalls = 0;
+  pauseResolve: (() => void) | null = null;
+  resumeResolve: (() => void) | null = null;
+  private pauseP: Promise<void> | null = null;
+  private resumeP: Promise<void> | null = null;
+
+  deferPause(): void {
+    this.pauseP = new Promise((r) => (this.pauseResolve = r));
+  }
+  deferResume(): void {
+    this.resumeP = new Promise((r) => (this.resumeResolve = r));
+  }
+  async pause(): Promise<void> {
+    this.pauseCalls += 1;
+    if (this.pauseP) await this.pauseP;
+  }
+  async resume(): Promise<void> {
+    this.resumeCalls += 1;
+    if (this.resumeP) await this.resumeP;
+  }
+}
+
 const engines: FakeEngine[] = [];
+// Which class createEngine() constructs next — FakeEngine (teardown-
+// only) by default; startListeningSoft() below points this at
+// FakeSoftPauseEngine for exactly one call, then restores it
+// immediately (createEngine() runs synchronously within that same
+// call — see startListeningSoft's own comment).
+let nextEngineClass: new () => FakeEngine = FakeEngine;
 vi.mock("../../lib/stt", () => ({
   createEngine: vi.fn(() => {
-    const e = new FakeEngine();
+    const e = new nextEngineClass();
     engines.push(e);
     return e as unknown as import("@jargonslayer/core/types").STTEngine;
   }),
@@ -116,6 +151,27 @@ describe("useMeeting — lifecycle races", () => {
     });
     expect(useApp.getState().status).toBe("listening");
     return engines[0];
+  }
+
+  /** Same as startListening(), but the engine createEngine() builds
+   *  supports soft pause/resume (STT protocol v2) — i.e. useMeeting's
+   *  pause()/resume() take the SOFT branch instead of teardown. */
+  async function startListeningSoft(): Promise<FakeSoftPauseEngine> {
+    let p: Promise<void>;
+    await act(async () => {
+      nextEngineClass = FakeSoftPauseEngine;
+      p = api!.start();
+      // createEngine() has already run synchronously as part of the
+      // call above (before start()'s first await) — safe to restore
+      // immediately so this override never leaks into a later start().
+      nextEngineClass = FakeEngine;
+      await flush();
+      engines[0].startResolve!();
+      await p;
+      engines[0].events!.onStatus("listening");
+    });
+    expect(useApp.getState().status).toBe("listening");
+    return engines[0] as FakeSoftPauseEngine;
   }
 
   it("End during resume's pending acquisition is never dropped, and never flips to listening", async () => {
@@ -254,5 +310,116 @@ describe("useMeeting — lifecycle races", () => {
     });
 
     expect(useApp.getState().status).toBe("stopped");
+  });
+
+  // ---------------------------------------------------------------
+  // Soft pause/resume (STT protocol v2, B4): an engine exposing
+  // pause()/resume() (tabaudio) is KEPT alive across a pause instead
+  // of torn down + reattached — see useMeeting.ts's pause()/resume()
+  // and Header.tsx's canPause matrix.
+  // ---------------------------------------------------------------
+
+  it("soft-pause keeps the SAME engine instance alive and flips status to paused", async () => {
+    const engine = await startListeningSoft();
+
+    await act(async () => {
+      await api!.pause();
+    });
+
+    expect(useApp.getState().status).toBe("paused");
+    expect(engine.pauseCalls).toBe(1);
+    expect(engine.stopCalls).toBe(0); // NOT torn down — the soft branch
+    expect(engines.length).toBe(1); // no new engine constructed by pause()
+  });
+
+  it("an engine 'listening'/'connecting' event while soft-paused does NOT un-pause the UI", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+    expect(useApp.getState().status).toBe("paused");
+
+    // e.g. a transient ws reconnect on the still-alive tabaudio
+    // transport — must be ignored while soft-paused, not un-pause it.
+    await act(async () => {
+      engine.events!.onStatus("listening");
+    });
+    expect(useApp.getState().status).toBe("paused");
+
+    await act(async () => {
+      engine.events!.onStatus("connecting");
+    });
+    expect(useApp.getState().status).toBe("paused");
+  });
+
+  it("End while soft-paused stops the SAME engine and lands on stopped", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+
+    await act(async () => {
+      await api!.stop();
+    });
+
+    expect(useApp.getState().status).toBe("stopped");
+    expect(engine.stopCalls).toBe(1);
+  });
+
+  it("resume() calls engine.resume() in place (no reattach) and folds accounting via resumeMeeting", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+
+    await act(async () => {
+      await api!.resume();
+    });
+
+    expect(engine.resumeCalls).toBe(1);
+    expect(useApp.getState().status).toBe("listening");
+    expect(engines.length).toBe(1); // still the SAME engine — no reattach
+  });
+
+  it("End during soft-pause's own await drains into a real stop (not a paused zombie)", async () => {
+    const engine = await startListeningSoft();
+    engine.deferPause();
+
+    await act(async () => {
+      const p1 = api!.pause();
+      await flush();
+      await api!.stop(); // gate-held → records the End intent
+      engine.pauseResolve!();
+      await p1;
+      await flush();
+      await flush();
+    });
+
+    expect(useApp.getState().status).toBe("stopped");
+    expect(engine.stopCalls).toBe(1);
+  });
+
+  it("End during soft-resume's own await drains into a real stop afterward", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+    engine.deferResume();
+
+    await act(async () => {
+      const p1 = api!.resume();
+      await flush();
+      await api!.stop(); // gate-held → pendingEnd, mirrors the teardown-branch guard
+      engine.resumeResolve!();
+      await p1;
+      await flush();
+      await flush();
+    });
+
+    expect(useApp.getState().status).toBe("stopped");
+    expect(engine.stopCalls).toBe(1);
+    // resumeMeeting() must NOT have folded accounting on the way — the
+    // pendingEnd guard should have suppressed it.
+    expect(statuses.slice(statuses.indexOf("paused"))).not.toContain("listening");
   });
 });

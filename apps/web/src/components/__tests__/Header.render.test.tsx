@@ -151,15 +151,36 @@ describe("Header — pause/resume/end button matrix (B4)", () => {
     expect(container!.querySelector('[data-testid="btn-start"]')).toBeNull();
   });
 
-  it("listening + tabaudio: hides 暂停 entirely (end-only), 结束 still shows", async () => {
+  it("listening + tabaudio: shows 暂停 (STT protocol v2 soft pause) and 结束", async () => {
     useApp.setState({
       settings: { ...DEFAULT_SETTINGS, engine: "tabaudio" },
       status: "listening",
     });
     await renderHeader();
 
+    expect(container!.querySelector('[data-testid="btn-pause"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="btn-stop"]')).not.toBeNull();
+  });
+
+  it("listening + whisper with realtime diarization ON: hides 暂停 entirely (end-only), 结束 still shows", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "whisper", realtimeDiarize: true },
+      status: "listening",
+    });
+    await renderHeader();
+
     expect(container!.querySelector('[data-testid="btn-pause"]')).toBeNull();
     expect(container!.querySelector('[data-testid="btn-stop"]')).not.toBeNull();
+  });
+
+  it("listening + whisper with realtime diarization OFF: shows 暂停", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "whisper", realtimeDiarize: false },
+      status: "listening",
+    });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="btn-pause"]')).not.toBeNull();
   });
 
   it("clicking 暂停/继续 fires onPause/onResume", async () => {
