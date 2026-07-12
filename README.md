@@ -154,7 +154,22 @@ Rule of thumb: Apple Silicon doing a live meeting → `medium`. Have an NVIDIA G
 - **`npm start` errors** with "Could not find a production build in the '.next' directory" — run `npm run build` first; `start` only serves an existing build.
 - **Port already in use** — pass `--port <n>` to `whisper_server.py`, then update it to match in Settings → transcription engine → Whisper 地址.
 
-> **Coming later**: the packaged desktop app (planned for v0.4) replaces all of the above with an installer and a first-run setup wizard — no terminal required. This guide covers today's manual path.
+> **Desktop app**: an early dev build already exists — see [Desktop build (in development)](#desktop-build-in-development) right below. A signed installer (no `npm`/terminal at all) ships later in v0.4 (S8).
+
+### Desktop build (in development)
+
+A native desktop shell (Tauri) wraps this same app with a self-managed local Whisper sidecar — no `pip`/terminal commands for Step 2 above. Still under active development (v0.4 S3) — this is the developer path, not a signed installer yet.
+
+```bash
+npm ci
+npm run dev:desktop
+```
+
+On first launch a full-screen wizard asks for consent (nothing downloads until you click 「开始安装」), then installs an isolated Python runtime + faster-whisper + a small Whisper model entirely under the app's own data directory — never touches your system Python, and deleting that directory is a clean uninstall:
+
+- macOS: `~/Library/Application Support/com.bioinfospace.jargonslayer/` (Python/venv, model cache, provision marker) and `~/Library/Logs/com.bioinfospace.jargonslayer/whisper_server.log`
+
+Settings → transcription engine gets a 托管模式 (sidecar mode) toggle on this build: **managed** (default — the app installs/starts/auto-restarts the sidecar itself; Whisper 地址 is fixed) or **external** — point it at a sidecar you started yourself with Step 2 above instead, exactly like the regular web build.
 
 ## Configure an API key (unlocks AI detection and reports)
 

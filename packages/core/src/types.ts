@@ -334,6 +334,18 @@ export interface Settings {
   micId?: string;
   language: string; // BCP-47, for Web Speech API
   whisperUrl: string; // local sidecar websocket
+  // v0.4 S3 chunk 6 (docs/design-explorations/s3-tauri-uv-blueprint.md,
+  // architecture decision 6) — desktop build only, meaningless (never
+  // read) on a web build. "managed" (default): the desktop app itself
+  // provisions + spawns the local Whisper sidecar (see lib/desktop/
+  // {provisionMachine,bootstrap}.ts) and whisperUrl above is fixed/
+  // greyed in SettingsDialog. "external": today's manual-install
+  // behavior (README「本地版安装」) — the user runs their own sidecar,
+  // whisperUrl stays editable, probe-only. migrateSettings's
+  // defaults-fold + sanitizeRestoredSettings's Object.keys(DEFAULT_
+  // SETTINGS) allow-list both pick this up automatically, same as
+  // partials/preferOnDeviceSpeech — no extra migration code needed.
+  sidecarMode: "managed" | "external";
   provider: LlmProvider;
   baseUrl: string; // openai-compat only, e.g. https://api.deepseek.com/v1
   apiKey: string; // "" = rely on server-side env ANTHROPIC_API_KEY
@@ -482,6 +494,7 @@ export const DEFAULT_SETTINGS: Settings = {
   engine: "demo",
   language: "en-US",
   whisperUrl: "ws://localhost:8765",
+  sidecarMode: "managed",
   provider: "anthropic",
   baseUrl: "",
   apiKey: "",

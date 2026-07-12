@@ -22,7 +22,11 @@ const nextConfig = {
   // route with no static params / server-only code) — that's S2+S3's
   // job to resolve, not this session's. Web builds (BUILD_TARGET unset
   // or anything else) are completely unaffected.
-  ...(process.env.BUILD_TARGET === "desktop" ? { output: "export" } : {}),
+  // v0.4 S3 chunk 1 (docs/design-explorations/s3-tauri-uv-blueprint.md) —
+  // the static export can't use next/image's server-side optimizer (no
+  // server exists in the Tauri webview target), so the desktop branch
+  // also opts into images.unoptimized alongside output:"export".
+  ...(process.env.BUILD_TARGET === "desktop" ? { output: "export", images: { unoptimized: true } } : {}),
   // Subscription-direct kill-switch (v0.2.2, experimental — see
   // src/lib/agent/localHost.ts's isFeatureBuilt). Next.js's webpack
   // DefinePlugin only inlines a NEXT_PUBLIC_* var (and thus lets the
@@ -79,6 +83,17 @@ const nextConfig = {
       process.env.BUILD_TARGET === "desktop"
         ? (process.env.NEXT_PUBLIC_LLM_TRANSPORT ?? "")
         : "server",
+    // v0.4 S3 chunk 1 (docs/design-explorations/s3-tauri-uv-blueprint.md,
+    // architecture decision 5) — desktop-context flag: read via
+    // src/lib/platform/desktop.ts's IS_DESKTOP. Unlike NEXT_PUBLIC_LLM_
+    // TRANSPORT above, there is no ambient value to forward/contain here:
+    // desktop-ness isn't a separately-set env var a shared CI environment
+    // could leak, it's entirely DERIVED from BUILD_TARGET, so this is just
+    // BUILD_TARGET's own boolean re-expressed as a NEXT_PUBLIC_* var. Same
+    // explicit-default-via-`env` requirement as every flag above (an
+    // unset var isn't reliably inlined by DefinePlugin) — "1" only for a
+    // BUILD_TARGET=desktop build, "" (falsy) for every ordinary web build.
+    NEXT_PUBLIC_DESKTOP: process.env.BUILD_TARGET === "desktop" ? "1" : "",
   },
 };
 

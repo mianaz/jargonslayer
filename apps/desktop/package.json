@@ -1,0 +1,16 @@
+{
+  "name": "@jargonslayer/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "JargonSlayer Tauri desktop shell — wraps the static-export web build with a uv-managed local Whisper sidecar (see docs/design-explorations/s3-tauri-uv-blueprint.md)",
+  "license": "MIT",
+  "author": "Miana Zeng",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

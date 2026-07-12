@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { SidebarSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { useMeeting } from "@/hooks/useMeeting";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
+import DesktopBootstrap from "@/components/desktop/DesktopBootstrap";
 import Header from "@/components/Header";
 import StatusLine from "@/components/StatusLine";
 import TranscriptPanel from "@/components/TranscriptPanel";
@@ -270,6 +272,11 @@ export default function Home() {
       />
       <LookupPopover />
       <Toast />
+      {/* v0.4 S3 chunk 6: first-run local sidecar provisioning wizard —
+         renders nothing on an ordinary web build (see DesktopBootstrap.
+         tsx's own header comment for why this is gated at BOTH this
+         call site and again inside that component). */}
+      {IS_DESKTOP && <DesktopBootstrap />}
     </div>
   );
 }
