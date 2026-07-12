@@ -127,6 +127,128 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).not.toContain(SENTINELS.apiKey); // still never the key VALUE itself
     });
   });
+
+  // Feature ask: "in the future, please include FULL config in debug
+  // log that user can export and raise an issue" — the settings
+  // section now iterates every Settings key generically instead of a
+  // curated allow-list (see report.ts's redactSettingsObject policy).
+  describe("完整配置 — generic full-config snapshot", () => {
+    it("renames the section header from the old 设置摘要 to 完整配置", () => {
+      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      expect(report).toContain("## 完整配置");
+    });
+
+    it("includes previously-omitted plain settings fields verbatim — proves this is genuinely FULLER than the old allow-list, not just renamed", () => {
+      const report = buildDiagnosticReport({
+        ...DEFAULT_SETTINGS,
+        language: "en-US",
+        detectModel: "distinctive-detect-model-id",
+        summaryModel: "distinctive-summary-model-id",
+        minConfidence: 0.77,
+        micId: "distinctive-mic-device-id",
+      });
+      expect(report).toContain('"language": "en-US"');
+      expect(report).toContain('"detectModel": "distinctive-detect-model-id"');
+      expect(report).toContain('"summaryModel": "distinctive-summary-model-id"');
+      expect(report).toContain('"minConfidence": 0.77');
+      expect(report).toContain('"micId": "distinctive-mic-device-id"');
+    });
+
+    describe("URL-valued keys — included but query string + userinfo stripped", () => {
+      it("whisperUrl keeps its origin+path but strips an embedded query string", () => {
+        const report = buildDiagnosticReport({
+          ...DEFAULT_SETTINGS,
+          whisperUrl: "ws://localhost:8765/some/path?SENTINEL_QUERY=leak-me",
+        });
+        expect(report).not.toContain("SENTINEL_QUERY");
+        expect(report).not.toContain("leak-me");
+        expect(report).toContain("ws://localhost:8765/some/path");
+      });
+
+      it("agentUrl and baseUrl are likewise query/userinfo-stripped, not treated as secret", () => {
+        const report = buildDiagnosticReport({
+          ...DEFAULT_SETTINGS,
+          agentUrl: "http://user:SENTINEL_PASS@127.0.0.1:8767?SENTINEL_Q=1",
+          baseUrl: "https://api.deepseek.com/v1?SENTINEL_KEY=abc",
+        });
+        expect(report).not.toContain("SENTINEL_PASS");
+        expect(report).not.toContain("SENTINEL_Q");
+        expect(report).not.toContain("SENTINEL_KEY");
+        expect(report).toContain("api.deepseek.com/v1");
+        // Confirms this field wasn't collapsed to a has* presence
+        // boolean (that's the secret-key branch, a different one).
+        expect(report).not.toContain("hasBaseUrl");
+        expect(report).not.toContain("hasAgentUrl");
+      });
+
+      it("webhookUrl is the documented exception: presence-only, NOT query-stripped-and-included — its path can itself embed a capability token (n8n/飞书-style), unlike a plain connection endpoint", () => {
+        const webhookWithPathToken = "https://hooks.example.com/services/T00/B00/SENTINEL-PATH-TOKEN";
+        const report = buildDiagnosticReport({ ...DEFAULT_SETTINGS, webhookUrl: webhookWithPathToken });
+        expect(report).not.toContain("SENTINEL-PATH-TOKEN");
+        expect(report).not.toContain("hooks.example.com");
+        expect(report).toContain('"hasWebhookUrl": true');
+      });
+    });
+
+    it("an unknown/future key whose name looks secret (matches /token|key|secret|password/i) is redacted to has<Key> presence-only — the sentinel VALUE never appears", () => {
+      const SENTINEL = "SENTINEL-UNKNOWN-FUTURE-SECRET-VALUE";
+      const settingsWithUnknownSecret = {
+        ...DEFAULT_SETTINGS,
+        superSecretApiToken: SENTINEL,
+      } as unknown as Settings;
+      const report = buildDiagnosticReport(settingsWithUnknownSecret);
+      expect(report).not.toContain(SENTINEL);
+      expect(report).toContain('"hasSuperSecretApiToken": true');
+    });
+
+    it("an unknown/future key whose name does NOT look secret is included verbatim (the documented safe default)", () => {
+      const settingsWithUnknownField = {
+        ...DEFAULT_SETTINGS,
+        someFutureNonSecretFlag: true,
+      } as unknown as Settings;
+      const report = buildDiagnosticReport(settingsWithUnknownField);
+      expect(report).toContain('"someFutureNonSecretFlag": true');
+    });
+
+    it("an array-of-OBJECTS field (hypothetical future 'list of user-authored entries') collapses to a count only — no entry content", () => {
+      const settingsWithArrayField = {
+        ...DEFAULT_SETTINGS,
+        futureSavedPresets: [
+          { id: "1", name: "SENTINEL-PRESET-ONE" },
+          { id: "2", name: "SENTINEL-PRESET-TWO" },
+        ],
+      } as unknown as Settings;
+      const report = buildDiagnosticReport(settingsWithArrayField);
+      expect(report).not.toContain("SENTINEL-PRESET-ONE");
+      expect(report).not.toContain("SENTINEL-PRESET-TWO");
+      expect(report).toContain('"futureSavedPresetsCount": 2');
+    });
+
+    it("an array of PRIMITIVES (enabledPacks — built-in pack ids, not user content) is included verbatim, not counted", () => {
+      const report = buildDiagnosticReport({ ...DEFAULT_SETTINGS, enabledPacks: ["biz", "tech"] });
+      expect(report).toContain('"enabledPacks": [\n    "biz",\n    "tech"\n  ]');
+    });
+
+    it("a nested settings object (taskLlm's per-domain override) applies the SAME policy recursively — nested apiKey redacted, nested baseUrl query-stripped, other fields verbatim", () => {
+      const report = buildDiagnosticReport({
+        ...DEFAULT_SETTINGS,
+        taskLlm: {
+          detect: {
+            enabled: true,
+            provider: "openai-compat",
+            baseUrl: "https://x.example.com?SENTINEL_NESTED_Q=1",
+            apiKey: SENTINELS.taskApiKey,
+            model: "distinctive-nested-model-id",
+          },
+        },
+      });
+      expect(report).not.toContain(SENTINELS.taskApiKey);
+      expect(report).not.toContain("SENTINEL_NESTED_Q");
+      expect(report).toContain('"hasApiKey": true');
+      expect(report).toContain("https://x.example.com/");
+      expect(report).toContain('"distinctive-nested-model-id"');
+    });
+  });
 });
 
 describe("diag/report.ts — copyDiagnosticReport", () => {
