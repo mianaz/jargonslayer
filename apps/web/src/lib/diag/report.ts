@@ -73,6 +73,13 @@ const SECRET_KEY_RE = /token|key|secret|password/i;
 // policy doc's point 1 for webhookUrl's rationale.
 const EXTRA_SECRET_KEYS = new Set(["webhookUrl"]);
 const URL_KEY_RE = /url$/i;
+// User-authored free text (profile self-descriptions today). Not
+// secret, but mildly identifying and diagnostically worthless beyond
+// "is it set and how long" — a copied report lands in public GitHub
+// issues, so content stays out and only the char count ships
+// (`industryChars: 12`). Name-based like everything else, so a future
+// free-text field must be added here deliberately.
+const FREE_TEXT_KEYS = new Set(["industry", "role", "familiarDomains", "weakDomains"]);
 
 function isSecretShapedKey(key: string): boolean {
   return SECRET_KEY_RE.test(key) || EXTRA_SECRET_KEYS.has(key);
@@ -116,6 +123,10 @@ function redactSettingsObject(obj: Record<string, unknown>): Record<string, unkn
     }
     if (typeof value === "string" && isUrlShapedKey(key)) {
       out[key] = sanitizeUrl(value);
+      continue;
+    }
+    if (typeof value === "string" && FREE_TEXT_KEYS.has(key)) {
+      out[`${key}Chars`] = value.length;
       continue;
     }
     if (Array.isArray(value)) {

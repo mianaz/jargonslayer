@@ -52,6 +52,27 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).toContain('"hasApiKey": true');
     });
 
+    it("profile free text ships as char counts only, never content", () => {
+      const report = buildDiagnosticReport({
+        ...DEFAULT_SETTINGS,
+        profile: {
+          enabled: true,
+          industry: "SENTINEL-INDUSTRY-生物信息",
+          role: "SENTINEL-ROLE-博士生",
+          englishLevel: "intermediate",
+          familiarDomains: "SENTINEL-FAMILIAR-测序",
+          weakDomains: "SENTINEL-WEAK-金融",
+        },
+      });
+      expect(report).not.toContain("SENTINEL-INDUSTRY");
+      expect(report).not.toContain("SENTINEL-ROLE");
+      expect(report).not.toContain("SENTINEL-FAMILIAR");
+      expect(report).not.toContain("SENTINEL-WEAK");
+      expect(report).toContain('"industryChars": 22');
+      expect(report).toContain('"enabled": true');
+      expect(report).toContain('"englishLevel": "intermediate"');
+    });
+
     it("reports hasApiKey:false etc. for default (empty-string) settings", () => {
       const report = buildDiagnosticReport(DEFAULT_SETTINGS);
       expect(report).toContain('"hasApiKey": false');
