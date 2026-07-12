@@ -84,26 +84,41 @@ import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import { diagLog } from "../diag/log";
 import { setTransport, type Transport } from "../llm/llmTransport";
 import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
+// S4 chunk 4 (blueprint decision C): the model-switch flow's own HTTP
+// leg reuses upload.ts's httpBaseFromWs (the SAME ws://…:8765 ->
+// http://…:8766 derivation every other sidecar-HTTP caller in this
+// codebase already uses) and pollJob (the single GET /jobs/{id} fetch)
+// — see switchModel()'s own doc comment below for why the LOOP around
+// pollJob is a small local one rather than a reused upload.ts export
+// (pollJobUntilDone exists there but is module-private, and lib/stt/
+// is off this chunk's touch list either way).
+import { httpBaseFromWs, pollJob } from "../stt/upload";
 import { getInvoke, getListen, getTauriFetch, type InvokeFn, type ListenFn, type TauriFetchFn } from "./tauriApi";
 import {
   getAppPaths,
+  invokeWriteMarker,
   runEffects,
   stopServer,
   type LogStream,
   type OnLog,
   type PrewarmProgressEvent,
+  type StartServerResult,
 } from "./provisionRunner";
-import type { DesktopPaths } from "./uvCommands";
+import { PINNED_PYTHON_MINOR, type DesktopPaths } from "./uvCommands";
 import {
   decideRestart,
   initial,
   initialRestartState,
+  parseMarker,
   transition,
   ALLOWED_MARKER_MODELS,
+  MARKER_SCHEMA_VERSION,
   MAX_RESTARTS_PER_WINDOW,
+  POLLING_HEALTH_ATTEMPT_CAP,
   RESTART_WINDOW_MS,
   type MachineState,
   type ProvisionContext,
+  type ProvisionMarker,
   type ProvisionStep,
   type RestartState,
 } from "./provisionMachine";
@@ -115,6 +130,28 @@ import {
 export interface DesktopLogLine {
   stream: LogStream;
   line: string;
+}
+
+/** One phase update during an in-flight switchModel() call — mirrors
+ *  downloadProgress$/currentDownloadProgress's own "listener Set +
+ *  snapshot getter" shape exactly (S4 chunk 2's precedent), just for
+ *  the NEW :8766 POST /download-model job (S4 chunk 1) instead of
+ *  first-run's --download-only/prewarm://progress path — decision B
+ *  deliberately keeps the two download transports separate, so their
+ *  progress SHAPES stay separate too rather than forcing one to paper
+ *  over the other's units (whisper_server.py's JobStatus.progress is
+ *  already a 0..1 fraction; PrewarmProgressEvent is raw byte counts).
+ *  switchModel's own signature stays the plain `(model) => Promise<void>`
+ *  the blueprint specifies — this is how SettingsDialog's 下载并切换
+ *  confirm button gets a live readout DURING that awaited call, the
+ *  same way the wizard's 下载模型 row gets one from
+ *  downloadProgress$ during beginProvision(). */
+export interface SwitchModelProgress {
+  phase: "downloading" | "restarting";
+  /** whisper_server.py JobStatus.progress verbatim (0..1) — only
+   *  present while phase is "downloading"; omitted once phase moves to
+   *  "restarting" (the job is done, there's no fraction left to show). */
+  progress?: number;
 }
 
 /** Chinese labels for chunk 6's wizard step rows AND this file's own
@@ -156,6 +193,68 @@ export function wizardRowStep(step: ProvisionStep): ProvisionStep {
 /** small — first-run reliability (blueprint architecture decision 4);
  *  S4's model picker is what makes this caller-chosen. */
 const DEFAULT_DESKTOP_MODEL = "small";
+
+/** S4 chunk 4: switchModel()'s own download-job poll loop's spacing —
+ *  mirrors upload.ts's own (module-private, unexported) POLL_INTERVAL_MS
+ *  convention for polling a sidecar job to done/error; not imported
+ *  (lib/stt/ is off this chunk's touch list and the constant isn't
+ *  exported anyway) so this is a same-valued local mirror, not a
+ *  reuse. No attempt cap, same as upload.ts's own pollJobUntilDone —
+ *  a large model's download can legitimately take many minutes, and
+ *  imposing an arbitrary cap here would fail a slow-but-healthy
+ *  download for no real reason. */
+const SWITCH_DOWNLOAD_POLL_INTERVAL_MS = 1500;
+
+/** S4 chunk 4: switchModel()'s own post-restart health-poll spacing —
+ *  mirrors provisionRunner.ts's own (module-private, unexported)
+ *  HEALTH_POLL_INTERVAL_MS/POLLING_HEALTH cadence exactly (2s spacing,
+ *  first attempt never sleeps — see performSwitchModel below), bounded
+ *  by the SAME POLLING_HEALTH_ATTEMPT_CAP provisionMachine.ts already
+ *  exports (reused directly, not mirrored — an actual shared constant,
+ *  unlike the interval itself). */
+const SWITCH_HEALTH_POLL_INTERVAL_MS = 2000;
+
+/** Mirrors provisionRunner.ts's own (module-private, unexported)
+ *  defaultNow/defaultSleep — this file needs its own copies for
+ *  switchModel()'s marker write (invokeWriteMarker's own `now` param)
+ *  and its two poll loops, since provisionRunner.ts doesn't export
+ *  either. */
+const defaultNow = (): string => new Date().toISOString();
+const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** POST {httpBase}/download-model {model} -> 202 {job_id} (S4 chunk 1's
+ *  sidecar endpoint) — httpBaseFromWs(DEFAULT_SETTINGS.whisperUrl) is
+ *  the SAME managed-mode derivation runnerDeps.settings/probeSidecar
+ *  already use elsewhere in this file (managed mode's whisperUrl is
+ *  fixed, blueprint architecture decision 6). Plain global fetch, not
+ *  deps.tauriFetch — every other sidecar-HTTP call in this codebase
+ *  (uploadRecording/fetchSidecarHealth/pollJob/ingestUrl/probeSidecar)
+ *  already talks to localhost this same way; tauriFetch exists only to
+ *  back the LLM transport's plugin-http swap (setTransport above), not
+ *  as a general fetch replacement. Error-body handling mirrors
+ *  upload.ts's ingestUrl (try the JSON body's own `error` field, fall
+ *  back to a generic zh message) — not reused directly since it's a
+ *  different endpoint/body shape, just the same shape of convention. */
+async function postDownloadModel(model: string): Promise<string> {
+  const base = httpBaseFromWs(DEFAULT_SETTINGS.whisperUrl);
+  const res = await fetch(`${base}/download-model`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model }),
+  });
+  if (!res.ok) {
+    let message = `下载模型请求失败（${res.status}）`;
+    try {
+      const body = (await res.json()) as { error?: string };
+      if (body?.error) message = body.error;
+    } catch {
+      // keep the generic message
+    }
+    throw new Error(message);
+  }
+  const body = (await res.json()) as { job_id: string };
+  return body.job_id;
+}
 
 /** The machine's own MachineState, widened with two extra phases this
  *  file alone can produce: IS_DESKTOP=false (an ordinary web build) has
@@ -253,6 +352,59 @@ export interface DesktopBootstrapHandle {
    *  on a stop_server/write_provision_marker failure — the caller
    *  (a UI button) is expected to catch and toast. */
   reprovision: () => Promise<void>;
+  /** SettingsDialog's 转录引擎 desktop-managed block (S4 chunk 4): the
+   *  TRUTHFUL installed model, read fresh from the provision marker
+   *  (deps.invoke("read_provision_marker") + parseMarker — both
+   *  already exist, provisionMachine.ts's own schema authority) rather
+   *  than settings.whisperModel, which is only the user's TARGET/
+   *  preference (decision C) and can briefly diverge from what's
+   *  actually running (e.g. right after a backup restore, before any
+   *  switch). null on a missing/corrupt marker or a read failure (fails
+   *  open, mirrors provisionRunner.ts's own readMarkerEffect contract)
+   *  — the caller (SettingsDialog) renders an em-dash for both "still
+   *  loading" and this null case, same posture as sidecarStatus's own
+   *  `null = not probed yet` idiom just above it in that file. */
+  installedModel: () => Promise<string | null>;
+  /** SettingsDialog's 转录引擎 「更换模型」 confirm button (S4 chunk 4,
+   *  blueprint decision C's switch flow): POST :8766 /download-model
+   *  {model} -> poll its job to done/error -> stop_server -> start_
+   *  server(model) -> poll /health -> on success, write the marker
+   *  (invokeWriteMarker, reused verbatim from provisionRunner.ts) AND
+   *  persist settings.whisperModel TOGETHER (decision C: "this keeps
+   *  the two in lock-step"). A thin bootstrap-only detour around the
+   *  machine, same posture as reprovision()/recheckHealth() above —
+   *  provisionMachine.ts itself gains no new state for this.
+   *
+   *  Rejects (never silently no-ops) in three cases: `model` isn't
+   *  ALLOWED_MARKER_MODELS-valid; current.state.phase isn't HEALTHY
+   *  (switching only makes sense from an already-running managed
+   *  sidecar — the UI is expected to only ever offer this button then,
+   *  same "mode gating lives in SettingsDialog, not the handle" posture
+   *  reprovision()'s own sidecarMode-agnostic implementation already
+   *  established); or the switch itself fails. On a DOWNLOAD-phase
+   *  failure the old server was never touched — current.state stays
+   *  exactly HEALTHY, a truthful "nothing changed, try again" outcome.
+   *  On a failure from stop_server onward (the old server IS already
+   *  gone), current.state instead lands on a real STEP/ERROR
+   *  MachineState — the closest existing shape to "a fresh provision
+   *  would be stuck here too" — so DesktopWizard.tsx's existing 重试/
+   *  EscapeHatch machinery (unmodified by this chunk) can recover the
+   *  session-wide loss of local transcription; see this file's own
+   *  landOnSwitchFailure for exactly which step. Single-flighted +
+   *  generation-guarded like reprovision() (see that field's own latch
+   *  doc comment) — a second overlapping call joins the SAME in-flight
+   *  attempt rather than double-downloading/double-restarting. */
+  switchModel: (model: string) => Promise<void>;
+  /** Subscribe to every phase update during an in-flight switchModel()
+   *  call — see SwitchModelProgress's own doc comment for why this is
+   *  a SEPARATE surface from downloadProgress$ rather than a reused
+   *  one. Does NOT replay past updates (mirrors downloadProgress$'s own
+   *  "call the snapshot getter first" contract). */
+  switchModelProgress$: (listener: (progress: SwitchModelProgress | null) => void) => () => void;
+  /** Snapshot of the LATEST switchModel() phase update, or null outside
+   *  an active call — reset the instant switchModel() settles (success
+   *  or failure), same "both ends" contract as currentDownloadProgress. */
+  currentSwitchModelProgress: () => SwitchModelProgress | null;
   /** SettingsDialog's desktop-only 诊断信息 → 「查看本地服务日志」: tails
    *  whisper_server.log via Rust's read_sidecar_log (provision.rs).
    *  Deliberately routed through THIS handle (reusing the SAME
@@ -292,6 +444,10 @@ const NOT_DESKTOP_HANDLE: DesktopBootstrapHandle = {
   paths: NOT_DESKTOP_PATHS,
   recheckHealth: async () => {},
   reprovision: async () => {},
+  installedModel: async () => null,
+  switchModel: async () => {},
+  switchModelProgress$: () => () => {},
+  currentSwitchModelProgress: () => null,
   readSidecarLog: async () => "",
 };
 
@@ -389,6 +545,18 @@ export interface BootstrapDeps {
    *  own updateSettings -> storage.saveSettings posture (already
    *  un-awaited there). */
   persistDesktopModel?: (model: string) => Promise<void>;
+  /** S4 chunk 4: paces switchModel()'s own download-job/health-poll
+   *  loops (SWITCH_DOWNLOAD_POLL_INTERVAL_MS / SWITCH_HEALTH_POLL_
+   *  INTERVAL_MS below) — same "real setTimeout-backed default,
+   *  swappable for hermetic instant unit tests" contract as
+   *  provisionRunner.ts's own RunnerDeps.sleep (that file's own doc
+   *  comment on POLLING_HEALTH's pacing). Deliberately NOT threaded
+   *  into runnerDeps.sleep below — runnerDeps already drives the
+   *  UNRELATED first-run provisioning loop via runEffects, and this
+   *  chunk's own touch-list stays surgical by leaving that existing,
+   *  already-tested wiring untouched rather than growing its blast
+   *  radius to cover a second, independent caller. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** The testable core — see this file's header comment. Resolves once
@@ -446,6 +614,18 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   function resetDownloadProgress(): void {
     downloadProgress = null;
     notifyDownloadProgress();
+  }
+
+  // S4 chunk 4 — mirrors downloadProgress/notifyDownloadProgress just
+  // above exactly (same listener-Set-+-snapshot shape), for
+  // switchModel()'s own :8766 /download-model job instead of first-run's
+  // --download-only/prewarm://progress path; see SwitchModelProgress's
+  // own doc comment on why the two stay separate surfaces.
+  let switchModelProgress: SwitchModelProgress | null = null;
+  const switchModelProgressListeners = new Set<(progress: SwitchModelProgress | null) => void>();
+  function notifySwitchModelProgress(progress: SwitchModelProgress | null): void {
+    switchModelProgress = progress;
+    for (const listener of switchModelProgressListeners) listener(switchModelProgress);
   }
 
   const runnerDeps = {
@@ -510,6 +690,12 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   // matches (a newer drive already took over). The very FIRST drive,
   // kicked off unconditionally further down, never needs to bump
   // anything — it naturally owns whatever `generation` starts at.
+  // switchModel() (S4 chunk 4) also bumps it on entry, mirroring
+  // reprovision()'s own leading bump — it never loops through drive()
+  // itself so the bump can't supersede ITS OWN progress the way it
+  // does for a real drive, but it still invalidates any drive() that
+  // happens to be concurrently in flight (e.g. a crash-restart) the
+  // same way every other entry point here already does.
   let generation = 0;
   // Finding 3: reprovision()'s own single-flight latch — a second
   // overlapping call awaits the SAME in-flight promise (settling
@@ -521,6 +707,14 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   // call), since a failed reprovision() must still let a LATER, non-
   // overlapping attempt through.
   let reprovisionInFlight: Promise<void> | null = null;
+  // S4 chunk 4: switchModel()'s own single-flight latch — same
+  // contract as reprovisionInFlight just above (a second overlapping
+  // call joins the SAME in-flight attempt; clears on settle either
+  // way), kept as its own separate variable since the two actions are
+  // unrelated (a reprovision() and a switchModel() should never be
+  // coalesced into "the same" in-flight attempt just because both
+  // happen to be pending).
+  let switchModelInFlight: Promise<void> | null = null;
   const listeners = new Set<(state: DesktopBootstrapState) => void>();
 
   function externalState(): DesktopBootstrapState {
@@ -651,6 +845,118 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       notify();
     }
   }
+
+  // S4 chunk 4 (blueprint decision C) — the switch flow's own "land on
+  // a truthful STEP/ERROR" step, used by performSwitchModel below for
+  // every failure from stop_server onward (the old server is already
+  // gone by then — see switchModel's own interface doc comment on the
+  // two failure buckets). `step` picks whichever of STARTING/POLLING_
+  // HEALTH is the closest analog to where a FRESH provision would be
+  // stuck at that same moment (STARTING: the stop_server/start_server
+  // invoke itself failed, mirroring runStepEffect's own catch for that
+  // step; POLLING_HEALTH: start_server succeeded but health never came
+  // up, mirroring handleHealthPollResult's own attempt-cap branch) —
+  // behaviorally identical either way (handleRetry in
+  // provisionMachine.ts treats both steps the same: a leading
+  // stopServer + re-enter STARTING), but picking the nearer analog is
+  // still the more honest, better-justified choice per this chunk's own
+  // "pick the closest existing shape and justify" instruction.
+  // retriable:true throughout, matching runStepEffect's own "every
+  // failure reachable here is in practice transient" posture.
+  function landOnSwitchFailure(step: Extract<ProvisionStep, "STARTING" | "POLLING_HEALTH">, message: string): void {
+    diagLog(
+      "error",
+      "desktop-provision",
+      `切换模型失败（旧服务已停止，${PROVISION_STEP_LABELS[step]}未恢复）`,
+      redactHomePath(message),
+    );
+    current = { state: { phase: "STEP", step, status: "ERROR", error: message, retriable: true }, effects: [] };
+    notify();
+  }
+
+  /** The real work behind the `switchModel` handle action (split out
+   *  as its own nested function, mirroring drive()/driveGuarded()'s own
+   *  split, so the returned handle method itself stays a thin validate
+   *  + single-flight wrapper below). Callable only once switchModel()
+   *  has already confirmed `model` is ALLOWED_MARKER_MODELS-valid and
+   *  current.state.phase === "HEALTHY" — this function trusts both. */
+  async function performSwitchModel(model: string): Promise<void> {
+    try {
+      // ---- bucket 1: download (old server untouched throughout — a
+      // failure here rethrows as-is, current.state is never touched) ----
+      notifySwitchModelProgress({ phase: "downloading", progress: 0 });
+      const jobId = await postDownloadModel(model);
+      const sleep = deps.sleep ?? defaultSleep;
+      for (;;) {
+        const job = await pollJob(jobId, runnerDeps.settings);
+        if (job.status === "error") throw new Error(job.error ?? "模型下载失败");
+        notifySwitchModelProgress({ phase: "downloading", progress: job.progress });
+        if (job.status === "done") break;
+        await sleep(SWITCH_DOWNLOAD_POLL_INTERVAL_MS);
+      }
+
+      // ---- bucket 2 begins here: the old server is about to go away ----
+      // Reseed ctx BEFORE touching the running server — a later
+      // same-session crash-restart (handleServerExit's own CRASH_
+      // RESTART above, which reads ctx.model directly, never the
+      // marker) must relaunch the NEW model, not silently revert to
+      // whatever ctx.model was before this switch.
+      ctx = { ...ctx, model };
+      notifySwitchModelProgress({ phase: "restarting" });
+      diagLog("info", "desktop-provision", `切换模型：停止旧服务，准备启动 ${model}`);
+      try {
+        await stopServer(deps.invoke);
+        await deps.invoke<StartServerResult>("start_server", { model });
+      } catch (error) {
+        const message = describeError(error);
+        landOnSwitchFailure("STARTING", message);
+        throw error instanceof Error ? error : new Error(message);
+      }
+
+      let healthy = false;
+      // Finding 1's own cadence, mirrored: the first attempt never
+      // sleeps, every attempt after paces SWITCH_HEALTH_POLL_INTERVAL_MS
+      // first — see that constant's own doc comment.
+      for (let attempt = 1; attempt <= POLLING_HEALTH_ATTEMPT_CAP; attempt++) {
+        if (attempt > 1) await sleep(SWITCH_HEALTH_POLL_INTERVAL_MS);
+        healthy = (await probe(runnerDeps.settings)).up;
+        if (healthy) break;
+      }
+      if (!healthy) {
+        const message = `切换到 ${model} 后本地服务在 ${POLLING_HEALTH_ATTEMPT_CAP} 次检测内仍未恢复健康`;
+        landOnSwitchFailure("POLLING_HEALTH", message);
+        throw new Error(message);
+      }
+
+      // ---- durably record the switch (marker + settings together,
+      // decision C: "this keeps the two in lock-step") ----
+      // py/deps are reused verbatim from whatever marker is already on
+      // disk (untouched by a model switch — only `model` actually
+      // changes) rather than reconstructed from provisionMachine.ts's
+      // own buildMarker/DEPS_TAG, which are module-private there and
+      // off this chunk's touch list to export; a fallback only matters
+      // for the pathological case of reaching HEALTHY with no marker at
+      // all (e.g. an adopted external-ish server), and neither field is
+      // ever compared — parseMarker only shape-checks them (blueprint
+      // risk register #5: "pin comparison still skipped").
+      const existingMarker = parseMarker(
+        await deps.invoke<string | null>("read_provision_marker").catch(() => null),
+      );
+      const marker: Omit<ProvisionMarker, "ts"> = {
+        schema: MARKER_SCHEMA_VERSION,
+        model,
+        py: existingMarker?.py ?? PINNED_PYTHON_MINOR,
+        deps: existingMarker?.deps ?? "unknown",
+      };
+      await invokeWriteMarker(runnerDeps, marker, deps.now ?? defaultNow);
+      await deps.persistDesktopModel?.(model);
+      diagLog("info", "desktop-provision", `已切换到模型 ${model}`);
+      notify(); // current.state is still HEALTHY — re-announce per this action's own contract.
+    } finally {
+      notifySwitchModelProgress(null);
+    }
+  }
+
   if (sidecarMode === "external") {
     // Finding 2b: never touches the managed drive loop OR its
     // server://exit crash-restart wiring below — this app neither
@@ -755,6 +1061,42 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         reprovisionInFlight = null;
       });
       return reprovisionInFlight;
+    },
+    async installedModel() {
+      try {
+        const raw = await deps.invoke<string | null>("read_provision_marker");
+        return parseMarker(raw)?.model ?? null;
+      } catch {
+        // Fail open to null — mirrors provisionRunner.ts's own
+        // readMarkerEffect contract (never throws, "no marker" and "a
+        // read failure" render identically to this method's caller).
+        return null;
+      }
+    },
+    async switchModel(model: string) {
+      if (!ALLOWED_MARKER_MODELS.includes(model)) {
+        return Promise.reject(new Error(`不支持的模型：${model}`));
+      }
+      if (current.state.phase !== "HEALTHY") {
+        return Promise.reject(new Error("本地服务当前不可用，暂时无法切换模型"));
+      }
+      // Finding 3-style single-flight — mirrors reprovision()'s own
+      // latch immediately above (see switchModelInFlight's own doc
+      // comment).
+      if (switchModelInFlight) return switchModelInFlight;
+      generation++; // supersedes whatever drive is currently running — mirrors reprovision()'s own leading bump.
+      const run = performSwitchModel(model);
+      switchModelInFlight = run.finally(() => {
+        switchModelInFlight = null;
+      });
+      return switchModelInFlight;
+    },
+    switchModelProgress$(listener) {
+      switchModelProgressListeners.add(listener);
+      return () => switchModelProgressListeners.delete(listener);
+    },
+    currentSwitchModelProgress() {
+      return switchModelProgress;
     },
     async readSidecarLog(tailLines: number) {
       return deps.invoke<string>("read_sidecar_log", { tailLines });

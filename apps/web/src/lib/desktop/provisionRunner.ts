@@ -143,7 +143,15 @@ async function readMarkerEffect(deps: RunnerDeps): Promise<string | null> {
   }
 }
 
-async function invokeWriteMarker(
+/** write_provision_marker — like stopServer/getAppPaths below, ALSO
+ *  exported for a caller outside the machine's own driven flow: S4
+ *  chunk 4's bootstrap.ts switchModel() (a thin bootstrap-only detour,
+ *  same rationale as reprovision()'s direct stopServer() call) reuses
+ *  this verbatim rather than hand-duplicating the "stamp `ts`, then
+ *  JSON.stringify + invoke" shape — the ONE place that does so stays
+ *  this one, regardless of how many external callers there end up
+ *  being. */
+export async function invokeWriteMarker(
   deps: RunnerDeps,
   marker: Omit<ProvisionMarker, "ts">,
   now: () => string,

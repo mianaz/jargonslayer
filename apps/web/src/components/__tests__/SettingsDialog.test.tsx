@@ -613,3 +613,69 @@ describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox
     expect(container!.textContent).toContain("Soniox Key");
   });
 });
+
+// ---------------------------------------------------------------
+// 转录引擎 更换模型 (v0.4 S4 chunk 4, blueprint decision C's switch
+// flow). Same IS_DESKTOP limitation this file's own Soniox describe
+// block above already documents ("PREVIEW_TIER/IS_DESKTOP are
+// import-time consts... the rest of this file never stubs PREVIEW_
+// TIER live" — platform/desktop.ts's IS_DESKTOP is read once when
+// THIS file's own top-level `import SettingsDialog from
+// "../SettingsDialog"` first evaluates the module graph, long before
+// any test body runs, so a runtime vi.stubEnv can't flip it here any
+// more than it can PREVIEW_TIER). The whole 当前模型/更换模型 block
+// (like the pre-existing 重新运行安装向导 button right beside it, which
+// has never had its own render test in this file for the identical
+// reason) sits behind `{IS_DESKTOP && (...)}` and is therefore
+// structurally unreachable from any render in this suite — so neither
+// the meeting-active disable (risk 2: switching stops+relaunches the
+// sidecar, disruptive mid-meeting) nor the immediate-action placement
+// (handleSwitchModel bypasses patch()/draft/保存 entirely — see that
+// handler's own doc comment in SettingsDialog.tsx) is mount-testable
+// here without a vi.resetModules() + dynamic-re-import workaround this
+// file has never used for the analogous PREVIEW_TIER gap either; both
+// are instead covered at the unit level in bootstrap.test.ts
+// (switchModel()'s own non-HEALTHY-rejection/single-flight tests) and
+// by direct code inspection (meetingActive gates the button's
+// `disabled`/`title`, handleSwitchModel never calls patch()). What IS
+// testable without IS_DESKTOP: that the block stays fully absent on an
+// ordinary web build regardless of sidecarMode/meeting status — i.e.
+// nothing here accidentally leaks into a build that never provisions
+// anything.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 更换模型 (v0.4 S4 chunk 4)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ status: "idle" }); // resetStore() doesn't cover this field — avoid leaking into later tests
+  });
+
+  it("renders no 更换模型/当前模型 affordance on a non-desktop build, even with sidecarMode:\"managed\" and a meeting active — IS_DESKTOP gates the whole block", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, sidecarMode: "managed" },
+      status: "listening",
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.textContent).not.toContain("更换模型");
+    expect(container!.textContent).not.toContain("当前模型");
+  });
+});
