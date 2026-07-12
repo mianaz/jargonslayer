@@ -78,23 +78,87 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
 </table>
 </div>
 
-## Quickstart
+## Local setup
+
+*(Section also in [简体中文](README.zh-CN.md#本地安装与运行).)*
+
+Two independent pieces: **the app** (a Next.js server — required) and **the local Whisper sidecar** (a Python process — optional, only needed for audio that never leaves the machine). Set up the app first; add the sidecar whenever you want local mic/tab transcription.
+
+### Prerequisites
+
+- **git** — check with `git --version`; install from [git-scm.com](https://git-scm.com/downloads) if missing
+- **Node.js ≥ 20** (this repo's own dev environment runs 24) — check with `node -v`; get it from [nodejs.org](https://nodejs.org/) or a version manager (nvm, fnm, …)
+- **Python ≥ 3.9** — only needed for Step 2 below; check with `python3 --version`; get it from [python.org](https://www.python.org/downloads/) if missing
+
+### Step 1 — the app
 
 ```bash
 git clone https://github.com/mianaz/jargonslayer.git
 cd jargonslayer
-npm install
-npm run dev
+npm ci
+npm run build && npm start
+# while developing instead: npm run dev
 # open http://localhost:3000
 ```
 
-On first launch an onboarding tour appears. **Open the ≡ menu (top right) and click 「演示」 (Demo) first** — no microphone, no API key, and you'll see the full transcription → detection → cards → report flow (the demo runs on the built-in dictionary when no key is configured).
+`npm ci` installs exactly what the committed lockfile pins. The project became an npm workspace at v0.4 (root + `apps/web` + `packages/core`) — the commands above didn't change, but if you're updating an old clone from before that, run `npm ci` again after pulling to pick up the new workspace layout.
+
+> Never set `NEXT_PUBLIC_DEPLOY_TIER` for a local run — that variable exists only for the hosted preview build (it swaps in a shared demo key and a trimmed model list). Leave it unset and you get the full local build.
+
+On first launch an onboarding tour appears. **Open the ≡ menu (top right) and click 「演示」 (Demo) first** — no microphone, no API key, and you'll see the full transcription → detection → cards → report flow (the demo runs on the built-in dictionary when no key is configured). The dictionary needs nothing else — it detects instantly, offline. AI detection and post-meeting reports need a key; see [Configure an API key](#configure-an-api-key-unlocks-ai-detection-and-reports) below.
+
+### Step 2 — the local Whisper sidecar (optional but recommended)
+
+This is what unlocks the 本地 Whisper mic engine, 标签页音频 (tab/stream capture — hearing the other side of an online meeting), and the sidecar-backed route for file and URL imports (better quality plus diarization on uploads; the only route for URL/`yt-dlp` imports). Every one of those keeps audio on this machine.
+
+```bash
+cd sidecar
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+python whisper_server.py --model medium --partials
+```
+
+(`--partials` streams gray interim text while someone is speaking — the typing effect; drop it if CPU is tight.) Wait for the banner. The first run downloads the model from Hugging Face; the port only opens once that download *and* the model load finish. Depending on the model size and your connection this can take a while before anything prints — that's normal, not a hang. You'll see something like:
+
+```
+============================================================
+JargonSlayer 本地 Whisper 服务 / local Whisper sidecar
+  model:     medium
+  device:    cpu
+  load:      12.34s
+  diarize:   off
+ws://127.0.0.1:8765 等待连接 — 在 JargonSlayer 设置中选择「本地 Whisper」
+http://127.0.0.1:8766 录音上传任务 API — PUT /transcribe, POST /ingest-url, GET /jobs
+============================================================
+```
+
+Once that `ws://... 等待连接` line shows up, go back to the page: Settings → transcription engine → 本地 Whisper → 开始监听.
+
+| Model | Quality | Speed | Best for |
+|---|---|---|---|
+| `tiny` / `base` | Basic | Very fast | Low-spec machines, quick test only |
+| `small` (sidecar default) | Good | Realtime with headroom | Lightweight, fine for clean mostly-English audio |
+| `medium` | Better | Near realtime | **Recommended — best balance for live 中英夹杂 (code-switched zh-en)** |
+| `large-v3` | Best | Too slow live on Apple Silicon CPU | Best accuracy — batch/upload re-transcription on Mac, or live if you have an NVIDIA GPU |
+
+Rule of thumb: Apple Silicon doing a live meeting → `medium`. Have an NVIDIA GPU → `large-v3` live is fine too. Old or no-GPU laptop → `small`. None of these switch languages mid-sentence flawlessly — Whisper picks one language per ~30-second window; the jargon detection and Chinese gloss layer on top is what actually carries the bilingual experience, not the transcription itself.
+
+**Picking an engine**: mic only → 本地 Whisper. Need the other side of an online meeting, or any browser tab/stream → 标签页音频 (same sidecar, still fully local). Don't want to install anything → 浏览器识别, the zero-setup fallback — but plainly: that sends your audio to Chrome's speech service (Google).
+
+### Troubleshooting
+
+- **`无法连接本地 Whisper` toast** — the sidecar isn't running, or it's still downloading/loading the model (wait for the banner above). Check with `nc -z localhost 8765 && echo UP || echo DOWN`.
+- **`pip install -r requirements.txt` fails on `claude-agent-sdk`** — that dependency needs Python ≥ 3.10 and is only for the separate, optional [subscription-direct](#subscription-direct-experimental-local-dev-build-only) agent sidecar, not transcription. Install just the three transcription deps instead: `pip install "faster-whisper>=1.0,<2.0" "websockets>=12,<14" "numpy>=1.24,<3.0"`.
+- **`npm start` errors** with "Could not find a production build in the '.next' directory" — run `npm run build` first; `start` only serves an existing build.
+- **Port already in use** — pass `--port <n>` to `whisper_server.py`, then update it to match in Settings → transcription engine → Whisper 地址.
+
+> **Coming later**: the packaged desktop app (planned for v0.4) replaces all of the above with an installer and a first-run setup wizard — no terminal required. This guide covers today's manual path.
 
 ## Configure an API key (unlocks AI detection and reports)
 
 The built-in dictionary only matches fixed phrases. An Anthropic API key adds context-aware detection plus post-meeting summaries and translation. Two ways:
 
-1. **In the UI**: ≡ menu → 「设置」 (Settings) → AI 检测 → API Key. Stored in your local browser (IndexedDB); each call is relayed once, in memory, through this app's own `/api/*` routes before reaching the model provider — never written to disk or logged, but it does pass through that server's memory, which is not the same claim as "never touches a server." If you're self-hosting, that server is your own machine.
+1. **In the UI**: ≡ menu → 「设置」 (Settings) → switch the top toggle to 「高级」 (Advanced) → AI 检测 → API Key. Stored in your local browser (IndexedDB); each call is relayed once, in memory, through this app's own `/api/*` routes before reaching the model provider — never written to disk or logged, but it does pass through that server's memory, which is not the same claim as "never touches a server." If you're self-hosting, that server is your own machine.
 2. **Environment variable** (recommended — the hardened, zero-browser-storage posture): the key never enters the browser at all, it only ever lives in the server process. Create `.env.local` in the project root:
    ```
    ANTHROPIC_API_KEY=sk-ant-...
@@ -117,23 +181,9 @@ Get a key at [console.anthropic.com](https://console.anthropic.com/). Defaults: 
 
 ### Local Whisper (privacy mode)
 
-```bash
-cd sidecar
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-python whisper_server.py --model small
-# when you see "ws://127.0.0.1:8765 等待连接" (waiting for connection),
-# go back to the page: Settings → transcription engine → 本地 Whisper → 开始监听
-```
+Setup, the "ready" banner, model choice, and troubleshooting all live in [Local setup → Step 2](#step-2--the-local-whisper-sidecar-optional-but-recommended).
 
-| Model | Quality | Speed | Best for |
-|---|---|---|---|
-| `tiny` / `base` | Basic | Very fast | Low-spec machines |
-| `small` (default) | Good | Realtime with headroom | **Daily use** |
-| `medium` | Better | Near realtime | Heavy accents, technical vocabulary |
-| `large-v3` | Best | Slower | Post-meeting re-transcription |
-
-Useful flags: `--language en` (default), `--partials` (gray interim text while speaking, more CPU), `--save-audio meeting.wav` (keep audio for post-meeting diarization).
+Useful flags once it's running: `--language en` (default), `--partials` (gray interim text while speaking, more CPU), `--save-audio meeting.wav` (keep audio for post-meeting diarization).
 
 ### ⚠️ Hearing "the other side" (must-read for online meetings)
 
