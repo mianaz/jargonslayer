@@ -90,6 +90,17 @@ function buildMarker(ctx: ProvisionContext): Omit<ProvisionMarker, "ts"> {
   return { schema: MARKER_SCHEMA_VERSION, model: ctx.model, py: PINNED_PYTHON_MINOR, deps: DEPS_TAG };
 }
 
+// Mirrors apps/desktop/src-tauri/src/server.rs's own ALLOWED_MODELS —
+// bump both together if the accepted Whisper model set ever changes. A
+// marker whose model isn't one of these is corrupted/foreign (never a
+// value THIS app could have written) — parseMarker below rejects it
+// the same as a missing/empty model, landing on a fresh provision
+// rather than riding a bogus model string into startStep/start_server.
+// A cheap shape guard ONLY — NOT the deliberately-avoided pin
+// comparison against ctx.model (see handleCheckResult below: a
+// marker's OWN model is meant to win over ctx's fixed default).
+const ALLOWED_MARKER_MODELS: readonly string[] = ["tiny", "base", "small", "medium", "large-v3"];
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -111,6 +122,7 @@ export function parseMarker(raw: string | null): ProvisionMarker | null {
   const { schema, model, py, deps, ts } = parsed;
   if (schema !== MARKER_SCHEMA_VERSION) return null;
   if (typeof model !== "string" || model === "") return null;
+  if (!ALLOWED_MARKER_MODELS.includes(model)) return null;
   if (typeof py !== "string" || typeof deps !== "string" || typeof ts !== "string") return null;
   return { schema, model, py, deps, ts };
 }
@@ -124,7 +136,11 @@ export type Effect =
   | { kind: "runUv"; command: UvCommand }
   | { kind: "prewarmModel"; model: string }
   | { kind: "startServer"; model: string }
-  | { kind: "writeMarker"; marker: Omit<ProvisionMarker, "ts"> };
+  | { kind: "writeMarker"; marker: Omit<ProvisionMarker, "ts"> }
+  /** Leading effect on a STARTING/POLLING_HEALTH retry (see handleRetry
+   *  below) — mirrors writeMarker's own "bundled leading effect ahead
+   *  of the real step effect" shape. */
+  | { kind: "stopServer" };
 
 // ---- events (interpreter -> machine) ----
 
@@ -261,6 +277,24 @@ function handleStepError(
 
 function handleRetry(ctx: ProvisionContext, state: MachineState): TransitionResult {
   if (state.phase !== "STEP" || state.status !== "ERROR") return { state, effects: [] };
+  // server.rs's start_server short-circuits to already_running:true
+  // whenever ServerState still holds a Child — spawned-but-never-bound
+  // or not, since the slot is filled the instant spawn_streamed
+  // succeeds, well before whisper_server.py's own load-before-bind
+  // finishes. A bare re-entry into POLLING after a POLLING_HEALTH
+  // timeout would therefore just re-observe the SAME hung child
+  // forever — retrying it means stop-then-restart, re-entering
+  // STARTING (not POLLING) with a LEADING stopServer. Applied
+  // uniformly to a STARTING retry too (not just POLLING_HEALTH's):
+  // stop_server is an idempotent Ok(()) when nothing is held (verified
+  // in server.rs — a rejected start_server invoke never leaves a child
+  // tracked, so this is provably a no-op there today), and one rule
+  // for both post-spawn-attempt steps is simpler than two step-
+  // dependent ones.
+  if (state.step === "STARTING" || state.step === "POLLING_HEALTH") {
+    const started = startStep(ctx, "STARTING");
+    return { state: started.state, effects: [{ kind: "stopServer" }, ...started.effects] };
+  }
   return startStep(ctx, state.step);
 }
 

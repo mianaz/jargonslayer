@@ -26,6 +26,7 @@ import { diagLog } from "@/lib/diag/log";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import {
   initDesktop,
+  redactHomePath,
   type DesktopBootstrapHandle,
   type DesktopBootstrapState,
   type DesktopLogLine,
@@ -101,7 +102,11 @@ export default function DesktopBootstrap() {
   const terminalReason = state?.phase === "TERMINAL_ERROR" ? state.reason : null;
   useEffect(() => {
     if (terminalReason === null) return;
-    const entry = diagLog("error", "desktop-server", "本地服务已停止", terminalReason);
+    // Finding 4: the SAME diag-ring choke point as bootstrap.ts's own
+    // STEP_ERROR logging — redactHomePath before it ever reaches
+    // diagLog, never before display (DesktopWizard.tsx's terminal
+    // screen below still renders `state.reason` raw).
+    const entry = diagLog("error", "desktop-server", "本地服务已停止", redactHomePath(terminalReason));
     showToast({ message: "本地语音识别服务反复异常退出，已停止自动重启", ref: entry.ref });
   }, [terminalReason, showToast]);
 
@@ -112,13 +117,19 @@ export default function DesktopBootstrap() {
       ? !consentDismissed
       : state.phase === "TERMINAL_ERROR"
         ? !terminalDismissed
-        : state.phase === "STEP";
+        : state.phase === "EXTERNAL_UNMANAGED"
+          ? false
+          : state.phase === "STEP";
   // ^ every STEP shape (RUNNING/POLLING/ERROR) stays visible once
   //   consent was given — there is no "dismiss mid-install" affordance;
   //   the only up-front choice is at WIZARD_CONSENT_REQUIRED. HEALTHY/
   //   CHECKING/NOT_DESKTOP render nothing (the `!handle` guard above
   //   already excludes NOT_DESKTOP in practice, since IS_DESKTOP false
-  //   returns before ever reaching this point).
+  //   returns before ever reaching this point). EXTERNAL_UNMANAGED
+  //   (Finding 2 — user chose an externally-managed sidecar) is spelled
+  //   out explicitly rather than left to the STEP fallthrough: this app
+  //   never provisions/starts anything in that mode, so there is no
+  //   wizard action to ever offer for it.
 
   if (!visible) return null;
 

@@ -132,11 +132,79 @@ describe("runEffects — STEP/POLLING_HEALTH (probeHealth alone -> HEALTH_POLL_R
   it("maps to probeSidecar only, never touches invoke()", async () => {
     const { invoke, calls } = makeFakeInvoke({});
     const { listen } = makeFakeListen();
-    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: true }) };
+    const deps: RunnerDeps = {
+      invoke,
+      listen,
+      settings: DEFAULT_SETTINGS,
+      probeSidecarFn: async () => ({ up: true }),
+      sleep: async () => {}, // Finding 1: attempts:3 below is past the first attempt — instant fake, no real 2s wait.
+    };
     const state: MachineState = { phase: "STEP", step: "POLLING_HEALTH", status: "POLLING", attempts: 3 };
     const event = await runEffects(state, [{ kind: "probeHealth" }], deps);
     expect(event).toEqual({ type: "HEALTH_POLL_RESULT", healthy: true });
     expect(calls).toEqual([]);
+  });
+
+  it("Finding 1: the FIRST attempt (attempts:1) probes immediately — never calls sleep", async () => {
+    const { invoke } = makeFakeInvoke({});
+    const { listen } = makeFakeListen();
+    const sleepCalls: number[] = [];
+    const deps: RunnerDeps = {
+      invoke,
+      listen,
+      settings: DEFAULT_SETTINGS,
+      probeSidecarFn: async () => ({ up: false }),
+      sleep: async (ms) => {
+        sleepCalls.push(ms);
+      },
+    };
+    const state: MachineState = { phase: "STEP", step: "POLLING_HEALTH", status: "POLLING", attempts: 1 };
+    const event = await runEffects(state, [{ kind: "probeHealth" }], deps);
+    expect(sleepCalls).toEqual([]);
+    expect(event).toEqual({ type: "HEALTH_POLL_RESULT", healthy: false });
+  });
+
+  it("Finding 1: every attempt AFTER the first sleeps 2000ms BEFORE probing — a 30x2s ≈ 60s budget for whisper_server.py's load-before-bind bind, instead of exhausting the cap in under a second against a connection-refused probe", async () => {
+    const { invoke } = makeFakeInvoke({});
+    const { listen } = makeFakeListen();
+    const order: string[] = [];
+    const deps: RunnerDeps = {
+      invoke,
+      listen,
+      settings: DEFAULT_SETTINGS,
+      probeSidecarFn: async () => {
+        order.push("probe");
+        return { up: false };
+      },
+      sleep: async (ms) => {
+        order.push(`sleep:${ms}`);
+      },
+    };
+    const state: MachineState = { phase: "STEP", step: "POLLING_HEALTH", status: "POLLING", attempts: 2 };
+    const event = await runEffects(state, [{ kind: "probeHealth" }], deps);
+    expect(order).toEqual(["sleep:2000", "probe"]); // sleep BEFORE the probe, not after
+    expect(event).toEqual({ type: "HEALTH_POLL_RESULT", healthy: false });
+  });
+
+  it("without an injected sleep, defaults to a REAL timer (production behavior) — proven via fake timers rather than a real 2s wait", async () => {
+    vi.useFakeTimers();
+    try {
+      const { invoke } = makeFakeInvoke({});
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = {
+        invoke,
+        listen,
+        settings: DEFAULT_SETTINGS,
+        probeSidecarFn: async () => ({ up: true }),
+        // no `sleep` override — exercises defaultSleep's real setTimeout
+      };
+      const state: MachineState = { phase: "STEP", step: "POLLING_HEALTH", status: "POLLING", attempts: 2 };
+      const eventPromise = runEffects(state, [{ kind: "probeHealth" }], deps);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await eventPromise).toEqual({ type: "HEALTH_POLL_RESULT", healthy: true });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -384,6 +452,59 @@ describe("runEffects — startServer (STARTING), with and without a bundled writ
       retriable: true,
     });
     expect(calls.map((c) => c.cmd)).toEqual(["write_provision_marker"]); // start_server never reached
+  });
+});
+
+describe("runEffects — RETRY-into-STARTING's bundled stopServer (Finding 7)", () => {
+  it('a leading stopServer effect invokes "stop_server" BEFORE start_server, then STEP_OK', async () => {
+    const order: string[] = [];
+    const { invoke, calls } = makeFakeInvoke({
+      stop_server: () => {
+        order.push("stop_server");
+        return undefined;
+      },
+      start_server: () => {
+        order.push("start_server");
+        return { alreadyRunning: false };
+      },
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS };
+
+    const event = await runEffects(
+      { phase: "STEP", step: "STARTING", status: "RUNNING" },
+      [{ kind: "stopServer" }, { kind: "startServer", model: "small" }],
+      deps,
+    );
+
+    expect(event).toEqual({ type: "STEP_OK", step: "STARTING" });
+    expect(order).toEqual(["stop_server", "start_server"]);
+    expect(calls.map((c) => c.cmd)).toEqual(["stop_server", "start_server"]);
+  });
+
+  it("a rejected stop_server fails the CURRENT step (STARTING) and never calls start_server", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      stop_server: () => {
+        throw new Error("failed to kill whisper_server.py");
+      },
+      start_server: () => ({ alreadyRunning: false }),
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS };
+
+    const event = await runEffects(
+      { phase: "STEP", step: "STARTING", status: "RUNNING" },
+      [{ kind: "stopServer" }, { kind: "startServer", model: "small" }],
+      deps,
+    );
+
+    expect(event).toEqual({
+      type: "STEP_ERROR",
+      step: "STARTING",
+      error: "failed to kill whisper_server.py",
+      retriable: true,
+    });
+    expect(calls.map((c) => c.cmd)).toEqual(["stop_server"]); // start_server never reached
   });
 });
 

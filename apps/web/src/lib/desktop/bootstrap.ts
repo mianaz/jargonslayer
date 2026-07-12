@@ -45,6 +45,12 @@
 // beginProvision() call. PROVISIONED_DEAD (marker present+valid, probe
 // dead -> STARTING) is untouched: restarting an already-installed
 // server needs no consent, so it keeps auto-driving exactly as before.
+// The initial CHECKING itself (a localhost-only GET /health + a
+// marker file READ, both performed BEFORE this gate) is deliberately
+// NOT gated — it makes no external network call, writes nothing, and
+// downloads nothing; it is only how this file learns whether
+// provisioning is even needed in the first place, so consent isn't
+// meaningful to ask for yet.
 //
 // Chunk 7 additions (same file, same testability contract): a
 // server://exit listener wired to provisionMachine.ts's decideRestart
@@ -138,11 +144,17 @@ const DEFAULT_DESKTOP_MODEL = "small";
  *  NEEDS_PROVISION decision (LEAD AMENDMENT above) pauses BEFORE the
  *  underlying machine's own INSTALL_PYTHON/RUNNING state is ever
  *  revealed, surfacing WIZARD_CONSENT_REQUIRED instead until
- *  beginProvision() is called. */
+ *  beginProvision() is called; Finding 2 — the user's persisted
+ *  sidecarMode is "external" — never touches the underlying machine at
+ *  ALL (no provisioning is this app's to do), surfacing EXTERNAL_
+ *  UNMANAGED once a one-shot health probe comes back down (HEALTHY
+ *  covers the up case — a real MachineState phase already, no widening
+ *  needed there). */
 export type DesktopBootstrapState =
   | MachineState
   | { phase: "NOT_DESKTOP" }
-  | { phase: "WIZARD_CONSENT_REQUIRED" };
+  | { phase: "WIZARD_CONSENT_REQUIRED" }
+  | { phase: "EXTERNAL_UNMANAGED" };
 
 /** Minimal subscription surface (blueprint chunk 5: "a tiny listener
  *  set, not a new dependency; NOT zustand — this predates store
@@ -240,6 +252,29 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Finding 4: diagLog's ring buffer (lib/diag/log.ts) is labels/
+ *  origins/counts, never raw paths — that module's own hard PRIVACY
+ *  RULE — but a provisioning error reaching this file usually
+ *  originates as a Rust error string that embeds an absolute path
+ *  ("failed to create /Users/<name>/Library/... : permission denied"),
+ *  leaking the OS username into a 复制诊断信息 report. Redacts ONLY the
+ *  drive-segment + username portion (the REST of the path carries no
+ *  PII) for macOS/Linux/Windows home directories. Applied at the
+ *  choke point — every string that reaches diagLog's detail/reason in
+ *  this file goes through this — NEVER at state construction, so the
+ *  wizard UI (DesktopWizard.tsx) keeps showing the raw, unredacted
+ *  error on screen: that's local-only and the user may need the real
+ *  path to actually use the escape hatch. Exported so
+ *  DesktopBootstrap.tsx's own terminalReason diagLog call (the other
+ *  choke point, outside this file) routes through the exact same
+ *  rule. */
+export function redactHomePath(text: string): string {
+  return text
+    .replace(/\/Users\/[^/\s]+/g, "~")
+    .replace(/\/home\/[^/\s]+/g, "~")
+    .replace(/C:\\Users\\[^\\\s]+/g, "~");
+}
+
 function isAutoAdvancing(state: MachineState): boolean {
   return state.phase === "CHECKING" || (state.phase === "STEP" && state.status !== "ERROR");
 }
@@ -267,6 +302,13 @@ export interface BootstrapDeps {
    *  (and this file's pre-existing `now` above, for the marker's `ts`).
    *  Overridable for restart-window tests. */
   restartClock?: () => number;
+  /** Finding 2: the user's persisted sidecarMode ("managed"|"external",
+   *  packages/core/src/types.ts) — awaited right after getAppPaths,
+   *  before any provisioning decision is made. Absent (every existing
+   *  test, and any caller that hasn't wired it) defaults to "managed",
+   *  today's only behavior — see bootstrapWithRealDeps below for the
+   *  one real implementation. */
+  getSidecarMode?: () => Promise<"managed" | "external">;
 }
 
 /** The testable core — see this file's header comment. Resolves once
@@ -280,6 +322,9 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
 
   // ② the provision flow.
   const paths = await getAppPaths(deps.invoke);
+  // Finding 2: read BEFORE any provisioning decision — "external"
+  // branches away from the managed drive loop entirely, further down.
+  const sidecarMode = (await deps.getSidecarMode?.()) ?? "managed";
   const ctx: ProvisionContext = { paths, model: deps.model ?? DEFAULT_DESKTOP_MODEL };
 
   const logListeners = new Set<(line: DesktopLogLine) => void>();
@@ -319,10 +364,42 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   // EXTERNALLY-visible state (externalState() below) and whether the
   // drive loop keeps looping are affected.
   let awaitingConsent = false;
+  // Finding 2b: true once external mode's own one-shot probe comes
+  // back down — see externalState() below. Never true at the same
+  // time as awaitingConsent (external mode never touches the managed
+  // drive loop that flag guards).
+  let externalUnmanaged = false;
   let restartState: RestartState = initialRestartState();
+  // Finding 3 (drive-loop re-entrancy): two overlapping drives — e.g.
+  // reprovision() racing the initial drive, or two interleaved
+  // reprovision() clicks — would otherwise both read/write the SAME
+  // `current`/`awaitingConsent`/`externalUnmanaged` closure state,
+  // each applying transitions against whatever the OTHER most
+  // recently wrote, producing interleaved duplicate effects (and
+  // eventually concurrent start_server invokes). Bumped by every
+  // method that starts a NEW drive (reprovision(), beginProvision(),
+  // retryStep(), and external mode's own one-shot probe below) BEFORE
+  // calling driveGuarded()/driveExternalGuarded() — drive() (and the
+  // external probe) capture the CURRENT value at entry and re-check it
+  // after every await, exiting silently the instant it no longer
+  // matches (a newer drive already took over). The very FIRST drive,
+  // kicked off unconditionally further down, never needs to bump
+  // anything — it naturally owns whatever `generation` starts at.
+  let generation = 0;
+  // Finding 3: reprovision()'s own single-flight latch — a second
+  // overlapping call awaits the SAME in-flight promise (settling
+  // together, including a rejection) rather than double-running
+  // stop_server + the marker write. Cleared via `.finally()` once
+  // settled either way, mirroring initDesktop()'s own cached-promise
+  // idempotency pattern further down this file — EXCEPT that latch
+  // clears automatically on settle (not just via an explicit reset
+  // call), since a failed reprovision() must still let a LATER, non-
+  // overlapping attempt through.
+  let reprovisionInFlight: Promise<void> | null = null;
   const listeners = new Set<(state: DesktopBootstrapState) => void>();
 
   function externalState(): DesktopBootstrapState {
+    if (externalUnmanaged) return { phase: "EXTERNAL_UNMANAGED" };
     return awaitingConsent ? { phase: "WIZARD_CONSENT_REQUIRED" } : current.state;
   }
 
@@ -341,16 +418,19 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   }
 
   async function drive(): Promise<void> {
+    // Finding 3 — see `generation`'s own doc comment above.
+    const myGeneration = generation;
     while (isAutoAdvancing(current.state)) {
       if (current.state.phase === "STEP" && current.state.status === "RUNNING") {
         diagLog("info", "desktop-provision", `${PROVISION_STEP_LABELS[current.state.step]} 开始`);
       }
       const event = await runEffects(current.state, current.effects, runnerDeps);
+      if (generation !== myGeneration) return; // superseded — apply nothing further.
       current = transition(ctx, current.state, event);
       if (event.type === "STEP_OK") {
         diagLog("info", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 完成`);
       } else if (event.type === "STEP_ERROR") {
-        diagLog("error", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 失败`, event.error);
+        diagLog("error", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 失败`, redactHomePath(event.error));
       }
       if (event.type === "CHECK_RESULT" && isFreshProvisionEntry(current.state)) {
         awaitingConsent = true;
@@ -371,6 +451,38 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       current = { state: { phase: "TERMINAL_ERROR", reason: describeError(error) }, effects: [] };
       notify();
     });
+  }
+
+  // Finding 2b: external mode's entire "drive" — a ONE-SHOT health
+  // probe (no marker read: this app never provisioned an externally-
+  // managed sidecar, so there's nothing of its own to adopt), run in
+  // the BACKGROUND exactly like driveGuarded()'s managed CHECKING probe
+  // above, so bootstrapDesktop's own "resolves almost immediately"
+  // contract (this file's header comment) holds for external mode too
+  // — sidecarHealth.ts's PROBE_TIMEOUT_MS is 3s, long enough to be
+  // worth never blocking app mount on. Captures its own generation
+  // (Finding 3) so a reprovision() racing this probe can still
+  // supersede it, the same guard drive() uses for the managed loop.
+  function driveExternalGuarded(): void {
+    const myGeneration = generation;
+    probe(runnerDeps.settings)
+      .then((result) => {
+        if (generation !== myGeneration) return;
+        if (result.up) {
+          current = { state: { phase: "HEALTHY" }, effects: [] };
+        } else {
+          externalUnmanaged = true;
+        }
+        notify();
+      })
+      .catch((error: unknown) => {
+        if (generation !== myGeneration) return;
+        // Mirrors driveGuarded()'s own defensive posture — probeSidecar
+        // is documented "never throws", so reaching here means
+        // something outside that contract broke.
+        current = { state: { phase: "TERMINAL_ERROR", reason: describeError(error) }, effects: [] };
+        notify();
+      });
   }
 
   // chunk 7 — server://exit crash-restart wiring: only ever meaningful
@@ -406,15 +518,22 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       notify();
     }
   }
-  try {
-    await deps.listen<{ code: number | null }>("server://exit", () => {
-      void handleServerExit();
-    });
-  } catch {
-    // best-effort — see this block's own doc comment above.
-  }
+  if (sidecarMode === "external") {
+    // Finding 2b: never touches the managed drive loop OR its
+    // server://exit crash-restart wiring below — this app neither
+    // provisions nor starts/restarts anything it doesn't manage.
+    driveExternalGuarded();
+  } else {
+    try {
+      await deps.listen<{ code: number | null }>("server://exit", () => {
+        void handleServerExit();
+      });
+    } catch {
+      // best-effort — see this block's own doc comment above.
+    }
 
-  driveGuarded();
+    driveGuarded();
+  }
 
   return {
     state$(listener) {
@@ -426,6 +545,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     },
     retryStep() {
       if (current.state.phase !== "STEP" || current.state.status !== "ERROR") return;
+      generation++; // Finding 3 — see that variable's own doc comment above.
       current = transition(ctx, current.state, { type: "RETRY" });
       notify();
       driveGuarded();
@@ -433,6 +553,7 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     beginProvision() {
       if (!awaitingConsent) return;
       diagLog("info", "desktop-provision", "用户已确认开始安装");
+      generation++; // Finding 3 — see that variable's own doc comment above.
       awaitingConsent = false;
       notify();
       driveGuarded();
@@ -462,14 +583,30 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       }
     },
     async reprovision() {
-      await stopServer(deps.invoke);
-      await deps.invoke<void>("write_provision_marker", { json: "null" });
-      diagLog("info", "desktop-provision", "重新运行安装向导");
-      restartState = initialRestartState();
-      awaitingConsent = false;
-      current = initial();
-      notify();
-      driveGuarded();
+      // Finding 3: a second, overlapping call joins the SAME in-flight
+      // attempt (see reprovisionInFlight's own doc comment above)
+      // instead of double-running stop_server + the marker write.
+      if (reprovisionInFlight) return reprovisionInFlight;
+      const run = (async () => {
+        generation++; // supersedes whatever drive is currently running.
+        await stopServer(deps.invoke);
+        await deps.invoke<void>("write_provision_marker", { json: "null" });
+        diagLog("info", "desktop-provision", "重新运行安装向导");
+        restartState = initialRestartState();
+        awaitingConsent = false;
+        // A stale EXTERNAL_UNMANAGED parking must not survive a reset
+        // back into the (managed) drive loop below — externalState()
+        // checks this flag FIRST, ahead of current.state, so leaving it
+        // true would mask the fresh drive's real progress entirely.
+        externalUnmanaged = false;
+        current = initial();
+        notify();
+        driveGuarded();
+      })();
+      reprovisionInFlight = run.finally(() => {
+        reprovisionInFlight = null;
+      });
+      return reprovisionInFlight;
     },
     async readSidecarLog(tailLines: number) {
       return deps.invoke<string>("read_sidecar_log", { tailLines });
@@ -483,9 +620,47 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
 
 let cachedHandlePromise: Promise<DesktopBootstrapHandle> | null = null;
 
+/** Finding 2c: bootstrapWithRealDeps' own BootstrapDeps.getSidecarMode
+ *  implementation — the ONE place allowed to reach into the zustand
+ *  store (see BootstrapDeps.setTransport's own doc comment on why
+ *  bootstrapDesktop itself never imports a module with side-effecting
+ *  global state directly; store.ts's useApp singleton is exactly that
+ *  kind of state, same as llmTransport.ts's activeTransport). A
+ *  dynamic import (not a top-level one) keeps store.ts's own sizeable
+ *  transitive graph — IndexedDB-backed history/learnset/autoExport,
+ *  theming, the subscription-direct kill-switch — out of
+ *  bootstrapDesktop's module graph entirely; every existing
+ *  bootstrapDesktop test therefore still imports zero of it, exactly
+ *  as before this finding.
+ *
+ *  Waits on store.ts's `hydrated` flag via subscribe() rather than a
+ *  synchronous getState() read — bootstrapDesktop can start (and even
+ *  finish) running before page.tsx's own hydrate() call resolves (see
+ *  DesktopBootstrapHandle's own "NOT zustand — this predates store
+ *  hydration" doc comment above), so a synchronous read here could
+ *  still observe DEFAULT_SETTINGS.sidecarMode ("managed") even for a
+ *  user who saved "external". Same "gate on hydrated, don't just read
+ *  settings" contract SettingsDialog.tsx's own #62 auto-promote effect
+ *  already uses for the identical race (settingsSections.ts's
+ *  shouldAutoPromoteToAdvanced) — reused here rather than re-derived. */
+async function getPersistedSidecarMode(): Promise<"managed" | "external"> {
+  const { useApp } = await import("../store");
+  if (!useApp.getState().hydrated) {
+    await new Promise<void>((resolve) => {
+      const unsubscribe = useApp.subscribe((state) => {
+        if (state.hydrated) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+  return useApp.getState().settings.sidecarMode;
+}
+
 async function bootstrapWithRealDeps(): Promise<DesktopBootstrapHandle> {
   const [tauriFetch, invoke, listen] = await Promise.all([getTauriFetch(), getInvoke(), getListen()]);
-  return bootstrapDesktop({ invoke, listen, tauriFetch, setTransport });
+  return bootstrapDesktop({ invoke, listen, tauriFetch, setTransport, getSidecarMode: getPersistedSidecarMode });
 }
 
 /** Call once during desktop app init (chunk 6's DesktopBootstrap.tsx).

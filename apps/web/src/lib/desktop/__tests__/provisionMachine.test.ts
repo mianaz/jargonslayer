@@ -79,6 +79,12 @@ describe("parseMarker", () => {
     ).toBeNull();
   });
 
+  it("Finding 5: returns null when model isn't one of server.rs's ALLOWED_MODELS (corrupted/foreign marker)", () => {
+    expect(
+      parseMarker(JSON.stringify({ schema: MARKER_SCHEMA_VERSION, model: "gpt-4", py: "3.12", deps: "x", ts: "t" })),
+    ).toBeNull();
+  });
+
   it("returns null when any other field has the wrong type", () => {
     expect(
       parseMarker(JSON.stringify({ schema: MARKER_SCHEMA_VERSION, model: "small", py: 312, deps: "x", ts: "t" })),
@@ -253,7 +259,7 @@ describe("transition — STEP_ERROR", () => {
 });
 
 describe("transition — RETRY", () => {
-  it("re-enters the errored step's SAME effect", () => {
+  it("re-enters the errored step's SAME effect (a step with no held child)", () => {
     const state: MachineState = {
       phase: "STEP",
       step: "CREATE_VENV",
@@ -267,7 +273,7 @@ describe("transition — RETRY", () => {
     });
   });
 
-  it("re-entering POLLING_HEALTH resets attempts back to 1", () => {
+  it("Finding 7: retrying a POLLING_HEALTH timeout re-enters STARTING (not POLLING) with a LEADING stopServer — server.rs's start_server short-circuits to already_running:true while the hung child is still held, so a bare re-probe would just observe the SAME child forever", () => {
     const state: MachineState = {
       phase: "STEP",
       step: "POLLING_HEALTH",
@@ -276,8 +282,22 @@ describe("transition — RETRY", () => {
       retriable: true,
     };
     expect(transition(ctx, state, { type: "RETRY" })).toEqual({
-      state: { phase: "STEP", step: "POLLING_HEALTH", status: "POLLING", attempts: 1 },
-      effects: [{ kind: "probeHealth" }],
+      state: { phase: "STEP", step: "STARTING", status: "RUNNING" },
+      effects: [{ kind: "stopServer" }, { kind: "startServer", model: "small" }],
+    });
+  });
+
+  it("Finding 7: retrying a STARTING error ALSO carries a leading stopServer (uniform with POLLING_HEALTH's own retry — see handleRetry's own doc comment for why this is deliberately not step-dependent)", () => {
+    const state: MachineState = {
+      phase: "STEP",
+      step: "STARTING",
+      status: "ERROR",
+      error: "spawn ENOENT",
+      retriable: true,
+    };
+    expect(transition(ctx, state, { type: "RETRY" })).toEqual({
+      state: { phase: "STEP", step: "STARTING", status: "RUNNING" },
+      effects: [{ kind: "stopServer" }, { kind: "startServer", model: "small" }],
     });
   });
 

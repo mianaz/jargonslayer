@@ -21,11 +21,15 @@
 //   runUv        -> invoke("run_uv", { args, env })             -> ProcessResult, uv://log-streamed
 //   prewarmModel -> invoke("prewarm_model", { model })          -> ProcessResult, uv://log-streamed
 //   startServer  -> invoke("start_server", { model })           -> StartServerResult
-// stopServer isn't a provisionMachine Effect (nothing in chunk 4's
-// machine emits it — it's a plain lifecycle action a future caller,
-// e.g. chunk 6/7's settings "切换到外部 sidecar" or app-quit handling,
-// invokes directly) — exported as its own small helper below so it
-// still matches this chunk's Rust-command-name-parity mandate.
+//   stopServer   -> invoke("stop_server")                       -> void (Finding 7: the
+//                   LEADING effect on a STARTING/POLLING_HEALTH retry
+//                   — see provisionMachine.ts's handleRetry)
+// stopServer is ALSO exported as its own small helper below (the exact
+// same invoke("stop_server")) for callers outside the machine's driven
+// flow entirely — bootstrap.ts's reprovision() and settings' "切换到
+// 外部 sidecar"/app-quit handling invoke it directly, never via an
+// Effect — so it still matches this chunk's Rust-command-name-parity
+// mandate either way.
 
 import type { Settings } from "@jargonslayer/core/types";
 import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
@@ -78,10 +82,27 @@ export interface RunnerDeps {
    *  same "explicit nowMs, never Date.now() internally" contract
    *  provisionMachine.ts's own decideRestart already uses. */
   now?: () => string;
+  /** Paces POLLING_HEALTH's own repeated probe loop (see runEffects'
+   *  POLLING_HEALTH branch) — whisper_server.py loads the model BEFORE
+   *  binding (load-before-bind, architecture decision 4), so the bind
+   *  can be 10-60s away even once the process itself is up; probing
+   *  back-to-back would exhaust POLLING_HEALTH_ATTEMPT_CAP in under a
+   *  second against a connection-refused localhost probe (~1ms each).
+   *  Defaults to a real setTimeout-backed sleep; swappable for
+   *  hermetic, instant unit tests (a recorded fake never actually
+   *  waits). */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 const noopLog: OnLog = () => {};
 const defaultNow = () => new Date().toISOString();
+const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** 2000ms × POLLING_HEALTH_ATTEMPT_CAP's 30 attempts ≈ a 60s budget for
+ *  whisper_server.py's bind (Finding 1) — see runEffects' POLLING_
+ *  HEALTH branch: the FIRST attempt (state.attempts === 1) never
+ *  sleeps, every attempt after it does. */
+const HEALTH_POLL_INTERVAL_MS = 2000;
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -201,6 +222,7 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
   const probe = deps.probeSidecarFn ?? probeSidecar;
   const now = deps.now ?? defaultNow;
   const onLog = deps.onLog ?? noopLog;
+  const sleep = deps.sleep ?? defaultSleep;
 
   if (state.phase === "CHECKING") {
     let probeHealthy = false;
@@ -218,11 +240,34 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
   }
 
   if (state.phase === "STEP" && state.step === "POLLING_HEALTH" && state.status === "POLLING") {
+    // Finding 1: state.attempts === 1 is THIS call's first probe (set
+    // by startStep/handleRetry) — fire it immediately. Every later
+    // attempt (handleHealthPollResult already incremented attempts
+    // before re-issuing probeHealth) paces HEALTH_POLL_INTERVAL_MS
+    // first, so a connection-refused probe (~1ms) can't blow through
+    // all POLLING_HEALTH_ATTEMPT_CAP attempts in under a second.
+    if (state.attempts > 1) await sleep(HEALTH_POLL_INTERVAL_MS);
     const healthy = (await probe(deps.settings)).up;
     return { type: "HEALTH_POLL_RESULT", healthy };
   }
 
   if (state.phase === "STEP" && state.status === "RUNNING") {
+    // A STARTING/POLLING_HEALTH retry bundles a leading stopServer
+    // ahead of the real (startServer) step effect — see
+    // provisionMachine.ts's handleRetry (Finding 7). Perform it first,
+    // same "fails the CURRENT step, never silently swallowed" contract
+    // as the writeMarker bundle just below.
+    const stopServerEffect = effects.find(
+      (effect): effect is Extract<Effect, { kind: "stopServer" }> => effect.kind === "stopServer",
+    );
+    if (stopServerEffect) {
+      try {
+        await stopServer(deps.invoke);
+      } catch (error) {
+        return { type: "STEP_ERROR", step: state.step, error: describeError(error), retriable: true };
+      }
+    }
+
     // A DOWNLOAD_MODEL -> STARTING transition bundles a leading
     // writeMarker alongside the real (startServer) step effect — see
     // provisionMachine.ts's handleStepOk. Perform it first; if it

@@ -777,9 +777,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // while the dialog was open (tag-blocker HIGH 3) — always take the
     // live value instead.
     const toSave: Settings = { ...draft, enabledPacks, uiMode: useApp.getState().settings.uiMode };
+    // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
+    // getSidecarMode is only ever read once, at app start (Finding 2c)
+    // — so switching it here can't take effect live; tell the user a
+    // restart is needed instead of silently saving a toggle that won't
+    // do anything until then. No live engine switching.
+    const sidecarModeChanged = IS_DESKTOP && draft.sidecarMode !== settings.sidecarMode;
     updateSettings(toSave);
     setEnabledPacks(enabledPacks);
-    showToast("设置已保存");
+    showToast(sidecarModeChanged ? "已保存，重启应用后生效" : "设置已保存");
     onClose();
   };
 

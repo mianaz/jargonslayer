@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   bootstrapDesktop,
   initDesktop,
+  redactHomePath,
   resetDesktopBootstrap,
   type BootstrapDeps,
   type DesktopBootstrapHandle,
@@ -18,6 +19,7 @@ import {
 import { MAX_RESTARTS_PER_WINDOW } from "../provisionMachine";
 import type { InvokeFn, ListenFn, TauriEvent, TauriFetchFn } from "../tauriApi";
 import type { DesktopPaths } from "../uvCommands";
+import { clearDiag, getDiagEntries } from "../../diag/log";
 
 const paths: DesktopPaths = {
   appData: "/fake/AppData",
@@ -89,6 +91,7 @@ function waitForStable(handle: DesktopBootstrapHandle): Promise<DesktopBootstrap
     s.phase === "HEALTHY" ||
     s.phase === "TERMINAL_ERROR" ||
     s.phase === "WIZARD_CONSENT_REQUIRED" ||
+    s.phase === "EXTERNAL_UNMANAGED" ||
     (s.phase === "STEP" && s.status === "ERROR");
   const initialState = handle.currentState();
   if (isStable(initialState)) return Promise.resolve(initialState);
@@ -701,5 +704,208 @@ describe("bootstrapDesktop — recheckHealth() (chunk 6 wizard escape hatch)", (
     const before = handle.currentState();
     await handle.recheckHealth();
     expect(handle.currentState()).toEqual(before);
+  });
+});
+
+describe("bootstrapDesktop — external sidecar mode (Finding 2)", () => {
+  it('getSidecarMode absent: unchanged managed behavior (defaults to "managed", drives the full pipeline as before)', async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+  });
+
+  it('sidecarMode:"external", probe down: parks at EXTERNAL_UNMANAGED — never runs the drive loop (no read_provision_marker/run_uv/prewarm_model/start_server, no consent phase)', async () => {
+    const invokeCalls: string[] = [];
+    const deps: BootstrapDeps = {
+      // read_provision_marker/run_uv/prewarm_model/start_server are
+      // deliberately absent from the handlers map — makeFakeInvoke
+      // throws on any unexpected invoke(), so this doubles as an
+      // assertion that external mode never calls them.
+      invoke: makeFakeInvoke({ app_paths: () => paths }, (cmd) => invokeCalls.push(cmd)),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "EXTERNAL_UNMANAGED" });
+    expect(invokeCalls).toEqual(["app_paths"]);
+  });
+
+  it('sidecarMode:"external", probe up: HEALTHY, same no-drive guarantee', async () => {
+    const invokeCalls: string[] = [];
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths }, (cmd) => invokeCalls.push(cmd)),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(invokeCalls).toEqual(["app_paths"]);
+  });
+
+  it("external mode never registers the server://exit crash-restart listener", async () => {
+    const listenCalls: string[] = [];
+    const listen: ListenFn = (async (event: string) => {
+      listenCalls.push(event);
+      return () => {};
+    }) as ListenFn;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+    expect(listenCalls).toEqual([]);
+  });
+});
+
+describe("bootstrapDesktop — drive-loop re-entrancy guards (Finding 3)", () => {
+  it("reprovision() is single-flighted: two interleaved calls run stop_server/write_provision_marker exactly once each, and both callers observe the same outcome", async () => {
+    let stopServerCalls = 0;
+    let writeMarkerCalls = 0;
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => {
+          stopServerCalls += 1;
+          return undefined;
+        },
+        write_provision_marker: () => {
+          writeMarkerCalls += 1;
+          return undefined;
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls === 1 }; // healthy on adopt, dead on the post-reprovision re-check
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    const p1 = handle.reprovision();
+    const p2 = handle.reprovision(); // interleaved — must join p1, not double-run
+    await Promise.all([p1, p2]);
+
+    expect(stopServerCalls).toBe(1);
+    expect(writeMarkerCalls).toBe(1);
+
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+  });
+
+  it("a superseded drive applies no further transitions once a newer reprovision() takes over its generation", async () => {
+    let runUvCalls = 0;
+    let resolveFirstRunUv: (() => void) | null = null;
+    const firstRunUvGate = new Promise<void>((resolve) => {
+      resolveFirstRunUv = resolve;
+    });
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => undefined,
+        write_provision_marker: () => undefined,
+        run_uv: async () => {
+          runUvCalls += 1;
+          if (runUvCalls === 1) {
+            await firstRunUvGate; // held open — simulates a slow/stuck INSTALL_PYTHON
+          }
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+    expect(handle.currentState()).toEqual({ phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" });
+
+    const seen: DesktopBootstrapState[] = [];
+    handle.state$((s) => seen.push(s));
+
+    // Races the still-in-flight first drive (run_uv held open) — bumps
+    // the generation, resets state, and starts its OWN drive.
+    await handle.reprovision();
+    const gatedAgain = await waitForStable(handle);
+    expect(gatedAgain).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    // Now let the FIRST (superseded) run_uv() resolve — if drive()#1
+    // were still applying transitions, this STEP_OK would advance
+    // straight past the fresh WIZARD_CONSENT_REQUIRED pause. It must be
+    // a complete no-op instead: no further notify(), no state change.
+    const seenCountBeforeStaleResolve = seen.length;
+    resolveFirstRunUv!();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // flush the (wrongly-)pending chain, if any
+    expect(seen.length).toBe(seenCountBeforeStaleResolve);
+    expect(handle.currentState()).toEqual(gatedAgain);
+  });
+});
+
+describe("bootstrapDesktop — diag redaction at the STEP_ERROR choke point (Finding 4)", () => {
+  it("redactHomePath: replaces macOS/Linux/Windows home-dir segments with ~, everywhere they occur, leaving everything else untouched", () => {
+    expect(redactHomePath("failed to create /Users/miana/Library/Application Support/x: permission denied")).toBe(
+      "failed to create ~/Library/Application Support/x: permission denied",
+    );
+    expect(redactHomePath("/home/miana/.cache/uv/foo")).toBe("~/.cache/uv/foo");
+    expect(redactHomePath("C:\\Users\\miana\\AppData\\Local\\foo")).toBe("~\\AppData\\Local\\foo");
+    expect(redactHomePath("/Users/miana/a and again /Users/miana/b")).toBe("~/a and again ~/b");
+    expect(redactHomePath("exited with code 1")).toBe("exited with code 1");
+  });
+
+  it("a STEP_ERROR carrying a /Users path lands REDACTED in the diag entry, while the machine's own state.error (the wizard's on-screen escape hatch) stays raw", async () => {
+    clearDiag();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => {
+          throw new Error("failed to create /Users/miana/Library/Application Support/x: permission denied");
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+    const errored = await waitForStable(handle);
+    expect(errored).toMatchObject({
+      phase: "STEP",
+      error: "failed to create /Users/miana/Library/Application Support/x: permission denied",
+    });
+
+    const stepErrorEntry = getDiagEntries().find((e) => e.tag === "desktop-provision" && e.level === "error");
+    expect(stepErrorEntry?.detail).toBe("failed to create ~/Library/Application Support/x: permission denied");
   });
 });
