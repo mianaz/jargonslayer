@@ -261,6 +261,17 @@ try:
         "self.n — verified against the pinned tqdm's update() source; see docstring)",
         reconstruct.n == 1000 and reconstruct.disable is not True,
     )
+
+    # Close every bar this section created. Not politeness: leaving them
+    # for GC means tqdm's __del__ -> close() -> display() runs during
+    # interpreter FINALIZATION, which segfaults on some Pythons (observed
+    # on CPython 3.13/macOS: "Garbage-collecting ... format_meter" in the
+    # faulthandler trace; exit 139 with all checks green). Production is
+    # unaffected — snapshot_download closes the bars it creates, and the
+    # venv pins 3.12 — this is purely a bare-instance test artifact.
+    transfer.close()
+    reconstruct.close()
+    file_count.close()
 except ImportError as exc:  # pragma: no cover - only if tqdm truly isn't installed
     print(f"SKIP: _make_progress_bar_class section (tqdm not importable: {exc})")
 
