@@ -377,9 +377,29 @@ export function useMeeting(): UseMeetingResult {
     // F6: same plain-return as pause() above — see terminalTeardownRef's
     // own doc.
     if (terminalTeardownRef.current) return;
-    const { status, meetingGen } = useApp.getState();
+    const { status, meetingGen, settings } = useApp.getState();
     if (status !== "paused") return;
-    const engine = engineRef.current;
+    let engine = engineRef.current;
+    // Engine switch during a retained soft pause (codex v2 review F7):
+    // pre-v2, EVERY pause was teardown, so switching engines in
+    // Settings while paused was already honored (resume's
+    // teardown-resume path below always attaches whatever
+    // settings.engine currently says). A RETAINED soft-paused engine
+    // (tabaudio) bypasses that entirely by design — it's the SAME
+    // instance, never re-attached — so it silently kept ignoring a
+    // mid-pause engine switch. If the live engine no longer matches
+    // the currently-selected one, fully tear it down (including its
+    // own stop drain) here, then fall through to the SAME
+    // teardown-resume path below so the newly selected engine attaches
+    // (the tab-audio picker reappearing when switching TO tabaudio is
+    // expected — same as any other fresh attach). Same pendingEnd
+    // guards as the paths below apply automatically once this falls
+    // through — nothing extra needed here.
+    if (engine && engine.kind !== settings.engine) {
+      engineRef.current = null;
+      await engine.stop();
+      engine = null;
+    }
     if (engine?.resume) {
       await engine.resume();
       // A pending End equally wins over the fold here (mirrors the

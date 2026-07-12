@@ -26,6 +26,12 @@ type AnyEvents = {
 };
 
 class FakeEngine {
+  // Matches DEFAULT_SETTINGS.engine ("demo") so every EXISTING test
+  // below (none of which touch settings.engine) pairs cleanly with
+  // resume()'s F7 kind-mismatch check (codex v2 review) — only a test
+  // that deliberately changes settings.engine after pausing exercises
+  // a mismatch.
+  kind = "demo";
   events: AnyEvents | null = null;
   startResolve: (() => void) | null = null;
   stopResolve: (() => void) | null = null;
@@ -52,6 +58,10 @@ class FakeEngine {
 // plain FakeEngine (no pause/resume at all) always takes the teardown
 // branch, so every existing test below is untouched by this addition.
 class FakeSoftPauseEngine extends FakeEngine {
+  // The real soft-pause-capable engine (see the class doc above) —
+  // startListeningSoft() below pairs this with settings.engine:
+  // "tabaudio" for the same reason FakeEngine pairs with "demo".
+  kind = "tabaudio";
   pauseCalls = 0;
   resumeCalls = 0;
   pauseResolve: (() => void) | null = null;
@@ -160,6 +170,10 @@ describe("useMeeting — lifecycle races", () => {
   async function startListeningSoft(): Promise<FakeSoftPauseEngine> {
     let p: Promise<void>;
     await act(async () => {
+      // Pairs with FakeSoftPauseEngine.kind ("tabaudio") — real
+      // soft-pause is tabaudio-only, and resume()'s F7 kind-mismatch
+      // check (codex v2 review) now actually reads settings.engine.
+      useApp.setState({ settings: { ...useApp.getState().settings, engine: "tabaudio" } });
       nextEngineClass = FakeSoftPauseEngine;
       p = api!.start();
       // createEngine() has already run synchronously as part of the
@@ -522,5 +536,50 @@ describe("useMeeting — lifecycle races", () => {
       await flush();
     });
     expect(useApp.getState().status).toBe("idle"); // 0 segments — runStopFlow's own branch
+  });
+
+  // ---------------------------------------------------------------
+  // Engine switch during a retained soft pause (codex v2 review F7):
+  // a RETAINED soft-paused engine ignores a settings.engine change
+  // made while paused unless resume() explicitly checks for it.
+  // ---------------------------------------------------------------
+
+  it("resume() tears down a soft-paused engine whose kind no longer matches settings.engine, then attaches the newly selected engine instead of soft-resuming the stale one", async () => {
+    const engine = await startListeningSoft(); // kind: "tabaudio"
+    await act(async () => {
+      await api!.pause();
+    });
+    expect(useApp.getState().status).toBe("paused");
+
+    // User switched engines in Settings while paused.
+    useApp.setState({ settings: { ...useApp.getState().settings, engine: "webspeech" } });
+
+    await act(async () => {
+      const resumeP = api!.resume();
+      await flush();
+      engines[1].startResolve!(); // the newly attached (webspeech-selected) engine
+      await resumeP;
+    });
+
+    expect(engine.stopCalls).toBe(1); // the stale tabaudio engine was fully torn down
+    expect(engine.resumeCalls).toBe(0); // never soft-resumed — it no longer matches settings
+    expect(engines.length).toBe(2); // attachEngine constructed a fresh engine
+    expect(useApp.getState().status).toBe("listening");
+  });
+
+  it("resume() soft-resumes in place (no teardown) when the engine kind still matches settings.engine — the F7 fix doesn't fire spuriously", async () => {
+    const engine = await startListeningSoft();
+    await act(async () => {
+      await api!.pause();
+    });
+
+    await act(async () => {
+      await api!.resume();
+    });
+
+    expect(engine.stopCalls).toBe(0);
+    expect(engine.resumeCalls).toBe(1);
+    expect(engines.length).toBe(1);
+    expect(useApp.getState().status).toBe("listening");
   });
 });
