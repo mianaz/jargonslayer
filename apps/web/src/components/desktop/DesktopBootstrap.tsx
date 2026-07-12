@@ -31,6 +31,7 @@ import {
   type DesktopBootstrapState,
   type DesktopLogLine,
 } from "@/lib/desktop/bootstrap";
+import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
 import DesktopWizard from "./DesktopWizard";
 
 // Blueprint §Chunk 6: "cap the buffer ~500 lines".
@@ -45,6 +46,11 @@ export default function DesktopBootstrap() {
   const [handle, setHandle] = useState<DesktopBootstrapHandle | null>(null);
   const [state, setState] = useState<DesktopBootstrapState | null>(null);
   const [logLines, setLogLines] = useState<DesktopLogLine[]>([]);
+  // S4 chunk 2's prewarm://progress snapshot, threaded through to
+  // DesktopWizard.tsx's StepRowsScreen exactly the same
+  // snapshot-then-subscribe shape as `state`/`logLines` below (initial
+  // currentDownloadProgress() read, then a downloadProgress$ subscribe).
+  const [downloadProgress, setDownloadProgress] = useState<PrewarmProgressEvent | null>(null);
   // "稍后再说" / "关闭，稍后处理" (blueprint §Chunk 6 + §Chunk 7): two
   // INDEPENDENT dismiss flags, each auto-reset the moment its own
   // triggering phase is left (see the two effects below) — so
@@ -60,10 +66,12 @@ export default function DesktopBootstrap() {
     let cancelled = false;
     let unsubState: (() => void) | null = null;
     let unsubLog: (() => void) | null = null;
+    let unsubDownloadProgress: (() => void) | null = null;
     void initDesktop().then((h) => {
       if (cancelled) return;
       setHandle(h);
       setState(h.currentState());
+      setDownloadProgress(h.currentDownloadProgress());
       unsubState = h.state$((s) => {
         if (!cancelled) setState(s);
       });
@@ -74,11 +82,15 @@ export default function DesktopBootstrap() {
           return next.length > LOG_BUFFER_CAP ? next.slice(next.length - LOG_BUFFER_CAP) : next;
         });
       });
+      unsubDownloadProgress = h.downloadProgress$((progress) => {
+        if (!cancelled) setDownloadProgress(progress);
+      });
     });
     return () => {
       cancelled = true;
       unsubState?.();
       unsubLog?.();
+      unsubDownloadProgress?.();
     };
   }, []);
 
@@ -138,7 +150,8 @@ export default function DesktopBootstrap() {
       state={state}
       paths={handle.paths}
       logLines={logLines}
-      onBeginProvision={() => handle.beginProvision()}
+      downloadProgress={downloadProgress}
+      onBeginProvision={(model) => handle.beginProvision(model)}
       onDismissConsent={() => setConsentDismissed(true)}
       onDismissTerminal={() => setTerminalDismissed(true)}
       onRetry={() => handle.retryStep()}

@@ -99,6 +99,7 @@ import {
   initial,
   initialRestartState,
   transition,
+  ALLOWED_MARKER_MODELS,
   MAX_RESTARTS_PER_WINDOW,
   RESTART_WINDOW_MS,
   type MachineState,
@@ -193,8 +194,22 @@ export interface DesktopBootstrapHandle {
   retryStep: () => void;
   /** LEAD AMENDMENT: resumes driving past a WIZARD_CONSENT_REQUIRED
    *  pause — a no-op outside that exact state (never throws on a
-   *  stray/late call, same contract as retryStep). */
-  beginProvision: () => void;
+   *  stray/late call, same contract as retryStep).
+   *  S4 chunk 3 (blueprint decision A + C): `model` is the user's pick
+   *  from the wizard's <ModelPicker> — reseeds `ctx.model` (ctx is
+   *  reassignable now, see bootstrapDesktop's own `let ctx` below) so
+   *  every effect this drive issues from here on (prewarmModel/
+   *  startServer, and the marker STEP_OK writes at DOWNLOAD_MODEL ->
+   *  STARTING) carries it, and persists it to `settings.whisperModel`
+   *  via deps.persistDesktopModel (optional — a no-op when absent,
+   *  same posture as every other optional BootstrapDeps callback).
+   *  Optional, defaulting to the ALREADY-seeded `ctx.model` (see
+   *  bootstrapDesktop's own ctx-seed, fed by deps.getDesktopModel) —
+   *  backward compat: every pre-S4 call site/test calling
+   *  `beginProvision()` with no argument keeps working unchanged,
+   *  simply re-confirming (and re-persisting) whatever model was
+   *  already seeded rather than picking a new one. */
+  beginProvision: (model?: string) => void;
   /** Subscribe to every uv/prewarm stdout/stderr line as it streams in
    *  (provisionRunner.ts's withUvLog, via this file's own onLog wiring
    *  below) — chunk 6's wizard 详细日志 pane. Does NOT replay past lines
@@ -341,6 +356,39 @@ export interface BootstrapDeps {
    *  today's only behavior — see bootstrapWithRealDeps below for the
    *  one real implementation. */
   getSidecarMode?: () => Promise<"managed" | "external">;
+  /** S4 chunk 3 (blueprint decision C): hydration-gated read of the
+   *  user's persisted `settings.whisperModel` preference — mirrors
+   *  getSidecarMode's own "await BEFORE any provisioning decision"
+   *  contract exactly, just for the model instead of the sidecar mode.
+   *  Only ever MATTERS for a fresh provision in effect (a provisioned-
+   *  dead restart's `startStep({...ctx, model: marker.model},
+   *  "STARTING")` in provisionMachine.ts always overrides ctx.model
+   *  with the marker's own, unconditionally) — clamped against
+   *  provisionMachine.ts's ALLOWED_MARKER_MODELS, falling back to
+   *  DEFAULT_DESKTOP_MODEL on anything else (decision C's clamp: a
+   *  corrupted/foreign persisted value — e.g. a restored backup written
+   *  by a future build with a wider model set — must never reach
+   *  prewarmModel/startServer as a raw string). Absent (every pre-S4
+   *  test, and any caller that hasn't wired it) leaves ctx.model at
+   *  DEFAULT_DESKTOP_MODEL exactly as before this chunk — see
+   *  bootstrapWithRealDeps below for the one real implementation. */
+  getDesktopModel?: () => Promise<string>;
+  /** S4 chunk 3 (blueprint decision C's wiring bullet): persists a
+   *  beginProvision(model) pick to `settings.whisperModel` — "ride the
+   *  store's normal persistence" means going through the exact same
+   *  `updateSettings` action every other settings write in this app
+   *  uses (store.ts), not a bespoke bypass. Same dynamic-import-of-
+   *  store.ts + hydration-gate shape as getSidecarMode/getDesktopModel
+   *  above (keeps store.ts's own sizeable transitive graph out of every
+   *  test that doesn't explicitly wire this) — and the gate isn't just
+   *  belt-and-suspenders here: store.ts's own hydrate() does a raw
+   *  `set({settings, ...})` overwrite (not a merge), so a write that
+   *  landed BEFORE hydrate() resolved would be silently clobbered the
+   *  instant it does. Optional — a no-op when absent (every pre-S4
+   *  test) — fire-and-forget from beginProvision, matching store.ts's
+   *  own updateSettings -> storage.saveSettings posture (already
+   *  un-awaited there). */
+  persistDesktopModel?: (model: string) => Promise<void>;
 }
 
 /** The testable core — see this file's header comment. Resolves once
@@ -357,7 +405,26 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   // Finding 2: read BEFORE any provisioning decision — "external"
   // branches away from the managed drive loop entirely, further down.
   const sidecarMode = (await deps.getSidecarMode?.()) ?? "managed";
-  const ctx: ProvisionContext = { paths, model: deps.model ?? DEFAULT_DESKTOP_MODEL };
+  // S4 chunk 3 (decision C's clamp): the user's persisted whisperModel
+  // preference, read the same "await early, before any provisioning
+  // decision" way as sidecarMode above — clamped against
+  // ALLOWED_MARKER_MODELS (see getDesktopModel's own doc comment) and
+  // falling back to DEFAULT_DESKTOP_MODEL otherwise. Computed
+  // unconditionally, same as sidecarMode, keeping this file's one
+  // "gather everything before deciding" shape — even though it only
+  // ever matters for a fresh provision (provisioned-dead always defers
+  // to the marker's own model instead, see handleCheckResult).
+  const persistedModel = await deps.getDesktopModel?.();
+  const seededModel =
+    persistedModel !== undefined && ALLOWED_MARKER_MODELS.includes(persistedModel)
+      ? persistedModel
+      : DEFAULT_DESKTOP_MODEL;
+  // ctx becomes reassignable (S4 chunk 3): beginProvision(model) below
+  // re-seeds it with the wizard's own <ModelPicker> pick, the same
+  // "explicitly rebuild the pinned config" shape every other piece of
+  // mutable state in this closure already uses (current/awaitingConsent/
+  // etc. below) rather than a param object mutated in place.
+  let ctx: ProvisionContext = { paths, model: deps.model ?? seededModel };
 
   const logListeners = new Set<(line: DesktopLogLine) => void>();
   function notifyLog(stream: LogStream, line: string): void {
@@ -616,8 +683,16 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       notify();
       driveGuarded();
     },
-    beginProvision() {
+    beginProvision(model: string = ctx.model) {
       if (!awaitingConsent) return;
+      // S4 chunk 3 — see this method's own doc comment on
+      // DesktopBootstrapHandle above: reseeds ctx.model (a no-op value-
+      // wise on the backward-compat no-arg path, since `model` already
+      // defaulted to ctx.model) and rides the store's normal
+      // persistence, fire-and-forget like updateSettings' own
+      // storage.saveSettings call.
+      ctx = { ...ctx, model };
+      void deps.persistDesktopModel?.(model);
       diagLog("info", "desktop-provision", "用户已确认开始安装");
       generation++; // Finding 3 — see that variable's own doc comment above.
       awaitingConsent = false;
@@ -731,9 +806,61 @@ async function getPersistedSidecarMode(): Promise<"managed" | "external"> {
   return useApp.getState().settings.sidecarMode;
 }
 
+/** S4 chunk 3 — mirrors getPersistedSidecarMode above exactly (same
+ *  dynamic-import + hydration-gate shape, same rationale — see that
+ *  function's own doc comment), just reading `settings.whisperModel`
+ *  instead of `settings.sidecarMode`. The clamp against
+ *  ALLOWED_MARKER_MODELS happens in bootstrapDesktop's own ctx-seed
+ *  (getDesktopModel's doc comment above), not here — this function is a
+ *  plain, honest read of whatever is persisted, valid or not. */
+async function getPersistedDesktopModel(): Promise<string> {
+  const { useApp } = await import("../store");
+  if (!useApp.getState().hydrated) {
+    await new Promise<void>((resolve) => {
+      const unsubscribe = useApp.subscribe((state) => {
+        if (state.hydrated) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+  return useApp.getState().settings.whisperModel;
+}
+
+/** S4 chunk 3 — the write counterpart of getPersistedDesktopModel above:
+ *  persists beginProvision(model)'s pick via store.ts's `updateSettings`
+ *  action (the store's normal setter — same one every other Settings
+ *  write in this app already goes through, which itself fires off its
+ *  own un-awaited `storage.saveSettings`). Hydration-gated for the same
+ *  reason the two read-side functions above are — see
+ *  persistDesktopModel's own doc comment on BootstrapDeps. */
+async function persistDesktopModelToStore(model: string): Promise<void> {
+  const { useApp } = await import("../store");
+  if (!useApp.getState().hydrated) {
+    await new Promise<void>((resolve) => {
+      const unsubscribe = useApp.subscribe((state) => {
+        if (state.hydrated) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+  useApp.getState().updateSettings({ whisperModel: model });
+}
+
 async function bootstrapWithRealDeps(): Promise<DesktopBootstrapHandle> {
   const [tauriFetch, invoke, listen] = await Promise.all([getTauriFetch(), getInvoke(), getListen()]);
-  return bootstrapDesktop({ invoke, listen, tauriFetch, setTransport, getSidecarMode: getPersistedSidecarMode });
+  return bootstrapDesktop({
+    invoke,
+    listen,
+    tauriFetch,
+    setTransport,
+    getSidecarMode: getPersistedSidecarMode,
+    getDesktopModel: getPersistedDesktopModel,
+    persistDesktopModel: persistDesktopModelToStore,
+  });
 }
 
 /** Call once during desktop app init (chunk 6's DesktopBootstrap.tsx).

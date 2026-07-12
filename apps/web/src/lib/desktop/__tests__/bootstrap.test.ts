@@ -1070,3 +1070,153 @@ describe("bootstrapDesktop — diag redaction at the STEP_ERROR choke point (Fin
     expect(stepErrorEntry?.detail).toBe("failed to create ~/Library/Application Support/x: permission denied");
   });
 });
+
+describe("bootstrapDesktop — S4 chunk 3: model picker wiring (beginProvision(model), getDesktopModel, ctx-seed clamp)", () => {
+  it("beginProvision(model) reseeds ctx so DOWNLOAD_MODEL/STARTING (and the written marker) all carry the newly-chosen model", async () => {
+    const modelsSeen: { prewarm?: string; marker?: string; start?: string } = {};
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: 0 }),
+        prewarm_model: (args) => {
+          modelsSeen.prewarm = args?.model as string;
+          return { code: 0 };
+        },
+        write_provision_marker: (args) => {
+          modelsSeen.marker = (JSON.parse(args?.json as string) as { model: string }).model;
+          return undefined;
+        },
+        start_server: (args) => {
+          modelsSeen.start = args?.model as string;
+          return { alreadyRunning: false };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision("large-v3-turbo");
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+
+    expect(modelsSeen.prewarm).toBe("large-v3-turbo");
+    expect(modelsSeen.marker).toBe("large-v3-turbo");
+    expect(modelsSeen.start).toBe("large-v3-turbo");
+  });
+
+  it("beginProvision(model) persists settings.whisperModel via deps.persistDesktopModel — the same dynamic-import store path getDesktopModel/getSidecarMode use", async () => {
+    const persisted: string[] = [];
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke(successfulPipelineHandlers),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+      persistDesktopModel: async (model) => {
+        persisted.push(model);
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+    handle.beginProvision("medium");
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(persisted).toEqual(["medium"]);
+  });
+
+  it("getDesktopModel seeds ctx.model for a fresh provision (no marker) — every step-producing effect and the written marker carry it, even through a no-arg beginProvision()", async () => {
+    const modelsSeen: { prewarm?: string; marker?: string } = {};
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: (args) => {
+          modelsSeen.prewarm = args?.model as string;
+          return { code: 0 };
+        },
+        write_provision_marker: (args) => {
+          modelsSeen.marker = (JSON.parse(args?.json as string) as { model: string }).model;
+          return undefined;
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+      getDesktopModel: async () => "large-v3",
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision(); // no-arg — must still carry the getDesktopModel-seeded value through
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(modelsSeen.prewarm).toBe("large-v3");
+    expect(modelsSeen.marker).toBe("large-v3");
+  });
+
+  it("clamp: a getDesktopModel value outside ALLOWED_MARKER_MODELS falls back to the small default rather than riding a bogus model into prewarmModel", async () => {
+    const modelsSeen: { prewarm?: string } = {};
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: (args) => {
+          modelsSeen.prewarm = args?.model as string;
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+      getDesktopModel: async () => "not-a-real-model",
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+    handle.beginProvision();
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(modelsSeen.prewarm).toBe("small");
+  });
+
+  it("no-arg beginProvision() is unchanged for callers that never wire getDesktopModel/deps.model — still drives the small default through, exactly like every pre-S4 test in this file", async () => {
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke(successfulPipelineHandlers),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+    handle.beginProvision();
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+  });
+});

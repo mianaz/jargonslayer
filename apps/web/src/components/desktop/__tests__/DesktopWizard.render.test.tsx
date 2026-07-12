@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import DesktopWizard from "../DesktopWizard";
 import type { DesktopBootstrapState, DesktopLogLine } from "@/lib/desktop/bootstrap";
+import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
 import type { DesktopPaths } from "@/lib/desktop/uvCommands";
 
 const paths: DesktopPaths = {
@@ -58,6 +59,7 @@ describe("DesktopWizard — state-driven rendering", () => {
           state={state}
           paths={paths}
           logLines={logLines}
+          downloadProgress={null}
           onBeginProvision={noop}
           onDismissConsent={noop}
           onDismissTerminal={noop}
@@ -70,7 +72,7 @@ describe("DesktopWizard — state-driven rendering", () => {
     });
   }
 
-  it("WIZARD_CONSENT_REQUIRED: renders the consent screen; 开始安装 calls onBeginProvision, 稍后再说 calls onDismissConsent", async () => {
+  it("WIZARD_CONSENT_REQUIRED: renders the consent screen; 开始安装 calls onBeginProvision(model), 稍后再说 calls onDismissConsent", async () => {
     const onBeginProvision = vi.fn();
     const onDismissConsent = vi.fn();
     await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision, onDismissConsent });
@@ -83,11 +85,39 @@ describe("DesktopWizard — state-driven rendering", () => {
       container!.querySelector('[data-testid="btn-begin-provision"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onBeginProvision).toHaveBeenCalledTimes(1);
+    expect(onBeginProvision).toHaveBeenCalledWith(WIZARD_PRESELECTED_MODEL);
 
     await act(async () => {
       container!.querySelector('[data-testid="btn-dismiss-wizard"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onDismissConsent).toHaveBeenCalledTimes(1);
+  });
+
+  it("WIZARD_CONSENT_REQUIRED: embeds <ModelPicker>, pre-selected to WIZARD_PRESELECTED_MODEL, and the 开始安装 button text tracks the selection", async () => {
+    const onBeginProvision = vi.fn();
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision });
+
+    expect(container!.querySelector('[data-testid="model-picker"]')).not.toBeNull();
+    const preselected = MODEL_CATALOG.find((m) => m.id === WIZARD_PRESELECTED_MODEL)!;
+    const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
+    expect(beginBtn.textContent).toBe(`开始安装（${preselected.id} · ${preselected.size}）`);
+    expect(
+      container!.querySelector(`[data-testid="model-option-${WIZARD_PRESELECTED_MODEL}"]`)!.getAttribute("aria-checked"),
+    ).toBe("true");
+
+    // Pick a different row — the button text updates to match, and the
+    // eventual onBeginProvision call carries THAT model, not the
+    // pre-selected default.
+    const largeV3 = MODEL_CATALOG.find((m) => m.id === "large-v3")!;
+    await act(async () => {
+      container!.querySelector('[data-testid="model-option-large-v3"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(beginBtn.textContent).toBe(`开始安装（${largeV3.id} · ${largeV3.size}）`);
+
+    await act(async () => {
+      beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBeginProvision).toHaveBeenCalledWith("large-v3");
   });
 
   it("STEP/RUNNING (CREATE_VENV): earlier rows read done, the current row reads running, later rows read pending — no error/escape-hatch chrome", async () => {
@@ -108,6 +138,33 @@ describe("DesktopWizard — state-driven rendering", () => {
 
     expect(container!.querySelector('[data-testid="wizard-step-STARTING"]')!.getAttribute("data-status")).toBe("running");
     expect(container!.querySelector('[data-testid="wizard-step-DOWNLOAD_MODEL"]')!.getAttribute("data-status")).toBe("done");
+  });
+
+  it("STEP/RUNNING (DOWNLOAD_MODEL) with downloadProgress: shows pct + human-readable downloaded/total on that row only", async () => {
+    await renderWizard({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" }, [], {
+      downloadProgress: { downloaded: 500 * 1024 * 1024, total: 1500 * 1024 * 1024 },
+    });
+
+    const row = container!.querySelector('[data-testid="wizard-step-DOWNLOAD_MODEL"]')!;
+    expect(row.querySelector('[data-testid="wizard-download-progress"]')).not.toBeNull();
+    expect(row.textContent).toContain("33%");
+    expect(row.textContent).toContain("500.0MB");
+    expect(row.textContent).toContain("1.5GB");
+
+    // no other row grows the same progress chrome
+    expect(container!.querySelector('[data-testid="wizard-step-STARTING"] [data-testid="wizard-download-progress"]')).toBeNull();
+  });
+
+  it("STEP/RUNNING (DOWNLOAD_MODEL) with no downloadProgress yet (null): no progress chrome on the row", async () => {
+    await renderWizard({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" });
+    expect(container!.querySelector('[data-testid="wizard-download-progress"]')).toBeNull();
+  });
+
+  it("DOWNLOAD_MODEL progress is only shown while that row is RUNNING — a stale non-null downloadProgress during a LATER row (STARTING) renders no chrome", async () => {
+    await renderWizard({ phase: "STEP", step: "STARTING", status: "RUNNING" }, [], {
+      downloadProgress: { downloaded: 1, total: 2 },
+    });
+    expect(container!.querySelector('[data-testid="wizard-download-progress"]')).toBeNull();
   });
 
   it("STEP/ERROR: shows the error row, message, 重试 (onRetry), and the escape hatch (paths + 我已手动安装 -> onRecheckHealth)", async () => {
