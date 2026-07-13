@@ -46,6 +46,13 @@ Covers (protocol v2, see whisper_server.py's own module docstring):
     buffered, closes right after stopped with no pass; an already-
     in-flight periodic pass is awaited before the final pass itself
     runs (never overlapped/skipped)
+  - diarization_probe (S5 decision C): import-first ordering; the
+    three orthogonal (installed, ready, error) facts for not-installed
+    vs installed-no-token vs installed-with-token, pyannote faked via
+    sys.modules (never a real pyannote install — see that section for
+    why); health_payload's /health shape, including the new
+    diarization_installed field and the unchanged-on-purpose
+    diarization_ready/diarization_error back-compat semantics
 """
 
 from __future__ import annotations
@@ -53,6 +60,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -63,7 +71,9 @@ from whisper_server import (  # noqa: E402
     FRAME_SAMPLES,
     ConnectionState,
     FinalizeJob,
+    JobManager,
     WhisperServer,
+    health_payload,
 )
 
 FAILURES: list[str] = []
@@ -682,6 +692,134 @@ async def test_finalize_queue_preserves_send_order() -> None:
 
 
 # =================================================================
+# diarization_probe (S5 decision C) — import-first ordering, three
+# orthogonal (installed, ready, error) facts. pyannote's presence is
+# faked via sys.modules — NEVER a real pyannote install: this dev
+# machine's ambient `python3` may have a real pyannote.audio on a base
+# conda env entirely outside the sidecar venv, so merely leaving
+# pyannote "not installed" here would not reliably exercise the
+# not-installed path on every machine this file runs on;
+# sys.modules["pyannote.audio"] = None is the documented idiom to force
+# ImportError regardless of what's really reachable on sys.path.
+# =================================================================
+
+_UNSET = object()
+
+
+def _set_pyannote_importable(available: bool) -> dict[str, object]:
+    """Stubs sys.modules so `import pyannote.audio` (as
+    diarization_probe does it) deterministically succeeds
+    (available=True — harmless fake modules for both `pyannote` and
+    `pyannote.audio`; a dotted import needs the PARENT key present
+    too, confirmed live: stubbing only the child still raises
+    ModuleNotFoundError for the parent in a clean interpreter) or fails
+    (available=False — the `= None` force-ImportError idiom). Returns
+    the previous sys.modules entries (or _UNSET if there was none) for
+    restoration via _restore_pyannote_importable — mirrors
+    test_download.py's shutil.disk_usage save/restore idiom."""
+    saved: dict[str, object] = {
+        name: sys.modules.get(name, _UNSET) for name in ("pyannote", "pyannote.audio")
+    }
+    if available:
+        sys.modules["pyannote"] = types.ModuleType("pyannote")
+        sys.modules["pyannote.audio"] = types.ModuleType("pyannote.audio")
+    else:
+        sys.modules.pop("pyannote", None)
+        sys.modules["pyannote.audio"] = None  # type: ignore[assignment]
+    return saved
+
+
+def _restore_pyannote_importable(saved: dict[str, object]) -> None:
+    for name, prev in saved.items():
+        if prev is _UNSET:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = prev  # type: ignore[assignment]
+
+
+def test_diarization_probe_not_installed() -> None:
+    server = JobManager(model=None, model_name="small", default_language="en", hf_token="a-token")
+    saved = _set_pyannote_importable(False)
+    try:
+        installed, ready, error = server.diarization_probe()
+        check("diarization_probe not-installed: installed is False", installed is False)
+        check("diarization_probe not-installed: ready is False", ready is False)
+        check(
+            "diarization_probe not-installed: error mentions 未安装/pyannote — distinguishable from the token case",
+            error is not None and "未安装" in error and "pyannote" in error,
+        )
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_diarization_probe_installed_no_token() -> None:
+    server = JobManager(model=None, model_name="small", default_language="en", hf_token=None)
+    saved = _set_pyannote_importable(True)
+    try:
+        installed, ready, error = server.diarization_probe()
+        check("diarization_probe installed+no-token: installed is True", installed is True)
+        check("diarization_probe installed+no-token: ready is False", ready is False)
+        check(
+            "diarization_probe installed+no-token: error mentions the token, not an install problem",
+            error is not None and "Token" in error and "未安装" not in error,
+        )
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_diarization_probe_installed_with_token() -> None:
+    server = JobManager(model=None, model_name="small", default_language="en", hf_token="a-token")
+    saved = _set_pyannote_importable(True)
+    try:
+        installed, ready, error = server.diarization_probe()
+        check("diarization_probe installed+token: installed is True", installed is True)
+        check("diarization_probe installed+token: ready is True", ready is True)
+        check("diarization_probe installed+token: error is None", error is None)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+# =================================================================
+# health_payload — GET /health's shape (S5 decision C adds
+# diarization_installed). No test in this suite previously asserted
+# /health's shape at all (grep confirms: nothing referenced
+# diarization_probe/diarization_ready/diarization_error anywhere
+# before S5), so this is new coverage, not an update to a pinned
+# ordering.
+# =================================================================
+
+
+def test_health_payload_shape() -> None:
+    check(
+        "health_payload: keys are exactly ok/model/diarization_installed/diarization_ready/diarization_error",
+        set(health_payload("small", True, True, None).keys())
+        == {"ok", "model", "diarization_installed", "diarization_ready", "diarization_error"},
+    )
+    check(
+        "health_payload: ok is always True, and the model name passes through unchanged",
+        health_payload("large-v3", True, True, None)["ok"] is True
+        and health_payload("large-v3", True, True, None)["model"] == "large-v3",
+    )
+    check(
+        "health_payload: not-installed case reports diarization_installed False",
+        health_payload("small", False, False, "x")["diarization_installed"] is False,
+    )
+    check(
+        "health_payload: installed+no-token case reports diarization_installed True, diarization_ready False",
+        health_payload("small", True, False, "x")["diarization_installed"] is True
+        and health_payload("small", True, False, "x")["diarization_ready"] is False,
+    )
+    check(
+        "health_payload: diarization_error is suppressed to None whenever ready (unchanged pre-S5 back-compat)",
+        health_payload("small", True, True, "should never surface")["diarization_error"] is None,
+    )
+    check(
+        "health_payload: diarization_error carries the message through whenever not ready (unchanged pre-S5 back-compat)",
+        health_payload("small", True, False, "未配置 HF Token")["diarization_error"] == "未配置 HF Token",
+    )
+
+
+# =================================================================
 # runner
 # =================================================================
 
@@ -713,6 +851,10 @@ async def run_async_tests() -> None:
 
 
 test_partials_override_both_directions()
+test_diarization_probe_not_installed()
+test_diarization_probe_installed_no_token()
+test_diarization_probe_installed_with_token()
+test_health_payload_shape()
 asyncio.run(run_async_tests())
 
 

@@ -139,6 +139,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import importlib
 import json
 import os
 import shutil
@@ -1694,20 +1695,43 @@ class JobManager:
         token = hf_token or self.hf_token
         return _shared_diarize_pipeline.get(token)
 
-    def diarization_probe(self) -> tuple[bool, Optional[str]]:
+    def diarization_probe(self) -> tuple[bool, bool, Optional[str]]:
         """Lightweight readiness check for GET /health: does pyannote
         import, and is a token available (CLI/env, or the most recent
         per-request hf_token)? Deliberately does NOT call
         Pipeline.from_pretrained() (that downloads/loads the model) —
-        it only checks the import + token presence, per spec."""
-        token = self.hf_token or self.last_request_token
-        if not token:
-            return False, "未配置 HF Token / no HF token available"
+        it only checks the import + token presence, per spec.
+
+        Returns (installed, ready, error) — three orthogonal facts (S5
+        decision C, replacing the old (ready, error) pair): `installed`
+        is the pyannote import result alone, token-independent, so
+        /health can report "already installed" even before any token
+        is configured; `ready` is installed AND token present (the
+        pre-S5 boolean, kept as-is for back-compat — arming a meeting
+        still needs both); `error` explains whichever check failed.
+        Checked import-FIRST, token second (the old order was token-
+        first, which could never tell "pyannote missing" apart from
+        "no token" — this is the 检测状态 bug S5 fixes)."""
+        # pyannote is never imported anywhere in this process before a
+        # successful pip install (this probe is its first-ever import
+        # attempt), so there is no stale NEGATIVE sys.modules entry to
+        # worry about here — invalidate_caches() only needs to bust the
+        # path-based finders' cached directory listing from before the
+        # install wrote pyannote's files into site-packages, so a
+        # still-running server picks up a just-installed pyannote on
+        # the very next probe, no restart required.
+        importlib.invalidate_caches()
         try:
             import pyannote.audio  # noqa: F401  type: ignore[import-not-found]
         except Exception as exc:  # noqa: BLE001 - see _load_diarize_pipeline docstring
-            return False, f"{type(exc).__name__}: {exc}"
-        return True, None
+            return False, False, (
+                f"pyannote.audio 未安装（{type(exc).__name__}: {exc}） / "
+                "pyannote.audio not installed"
+            )
+        token = self.hf_token or self.last_request_token
+        if not token:
+            return True, False, "未配置 HF Token / no HF token available"
+        return True, True, None
 
     @staticmethod
     def _to_wav_for_diarization(file_path: str) -> tuple[str, bool]:
@@ -2058,15 +2082,10 @@ def make_job_http_handler(
             parts = [p for p in parsed.path.split("/") if p]
 
             if parts == ["health"]:
-                ready, error = job_manager.diarization_probe()
+                installed, ready, error = job_manager.diarization_probe()
                 self._send_json(
                     HTTPStatus.OK,
-                    {
-                        "ok": True,
-                        "model": job_manager.model_name,
-                        "diarization_ready": ready,
-                        "diarization_error": None if ready else error,
-                    },
+                    health_payload(job_manager.model_name, installed, ready, error),
                 )
                 return
 
@@ -2099,6 +2118,25 @@ def run_http_server(
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     return httpd
+
+
+def health_payload(model_name: str, installed: bool, ready: bool, error: Optional[str]) -> dict[str, Any]:
+    """JSON body for GET /health. `installed`/`ready`/`error` are
+    JobManager.diarization_probe()'s three orthogonal facts (S5
+    decision C) — `diarization_ready`/`diarization_error` keep their
+    pre-S5 meaning exactly unchanged (ready implies installed; error is
+    None whenever ready), `diarization_installed` is the new,
+    token-independent field. Factored out as its own pure function,
+    mirroring download_conflict_response/validate_download_model's
+    convention below, so its shape is directly unit-testable without
+    constructing a live handler — see test_whisper_protocol.py."""
+    return {
+        "ok": True,
+        "model": model_name,
+        "diarization_installed": installed,
+        "diarization_ready": ready,
+        "diarization_error": None if ready else error,
+    }
 
 
 # =================================================================
