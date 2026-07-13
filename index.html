@@ -610,7 +610,7 @@
     <span class="tl-dot g"></span>
   </div>
   <div class="tl-path">
-    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>v0.2.3+
+    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>v0.3.0+
   </div>
   <div class="tl-spacer"></div>
   <button class="lang-toggle" id="langToggle" type="button" aria-label="切换语言 / switch language">中 / EN</button>
@@ -705,8 +705,8 @@
       <div class="feat c-green reveal">
         <div class="feat-key">real-time transcription</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>实时转录</b>：浏览器识别（云端）/ 本地 Whisper / 标签页音频（后两者音频不出本机），每个引擎带「本地 / 云端」数据去向标识；浏览器识别由 VAD 监督器把关——轮换只切真停顿、恢复不丢缓冲、语言不匹配给一次提示而非悄悄丢句。内置演示零依赖看完整流程。</span>
-          <span class="lang-en">Browser speech recognition (cloud), local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled <b>local / cloud</b> so the data path is visible at a glance. Browser recognition is guarded by a voice-activity supervisor — rotations land in real pauses, recovery never discards buffered speech, a language mismatch gets one hint instead of silent loss. A zero-dependency demo shows the whole flow.</span>
+          <span class="lang-zh"><b>实时转录</b>：浏览器识别 / 本地 Whisper / 标签页音频（后两者音频不出本机），每个引擎带「本地 / 云端」数据去向标识；Chrome 139+ 浏览器识别优先走设备端——音频留在本机，状态栏亮起绿色「音频未离开本机」；另有实验性 Soniox 实时引擎（自备 Key），面向中英夹杂场景。浏览器识别由 VAD 监督器把关——轮换只切真停顿、恢复不丢缓冲、语言不匹配给一次提示而非悄悄丢句。内置演示零依赖看完整流程。</span>
+          <span class="lang-en">Browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled <b>local / cloud</b> so the data path is visible at a glance; on Chrome 139+ browser recognition prefers <b>on-device</b> — audio stays local and the status line shows the green chip — and an experimental <b>Soniox</b> realtime engine (BYOK) targets code-switched zh-en. Browser recognition is guarded by a voice-activity supervisor — rotations land in real pauses, recovery never discards buffered speech, a language mismatch gets one hint instead of silent loss. A zero-dependency demo shows the whole flow.</span>
         </div>
       </div>
 
@@ -787,6 +787,14 @@
         <div class="feat-body">
           <span class="lang-zh"><b>会议历史</b>：全部存浏览器 IndexedDB，无账号，支持搜索曾出现过的表达；一键全量备份/恢复。</span>
           <span class="lang-en"><b>History without accounts</b>: everything in IndexedDB; search old meetings by expression; one-click full backup and restore.</span>
+        </div>
+      </div>
+
+      <div class="feat c-red reveal">
+        <div class="feat-key">desktop app — v0.4, in development</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>桌面版（开发中）</b>：Tauri 外壳把同一个应用装进原生窗口，本地 Whisper 由应用自己托管——首次启动的向导先征求同意，再把独立 Python 环境和你选的 Whisper 模型（四档，预选 medium）装进应用数据目录，不碰系统 Python，删掉目录就是干净卸载。换模型在现有服务旁边下载、下载完成才切换；说话人分离扩展一键安装。签名安装包随 v0.4.0 发布。</span>
+          <span class="lang-en"><b>Desktop app (in development)</b>: a Tauri shell puts the same app in a native window with a self-managed local Whisper — the first-run wizard asks consent, then installs an isolated Python runtime plus the Whisper model you pick (four sizes, medium pre-selected) under the app's own data directory; it never touches system Python, and deleting the directory is a clean uninstall. Model switching downloads beside the live server and only then swaps; the diarization add-on installs in one click. A signed installer ships with v0.4.0.</span>
         </div>
       </div>
 
@@ -878,7 +886,15 @@
               <span class="lang-zh">音频（浏览器识别）</span><span class="lang-en">Audio (browser recognition)</span>
             </td>
             <td class="dest-col"><span class="dot cloud"></span>
-              <span class="lang-zh">浏览器厂商的语音服务（Google/Apple）</span><span class="lang-en">Browser vendor's speech service</span>
+              <span class="lang-zh">Chrome 139+ 有本地语言包时仅本机（自动优先）；否则浏览器厂商的语音服务（Google/Apple）</span><span class="lang-en">On-device (local) on Chrome 139+ when a language pack is available; otherwise the browser vendor's speech service</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">音频（Soniox 引擎，自备 Key，实验）</span><span class="lang-en">Audio (Soniox engine, BYOK, experimental)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">用你自己的 Key 经 WSS 直连 Soniox 实时接口，适用其隐私条款</span><span class="lang-en">Directly to Soniox's realtime API over WSS under your own key; Soniox's privacy terms apply</span>
             </td>
           </tr>
           <tr>

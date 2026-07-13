@@ -281,7 +281,7 @@
 <body>
 <header class="topbar">
   <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
-  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / v0.2.3+</div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / v0.3.0+</div>
   <div class="spacer"></div>
   <a href="../">Landing</a>
   <a href="zh/">中文</a>
@@ -515,7 +515,7 @@ python whisper_server.py --model small</code></pre>
         <li>Use flashcards for quick practice; mark entries as known or unknown.</li>
         <li>Use Anki TSV export for serious spaced repetition.</li>
       </ul>
-      <div class="callout info"><strong>Roadmap note:</strong> v0.3.0 plans to evolve this from glossary-only mastery into a first-class learn-set and due-review loop.</div>
+      <div class="callout info"><strong>Shipped in v0.3.0:</strong> this evolved from glossary-only mastery into a first-class learn-set — known-word suppression on live cards plus a due-driven review loop under /review → 到期复习.</div>
     </section>
 
     <section id="glossary">
@@ -678,7 +678,7 @@ python whisper_server.py --model small</code></pre>
         <li>Entries can be manual, AI-defined from selected text, or collected from a meeting's cards.</li>
         <li>Each entry stores headword, variants, explanation, example, original context, user note, source, timestamps, and review state.</li>
         <li>Expression entries may store category, meaning, plain-English rewrite, and tone. Term entries may store term type and English gloss.</li>
-        <li>Review state includes mastered, review count, and last reviewed time. v0.3.0 plans to expand this into a true learn-set and due-review loop.</li>
+        <li>Review state includes mastered, review count, and last reviewed time. v0.3.0 expanded this into a true learn-set and due-review loop (SM-2-lite scheduling).</li>
       </ul>
 
       <h3>Automation Spec</h3>
@@ -835,7 +835,7 @@ npm run build</code></pre>
           <tr><td>Hosted preview</td><td>Available</td><td>Preview tier with transparent limits and greyed local-only features</td></tr>
           <tr><td>Local web app</td><td>Available</td><td>Full local-first build</td></tr>
           <tr><td>PWA install</td><td>Available</td><td>Uses existing manifest and icons</td></tr>
-          <tr><td>Tauri menu-bar app</td><td>Roadmap</td><td>Preferred desktop packaging direction</td></tr>
+          <tr><td>Tauri desktop app</td><td>In development (v0.4)</td><td>Self-managed local Whisper via a consent-gated wizard; signed installer ships with v0.4.0</td></tr>
           <tr><td>Native mobile</td><td>Not recommended now</td><td>PWA covers most mobile use cases</td></tr>
         </tbody>
       </table>
@@ -859,14 +859,14 @@ sidecar/.venv/bin/python sidecar/test_realtime_diar.py</code></pre>
 
     <section id="roadmap">
       <h2>Roadmap</h2>
-      <p>The current v0.3.0 priority is the learning loop. If capacity is constrained, that work wins over parallel tracks.</p>
+      <p>v0.3.0 shipped its full slate: the learning loop (#48), the unified import hub + task center (#58), simple/advanced settings (#62), and four new themes (#52). Current work is v0.4:</p>
       <ol>
-        <li><strong>#48 Learning loop:</strong> learn-set substrate, known suppression, and due-based review.</li>
-        <li><strong>#58 Unified import and task center:</strong> one place for long-running import/transcription jobs.</li>
-        <li><strong>#62 Settings progressive disclosure:</strong> make settings easier to scan without removing power-user controls.</li>
-        <li><strong>#52 Theme ecosystem:</strong> continue design cleanup after theme selection.</li>
+        <li><strong>Desktop app (Tauri):</strong> self-managed local Whisper — consent-gated wizard, model picker + live model switching, one-click diarization add-on. On main now; the signed installer lands with v0.4.0.</li>
+        <li><strong>On-device browser recognition:</strong> Chrome 139+ prefers local speech recognition, automatic cloud fallback. Shipped.</li>
+        <li><strong>Soniox realtime engine (experimental, BYOK):</strong> aimed at code-switched zh-en; stays experimental until it clears the in-house benchmark. Shipped.</li>
+        <li><strong>Chrome extension (Lite):</strong> MV3 side-panel dictionary lookup scaffold shipped; live-capture port in progress.</li>
       </ol>
-      <p>Parked larger-platform items include Chrome extraction/plugin work, Tauri packaging, browser-Whisper realtime, free translation tier, and select-to-web-search.</p>
+      <p>Parked items include browser-Whisper realtime streaming, a free translation tier, and select-to-web-search.</p>
     </section>
 
     <div class="footer">
