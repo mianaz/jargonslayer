@@ -149,15 +149,26 @@ export class FakeAudioContext {
 }
 
 /** Installs `globalThis.AudioContext` + `globalThis.AudioWorkletNode`
- *  and returns the live tracking array of every AudioWorkletNode
- *  constructed (so a test can reach into `workletNodes[N].port.
- *  onmessage(...)` to simulate a delivered PCM chunk). Call
- *  uninstallFakeAudioGraph() in afterEach. */
-export function installFakeAudioGraph(): { workletNodes: FakeAudioWorkletNode[] } {
+ *  and returns the live tracking arrays of every instance constructed
+ *  (so a test can reach into `workletNodes[N].port.onmessage(...)` to
+ *  simulate a delivered PCM chunk, or assert `contexts.length === 0` to
+ *  prove a codepath built no audio graph at all — see wsTransport.ts's
+ *  attachPcmFeed()/appAudio.test.ts's own "no AudioContext" coverage).
+ *  Call uninstallFakeAudioGraph() in afterEach. */
+export function installFakeAudioGraph(): {
+  workletNodes: FakeAudioWorkletNode[];
+  contexts: FakeAudioContext[];
+} {
   const workletNodes: FakeAudioWorkletNode[] = [];
+  const contexts: FakeAudioContext[] = [];
 
   Object.defineProperty(globalThis, "AudioContext", {
-    value: class extends FakeAudioContext {},
+    value: class extends FakeAudioContext {
+      constructor() {
+        super();
+        contexts.push(this);
+      }
+    },
     configurable: true,
     writable: true,
   });
@@ -172,7 +183,7 @@ export function installFakeAudioGraph(): { workletNodes: FakeAudioWorkletNode[] 
     writable: true,
   });
 
-  return { workletNodes };
+  return { workletNodes, contexts };
 }
 
 export function uninstallFakeAudioGraph(): void {

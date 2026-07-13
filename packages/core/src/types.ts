@@ -32,6 +32,19 @@ export type STTEngineKind =
   // whisper/tabaudio's triple gate (ENGINE_CARDS/Header previewLocked +
   // store.ts applyTierDefaults coercion + key field disabled).
   | "soniox"
+  // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D7):
+  // desktop-only native app/system audio capture via a CoreAudio
+  // process tap (apps/desktop/src-tauri's audiocap helper) — the
+  // Zoom/Teams/WeChat-app case tabaudio can never cover (getDisplayMedia
+  // only ever taps a browser TAB). Tauri-only (existing isTauri gate;
+  // browser keeps tabaudio) and below the macOS 14.4 support floor
+  // shows disabled — see lib/stt/appAudio.ts. D7 supersedes tabaudio on
+  // desktop everywhere: every exhaustive Record/label map keyed by this
+  // type, plus persisted-settings coercion both directions, must add
+  // "appaudio" (S9.3 added the type + lib/stt-layer maps; S9.4 owns the
+  // components-layer surfaces — ENGINE_CARDS/Header/SettingsDialog/
+  // TutorialOverlay/history export labels/tier gating).
+  | "appaudio"
   | "import"
   | "browser-whisper";
 

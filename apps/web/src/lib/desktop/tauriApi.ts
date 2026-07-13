@@ -53,9 +53,29 @@ export type ListenFn = <T>(event: string, handler: (event: TauriEvent<T>) => voi
  *  llmTransport.ts's own `Transport` type documents. */
 export type TauriFetchFn = typeof fetch;
 
+/** Matches `@tauri-apps/api/core`'s `Channel<ArrayBuffer>` closely
+ *  enough for this app's one consumer (S9.3, docs/design-explorations/
+ *  s9-app-audio-tap-blueprint.md's D5 — stt/appAudio.ts's AppAudioEngine
+ *  receives the app-audio helper's batched PCM chunks over one of
+ *  these) — trimmed to the one thing that caller does with it: read
+ *  `onmessage` fires, same as InvokeFn/ListenFn's own "close enough"
+ *  contract above. Monomorphic to ArrayBuffer (unlike Channel's own
+ *  generic `<T>`) since that's the only payload shape any Channel in
+ *  this app carries. */
+export interface PcmChannel {
+  onmessage: (data: ArrayBuffer) => void;
+}
+
+/** Constructs a real `Channel<ArrayBuffer>` pre-wired with `onmessage`
+ *  — mirrors the real constructor's own `new Channel(onmessage)` shape,
+ *  so appAudio.ts never needs to import `Channel` (or anything else
+ *  from `@tauri-apps/*`) itself. */
+export type ChannelFactory = (onmessage: (data: ArrayBuffer) => void) => PcmChannel;
+
 let invokePromise: Promise<InvokeFn> | null = null;
 let listenPromise: Promise<ListenFn> | null = null;
 let tauriFetchPromise: Promise<TauriFetchFn> | null = null;
+let channelFactoryPromise: Promise<ChannelFactory> | null = null;
 
 /** Lazily imports `@tauri-apps/api/core` and resolves its `invoke`.
  *  Throws SYNCHRONOUSLY (before the import() is ever reached) outside a
@@ -98,6 +118,22 @@ export function getTauriFetch(): Promise<TauriFetchFn> {
   return tauriFetchPromise;
 }
 
+/** Lazily imports `@tauri-apps/api/core` and resolves a `ChannelFactory`
+ *  — see PcmChannel/ChannelFactory's own doc comments above. */
+export function getChannelFactory(): Promise<ChannelFactory> {
+  if (!DESKTOP_BUILD) {
+    throw new Error(
+      "tauriApi.getChannelFactory: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")",
+    );
+  }
+  if (!channelFactoryPromise) {
+    channelFactoryPromise = import("@tauri-apps/api/core").then(
+      (mod) => (onmessage: (data: ArrayBuffer) => void) => new mod.Channel<ArrayBuffer>(onmessage),
+    );
+  }
+  return channelFactoryPromise;
+}
+
 /** Test-only reset — clears the memoized import promises. Mirrors
  *  llmTransport.ts's resetTransport / client.ts's
  *  resetSubscriptionToastLatch convention for module-level state that
@@ -108,4 +144,5 @@ export function resetTauriApiCache(): void {
   invokePromise = null;
   listenPromise = null;
   tauriFetchPromise = null;
+  channelFactoryPromise = null;
 }
