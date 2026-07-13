@@ -17,6 +17,7 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   webspeech: "浏览器识别",
   whisper: "本地 Whisper",
   tabaudio: "标签页音频",
+  appaudio: "系统/App 音频",
   soniox: "Soniox 云端识别",
   import: "导入",
   "browser-whisper": "浏览器 Whisper",

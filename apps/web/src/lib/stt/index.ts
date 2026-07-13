@@ -4,6 +4,7 @@ import type { STTEngine, STTEngineKind } from "@jargonslayer/core/types";
 import { WebSpeechEngine } from "./webSpeech";
 import { WhisperSocketEngine } from "./whisperSocket";
 import { TabAudioEngine } from "./tabAudio";
+import { AppAudioEngine } from "./appAudio";
 import { DemoEngine } from "./demo";
 import { SonioxEngine } from "./soniox";
 
@@ -15,6 +16,11 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       return new WhisperSocketEngine();
     case "tabaudio":
       return new TabAudioEngine();
+    case "appaudio":
+      // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md) —
+      // desktop-only native app/system audio capture. Still unreachable
+      // from the UI until S9.4 adds the engine card/gating (D6/D7).
+      return new AppAudioEngine();
     case "demo":
       return new DemoEngine();
     case "soniox":

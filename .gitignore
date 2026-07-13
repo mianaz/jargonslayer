@@ -35,3 +35,13 @@ sidecar/*.wav
 # verified install (binaries/.uv-<triple>.sha256). Pinned uv version is
 # tracked in the script, not git.
 /apps/desktop/src-tauri/binaries/
+
+# v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md) —
+# the jargonslayer-audiocap sidecar binary, built per-machine by
+# `node scripts/build-audiocap.mjs` from apps/desktop/src-tauri/
+# audiocap-helper/ (a Swift package, no download/checksum to pin — the
+# source it's built from IS the checksum). Already covered by the
+# broader /apps/desktop/src-tauri/binaries/ ignore above; called out
+# explicitly here too, next to the uv pattern, for anyone scanning this
+# file for "what's a staged sidecar binary."
+binaries/jargonslayer-audiocap-*

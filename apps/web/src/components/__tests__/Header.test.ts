@@ -22,8 +22,8 @@ describe("isEngineControlBusy", () => {
 });
 
 // canPause matrix (B4, STT protocol v2): demo -> false; webspeech ->
-// true; tabaudio -> true (soft pause, no re-picker); whisper -> true
-// EXCEPT when realtime diarization is on (seg_id namespace reset on
+// true; tabaudio/appaudio -> true (soft pause, no re-picker); whisper ->
+// true EXCEPT when realtime diarization is on (seg_id namespace reset on
 // reattach would collide with pre-pause diarization ids).
 describe("canPause — pause-button availability by engine (B4, STT protocol v2)", () => {
   it("allows pause for webspeech — its stop() drains the working tail synchronously", () => {
@@ -34,6 +34,11 @@ describe("canPause — pause-button availability by engine (B4, STT protocol v2)
   it("allows pause for tabaudio — SOFT pause (wsTransport pauseFeed/resumeFeed), never re-opens the OS share picker", () => {
     expect(canPause("tabaudio", { realtimeDiarize: false })).toBe(true);
     expect(canPause("tabaudio", { realtimeDiarize: true })).toBe(true);
+  });
+
+  it("allows pause for appaudio (S9/D7) — SOFT pause too (same wsTransport pauseFeed/resumeFeed), the helper process keeps running untouched", () => {
+    expect(canPause("appaudio", { realtimeDiarize: false })).toBe(true);
+    expect(canPause("appaudio", { realtimeDiarize: true })).toBe(true);
   });
 
   it("allows pause for whisper when realtime diarization is OFF", () => {

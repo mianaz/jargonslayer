@@ -15,6 +15,10 @@ const ENGINE_POSTURE: Record<string, "local" | "cloud"> = {
   webspeech: "cloud",
   whisper: "local",
   tabaudio: "local",
+  // S9/D7: desktop-only CoreAudio process tap — audio goes only to the
+  // local Whisper sidecar (same 音频未离开本机 chip whisper/tabaudio
+  // already carry), never leaving this Mac.
+  appaudio: "local",
   demo: "local",
 };
 
@@ -96,7 +100,9 @@ export default function StatusLine() {
   // sidecarUp plumbing, no new probe/state added. Web build copy is
   // byte-identical to before (sidecarMode is meaningless there).
   const sidecarDownHint =
-    (engine === "whisper" || engine === "tabaudio") && status === "idle" && sidecarUp === false
+    (engine === "whisper" || engine === "tabaudio" || engine === "appaudio") &&
+    status === "idle" &&
+    sidecarUp === false
       ? IS_DESKTOP
         ? `本地服务·${sidecarMode === "managed" ? "托管" : "外部"}未连接——见 设置 → 转录引擎`
         : "本地 Whisper sidecar 未连接——见 设置 → 转录引擎"

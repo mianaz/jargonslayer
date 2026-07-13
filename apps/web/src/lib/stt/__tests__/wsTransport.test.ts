@@ -14,6 +14,7 @@ import {
   installFakeWebSocket,
   uninstallFakeAudioGraph,
   uninstallFakeWebSocket,
+  type FakeAudioContext,
   type FakeAudioWorkletNode,
 } from "./fakeWs";
 import { WsTransport } from "../wsTransport";
@@ -27,6 +28,7 @@ const POST_STOP_LINGER_MS = 12000;
 describe("WsTransport — protocol v2", () => {
   let wsInstances: FakeWebSocket[];
   let workletNodes: FakeAudioWorkletNode[];
+  let contexts: FakeAudioContext[];
   let onInterim: ReturnType<typeof vi.fn>;
   let onFinal: ReturnType<typeof vi.fn>;
   let onStatus: ReturnType<typeof vi.fn>;
@@ -35,7 +37,7 @@ describe("WsTransport — protocol v2", () => {
 
   beforeEach(() => {
     ({ instances: wsInstances } = installFakeWebSocket());
-    ({ workletNodes } = installFakeAudioGraph());
+    ({ workletNodes, contexts } = installFakeAudioGraph());
     onInterim = vi.fn();
     onFinal = vi.fn();
     onStatus = vi.fn();
@@ -469,5 +471,113 @@ describe("WsTransport — protocol v2", () => {
     const [updateAssignments] = onSpeakerUpdate.mock.calls[0];
     expect(updateAssignments[0].segId).toBe(secondMappedSeg);
     expect(updateAssignments[0].segId).not.toBe(firstMappedSeg);
+  });
+
+  // ---------------------------------------------------------------
+  // attachPcmFeed() / pushPcm() — D5 seam (S9.3, docs/design-
+  // explorations/s9-app-audio-tap-blueprint.md): appAudio.ts's
+  // AppAudioEngine feeds already-downsampled PCM in from a Tauri
+  // Channel instead of a browser AudioContext/worklet graph. pushPcm()
+  // is the ONE guard path both feed sources go through — see
+  // wsTransport.ts's own doc comment on each method.
+  // ---------------------------------------------------------------
+
+  describe("attachPcmFeed() / pushPcm()", () => {
+    it("attachPcmFeed() calls connect() (same as attachStream()) and forwards pushPcm() chunks once the ws is OPEN", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      const ws = wsInstances[wsInstances.length - 1];
+      expect(ws).toBeTruthy();
+      ws.simulateOpen();
+      ws.sent = []; // drop the initial config send for a clean assertion
+
+      const chunk = new ArrayBuffer(8);
+      transport.pushPcm(chunk);
+      expect(ws.sent).toEqual([chunk]);
+    });
+
+    it("pushPcm() drops the chunk while feedPaused", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      const ws = wsInstances[wsInstances.length - 1];
+      ws.simulateOpen();
+      transport.pauseFeed();
+      ws.sent = [];
+
+      transport.pushPcm(new ArrayBuffer(8));
+      expect(ws.sent).toEqual([]);
+    });
+
+    it("pushPcm() drops the chunk while stopping (drain wait in flight)", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      const ws = wsInstances[wsInstances.length - 1];
+      ws.simulateOpen();
+
+      const stopP = transport.stop();
+      await Promise.resolve();
+      ws.sent = []; // drop the {"type":"stop"} send for a clean assertion
+
+      transport.pushPcm(new ArrayBuffer(8));
+      expect(ws.sent).toEqual([]); // never forwarded
+
+      ws.simulateMessage({ type: "stopped" });
+      await stopP;
+    });
+
+    it("pushPcm() drops the chunk when there is no OPEN ws (e.g. still CONNECTING)", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      const ws = wsInstances[wsInstances.length - 1];
+      // Never opened — still CONNECTING.
+
+      transport.pushPcm(new ArrayBuffer(8));
+      expect(ws.sent).toEqual([]);
+    });
+
+    it("the worklet's onmessage handler routes through pushPcm() — no duplicated guard logic", async () => {
+      const transport = makeTransport();
+      const ws = await attachAndOpen(transport);
+      const worklet = workletNodes[workletNodes.length - 1];
+      const pushPcmSpy = vi.spyOn(transport, "pushPcm");
+      ws.sent = [];
+
+      const chunk = new ArrayBuffer(4);
+      worklet.port.onmessage?.({ data: chunk });
+
+      expect(pushPcmSpy).toHaveBeenCalledTimes(1);
+      expect(pushPcmSpy).toHaveBeenCalledWith(chunk);
+      expect(ws.sent).toEqual([chunk]); // the real guard path still ran (forwarded)
+    });
+
+    it("attachPcmFeed() builds no AudioContext/AudioWorkletNode, and stop() still runs the full drain handshake against the null audio nodes", async () => {
+      const transport = makeTransport();
+      transport.attachPcmFeed();
+      const ws = wsInstances[wsInstances.length - 1];
+      ws.simulateOpen();
+
+      expect(contexts.length).toBe(0);
+      expect(workletNodes.length).toBe(0);
+
+      let resolved = false;
+      const stopP = transport.stop().then(() => {
+        resolved = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(JSON.parse(ws.sent[ws.sent.length - 1] as string)).toEqual({ type: "stop" });
+      expect(resolved).toBe(false);
+
+      ws.simulateMessage({ type: "stopped" });
+      await stopP;
+
+      expect(resolved).toBe(true);
+      expect(ws.closeCalls).toBe(1);
+      // Still no audio graph, even after a full stop() — attachPcmFeed()
+      // truly never touches AudioContext/AudioWorkletNode.
+      expect(contexts.length).toBe(0);
+      expect(workletNodes.length).toBe(0);
+    });
   });
 });

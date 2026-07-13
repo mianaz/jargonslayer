@@ -5,8 +5,8 @@
   "build": {
     "frontendDist": "../../web/out",
     "devUrl": "http://localhost:3000",
-    "beforeDevCommand": "npm run fetch:uv --prefix ../.. && npm run dev -w apps/web --prefix ../..",
-    "beforeBuildCommand": "npm run fetch:uv --prefix ../.. && npm run build:desktop --prefix ../.."
+    "beforeDevCommand": "npm run fetch:uv --prefix ../.. && npm run build:audiocap --prefix ../.. && npm run dev -w apps/web --prefix ../..",
+    "beforeBuildCommand": "npm run fetch:uv --prefix ../.. && npm run build:audiocap --prefix ../.. && npm run build:desktop --prefix ../.."
   },
   "app": {
     "windows": [
@@ -31,7 +31,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/uv"],
+    "externalBin": ["binaries/uv", "binaries/jargonslayer-audiocap"],
     "resources": {
       "../../../sidecar/whisper_server.py": "sidecar/whisper_server.py",
       "../../../sidecar/requirements-sidecar.txt": "sidecar/requirements-sidecar.txt",

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>com.bioinfospace.jargonslayer.audiocap</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>JargonSlayer 需要录制系统音频以实时转录会议中对方的语音；音频仅发送到本机转录服务，不会离开这台电脑。</string>
+</dict>
+</plist>

@@ -191,6 +191,20 @@ describe("StatusLine — sidecar-down tooltip", () => {
     expect(privacySegment().title).not.toBe("");
   });
 
+  it("hints for engine:appaudio too (S9/D7 — a third sidecar-backed engine)", async () => {
+    useApp.setState((s) => ({
+      status: "idle",
+      sidecarUp: false,
+      settings: { ...s.settings, engine: "appaudio" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine />);
+    });
+
+    expect(privacySegment().title).not.toBe("");
+  });
+
   it("no hint once the sidecar is confirmed up (sidecarUp:true)", async () => {
     useApp.setState((s) => ({
       status: "idle",

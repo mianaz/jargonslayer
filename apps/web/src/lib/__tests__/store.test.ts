@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aliasesAfterRename,
+  applyPlatformEngineDefaults,
   applySpeakerUpdateToSegments,
   applyTierDefaults,
   currentSessionSnapshot,
@@ -821,6 +822,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
   it("full tier (isPreview:false) never coerces, regardless of engine or hadSavedEngine", () => {
     expect(applyTierDefaults(withEngine("whisper"), false, true).engine).toBe("whisper");
     expect(applyTierDefaults(withEngine("tabaudio"), false, true).engine).toBe("tabaudio");
+    expect(applyTierDefaults(withEngine("appaudio"), false, true).engine).toBe("appaudio");
     expect(applyTierDefaults(withEngine("soniox"), false, true).engine).toBe("soniox");
     expect(applyTierDefaults(withEngine("demo"), false, false).engine).toBe("demo");
   });
@@ -835,7 +837,12 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(s.engine).toBe("webspeech");
   });
 
-  it("preview tier coerces a saved BYOK cloud engine (soniox) to webspeech — v0.4 S4 blueprint decision E / risk 4, same lock as whisper/tabaudio", () => {
+  it("preview tier coerces a saved sidecar-only engine (appaudio) to webspeech — S9/D7: structural coverage only, since applyPlatformEngineDefaults would already have coerced a stored appaudio away on a real (web) preview build before this function ever sees it", () => {
+    const s = applyTierDefaults(withEngine("appaudio"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier coerces a saved BYOK cloud engine (soniox) to webspeech — v0.4 S4 blueprint decision E / risk 4, same lock as whisper/tabaudio/appaudio", () => {
     const s = applyTierDefaults(withEngine("soniox"), true, true);
     expect(s.engine).toBe("webspeech");
   });
@@ -879,6 +886,59 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(!!withEngineKey && "engine" in withEngineKey).toBe(true);
     expect(!!withoutEngineKey && "engine" in withoutEngineKey).toBe(false);
     expect(!!noSavedObject && "engine" in noSavedObject).toBe(false);
+  });
+});
+
+describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coercion", () => {
+  function withEngine(engine: Settings["engine"]): Settings {
+    return { ...DEFAULT_SETTINGS, engine };
+  }
+
+  it("desktop coerces a stored tabaudio to appaudio (WKWebView has no getDisplayMedia picker to fail into)", () => {
+    const s = applyPlatformEngineDefaults(withEngine("tabaudio"), true);
+    expect(s.engine).toBe("appaudio");
+  });
+
+  it("web coerces a stored appaudio to tabaudio (appaudio is Tauri-only, D6)", () => {
+    const s = applyPlatformEngineDefaults(withEngine("appaudio"), false);
+    expect(s.engine).toBe("tabaudio");
+  });
+
+  it("desktop leaves every other engine untouched, including appaudio itself", () => {
+    for (const engine of ["webspeech", "whisper", "appaudio", "soniox", "demo"] as const) {
+      expect(applyPlatformEngineDefaults(withEngine(engine), true).engine).toBe(engine);
+    }
+  });
+
+  it("web leaves every other engine untouched, including tabaudio itself", () => {
+    for (const engine of ["webspeech", "whisper", "tabaudio", "soniox", "demo"] as const) {
+      expect(applyPlatformEngineDefaults(withEngine(engine), false).engine).toBe(engine);
+    }
+  });
+
+  it("leaves other settings fields untouched across a real coercion", () => {
+    const base = { ...withEngine("tabaudio"), language: "en-GB" };
+    const s = applyPlatformEngineDefaults(base, true);
+    expect(s.engine).toBe("appaudio");
+    expect(s.language).toBe("en-GB");
+  });
+});
+
+describe("migrateSettings — S9/D7 platform coercion composes with applyTierDefaults (platform runs first)", () => {
+  // Ambient test env is a web build (IS_DESKTOP false, see
+  // platform/desktop.ts) — migrateSettings itself always feeds the
+  // REAL IS_DESKTOP/PREVIEW_TIER (both import-time consts, same
+  // limitation this repo's other IS_DESKTOP-gated suites already
+  // document — see e.g. SettingsDialog.test.tsx's own header comment on
+  // the 更换模型 describe block), so only the web-branch composition is
+  // exercisable end-to-end here; the desktop branch and every isPreview
+  // combination are already fully covered directly above via the pure
+  // applyPlatformEngineDefaults/applyTierDefaults functions with an
+  // explicit boolean, which is the entire reason both were extracted as
+  // pure helpers in the first place.
+  it("a stored appaudio (e.g. a full-tier backup restored from a desktop export) is coerced to tabaudio on a real (web) migrateSettings call", () => {
+    const s = migrateSettings({ engine: "appaudio" } as Partial<Settings>);
+    expect(s.engine).toBe("tabaudio");
   });
 });
 

@@ -29,6 +29,12 @@ import {
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import { probeSidecar, type SidecarProbeResult } from "@/lib/stt/sidecarHealth";
+import {
+  appAudioLockReason,
+  isAppAudioFloorLocked,
+  probeAudiocapCaps,
+  type AudiocapCapabilities,
+} from "@/lib/desktop/audiocapCaps";
 import type {
   EnglishLevel,
   ExplainLanguage,
@@ -39,6 +45,7 @@ import type {
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { getInvoke } from "@/lib/desktop/tauriApi";
 import { initDesktop, type DesktopLogLine } from "@/lib/desktop/bootstrap";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import {
@@ -113,14 +120,35 @@ const ENGINE_CARDS: {
     posture: "local",
     sidecarOnly: true,
   },
-  {
-    value: "tabaudio",
-    label: "标签页音频",
-    hint: "在本机转录标签页音频",
-    posture: "local",
-    disabled: true,
-    sidecarOnly: true,
-  },
+  // D7 desktop tabaudio replacement (docs/design-explorations/
+  // s9-app-audio-tap-blueprint.md): tabaudio (getDisplayMedia) can only
+  // ever fail inside Tauri's WKWebView — there is no tab-share picker
+  // to launch there — so desktop shows 系统/App 音频 (a CoreAudio process
+  // tap, S9) in its slot instead; the web build keeps 标签页音频 exactly
+  // as before (D7 pinned decision: browser behavior stays
+  // byte-identical). D3/D4: captures what plays out of THIS Mac —
+  // including other apps/sounds, not just the call's other side — never
+  // the user's own microphone. Unlike tabaudio's static `disabled`
+  // above, appaudio's disabled/title is computed dynamically below
+  // (audiocapCaps, the audiocap_capabilities() probe) — whether it's
+  // selectable depends on THIS machine's macOS version (D6's "shown-but-
+  // disabled below floor", never hidden), not a fixed product decision.
+  IS_DESKTOP
+    ? {
+        value: "appaudio",
+        label: "系统/App 音频",
+        hint: "会议中对方的声音，也含 Mac 播放的其他声音，不含你的麦克风",
+        posture: "local",
+        sidecarOnly: true,
+      }
+    : {
+        value: "tabaudio",
+        label: "标签页音频",
+        hint: "在本机转录标签页音频",
+        posture: "local",
+        disabled: true,
+        sidecarOnly: true,
+      },
   {
     value: "soniox",
     label: "Soniox 云端识别",
@@ -517,13 +545,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 转录引擎 sidecar status line (owner ask 2026-07-11: "I cannot see in
   // the GUI if the local side got set up at all") — a lightweight GET
   // /health readout shown directly under the engine picker whenever the
-  // draft engine is whisper/tabaudio, separate from 说话人分离's own
-  // fetchSidecarHealth probe below (that one is diarization-specific,
+  // draft engine is whisper/tabaudio/appaudio, separate from 说话人分离's
+  // own fetchSidecarHealth probe below (that one is diarization-specific,
   // toast-only). null = not probed yet this dialog-open/engine
   // selection — rendered the same as a confirmed-down result (mirrors
   // 订阅直连's agentHealthState `!agentHealthState` idiom below).
   const [sidecarStatus, setSidecarStatus] = useState<SidecarProbeResult | null>(null);
   const [checkingSidecarStatus, setCheckingSidecarStatus] = useState(false);
+  // 转录引擎 系统/App 音频 macOS-floor gating (S9.4, D6; centralized onto
+  // lib/desktop/audiocapCaps.ts by adversarial review finding F9 — that
+  // module is now the ONE place probing/caching audiocap_capabilities(),
+  // shared with Header.tsx's ENGINE_OPTIONS) — probed once per
+  // dialog-open (see the IS_DESKTOP-gated effect below), cached for the
+  // rest of that open same as sidecarStatus/installedModel/
+  // diarizationInstalled above. null = not probed yet this open; the
+  // ENGINE_CARDS render below treats null the same as "supported" (see
+  // isAppAudioFloorLocked's own POLICY doc — fails open, since D6 says
+  // "runtime commands re-check support, UI gating is not a boundary", so
+  // an optimistic default here is only ever a brief cosmetic gap, never
+  // a real safety hole).
+  const [audiocapCaps, setAudiocapCaps] = useState<AudiocapCapabilities | null>(null);
   // Soniox API Key masked-input toggle (v0.4 S4 chunk 6) — same
   // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
   // field itself only renders when draft.engine === "soniox".
@@ -743,17 +784,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   // 转录引擎 sidecar status line: probes GET /health whenever this
   // section becomes relevant — the dialog opens with the draft engine
-  // already whisper/tabaudio, or the user switches an engine card to
-  // one of those while the dialog stays open — and again whenever
-  // draft.engine changes between the two (cheap: same sidecar either
-  // way). Preview tier (#61) never probes, matching every other
-  // sidecar-dependent affordance's showroom posture (no probing to
-  // unlock). Cancellation-guarded like ImportHub's own open-gated
+  // already whisper/tabaudio/appaudio, or the user switches an engine
+  // card to one of those while the dialog stays open — and again
+  // whenever draft.engine changes among the three (cheap: same sidecar
+  // either way — appaudio joins here too, S9/D7: its helper still
+  // streams into the SAME local Whisper sidecar over WsTransport, not a
+  // separate service). Preview tier (#61) never probes, matching every
+  // other sidecar-dependent affordance's showroom posture (no probing
+  // to unlock). Cancellation-guarded like ImportHub's own open-gated
   // probe (its own doc explains why) — this one can additionally be
   // interrupted by an engine switch, not just a close.
   useEffect(() => {
     if (!open || PREVIEW_TIER) return;
-    if (draft.engine !== "whisper" && draft.engine !== "tabaudio") return;
+    if (draft.engine !== "whisper" && draft.engine !== "tabaudio" && draft.engine !== "appaudio") return;
     setSidecarStatus(null);
     setCheckingSidecarStatus(true);
     let cancelled = false;
@@ -820,6 +863,33 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draft.sidecarMode]);
+
+  // 转录引擎 系统/App 音频 macOS-floor gating (S9.4, D6; F9): audiocap_
+  // capabilities() is a synchronous OS-version check on the Rust side
+  // (NSProcessInfo, no I/O) — probed once per dialog-open via the
+  // shared lib/desktop/audiocapCaps.ts module (also Header.tsx's own
+  // ENGINE_OPTIONS gate — see that module's POLICY doc), cached for the
+  // rest of that open (see audiocapCaps' own doc comment above).
+  // probeAudiocapCaps() is IS_DESKTOP-guarded internally (never reaches
+  // getInvoke() outside a desktop build) AND never rejects (an error
+  // resolves its own fail-open shape — see that module's own doc), so
+  // this effect needs no separate .catch() of its own anymore. Unlike
+  // the 本地服务/diarization effects just above, deliberately NOT keyed
+  // on draft.engine/draft.sidecarMode — floor support depends only on
+  // which macOS this machine runs, not on which engine happens to be
+  // drafted, so ENGINE_CARDS can render the right disabled/enabled
+  // state for 系统/App 音频 even before it's ever been selected this open.
+  useEffect(() => {
+    if (!open || !IS_DESKTOP) return;
+    let cancelled = false;
+    void probeAudiocapCaps().then((caps) => {
+      if (!cancelled) setAudiocapCaps(caps);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   if (!open) return null;
 
@@ -979,6 +1049,24 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       useApp.getState().setSidecarUp(result.up);
     } finally {
       setCheckingSidecarStatus(false);
+    }
+  };
+
+  // 转录引擎 系统/App 音频 permission-denied CTA (S9.4, D6): fires the
+  // Rust-side open_privacy_settings() command (audiocap.rs) — best-
+  // effort/uncontracted on ITS OWN side (tries the direct 屏幕与系统音频
+  // 录制 deep link, falls back to the bare 隐私与安全性 pane, never
+  // reports which leg actually worked back to us), so this handler
+  // itself only guards against invoke() throwing outright (e.g. a
+  // structurally missing command) — the always-visible manual-path text
+  // beside this button is the real fallback for "neither deep link
+  // actually opened anything", not a toast here.
+  const handleOpenPrivacySettings = async () => {
+    try {
+      const invoke = await getInvoke();
+      await invoke("open_privacy_settings");
+    } catch (err) {
+      showToast(err instanceof Error ? `无法打开系统设置：${err.message}` : "无法打开系统设置");
     }
   };
 
@@ -1260,18 +1348,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   };
 
   const activePreset = presetIdFor(PROVIDER_PRESETS, draft);
-  // 实时说话人分离（beta）: only meaningful for the two local-audio
-  // engines that go through wsTransport.ts, and only runnable once a
-  // token is configured (mirrors the sidecar's own arming gate: config.
-  // diarize truthy AND a token available). Preview tier (#61): always
-  // unavailable — the whole 说话人分离 section's inputs are disabled
-  // there, but this also guards against a persisted hfToken +
-  // whisper/tabaudio engine surviving into a preview build (e.g. an
-  // imported full-tier settings export) from evaluating true and
-  // enabling the checkbox despite the section's greyed-out fields.
+  // 实时说话人分离（beta）: only meaningful for the local-audio engines
+  // that go through wsTransport.ts (whisper/tabaudio, and appaudio —
+  // S9/D7 — since AppAudioEngine drives the SAME WsTransport seam via
+  // attachPcmFeed()), and only runnable once a token is configured
+  // (mirrors the sidecar's own arming gate: config.diarize truthy AND a
+  // token available). Preview tier (#61): always unavailable — the
+  // whole 说话人分离 section's inputs are disabled there, but this also
+  // guards against a persisted hfToken + whisper/tabaudio/appaudio
+  // engine surviving into a preview build (e.g. an imported full-tier
+  // settings export) from evaluating true and enabling the checkbox
+  // despite the section's greyed-out fields.
   const realtimeDiarizeAvailable =
     !PREVIEW_TIER &&
-    (draft.engine === "whisper" || draft.engine === "tabaudio") &&
+    (draft.engine === "whisper" || draft.engine === "tabaudio" || draft.engine === "appaudio") &&
     !!draft.hfToken;
   // 双语转录 (#42): the translation target IS explainLanguage — "en"
   // would mean translating English into English, so the toggle is
@@ -1374,13 +1464,31 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // joins sidecarOnly in the preview lock — see
                 // ENGINE_CARDS' own byokOnly doc comment above.
                 const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
+                // S9.4, D6 (F9): 系统/App 音频's own macOS-floor gate —
+                // "shown-but-disabled below floor", never hidden (see
+                // ENGINE_CARDS' own appaudio doc comment above for why
+                // this is computed here instead of a static `disabled`
+                // on the card itself). isAppAudioFloorLocked is the SAME
+                // shared policy function Header.tsx's ENGINE_OPTIONS now
+                // consumes too (lib/desktop/audiocapCaps.ts) — audiocapCaps
+                // null (not probed yet this open, or this isn't even the
+                // appaudio card) never locks — only an EXPLICIT
+                // appAudioSupported:false does (see that module's own
+                // POLICY doc).
+                const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
                 return (
                   <button
                     key={opt.value}
                     type="button"
-                    disabled={opt.disabled || previewLocked}
+                    disabled={opt.disabled || previewLocked || floorLocked}
                     onClick={() => patch({ engine: opt.value })}
-                    title={previewLocked ? "本地版功能：体验版暂未开放" : undefined}
+                    title={
+                      previewLocked
+                        ? "本地版功能：体验版暂未开放"
+                        : floorLocked
+                          ? appAudioLockReason(audiocapCaps)
+                          : undefined
+                    }
                     className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                       draft.engine === opt.value
                         ? "border-act bg-panel3 text-fg"
@@ -1422,13 +1530,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </div>
 
             {/* 本地服务 status line (owner ask 2026-07-11): only for the
-               two sidecar-backed engines — probed by the useEffect/
-               handleCheckSidecarStatus above. sidecarStatus === null
-               (not probed yet) renders identically to a confirmed-down
-               result, mirroring 订阅直连's own agentHealthState
-               `!agentHealthState` idiom below rather than adding a
-               third "checking" visual state. */}
-            {!PREVIEW_TIER && (draft.engine === "whisper" || draft.engine === "tabaudio") && (
+               sidecar-backed engines (whisper/tabaudio, and appaudio —
+               S9/D7) — probed by the useEffect/handleCheckSidecarStatus
+               above. sidecarStatus === null (not probed yet) renders
+               identically to a confirmed-down result, mirroring 订阅直连's
+               own agentHealthState `!agentHealthState` idiom below
+               rather than adding a third "checking" visual state. */}
+            {!PREVIEW_TIER &&
+              (draft.engine === "whisper" || draft.engine === "tabaudio" || draft.engine === "appaudio") && (
               <div className="space-y-2 border border-edge bg-panel2 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 text-sm text-fg">
@@ -1469,6 +1578,37 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     </a>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* 系统/App 音频 permission-denied CTA (S9.4, D6): AppAudioEngine
+               (lib/stt/appAudio.ts) already surfaces the zh
+               permission-denied error via onStatus/showToast the moment
+               a real start() hits it — this dialog has no live signal
+               for that (no private TCC preflight API, per D6), so
+               instead of reacting to a "denied" event this is an
+               always-present affordance once 系统/App 音频 is the drafted
+               engine: a deep-link button (open_privacy_settings, best-
+               effort/uncontracted — see that Rust command's own doc
+               comment) plus an ALWAYS-visible manual path, so the fix is
+               already in view before the user ever has to hit the
+               error once. */}
+            {draft.engine === "appaudio" && (
+              <div className="space-y-2 border border-edge bg-panel2 p-3">
+                <div className="text-sm text-fg">系统音频录制权限</div>
+                <div className="text-xs leading-[1.7] text-mut2">
+                  首次开始监听时 macOS 会弹出授权提示；如果已拒绝或没看到提示，可前往系统设置手动开启后重试——重试会重新触发系统权限提示。
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleOpenPrivacySettings()}
+                  className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3"
+                >
+                  打开系统设置
+                </button>
+                <div className="text-xs leading-[1.7] text-mut2">
+                  手动路径：系统设置 → 隐私与安全性 → 屏幕与系统音频录制
+                </div>
               </div>
             )}
 

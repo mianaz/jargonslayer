@@ -31,6 +31,42 @@ serde = { version = "1", features = ["derive"] }
 # parsing --download-only's NDJSON stdout lines directly; made explicit
 # now that this crate's own code calls serde_json::from_str itself.
 serde_json = "1"
+# S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
+# device-native -> 16kHz mono resampling for the audiocap pipeline.
+# Pinned to the pre-1.0 Vec<Vec<f32>>-style API (FftFixedIn + the
+# Resampler trait's process/process_partial) rather than the crate's own
+# 1.0+ line: 1.0.0 (Dec 2025) had already redesigned around an
+# Adapter/process_into_buffer model, and the crate kept making breaking
+# major-version bumps every 1-2 months after that (2.0/3.0/4.0 through
+# Jul 2026) — see audiocap_resample.rs's own header comment for the
+# full reasoning. 0.16.2 is the last pre-redesign release, verified
+# directly against its own docs.rs API (not assumed) before writing
+# audiocap_resample.rs against it.
+rubato = "0.16.2"
+# S9.2 — stop_app_audio's SIGKILL fallback. tauri-plugin-shell's
+# CommandChild (2.3.5) exposes only kill(self) (SIGKILL, consumes the
+# handle) or write(&mut self) — no partial "close just stdin, keep the
+# handle" API — so the graceful stop path (drop the whole CommandChild
+# to close its stdin, the helper's own dead-man switch) leaves nothing
+# to call .kill() on for the grace-timeout fallback; a raw
+# libc::kill(pid, SIGKILL) on the pid captured before the drop is the
+# only way left to reach it (audiocap.rs's force_kill_pid). Already
+# resolved transitively (objc2 et al. — see Cargo.lock); made explicit
+# now that this crate's own code calls it directly. macOS-only (see the
+# target-gated block below) since libc::kill/SIGKILL don't exist on
+# Windows and this whole feature never ships there.
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+# S9.2 (D1/D6) — audiocap_capabilities()'s macOS-version check via
+# NSProcessInfo.operatingSystemVersion, per this slice's own instruction
+# ("if an objc2-foundation-style dep is ALREADY in the tree — check
+# Cargo.lock — use it, else parse SystemVersion.plist"): objc2-foundation
+# 0.3.2 is already resolved transitively (tauri's own macOS backend), so
+# this makes it a direct dependency at the SAME version rather than
+# shelling out to sw_vers or hand-parsing a plist. NSProcessInfo is one
+# of the crate's ~176 DEFAULT features, so no extra feature flags needed
+# (verified against the crate's own docs.rs feature list).
+objc2-foundation = "0.3.2"
 
 # Single-instance is desktop-only (no Android/iOS support) — same
 # target gate the plugin's own setup docs recommend for `cargo add`.

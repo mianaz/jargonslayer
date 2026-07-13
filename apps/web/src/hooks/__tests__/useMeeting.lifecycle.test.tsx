@@ -85,6 +85,16 @@ class FakeSoftPauseEngine extends FakeEngine {
   }
 }
 
+// F10 (adversarial review): appaudio is ALSO soft-pause-capable (S9/D7)
+// — a second concrete kind alongside FakeSoftPauseEngine's own
+// "tabaudio", used ONLY by the capture_ended toast-copy test below
+// (kept separate from FakeSoftPauseEngine itself so every EXISTING
+// soft-pause test above, which doesn't care about the toast copy, is
+// untouched).
+class FakeAppAudioEngine extends FakeSoftPauseEngine {
+  kind = "appaudio";
+}
+
 const engines: FakeEngine[] = [];
 // Which class createEngine() constructs next — FakeEngine (teardown-
 // only) by default; startListeningSoft() below points this at
@@ -171,8 +181,13 @@ describe("useMeeting — lifecycle races", () => {
     let p: Promise<void>;
     await act(async () => {
       // Pairs with FakeSoftPauseEngine.kind ("tabaudio") — real
-      // soft-pause is tabaudio-only, and resume()'s F7 kind-mismatch
-      // check (codex v2 review) now actually reads settings.engine.
+      // soft-pause is tabaudio/appaudio (S9/D7), and resume()'s F7
+      // kind-mismatch check (codex v2 review) now actually reads
+      // settings.engine; useMeeting.ts itself never branches on the
+      // KIND string (see this file's own `engine.pause`/`?.resume`
+      // property-presence doc above), so "tabaudio" here is just an
+      // arbitrary pick among the soft-pause-capable kinds, not a claim
+      // that it's the only one.
       useApp.setState({ settings: { ...useApp.getState().settings, engine: "tabaudio" } });
       nextEngineClass = FakeSoftPauseEngine;
       p = api!.start();
@@ -188,6 +203,57 @@ describe("useMeeting — lifecycle races", () => {
     expect(useApp.getState().status).toBe("listening");
     return engines[0] as FakeSoftPauseEngine;
   }
+
+  /** Same as startListeningSoft(), but kind:"appaudio" (S9/D7's own
+   *  soft-pause-capable engine) — used only by the F10 capture_ended
+   *  toast-copy tests below. */
+  async function startListeningAppAudio(): Promise<FakeAppAudioEngine> {
+    let p: Promise<void>;
+    await act(async () => {
+      useApp.setState({ settings: { ...useApp.getState().settings, engine: "appaudio" } });
+      nextEngineClass = FakeAppAudioEngine;
+      p = api!.start();
+      nextEngineClass = FakeEngine;
+      await flush();
+      engines[0].startResolve!();
+      await p;
+      engines[0].events!.onStatus("listening");
+    });
+    expect(useApp.getState().status).toBe("listening");
+    return engines[0] as FakeAppAudioEngine;
+  }
+
+  // ---------------------------------------------------------------
+  // F10 (adversarial review, MEDIUM): a prior S9.4 fix changed the
+  // capture_ended toast copy UNCONDITIONALLY, which silently altered
+  // tabaudio's (and any other non-appaudio engine's) WEB-build toast
+  // too, violating D7's "browser behavior stays byte-identical" pin.
+  // The copy must be engine-kind-conditional instead.
+  // ---------------------------------------------------------------
+
+  it("capture_ended toast — tabaudio (and non-appaudio) keeps the ORIGINAL 共享已结束 copy, byte-identical to pre-S9 web behavior", async () => {
+    const engine = await startListeningSoft(); // kind: "tabaudio"
+
+    await act(async () => {
+      engine.events!.onStatus("idle", "capture_ended");
+      await flush();
+      await flush();
+    });
+
+    expect(useApp.getState().toast).toBe("共享已结束，会议已保存到历史记录");
+  });
+
+  it("capture_ended toast — appaudio gets 音频捕获已结束 (S9's own CoreAudio-tap-ending copy, never a share picker)", async () => {
+    const engine = await startListeningAppAudio();
+
+    await act(async () => {
+      engine.events!.onStatus("idle", "capture_ended");
+      await flush();
+      await flush();
+    });
+
+    expect(useApp.getState().toast).toBe("音频捕获已结束，会议已保存到历史记录");
+  });
 
   it("End during resume's pending acquisition is never dropped, and never flips to listening", async () => {
     await startListening();

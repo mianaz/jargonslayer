@@ -1,9 +1,14 @@
 // Shared internal transport: AudioWorklet downsampling (16kHz mono
 // int16) piped over a WebSocket to the local Whisper sidecar, plus
 // the sidecar wire protocol (config JSON out; partial/final JSON in).
-// Used by both whisperSocket.ts (mic) and tabAudio.ts (tab/system
-// audio) — the only difference between those engines is how they
-// obtain the source MediaStream.
+// Used by whisperSocket.ts (mic) and tabAudio.ts (tab/system audio) via
+// attachStream() — the only difference between those two engines is how
+// they obtain the source MediaStream — and by appAudio.ts (S9.3, native
+// app/system audio) via attachPcmFeed()/pushPcm(), which skip the
+// MediaStream/AudioContext/worklet entirely: the native helper already
+// delivers 16kHz mono i16 PCM, fed in over a Tauri Channel instead of a
+// browser audio graph (see D5, docs/design-explorations/s9-app-audio-
+// tap-blueprint.md). Both feed paths share the ONE pushPcm() guard.
 
 import type { STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
@@ -101,12 +106,12 @@ export class WsTransport {
   private reconnectAttempted = false;
   private stopping = false;
 
-  // Soft pause (STT protocol v2, tabaudio only — see pauseFeed/
-  // resumeFeed below): gates the worklet's PCM forwarding without
-  // touching the ws or audio graph. Deliberately NOT reset in
-  // connect() — a reconnect landing while soft-paused (e.g. a
-  // transient network drop) must stay paused, not silently resume
-  // sending audio.
+  // Soft pause (STT protocol v2, tabaudio/appaudio only — see pauseFeed/
+  // resumeFeed below): gates pushPcm()'s forwarding (both the worklet's
+  // PCM and appAudio.ts's Channel-fed PCM) without touching the ws or
+  // audio graph. Deliberately NOT reset in connect() — a reconnect
+  // landing while soft-paused (e.g. a transient network drop) must stay
+  // paused, not silently resume sending audio.
   private feedPaused = false;
 
   // stop()'s drain wait (STT protocol v2): resolved by the "stopped"
@@ -197,21 +202,12 @@ export class WsTransport {
     this.sourceNode = ctx.createMediaStreamSource(stream);
     this.workletNode = new AudioWorkletNode(ctx, "pcm-processor");
 
+    // D5 (S9.3): routes through the SAME guard pushPcm() below uses —
+    // see that method's own doc comment for what each check protects
+    // against. No duplicated guard logic between this browser-audio-
+    // graph path and appAudio.ts's Channel-fed path.
     this.workletNode.port.onmessage = (ev: MessageEvent<ArrayBuffer>) => {
-      if (this.feedPaused) return; // soft pause — keep the graph running, drop PCM
-      // stop()'s drain wait (STT protocol v2 fix): `stopping` flips
-      // SYNCHRONOUSLY before stop() ever awaits anything, but the
-      // worklet keeps running (and this port keeps posting frames)
-      // for the whole up-to-8s drain since the audio graph itself
-      // isn't torn down until AFTER the wait — without this check,
-      // PCM captured during that wait would keep streaming to a
-      // sidecar that's already draining, enqueuing behind (or, on an
-      // old server predating protocol v2, getting transcribed after)
-      // the stop sentinel.
-      if (this.stopping) return;
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(ev.data);
-      }
+      this.pushPcm(ev.data);
     };
 
     this.sourceNode.connect(this.workletNode);
@@ -225,6 +221,38 @@ export class WsTransport {
     this.muteNode.connect(ctx.destination);
 
     this.connect();
+  }
+
+  /** D5 (S9.3, docs/design-explorations/s9-app-audio-tap-blueprint.md):
+   * starts the sidecar connection for a PCM feed with NO browser audio
+   * graph — appAudio.ts's AppAudioEngine already receives fully-formed
+   * 16kHz mono i16 PCM from the native helper (over a Tauri Channel),
+   * so there's no MediaStream/AudioContext/worklet to build here, just
+   * the same connect() attachStream() uses. Caller forwards each
+   * arriving chunk itself via pushPcm() below. */
+  attachPcmFeed(): void {
+    this.connect();
+  }
+
+  /** D5 (S9.3): the ONE guard path for forwarding a PCM chunk to the
+   * sidecar — shared by the AudioWorklet's port.onmessage (attachStream()
+   * above) and appAudio.ts's Channel onmessage (attachPcmFeed() above),
+   * so the two feed sources can never drift into two different-but-
+   * similar drop conditions. */
+  pushPcm(data: ArrayBuffer): void {
+    if (this.feedPaused) return; // soft pause — keep the graph/feed running, drop PCM
+    // stop()'s drain wait (STT protocol v2 fix): `stopping` flips
+    // SYNCHRONOUSLY before stop() ever awaits anything, but a feed
+    // source (worklet port, or appAudio.ts's Channel) keeps posting
+    // frames for the whole up-to-8s drain since it isn't torn down
+    // until AFTER the wait — without this check, PCM captured during
+    // that wait would keep streaming to a sidecar that's already
+    // draining, enqueuing behind (or, on an old server predating
+    // protocol v2, getting transcribed after) the stop sentinel.
+    if (this.stopping) return;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+    }
   }
 
   private connect(): void {
@@ -373,9 +401,10 @@ export class WsTransport {
     );
   }
 
-  /** Soft pause (STT protocol v2, tabaudio only): stop forwarding PCM
-   * — the ws connection and audio graph both stay alive, so resume
-   * needs no reconnect and no re-picker. Best-effort "flush" so the
+  /** Soft pause (STT protocol v2, tabaudio/appaudio only): stop
+   * forwarding PCM — the ws connection (and, for tabaudio, the audio
+   * graph) both stay alive, so resume needs no reconnect and no
+   * re-picker/re-tap. Best-effort "flush" so the
    * sidecar finalizes whatever it was mid-segment on, rather than
    * leaving it hanging until resume's next frame; the flush itself is
    * fire-and-forget (no ack — see wsTransport's protocol). */

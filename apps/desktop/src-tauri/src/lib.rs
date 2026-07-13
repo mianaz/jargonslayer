@@ -8,6 +8,11 @@
 // exclusivity check should run before anything else does real work (it
 // also means we never get a chance to double-provision from two
 // concurrently-running instances, blueprint §Critical details).
+mod audiocap;
+mod audiocap_batch;
+mod audiocap_framing;
+mod audiocap_pipeline;
+mod audiocap_resample;
 mod paths;
 mod provision;
 mod server;
@@ -40,6 +45,10 @@ pub fn run() {
         // server::ServerState's own doc comment for who's allowed to
         // touch it.
         .manage(server::ServerState::default())
+        // v0.4 S9.2 — single-flight + generation-guard state for the
+        // audiocap session (see audiocap::AudiocapState's own doc
+        // comment).
+        .manage(audiocap::AudiocapState::default())
         // App-owned commands (not plugin commands) need no capability/
         // permission entry: Tauri's ACL only gates a command when it's a
         // plugin command, the app declares its OWN acl manifest under
@@ -59,7 +68,30 @@ pub fn run() {
             provision::read_provision_marker,
             provision::write_provision_marker,
             provision::read_sidecar_log,
+            audiocap::audiocap_capabilities,
+            audiocap::start_app_audio,
+            audiocap::stop_app_audio,
+            audiocap::pause_app_audio,
+            audiocap::resume_app_audio,
+            audiocap::open_privacy_settings,
         ])
+        // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
+        // — the audiocap TCC-attribution spike rig: inert unless
+        // JARGONSLAYER_SPIKE_AUDIOCAP=1 (see audiocap::maybe_spawn_spike's
+        // own doc comment). Lives in `.setup()`, not behind any command/UI
+        // affordance, because the spike's whole point is that the PACKAGED
+        // APP ITSELF has to be the one spawning the helper for D2's TCC
+        // responsible-process question to mean anything.
+        .setup(|app| {
+            audiocap::maybe_spawn_spike(app.handle());
+            // v0.4 S9.2 — best-effort startup backstop for aggregate
+            // devices orphaned by an earlier run's uncatchable SIGKILL
+            // (risk register item 4); no-ops below the macOS version
+            // floor. See audiocap::sweep_orphans_best_effort's own doc
+            // comment.
+            audiocap::sweep_orphans_best_effort(app.handle());
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
@@ -74,6 +106,10 @@ pub fn run() {
             tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
         ) {
             server::kill_held_child_on_exit(app_handle);
+            // v0.4 S9.2 — same best-effort posture as the whisper_server.py
+            // cleanup above, see audiocap::kill_held_session_on_exit's own
+            // doc comment.
+            audiocap::kill_held_session_on_exit(app_handle);
         }
     });
 }
