@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JargonSlayer — 隐私政策 / Privacy Policy</title>
+<meta name="description" content="JargonSlayer privacy policy: no accounts, no analytics, no data sale. Audio and transcripts stay on your machine unless a clearly labeled cloud path is in use.">
+<style>
+  :root { --bg:#0f1115; --fg:#d6d8de; --dim:#8a8f9c; --acc:#4ec9b0; --line:#262a33; --local:#4ec9b0; --cloud:#e5c07b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; line-height:1.75; font-size:15px; }
+  .wrap { max-width:860px; margin:0 auto; padding:48px 20px 80px; }
+  h1 { font-size:22px; color:var(--acc); margin:0 0 4px; }
+  h2 { font-size:17px; color:var(--acc); margin:40px 0 8px; border-bottom:1px solid var(--line); padding-bottom:6px; }
+  h3 { font-size:15px; margin:24px 0 4px; }
+  .meta { color:var(--dim); font-size:13px; margin-bottom:28px; }
+  a { color:var(--acc); }
+  table { width:100%; border-collapse:collapse; margin:12px 0 20px; font-size:14px; }
+  th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align:top; }
+  th { color:var(--dim); font-weight:normal; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:0; margin-right:8px; vertical-align:middle; }
+  .dot.local { background:var(--local); } .dot.cloud { background:var(--cloud); }
+  .langnav { margin:0 0 32px; padding:10px 12px; border:1px solid var(--line); font-size:13px; color:var(--dim); }
+  ul { padding-left:22px; } li { margin:4px 0; }
+  .hr { border-top:1px solid var(--line); margin:56px 0 40px; }
+  code { color:var(--acc); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>JargonSlayer 隐私政策 / Privacy Policy</h1>
+<p class="meta">生效日期 / Effective date: 2026-07-12 · 适用于网页版、桌面版（macOS）与 Chrome 扩展 JargonSlayer Lite / Applies to the web app, the macOS desktop app, and the JargonSlayer Lite Chrome extension.</p>
+
+<div class="langnav">跳转 / Jump to: <a href="#zh">中文</a> · <a href="#en">English</a></div>
+
+<!-- ================= 中文 ================= -->
+<h2 id="zh">中文</h2>
+
+<p>JargonSlayer 是 Miana Zeng 维护的个人开源项目（<a href="https://github.com/mianaz/jargonslayer">GitHub 仓库</a>，AGPL-3.0 许可）。没有公司，没有账号体系，没有广告，没有统计埋点，不出售、不共享、不用任何数据做产品之外的事。这份政策把每一类数据的去向写清楚。</p>
+
+<h3>Chrome 扩展（JargonSlayer Lite）</h3>
+<ul>
+  <li><b>麦克风</b>：只在你点「开始聆听」之后使用；首次会打开一个授权页请求麦克风权限，授权页在拿到权限的瞬间即停止音频轨，不录任何东西。Chrome 139+ 且本地语言包可用时，识别在设备端完成，音频不出本机；否则由浏览器的 Web Speech API 把音频交给 Google 的语音服务处理——当前走哪条路径，面板里的隐私提示行会实时标注。</li>
+  <li><b>粘贴的文本</b>：仅在本机用内置词典扫描；整段翻译用的是 Chrome 内置的设备端 Translator API。</li>
+  <li><b>存储</b>：收藏的卡片存在 <code>chrome.storage.local</code>，会话历史存在本机 IndexedDB；导出是本地下载。这些数据不同步、不上传，删除按钮即可清除，卸载扩展即全部消失。</li>
+  <li><b>权限清单</b>：仅 <code>sidePanel</code> 与 <code>storage</code> 两项；无 host 权限、无内容脚本、无远程代码。</li>
+  <li><b>开发者收不到任何数据</b>：本扩展没有自己的服务器。</li>
+</ul>
+
+<h3>网页版与桌面版</h3>
+<table>
+  <thead><tr><th>数据</th><th>去向</th></tr></thead>
+  <tbody>
+    <tr><td>音频（本地 Whisper / 标签页音频 / 文件导入）</td><td><span class="dot local"></span>仅本机（websocket 走 127.0.0.1；文件在浏览器内转录）</td></tr>
+    <tr><td>音频（浏览器识别）</td><td><span class="dot cloud"></span>Chrome 139+ 有本地语言包时仅本机；否则浏览器厂商的语音服务（Google/Apple）</td></tr>
+    <tr><td>音频（Soniox 引擎，自备 Key，实验）</td><td><span class="dot cloud"></span>用你自己的 Key 经 WSS 直连 Soniox，适用其隐私条款</td></tr>
+    <tr><td>转录文本（体验版，AI 开启）</td><td><span class="dot cloud"></span>经本项目服务器内存中转（不落盘、不存储）→ OpenRouter</td></tr>
+    <tr><td>转录文本（本地版，BYOK AI 开启）</td><td><span class="dot cloud"></span>直接发往你自己配置的模型端点</td></tr>
+    <tr><td>转录文本（AI 关闭 / 词典模式）</td><td><span class="dot local"></span>仅本机</td></tr>
+    <tr><td>会议历史、设置、API Key</td><td><span class="dot local"></span>仅本机（IndexedDB / localStorage；备份导出默认剔除 Key）</td></tr>
+  </tbody>
+</table>
+<p>想让所有文本都留在本机：设置里关掉「AI 检测」，内置词典仍会即时出卡片。</p>
+
+<h3>保留与删除</h3>
+<p>所有数据都在你的设备上，由你控制：应用内的删除按钮、清除浏览器站点数据、或卸载应用/扩展，任意一种都能彻底清除。我们这边没有可删除的副本——因为从未收到过。</p>
+
+<h3>政策变更</h3>
+<p>如有变更会更新本页并注明日期；历史版本可在 <a href="https://github.com/mianaz/jargonslayer">仓库</a>的 gh-pages 分支提交记录中查看。问题请开 GitHub Issue。</p>
+
+<div class="hr"></div>
+
+<!-- ================= English ================= -->
+<h2 id="en">English</h2>
+
+<p>JargonSlayer is a personal open-source project maintained by Miana Zeng (<a href="https://github.com/mianaz/jargonslayer">GitHub repo</a>, AGPL-3.0). There is no company behind it, no accounts, no ads, no analytics, and no sale or sharing of data of any kind. This page states exactly where each class of data goes.</p>
+
+<h3>Chrome extension (JargonSlayer Lite)</h3>
+<ul>
+  <li><b>Microphone</b>: used only after you click 开始聆听 (Start listening). The first use opens a one-time grant page to request mic permission; that page stops all audio tracks the instant the grant lands and records nothing. On Chrome 139+ with a local language pack, recognition runs on-device and audio never leaves your machine; otherwise the browser's Web Speech API sends audio to Google's speech service — the privacy line in the panel states which path is active, live.</li>
+  <li><b>Pasted text</b>: scanned locally against the built-in dictionary; full translation uses Chrome's built-in on-device Translator API.</li>
+  <li><b>Storage</b>: bookmarked cards live in <code>chrome.storage.local</code>; session history lives in local IndexedDB; exports are local downloads. Nothing syncs or uploads; in-app delete buttons remove items, and uninstalling removes everything.</li>
+  <li><b>Permissions</b>: exactly <code>sidePanel</code> and <code>storage</code>. No host permissions, no content scripts, no remote code.</li>
+  <li><b>The developer receives nothing</b>: this extension has no server of its own.</li>
+</ul>
+
+<h3>Web and desktop apps</h3>
+<table>
+  <thead><tr><th>Data</th><th>Destination</th></tr></thead>
+  <tbody>
+    <tr><td>Audio (local Whisper / tab audio / file imports)</td><td><span class="dot local"></span>Local only (websocket on 127.0.0.1; files transcribed in-browser)</td></tr>
+    <tr><td>Audio (browser recognition)</td><td><span class="dot cloud"></span>On-device on Chrome 139+ when a language pack is available; otherwise the browser vendor's speech service (Google/Apple)</td></tr>
+    <tr><td>Audio (Soniox engine, BYOK, experimental)</td><td><span class="dot cloud"></span>Directly to Soniox over WSS under your own key; Soniox's privacy terms apply</td></tr>
+    <tr><td>Transcript text (preview tier, AI on)</td><td><span class="dot cloud"></span>Transits this project's server in memory only (never stored) → OpenRouter</td></tr>
+    <tr><td>Transcript text (local tier, BYOK AI on)</td><td><span class="dot cloud"></span>Sent directly to the model endpoint you configured</td></tr>
+    <tr><td>Transcript text (AI off / dictionary mode)</td><td><span class="dot local"></span>Local only</td></tr>
+    <tr><td>History, settings, API keys</td><td><span class="dot local"></span>Local only (IndexedDB / localStorage; backup export strips keys by default)</td></tr>
+  </tbody>
+</table>
+<p>To keep all text on the machine: turn off AI detection in Settings — the built-in dictionary still produces cards instantly.</p>
+
+<h3>Retention and deletion</h3>
+<p>All data lives on your device under your control: in-app delete buttons, clearing the browser's site data, or uninstalling the app/extension each remove it completely. There is no copy on our side to delete — none was ever received.</p>
+
+<h3>Changes</h3>
+<p>Changes will be posted on this page with an updated date; history is visible in the <a href="https://github.com/mianaz/jargonslayer">repository</a>'s gh-pages branch. Questions: open a GitHub Issue.</p>
+
+<p class="meta" style="margin-top:48px"><a href="./">← JargonSlayer</a></p>
+</div>
+</body>
+</html>
