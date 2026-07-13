@@ -46,6 +46,13 @@ export interface DesktopWizardProps {
   onBeginProvision: (model: string) => void;
   onDismissConsent: () => void;
   onDismissTerminal: () => void;
+  /** v0.4.0 field fix: the STEP/ERROR screen's own 关闭 — before this,
+   *  an install error trapped the user in the full-screen overlay with
+   *  只有重试 (and the EscapeHatch text pointing at a Settings panel the
+   *  overlay itself made unreachable). Owned by DesktopBootstrap.tsx as
+   *  a third dismiss flag with the same auto-reset-on-phase-exit
+   *  contract as the other two. */
+  onDismissStepError: () => void;
   onRetry: () => void;
   onRecheckHealth: () => Promise<void>;
   onReprovision: () => Promise<void>;
@@ -264,6 +271,8 @@ function StepRowsScreen({
   downloadProgress,
   onRetry,
   onRecheckHealth,
+  onReprovision,
+  onDismissStepError,
 }: {
   state: Extract<DesktopBootstrapState, { phase: "STEP" }>;
   paths: DesktopPaths;
@@ -271,8 +280,15 @@ function StepRowsScreen({
   downloadProgress: PrewarmProgressEvent | null;
   onRetry: () => void;
   onRecheckHealth: () => Promise<void>;
+  onReprovision: () => Promise<void>;
+  onDismissStepError: () => void;
 }) {
   const hasError = state.status === "ERROR";
+  // v0.4.0 field fix: 返回重新选择's own transient busy flag — the same
+  // UI-only-toggle contract as TerminalErrorScreen's `reprovisioning`
+  // below (this file's header comment), around the same awaited
+  // onReprovision callback.
+  const [returning, setReturning] = useState(false);
   return (
     <WizardFrame>
       <div data-testid="desktop-wizard-steps" className="space-y-4">
@@ -303,14 +319,51 @@ function StepRowsScreen({
         {state.status === "ERROR" && (
           <div className="space-y-3 border border-warn-soft/40 bg-panel2 p-3">
             <div className="text-sm text-warn-soft">{state.error}</div>
-            <button
-              type="button"
-              data-testid="btn-retry-step"
-              onClick={onRetry}
-              className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
-            >
-              重试
-            </button>
+            {/* v0.4.0 field fix: 重试 must not be the only way out — a
+               deterministic failure (the packaged-app uv ENOENT that
+               prompted this) made the full-screen overlay a trap: no way
+               back to the model pick, and no way to reach the very
+               Settings panel the EscapeHatch text below points at.
+               返回重新选择 reuses reprovision() (bootstrap.ts documents it
+               "meaningful from every reachable state"): stop whatever
+               may be running, clear the marker, land back on the consent
+               screen. 关闭 dismisses the overlay so the app (cloud/BYOK,
+               Settings) is usable — same wording as TerminalErrorScreen's
+               own dismiss. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                data-testid="btn-retry-step"
+                onClick={onRetry}
+                className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+              >
+                重试
+              </button>
+              <button
+                type="button"
+                data-testid="btn-back-to-consent"
+                disabled={returning}
+                onClick={async () => {
+                  setReturning(true);
+                  try {
+                    await onReprovision();
+                  } finally {
+                    setReturning(false);
+                  }
+                }}
+                className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {returning ? "处理中…" : "返回重新选择"}
+              </button>
+              <button
+                type="button"
+                data-testid="btn-dismiss-step-error"
+                onClick={onDismissStepError}
+                className="btn-tactile px-3 py-1.5 text-sm text-mut hover:bg-panel3 hover:text-fg"
+              >
+                关闭，稍后处理
+              </button>
+            </div>
           </div>
         )}
 
@@ -380,6 +433,7 @@ export default function DesktopWizard({
   onBeginProvision,
   onDismissConsent,
   onDismissTerminal,
+  onDismissStepError,
   onRetry,
   onRecheckHealth,
   onReprovision,
@@ -396,6 +450,8 @@ export default function DesktopWizard({
         downloadProgress={downloadProgress}
         onRetry={onRetry}
         onRecheckHealth={onRecheckHealth}
+        onReprovision={onReprovision}
+        onDismissStepError={onDismissStepError}
       />
     );
   }

@@ -903,6 +903,14 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         if (event.step === "DOWNLOAD_MODEL") resetDownloadProgress();
       } else if (event.type === "STEP_ERROR") {
         diagLog("error", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 失败`, redactHomePath(event.error));
+        // v0.4.0 field fix: a step that fails BEFORE its subprocess ever
+        // produces output (e.g. the uv sidecar failing to spawn) emitted
+        // zero uv://log lines, leaving the wizard 详细日志 pane at
+        // 「暂无输出」 exactly when its content mattered most. The error
+        // line goes to the pane RAW (unredacted) — same "local-only
+        // display keeps the real path, only the diag ring redacts" rule
+        // as redactHomePath's own doc comment above.
+        notifyLog("stderr", `${PROVISION_STEP_LABELS[event.step]} 失败：${event.error}`);
         if (event.step === "DOWNLOAD_MODEL") resetDownloadProgress();
       }
       if (event.type === "CHECK_RESULT" && isFreshProvisionEntry(current.state)) {
@@ -1016,6 +1024,11 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       `切换模型失败（旧服务已停止，${PROVISION_STEP_LABELS[step]}未恢复）`,
       redactHomePath(message),
     );
+    // Review finding (v0.4.0 hotfix round): this is the ONE STEP/ERROR
+    // entry point that bypasses drive()'s own STEP_ERROR branch, so it
+    // needs its own 详细日志 line too — same "the pane must never read
+    // 暂无输出 on a failure" rule, same RAW-not-redacted display posture.
+    notifyLog("stderr", `切换模型失败（${PROVISION_STEP_LABELS[step]}未恢复）：${message}`);
     current = { state: { phase: "STEP", step, status: "ERROR", error: message, retriable: true }, effects: [] };
     notify();
   }

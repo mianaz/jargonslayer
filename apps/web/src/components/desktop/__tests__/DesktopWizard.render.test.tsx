@@ -64,6 +64,7 @@ describe("DesktopWizard — state-driven rendering", () => {
           onBeginProvision={noop}
           onDismissConsent={noop}
           onDismissTerminal={noop}
+          onDismissStepError={noop}
           onRetry={noop}
           onRecheckHealth={asyncNoop}
           onReprovision={asyncNoop}
@@ -132,6 +133,10 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(container!.querySelector('[data-testid="wizard-step-STARTING"]')!.getAttribute("data-status")).toBe("pending");
     expect(container!.querySelector('[data-testid="btn-retry-step"]')).toBeNull();
     expect(container!.querySelector('[data-testid="btn-manual-recheck"]')).toBeNull();
+    // the two v0.4.0 error-recovery affordances are ERROR-only chrome —
+    // an actively-advancing install must not offer them.
+    expect(container!.querySelector('[data-testid="btn-back-to-consent"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-dismiss-step-error"]')).toBeNull();
   });
 
   it("STEP/POLLING (POLLING_HEALTH): folds into the STARTING row, shown as running", async () => {
@@ -191,6 +196,42 @@ describe("DesktopWizard — state-driven rendering", () => {
       container!.querySelector('[data-testid="btn-manual-recheck"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onRecheckHealth).toHaveBeenCalledTimes(1);
+  });
+
+  it("STEP/ERROR: 返回重新选择 awaits onReprovision (busy label while pending), 关闭，稍后处理 calls onDismissStepError — the v0.4.0 field fix's two ways OUT of a deterministic install failure", async () => {
+    let resolveReprovision!: () => void;
+    const reprovisionGate = new Promise<void>((resolve) => {
+      resolveReprovision = resolve;
+    });
+    const onReprovision = vi.fn(() => reprovisionGate);
+    const onDismissStepError = vi.fn();
+    await renderWizard(
+      { phase: "STEP", step: "INSTALL_PYTHON", status: "ERROR", error: "failed to spawn uv", retriable: true },
+      [],
+      { onReprovision, onDismissStepError },
+    );
+
+    const backBtn = container!.querySelector('[data-testid="btn-back-to-consent"]')! as HTMLButtonElement;
+    expect(backBtn.textContent).toBe("返回重新选择");
+    await act(async () => {
+      backBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onReprovision).toHaveBeenCalledTimes(1);
+    // busy while the awaited reprovision is still in flight — mirrors
+    // TerminalErrorScreen's own 处理中… contract.
+    expect(backBtn.textContent).toBe("处理中…");
+    expect(backBtn.disabled).toBe(true);
+    await act(async () => {
+      resolveReprovision();
+      await reprovisionGate;
+    });
+    expect(backBtn.textContent).toBe("返回重新选择");
+    expect(backBtn.disabled).toBe(false);
+
+    await act(async () => {
+      container!.querySelector('[data-testid="btn-dismiss-step-error"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onDismissStepError).toHaveBeenCalledTimes(1);
   });
 
   it("详细日志 pane: collapsed by default, expands on click, and renders every given log line", async () => {
