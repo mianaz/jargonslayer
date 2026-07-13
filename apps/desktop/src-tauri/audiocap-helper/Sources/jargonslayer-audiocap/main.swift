@@ -38,7 +38,20 @@ struct CLIArguments {
     let durationSeconds: Double?
 }
 
-func parseArguments(_ arguments: [String]) -> CLIArguments? {
+// S9.2 — the CLI's two mutually-exclusive modes: live capture (the
+// original S9.1 shape, requires --exclude-pid) and --sweep-orphans (the
+// startup best-effort aggregate-device cleanup, OrphanSweep.swift —
+// takes no other arguments at all, needs no pid).
+enum CLIMode {
+    case capture(CLIArguments)
+    case sweepOrphans
+}
+
+func parseArguments(_ arguments: [String]) -> CLIMode? {
+    if arguments.count == 2, arguments[1] == "--sweep-orphans" {
+        return .sweepOrphans
+    }
+
     var excludePID: pid_t?
     var durationSeconds: Double?
     var index = 1
@@ -57,13 +70,26 @@ func parseArguments(_ arguments: [String]) -> CLIArguments? {
         }
     }
     guard let excludePID else { return nil }
-    return CLIArguments(excludePID: excludePID, durationSeconds: durationSeconds)
+    return .capture(CLIArguments(excludePID: excludePID, durationSeconds: durationSeconds))
 }
 
 func printUsageAndExit() -> Never {
-    let usage = "usage: jargonslayer-audiocap --exclude-pid <pid> [--duration <seconds>]\n"
+    let usage = "usage: jargonslayer-audiocap --exclude-pid <pid> [--duration <seconds>] | jargonslayer-audiocap --sweep-orphans\n"
     FileHandle.standardError.write(Data(usage.utf8))
     exit(2)
+}
+
+/// `--sweep-orphans` mode's own entry point — no ring/tap/writer thread,
+/// no signal handling, just a one-shot enumerate+destroy+report+exit.
+/// Gated the same `@available` way as `runCapture` (see this file's own
+/// entry-point comment) purely for uniform CLI behavior below the
+/// floor; OrphanSweep's own CoreAudio calls don't actually require
+/// 14.2+ (see that file's own doc comment).
+@available(macOS 14.2, *)
+func runSweepOrphans() -> Never {
+    let destroyed = OrphanSweep.sweep()
+    StatusEvents.emitNote(state: "swept", message: "\(destroyed) orphan(s)")
+    exit(0)
 }
 
 @available(macOS 14.2, *)
@@ -194,7 +220,7 @@ func runCapture(excludePID: pid_t, durationSeconds: Double?) -> Never {
 // "the parent is gone" and shuts down cleanly instead.
 signal(SIGPIPE, SIG_IGN)
 
-guard let cliArguments = parseArguments(CommandLine.arguments) else {
+guard let cliMode = parseArguments(CommandLine.arguments) else {
     printUsageAndExit()
 }
 
@@ -202,7 +228,10 @@ guard let cliArguments = parseArguments(CommandLine.arguments) else {
 // never spawns a tap-related object below this guard. See
 // AudioCapError.unsupportedOS's own doc comment for why S9.2's Rust
 // side (capabilities() gating) is the primary defense and this is
-// belt-and-suspenders for direct/manual invocation.
+// belt-and-suspenders for direct/manual invocation. Applies uniformly
+// to BOTH CLI modes (capture and --sweep-orphans) even though
+// OrphanSweep's own CoreAudio calls don't strictly need 14.2+ — see
+// that file's own doc comment for why the gate is kept anyway.
 //
 // `if #available ... else` (not `guard #available ... else { exit }`):
 // verified empirically that top-level code in a script-mode file like
@@ -212,7 +241,12 @@ guard let cliArguments = parseArguments(CommandLine.arguments) else {
 // with the `guard` form. Wrapping the call itself in `if #available`
 // sidesteps that quirk entirely.
 if #available(macOS 14.2, *) {
-    runCapture(excludePID: cliArguments.excludePID, durationSeconds: cliArguments.durationSeconds)
+    switch cliMode {
+    case .capture(let cliArguments):
+        runCapture(excludePID: cliArguments.excludePID, durationSeconds: cliArguments.durationSeconds)
+    case .sweepOrphans:
+        runSweepOrphans()
+    }
 } else {
     StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap requires macOS 14.2+ (CoreAudio process taps: AudioHardwareCreateProcessTap / CATapDescription's tap-creation entry points)"))
     exit(1)
