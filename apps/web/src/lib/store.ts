@@ -34,6 +34,7 @@ import { writeDisplayMirror } from "./theme/displayStorage";
 import { getBuiltinTheme } from "./theme/themes";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
 import { PREVIEW_TIER } from "./deployTier";
+import { IS_DESKTOP } from "./platform/desktop";
 import { diagLog } from "./diag/log";
 import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
 
@@ -373,6 +374,30 @@ interface AppState {
   setSidecarUp: (up: boolean | null) => void;
 }
 
+/** S9/D7 platform engine coercion — desktop never shows tabaudio
+ *  (Tauri's WKWebView has no getDisplayMedia tab-share picker to fail
+ *  into; the appaudio CoreAudio-tap card takes its slot instead, see
+ *  Header.tsx/SettingsDialog.tsx/TutorialOverlay.tsx's own IS_DESKTOP
+ *  swaps), and web never shows appaudio (Tauri-only, D6). A stored
+ *  engine from the OTHER platform — e.g. a full-tier backup exported on
+ *  desktop and restored on a web build, or vice versa (SettingsDialog's
+ *  全量备份/恢复, #57) — must not resurrect a picker entry this platform
+ *  no longer offers, so it's coerced to this platform's own equivalent
+ *  instead of surviving as an orphaned value nothing can select again.
+ *  Pure so it's unit-testable without depending on the IS_DESKTOP
+ *  build-time env const (tests pass `isDesktop` directly; migrateSettings
+ *  below is the only real caller, feeding it the actual IS_DESKTOP) —
+ *  mirrors applyTierDefaults' own shape immediately below. */
+export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean): Settings {
+  if (isDesktop && settings.engine === "tabaudio") {
+    return { ...settings, engine: "appaudio" };
+  }
+  if (!isDesktop && settings.engine === "appaudio") {
+    return { ...settings, engine: "tabaudio" };
+  }
+  return settings;
+}
+
 /** Preview tier (#61) engine defaults — pure so it's unit-testable
  *  without depending on the PREVIEW_TIER build-time env const (tests
  *  pass `isPreview` directly; migrateSettings below is the only real
@@ -384,7 +409,16 @@ interface AppState {
  *      cloud, same preview lock via ENGINE_OPTIONS' byokOnly — v0.4 S4
  *      blueprint decision E) is coerced to "webspeech" so a returning
  *      preview user's start button still does real transcription
- *      instead of silently trying a disabled engine.
+ *      instead of silently trying a disabled engine. "appaudio" joins
+ *      this list too (S9/D7) — structurally, not because it's ever
+ *      actually reachable here: appaudio is desktop-only, and the
+ *      preview tier is a hosted WEB build, so applyPlatformEngineDefaults
+ *      above would already have coerced any stored "appaudio" away to
+ *      "tabaudio" before this function ever sees it on a real preview
+ *      build (migrateSettings runs both, platform first) — same
+ *      "extend the engine-legality function even though this exact
+ *      build can't reach it" posture soniox's own listing here already
+ *      set as precedent.
  *   2. True first run only — `hadSavedEngine` is false — is coerced
  *      from the default "demo" to "webspeech" so the start button does
  *      real transcription out of the box, without a trip to Settings.
@@ -399,7 +433,12 @@ export function applyTierDefaults(
   hadSavedEngine: boolean,
 ): Settings {
   if (!isPreview) return settings;
-  if (settings.engine === "whisper" || settings.engine === "tabaudio" || settings.engine === "soniox") {
+  if (
+    settings.engine === "whisper" ||
+    settings.engine === "tabaudio" ||
+    settings.engine === "appaudio" ||
+    settings.engine === "soniox"
+  ) {
     return { ...settings, engine: "webspeech" };
   }
   if (!hadSavedEngine && settings.engine === "demo") {
@@ -502,11 +541,15 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
     settings.aiDetect = !legacy.dictionaryOnly;
   }
   delete (settings as { dictionaryOnly?: boolean }).dictionaryOnly;
+  // S9/D7 platform coercion runs FIRST — see applyPlatformEngineDefaults'
+  // own doc for why (an engine value must be legal for THIS platform
+  // before preview-tier legality is even meaningful to ask about).
+  const platformSettings = applyPlatformEngineDefaults(settings, IS_DESKTOP);
   // Preview tier (#61) — see applyTierDefaults' own doc for the two
   // coercions and why "first run" is `saved`'s own engine key, not the
   // post-fold value (a returning user's persisted engine:"demo", from
   // running the ≡ menu's 演示, must NOT be re-coerced).
-  return applyTierDefaults(settings, PREVIEW_TIER, !!saved && "engine" in saved);
+  return applyTierDefaults(platformSettings, PREVIEW_TIER, !!saved && "engine" in saved);
 }
 
 // ---------------------------------------------------------------

@@ -171,8 +171,13 @@ describe("useMeeting — lifecycle races", () => {
     let p: Promise<void>;
     await act(async () => {
       // Pairs with FakeSoftPauseEngine.kind ("tabaudio") — real
-      // soft-pause is tabaudio-only, and resume()'s F7 kind-mismatch
-      // check (codex v2 review) now actually reads settings.engine.
+      // soft-pause is tabaudio/appaudio (S9/D7), and resume()'s F7
+      // kind-mismatch check (codex v2 review) now actually reads
+      // settings.engine; useMeeting.ts itself never branches on the
+      // KIND string (see this file's own `engine.pause`/`?.resume`
+      // property-presence doc above), so "tabaudio" here is just an
+      // arbitrary pick among the soft-pause-capable kinds, not a claim
+      // that it's the only one.
       useApp.setState({ settings: { ...useApp.getState().settings, engine: "tabaudio" } });
       nextEngineClass = FakeSoftPauseEngine;
       p = api!.start();

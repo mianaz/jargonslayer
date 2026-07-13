@@ -40,7 +40,12 @@ import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslaye
 import { WsTransport } from "./wsTransport";
 import { getChannelFactory, getInvoke, getListen, type UnlistenFn } from "../desktop/tauriApi";
 
-interface AudiocapCapabilities {
+// Exported so SettingsDialog.tsx (S9.4, D6) can reuse this exact shape
+// for its own audiocap_capabilities() probe (the ENGINE_CARDS
+// macOS-floor gating) instead of hand-duplicating an equivalent
+// interface — the wire contract above is the single source of truth
+// for both callers.
+export interface AudiocapCapabilities {
   appAudioSupported: boolean;
   reason: string | null;
 }

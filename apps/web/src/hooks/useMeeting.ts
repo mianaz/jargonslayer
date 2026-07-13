@@ -236,9 +236,13 @@ export function useMeeting(): UseMeetingResult {
         ) {
           // F6: same synchronous-before-await set as the error branch.
           terminalTeardownRef.current = true;
+          // "音频捕获已结束" (not the old "共享已结束"): capture_ended is
+          // shared by tabaudio's browser stop-share control AND appaudio's
+          // helper ending (S9.4 lead fix) — "共享" was share-picker
+          // phrasing that read wrong for a CoreAudio tap ending.
           const endToast =
             detail === "capture_ended"
-              ? "共享已结束，会议已保存到历史记录"
+              ? "音频捕获已结束，会议已保存到历史记录"
               : "演示结束，打开右侧「纪要」标签生成会后报告试试";
           void runStopFlow()
             .then(() => {
@@ -339,7 +343,7 @@ export function useMeeting(): UseMeetingResult {
   }), [attachEngine, withLifecycleGate]);
 
   // Pause (B3, soft branch added by STT protocol v2): two branches —
-  // SOFT (engine.pause exists, currently only tabaudio) keeps the
+  // SOFT (engine.pause exists — tabaudio and appaudio) keeps the
   // engine/transport alive, so resume needs no reconnect and no
   // re-picker; TEARDOWN (everything else, unchanged from B3) stops the
   // engine outright and resume() reattaches a fresh one. Both branches

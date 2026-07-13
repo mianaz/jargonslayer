@@ -289,6 +289,58 @@ pub fn audiocap_capabilities() -> AudiocapCapabilities {
     capabilities_for(macos_version())
 }
 
+// ---- open_privacy_settings (D6: permission-denied CTA) ----
+
+/// Primary deep link (D6): opens Sequoia's 屏幕与系统音频录制 pane
+/// directly. Undocumented/uncontracted (Apple ships no public API for
+/// this) — `PRIVACY_SETTINGS_FALLBACK_URL` below is tried if opening
+/// this one fails.
+pub const PRIVACY_SETTINGS_SCREEN_CAPTURE_URL: &str =
+    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenCapture";
+
+/// Fallback (D6): the bare 隐私与安全性 pane, one level up from the deep
+/// link above — tried only if THAT `open` invocation itself errors.
+pub const PRIVACY_SETTINGS_FALLBACK_URL: &str =
+    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension";
+
+/// SettingsDialog's 系统/App 音频 permission-denied CTA (S9.4, D6):
+/// best-effort `open <url>` of the direct 屏幕与系统音频录制 deep link,
+/// falling back to the bare 隐私与安全性 pane if that FIRST `open`
+/// invocation itself errors (a failed spawn or a nonzero exit status —
+/// `open` can't tell us whether the URL scheme actually resolved to a
+/// real pane, only whether it handed the request to LaunchServices at
+/// all). Both legs are best-effort/uncontracted (blueprint D6: "deep
+/// links are uncontracted") and this never reports failure back to the
+/// JS caller — SettingsDialog's own manual-path text (系统设置 → 隐私与
+/// 安全性 → 屏幕与系统音频录制) stays visible beside the button regardless
+/// of whether either `open` actually worked. No-op on non-macOS (the
+/// `x-apple.systempreferences:` scheme and the `open` binary are both
+/// macOS-only; the whole 系统/App 音频 feature is unreachable below the
+/// macOS floor anyway — see `is_macos_version_supported`).
+#[tauri::command]
+pub fn open_privacy_settings() {
+    if !try_open(PRIVACY_SETTINGS_SCREEN_CAPTURE_URL) {
+        try_open(PRIVACY_SETTINGS_FALLBACK_URL);
+    }
+}
+
+/// Spawns `open <url>`, status-checked — a failed spawn OR a nonzero
+/// exit both count as "try the fallback" per `open_privacy_settings`'s
+/// own doc comment. Never panics.
+#[cfg(target_os = "macos")]
+fn try_open(url: &str) -> bool {
+    std::process::Command::new("open")
+        .arg(url)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn try_open(_url: &str) -> bool {
+    false
+}
+
 // ---- audiocap://status kind mapping (wire contract) ----
 
 /// The CLOSED set of `audiocap://status` event kinds the wire contract
@@ -1132,6 +1184,29 @@ mod tests {
         let caps = capabilities_for((14, 3));
         assert!(!caps.app_audio_supported);
         assert_eq!(caps.reason, Some(UNSUPPORTED_REASON.to_string()));
+    }
+
+    // ---- open_privacy_settings URL constants (S9.4, D6) — pure logic
+    // only; try_open()/open_privacy_settings() themselves shell out to
+    // the real `open` binary and are intentionally left untested here
+    // (this task's own scope: "add a cargo test only if there's pure
+    // logic to pin"). ----
+
+    #[test]
+    fn privacy_settings_urls_use_the_x_apple_systempreferences_scheme() {
+        assert!(PRIVACY_SETTINGS_SCREEN_CAPTURE_URL.starts_with("x-apple.systempreferences:"));
+        assert!(PRIVACY_SETTINGS_FALLBACK_URL.starts_with("x-apple.systempreferences:"));
+    }
+
+    #[test]
+    fn primary_url_is_the_fallback_url_plus_the_screen_capture_query() {
+        // Pins the two constants' relationship — the primary deep link
+        // is the fallback pane's own URL with `?Privacy_ScreenCapture`
+        // appended, not two independently-typo-able strings.
+        assert_eq!(
+            PRIVACY_SETTINGS_SCREEN_CAPTURE_URL,
+            format!("{PRIVACY_SETTINGS_FALLBACK_URL}?Privacy_ScreenCapture")
+        );
     }
 
     // ---- status/error NDJSON line parsing ----

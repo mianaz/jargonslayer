@@ -10,6 +10,7 @@ import { CaretRight, CheckCircle } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import type { STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
 
 export interface TutorialOverlayProps {
   open: boolean;
@@ -49,8 +50,16 @@ const STEP_COUNT = 5;
 // the grid, still driving the same settings.engine="demo" + onStart
 // demo mechanism as the header's 演示 button. posture drives the
 // 本地/云端 chip: 浏览器识别·云端（音频经浏览器厂商云端识别，会离开设
-// 备）/ 本地 Whisper·本地（音频不出本机）/ 标签页音频·本地（本地转录标
-// 签页声音）.
+// 备）/ 本地 Whisper·本地（音频不出本机）/ 标签页音频（或桌面端的系统/App
+// 音频）·本地（本地转录）.
+//
+// D7 desktop tabaudio replacement (docs/design-explorations/
+// s9-app-audio-tap-blueprint.md): tabaudio can only ever fail inside
+// Tauri's WKWebView (no tab-share picker) — desktop shows appaudio (a
+// CoreAudio process tap, S9) in its slot instead; the web build keeps
+// tabaudio exactly as before (D7 pinned decision: browser behavior
+// stays byte-identical). IS_DESKTOP is a build-time const, resolved
+// once at module load.
 // ---------------------------------------------------------------
 
 const ENGINE_OPTIONS: {
@@ -71,12 +80,19 @@ const ENGINE_OPTIONS: {
     hint: "隐私保护最强，需启动本地 sidecar",
     posture: "local",
   },
-  {
-    value: "tabaudio",
-    label: "标签页音频",
-    hint: "共享标签页，听懂对方声音",
-    posture: "local",
-  },
+  IS_DESKTOP
+    ? {
+        value: "appaudio",
+        label: "系统/App 音频",
+        hint: "转录对方与其他声音，非你的麦克风",
+        posture: "local",
+      }
+    : {
+        value: "tabaudio",
+        label: "标签页音频",
+        hint: "共享标签页，听懂对方声音",
+        posture: "local",
+      },
 ];
 
 const POSTURE_LABEL: Record<"local" | "cloud", string> = {

@@ -164,11 +164,17 @@ describe("SettingsDialog — tag-blocker HIGH 3: 保存 must not revert a live u
 // 转录引擎 sidecar status line (owner ask 2026-07-11: "I cannot see in
 // the GUI if the local side got set up at all") — probes GET /health
 // (via lib/stt/sidecarHealth.ts's probeSidecar) whenever the draft
-// engine is whisper/tabaudio, mirrors the result into store.sidecarUp
-// for StatusLine's tooltip, and offers a 重新检测 refresh. Mocks fetch
-// (not probeSidecar) so this exercises the real component + real probe
-// function, matching this file's own "mount the real component" header
-// comment.
+// engine is whisper/tabaudio/appaudio (S9/D7 added the third), mirrors
+// the result into store.sidecarUp for StatusLine's tooltip, and offers
+// a 重新检测 refresh. Mocks fetch (not probeSidecar) so this exercises
+// the real component + real probe function, matching this file's own
+// "mount the real component" header comment. Unlike the ENGINE_CARDS
+// IS_DESKTOP swap itself (structurally unreachable in this ambient web
+// test env — see this file's own 更换模型 describe block for that
+// limitation), this triple-gate condition is plain draft.engine string
+// comparison with no IS_DESKTOP dependency, so setting
+// settings.engine:"appaudio" directly (bypassing the picker) exercises
+// the real changed code path end-to-end.
 // ---------------------------------------------------------------
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -219,6 +225,24 @@ describe("SettingsDialog — 转录引擎 sidecar status line", () => {
     expect(useApp.getState().sidecarUp).toBe(true);
   });
 
+  it("probes on render for engine:appaudio too (S9/D7 — a third sidecar-backed engine, same wsTransport-backed local sidecar as whisper/tabaudio)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "appaudio" }, hydrated: true });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({ ok: true, model: "small", diarization_ready: true, diarization_error: null }),
+      ),
+    );
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.textContent).toContain("已连接");
+    expect(useApp.getState().sidecarUp).toBe(true);
+  });
+
   it("shows the down state + install hint when unreachable, and 重新检测 re-probes to the up state", async () => {
     useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "whisper" }, hydrated: true });
     const fetchMock = vi
@@ -264,6 +288,84 @@ describe("SettingsDialog — 转录引擎 sidecar status line", () => {
     expect(container!.textContent).not.toContain("本地服务");
     expect(fetchMock).not.toHaveBeenCalled();
     expect(useApp.getState().sidecarUp).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------
+// 转录引擎 系统/App 音频 permission-denied CTA (S9.4, D6) — engine-
+// conditional like 本地服务/Soniox API Key above, so it's just as
+// reachable in this ambient web test env regardless of the IS_DESKTOP-
+// gated ENGINE_CARDS swap itself (same rationale as the sidecar status
+// line's own appaudio test above). getInvoke() is NOT mocked here —
+// on a non-desktop build it throws SYNCHRONOUSLY (tauriApi.ts's own
+// guard), which handleOpenPrivacySettings' try/catch is exactly built
+// to survive; this doubles as a real-behavior pin for "the button never
+// throws an unhandled rejection even where open_privacy_settings can't
+// possibly exist", not just a desktop-only path.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 系统/App 音频 permission-denied CTA (S9.4)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ toast: null });
+  });
+
+  it("renders the CTA (button + always-visible manual path) once appaudio is the drafted engine", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "appaudio" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.textContent).toContain("系统音频录制权限");
+    expect(container!.textContent).toContain("系统设置 → 隐私与安全性 → 屏幕与系统音频录制");
+    const btn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.textContent === "打开系统设置",
+    );
+    expect(btn).toBeDefined();
+  });
+
+  it("is absent for every other engine", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "whisper" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.textContent).not.toContain("系统音频录制权限");
+  });
+
+  it("clicking 打开系统设置 on a non-desktop build catches getInvoke()'s synchronous throw and toasts rather than crashing", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "appaudio" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const btn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.textContent === "打开系统设置",
+    );
+    if (!btn) throw new Error('button "打开系统设置" not found');
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(useApp.getState().toast).toContain("无法打开系统设置");
   });
 });
 

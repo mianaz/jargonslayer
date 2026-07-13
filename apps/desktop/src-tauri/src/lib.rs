@@ -71,6 +71,7 @@ pub fn run() {
             audiocap::audiocap_capabilities,
             audiocap::start_app_audio,
             audiocap::stop_app_audio,
+            audiocap::open_privacy_settings,
         ])
         // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
         // — the audiocap TCC-attribution spike rig: inert unless

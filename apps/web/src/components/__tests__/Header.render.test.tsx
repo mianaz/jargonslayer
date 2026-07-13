@@ -162,6 +162,17 @@ describe("Header — pause/resume/end button matrix (B4)", () => {
     expect(container!.querySelector('[data-testid="btn-stop"]')).not.toBeNull();
   });
 
+  it("listening + appaudio (S9/D7): shows 暂停 (same STT protocol v2 soft pause) and 结束", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "appaudio" },
+      status: "listening",
+    });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="btn-pause"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="btn-stop"]')).not.toBeNull();
+  });
+
   it("listening + whisper with realtime diarization ON: hides 暂停 entirely (end-only), 结束 still shows", async () => {
     useApp.setState({
       settings: { ...DEFAULT_SETTINGS, engine: "whisper", realtimeDiarize: true },

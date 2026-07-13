@@ -26,6 +26,7 @@ import { elapsedActiveMs, useApp } from "@/lib/store";
 import type { MeetingStatus, Settings, STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { PREVIEW_TIER } from "@/lib/deployTier";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -52,18 +53,19 @@ export function isEngineControlBusy(status: MeetingStatus): boolean {
 // Pause availability (B4, STT protocol v2 matrix): demo -> false (a
 // scripted replay only knows how to restart from line 0, not
 // "resume"); webspeech -> true (teardown pause — stop() drains the
-// working tail synchronously); tabaudio -> true (SOFT pause, see
-// TabAudioEngine.pause/wsTransport.ts's pauseFeed/resumeFeed — the
-// capture stream and ws both stay alive, so resume never re-opens the
-// OS/browser tab-share picker); whisper (mic) -> true EXCEPT when
-// realtime diarization is on. whisper has no soft pause (holding the
-// mic open while "paused" is bad optics — see whisperSocket.ts), so
-// its pause is teardown-only: a resume reattaches a FRESH sidecar
-// connection, whose seg_id namespace restarts at 0 and would collide
-// with pre-pause diarization ids (known beta limitation) — kept
-// hidden in that one case, documented here rather than silently
-// wrong. Exported so it's independently unit-testable, same pattern
-// as isEngineControlBusy.
+// working tail synchronously); tabaudio/appaudio -> true (SOFT pause,
+// see TabAudioEngine.pause/AppAudioEngine.pause + wsTransport.ts's
+// pauseFeed/resumeFeed — the capture stream/helper and ws both stay
+// alive, so resume never re-opens the OS/browser tab-share picker, and
+// appaudio's own helper process just keeps running untouched — S9,
+// D7); whisper (mic) -> true EXCEPT when realtime diarization is on.
+// whisper has no soft pause (holding the mic open while "paused" is
+// bad optics — see whisperSocket.ts), so its pause is teardown-only: a
+// resume reattaches a FRESH sidecar connection, whose seg_id namespace
+// restarts at 0 and would collide with pre-pause diarization ids
+// (known beta limitation) — kept hidden in that one case, documented
+// here rather than silently wrong. Exported so it's independently
+// unit-testable, same pattern as isEngineControlBusy.
 export function canPause(
   engine: STTEngineKind,
   settings: Pick<Settings, "realtimeDiarize">,
@@ -71,27 +73,36 @@ export function canPause(
   if (engine === "whisper") return !settings.realtimeDiarize;
   // v0.4 S4 (blueprint decision E, risk 4): Soniox (soniox.ts)
   // implements no pause()/resume() — explicit false rather than
-  // relying on the trailing webspeech/tabaudio check below, so a
-  // future STTEngineKind added to that OR can't silently start
+  // relying on the trailing webspeech/tabaudio/appaudio check below,
+  // so a future STTEngineKind added to that OR can't silently start
   // returning true for soniox by omission. useMeeting.ts's own
   // pause()/resume() are unaffected either way (capability-derived —
   // `engineRef.current?.pause`/`?.resume` — not this hardcoded
   // matrix), so soniox already falls back to teardown-pause there.
   if (engine === "soniox") return false;
-  return engine === "webspeech" || engine === "tabaudio";
+  return engine === "webspeech" || engine === "tabaudio" || engine === "appaudio";
 }
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine, so it has exactly one affordance: the menu's 演示 item.
 // posture drives the 本地/云端 label: local engines process audio on
 // this machine; cloud engines send audio to a third-party service.
-// sidecarOnly (#61 preview tier): whisper/tabaudio require the local
-// sidecar process, which the hosted preview build never has — greyed
-// out there rather than removed (showroom posture: show everything,
-// no dead ends). byokOnly (v0.4 S4, blueprint decision E): soniox is
-// an unproven BYOK cloud engine (no local sidecar involved, but not
-// benchmark-cleared either) — same preview lock as sidecarOnly, see
-// previewLocked below.
+// sidecarOnly (#61 preview tier): whisper/tabaudio/appaudio require the
+// local sidecar process, which the hosted preview build never has —
+// greyed out there rather than removed (showroom posture: show
+// everything, no dead ends). byokOnly (v0.4 S4, blueprint decision E):
+// soniox is an unproven BYOK cloud engine (no local sidecar involved,
+// but not benchmark-cleared either) — same preview lock as
+// sidecarOnly, see previewLocked below.
+//
+// D7 desktop tabaudio replacement (docs/design-explorations/
+// s9-app-audio-tap-blueprint.md): tabaudio (getDisplayMedia) can only
+// ever fail inside Tauri's WKWebView — there is no tab-share picker to
+// launch there — so desktop shows appaudio (a CoreAudio process tap,
+// S9) in its slot instead; the web build keeps tabaudio exactly as
+// before (D7 pinned decision: browser behavior stays byte-identical).
+// IS_DESKTOP is a build-time const, so this swap is resolved once at
+// module load, not per render.
 const ENGINE_OPTIONS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
@@ -101,7 +112,9 @@ const ENGINE_OPTIONS: {
 }[] = [
   { value: "webspeech", label: "浏览器识别", posture: "cloud" },
   { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true },
-  { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
+  IS_DESKTOP
+    ? { value: "appaudio", label: "系统/App 音频", posture: "local", sidecarOnly: true }
+    : { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
   { value: "soniox", label: "Soniox 云端识别", posture: "cloud", byokOnly: true },
 ];
 
