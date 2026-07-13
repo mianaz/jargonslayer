@@ -34,7 +34,8 @@
     "externalBin": ["binaries/uv"],
     "resources": {
       "../../../sidecar/whisper_server.py": "sidecar/whisper_server.py",
-      "../../../sidecar/requirements-sidecar.txt": "sidecar/requirements-sidecar.txt"
+      "../../../sidecar/requirements-sidecar.txt": "sidecar/requirements-sidecar.txt",
+      "../../../sidecar/requirements-diar.txt": "sidecar/requirements-diar.txt"
     },
     "macOS": {
       "entitlements": "./entitlements.plist"

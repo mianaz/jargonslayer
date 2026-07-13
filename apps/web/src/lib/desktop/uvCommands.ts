@@ -34,6 +34,7 @@ export interface DesktopPaths {
   modelsDir: string;
   scriptPath: string;
   requirementsPath: string;
+  diarRequirementsPath: string;
   logPath: string;
   markerPath: string;
 }
@@ -80,6 +81,25 @@ export function venvCreate(paths: DesktopPaths): UvCommand {
 export function pipInstall(paths: DesktopPaths): UvCommand {
   return {
     args: ["pip", "install", "--python", paths.venvPython, "-r", paths.requirementsPath],
+    env: uvEnv(paths),
+  };
+}
+
+/** v0.4 S5 chunk 0 — installs the optional diarization add-on
+ *  (sidecar/requirements-diar.txt, bundled as its own Tauri resource —
+ *  see paths.rs's `diar_requirements_path`) into the SAME already-
+ *  provisioned venv `pipInstall` targets. A near-clone of `pipInstall`
+ *  by design: it rides the exact SAME validated Rust shape (uv.rs's
+ *  `validate_uv_args` `pip install --python <venv_python> -r
+ *  <requirements>` match arm), and that shape already allows the
+ *  requirements operand to resolve under `resource_dir` (not just
+ *  `app_data`) — so this needs zero Rust change, only a second bundled
+ *  requirements file + this second builder. See docs/design-
+ *  explorations/s5-diarization-addon-blueprint.md's Anchors section +
+ *  decision B. */
+export function pipInstallDiar(paths: DesktopPaths): UvCommand {
+  return {
+    args: ["pip", "install", "--python", paths.venvPython, "-r", paths.diarRequirementsPath],
     env: uvEnv(paths),
   };
 }

@@ -456,6 +456,7 @@ const NOT_DESKTOP_PATHS: DesktopPaths = {
   modelsDir: "",
   scriptPath: "",
   requirementsPath: "",
+  diarRequirementsPath: "",
   logPath: "",
   markerPath: "",
 };

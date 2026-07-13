@@ -25,6 +25,7 @@ const paths: DesktopPaths = {
   modelsDir: "/fake/AppData/models",
   scriptPath: "/fake/Resources/sidecar/whisper_server.py",
   requirementsPath: "/fake/Resources/sidecar/requirements-sidecar.txt",
+  diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
 };
