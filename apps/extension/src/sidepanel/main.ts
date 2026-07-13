@@ -11,10 +11,32 @@
 // Likewise, personal-glossary shadowing (history/glossaryLookup.ts) is
 // a no-op here for the same reason — this app never populates that
 // cache either, so every card comes straight from the built-in tables.
+//
+// S7 adds live mic capture (captureController.ts) as an ADDITIVE
+// layer alongside all of the above: its own transcript/detected-cards
+// area, history, and the 更多能力 locked-features section. Nothing in
+// this file's S6 code paths (paste-and-scan, Translator lookups,
+// savedLookups 收藏) changes shape — capture's detected cards render
+// into their OWN #js-capture-cards area (see renderCaptureCards
+// below), never into #js-results, so switching between typing/pasting
+// and live listening can never clobber the other's on-screen state.
 
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
-import type { DetectedExpression, DetectedTerm } from "@jargonslayer/core/types";
+import type {
+  DetectedExpression,
+  DetectedTerm,
+  ExpressionCard,
+  TermCard,
+} from "@jargonslayer/core/types";
 
+import type { AccumulatorSnapshot } from "../detect/accumulator";
+import { openPermissionPage } from "../permission/micPermission";
+import {
+  deleteSession,
+  listSessions,
+  type LiteSegment,
+  type LiteSession,
+} from "../storage/history";
 import { getSavedLookups, saveLookup } from "../storage/savedLookups";
 import { type CapabilityState } from "../translate/availability";
 import {
@@ -22,7 +44,11 @@ import {
   detectTopLanguage,
 } from "../translate/languageDetector";
 import { checkTranslatorAvailability, translateText } from "../translate/translator";
+import { CaptureController, type CaptureStatus } from "./captureController";
 import { clearChildren, renderExpressionCard, renderTermCard } from "./render";
+import { renderHistorySection } from "./renderHistory";
+import { renderLockedSection } from "./renderLocked";
+import { renderTranscript } from "./renderTranscript";
 
 const input = document.querySelector<HTMLTextAreaElement>("#js-input")!;
 const scanBtn = document.querySelector<HTMLButtonElement>("#js-scan-btn")!;
@@ -35,8 +61,28 @@ const translateBtn = document.querySelector<HTMLButtonElement>("#js-translate-bt
 const translateStatus = document.querySelector<HTMLSpanElement>("#js-translate-status")!;
 const translateOutput = document.querySelector<HTMLParagraphElement>("#js-translate-output")!;
 
+// ---- S7 capture elements ----
+const listenBtn = document.querySelector<HTMLButtonElement>("#js-listen-btn")!;
+const listenStatus = document.querySelector<HTMLSpanElement>("#js-listen-status")!;
+const privacyLine = document.querySelector<HTMLParagraphElement>("#js-privacy-line")!;
+const captureNotice = document.querySelector<HTMLParagraphElement>("#js-capture-notice")!;
+const savedNotice = document.querySelector<HTMLParagraphElement>("#js-saved-notice")!;
+const grantAffordance = document.querySelector<HTMLElement>("#js-grant-affordance")!;
+const grantBtn = document.querySelector<HTMLButtonElement>("#js-grant-btn")!;
+const unsupportedNotice = document.querySelector<HTMLParagraphElement>("#js-unsupported-notice")!;
+const transcriptMount = document.querySelector<HTMLElement>("#js-transcript")!;
+const captureCardsEl = document.querySelector<HTMLElement>("#js-capture-cards")!;
+const captureEmptyHint = document.querySelector<HTMLParagraphElement>("#js-capture-empty-hint")!;
+const historyMount = document.querySelector<HTMLElement>("#js-history-mount")!;
+const lockedMount = document.querySelector<HTMLElement>("#js-locked-mount")!;
+
 let lastScannedText = "";
 let savedHeadwords = new Set<string>();
+
+// ---- S7 capture state ----
+let isListening = false;
+let currentSegments: LiteSegment[] = [];
+let lastCaptureSnapshot: AccumulatorSnapshot = { cards: [], terms: [] };
 
 async function refreshSavedHeadwords(): Promise<void> {
   const saved = await getSavedLookups();
@@ -47,6 +93,19 @@ function isSaved(headword: string): boolean {
   return savedHeadwords.has(headword.trim().toLowerCase());
 }
 
+// F6b (S7 review): a save from EITHER surface (the S6 paste area OR
+// the S7 live-capture cards area) must grey out the same headword on
+// BOTH — otherwise the same word stays saveable a second time from
+// whichever area didn't just re-render itself. Both re-renders below
+// are safe to call unconditionally even when the OTHER area has
+// nothing on screen yet: runScan() no-ops on an empty textarea,
+// renderCaptureCards() no-ops on the initial empty snapshot.
+async function refreshSavedStateAcrossAreas(): Promise<void> {
+  await refreshSavedHeadwords();
+  runScan();
+  renderCaptureCards(lastCaptureSnapshot);
+}
+
 async function handleSaveExpression(expr: DetectedExpression): Promise<void> {
   await saveLookup({
     kind: "expression",
@@ -54,8 +113,7 @@ async function handleSaveExpression(expr: DetectedExpression): Promise<void> {
     chinese_explanation: expr.chinese_explanation,
     source_sentence: expr.source_sentence,
   });
-  await refreshSavedHeadwords();
-  runScan(); // re-render so the just-saved card flips to "已收藏 ✓"
+  await refreshSavedStateAcrossAreas(); // re-renders both areas so the just-saved card flips to "已收藏 ✓" everywhere
 }
 
 async function handleSaveTerm(term: DetectedTerm): Promise<void> {
@@ -64,8 +122,7 @@ async function handleSaveTerm(term: DetectedTerm): Promise<void> {
     headword: term.term,
     chinese_explanation: term.gloss_zh,
   });
-  await refreshSavedHeadwords();
-  runScan();
+  await refreshSavedStateAcrossAreas();
 }
 
 function runScan(): void {
@@ -160,6 +217,195 @@ async function updateTranslateAffordance(): Promise<void> {
   setTranslateStatus(state);
 }
 
+// ---------------------------------------------------------------
+// S7 capture — captureController.ts owns the engine/permission/
+// accumulator/history-save lifecycle; everything below is DOM-only
+// glue wiring its injected callbacks to this panel's elements (the
+// same "controller stays DOM-free, main.ts owns the DOM" split
+// render.ts's own header comment describes for renderExpressionCard/
+// renderTermCard).
+// ---------------------------------------------------------------
+
+function setListenButtonState(listening: boolean): void {
+  isListening = listening;
+  listenBtn.disabled = false;
+  listenBtn.textContent = listening ? "停止聆听" : "开始聆听";
+  listenBtn.className = listening ? "js-btn js-btn-listening" : "js-btn js-btn-primary";
+}
+
+function handleCaptureStatus(status: CaptureStatus, detail?: string): void {
+  switch (status) {
+    case "listening":
+      setListenButtonState(true);
+      listenStatus.textContent = "正在聆听…";
+      grantAffordance.hidden = true;
+      unsupportedNotice.hidden = true;
+      return;
+    case "stopped":
+      setListenButtonState(false);
+      listenStatus.textContent = "已停止";
+      return;
+    case "error":
+      setListenButtonState(false);
+      listenStatus.textContent = detail ?? "";
+      return;
+    case "unsupported":
+      setListenButtonState(false);
+      listenBtn.disabled = true;
+      listenStatus.textContent = "";
+      unsupportedNotice.hidden = false;
+      return;
+    case "idle":
+    case "connecting":
+      listenStatus.textContent = "";
+      return;
+  }
+}
+
+function handleTranscriptChange(segments: LiteSegment[], interim: string): void {
+  currentSegments = segments;
+  transcriptMount.replaceChildren(renderTranscript(segments, interim));
+  transcriptMount.scrollTop = transcriptMount.scrollHeight;
+}
+
+/** Mirrors runScan()'s own persistent-hint idiom above (clearChildren,
+ *  then always re-append the ONE captureEmptyHint node first, toggling
+ *  its hidden/textContent) rather than renderTranscript.ts/renderLocked
+ *  .ts's fresh-node-per-call convention — this logic lives in the SAME
+ *  file as runScan and should read the same way it does. */
+function renderCaptureCards(snapshot: AccumulatorSnapshot): void {
+  lastCaptureSnapshot = snapshot;
+  clearChildren(captureCardsEl);
+  captureCardsEl.appendChild(captureEmptyHint);
+
+  const { cards, terms } = snapshot;
+  if (cards.length === 0 && terms.length === 0) {
+    captureEmptyHint.hidden = false;
+    captureEmptyHint.textContent =
+      currentSegments.length === 0
+        ? "检测结果会显示在这里。"
+        : "没有检测到黑话或术语 — 这段话说得挺直白。";
+    return;
+  }
+
+  captureEmptyHint.hidden = true;
+  for (const card of cards) {
+    captureCardsEl.appendChild(
+      renderExpressionCard(card, {
+        saved: isSaved(card.expression),
+        onSave: () => void handleSaveCaptureExpression(card),
+      }),
+    );
+  }
+  for (const term of terms) {
+    captureCardsEl.appendChild(
+      renderTermCard(term, {
+        saved: isSaved(term.term),
+        onSave: () => void handleSaveCaptureTerm(term),
+      }),
+    );
+  }
+}
+
+async function handleSaveCaptureExpression(expr: ExpressionCard): Promise<void> {
+  await saveLookup({
+    kind: "expression",
+    headword: expr.expression,
+    chinese_explanation: expr.chinese_explanation,
+    source_sentence: expr.source_sentence,
+  });
+  await refreshSavedStateAcrossAreas(); // re-renders both areas so the just-saved card flips to "已收藏 ✓" everywhere
+}
+
+async function handleSaveCaptureTerm(term: TermCard): Promise<void> {
+  await saveLookup({
+    kind: "term",
+    headword: term.term,
+    chinese_explanation: term.gloss_zh,
+  });
+  await refreshSavedStateAcrossAreas();
+}
+
+function handlePrivacyMode(mode: "on-device" | "cloud"): void {
+  privacyLine.hidden = false;
+  if (mode === "on-device") {
+    privacyLine.textContent = "设备端识别，音频未离开本机。";
+    privacyLine.className = "js-privacy-line js-privacy-line--on-device";
+  } else {
+    privacyLine.textContent = "云端模式，音频会发送给 Google 处理。";
+    privacyLine.className = "js-privacy-line";
+  }
+}
+
+function handleGrantNeeded(): void {
+  grantAffordance.hidden = false;
+  setListenButtonState(false);
+}
+
+function handleNotice(msg: string): void {
+  captureNotice.hidden = false;
+  captureNotice.textContent = msg;
+}
+
+function handleSaved(_session: LiteSession): void {
+  savedNotice.hidden = false;
+  void refreshHistory();
+}
+
+async function refreshHistory(): Promise<void> {
+  const sessions = await listSessions();
+  historyMount.replaceChildren(
+    renderHistorySection(sessions, { onDelete: (id) => void handleDeleteSession(id) }),
+  );
+}
+
+async function handleDeleteSession(id: string): Promise<void> {
+  await deleteSession(id);
+  void refreshHistory();
+}
+
+const captureController = new CaptureController({
+  callbacks: {
+    onStatusChange: handleCaptureStatus,
+    onTranscriptChange: handleTranscriptChange,
+    onCardsChange: renderCaptureCards,
+    onPrivacyMode: handlePrivacyMode,
+    onGrantNeeded: handleGrantNeeded,
+    onNotice: handleNotice,
+    onSaved: handleSaved,
+  },
+});
+
+// F9 (S7 review): best-effort save-on-close — pagehide fires as the
+// side panel is closing/navigating away; calling stop() here attempts
+// to persist whatever was captured instead of silently discarding it.
+// Fire-and-forget and best-effort ONLY (one-line caveat, reviewers
+// accepted it): the document can be torn down before this promise —
+// let alone the IndexedDB write inside it — ever settles.
+window.addEventListener("pagehide", () => {
+  if (isListening) void captureController.stop();
+});
+
+listenBtn.addEventListener("click", () => {
+  if (isListening) {
+    void captureController.stop();
+    return;
+  }
+  // Clear affordances from any PRIOR attempt before this one runs its
+  // own permission/support check.
+  grantAffordance.hidden = true;
+  savedNotice.hidden = true;
+  captureNotice.hidden = true;
+  void captureController.start();
+});
+
+grantBtn.addEventListener("click", () => {
+  // The ONLY place this controller's grant affordance actually opens
+  // the permission tab — an explicit extra click, never automatic
+  // (blueprint §7's own copy: "点下面的按钮会打开一个页面…").
+  void openPermissionPage();
+});
+
 translateBtn.addEventListener("click", () => {
   void (async () => {
     if (!lastScannedText) return;
@@ -188,3 +434,8 @@ input.addEventListener("keydown", (e) => {
 void refreshSavedHeadwords();
 void checkLanguageDetectorAvailability();
 void updateTranslateAffordance();
+
+// 更多能力 is a static registry (lockedFeatures.ts) — rendered once,
+// never refreshed, unlike history below.
+lockedMount.appendChild(renderLockedSection());
+void refreshHistory();

@@ -80,7 +80,8 @@ body {
 
 .js-input-section,
 .js-translate-section,
-.js-results {
+.js-results,
+.js-locked-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -268,4 +269,146 @@ body {
 
 .js-footer-sep {
   color: var(--edge2);
+}
+
+/* ---- S7 capture (listen/stop, privacy line, grant affordance,
+   transcript, unsupported notice) ---- */
+
+.js-capture-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-bottom: 1px solid var(--edge);
+  padding-bottom: 14px;
+}
+
+/* Idle/ready-to-listen keeps the existing green .js-btn-primary look
+   (shared with the paste-and-scan 检测 button); this modifier is the
+   ACTIVE-session look — reads as a "recording" state, distinct enough
+   at a glance that clicking again to stop is obvious. */
+.js-btn-listening {
+  border-color: var(--lab-red);
+  color: var(--lab-red);
+}
+
+.js-btn-listening:hover:not(:disabled) {
+  background: var(--panel3);
+}
+
+.js-privacy-line {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--mut);
+}
+
+.js-privacy-line--on-device {
+  color: var(--lab-green);
+}
+
+.js-unsupported-notice {
+  margin: 0;
+  font-size: 12px;
+  color: var(--lab-orange);
+}
+
+.js-transcript {
+  max-height: 160px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  padding: 8px;
+}
+
+.js-transcript-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.js-transcript-line {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+
+.js-transcript-interim {
+  color: var(--mut2);
+  font-style: italic;
+}
+
+.js-grant-affordance {
+  background: var(--panel2);
+  border-left: 2px solid var(--lab-orange);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.js-grant-title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.js-grant-desc {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--mut);
+}
+
+/* ---- S7 更多能力 (locked features) + 历史记录 (history) shared
+   heading treatment — smaller/lighter than the masthead .js-title.
+   renderLocked.ts (not owned by this chunk) already emits
+   .js-locked-title on its <h2>; renderHistory.ts's own <h2> uses
+   .js-history-heading, grouped into the same rule here rather than
+   forcing renderLocked.ts to change its class name. ---- */
+.js-locked-title,
+.js-history-heading {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* LEAD DECISION: cancel the inherited .js-card:hover highlight —
+   locked rows are non-interactive (disabled/greyed features), so a
+   hover highlight would wrongly imply clickability. Must come after
+   .js-card:hover above so source order (equal specificity) resolves
+   in this rule's favor. */
+.js-locked-row:hover {
+  background: var(--panel);
+}
+
+.js-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.js-history-row {
+  background: var(--panel);
+  border-bottom: 1px solid var(--edge);
+  border-left: 2px solid var(--mut);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.js-history-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.js-history-row-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.js-history-row-date {
+  color: var(--mut2);
+  font-size: 11px;
+  white-space: nowrap;
 }

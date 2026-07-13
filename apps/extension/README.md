@@ -1,14 +1,16 @@
 # @jargonslayer/extension — JargonSlayer Lite (Chrome MV3)
 
-Chrome side-panel extension: paste English business text, get instant Chinese
+Chrome side-panel extension: **live-caption English speech from your mic**
+(开始聆听) or paste English business text, and get instant Chinese
 explanations for idioms/jargon and business/tech terms (from
 `@jargonslayer/core`'s built-in dictionary), plus — when Chrome's on-device
-Translator API is available — a full translation of the pasted text. No
-login, no API key, no cost.
+Translator API is available — a full translation of pasted text. No login,
+no API key, no cost.
 
-Part of [PLAN-v0.4](../../docs/PLAN-v0.4.md) session S6 ("extension scaffold
-+ side panel + dictionary + Translator API"). Mic capture (Web Speech) lands
-in S7 — this build only accepts pasted/typed text.
+Part of [PLAN-v0.4](../../docs/PLAN-v0.4.md) sessions S6 (scaffold + side
+panel + dictionary + Translator) and S7 (Web Speech capture port + history/
+export + greyed features) — design in
+`docs/design-explorations/s7-extension-capture-blueprint.md`.
 
 ## Load unpacked (development)
 
@@ -63,18 +65,75 @@ picking up saved changes.
   in the scan-status line when the pasted text doesn't look like English
   (dictionary matching itself doesn't care — this is advisory only)
 
-## What's deferred (S7/S8)
+## What's new in S7 — live capture
 
-- **S7**: Web Speech mic capture (port of the shipped `webSpeechSession` +
-  VAD-supervisor hardening) — the biggest remaining piece; S6 is
-  paste/type-only. A real history/glossary surface beyond the raw
-  `chrome.storage.local` stub here. Copy/export.
+- **开始聆听 / 停止聆听** — live mic capture through the SAME hardened
+  engine the web app ships (`WebSpeechEngine` + VAD supervisor +
+  `UtteranceAssembler`, ported verbatim into `src/capture/` with their
+  test suites, including the 8-scenario word-loss harness). On Chrome 139+
+  it prefers **on-device recognition** (`processLocally`) with automatic
+  cloud fallback; the privacy line above the transcript always states
+  which path is active（设备端识别，音频未离开本机。/ 云端模式，音频会发送给
+  Google 处理。）.
+- **One-time mic grant page** — Chrome cannot render the `getUserMedia`
+  permission prompt inside a side panel, so the first 开始聆听 opens
+  `src/permission/permission.html` in a regular tab to request the mic
+  once; the grant persists for the extension origin and the tab can be
+  closed. The page stops the mic stream the moment the grant lands — it
+  exists only to obtain the permission, never to record.
+- **Live dictionary cards** — every finalized caption line runs through
+  `scanDictionary` + `mergeDetections` (the same pipeline as the web
+  app's imports); detected cards render in their own area beside the S6
+  paste-and-scan results, and 收藏 works on them identically.
+- **历史记录** — sessions auto-save on 停止聆听 to IndexedDB (own database
+  `jargonslayer-extension`; `chrome.storage.local` still holds only the
+  small 收藏 list), with 导出 Markdown / 导出 JSON (plain Blob downloads,
+  no `downloads` permission) and 删除.
+- **更多能力** — the capabilities Lite doesn't have (LLM detection, tab
+  audio, diarization, spaced-repetition review) are shown as disabled
+  rows with a `完整版`/`桌面版` badge naming where each unlocks — the
+  same honest visible-but-locked posture as the web app's 「本地版功能」.
+- For integrators: the capture lifecycle lives in
+  `src/sidepanel/captureController.ts`, DOM-free, with an injected
+  callback surface (`onStatusChange` / `onTranscriptChange` /
+  `onCardsChange` / `onPrivacyMode` / `onGrantNeeded` / `onNotice` /
+  `onSaved`) and injectable engine/permission/storage seams — a future
+  offscreen-document pivot or floating-caption surface swaps the engine
+  binding without touching the panel logic.
+
+## Manual test checklist (load-unpacked — what unit tests can't reach)
+
+1. Toolbar → panel → 开始聆听 → grant tab opens → allow → back in the
+   panel: 正在聆听…; speak English → gray interim line → finalized
+   segments → cards appear; privacy line shows on-device or cloud.
+2. macOS: if on-device availability misreports (known Chromium issue
+   444393111), captions must continue via cloud fallback — capture never
+   blocks on on-device.
+3. 停止聆听 → saved hint → close/reopen the panel → 历史记录 persists →
+   导出 Markdown / 导出 JSON both download; 删除 removes.
+4. Deny the mic in the grant tab → panel shows the re-grant affordance;
+   re-allowing via the address-bar site settings recovers.
+5. 更多能力 rows render disabled with correct badges; S6 paste-and-scan
+   and the Translator flow still work exactly as before.
+
+## What's deferred (S8+)
+
 - **S8**: Chrome Web Store packaging + submission, zh copy polish pass.
+- Later: offscreen-document capture pivot (pre-scoped in the blueprint,
+  only if side-panel Web Speech proves unreliable in real Chrome),
+  content-script select→explain, tab audio, LLM/BYOK detection, SRS
+  review-proper.
 
 ## Permissions
 
 - `sidePanel` — required to open/configure the side panel
-- `storage` — `chrome.storage.local`, backing the 收藏 stub above
+- `storage` — `chrome.storage.local`, backing the 收藏 list above
+
+**Still exactly these two.** The microphone needs **no manifest
+permission** — it uses the standard web `getUserMedia` permission model
+via the one-time grant page (no install-time warning); history uses
+IndexedDB (no `unlimitedStorage`); exports are Blob downloads (no
+`downloads`); the grant tab opens via `chrome.tabs.create` (no `tabs`).
 
 No `host_permissions`, no content scripts, no remote code — matches
 PLAN-v0.4 §1C's "side panel is the app, the service worker is a stateless

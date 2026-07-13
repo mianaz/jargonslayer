@@ -76,12 +76,29 @@ function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 
 /** Appends a new saved-lookup record and persists the whole list —
  *  minimal but REAL end-to-end persistence: a fresh call to
- *  getSavedLookups() after this (e.g. on panel reopen) sees it. */
+ *  getSavedLookups() after this (e.g. on panel reopen) sees it.
+ *
+ *  F6a (S7 review, lead-adjudicated): if an entry with the SAME
+ *  kind+headword is already saved — e.g. re-scanning the same paste,
+ *  or a live-capture card surfacing a headword already saved from the
+ *  S6 paste area — this returns that existing record UNCHANGED rather
+ *  than appending a duplicate. Chosen over silently overwriting (would
+ *  lose the original savedAt/id for no reason) or throwing (the panel
+ *  has no error UI for a 收藏 click, and "already saved" isn't really
+ *  an error). Case/whitespace-insensitive on headword, matching
+ *  isAlreadySaved's own normalization below. */
 export async function saveLookup(
   entry: Omit<SavedLookup, "id" | "savedAt">,
 ): Promise<SavedLookup> {
   return withWriteLock(async () => {
     const existing = await getSavedLookups();
+    const duplicate = existing.find(
+      (e) =>
+        e.kind === entry.kind &&
+        e.headword.trim().toLowerCase() === entry.headword.trim().toLowerCase(),
+    );
+    if (duplicate) return duplicate;
+
     const record: SavedLookup = { ...entry, id: newId(), savedAt: Date.now() };
     await chrome.storage.local.set({ [STORAGE_KEY]: [...existing, record] });
     return record;
