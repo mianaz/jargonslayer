@@ -57,7 +57,14 @@ describe("buildSonioxConfig", () => {
   it("fixes model/audio_format/sample_rate/num_channels/enable_endpoint_detection", async () => {
     const config = await buildSonioxConfig(DEFAULT_SETTINGS);
     expect(config.model).toBe("stt-rt-v5");
-    expect(config.audio_format).toBe("s16le");
+    // MUST be "pcm_s16le", not "s16le" — soniox.com/docs/stt/rt/
+    // real-time-transcription's raw-audio audio_format values are
+    // pcm_s8/s16/s24/s32 with le/be suffixes; "s16le" (the blueprint's
+    // own wrong anchor) gets every real session rejected at config (S4
+    // review finding 1, re-verified 2026-07-12). Pinned as an exact
+    // literal — not `.toContain`/a regex — so this can't silently
+    // regress back to the wrong anchor.
+    expect(config.audio_format).toBe("pcm_s16le");
     expect(config.sample_rate).toBe(16000);
     expect(config.num_channels).toBe(1);
     expect(config.enable_endpoint_detection).toBe(true);
@@ -95,11 +102,31 @@ describe("SonioxTokenMapper", () => {
     expect(second).toEqual({ interim: "Hello wor", finals: [] });
   });
 
-  it("clears the interim tail to empty once a message carries no non-final tokens", () => {
+  it("clears the non-final SUFFIX to empty once a message carries no non-final tokens, but keeps showing the now-pending final text (S4 review finding 3)", () => {
     const mapper = new SonioxTokenMapper(0);
     mapper.ingest([token({ text: "Hel", is_final: false })]);
     const { interim } = mapper.ingest([token({ text: "Hello", is_final: true })]);
-    expect(interim).toBe("");
+    // "Hello" finalized but hasn't crossed its own <end> yet — it must
+    // stay visible in the interim rather than vanishing until <end>
+    // arrives (doc'd mixed-batch behavior: finalized tokens arrive
+    // BEFORE <end>).
+    expect(interim).toBe("Hello");
+  });
+
+  it("interim is the pending (not-yet-<end>ed) final text PLUS the current non-final tail, in a single mixed ingest() batch", () => {
+    const mapper = new SonioxTokenMapper(0);
+    const { interim } = mapper.ingest([
+      token({ text: "Hello", is_final: true }),
+      token({ text: " wor", is_final: false }),
+    ]);
+    expect(interim).toBe("Hello wor");
+  });
+
+  it("keeps already-buffered (not-yet-<end>ed) final text visible in a LATER ingest()'s interim, not just the batch where it finalized", () => {
+    const mapper = new SonioxTokenMapper(0);
+    mapper.ingest([token({ text: "Hello", is_final: true })]);
+    const { interim } = mapper.ingest([token({ text: " wor", is_final: false })]);
+    expect(interim).toBe("Hello wor");
   });
 
   it("emits onFinal exactly once per utterance on the <end> boundary token, stripping <end> from the text", () => {
@@ -269,7 +296,7 @@ describe("SonioxTransport", () => {
     expect(config).toMatchObject({
       api_key: "sk-abc",
       model: "stt-rt-v5",
-      audio_format: "s16le",
+      audio_format: "pcm_s16le", // see buildSonioxConfig's own test for the doc citation
       sample_rate: 16000,
       num_channels: 1,
       language_hints: ["en", "zh"],
@@ -387,6 +414,32 @@ describe("SonioxTransport", () => {
     expect(ws.sent).toEqual([]); // never sent the empty-frame sentinel
   });
 
+  it("stop() during the pre-config window (ws OPEN but config not yet sent) closes without sending anything and resolves (S4 review finding 4)", async () => {
+    const transport = makeTransport();
+    await transport.attachStream(fakeMediaStream());
+    const ws = wsInstances[wsInstances.length - 1];
+    ws.simulateOpen();
+    // Deliberately NOT flushed yet — sendConfig()'s mint is still
+    // in-flight at this exact synchronous point (same gap the PCM-
+    // forwarding test above exercises), so configSent is still false
+    // even though the socket itself is already OPEN.
+
+    let resolved = false;
+    const stopP = transport.stop().then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(resolved).toBe(true);
+    expect(ws.closeCalls).toBe(1);
+    // The empty end-of-audio frame must never become this socket's
+    // first-ever message — and since sendConfig() itself bails once
+    // `stopping` is true, nothing else gets sent either.
+    expect(ws.sent).toEqual([]);
+    await stopP;
+  });
+
   it("a late final (via a trailing <end>) arriving during the drain wait still reaches onFinal", async () => {
     const transport = makeTransport();
     const ws = await attachAndOpen(transport);
@@ -430,6 +483,70 @@ describe("SonioxTransport", () => {
     });
   });
 
+  it("stop() resolving via STOP_DRAIN_TIMEOUT_MS also force-flushes a trailing utterance that never crossed its own <end> boundary", async () => {
+    vi.useFakeTimers();
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    const stopP = transport.stop();
+    await vi.advanceTimersByTimeAsync(0);
+
+    ws.simulateMessage({ tokens: [{ text: "cut off, server hung", is_final: true }] });
+    expect(onFinal).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(STOP_DRAIN_TIMEOUT_MS);
+    await stopP;
+
+    expect(onFinal).toHaveBeenCalledWith("cut off, server hung", {
+      speaker: undefined,
+      startedAt: undefined,
+    });
+  });
+
+  it("a close during the drain wait (crash — {finished:true} never arrives) still force-flushes a trailing utterance that never crossed its own <end> boundary (S4 review finding 5)", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    const stopP = transport.stop();
+    await Promise.resolve();
+
+    // The last utterance got cut off mid-sentence — finalized tokens
+    // arrived, but the connection crashes before any "<end>" (or
+    // "finished") arrives.
+    ws.simulateMessage({ tokens: [{ text: "cut off by a crash", is_final: true }] });
+    expect(onFinal).not.toHaveBeenCalled();
+
+    ws.simulateServerClose();
+    await stopP;
+
+    expect(onFinal).toHaveBeenCalledTimes(1);
+    expect(onFinal).toHaveBeenCalledWith("cut off by a crash", {
+      speaker: undefined,
+      startedAt: undefined,
+    });
+  });
+
+  it("a stray {finished:true} arriving after a close-during-drain flush does not re-deliver the same utterance", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    const stopP = transport.stop();
+    await Promise.resolve();
+
+    ws.simulateMessage({ tokens: [{ text: "cut off by a crash", is_final: true }] });
+    ws.simulateServerClose(); // force-flushes "cut off by a crash" exactly once
+    await stopP;
+
+    // Nothing in this class unwires onmessage after close, so a late/
+    // stray "finished" (never expected from a real closed socket, but
+    // belt-and-suspenders) must not double-deliver the same utterance
+    // — SonioxTokenMapper.flushPending() is one-shot, so this is a
+    // no-op the second time.
+    ws.simulateMessage({ tokens: [], finished: true });
+
+    expect(onFinal).toHaveBeenCalledTimes(1);
+  });
+
   // ---------------------------------------------------------------
   // normal token-stream forwarding
   // ---------------------------------------------------------------
@@ -461,7 +578,7 @@ describe("SonioxTransport", () => {
   // error-frame path
   // ---------------------------------------------------------------
 
-  it("an error frame surfaces onStatus('error', ...) with a message that contains error_code but NEVER the api_key", async () => {
+  it("a 401 error frame maps to the fixed 'API Key 无效或无权限' bucket and never echoes error_message/error_type/request_id", async () => {
     const transport = makeTransport({ sonioxKey: "sk-should-never-leak" });
     const ws = await attachAndOpen(transport);
 
@@ -475,9 +592,62 @@ describe("SonioxTransport", () => {
 
     const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
     expect(errorCalls.length).toBe(1);
-    const [, message] = errorCalls[0] as [string, string];
-    expect(message).toContain("401");
-    expect(message).not.toContain("sk-should-never-leak");
+    expect(errorCalls[0][1]).toBe("Soniox API Key 无效或无权限");
+  });
+
+  it("a 403 error frame maps to the same 'API Key 无效或无权限' bucket as 401", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    ws.simulateMessage({
+      tokens: [],
+      error_code: 403,
+      error_type: "temp_api_key_session_expired",
+    });
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls[0][1]).toBe("Soniox API Key 无效或无权限");
+  });
+
+  it("a 429 error frame maps to the fixed '配额或速率限制' bucket", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    ws.simulateMessage({ tokens: [], error_code: 429, error_type: "limit_exceeded" });
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls[0][1]).toBe("Soniox 配额或速率限制");
+  });
+
+  it("any other error_code falls into the generic bucket, surfacing only the numeric code", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    ws.simulateMessage({
+      tokens: [],
+      error_code: 500,
+      error_type: "internal_error",
+      error_message: "stack trace details nobody should see",
+    });
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls[0][1]).toBe("Soniox 服务错误（代码 500）");
+  });
+
+  it("never forwards error_message even when it echoes back the literal configured api_key", async () => {
+    const transport = makeTransport({ sonioxKey: "sk-should-never-leak" });
+    const ws = await attachAndOpen(transport);
+
+    ws.simulateMessage({
+      tokens: [],
+      error_code: 400,
+      error_type: "invalid_request",
+      error_message: "malformed config: api_key sk-should-never-leak is not valid base64",
+    });
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls.length).toBe(1);
+    expect(errorCalls[0][1]).not.toContain("sk-should-never-leak");
   });
 
   it("a duplicate error surface is suppressed when the server closes right after its own error frame", async () => {

@@ -13,19 +13,24 @@
 // v0.4 (blueprint decision E / risk register).
 //
 // Wire protocol verified against soniox.com/docs/stt/api-reference/
-// websocket-api and soniox.com/docs/stt/rt/endpoint-detection
-// (2026-07-12, alongside the blueprint's own anchors): the first
-// message is JSON config (api_key/model/audio_format/sample_rate/
-// num_channels/language_hints/enable_endpoint_detection); audio frames
-// are binary s16le; responses carry `tokens:[{text,start_ms,end_ms,
-// is_final,speaker,...}]`; ending the stream is an EMPTY ws frame,
-// acked by `{tokens:[],finished:true}` before the server closes on its
-// own; errors are `{tokens:[],error_code,error_type,error_message,
-// request_id}`. Endpoint detection (enable_endpoint_detection:true)
-// does NOT add a top-level "endpoint" field — it inserts a literal
-// `{text:"<end>",is_final:true}` sentinel token into the final token
-// stream at each utterance boundary; SonioxTokenMapper below is what
-// actually reads that sentinel.
+// websocket-api, soniox.com/docs/stt/rt/endpoint-detection, and
+// soniox.com/docs/stt/rt/real-time-transcription (2026-07-12,
+// alongside the blueprint's own anchors — the real-time-transcription
+// page is what caught the blueprint's own audio_format anchor being
+// wrong; see buildSonioxConfig below): the first message is JSON
+// config (api_key/model/audio_format/sample_rate/num_channels/
+// language_hints/enable_endpoint_detection); audio frames are binary
+// s16 little-endian PCM; responses carry `tokens:[{text,start_ms,
+// end_ms,is_final,speaker,...}]`; ending the stream is an EMPTY ws
+// frame, acked by `{tokens:[],finished:true}` before the server closes
+// on its own; errors are `{tokens:[],error_code,error_type,
+// error_message,request_id}` — error_type/error_message are provider-
+// controlled text and NEVER forwarded to the UI verbatim (S4 review
+// finding 2 — see formatSonioxError below). Endpoint detection
+// (enable_endpoint_detection:true) does NOT add a top-level "endpoint"
+// field — it inserts a literal `{text:"<end>",is_final:true}` sentinel
+// token into the final token stream at each utterance boundary;
+// SonioxTokenMapper below is what actually reads that sentinel.
 
 import type { STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
@@ -56,7 +61,12 @@ const SONIOX_CONNECT_ERROR =
 // carries its own leading whitespace (confirmed against the docs'
 // token-evolution example, which shows standalone `{"text":" "}`
 // tokens) — every join below is a plain "" concatenation, never
-// space-inserting.
+// space-inserting. Finalized tokens are also doc'd to arrive
+// incrementally BEFORE their utterance's own "<end>" — so the interim
+// this mapper returns must keep showing everything finalized so far
+// that hasn't crossed "<end>" yet (ahead of the current non-final
+// tail), or those words visibly vanish from the live caption until the
+// utterance ends (S4 review finding 3).
 // ---------------------------------------------------------------
 
 /** One entry of a Soniox response's `tokens` array. `language`/
@@ -97,9 +107,16 @@ export interface SonioxMappedFinal {
 }
 
 export interface SonioxIngestResult {
-  /** The current non-final tail, fully replacing whatever the last
-   *  ingest() call returned (never a partial update) — mirrors
-   *  wsTransport's own "always forward the latest partial" contract. */
+  /** Whatever's been finalized but hasn't crossed its own "<end>" yet
+   *  (oldest first) PLUS the current non-final tail, "" -joined
+   *  (blueprint decision E's leading-whitespace-is-in-the-token-text
+   *  rule applies across this join too) — fully replacing whatever the
+   *  last ingest() call returned (never a partial update), mirroring
+   *  wsTransport's own "always forward the latest partial" contract.
+   *  Both halves are needed: without the pending-final prefix,
+   *  already-finalized words disappear from the caption the instant
+   *  they finalize, only to reappear as part of the NEXT onFinal once
+   *  "<end>" arrives (S4 review finding 3). */
   interim: string;
   /** Zero or more utterances that just crossed an endpoint boundary in
    *  this batch, oldest first. Usually 0 or 1; only >1 if a single
@@ -123,9 +140,14 @@ export class SonioxTokenMapper {
    *  one SonioxMappedFinal (the "emit onFinal exactly once per
    *  finalized utterance stretch" contract) and is itself never
    *  included in any text. Non-final tokens replace the returned
-   *  interim tail wholesale — including with "" once nothing is
-   *  pending, so a stale gray tail never lingers past its own
-   *  finalization. */
+   *  interim tail's own suffix wholesale — including with "" once
+   *  nothing is pending, so a stale gray tail never lingers past its
+   *  own finalization. The returned interim is prefixed with whatever
+   *  is STILL buffered as finalized-but-not-yet-"<end>"ed after this
+   *  call (which includes anything this same call just flushed OUT via
+   *  its own "<end>" — that text left the buffer into `finals`, so it
+   *  correctly does NOT reappear here) — see SonioxIngestResult.interim
+   *  above (S4 review finding 3). */
   ingest(tokens: SonioxToken[]): SonioxIngestResult {
     const finals: SonioxMappedFinal[] = [];
     const nonFinalTexts: string[] = [];
@@ -141,7 +163,8 @@ export class SonioxTokenMapper {
       }
       this.finalBuffer.push(t);
     }
-    return { interim: nonFinalTexts.join(""), finals };
+    const pendingFinalText = this.finalBuffer.map((t) => t.text).join("");
+    return { interim: pendingFinalText + nonFinalTexts.join(""), finals };
   }
 
   /** Force-flushes whatever's been finalized but never crossed an
@@ -182,7 +205,9 @@ export class SonioxTokenMapper {
 export interface SonioxConfigMessage {
   api_key: string;
   model: string;
-  audio_format: "s16le";
+  // "pcm_s16le", NOT "s16le" — see this file's header comment and
+  // buildSonioxConfig below (S4 review finding 1).
+  audio_format: "pcm_s16le";
   sample_rate: number;
   num_channels: number;
   language_hints: string[];
@@ -210,7 +235,12 @@ export async function buildSonioxConfig(
   return {
     api_key: apiKey,
     model: SONIOX_MODEL,
-    audio_format: "s16le",
+    // MUST be "pcm_s16le" — soniox.com/docs/stt/rt/real-time-
+    // transcription's raw-audio audio_format values are pcm_s8/s16/
+    // s24/s32 with le/be suffixes; the blueprint's own anchor of
+    // "s16le" (no "pcm_" prefix) gets every real session rejected at
+    // config (S4 review finding 1, re-verified 2026-07-12).
+    audio_format: "pcm_s16le",
     sample_rate: 16000,
     num_channels: 1,
     language_hints: buildLanguageHints(settings.language),
@@ -239,18 +269,48 @@ interface SonioxServerMessage {
   tokens: SonioxToken[];
   finished?: boolean;
   error_code?: number;
+  // error_type/error_message are part of the real wire shape but
+  // deliberately never read into anything user-facing — see
+  // formatSonioxError below (S4 review finding 2).
   error_type?: string;
   error_message?: string;
   request_id?: string;
 }
 
+// error_message/error_type are provider-controlled text straight off
+// the wire — Soniox's own error responses can echo back pieces of the
+// request that caused them (e.g. a malformed-config error describing
+// the bad field), and the request includes the raw api_key. Forwarding
+// either into onStatus/toast/diag would risk leaking sonioxKey through
+// a UI surface never meant to hold secrets (S4 review finding 2), so
+// NEITHER is ever read here — only the numeric error_code, mapped to a
+// fixed zh string. Codes verified against soniox.com/docs/stt/api-
+// reference/websocket-api#error-response (2026-07-12): 401
+// (unauthenticated) / 403 (temp_api_key_session_expired) are both
+// auth/permission failures; 429 (limit_exceeded) is a rate/quota
+// failure; everything else (400 malformed request, 402 budget
+// exhausted, 408/413 timeouts, 500/503 server-side, or any other/
+// future code) falls into one generic bucket that still surfaces the
+// numeric code for support purposes.
 function formatSonioxError(msg: SonioxServerMessage): string {
-  const detail = msg.error_message || msg.error_type || "未知错误";
-  // error_code included per the blueprint's risk register — api_key is
-  // NEVER part of this (or any) message here; the only place api_key
-  // is ever touched is inside sendConfig() below, and only to hand it
-  // to WebSocket.send(), never to a log/console call.
-  return `Soniox 转录出错（error_code ${msg.error_code}）：${detail}`;
+  const code = msg.error_code;
+  if (code === 401 || code === 403) return "Soniox API Key 无效或无权限";
+  if (code === 429) return "Soniox 配额或速率限制";
+  return `Soniox 服务错误（代码 ${code}）`;
+}
+
+/** Belt-and-suspenders for S4 review finding 2: strips every
+ *  occurrence of the configured sonioxKey out of a string before it's
+ *  allowed to leave the transport. formatSonioxError() above already
+ *  never reads error_message/error_type in the first place, but this
+ *  is a second, independent guard applied at emitError() below — the
+ *  SINGLE choke point every onStatus("error", ...) call passes through
+ *  — so it also covers SONIOX_CONNECT_ERROR/the mint-failure message
+ *  and any string built here in the future, not just this function's
+ *  own output. */
+function scrubApiKey(text: string, apiKey: string): string {
+  if (!apiKey) return text;
+  return text.split(apiKey).join("[REDACTED]");
 }
 
 export interface SonioxTransportCallbacks {
@@ -368,13 +428,7 @@ export class SonioxTransport {
         // Stop-drain (risk 3): a trailing utterance that never crossed
         // an endpoint before the stream ended must still reach
         // onFinal, not be silently dropped.
-        const trailing = this.mapper?.flushPending();
-        if (trailing) {
-          this.events.onFinal(trailing.text, {
-            speaker: trailing.speaker,
-            startedAt: trailing.startedAt,
-          });
-        }
+        this.flushPendingFinal();
         this.stopDrainResolve?.();
         this.stopDrainResolve = null;
         return;
@@ -392,10 +446,20 @@ export class SonioxTransport {
       // stop()'s drain wait must also resolve if the ws closes on its
       // own during the wait (crash, network drop mid-drain, or the
       // server's own self-close right after "finished") — never hang
-      // the wait until STOP_DRAIN_TIMEOUT_MS for that case.
+      // the wait until STOP_DRAIN_TIMEOUT_MS for that case. A close
+      // landing here means the server's own {finished:true} ack never
+      // arrived, so THAT flush (above) never ran — the same
+      // force-flush must run here too, or a trailing finalized-but-
+      // un-<end>ed utterance is silently discarded instead of reaching
+      // onFinal (S4 review finding 5). flushPendingFinal() is safe to
+      // call even when the finished-ack flush already ran first (e.g.
+      // a stray message after close) — SonioxTokenMapper.flushPending()
+      // returns null once already drained, so this never double-
+      // delivers the same utterance.
       if (this.stopDrainResolve) {
         const resolve = this.stopDrainResolve;
         this.stopDrainResolve = null;
+        this.flushPendingFinal();
         resolve();
         return;
       }
@@ -450,7 +514,29 @@ export class SonioxTransport {
   private emitError(message: string): void {
     if (this.erroredOut) return;
     this.erroredOut = true;
-    this.events.onStatus("error", message);
+    // scrubApiKey: the single choke point every error string passes
+    // through before reaching onStatus (S4 review finding 2).
+    this.events.onStatus("error", scrubApiKey(message, this.settings.sonioxKey));
+  }
+
+  /** Force-flushes any trailing finalized-but-un-<end>ed utterance the
+   *  mapper is still holding and, if there was one, delivers it through
+   *  the normal onFinal path exactly once. Shared by every way stop()'s
+   *  drain wait can end — the server's own {finished:true} ack, the ws
+   *  closing on its own mid-drain, or STOP_DRAIN_TIMEOUT_MS — so a
+   *  trailing utterance reaches onFinal no matter which of those three
+   *  actually fires (S4 review finding 5), and reaches it exactly once:
+   *  SonioxTokenMapper.flushPending() is itself one-shot per pending
+   *  utterance (returns null once already flushed), so calling this
+   *  more than once for the same drain is always safe. */
+  private flushPendingFinal(): void {
+    const trailing = this.mapper?.flushPending();
+    if (trailing) {
+      this.events.onFinal(trailing.text, {
+        speaker: trailing.speaker,
+        startedAt: trailing.startedAt,
+      });
+    }
   }
 
   /** Tear down the WS + audio graph. Safe to call multiple times —
@@ -463,7 +549,16 @@ export class SonioxTransport {
 
     const ws = this.ws;
     this.ws = null;
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    // configSent gate (S4 review finding 4): stop() can land while
+    // sendConfig()'s mint is still in flight — the ws is already OPEN
+    // by then (onopen already fired), but nothing has been sent on it
+    // yet. Soniox requires the JSON config to be the socket's FIRST
+    // message; sending the empty end-of-audio frame in that window
+    // would make the terminator the first (and, since sendConfig()
+    // bails once `stopping` is true, only) message this connection
+    // ever sends. Skip straight to the close() below instead — there's
+    // nothing to drain from a server that was never sent a config.
+    if (ws && ws.readyState === WebSocket.OPEN && this.configSent) {
       try {
         // Empty binary frame = Soniox's own end-of-audio sentinel (no
         // {"type":"stop"} JSON envelope like whisper_server.py's
@@ -477,6 +572,11 @@ export class SonioxTransport {
           setTimeout(() => {
             if (this.stopDrainResolve === resolve) {
               this.stopDrainResolve = null;
+              // Same force-flush as the other two ways the drain wait
+              // can end (S4 review finding 5) — a server that never
+              // acks at all must not silently drop a trailing
+              // finalized-but-un-<end>ed utterance either.
+              this.flushPendingFinal();
               resolve();
             }
           }, STOP_DRAIN_TIMEOUT_MS);
