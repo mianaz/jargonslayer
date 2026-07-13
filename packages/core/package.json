@@ -1,6 +1,6 @@
 {
   "name": "@jargonslayer/core",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Pure TypeScript detection/learning/prompt core shared across JargonSlayer's web app and future desktop/extension targets (#53 workspace extraction). No React/DOM/Next/zustand/idb-keyval — see PLAN-v0.4 §1D.",
