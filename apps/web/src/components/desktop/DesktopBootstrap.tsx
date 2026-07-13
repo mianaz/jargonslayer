@@ -51,15 +51,20 @@ export default function DesktopBootstrap() {
   // snapshot-then-subscribe shape as `state`/`logLines` below (initial
   // currentDownloadProgress() read, then a downloadProgress$ subscribe).
   const [downloadProgress, setDownloadProgress] = useState<PrewarmProgressEvent | null>(null);
-  // "稍后再说" / "关闭，稍后处理" (blueprint §Chunk 6 + §Chunk 7): two
-  // INDEPENDENT dismiss flags, each auto-reset the moment its own
-  // triggering phase is left (see the two effects below) — so
-  // dismissing the first-run consent screen can never suppress a
-  // LATER, unrelated post-crash error, and vice versa; leaving either
-  // phase for ANY reason (success, a fresh reprovision, …) always
-  // clears that phase's own dismissal first.
+  // "稍后再说" / "关闭，稍后处理" (blueprint §Chunk 6 + §Chunk 7), plus
+  // the STEP/ERROR 关闭 (v0.4.0 field fix — see DesktopWizardProps.
+  // onDismissStepError): three INDEPENDENT dismiss flags, each
+  // auto-reset the moment its own triggering phase/status is left (see
+  // the effects below) — so dismissing the first-run consent screen can
+  // never suppress a LATER, unrelated post-crash error, and vice versa;
+  // leaving either phase for ANY reason (success, a fresh reprovision,
+  // …) always clears that phase's own dismissal first. The STEP/ERROR
+  // flag only ever suppresses the ERROR status — a retry kicked off
+  // from elsewhere (Settings → 重新运行安装向导 lands on the consent
+  // phase, which resets it) re-shows the wizard as usual.
   const [consentDismissed, setConsentDismissed] = useState(false);
   const [terminalDismissed, setTerminalDismissed] = useState(false);
+  const [stepErrorDismissed, setStepErrorDismissed] = useState(false);
 
   useEffect(() => {
     if (!IS_DESKTOP) return;
@@ -102,6 +107,15 @@ export default function DesktopBootstrap() {
     if (state?.phase !== "TERMINAL_ERROR") setTerminalDismissed(false);
   }, [state?.phase]);
 
+  // The STEP/ERROR dismiss flag resets on leaving the ERROR status, not
+  // just the STEP phase — so a 重试 that re-enters RUNNING (or a
+  // reprovision landing back on consent) always re-arms the overlay for
+  // the NEXT error, mirroring the two per-phase resets above.
+  const inStepError = state?.phase === "STEP" && state.status === "ERROR";
+  useEffect(() => {
+    if (!inStepError) setStepErrorDismissed(false);
+  }, [inStepError]);
+
   // chunk 7: "TERMINAL_ERROR -> wizard error surface + toast" — the
   // wizard screen itself is the "surface" (rendered below regardless of
   // this toast); this effect adds the toast half exactly once per
@@ -131,17 +145,21 @@ export default function DesktopBootstrap() {
         ? !terminalDismissed
         : state.phase === "EXTERNAL_UNMANAGED"
           ? false
-          : state.phase === "STEP";
-  // ^ every STEP shape (RUNNING/POLLING/ERROR) stays visible once
-  //   consent was given — there is no "dismiss mid-install" affordance;
-  //   the only up-front choice is at WIZARD_CONSENT_REQUIRED. HEALTHY/
-  //   CHECKING/NOT_DESKTOP render nothing (the `!handle` guard above
-  //   already excludes NOT_DESKTOP in practice, since IS_DESKTOP false
-  //   returns before ever reaching this point). EXTERNAL_UNMANAGED
-  //   (Finding 2 — user chose an externally-managed sidecar) is spelled
-  //   out explicitly rather than left to the STEP fallthrough: this app
-  //   never provisions/starts anything in that mode, so there is no
-  //   wizard action to ever offer for it.
+          : state.phase === "STEP" && !(state.status === "ERROR" && stepErrorDismissed);
+  // ^ an actively-advancing STEP (RUNNING/POLLING) stays visible once
+  //   consent was given — install progress is never dismissible
+  //   mid-flight — but the ERROR status is (v0.4.0 field fix): a
+  //   deterministic failure otherwise traps the user in a full-screen
+  //   overlay whose only affordance is a 重试 that can never succeed,
+  //   with the Settings panel its own escape-hatch text points at
+  //   unreachable behind it. HEALTHY/CHECKING/NOT_DESKTOP render
+  //   nothing (the `!handle` guard above already excludes NOT_DESKTOP
+  //   in practice, since IS_DESKTOP false returns before ever reaching
+  //   this point). EXTERNAL_UNMANAGED (Finding 2 — user chose an
+  //   externally-managed sidecar) is spelled out explicitly rather than
+  //   left to the STEP fallthrough: this app never provisions/starts
+  //   anything in that mode, so there is no wizard action to ever offer
+  //   for it.
 
   if (!visible) return null;
 
@@ -154,6 +172,7 @@ export default function DesktopBootstrap() {
       onBeginProvision={(model) => handle.beginProvision(model)}
       onDismissConsent={() => setConsentDismissed(true)}
       onDismissTerminal={() => setTerminalDismissed(true)}
+      onDismissStepError={() => setStepErrorDismissed(true)}
       onRetry={() => handle.retryStep()}
       onRecheckHealth={() => handle.recheckHealth()}
       onReprovision={async () => {

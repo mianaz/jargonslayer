@@ -32,6 +32,21 @@ use crate::paths::resolve_app_paths;
 /// enforcement is validate_uv_args' per-shape match, not this list alone.
 const ALLOWED_UV_SUBCOMMANDS: [&str; 3] = ["python", "venv", "pip"];
 
+/// The program name handed to `Shell::sidecar` below — the FILE NAME of
+/// tauri.conf.json's `bundle.externalBin` entry ("binaries/uv"), never
+/// the entry itself. tauri-plugin-shell's Rust `Shell::sidecar` resolves
+/// by joining the given path VERBATIM onto the running exe's own
+/// directory (relative_command_path, plugin 2.3.5), while the bundler
+/// FLATTENS every externalBin into that directory (binaries/uv-<triple>
+/// -> Contents/MacOS/uv in the macOS bundle, target/<profile>/uv in
+/// dev). Passing the whole config entry "binaries/uv" therefore resolved
+/// to Contents/MacOS/binaries/uv — ENOENT on every machine, dev and
+/// packaged alike; it survived to v0.4.0's first packaged run only
+/// because this spawn needs a live GUI provisioning run to ever execute.
+/// Pinned against the config by
+/// `sidecar_program_is_a_bare_file_name_matching_external_bin` below.
+const UV_SIDECAR_PROGRAM: &str = "uv";
+
 /// The two filesystem roots validate_uv_args/validate_uv_env check
 /// path-valued operands/env values against. Deliberately just these two
 /// paths (not the full `paths::AppPaths`) — a small, easily-faked struct
@@ -279,10 +294,14 @@ pub async fn run_uv(
     validate_uv_args(&args, &roots)?;
     validate_uv_env(&env, &roots)?;
 
-    // `app.shell().sidecar("binaries/uv")` — matches tauri.conf.json's
-    // `bundle.externalBin: ["binaries/uv"]` (chunk 2) exactly; the
-    // bundler strips the target-triple suffix at build time, so the
-    // sidecar name at runtime is never triple-qualified.
+    // `app.shell().sidecar(UV_SIDECAR_PROGRAM)` — the file name "uv",
+    // NOT tauri.conf.json's full externalBin entry "binaries/uv": the
+    // Rust `Shell::sidecar` joins its argument verbatim onto the exe's
+    // directory, where the bundler has already FLATTENED the binary (see
+    // UV_SIDECAR_PROGRAM's own doc comment for the v0.4.0 packaged-app
+    // ENOENT this distinction caused). Unlike the IPC path, Shell::
+    // sidecar never validates its argument against bundle.externalBin,
+    // so the bare file name is accepted as-is.
     //
     // This is tauri-plugin-shell's Rust API (Shell::sidecar ->
     // Command::new_sidecar, and below, Command::spawn) — NOT the
@@ -296,16 +315,27 @@ pub async fn run_uv(
     // gated by the validation above, NOT by capabilities/default.json —
     // deliberately no shell:allow-spawn grant there (see that file's own
     // description for why one would only ever help an attacker here).
+    //
+    // Both failure paths below ALSO emit the message as a uv://log line:
+    // a resolve/spawn failure produces zero subprocess output, which
+    // left the wizard's 详细日志 pane showing 「暂无输出」 at exactly the
+    // moment its content mattered most (the v0.4.0 field report).
     let command = app
         .shell()
-        .sidecar("binaries/uv")
-        .map_err(|e| format!("could not resolve the uv sidecar: {e}"))?
+        .sidecar(UV_SIDECAR_PROGRAM)
+        .map_err(|e| {
+            let message = format!("could not resolve the uv sidecar: {e}");
+            emit_uv_log(&app, "stderr", message.clone());
+            message
+        })?
         .args(&args)
         .envs(env);
 
-    let (mut rx, _child) = command
-        .spawn()
-        .map_err(|e| format!("failed to spawn uv {args:?}: {e}"))?;
+    let (mut rx, _child) = command.spawn().map_err(|e| {
+        let message = format!("failed to spawn uv {args:?}: {e}");
+        emit_uv_log(&app, "stderr", message.clone());
+        message
+    })?;
 
     let mut code = None;
     while let Some(event) = rx.recv().await {
@@ -592,5 +622,39 @@ mod tests {
             Path::new("/fake/AppDataEvil/venv"),
             Path::new("/fake/AppData")
         ));
+    }
+
+    // ---- UV_SIDECAR_PROGRAM vs tauri.conf.json (the v0.4.0
+    // packaged-app ENOENT regression — see the constant's doc comment) ----
+
+    #[test]
+    fn sidecar_program_is_a_bare_file_name_matching_external_bin() {
+        // Red on the pre-fix code (which passed the whole config entry
+        // "binaries/uv" to Shell::sidecar): resolution joins the given
+        // path verbatim onto the exe dir, but the bundler flattens every
+        // externalBin INTO that dir — only a single-component file name
+        // can ever resolve, in dev and packaged alike.
+        assert_eq!(
+            Path::new(UV_SIDECAR_PROGRAM).components().count(),
+            1,
+            "UV_SIDECAR_PROGRAM must be a bare file name, never a path"
+        );
+
+        // And that file name must be the file name OF a configured
+        // bundle.externalBin entry — parsing the real conf means a
+        // future rename/move of the entry breaks this test, not the
+        // packaged app.
+        let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json"))
+            .expect("tauri.conf.json parses");
+        let external_bins = conf["bundle"]["externalBin"]
+            .as_array()
+            .expect("bundle.externalBin is an array");
+        assert!(
+            external_bins
+                .iter()
+                .filter_map(|b| b.as_str())
+                .any(|b| Path::new(b).file_name().is_some_and(|n| n == UV_SIDECAR_PROGRAM)),
+            "no bundle.externalBin entry has file name '{UV_SIDECAR_PROGRAM}'"
+        );
     }
 }

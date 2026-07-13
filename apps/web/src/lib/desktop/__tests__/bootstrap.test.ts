@@ -1115,6 +1115,41 @@ describe("bootstrapDesktop — diag redaction at the STEP_ERROR choke point (Fin
     const stepErrorEntry = getDiagEntries().find((e) => e.tag === "desktop-provision" && e.level === "error");
     expect(stepErrorEntry?.detail).toBe("failed to create ~/Library/Application Support/x: permission denied");
   });
+
+  it("a STEP_ERROR also feeds log$ one RAW error line (v0.4.0 field fix: a pre-output spawn failure otherwise left the wizard 详细日志 pane at 暂无输出)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => {
+          // the real v0.4.0 field failure shape: the spawn itself fails,
+          // so the subprocess never produces a single output line.
+          throw new Error('failed to spawn uv ["python", "install", "3.12"]: No such file or directory (os error 2)');
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    const lines: Array<{ stream: string; line: string }> = [];
+    const unsub = handle.log$((line) => lines.push(line));
+    handle.beginProvision();
+    const errored = await waitForStable(handle);
+    unsub();
+    expect(errored).toMatchObject({ phase: "STEP", step: "INSTALL_PYTHON", status: "ERROR" });
+
+    // RAW (unredacted, unlike the diag entry above — the pane is
+    // local-only display), prefixed with the failed step's own label.
+    expect(lines).toContainEqual({
+      stream: "stderr",
+      line: '安装 Python 失败：failed to spawn uv ["python", "install", "3.12"]: No such file or directory (os error 2)',
+    });
+  });
 });
 
 describe("bootstrapDesktop — S4 chunk 3: model picker wiring (beginProvision(model), getDesktopModel, ctx-seed clamp)", () => {
@@ -1501,7 +1536,18 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     await waitForStable(handle); // -> HEALTHY
 
     const expectedMessage = `切换到 large-v3 后本地服务在 ${POLLING_HEALTH_ATTEMPT_CAP} 次检测内仍未恢复健康`;
+    const logLines: Array<{ stream: string; line: string }> = [];
+    const unsubLog = handle.log$((line) => logLines.push(line));
     await expect(handle.switchModel("large-v3")).rejects.toThrow(expectedMessage);
+    unsubLog();
+
+    // v0.4.0 hotfix review finding 2: landOnSwitchFailure is the one
+    // STEP/ERROR entry point outside drive() — it must feed the wizard
+    // 详细日志 pane too, or a switch failure shows 暂无输出.
+    expect(logLines).toContainEqual({
+      stream: "stderr",
+      line: `切换模型失败（启动本地服务未恢复）：${expectedMessage}`,
+    });
 
     expect(handle.currentState()).toEqual({
       phase: "STEP",
