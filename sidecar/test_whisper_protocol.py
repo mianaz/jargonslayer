@@ -46,6 +46,20 @@ Covers (protocol v2, see whisper_server.py's own module docstring):
     buffered, closes right after stopped with no pass; an already-
     in-flight periodic pass is awaited before the final pass itself
     runs (never overlapped/skipped)
+  - diarization_probe (S5 decision C): import-first ordering; the
+    three orthogonal (installed, ready, error) facts for not-installed
+    vs installed-no-token vs installed-with-token, pyannote faked via
+    sys.modules (never a real pyannote install — see that section for
+    why); health_payload's /health shape, including the new
+    diarization_installed field and the unchanged-on-purpose
+    diarization_ready/diarization_error back-compat semantics
+  - _SharedDiarizePipeline.get() (S5 review pair Finding 1): a failed
+    load (missing module, or Pipeline.from_pretrained itself raising —
+    e.g. an unaccepted-license/bad-token 403) is NOT latched — the next
+    get() call on the SAME instance retries the whole load rather than
+    staying "unavailable" forever; a SUCCEEDED load stays cached
+    exactly as before (the loader runs exactly once across repeated
+    get() calls)
 """
 
 from __future__ import annotations
@@ -53,6 +67,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -63,7 +78,10 @@ from whisper_server import (  # noqa: E402
     FRAME_SAMPLES,
     ConnectionState,
     FinalizeJob,
+    JobManager,
     WhisperServer,
+    _SharedDiarizePipeline,
+    health_payload,
 )
 
 FAILURES: list[str] = []
@@ -682,6 +700,265 @@ async def test_finalize_queue_preserves_send_order() -> None:
 
 
 # =================================================================
+# diarization_probe (S5 decision C) — import-first ordering, three
+# orthogonal (installed, ready, error) facts. pyannote's presence is
+# faked via sys.modules — NEVER a real pyannote install: this dev
+# machine's ambient `python3` may have a real pyannote.audio on a base
+# conda env entirely outside the sidecar venv, so merely leaving
+# pyannote "not installed" here would not reliably exercise the
+# not-installed path on every machine this file runs on;
+# sys.modules["pyannote.audio"] = None is the documented idiom to force
+# ImportError regardless of what's really reachable on sys.path.
+# =================================================================
+
+_UNSET = object()
+
+
+def _set_pyannote_importable(available: bool) -> dict[str, object]:
+    """Stubs sys.modules so `import pyannote.audio` (as
+    diarization_probe does it) deterministically succeeds
+    (available=True — harmless fake modules for both `pyannote` and
+    `pyannote.audio`; a dotted import needs the PARENT key present
+    too, confirmed live: stubbing only the child still raises
+    ModuleNotFoundError for the parent in a clean interpreter) or fails
+    (available=False — the `= None` force-ImportError idiom). Returns
+    the previous sys.modules entries (or _UNSET if there was none) for
+    restoration via _restore_pyannote_importable — mirrors
+    test_download.py's shutil.disk_usage save/restore idiom."""
+    saved: dict[str, object] = {
+        name: sys.modules.get(name, _UNSET) for name in ("pyannote", "pyannote.audio")
+    }
+    if available:
+        sys.modules["pyannote"] = types.ModuleType("pyannote")
+        sys.modules["pyannote.audio"] = types.ModuleType("pyannote.audio")
+    else:
+        sys.modules.pop("pyannote", None)
+        sys.modules["pyannote.audio"] = None  # type: ignore[assignment]
+    return saved
+
+
+def _restore_pyannote_importable(saved: dict[str, object]) -> None:
+    for name, prev in saved.items():
+        if prev is _UNSET:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = prev  # type: ignore[assignment]
+
+
+def test_diarization_probe_not_installed() -> None:
+    server = JobManager(model=None, model_name="small", default_language="en", hf_token="a-token")
+    saved = _set_pyannote_importable(False)
+    try:
+        installed, ready, error = server.diarization_probe()
+        check("diarization_probe not-installed: installed is False", installed is False)
+        check("diarization_probe not-installed: ready is False", ready is False)
+        check(
+            "diarization_probe not-installed: error mentions 未安装/pyannote — distinguishable from the token case",
+            error is not None and "未安装" in error and "pyannote" in error,
+        )
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_diarization_probe_installed_no_token() -> None:
+    server = JobManager(model=None, model_name="small", default_language="en", hf_token=None)
+    saved = _set_pyannote_importable(True)
+    try:
+        installed, ready, error = server.diarization_probe()
+        check("diarization_probe installed+no-token: installed is True", installed is True)
+        check("diarization_probe installed+no-token: ready is False", ready is False)
+        check(
+            "diarization_probe installed+no-token: error mentions the token, not an install problem",
+            error is not None and "Token" in error and "未安装" not in error,
+        )
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_diarization_probe_installed_with_token() -> None:
+    server = JobManager(model=None, model_name="small", default_language="en", hf_token="a-token")
+    saved = _set_pyannote_importable(True)
+    try:
+        installed, ready, error = server.diarization_probe()
+        check("diarization_probe installed+token: installed is True", installed is True)
+        check("diarization_probe installed+token: ready is True", ready is True)
+        check("diarization_probe installed+token: error is None", error is None)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+# =================================================================
+# _SharedDiarizePipeline.get() — failure-latched cache fix (S5 review
+# pair Finding 1): a failed load must not permanently latch process-
+# wide (see that method's own docstring for the two concrete
+# recoveries this enables). pyannote is faked via sys.modules, same
+# idiom as diarization_probe's own tests just above, but the stub also
+# needs an actual `Pipeline.from_pretrained` attached —
+# diarization_probe never imports that symbol (a plain `import
+# pyannote.audio`), so _set_pyannote_importable(True)'s bare module
+# stub alone isn't enough for get()'s own `from pyannote.audio import
+# Pipeline`. Every test below builds its OWN fresh _SharedDiarizePipeline
+# instance rather than touching whisper_server's module-level
+# `_shared_diarize_pipeline` singleton, so these tests can't leak
+# cached state into each other (or into anything else importing this
+# module) regardless of run order.
+# =================================================================
+
+
+def _set_pyannote_pipeline_stub(from_pretrained) -> dict[str, object]:
+    """Like _set_pyannote_importable(True), but the stubbed
+    `pyannote.audio` module also exposes a `Pipeline` object whose
+    `from_pretrained` is `from_pretrained` verbatim — reuses
+    _restore_pyannote_importable for teardown (same sys.modules keys)."""
+    saved: dict[str, object] = {
+        name: sys.modules.get(name, _UNSET) for name in ("pyannote", "pyannote.audio")
+    }
+    sys.modules["pyannote"] = types.ModuleType("pyannote")
+    audio_module = types.ModuleType("pyannote.audio")
+    audio_module.Pipeline = types.SimpleNamespace(from_pretrained=from_pretrained)  # type: ignore[attr-defined]
+    sys.modules["pyannote.audio"] = audio_module
+    return saved
+
+
+def test_shared_diarize_pipeline_retries_after_missing_module() -> None:
+    """Recovery 1 (get()'s own docstring): a mid-install import against
+    a half-written venv fails now, but completes moments later — the
+    NEXT get() call (this connection's next diarization window, or a
+    brand-new meeting) must retry the load rather than staying
+    permanently "unavailable" on this process."""
+    pipeline = _SharedDiarizePipeline()
+    saved = _set_pyannote_importable(False)
+    try:
+        result, error = pipeline.get(None)
+        check("missing-module load: pipeline is None", result is None)
+        check(
+            "missing-module load: error names the ModuleNotFoundError",
+            error is not None and "ModuleNotFoundError" in error,
+        )
+        check("missing-module load: NOT latched — a retry is still possible", pipeline._loaded is False)
+    finally:
+        _restore_pyannote_importable(saved)
+
+    # "install completes" — pyannote becomes importable and loads fine.
+    calls = 0
+    sentinel = object()
+
+    def fake_from_pretrained(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return sentinel
+
+    saved = _set_pyannote_pipeline_stub(fake_from_pretrained)
+    try:
+        result, error = pipeline.get(None)
+        check("retry after install: the SAME instance recovers, no restart needed", result is sentinel)
+        check("retry after install: error is cleared", error is None)
+        check("retry after install: the loader ran exactly once for this recovery", calls == 1)
+        check("retry after install: now latched", pipeline._loaded is True)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_shared_diarize_pipeline_retries_after_from_pretrained_failure() -> None:
+    """Recovery 2 (get()'s own docstring): pyannote imports fine but
+    Pipeline.from_pretrained itself fails — the unaccepted-license/
+    bad-token 403 case. Once the user accepts the license, the NEXT
+    get() call must retry and succeed, still with no sidecar restart."""
+    pipeline = _SharedDiarizePipeline()
+
+    def failing_from_pretrained(*args, **kwargs):
+        raise RuntimeError("403 Client Error: token lacks access to pyannote/speaker-diarization-3.1")
+
+    saved = _set_pyannote_pipeline_stub(failing_from_pretrained)
+    try:
+        result, error = pipeline.get("bad-token")
+        check("from_pretrained failure: pipeline is None", result is None)
+        check("from_pretrained failure: error names the RuntimeError", error is not None and "RuntimeError" in error)
+        check("from_pretrained failure: NOT latched — a retry is still possible", pipeline._loaded is False)
+    finally:
+        _restore_pyannote_importable(saved)
+
+    sentinel = object()
+
+    def working_from_pretrained(*args, **kwargs):
+        return sentinel
+
+    saved = _set_pyannote_pipeline_stub(working_from_pretrained)
+    try:
+        result, error = pipeline.get("good-token")
+        check("retry after license accept: the SAME instance recovers", result is sentinel)
+        check("retry after license accept: error is cleared", error is None)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_shared_diarize_pipeline_success_is_cached() -> None:
+    """A SUCCEEDED load must still behave exactly as before this
+    finding: the loader never runs twice — only a FAILED load retries."""
+    pipeline = _SharedDiarizePipeline()
+    calls = 0
+    sentinel = object()
+
+    def fake_from_pretrained(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return sentinel
+
+    saved = _set_pyannote_pipeline_stub(fake_from_pretrained)
+    try:
+        first_result, first_error = pipeline.get(None)
+        second_result, second_error = pipeline.get(None)
+        check(
+            "success caching: both calls return the identical cached pipeline",
+            first_result is sentinel and second_result is sentinel,
+        )
+        check("success caching: both calls report no error", first_error is None and second_error is None)
+        check("success caching: the loader ran exactly once across two get()s", calls == 1)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+# =================================================================
+# health_payload — GET /health's shape (S5 decision C adds
+# diarization_installed). No test in this suite previously asserted
+# /health's shape at all (grep confirms: nothing referenced
+# diarization_probe/diarization_ready/diarization_error anywhere
+# before S5), so this is new coverage, not an update to a pinned
+# ordering.
+# =================================================================
+
+
+def test_health_payload_shape() -> None:
+    check(
+        "health_payload: keys are exactly ok/model/diarization_installed/diarization_ready/diarization_error",
+        set(health_payload("small", True, True, None).keys())
+        == {"ok", "model", "diarization_installed", "diarization_ready", "diarization_error"},
+    )
+    check(
+        "health_payload: ok is always True, and the model name passes through unchanged",
+        health_payload("large-v3", True, True, None)["ok"] is True
+        and health_payload("large-v3", True, True, None)["model"] == "large-v3",
+    )
+    check(
+        "health_payload: not-installed case reports diarization_installed False",
+        health_payload("small", False, False, "x")["diarization_installed"] is False,
+    )
+    check(
+        "health_payload: installed+no-token case reports diarization_installed True, diarization_ready False",
+        health_payload("small", True, False, "x")["diarization_installed"] is True
+        and health_payload("small", True, False, "x")["diarization_ready"] is False,
+    )
+    check(
+        "health_payload: diarization_error is suppressed to None whenever ready (unchanged pre-S5 back-compat)",
+        health_payload("small", True, True, "should never surface")["diarization_error"] is None,
+    )
+    check(
+        "health_payload: diarization_error carries the message through whenever not ready (unchanged pre-S5 back-compat)",
+        health_payload("small", True, False, "未配置 HF Token")["diarization_error"] == "未配置 HF Token",
+    )
+
+
+# =================================================================
 # runner
 # =================================================================
 
@@ -713,6 +990,13 @@ async def run_async_tests() -> None:
 
 
 test_partials_override_both_directions()
+test_diarization_probe_not_installed()
+test_diarization_probe_installed_no_token()
+test_diarization_probe_installed_with_token()
+test_shared_diarize_pipeline_retries_after_missing_module()
+test_shared_diarize_pipeline_retries_after_from_pretrained_failure()
+test_shared_diarize_pipeline_success_is_cached()
+test_health_payload_shape()
 asyncio.run(run_async_tests())
 
 

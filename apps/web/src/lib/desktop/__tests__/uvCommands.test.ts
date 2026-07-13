@@ -2,7 +2,14 @@
 // provisionMachine.test.ts's own purity contract).
 import { describe, expect, it } from "vitest";
 
-import { pipInstall, pythonInstall, uvEnv, venvCreate, type DesktopPaths } from "../uvCommands";
+import {
+  pipInstall,
+  pipInstallDiar,
+  pythonInstall,
+  uvEnv,
+  venvCreate,
+  type DesktopPaths,
+} from "../uvCommands";
 
 const paths: DesktopPaths = {
   appData: "/fake/AppData",
@@ -13,6 +20,7 @@ const paths: DesktopPaths = {
   modelsDir: "/fake/AppData/models",
   scriptPath: "/fake/Resources/sidecar/whisper_server.py",
   requirementsPath: "/fake/Resources/sidecar/requirements-sidecar.txt",
+  diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
 };
@@ -79,5 +87,35 @@ describe("pipInstall", () => {
       "-r",
       "/elsewhere/requirements-sidecar.txt",
     ]);
+  });
+});
+
+describe("pipInstallDiar", () => {
+  it("installs --python paths.venvPython -r paths.diarRequirementsPath", () => {
+    expect(pipInstallDiar(paths)).toEqual({
+      args: ["pip", "install", "--python", paths.venvPython, "-r", paths.diarRequirementsPath],
+      env: uvEnv(paths),
+    });
+  });
+
+  it("uses whatever venvPython/diarRequirementsPath the given paths carry — never hardcoded", () => {
+    const other: DesktopPaths = {
+      ...paths,
+      venvPython: "/elsewhere/venv/bin/python",
+      diarRequirementsPath: "/elsewhere/requirements-diar.txt",
+    };
+    expect(pipInstallDiar(other).args).toEqual([
+      "pip",
+      "install",
+      "--python",
+      "/elsewhere/venv/bin/python",
+      "-r",
+      "/elsewhere/requirements-diar.txt",
+    ]);
+  });
+
+  it("targets the same venvPython as pipInstall, but a different requirements file", () => {
+    expect(pipInstallDiar(paths).args[3]).toEqual(pipInstall(paths).args[3]);
+    expect(pipInstallDiar(paths).args[5]).not.toEqual(pipInstall(paths).args[5]);
   });
 });

@@ -20,7 +20,7 @@ import {
 import { MAX_RESTARTS_PER_WINDOW, POLLING_HEALTH_ATTEMPT_CAP } from "../provisionMachine";
 import type { PrewarmProgressEvent } from "../provisionRunner";
 import type { InvokeFn, ListenFn, TauriEvent, TauriFetchFn } from "../tauriApi";
-import type { DesktopPaths } from "../uvCommands";
+import { pipInstallDiar, type DesktopPaths } from "../uvCommands";
 import { clearDiag, getDiagEntries } from "../../diag/log";
 
 const paths: DesktopPaths = {
@@ -32,6 +32,7 @@ const paths: DesktopPaths = {
   modelsDir: "/fake/AppData/models",
   scriptPath: "/fake/Resources/sidecar/whisper_server.py",
   requirementsPath: "/fake/Resources/sidecar/requirements-sidecar.txt",
+  diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
 };
@@ -433,6 +434,11 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
       throw new Error("should never be called on NOT_DESKTOP");
     });
     unsubscribeDownloadProgress(); // must not throw
+  });
+
+  it("installDiarization() is an inert no-op outside a desktop build too (S5 chunk 2)", async () => {
+    const handle = await initDesktop();
+    await expect(handle.installDiarization()).resolves.toBeUndefined();
   });
 
   it("is idempotent: two calls return the exact same cached promise, resolving to the exact same handle", async () => {
@@ -1615,6 +1621,30 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     resolveRunUv!(); // cleanup — avoid a dangling promise
   });
 
+  it('rejects when sidecarMode is "external" — even though external mode can itself reach HEALTHY (the exact gap this finding closes), zero invokes and no fetch at all (S5 review pair Finding 2)', async () => {
+    const invokeCalls: string[] = [];
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths }, (cmd) => invokeCalls.push(cmd)),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => ({ up: true }), // external sidecar IS up -> HEALTHY; the old phase-only gate would have let this through
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" }); // confirms the precondition Finding 2 is about
+
+    await expect(handle.switchModel("medium")).rejects.toThrow("当前为外部管理模式，此操作仅适用于内置本地服务");
+    expect(invokeCalls).toEqual(["app_paths"]); // only bootstrap's own call — switchModel() itself never invoked anything
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
   it("single-flights via the shared sidecar-lifecycle latch: two interleaved calls download/restart exactly once, and the SECOND caller REJECTS instead of joining (S4 review pair Finding 1a)", async () => {
     let downloadModelPosts = 0;
     let stopServerCalls = 0;
@@ -1866,5 +1896,222 @@ describe("bootstrapDesktop — installedModel() (S4 chunk 4)", () => {
     const handle = await bootstrapDesktop(deps);
     await waitForStable(handle);
     await expect(handle.installedModel()).resolves.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------
+// S5 chunk 2 (docs/design-explorations/s5-diarization-addon-
+// blueprint.md, decision B) — installDiarization(). Every test below
+// starts from a HEALTHY (adopted) handle, same posture as the
+// switchModel()/reprovision() suites above, since installDiarization()
+// is only ever meaningful from there.
+// ---------------------------------------------------------------
+
+describe("bootstrapDesktop — installDiarization() (S5 chunk 2, diarization add-on install)", () => {
+  it("happy path: invokes run_uv with pipInstallDiar's own {args,env} shape, streams uv://log lines to log$ subscribers, and resolves on exit code 0", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let runUvArgs: unknown;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => null,
+      run_uv: (args) => {
+        runUvArgs = args;
+        emit("uv://log", { stream: "stdout", line: "Collecting pyannote.audio" });
+        emit("uv://log", { stream: "stdout", line: "Successfully installed pyannote.audio-4.0.7" });
+        return { code: 0 };
+      },
+    });
+    const deps: BootstrapDeps = {
+      invoke,
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }), // adopt path -> HEALTHY immediately
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    const lines: DesktopLogLine[] = [];
+    handle.log$((line) => lines.push(line));
+
+    await expect(handle.installDiarization()).resolves.toBeUndefined();
+
+    // The exact same {args,env} shape pipInstallDiar builds — not a
+    // hand-duplicated literal, so this test breaks if the builder and
+    // the call site ever drift apart.
+    expect(runUvArgs).toEqual(pipInstallDiar(paths));
+    expect((runUvArgs as { args: string[] }).args).toEqual([
+      "pip",
+      "install",
+      "--python",
+      paths.venvPython,
+      "-r",
+      paths.diarRequirementsPath,
+    ]);
+    expect(lines).toContainEqual({ stream: "stdout", line: "Collecting pyannote.audio" });
+    expect(lines).toContainEqual({ stream: "stdout", line: "Successfully installed pyannote.audio-4.0.7" });
+  });
+
+  it("non-zero/null exit code rejects with a BARE zh message naming the exit code — no embedded 安装说话人分离扩展失败 prefix (S5 review pair Finding 3: that duplicated the ONE prefix SettingsDialog.tsx's own toast adds)", async () => {
+    let exitCode: number | null = 1;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: exitCode }),
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    // Anchored regex, not a plain substring — a plain "退出码 1" substring
+    // check would ALSO pass against the old, doubled-up message (it's a
+    // substring of that too), so it wouldn't actually catch a regression
+    // back to the old prefixed form.
+    await expect(handle.installDiarization()).rejects.toThrow(/^退出码 1$/);
+
+    exitCode = null;
+    await expect(handle.installDiarization()).rejects.toThrow(/^退出码 null$/);
+  });
+
+  it("rejects when current.state.phase isn't HEALTHY, without ever calling run_uv", async () => {
+    let runUvCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => {
+          runUvCalls += 1;
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    // current.state is already the fresh STEP/INSTALL_PYTHON/RUNNING the
+    // machine decided on (see bootstrap.ts's own header comment — only
+    // notify()/looping is paused, current.state itself is untouched) —
+    // not HEALTHY, so this exercises installDiarization()'s phase-gate
+    // without needing a held-open run_uv promise.
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    await expect(handle.installDiarization()).rejects.toThrow("本地服务未就绪，无法安装扩展");
+    expect(runUvCalls).toBe(0);
+  });
+
+  it('rejects when sidecarMode is "external" — even though external mode can itself reach HEALTHY (the exact gap this finding closes), zero invokes (S5 review pair Finding 2)', async () => {
+    const invokeCalls: string[] = [];
+    let runUvCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke(
+        {
+          app_paths: () => paths,
+          run_uv: () => {
+            runUvCalls += 1;
+            return { code: 0 };
+          },
+        },
+        (cmd) => invokeCalls.push(cmd),
+      ),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => ({ up: true }), // external sidecar IS up -> HEALTHY; the old phase-only gate would have let this through
+    };
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" }); // confirms the precondition Finding 2 is about
+
+    await expect(handle.installDiarization()).rejects.toThrow("当前为外部管理模式，此操作仅适用于内置本地服务");
+    expect(runUvCalls).toBe(0);
+    expect(invokeCalls).toEqual(["app_paths"]); // only bootstrap's own call — installDiarization() itself never invoked anything
+  });
+
+  it("busy-latch: an in-flight reprovision() blocks installDiarization() (shared latch, S4 review pair Finding 1a)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => undefined,
+        write_provision_marker: () => undefined,
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }), // adopt -> HEALTHY, so installDiarization's own phase-gate would otherwise pass
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    const reprovisionPromise = handle.reprovision();
+    await expect(handle.installDiarization()).rejects.toThrow("另一项本地服务操作正在进行");
+
+    await reprovisionPromise; // cleanup — let the winning call settle
+  });
+
+  it("busy-latch: an in-flight installDiarization() blocks reprovision() (shared latch works both directions)", async () => {
+    let resolveRunUv: (() => void) | null = null;
+    const runUvGate = new Promise<void>((resolve) => {
+      resolveRunUv = resolve;
+    });
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: async () => {
+          await runUvGate;
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    const installPromise = handle.installDiarization();
+    await expect(handle.reprovision()).rejects.toThrow("另一项本地服务操作正在进行");
+
+    resolveRunUv!(); // let the held-open install finish (test cleanup)
+    await installPromise;
+  });
+
+  it("never touches current.state or notifies state$ subscribers — stays HEALTHY throughout, listener call count unchanged", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => {
+          emit("uv://log", { stream: "stdout", line: "Downloading torch-2.8.0-cp312-none-macosx_11_0_arm64.whl" });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    const seenStates: DesktopBootstrapState[] = [];
+    handle.state$((s) => seenStates.push(s));
+
+    await handle.installDiarization();
+
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    expect(seenStates).toEqual([]); // no notify() call at all during the run
   });
 });

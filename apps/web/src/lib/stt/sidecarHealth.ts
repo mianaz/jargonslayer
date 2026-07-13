@@ -5,9 +5,15 @@
 // uploadRecording/ingestUrl/fetchSidecarHealth below already talk to),
 // with CORS "*", and always replies:
 //   { ok: true, model: <loaded faster-whisper model name>,
-//     diarization_ready: bool, diarization_error: string | null }
+//     diarization_installed: bool, diarization_ready: bool,
+//     diarization_error: string | null }
 // — a lightweight readiness check (pyannote import + token presence),
-// never loads the diarization model itself.
+// never loads the diarization model itself. `diarization_installed`
+// (S5 chunk 1, decision C) is the token-INDEPENDENT "is pyannote even
+// importable" fact; a legacy/external sidecar that predates it simply
+// omits the key, so this file's own SidecarProbeResult.installed below
+// is `boolean | undefined` — undefined must always render as 未知,
+// never coerced to 未安装 (risk 5).
 //
 // Reuses upload.ts's httpBaseFromWs for the ws://…:8765 ->
 // http://…:8766 derivation (already public/exported there — no
@@ -35,6 +41,14 @@ export interface SidecarProbeResult {
   /** Speaker diarization readiness (health's `diarization_ready`) —
    *  only present when reachable. */
   diarize?: boolean;
+  /** Speaker diarization INSTALL state (health's new
+   *  `diarization_installed`, S5 chunk 1/decision C) — token-
+   *  independent, unlike `diarize` above. `undefined` whenever
+   *  unreachable OR the sidecar simply doesn't send the field (a
+   *  legacy/external sidecar predating S5) — callers must render that
+   *  as "未知," never "未安装" (risk 5). Managed sidecars always send
+   *  it, true or false. */
+  installed?: boolean;
 }
 
 /** GET {httpBase}/health. Never throws — `{ up: false }` on ANY
@@ -51,9 +65,15 @@ export async function probeSidecar(settings: Settings): Promise<SidecarProbeResu
     if (!res.ok) return { up: false };
     const body = (await res.json()) as {
       model?: string;
+      diarization_installed?: boolean;
       diarization_ready?: boolean;
     };
-    return { up: true, model: body.model, diarize: body.diarization_ready };
+    return {
+      up: true,
+      model: body.model,
+      diarize: body.diarization_ready,
+      installed: body.diarization_installed,
+    };
   } catch {
     return { up: false };
   } finally {

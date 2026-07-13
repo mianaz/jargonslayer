@@ -139,6 +139,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import importlib
 import json
 import os
 import shutil
@@ -391,7 +392,22 @@ class _SharedDiarizePipeline:
         loads it first. A later caller supplying a *different* token
         won't force a reload; that's an accepted edge case for a
         local, single-user sidecar (mirrors the in-memory-only job
-        store tradeoff noted on JobManager)."""
+        store tradeoff noted on JobManager).
+
+        S5 review pair Finding 1: the cache is latched ONLY on success —
+        a failed load hands (None, error) back to every CURRENT caller
+        but leaves the instance retry-eligible, so the NEXT get() call
+        attempts the whole load again instead of staying permanently
+        "unavailable" process-wide until the sidecar is restarted. This
+        is what actually makes two real recoveries possible without a
+        restart: a mid-install import against a half-written venv (pip
+        install finishes moments later — the very next meeting arms
+        cleanly) and an unaccepted-license/bad HF token
+        (Pipeline.from_pretrained 403s — once the user accepts the
+        license, the next meeting just works). The cost is a repeated
+        failing attempt per meeting until then — for the missing-module
+        case that's one cheap, fast ModuleNotFoundError, well worth
+        paying for the retry."""
         if self._loaded:
             return self._pipeline, self._error
         with self._load_lock:
@@ -412,11 +428,21 @@ class _SharedDiarizePipeline:
                         use_auth_token=hf_token,
                     )
                 self._error = None
+                # Set the latch LAST so no reader ever observes loaded-
+                # but-empty — and ONLY on this success path (S5 review
+                # pair Finding 1): a caller that was blocked on
+                # _load_lock behind a FAILING load must not inherit a
+                # permanent latch it never asked for.
+                self._loaded = True
             except Exception as exc:  # noqa: BLE001 - see docstring
                 self._pipeline = None
                 self._error = f"{type(exc).__name__}: {exc}"
-            # Set the latch LAST so no reader ever observes loaded-but-empty.
-            self._loaded = True
+                # Deliberately NOT latched — see this method's own
+                # docstring (S5 review pair Finding 1). The NEXT get()
+                # (this connection's next diarization window, or a
+                # brand-new meeting) retries the load from scratch;
+                # `_load_lock` above still serializes it against any
+                # other thread's concurrent attempt exactly as before.
             return self._pipeline, self._error
 
 
@@ -1694,20 +1720,43 @@ class JobManager:
         token = hf_token or self.hf_token
         return _shared_diarize_pipeline.get(token)
 
-    def diarization_probe(self) -> tuple[bool, Optional[str]]:
+    def diarization_probe(self) -> tuple[bool, bool, Optional[str]]:
         """Lightweight readiness check for GET /health: does pyannote
         import, and is a token available (CLI/env, or the most recent
         per-request hf_token)? Deliberately does NOT call
         Pipeline.from_pretrained() (that downloads/loads the model) —
-        it only checks the import + token presence, per spec."""
-        token = self.hf_token or self.last_request_token
-        if not token:
-            return False, "未配置 HF Token / no HF token available"
+        it only checks the import + token presence, per spec.
+
+        Returns (installed, ready, error) — three orthogonal facts (S5
+        decision C, replacing the old (ready, error) pair): `installed`
+        is the pyannote import result alone, token-independent, so
+        /health can report "already installed" even before any token
+        is configured; `ready` is installed AND token present (the
+        pre-S5 boolean, kept as-is for back-compat — arming a meeting
+        still needs both); `error` explains whichever check failed.
+        Checked import-FIRST, token second (the old order was token-
+        first, which could never tell "pyannote missing" apart from
+        "no token" — this is the 检测状态 bug S5 fixes)."""
+        # pyannote is never imported anywhere in this process before a
+        # successful pip install (this probe is its first-ever import
+        # attempt), so there is no stale NEGATIVE sys.modules entry to
+        # worry about here — invalidate_caches() only needs to bust the
+        # path-based finders' cached directory listing from before the
+        # install wrote pyannote's files into site-packages, so a
+        # still-running server picks up a just-installed pyannote on
+        # the very next probe, no restart required.
+        importlib.invalidate_caches()
         try:
             import pyannote.audio  # noqa: F401  type: ignore[import-not-found]
         except Exception as exc:  # noqa: BLE001 - see _load_diarize_pipeline docstring
-            return False, f"{type(exc).__name__}: {exc}"
-        return True, None
+            return False, False, (
+                f"pyannote.audio 未安装（{type(exc).__name__}: {exc}） / "
+                "pyannote.audio not installed"
+            )
+        token = self.hf_token or self.last_request_token
+        if not token:
+            return True, False, "未配置 HF Token / no HF token available"
+        return True, True, None
 
     @staticmethod
     def _to_wav_for_diarization(file_path: str) -> tuple[str, bool]:
@@ -2058,15 +2107,10 @@ def make_job_http_handler(
             parts = [p for p in parsed.path.split("/") if p]
 
             if parts == ["health"]:
-                ready, error = job_manager.diarization_probe()
+                installed, ready, error = job_manager.diarization_probe()
                 self._send_json(
                     HTTPStatus.OK,
-                    {
-                        "ok": True,
-                        "model": job_manager.model_name,
-                        "diarization_ready": ready,
-                        "diarization_error": None if ready else error,
-                    },
+                    health_payload(job_manager.model_name, installed, ready, error),
                 )
                 return
 
@@ -2099,6 +2143,25 @@ def run_http_server(
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     return httpd
+
+
+def health_payload(model_name: str, installed: bool, ready: bool, error: Optional[str]) -> dict[str, Any]:
+    """JSON body for GET /health. `installed`/`ready`/`error` are
+    JobManager.diarization_probe()'s three orthogonal facts (S5
+    decision C) — `diarization_ready`/`diarization_error` keep their
+    pre-S5 meaning exactly unchanged (ready implies installed; error is
+    None whenever ready), `diarization_installed` is the new,
+    token-independent field. Factored out as its own pure function,
+    mirroring download_conflict_response/validate_download_model's
+    convention below, so its shape is directly unit-testable without
+    constructing a live handler — see test_whisper_protocol.py."""
+    return {
+        "ok": True,
+        "model": model_name,
+        "diarization_installed": installed,
+        "diarization_ready": ready,
+        "diarization_error": None if ready else error,
+    }
 
 
 # =================================================================

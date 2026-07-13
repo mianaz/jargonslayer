@@ -102,9 +102,11 @@ import {
   type LogStream,
   type OnLog,
   type PrewarmProgressEvent,
+  type ProcessResult,
   type StartServerResult,
+  type UvLogEvent,
 } from "./provisionRunner";
-import { PINNED_PYTHON_MINOR, type DesktopPaths } from "./uvCommands";
+import { PINNED_PYTHON_MINOR, pipInstallDiar, type DesktopPaths } from "./uvCommands";
 import {
   decideRestart,
   initial,
@@ -220,6 +222,12 @@ const SWITCH_HEALTH_POLL_INTERVAL_MS = 2000;
  *  similar wordings for the same condition. */
 const SIDECAR_LIFECYCLE_BUSY_MESSAGE = "另一项本地服务操作正在进行";
 
+/** S5 review pair Finding 2: switchModel()/installDiarization()'s own
+ *  rejection when the persisted sidecarMode is "external" — extracted
+ *  once, same "two call sites can't drift into two different-but-
+ *  similar wordings" rationale as SIDECAR_LIFECYCLE_BUSY_MESSAGE above. */
+const EXTERNAL_SIDECAR_MODE_MESSAGE = "当前为外部管理模式，此操作仅适用于内置本地服务";
+
 /** Mirrors provisionRunner.ts's own (module-private, unexported)
  *  defaultNow/defaultSleep — this file needs its own copies for
  *  switchModel()'s marker write (invokeWriteMarker's own `now` param)
@@ -260,6 +268,26 @@ async function postDownloadModel(model: string): Promise<string> {
   }
   const body = (await res.json()) as { job_id: string };
   return body.job_id;
+}
+
+/** v0.4 S5 chunk 2 (installDiarization()): mirrors provisionRunner.ts's
+ *  own (module-private, unexported) withUvLog exactly — listen() is
+ *  awaited (subscribed) BEFORE the invoke starts and unlistened only
+ *  after it settles, so no early uv://log line is ever missed. A local
+ *  adaptation rather than a reuse: withUvLog isn't exported, and this
+ *  file invokes run_uv directly (installDiarization() bypasses
+ *  runEffects/runStepEffect entirely — it isn't a provisionMachine
+ *  step), so it needs its own copy of the same contract rather than
+ *  widening provisionRunner.ts's touch list for one caller. */
+async function withUvLog<T>(deps: BootstrapDeps, onLog: OnLog, run: () => Promise<T>): Promise<T> {
+  const unlisten = await deps.listen<UvLogEvent>("uv://log", (event) => {
+    onLog(event.payload.stream, event.payload.line);
+  });
+  try {
+    return await run();
+  } finally {
+    unlisten();
+  }
 }
 
 /** The machine's own MachineState, widened with two extra phases this
@@ -393,13 +421,21 @@ export interface DesktopBootstrapHandle {
    *  reprovision()/recheckHealth() above — provisionMachine.ts itself
    *  gains no new state for this.
    *
-   *  Rejects (never silently no-ops) in four cases: `model` isn't
-   *  ALLOWED_MARKER_MODELS-valid; current.state.phase isn't HEALTHY
-   *  (switching only makes sense from an already-running managed
-   *  sidecar — the UI is expected to only ever offer this button then,
-   *  same "mode gating lives in SettingsDialog, not the handle" posture
-   *  reprovision()'s own sidecarMode-agnostic implementation already
-   *  established); a meeting is active right as the download finishes
+   *  Rejects (never silently no-ops) in five cases: the persisted
+   *  sidecarMode is "external" (S5 review pair Finding 2 — checked
+   *  FIRST, ahead of every other case below: external mode can reach
+   *  HEALTHY too, since that phase there just reflects the EXTERNAL
+   *  sidecar's own health probe, nothing this handle provisioned — a
+   *  draft-flipped UI, or any future caller, must not be able to reach
+   *  stop_server/start_server against whatever's actually listening on
+   *  managed mode's fixed ports; this replaces switchModel()'s own
+   *  former "mode gating lives in SettingsDialog, not the handle"
+   *  posture, which this finding showed was the wrong layer for an
+   *  action that mutates/restarts a process rather than just reading
+   *  one); `model` isn't ALLOWED_MARKER_MODELS-valid; current.state.
+   *  phase isn't HEALTHY (switching only makes sense from an already-
+   *  running managed sidecar); a meeting is active right as the
+   *  download finishes
    *  (S4 review pair Finding 2 — deps.isMeetingActive, rechecked fresh
    *  since SettingsDialog's own picker-open-time check is stale by the
    *  time a minutes-long download completes; current.state stays
@@ -432,6 +468,57 @@ export interface DesktopBootstrapHandle {
    *  an active call — reset the instant switchModel() settles (success
    *  or failure), same "both ends" contract as currentDownloadProgress. */
   currentSwitchModelProgress: () => SwitchModelProgress | null;
+  /** SettingsDialog's 说话人分离 「安装扩展」 button (S5 chunk 2,
+   *  docs/design-explorations/s5-diarization-addon-blueprint.md decision
+   *  B): installs the optional pyannote/diarization add-on into the
+   *  ALREADY-provisioned venv via the exact SAME run_uv pip-install
+   *  shape INSTALL_DEPS already uses, just targeting
+   *  requirements-diar.txt instead of requirements-sidecar.txt
+   *  (uvCommands.ts's pipInstallDiar) — zero Rust change (see that
+   *  builder's own doc comment). A thin bootstrap-only detour around the
+   *  machine, same posture as reprovision()/switchModel() above —
+   *  provisionMachine.ts itself gains no new state for this. Unlike
+   *  EITHER of those, this action never touches `current.state` or
+   *  `ctx` at all and never redrives: the running server keeps running
+   *  throughout (the venv merely gains packages on disk) — decision D's
+   *  "no restart needed, the running sidecar picks pyannote up on its
+   *  own next /health probe via importlib.invalidate_caches()". So,
+   *  deliberately, no `generation++`, no `current = initial()`/machine
+   *  reset. It still captures the CURRENT generation on entry purely as
+   *  defense-in-depth (mirrors performSwitchModel's own belt-and-
+   *  suspenders guard) — a reprovision()/switchModel() that somehow
+   *  raced in from elsewhere (the shared latch below already prevents
+   *  this in the ordinary case) would still structurally invalidate this
+   *  run, aborting it silently rather than reporting success/failure for
+   *  a venv that's already been recreated out from under it.
+   *
+   *  Rejects (never silently no-ops) in three cases: the persisted
+   *  sidecarMode is "external" (S5 review pair Finding 2 — checked
+   *  FIRST, same rationale as switchModel()'s own identical leading
+   *  check just above); `current.state.phase` isn't HEALTHY (installing
+   *  only makes sense against an already-running managed sidecar — same
+   *  "the caller's own precondition check, not a UI-only gate" posture
+   *  reprovision()/switchModel() already established); or the shared
+   *  sidecarLifecycleInFlight latch (S4 review pair Finding 1a) is
+   *  already held by an in-flight reprovision()/switchModel() call —
+   *  an install must never race
+   *  reprovision()'s venv recreation (it would either install into a
+   *  venv about to be destroyed, or destroy a venv mid-install) or a
+   *  model switch's own stop/start of the SAME server process. Held for
+   *  this call's own full duration too, so a LATER reprovision()/
+   *  switchModel() call correctly rejects against THIS one in turn —
+   *  single-flighted via the exact same shared latch, not a separate
+   *  one.
+   *
+   *  Streams every uv://log line for the run to log$ subscribers (this
+   *  file's own withUvLog above — see that function's own doc comment
+   *  for why it's a local adaptation rather than a direct reuse of
+   *  provisionRunner.ts's own withUvLog) — the SAME pane chunk 6's
+   *  wizard 详细日志/chunk 3's Settings tail already render, so a slow
+   *  ~1.2GB pip install isn't a silent multi-minute hang from the user's
+   *  POV. A non-zero/null run_uv exit code rejects with a zh message
+   *  naming the exit code. */
+  installDiarization: () => Promise<void>;
   /** SettingsDialog's desktop-only 诊断信息 → 「查看本地服务日志」: tails
    *  whisper_server.log via Rust's read_sidecar_log (provision.rs).
    *  Deliberately routed through THIS handle (reusing the SAME
@@ -456,6 +543,7 @@ const NOT_DESKTOP_PATHS: DesktopPaths = {
   modelsDir: "",
   scriptPath: "",
   requirementsPath: "",
+  diarRequirementsPath: "",
   logPath: "",
   markerPath: "",
 };
@@ -475,6 +563,7 @@ const NOT_DESKTOP_HANDLE: DesktopBootstrapHandle = {
   switchModel: async () => {},
   switchModelProgress$: () => () => {},
   currentSwitchModelProgress: () => null,
+  installDiarization: async () => {},
   readSidecarLog: async () => "",
 };
 
@@ -616,6 +705,9 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   const paths = await getAppPaths(deps.invoke);
   // Finding 2: read BEFORE any provisioning decision — "external"
   // branches away from the managed drive loop entirely, further down.
+  // S5 review pair Finding 2: this SAME closure variable is also read
+  // directly by switchModel()/installDiarization() below (no separate
+  // copy) — see each method's own doc comment on DesktopBootstrapHandle.
   const sidecarMode = (await deps.getSidecarMode?.()) ?? "managed";
   // S4 chunk 3 (decision C's clamp): the user's persisted whisperModel
   // preference, read the same "await early, before any provisioning
@@ -1064,6 +1156,59 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     }
   }
 
+  /** The real work behind the `installDiarization` handle action (split
+   *  out as its own nested function, mirroring performSwitchModel's own
+   *  split, so the returned handle method itself stays a thin validate +
+   *  single-flight wrapper below). Callable only once installDiarization()
+   *  has already confirmed current.state.phase === "HEALTHY" — this
+   *  function trusts that. Deliberately does NOT touch `current`/`ctx`/
+   *  `generation` (see installDiarization's own doc comment on
+   *  DesktopBootstrapHandle) — the only thing it does besides the
+   *  run_uv call itself is diagLog + stream uv://log to notifyLog. */
+  async function performInstallDiarization(): Promise<void> {
+    // Defense-in-depth only, mirroring performSwitchModel's own guard —
+    // installDiarization() itself never bumps `generation`, so this can
+    // only ever fire if some OTHER caller's reprovision()/switchModel()
+    // raced in despite the shared latch below (shouldn't happen in
+    // practice, since that latch already serializes all three).
+    const myGeneration = generation;
+    diagLog("info", "desktop-provision", "开始安装说话人分离扩展");
+    // Destructured into a fresh object literal — same shape runEffects.ts's
+    // own runStepEffect uses for the identical UvCommand -> invoke() args
+    // conversion (`{ args: effect.command.args, env: effect.command.env }`)
+    // — a UvCommand VARIABLE passed directly doesn't satisfy invoke()'s
+    // `Record<string, unknown>` parameter type (interfaces get no implicit
+    // string index signature; a literal does).
+    const command = pipInstallDiar(paths);
+    let result: ProcessResult;
+    try {
+      result = await withUvLog(deps, notifyLog, () =>
+        deps.invoke<ProcessResult>("run_uv", { args: command.args, env: command.env }),
+      );
+    } catch (error) {
+      const message = describeError(error);
+      diagLog("error", "desktop-provision", "安装说话人分离扩展失败", redactHomePath(message));
+      throw error instanceof Error ? error : new Error(message);
+    }
+    if (generation !== myGeneration) return; // superseded — see this function's own doc comment.
+    if (result.code !== 0) {
+      // S5 review pair Finding 3: bare — no "安装说话人分离扩展失败" prefix
+      // here. SettingsDialog.tsx's handleInstallDiarization is the ONE
+      // place that adds that prefix (mirrors handleReprovisionDesktop's
+      // identical `失败：${err.message}` posture); this thrown message
+      // used to carry the SAME phrase baked in too, so the toast doubled
+      // it up ("安装说话人分离扩展失败：安装说话人分离扩展失败（退出码 1）").
+      // Every OTHER rejection this function can throw (the run_uv
+      // invoke-failure catch above, and installDiarization()'s own
+      // not-HEALTHY/external-mode/busy-latch gates) was already bare —
+      // this was the one holdout.
+      const message = `退出码 ${result.code === null ? "null" : result.code}`;
+      diagLog("error", "desktop-provision", "安装说话人分离扩展失败", redactHomePath(message));
+      throw new Error(message);
+    }
+    diagLog("info", "desktop-provision", "说话人分离扩展安装完成");
+  }
+
   if (sidecarMode === "external") {
     // Finding 2b: never touches the managed drive loop OR its
     // server://exit crash-restart wiring below — this app neither
@@ -1184,6 +1329,16 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       }
     },
     async switchModel(model: string) {
+      // S5 review pair Finding 2: checked FIRST — external mode can
+      // reach HEALTHY too (the phase below reflects the EXTERNAL
+      // sidecar's own health, not anything this handle provisioned), so
+      // the phase check alone let a draft-flipped UI (or any future
+      // caller) drive start_server against whatever's actually
+      // listening on managed mode's fixed ports. See this method's own
+      // doc comment on DesktopBootstrapHandle for the full rationale.
+      if (sidecarMode === "external") {
+        return Promise.reject(new Error(EXTERNAL_SIDECAR_MODE_MESSAGE));
+      }
       if (!ALLOWED_MARKER_MODELS.includes(model)) {
         return Promise.reject(new Error(`不支持的模型：${model}`));
       }
@@ -1210,6 +1365,27 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     },
     currentSwitchModelProgress() {
       return switchModelProgress;
+    },
+    async installDiarization() {
+      // S5 review pair Finding 2 — see switchModel()'s own identical
+      // leading check above for the full rationale.
+      if (sidecarMode === "external") {
+        return Promise.reject(new Error(EXTERNAL_SIDECAR_MODE_MESSAGE));
+      }
+      if (current.state.phase !== "HEALTHY") {
+        return Promise.reject(new Error("本地服务未就绪，无法安装扩展"));
+      }
+      // S4 review pair Finding 1a's shared latch, reused verbatim — see
+      // sidecarLifecycleInFlight's own doc comment above and this
+      // method's own doc comment on DesktopBootstrapHandle.
+      if (sidecarLifecycleInFlight) {
+        return Promise.reject(new Error(SIDECAR_LIFECYCLE_BUSY_MESSAGE));
+      }
+      const run = performInstallDiarization();
+      sidecarLifecycleInFlight = run.finally(() => {
+        sidecarLifecycleInFlight = null;
+      });
+      return sidecarLifecycleInFlight;
     },
     async readSidecarLog(tailLines: number) {
       return deps.invoke<string>("read_sidecar_log", { tailLines });

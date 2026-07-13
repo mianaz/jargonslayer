@@ -39,7 +39,7 @@ import type {
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
-import { initDesktop } from "@/lib/desktop/bootstrap";
+import { initDesktop, type DesktopLogLine } from "@/lib/desktop/bootstrap";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import {
   isSectionVisible,
@@ -446,6 +446,14 @@ function TaskDomainBlock({
   );
 }
 
+// 说话人分离 安装扩展 (v0.4 S5 chunk 3): live log$ tail cap while
+// handleInstallDiarization's run_uv install is in flight — "the
+// wizard's 详细日志 idiom in miniature" (blueprint chunk 3), mirroring
+// DesktopBootstrap.tsx's own LOG_BUFFER_CAP slicing shape exactly, just
+// a small always-visible tail instead of that file's collapsible
+// 500-line pane.
+const DIAR_INSTALL_LOG_LINES = 6;
+
 export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -494,6 +502,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 说话人分离 (speaker diarization, HF token) section.
   const [showHfToken, setShowHfToken] = useState(false);
   const [checkingDiarization, setCheckingDiarization] = useState(false);
+  // 说话人分离 安装扩展 (v0.4 S5 chunk 3, desktop-managed only): the
+  // install-state row's own truth, sourced from fetchSidecarHealth's
+  // new diarization_installed field (decision C) — `undefined` renders
+  // 未知 (risk 5: legacy/external sidecars omit the field; also true
+  // before this dialog's own probe effect below first resolves), never
+  // 未安装. installingDiarization mirrors switchingModel's own busy-
+  // flag pattern (S4 chunk 4) for handleInstallDiarization below;
+  // diarizationInstallLog is that same handler's own DIAR_INSTALL_LOG_
+  // LINES-capped log$ tail.
+  const [diarizationInstalled, setDiarizationInstalled] = useState<boolean | undefined>(undefined);
+  const [installingDiarization, setInstallingDiarization] = useState(false);
+  const [diarizationInstallLog, setDiarizationInstallLog] = useState<DesktopLogLine[]>([]);
   // 转录引擎 sidecar status line (owner ask 2026-07-11: "I cannot see in
   // the GUI if the local side got set up at all") — a lightweight GET
   // /health readout shown directly under the engine picker whenever the
@@ -777,6 +797,30 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draft.sidecarMode]);
 
+  // 说话人分离 安装扩展 install-state row (v0.4 S5 chunk 3): probes GET
+  // /health via fetchSidecarHealth (decision C's diarization_installed)
+  // whenever the section becomes relevant — same "dialog opens with it
+  // already selected, or the user flips 托管模式 into it while the
+  // dialog stays open" cadence as the 当前模型 effect just above, not
+  // the 本地服务 status row's probe (that one also drives a manual
+  // 重新检测 button this row doesn't have — handleInstallDiarization's
+  // own re-probe-on-success below is this row's only other update
+  // trigger). fetchSidecarHealth returning null (sidecar unreachable)
+  // collapses to the exact same `undefined` -> 未知 render as a legacy
+  // sidecar that never sent the field at all — this effect deliberately
+  // never tries to tell those two apart (risk 5).
+  useEffect(() => {
+    if (!open || !IS_DESKTOP || draft.sidecarMode !== "managed") return;
+    let cancelled = false;
+    void fetchSidecarHealth(draft).then((health) => {
+      if (!cancelled) setDiarizationInstalled(health?.diarization_installed);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draft.sidecarMode]);
+
   if (!open) return null;
 
   const patch = (p: Partial<Settings>) => setDraft((d) => ({ ...d, ...p }));
@@ -1034,6 +1078,53 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       showToast(err instanceof Error ? `读取本地服务日志失败：${err.message}` : "读取本地服务日志失败");
     } finally {
       setLoadingSidecarLog(false);
+    }
+  };
+
+  // v0.4 S5 chunk 3 (blueprint decisions A/B): 说话人分离 安装扩展 — an
+  // IMMEDIATE action (like 重新运行安装向导/下载并切换 above), never routed
+  // through patch()/draft/保存. Reuses the SAME module-level bootstrap
+  // handle every other desktop action on this dialog already does.
+  // Subscribes handle.log$ for the run's own duration (subscribe-
+  // before/unlisten-after, mirroring withUvLog's own pattern inside
+  // bootstrap.ts), keeping only the last DIAR_INSTALL_LOG_LINES lines —
+  // the wizard's 详细日志 idiom in miniature. Re-probes fetchSidecarHealth
+  // on success rather than optimistically setting diarizationInstalled
+  // true (decision C's own "the running server is the truth" posture),
+  // so the row reflects exactly what the sidecar itself now reports.
+  // Errors surface via showToast only — bootstrap.ts's own doc comment
+  // on installDiarization() confirms every rejection message is already
+  // a BARE zh phrase (external-mode, not-HEALTHY, the shared-latch busy
+  // message, or a run_uv non-zero exit — S5 review pair Finding 3 made
+  // the exit-code case bare too, dropping its own baked-in "安装说话人
+  // 分离扩展失败" prefix, which used to double up with the one this toast
+  // adds below), same as handleReprovisionDesktop's identical
+  // `err.message` toast posture just above.
+  const handleInstallDiarization = async () => {
+    setInstallingDiarization(true);
+    setDiarizationInstallLog([]);
+    try {
+      const handle = await initDesktop();
+      const unsubscribe = handle.log$((line) => {
+        setDiarizationInstallLog((prev) => {
+          const next = [...prev, line];
+          return next.length > DIAR_INSTALL_LOG_LINES
+            ? next.slice(next.length - DIAR_INSTALL_LOG_LINES)
+            : next;
+        });
+      });
+      try {
+        await handle.installDiarization();
+      } finally {
+        unsubscribe();
+      }
+      showToast("说话人分离扩展安装完成");
+      const health = await fetchSidecarHealth(draft);
+      setDiarizationInstalled(health?.diarization_installed);
+    } catch (err) {
+      showToast(err instanceof Error ? `安装说话人分离扩展失败：${err.message}` : "安装说话人分离扩展失败");
+    } finally {
+      setInstallingDiarization(false);
     }
   };
 
@@ -1527,7 +1618,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <button
                         type="button"
                         onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : handleOpenModelPicker())}
-                        disabled={meetingActive || switchingModel || reprovisioningDesktop}
+                        disabled={meetingActive || switchingModel || reprovisioningDesktop || installingDiarization}
                         title={meetingActive ? "会议进行中，结束后可切换模型" : undefined}
                         className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -1548,7 +1639,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           <button
                             type="button"
                             onClick={() => void handleSwitchModel()}
-                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive}
+                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive || installingDiarization}
                             className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {switchingModel ? "处理中…" : "下载并切换"}
@@ -1568,7 +1659,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <button
                       type="button"
                       onClick={() => void handleReprovisionDesktop()}
-                      disabled={reprovisioningDesktop || switchingModel || meetingActive}
+                      disabled={reprovisioningDesktop || switchingModel || meetingActive || installingDiarization}
                       title={meetingActive ? "会议进行中，结束后可重新运行安装向导" : undefined}
                       className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -1649,6 +1740,72 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <SectionHeading>说话人分离</SectionHeading>
               {PREVIEW_TIER && <PreviewLockedBadge />}
             </div>
+
+            {/* 安装扩展 (v0.4 S5 chunk 3, blueprint decision A: a
+               Settings-only affordance, never a first-run wizard step —
+               desktop-managed only, mirroring the SAME IS_DESKTOP &&
+               sidecarMode==="managed" gate the 转录引擎 托管模式 block
+               above uses). diarizationInstalled/installingDiarization/
+               diarizationInstallLog are this dialog's own state (see
+               their declarations above); handleInstallDiarization drives
+               handle.installDiarization(). Deliberately placed ahead of
+               the pre-existing HF Token field below (kept EXACTLY as-is,
+               decision E) — installing the runtime is the precondition
+               token/license setup is otherwise meaningless without. */}
+            {IS_DESKTOP && draft.sidecarMode === "managed" && (
+              <div className="space-y-2 border border-edge bg-panel2 p-3">
+                <div className="text-sm text-fg">
+                  说话人分离扩展：
+                  {diarizationInstalled === true ? (
+                    <span className="text-lab-green">已安装</span>
+                  ) : diarizationInstalled === false ? (
+                    <span className="text-lab-orange">未安装</span>
+                  ) : (
+                    // undefined: not yet probed OR a legacy/external
+                    // sidecar that never sends diarization_installed —
+                    // risk 5 forbids ever rendering either as 未安装.
+                    <span className="text-mut2">未知</span>
+                  )}
+                </div>
+
+                {diarizationInstalled === false && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => void handleInstallDiarization()}
+                      disabled={
+                        installingDiarization || reprovisioningDesktop || switchingModel || meetingActive
+                      }
+                      title={meetingActive ? "会议进行中，结束后可安装说话人分离扩展" : undefined}
+                      className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {installingDiarization ? "安装中…" : "安装扩展（约 1–1.5 GB · 需几分钟）"}
+                    </button>
+                    {installingDiarization && (
+                      <div className="border border-edge bg-panel p-2 font-mono text-[11px] leading-[1.6] text-mut2">
+                        {diarizationInstallLog.length === 0 ? (
+                          <div>等待输出…</div>
+                        ) : (
+                          diarizationInstallLog.map((l, i) => (
+                            <div key={i} className={l.stream === "stderr" ? "text-lab-orange" : undefined}>
+                              {l.line}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Uninstall documentation (decision F, VETO ITEM 2):
+                   no in-place uninstall button — run_uv's validator has
+                   no pip-uninstall shape, and reprovision() already
+                   recreates the venv cleanly without pyannote. */}
+                <div className="text-xs leading-[1.7] text-mut2">
+                  移除扩展：重新运行安装向导（会重建本地环境）
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="text-xs text-mut">HF Token</label>
@@ -1751,6 +1908,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 onChange={(checked) => patch({ realtimeDiarize: checked })}
               />
             </label>
+
+            {/* v0.4 S5 chunk 3 (blueprint chunk 3, minor-taste call): an
+               INLINE warning, not a hard gate — realtimeDiarizeAvailable
+               above is untouched by diarizationInstalled, so the toggle
+               itself stays exactly as governed by the HF Token check it
+               already had. */}
+            {IS_DESKTOP && draft.sidecarMode === "managed" && diarizationInstalled === false && (
+              <div className="text-xs leading-[1.7] text-mut2">需先安装说话人分离扩展</div>
+            )}
           </section>
           )}
 

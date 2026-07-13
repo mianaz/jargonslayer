@@ -1,0 +1,61 @@
+# Desktop sidecar OPTIONAL diarization add-on (v0.4 S5 chunk 0) — pulls
+# in pyannote.audio + the torch family it needs on TOP of the already-
+# provisioned base venv (sidecar/requirements-sidecar.txt). Bundled as a
+# SECOND Tauri resource (tauri.conf.json's bundle.resources) and
+# installed via the SAME existing `uv pip install --python <venv> -r
+# <requirements>` shape uv.rs's validate_uv_args already allows (the
+# requirements operand may resolve under app_data OR resource_dir) —
+# zero Rust change. See docs/design-explorations/s5-diarization-addon-
+# blueprint.md's Anchors section + decision B. Opt-in, default OFF: this
+# file is never installed unless the user explicitly triggers Settings'
+# 说话人分离 「安装扩展」 affordance (S5 chunk 3) — it is NOT part of
+# first-run provisioning.
+#
+# Exact pins (not ranges) for the 5 top-level packages this add-on
+# actually needs pinned for reproducibility: pyannote.audio itself, plus
+# the torch family it declares (its own METADATA: huggingface-hub>=0.28.1,
+# lightning>=2.4, torch>=2.8.0, torchaudio>=2.8.0, torchcodec>=0.7.0).
+# Everything else pyannote.audio pulls in transitively (pyannote-core/
+# -database/-metrics/-pipeline, scipy, pandas, scikit-learn, matplotlib,
+# opentelemetry-*, ...) is deliberately left to float — same posture as
+# requirements-sidecar.txt leaving faster-whisper's own transitive deps
+# (ctranslate2, av, tokenizers, ...) unpinned.
+#
+# Verified 2026-07-12 (blueprint Risk register #1 — the load-bearing
+# manual check this chunk owns): using the pinned uv 0.11.28 binary
+# (apps/desktop/src-tauri/binaries/uv-aarch64-apple-darwin), built a
+# scratch venv with `uv venv --python 3.12` + `uv pip install -r
+# sidecar/requirements-sidecar.txt`, THEN `uv pip install -r` THIS file
+# on top of that SAME venv. Resolves cleanly — 90 packages total, 72 new
+# installs, no conflicts — and leaves the base pins numpy==2.5.1 /
+# faster-whisper==1.2.1 / huggingface-hub==1.23.0 completely UNMOVED
+# (huggingface-hub's installed 1.23.0 already satisfies pyannote.audio's
+# >=0.28.1 floor). `from pyannote.audio import Pipeline` and
+# `import faster_whisper` both import successfully afterward, on
+# aarch64-apple-darwin / Python 3.12.12. Kill criterion (not hit): if a
+# future bump can't resolve without moving a base pin, install into a
+# SEPARATE diar venv instead of loosening requirements-sidecar.txt.
+#
+# Observed sizes THIS machine, THIS run (arm64-darwin, CPU/MPS, Python
+# 3.12.12) — expected ~1.0-1.2GB installed on arm64-darwin CPU/MPS per
+# the blueprint's own measurement (py3.13, same pyannote.audio 4.0.7):
+# this run's venv site-packages grew 177MB -> 1013MB (+~836MB installed)
+# adding these 72 packages on top of the base's 25; a fresh
+# (started-empty) uv cache dir grew to ~877MB fetching them, dominated
+# by torch (106.1MiB wheel), scipy (19.5MiB), grpcio (11.4MiB), pandas
+# (9.4MiB), matplotlib (8.8MiB), scikit-learn (7.9MiB), sympy (6.0MiB),
+# pillow (4.6MiB), torchcodec (4.4MiB) — torch is the bulk, matching the
+# blueprint's size-honesty section. Re-verify this header (pins + sizes)
+# before bumping any of the 5 pins below.
+#
+# IRON RULE: this file MUST NOT move the base pins — numpy==2.5.1 /
+# faster-whisper==1.2.1 / huggingface-hub==1.23.0 (sidecar/requirements-
+# sidecar.txt) stay exactly as they are. If a future pyannote.audio/
+# torch bump can't resolve without moving one of those, STOP (the kill
+# criterion above) — do not loosen requirements-sidecar.txt's pins to
+# make this file's resolution easier.
+pyannote.audio==4.0.7
+torch==2.13.0
+torchaudio==2.11.0
+torchcodec==0.14.0
+lightning==2.6.5
