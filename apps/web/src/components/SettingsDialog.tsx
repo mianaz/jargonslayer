@@ -1507,7 +1507,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                        write of a stale value. installedModel is null
                        both while still loading and if the marker
                        genuinely can't be read — em-dash either way (see
-                       that state's own doc comment above). */}
+                       that state's own doc comment above).
+
+                       S4 review pair Finding 1c: 更换模型/下载并切换 and
+                       重新运行安装向导 below now disable EACH OTHER too
+                       (not just themselves) — bootstrap.ts's own shared
+                       sidecar-lifecycle latch (Finding 1a) already
+                       rejects an overlapping call either way, but UI
+                       mutual exclusion means the user never has to hit
+                       that rejection at all; both also gate on
+                       meetingActive (Finding 2), since a switch/reset
+                       mid-meeting kills the very sidecar transcription
+                       depends on. */}
                     <div className="flex items-center justify-between gap-3 border-t border-edge pt-3">
                       <div className="text-sm text-fg">
                         当前模型：
@@ -1516,7 +1527,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <button
                         type="button"
                         onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : handleOpenModelPicker())}
-                        disabled={meetingActive || switchingModel}
+                        disabled={meetingActive || switchingModel || reprovisioningDesktop}
                         title={meetingActive ? "会议进行中，结束后可切换模型" : undefined}
                         className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                       >
@@ -1537,7 +1548,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           <button
                             type="button"
                             onClick={() => void handleSwitchModel()}
-                            disabled={switchingModel || pickedModel === installedModel}
+                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive}
                             className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {switchingModel ? "处理中…" : "下载并切换"}
@@ -1557,7 +1568,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <button
                       type="button"
                       onClick={() => void handleReprovisionDesktop()}
-                      disabled={reprovisioningDesktop}
+                      disabled={reprovisioningDesktop || switchingModel || meetingActive}
+                      title={meetingActive ? "会议进行中，结束后可重新运行安装向导" : undefined}
                       className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {reprovisioningDesktop ? "处理中…" : "重新运行安装向导"}

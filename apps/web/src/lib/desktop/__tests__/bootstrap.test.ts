@@ -952,7 +952,7 @@ describe("bootstrapDesktop — external sidecar mode (Finding 2)", () => {
 });
 
 describe("bootstrapDesktop — drive-loop re-entrancy guards (Finding 3)", () => {
-  it("reprovision() is single-flighted: two interleaved calls run stop_server/write_provision_marker exactly once each, and both callers observe the same outcome", async () => {
+  it("reprovision() single-flights via the shared sidecar-lifecycle latch: two interleaved calls run stop_server/write_provision_marker exactly once, and the SECOND caller REJECTS instead of joining (S4 review pair Finding 1a)", async () => {
     let stopServerCalls = 0;
     let writeMarkerCalls = 0;
     let probeCalls = 0;
@@ -981,14 +981,41 @@ describe("bootstrapDesktop — drive-loop re-entrancy guards (Finding 3)", () =>
     await waitForStable(handle); // -> HEALTHY (adopted)
 
     const p1 = handle.reprovision();
-    const p2 = handle.reprovision(); // interleaved — must join p1, not double-run
-    await Promise.all([p1, p2]);
+    const p2 = handle.reprovision(); // interleaved — rejects rather than joining p1
+    await expect(p2).rejects.toThrow("另一项本地服务操作正在进行");
+    await p1;
 
     expect(stopServerCalls).toBe(1);
     expect(writeMarkerCalls).toBe(1);
 
     const gated = await waitForStable(handle);
     expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+  });
+
+  it("switchModel() rejects while reprovision() is in flight — the shared sidecar-lifecycle latch, not just a coincidental type match (S4 review pair Finding 1a)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => undefined,
+        write_provision_marker: () => undefined,
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }), // adopt -> HEALTHY, so switchModel()'s own phase-gate passes
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    const reprovisionPromise = handle.reprovision();
+    await expect(handle.switchModel("medium")).rejects.toThrow("另一项本地服务操作正在进行");
+    expect(fetchMock).not.toHaveBeenCalled(); // never even reached postDownloadModel
+
+    await reprovisionPromise; // cleanup — let the winning call settle
+    vi.unstubAllGlobals();
   });
 
   it("a superseded drive applies no further transitions once a newer reprovision() takes over its generation", async () => {
@@ -1270,7 +1297,7 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     vi.unstubAllGlobals();
   });
 
-  it("happy path: download poll -> stop -> start -> health -> marker+settings written, ordering asserted", async () => {
+  it("happy path: download poll -> marker+settings written -> stop -> start -> health, ordering asserted (S4 review pair Finding 3 reorder)", async () => {
     const order: string[] = [];
     let jobPolls = 0;
     const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
@@ -1336,11 +1363,11 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
       "fetch:download-model",
       "fetch:jobs(1)",
       "fetch:jobs(2)",
+      "invoke:write_provision_marker",
+      "persistDesktopModel",
       "invoke:stop_server",
       "invoke:start_server",
       "probe",
-      "invoke:write_provision_marker",
-      "persistDesktopModel",
     ]);
     expect(persisted).toEqual(["medium"]);
     // py/deps reused verbatim from the marker already on disk — only
@@ -1427,7 +1454,7 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     expect(handle.currentSwitchModelProgress()).toBeNull(); // reset even on this failure path
   });
 
-  it("post-stop health-failure path: the new server never comes back healthy -> lands on STEP/POLLING_HEALTH/ERROR (the wizard's existing escape hatch)", async () => {
+  it("post-stop health-failure path: the new server never comes back healthy -> lands on STEP/POLLING_HEALTH/ERROR (the wizard's existing escape hatch); the marker already says the NEW model despite the failure (S4 review pair Finding 3)", async () => {
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input);
       if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-2" }, 202);
@@ -1437,11 +1464,21 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     vi.stubGlobal("fetch", fetchMock);
 
     let probeCalls = 0;
+    let writeMarkerCalls = 0;
+    // Stateful — a subsequent read_provision_marker (installedModel())
+    // must reflect what write_provision_marker just wrote, or the
+    // assertion below would trivially read back the pre-switch marker.
+    let markerJson: string | null = existingMarkerJson;
     const invoke = makeFakeInvoke({
       app_paths: () => paths,
-      read_provision_marker: () => existingMarkerJson,
+      read_provision_marker: () => markerJson,
       stop_server: () => undefined,
       start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: (args) => {
+        writeMarkerCalls += 1;
+        markerJson = args?.json as string;
+        return undefined;
+      },
     });
     const deps = healthyDeps({
       invoke,
@@ -1467,9 +1504,17 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
       error: expectedMessage,
       retriable: true,
     });
+    // The marker+settings write (S4 review pair Finding 3) happens right
+    // after the download succeeds, BEFORE stop_server — so it already
+    // ran, once, before this health failure even started. 当前模型 (via
+    // installedModel(), the marker) already reads "large-v3" even though
+    // health never came up — self-describing, not a silent revert to
+    // whatever was running pre-switch.
+    expect(writeMarkerCalls).toBe(1);
+    await expect(handle.installedModel()).resolves.toBe("large-v3");
   });
 
-  it("post-stop start_server-invoke failure (fails before any health poll) -> lands on STEP/STARTING/ERROR", async () => {
+  it("post-stop start_server-invoke failure (fails before any health poll) -> lands on STEP/STARTING/ERROR; a RETRY starts the NEW model — the marker already said so before the retry even ran (S4 review pair Finding 3)", async () => {
     const fetchMock = vi.fn(async (input: unknown) => {
       const url = String(input);
       if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-3" }, 202);
@@ -1478,12 +1523,25 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     });
     vi.stubGlobal("fetch", fetchMock);
 
+    let startServerCalls = 0;
+    let writeMarkerCalls = 0;
+    const startServerModels: string[] = [];
+    // Stateful — see the previous test's own comment on why.
+    let markerJson: string | null = existingMarkerJson;
     const invoke = makeFakeInvoke({
       app_paths: () => paths,
-      read_provision_marker: () => existingMarkerJson,
+      read_provision_marker: () => markerJson,
       stop_server: () => undefined,
-      start_server: () => {
-        throw new Error("spawn failed");
+      start_server: (args) => {
+        startServerCalls += 1;
+        startServerModels.push(args?.model as string);
+        if (startServerCalls === 1) throw new Error("spawn failed"); // the switch's own attempt
+        return { alreadyRunning: false }; // the retry
+      },
+      write_provision_marker: (args) => {
+        writeMarkerCalls += 1;
+        markerJson = args?.json as string;
+        return undefined;
       },
     });
     const deps = healthyDeps({ invoke });
@@ -1499,6 +1557,26 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
       error: "spawn failed",
       retriable: true,
     });
+    // Already committed to "large-v3" — written right after the download
+    // succeeded, before stop_server/start_server ever ran (Finding 3).
+    expect(writeMarkerCalls).toBe(1);
+    await expect(handle.installedModel()).resolves.toBe("large-v3");
+
+    // "add: post-stop start failure then RETRY → starts B and marker
+    // already says B" — 重试 goes through provisionMachine.ts's own
+    // handleRetry (STARTING's leading stopServer + re-enter STARTING
+    // with ctx.model, already reseeded to "large-v3" by the switch
+    // itself), NOT performSwitchModel — so it starts the model ctx
+    // already carries and, matching handleStepOk's own contract (only
+    // DOWNLOAD_MODEL's STEP_OK writes a marker), never touches the
+    // marker again — it doesn't need to, the marker already said so.
+    const healthyAgain = waitForNextState(handle, (s) => s.phase === "HEALTHY");
+    handle.retryStep();
+    await healthyAgain;
+
+    expect(startServerModels).toEqual(["large-v3", "large-v3"]);
+    expect(writeMarkerCalls).toBe(1); // unchanged by the retry
+    await expect(handle.installedModel()).resolves.toBe("large-v3");
   });
 
   it("rejects (never silently no-ops) when the current phase isn't HEALTHY, without calling fetch at all", async () => {
@@ -1537,7 +1615,7 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     resolveRunUv!(); // cleanup — avoid a dangling promise
   });
 
-  it("single-flighted: two interleaved calls download/restart exactly once, and both callers observe the same outcome", async () => {
+  it("single-flights via the shared sidecar-lifecycle latch: two interleaved calls download/restart exactly once, and the SECOND caller REJECTS instead of joining (S4 review pair Finding 1a)", async () => {
     let downloadModelPosts = 0;
     let stopServerCalls = 0;
     const fetchMock = vi.fn(async (input: unknown) => {
@@ -1566,11 +1644,160 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     await waitForStable(handle);
 
     const p1 = handle.switchModel("medium");
-    const p2 = handle.switchModel("medium"); // interleaved — must join p1, not double-run
-    await Promise.all([p1, p2]);
+    const p2 = handle.switchModel("medium"); // interleaved — rejects rather than joining p1
+    await expect(p2).rejects.toThrow("另一项本地服务操作正在进行");
+    await p1;
 
     expect(downloadModelPosts).toBe(1);
     expect(stopServerCalls).toBe(1);
+  });
+
+  it("reprovision() rejects while switchModel() is in flight — the shared sidecar-lifecycle latch works both directions (S4 review pair Finding 1a)", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-cross" }, 202);
+      if (url.includes("/jobs/job-cross")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    let writeMarkerCalls = 0;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: () => {
+        writeMarkerCalls += 1;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    const switchPromise = handle.switchModel("medium");
+    await expect(handle.reprovision()).rejects.toThrow("另一项本地服务操作正在进行");
+    await switchPromise; // the switch itself completes untouched — no marker cleared, no WIZARD_CONSENT_REQUIRED parking mid-switch
+
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    // "重新运行安装向导" never got far enough to clear the marker (its own
+    // write_provision_marker call uses `json: "null"`) — the ONE
+    // write_provision_marker call observed is switchModel's own
+    // marker-write of the real "medium" marker.
+    expect(writeMarkerCalls).toBe(1);
+    expect(stopServerCalls).toBe(1); // switchModel's own stop, not a second one from reprovision()
+  });
+
+  it("meeting-active recheck right before stop_server cancels the switch, leaves state HEALTHY, and never touches the marker/settings/server — the download stays cached for a later attempt (S4 review pair Finding 2)", async () => {
+    let jobPolls = 0;
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-meeting" }, 202);
+      if (url.includes("/jobs/job-meeting")) {
+        jobPolls += 1;
+        return jsonResponse({ status: "done", progress: 1, error: null });
+      }
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    let writeMarkerCalls = 0;
+    let persistCalls = 0;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: () => {
+        writeMarkerCalls += 1;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({
+      invoke,
+      isMeetingActive: () => true,
+      persistDesktopModel: async () => {
+        persistCalls += 1;
+      },
+    });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    await expect(handle.switchModel("medium")).rejects.toThrow(
+      "会议进行中，已取消切换（模型已下载，可稍后一键切换）",
+    );
+
+    expect(jobPolls).toBe(1); // the download DID complete — it's cached sidecar-side
+    expect(stopServerCalls).toBe(0);
+    expect(writeMarkerCalls).toBe(0); // marker must NOT move to "medium" for a switch that never happened
+    expect(persistCalls).toBe(0);
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    await expect(handle.installedModel()).resolves.toBe("small"); // still the pre-switch marker
+  });
+
+  it("crash-window divergence (marker written, settings persist fails/never runs): installedModel() — the marker — is self-describing, independent of whisperModel (S4 review pair Finding 3)", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-divergence" }, 202);
+      if (url.includes("/jobs/job-divergence")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    // Stateful (unlike this file's other fakes, which mostly just COUNT
+    // write_provision_marker calls): a subsequent read_provision_marker
+    // must reflect what was just written, or the installedModel() check
+    // below would trivially read back the pre-switch marker regardless
+    // of what this test is actually exercising.
+    let markerJson: string | null = existingMarkerJson;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => markerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+      write_provision_marker: (args) => {
+        markerJson = args?.json as string;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({
+      invoke,
+      // Simulates the crash window between the marker write succeeding
+      // and settings.whisperModel actually persisting — e.g. the app
+      // quits right here. current.state is untouched (still HEALTHY,
+      // since stop_server below never even runs), so this rejection is
+      // the ONLY signal; the marker is already durable regardless.
+      persistDesktopModel: async () => {
+        throw new Error("simulated crash before settings persisted");
+      },
+    });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    await expect(handle.switchModel("medium")).rejects.toThrow("simulated crash before settings persisted");
+
+    expect(stopServerCalls).toBe(0); // never reached — the marker write already committed to "medium" first
+    // Settings never wrote "medium" (persistDesktopModel threw) — a
+    // caller reading settings.whisperModel here would see the STALE
+    // "small". SettingsDialog's own 当前模型 line deliberately does NOT
+    // read settings.whisperModel for exactly this reason (see
+    // installedModel()'s own doc comment: "TRUTHFUL... rather than
+    // settings.whisperModel, which is only the user's TARGET/preference
+    // ... and can briefly diverge from what's actually running") — it
+    // reads the marker, which already says "medium".
+    await expect(handle.installedModel()).resolves.toBe("medium");
   });
 
   it("allowlist rejection: an unknown model is rejected before any fetch/invoke call", async () => {
