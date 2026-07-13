@@ -1,0 +1,131 @@
+/* Minimal terminal-flavored styling for the mic first-grant page (S7
+   blueprint §2 Decision A / chunk 3) — deliberately its OWN small
+   stylesheet rather than a <link> to ../sidepanel/panel.css: that
+   file belongs to a different S7 chunk (Chunk 6) and this page must
+   stay fully self-contained, with no cross-chunk file coupling.
+   Tokens/classes below mirror panel.css's own conventions on purpose
+   (same hex values, same .js-* naming) so the two surfaces read as
+   the same product — exactly the way panel.css itself mirrors
+   apps/web's theme without importing it (see that file's header
+   comment for the identical precedent). This page only needs a small
+   subset of the full token set (no card/category colors, no --panel3)
+   since it has no cards and no tabbed sections. */
+
+:root {
+  --ink: #0a0a0a;
+  --panel: #121212;
+  --panel2: #1a1a1a;
+  --edge: #262626;
+  --edge2: #333333;
+  --fg: #ededed;
+  --mut: #9a9a9a;
+  --mut2: #8c8c8c;
+  --lab-green: #4ade80;
+  --lab-red: #ff5f56;
+
+  --mono: "SF Mono", "Menlo", "Consolas", monospace;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0 !important; /* sharp edges everywhere, no rounded classes */
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--ink);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 32px;
+  max-width: 440px;
+  margin: 0 auto;
+  min-height: 100vh;
+  justify-content: center;
+}
+
+.js-header {
+  border-bottom: 1px solid var(--edge);
+  padding-bottom: 10px;
+}
+
+.js-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.js-sub {
+  margin: 4px 0 0;
+  color: var(--mut);
+  font-size: 12px;
+}
+
+.js-body {
+  margin: 0;
+  font-size: 13px;
+  color: var(--fg);
+}
+
+.js-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.js-btn {
+  background: var(--panel2);
+  border: 1px solid var(--edge2);
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.js-btn:hover:not(:disabled) {
+  background: var(--panel);
+  border-color: var(--mut);
+}
+
+.js-btn:disabled {
+  color: var(--mut2);
+  cursor: default;
+}
+
+.js-btn-primary {
+  border-color: var(--lab-green);
+  color: var(--lab-green);
+}
+
+.js-btn-primary:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.js-result {
+  margin: 0;
+  border-left: 2px solid var(--edge);
+  background: var(--panel);
+  padding: 8px 10px;
+  font-size: 12.5px;
+}
+
+.js-result--success {
+  border-left-color: var(--lab-green);
+  color: var(--lab-green);
+}
+
+.js-result--denied {
+  border-left-color: var(--lab-red);
+  color: var(--lab-red);
+}

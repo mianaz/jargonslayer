@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="color-scheme" content="dark" />
+    <title>JargonSlayer · 麦克风授权</title>
+    <link rel="stylesheet" href="./permission.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="js-header">
+        <h1 class="js-title">需要麦克风权限</h1>
+        <p class="js-sub">JargonSlayer Lite</p>
+      </header>
+
+      <p class="js-body">点"允许"把麦克风权限授予 JargonSlayer。授权后可以关掉这个页面，回到侧边栏。</p>
+
+      <div class="js-row">
+        <button id="js-grant-btn" type="button" class="js-btn js-btn-primary">申请麦克风权限</button>
+      </div>
+
+      <p id="js-result" class="js-result" hidden></p>
+    </div>
+    <script type="module" src="./permission.ts"></script>
+  </body>
+</html>
