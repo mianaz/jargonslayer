@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="public/icon-ui-dark.png" />
-  <img src="public/icon-ui-light.png" width="150" alt="JargonSlayer icon" />
+  <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/icon-ui-dark.png" />
+  <img src="apps/web/public/icon-ui-light.png" width="150" alt="JargonSlayer icon" />
 </picture>
 
 # JargonSlayer
@@ -13,7 +13,7 @@
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-1053%20passing-4ADE80?style=flat-square&labelColor=121212)](src/lib/__tests__)
+[![Tests](https://img.shields.io/badge/tests-1664%20passing-4ADE80?style=flat-square&labelColor=121212)](apps/web/src/lib/__tests__)
 [![Data paths](https://img.shields.io/badge/data-transparent%20paths-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
 
 **English** · [简体中文](README.zh-CN.md) · [**Try It Live**](https://apps.bioinfospace.com/jargonslayer) · [Website](https://mianaz.github.io/jargonslayer/)
@@ -39,7 +39,7 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
 
 ## Features
 
-- **Real-time transcription** — browser speech recognition (cloud), local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled **local / cloud** so the data path is visible at a glance; a zero-dependency demo shows the whole flow without a microphone or key. Browser recognition is supervised by a voice-activity detector: session rotations land in real pauses, recovery never discards buffered speech, and a persistent language mismatch gets a one-time hint instead of silent text loss.
+- **Real-time transcription** — browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). On Chrome 139+ the browser engine prefers **on-device recognition** — audio stays local and the status line flips to the green 音频未离开本机 chip — falling back to the vendor cloud only when no on-device pack is available. An experimental **Soniox** realtime engine (BYOK) joins the lineup, aimed at live 中英夹杂 zh-en. Every engine is labeled **local / cloud** so the data path is visible at a glance; a zero-dependency demo shows the whole flow without a microphone or key. Browser recognition is supervised by a voice-activity detector: session rotations land in real pauses, recovery never discards buffered speech, and a persistent language mismatch gets a one-time hint instead of silent text loss.
 - **Real-time expression detection** — an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether *table this* means shelving a topic or furniture); proper nouns get separate term cards. A built-in dictionary (430+ entries, 11 topic packs from business to academia to pharma/biotech, community packs installable from GitHub) is the always-on instant layer — hits render immediately and the AI upgrades them in place; with AI off it works fully offline. Explanations can be Chinese or English.
 - **Bilingual live transcript** (optional) — turn it on in Settings and every finalized segment gets a Chinese translation line under the English text as the meeting happens, not just in the post-meeting report.
 - **Card experience** — expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup and one-click save to your glossary.
@@ -146,7 +146,7 @@ Gray interim text while someone is speaking (the typing effect) is now app-contr
 
 Rule of thumb: Apple Silicon doing a live meeting → `medium`. Have an NVIDIA GPU → `large-v3` live is fine too. Old or no-GPU laptop → `small`. None of these switch languages mid-sentence flawlessly — Whisper picks one language per ~30-second window; the jargon detection and Chinese gloss layer on top is what actually carries the bilingual experience, not the transcription itself.
 
-**Picking an engine**: mic only → 本地 Whisper. Need the other side of an online meeting, or any browser tab/stream → 标签页音频 (same sidecar, still fully local). Don't want to install anything → 浏览器识别, the zero-setup fallback — but plainly: that sends your audio to Chrome's speech service (Google).
+**Picking an engine**: mic only → 本地 Whisper. Need the other side of an online meeting, or any browser tab/stream → 标签页音频 (same sidecar, still fully local). Don't want to install anything → 浏览器识别, the zero-setup fallback — on Chrome 139+ it prefers on-device recognition (audio stays local); without an on-device language pack, plainly: your audio goes to Chrome's speech service (Google). The status line always says which path is active.
 
 ### Troubleshooting
 
@@ -159,18 +159,20 @@ Rule of thumb: Apple Silicon doing a live meeting → `medium`. Have an NVIDIA G
 
 ### Desktop build (in development)
 
-A native desktop shell (Tauri) wraps this same app with a self-managed local Whisper sidecar — no `pip`/terminal commands for Step 2 above. Still under active development (v0.4 S3) — this is the developer path, not a signed installer yet.
+A native desktop shell (Tauri) wraps this same app with a self-managed local Whisper sidecar — no `pip`/terminal commands for Step 2 above. Still under active development (v0.4 S3–S5) — this is the developer path, not a signed installer yet.
 
 ```bash
 npm ci
 npm run dev:desktop
 ```
 
-On first launch a full-screen wizard asks for consent (nothing downloads until you click 「开始安装」), then installs an isolated Python runtime + faster-whisper + a small Whisper model entirely under the app's own data directory — never touches your system Python, and deleting that directory is a clean uninstall:
+On first launch a full-screen wizard asks for consent (nothing downloads until you click 「开始安装」), then installs an isolated Python runtime + faster-whisper + the Whisper model you pick in the wizard (four sizes, `medium` pre-selected) entirely under the app's own data directory — never touches your system Python, and deleting that directory is a clean uninstall:
 
 - macOS: `~/Library/Application Support/com.bioinfospace.jargonslayer/` (Python/venv, model cache, provision marker) and `~/Library/Logs/com.bioinfospace.jargonslayer/whisper_server.log`
 
 Settings → transcription engine gets a 托管模式 (sidecar mode) toggle on this build: **managed** (default — the app installs/starts/auto-restarts the sidecar itself; Whisper 地址 is fixed) or **external** — point it at a sidecar you started yourself with Step 2 above instead, exactly like the regular web build.
+
+Two more Settings affordances exist only on this build (managed mode): **更换模型** downloads a different Whisper model *beside* the live server and switches only once the download lands — starting a meeting mid-download cancels the switch, nothing gets torn down under you; and **说话人分离** installs the diarization add-on in one click (the pinned pyannote + torch set, ~1 GB — the HuggingFace token and license-acceptance steps in [Speaker diarization](#speaker-diarization-optional) still apply).
 
 ## Configure an API key (unlocks AI detection and reports)
 
@@ -191,9 +193,10 @@ Get a key at [console.anthropic.com](https://console.anthropic.com/). Defaults: 
 
 | | Setup cost | Audio destination | Best for |
 |---|---|---|---|
-| Browser recognition | None | Browser vendor's speech service (**cloud**) | Everyday non-sensitive meetings (Chrome/Edge) |
+| Browser recognition | None | On-device when available (Chrome 139+), else browser vendor's speech service (**cloud**) — the status line always says which | Everyday meetings (Chrome/Edge), zero setup |
 | Local Whisper | One-time Python setup | **Never leaves the machine** | Sensitive content, offline, steadier accuracy |
 | Tab audio | Same sidecar as above | **Never leaves the machine** | Hearing the *other side* of an online meeting, no virtual sound card |
+| Soniox (experimental) | Soniox API key (BYOK) | Soniox realtime API (**cloud**, direct WSS under your key) | Live 中英夹杂 zh-en; stays 实验 until it clears the in-house benchmark |
 
 「演示」 (Demo) is not an engine — it's a menu entry that replays a scripted meeting so you can see everything with zero setup.
 
@@ -223,7 +226,7 @@ Your microphone only hears **you**. In Zoom/Teams/Meet the other side comes out 
 
 Both paths are built into the UI. One-time shared setup:
 
-1. `pip install pyannote.audio` inside the sidecar's `.venv`;
+1. `pip install -r requirements-diar.txt` inside the sidecar's `.venv` (the pinned, install-tested set — on the desktop build skip this step entirely: Settings → 说话人分离 installs it in one click);
 2. Free HuggingFace account → accept the terms of **all three** models: [segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0), [speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1), [speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) (new dependency in pyannote 4.x — skipping it causes a 403);
 3. Create a Read-scoped token and paste it into Settings → 说话人分离 (or pass `--hf-token` when starting the sidecar).
 
@@ -263,7 +266,7 @@ The same product ships in tiers that differ in **form factor, not payment** — 
 | Capability | Chrome extension (Lite, planned) | Preview ([hosted](https://apps.bioinfospace.com/jargonslayer)) | Local / Desktop |
 |---|---|---|---|
 | Dictionary detection (instant, offline) | ✓ | ✓ | ✓ |
-| Transcription | Web Speech | Web Speech | Web Speech · local Whisper · tab audio |
+| Transcription | Web Speech | Web Speech | Web Speech (on-device when available) · local Whisper · tab audio · Soniox (BYOK, experimental) |
 | AI detection / translation / summary | — | ✓ built-in demo key (rate-limited, fixed model list) | ✓ your own key (BYOK) |
 | Import text / audio / video (in-browser) | — | ✓ | ✓ |
 | Import from URL (yt-dlp) | — | shown, needs local sidecar | ✓ |
@@ -279,7 +282,8 @@ In the preview, features that need the local sidecar or your own credentials are
 | Data | Destination |
 |---|---|
 | Audio (local Whisper / tab audio) | Local only, websocket on 127.0.0.1 |
-| Audio (browser recognition / Web Speech) | Browser vendor's speech service (e.g. Google) — in **every** tier that uses Web Speech, including the extension |
+| Audio (browser recognition / Web Speech) | On Chrome 139+ with an on-device language pack: **local only** (preferred automatically, green status chip). Otherwise: browser vendor's speech service (e.g. Google) — in **every** tier that uses Web Speech, including the extension |
+| Audio (Soniox engine, BYOK) | Directly to Soniox's realtime API over WSS under **your own** key — Soniox's privacy terms apply; the key itself never appears in logs, diagnostics, or exports |
 | Audio/video file imports | Local only — transcribed in-browser (Whisper via WebGPU/WASM, ffmpeg.wasm), never uploaded |
 | Transcript text (preview tier, AI on) | Transits our server **in memory only** (never stored) → forwarded to OpenRouter **with `provider.data_collection="allow"`** (required for the demo key's model routing — treat preview text as shareable with model providers) |
 | Transcript text (local tier, BYOK AI on) | Directly to the endpoint **you** configure; the `data_collection` flag is **not** set — your provider's own privacy terms apply |
@@ -309,7 +313,7 @@ It is also interactive. Try clicking it. Try clicking it three times fast. Try h
 
 ## Architecture
 
-Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB; LLM calls go through server-side route proxies (Anthropic Messages API or OpenAI-compatible, structured output with repair-retry); local transcription is a faster-whisper sidecar over websocket with energy-based VAD; diarization via pyannote 4.x.
+Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB, organized as npm workspaces (`apps/web` + `packages/core`, pure-TS shared core); LLM calls go through server-side route proxies (Anthropic Messages API or OpenAI-compatible, structured output with repair-retry); local transcription is a faster-whisper sidecar over websocket with energy-based VAD; diarization via pyannote 4.x. The desktop build (`apps/desktop`) wraps the same app in a Tauri v2 shell whose Rust core provisions an isolated Python runtime through a pinned, checksum-verified `uv` — exact-shape argument validation, no shell access from the webview.
 
 ## License
 
