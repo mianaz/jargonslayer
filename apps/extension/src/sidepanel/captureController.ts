@@ -28,6 +28,7 @@ import {
 
 import { createAccumulator, type AccumulatorSnapshot } from "../detect/accumulator";
 import { WebSpeechEngine } from "../capture/webSpeech";
+import { diagLog } from "../lib/diag";
 import {
   decideMicPermissionAction,
   queryMicPermission,
@@ -101,6 +102,10 @@ export interface CaptureControllerOptions {
 const MIC_DENIED_DETAIL_MARKER = "麦克风权限被拒绝";
 export const UNSUPPORTED_NOTICE =
   "这个浏览器用不了语音识别，请用桌面版 Chrome。也可以直接粘贴文本来检测。";
+// F2: surfaced via onNotice when saveSession rejects in teardownAndSave —
+// the session itself is lost (never retried), so this is a user-visible
+// failure notice, not the VAD supervisor's advisory onNotice channel.
+export const SAVE_FAILED_NOTICE = "历史保存失败，本次会话未能写入本地存储";
 
 // lib.dom.d.ts does not declare SpeechRecognition (same reason
 // capture/webSpeech.ts shims its own SpeechRecognitionCtor) — this
@@ -141,6 +146,14 @@ export class CaptureController {
   private accumulator = createAccumulator();
   private sessionStartedAt = 0;
 
+  // F3: bumped by stop() and the terminal-error teardown (handleStatus)
+  // ONLY — never by start()'s own early-return branches. start()
+  // captures the value current at its own entry and re-checks it after
+  // every await; a mismatch means a stop()/error raced it to completion
+  // while it was suspended, so it must discard whatever it was doing
+  // instead of resurrecting a session nobody asked for anymore.
+  private generation = 0;
+
   constructor(options: CaptureControllerOptions) {
     this.callbacks = options.callbacks;
     this.createEngine = options.createEngine ?? (() => new WebSpeechEngine());
@@ -156,6 +169,9 @@ export class CaptureController {
   async start(): Promise<void> {
     if (this.isActive) return;
     this.isActive = true;
+    // F3: captured BEFORE the first await — the one value this whole
+    // call checks itself against every time it resumes.
+    const myGeneration = this.generation;
 
     if (!this.detectSupport()) {
       this.isActive = false;
@@ -164,6 +180,14 @@ export class CaptureController {
     }
 
     const permissionState = await this.queryMicPermissionFn();
+    // F3: a stop() (or terminal error) could have raced this call to
+    // completion while queryMicPermissionFn() was pending — no engine
+    // exists yet at this point, so there's nothing to discard, just
+    // bail before acting on a permission result nobody asked for
+    // anymore (this is what used to save a bogus startedAt:0 session,
+    // built from whatever stop() saw at the time).
+    if (myGeneration !== this.generation || !this.isActive) return;
+
     const action = this.decideMicPermissionActionFn(permissionState);
     if (action !== "start") {
       this.isActive = false;
@@ -192,8 +216,26 @@ export class CaptureController {
       preferOnDeviceSpeech: true,
     };
 
-    this.engine = this.createEngine();
-    await this.engine.start(events, settings);
+    const engine = this.createEngine();
+    this.engine = engine;
+    await engine.start(events, settings);
+
+    // F3: same race, checked again after the second (and last) await.
+    // An engine now exists, so a mismatch here means discarding it for
+    // real — but only if IT is still the one on `this.engine`: a
+    // terminal error can fire synchronously inside engine.start()
+    // itself (handleStatus already tears down + bumps the generation
+    // before this line ever runs), in which case this.engine is
+    // already null and stopping `engine` again would be redundant
+    // (webSpeech.stop() is idempotent, but there's no reason to rely
+    // on that twice).
+    if (myGeneration !== this.generation || !this.isActive) {
+      if (this.engine === engine) {
+        this.engine = null;
+        await engine.stop();
+      }
+      return;
+    }
   }
 
   /** No-op while not running (re-entrancy guard) — safe to call even
@@ -201,10 +243,47 @@ export class CaptureController {
   async stop(): Promise<void> {
     if (!this.isActive) return;
     this.isActive = false;
+    this.generation += 1;
 
+    // F2: teardownAndSave() never throws (a saveSession rejection is
+    // caught internally) — the try/finally is a defensive belt on top
+    // of that guarantee, not a substitute for it: onStatusChange
+    // ("stopped") and the button/UI reset it drives must fire no
+    // matter what happens above, or 停止聆听 would leave a dead button.
+    try {
+      await this.teardownAndSave(true);
+    } finally {
+      this.callbacks.onStatusChange("stopped");
+    }
+  }
+
+  /** Shared by stop() and the terminal-error path in handleStatus() —
+   *  stop the engine (if any), then build + persist the LiteSession
+   *  from whatever was captured this session. Zero-segment sessions
+   *  save only on an explicit stop() of a real session
+   *  (`saveWhenEmpty`, preserving the pre-existing time-string-title
+   *  behavior — the user deliberately ended it): the terminal-error
+   *  path passes false so a start that erred before any speech (mic
+   *  denied, network) doesn't deposit an empty junk entry in history
+   *  (F1's "if any segments were captured"), and F3's raced-start case
+   *  (no engine ever ran) never saves regardless. */
+  private async teardownAndSave(saveWhenEmpty: boolean): Promise<void> {
     const engine = this.engine;
     this.engine = null;
-    await engine?.stop();
+    if (engine) {
+      try {
+        await engine.stop();
+      } catch (err) {
+        // Engine teardown failure must neither block saving what was
+        // captured nor escape (stop() promises to never throw; the
+        // error path void's this promise entirely).
+        diagLog("warn", "capture-engine-stop-failed", "引擎停止时报错", String(err));
+      }
+    }
+
+    if (this.segments.length === 0 && (!engine || !saveWhenEmpty)) {
+      return;
+    }
 
     const firstText = this.segments[0]?.text.trim();
     const session: LiteSession = {
@@ -217,8 +296,22 @@ export class CaptureController {
       ...this.accumulator.snapshot(),
     };
 
-    await this.saveSessionFn(session);
-    this.callbacks.onStatusChange("stopped");
+    try {
+      await this.saveSessionFn(session);
+    } catch {
+      // F2: the session is lost (never retried) — surface it as a
+      // user-visible notice rather than an unhandled rejection that
+      // would otherwise wedge stop()'s caller. Lengths only, no
+      // transcript content, per diag.ts's privacy rule.
+      this.callbacks.onNotice?.(SAVE_FAILED_NOTICE);
+      diagLog(
+        "error",
+        "capture-save-failed",
+        "历史会话保存失败",
+        `segments=${session.segments.length}`,
+      );
+      return;
+    }
     this.callbacks.onSaved(session);
   }
 
@@ -240,8 +333,27 @@ export class CaptureController {
 
   private handleStatus(status: STTStatus, detail?: string): void {
     this.callbacks.onStatusChange(status, detail);
-    if (status === "error" && detail?.includes(MIC_DENIED_DETAIL_MARKER)) {
+    // F1: every "error" the engine reports here is terminal (mic
+    // denial, persistent recognition failure, network — see
+    // webSpeech.ts's handleError/handleEnd; benign cases like
+    // no-speech/aborted never reach onStatus at all) — the engine is
+    // already dead or dying, and 停止聆听 is no longer reachable for
+    // this session, so tear down + auto-save through the SAME path
+    // stop() uses rather than leaving isActive true (which would wedge
+    // every subsequent 开始聆听 as a silent no-op) and the engine's
+    // mic/VAD/AudioContext/watchdog alive underneath it.
+    if (status !== "error" || !this.isActive) return;
+
+    this.isActive = false;
+    this.generation += 1;
+    // Fired synchronously, BEFORE the async teardown below — matches
+    // the pre-existing (synchronous) timing this callback has always
+    // had, so a caller observing onGrantNeeded right after firing
+    // onStatus("error", …) still sees it without needing to await
+    // anything extra.
+    if (detail?.includes(MIC_DENIED_DETAIL_MARKER)) {
       this.callbacks.onGrantNeeded();
     }
+    void this.teardownAndSave(false);
   }
 }

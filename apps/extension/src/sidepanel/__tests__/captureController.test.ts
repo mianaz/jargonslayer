@@ -11,7 +11,7 @@ import { DEFAULT_SETTINGS, type STTEngine, type STTEvents, type Settings } from 
 
 import type { AccumulatorSnapshot } from "../../detect/accumulator";
 import type { LiteSession } from "../../storage/history";
-import { CaptureController, UNSUPPORTED_NOTICE } from "../captureController";
+import { CaptureController, SAVE_FAILED_NOTICE, UNSUPPORTED_NOTICE } from "../captureController";
 
 // ---- scripted fake engine ----------------------------------------
 
@@ -68,13 +68,16 @@ interface ControllerHarnessOptions {
   permissionState?: PermissionState | "unknown";
   detectSupport?: () => boolean;
   fakeEngine?: FakeEngineHandle;
+  /** Defaults to an always-resolving no-op — F2's save-failure tests
+   *  inject a rejecting implementation instead. */
+  saveSession?: (session: LiteSession) => Promise<void>;
 }
 
 function createHarness(opts: ControllerHarnessOptions = {}) {
   const callbacks = createCallbackSpies();
   const fakeEngine = opts.fakeEngine ?? createFakeEngine();
   const engineFactory = vi.fn(() => fakeEngine.engine);
-  const saveSessionSpy = vi.fn(async (_session: LiteSession) => {});
+  const saveSessionSpy = vi.fn(opts.saveSession ?? (async (_session: LiteSession) => {}));
   const permissionState: PermissionState | "unknown" = opts.permissionState ?? "granted";
   // Plain function, not vi.fn() — nothing here asserts on its call
   // history, and this file's OWN "granted" literal (below) has no
@@ -91,6 +94,17 @@ function createHarness(opts: ControllerHarnessOptions = {}) {
     detectSpeechRecognitionSupport: opts.detectSupport ?? (() => true),
   });
   return { controller, callbacks, fakeEngine, engineFactory, saveSessionSpy };
+}
+
+/** handleStatus's terminal-error teardown (F1) is deliberately
+ *  fire-and-forget — STTEvents.onStatus is a synchronous callback, so
+ *  the async engine.stop()/saveSession work it kicks off runs on its
+ *  own microtask chain. Tests that assert on its effects yield back to
+ *  the event loop once (a macrotask boundary, so ALL pending
+ *  microtasks — however many awaits deep — have already settled) before
+ *  asserting. */
+async function flushAsync(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe("CaptureController", () => {
@@ -275,6 +289,83 @@ describe("CaptureController", () => {
     });
   });
 
+  // F1 (blocker): pre-fix, a terminal engine error left isActive=true and
+  // the engine (mic/VAD/AudioContext/watchdog) alive forever — every
+  // subsequent start() silently no-op'd. This is the regression test:
+  // verified to fail on pre-fix code (git stash captureController.ts's
+  // fix and re-run — engineFactory's second call count stays 1, not 2).
+  describe("terminal engine error tears down + restores retry (F1)", () => {
+    const MIC_DENIED_DETAIL = "麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问";
+
+    it("stops the engine, auto-saves captured segments, and a SUBSEQUENT start() succeeds", async () => {
+      const { controller, callbacks, fakeEngine, saveSessionSpy, engineFactory } = createHarness();
+      await controller.start();
+      fakeEngine.getEvents().onFinal("Let's circle back on this.");
+
+      fakeEngine.getEvents().onStatus("error", MIC_DENIED_DETAIL);
+      await flushAsync();
+
+      expect(fakeEngine.stopCalls).toBe(1);
+      expect(saveSessionSpy).toHaveBeenCalledTimes(1);
+      expect(saveSessionSpy.mock.calls[0][0].segments).toEqual([
+        { text: "Let's circle back on this.", startedAt: expect.any(Number) },
+      ]);
+      expect(callbacks.onSaved).toHaveBeenCalledTimes(1);
+      expect(callbacks.onGrantNeeded).toHaveBeenCalledTimes(1);
+
+      const secondEngine = createFakeEngine();
+      engineFactory.mockReturnValue(secondEngine.engine);
+      await controller.start();
+
+      expect(engineFactory).toHaveBeenCalledTimes(2);
+      expect(secondEngine.startCalls).toBe(1);
+    });
+
+    it("a non mic-denial terminal error (e.g. network) also tears down without the grant affordance", async () => {
+      const { controller, callbacks, fakeEngine, engineFactory } = createHarness();
+      await controller.start();
+
+      fakeEngine
+        .getEvents()
+        .onStatus("error", "语音识别网络错误，Web Speech 需要联网，可切换到本地 Whisper 引擎");
+      await flushAsync();
+
+      expect(fakeEngine.stopCalls).toBe(1);
+      expect(callbacks.onGrantNeeded).not.toHaveBeenCalled();
+
+      const secondEngine = createFakeEngine();
+      engineFactory.mockReturnValue(secondEngine.engine);
+      await controller.start();
+
+      expect(secondEngine.startCalls).toBe(1);
+    });
+
+    // Lead adjudication on F1(c)'s "if any segments were captured":
+    // an error BEFORE any speech saves NOTHING — otherwise every failed
+    // start (mic denied, network) deposits a junk empty entry in
+    // history. Contrast with stop()'s pre-existing save-even-when-empty
+    // behavior (time-string title test below), which is user-initiated
+    // and stays.
+    it("a terminal error before any speech saves nothing, and retry still works", async () => {
+      const { controller, callbacks, fakeEngine, saveSessionSpy, engineFactory } = createHarness();
+      await controller.start();
+
+      fakeEngine.getEvents().onStatus("error", MIC_DENIED_DETAIL);
+      await flushAsync();
+
+      expect(fakeEngine.stopCalls).toBe(1);
+      expect(saveSessionSpy).not.toHaveBeenCalled();
+      expect(callbacks.onSaved).not.toHaveBeenCalled();
+      expect(callbacks.onGrantNeeded).toHaveBeenCalledTimes(1);
+
+      const secondEngine = createFakeEngine();
+      engineFactory.mockReturnValue(secondEngine.engine);
+      await controller.start();
+
+      expect(secondEngine.startCalls).toBe(1);
+    });
+  });
+
   describe("stop() builds and saves a LiteSession", () => {
     const FIXED_NOW = new Date(2026, 6, 12, 9, 0, 0).getTime();
 
@@ -338,6 +429,31 @@ describe("CaptureController", () => {
     });
   });
 
+  // F2 (high): pre-fix, stop() awaited saveSession directly — a
+  // rejection propagated straight out of stop(), skipping
+  // onStatusChange("stopped") entirely and leaving 停止聆听 a dead
+  // button. Verified to fail on pre-fix code (git stash the fix —
+  // controller.stop() rejects and onStatusChange("stopped") is never
+  // observed).
+  describe("stop() never leaves a dead button on save failure (F2)", () => {
+    it("onStatusChange('stopped') still fires, onNotice carries the zh failure string, onSaved is NOT fired, and stop() itself never rejects", async () => {
+      const { controller, callbacks, fakeEngine, saveSessionSpy } = createHarness({
+        saveSession: async () => {
+          throw new Error("simulated saveSession failure");
+        },
+      });
+      await controller.start();
+      fakeEngine.getEvents().onFinal("Let's circle back on this.");
+
+      await expect(controller.stop()).resolves.toBeUndefined();
+
+      expect(saveSessionSpy).toHaveBeenCalledTimes(1);
+      expect(callbacks.onStatusChange).toHaveBeenCalledWith("stopped");
+      expect(callbacks.onNotice).toHaveBeenCalledWith(SAVE_FAILED_NOTICE);
+      expect(callbacks.onSaved).not.toHaveBeenCalled();
+    });
+  });
+
   describe("re-entrancy", () => {
     it("start() while already listening is a no-op", async () => {
       const { controller, fakeEngine } = createHarness();
@@ -391,6 +507,48 @@ describe("CaptureController", () => {
       expect(fakeEngine.startCalls).toBe(2);
       expect(callbacks.onTranscriptChange).toHaveBeenCalledWith([], "");
       expect(callbacks.onCardsChange).toHaveBeenCalledWith({ cards: [], terms: [] });
+    });
+
+    // F3 (generation guard): pre-fix, a stop() landing while start() was
+    // still awaiting queryMicPermission() would fall through to
+    // stop()'s save logic with whatever was left on `this.segments` and
+    // the class field default `sessionStartedAt = 0` — a bogus
+    // startedAt:0 session (codex finding). Verified to fail on pre-fix
+    // code (git stash the fix — saveSessionSpy IS called here, with
+    // segments: [] and startedAt: 0).
+    it("stop() racing a pending queryMicPermission: no engine ever starts, no session saved, and a later start() works", async () => {
+      const callbacks = createCallbackSpies();
+      const fakeEngine = createFakeEngine();
+      const engineFactory = vi.fn(() => fakeEngine.engine);
+      const saveSessionSpy = vi.fn(async (_session: LiteSession) => {});
+      let resolvePermission!: (state: PermissionState | "unknown") => void;
+      const permissionPromise = new Promise<PermissionState | "unknown">((resolve) => {
+        resolvePermission = resolve;
+      });
+      const controller = new CaptureController({
+        callbacks,
+        createEngine: engineFactory,
+        saveSession: saveSessionSpy,
+        queryMicPermission: () => permissionPromise,
+        detectSpeechRecognitionSupport: () => true,
+      });
+
+      const startPromise = controller.start();
+      await controller.stop(); // races in while queryMicPermission() is still pending
+
+      resolvePermission("granted");
+      await startPromise;
+
+      expect(engineFactory).not.toHaveBeenCalled();
+      expect(saveSessionSpy).not.toHaveBeenCalled();
+      expect(callbacks.onSaved).not.toHaveBeenCalled();
+      expect(callbacks.onStatusChange).toHaveBeenCalledWith("stopped");
+
+      // a later start() must still work — the generation guard must not
+      // permanently wedge isActive/generation against each other.
+      await controller.start();
+      expect(engineFactory).toHaveBeenCalledTimes(1);
+      expect(fakeEngine.startCalls).toBe(1);
     });
   });
 });
