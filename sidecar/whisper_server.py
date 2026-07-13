@@ -1219,6 +1219,27 @@ def count_active_url_jobs(jobs: dict[str, dict[str, Any]]) -> int:
     )
 
 
+def active_download_job_id(jobs: dict[str, dict[str, Any]]) -> Optional[str]:
+    """Id of the currently queued/running kind=="download" job, if any
+    (else None) — start_download_job's single-flight gate (S4 review
+    finding, HIGH): each download job's own disk precheck
+    (check_disk_space, inside download_model_snapshot) only ever
+    accounts for THAT job's own multi-gigabyte snapshot, so N parallel
+    /download-model POSTs can each individually pass their own
+    precheck and still collectively exhaust disk. Unlike
+    count_active_url_jobs's cap — checked, then a job created, as two
+    SEPARATE steps in do_POST /ingest-url, leaving a window a racing
+    second call could slip through — this is meant to be called and
+    acted on inside the SAME critical section as the create (see
+    start_download_job), so no such window exists here. Pure (just
+    scans a dict) so it's callable under the lock the caller already
+    holds, without any extra I/O — mirrors count_active_url_jobs."""
+    for job in jobs.values():
+        if job.get("kind") == "download" and job.get("status") not in ("done", "error"):
+            return job["id"]
+    return None
+
+
 # =================================================================
 # Pure, unit-testable URL-import (#43 phase 2c) helpers — no I/O, no
 # subprocess, no network. Covered by test_ingest_url.py.
@@ -1515,24 +1536,54 @@ class JobManager:
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    def start_download_job(self, model: str) -> str:
+    def start_download_job(self, model: str) -> tuple[Optional[str], Optional[str]]:
         """Register a queued model-download job and kick off its
         background worker thread — decision B's :8766 model-switch
         path (docs/design-explorations/s4-model-wizard-blueprint.md):
         the server is already healthy/live here (unlike first-run,
         which uses --download-only instead — see run_download_only),
         so this reuses the same job/poll surface as start_job/
-        start_url_job. Returns the job id immediately (non-blocking).
-        Runs concurrently with the live server (disk-only, no port/
-        model conflict) — the caller keeps transcribing on the current
-        model until the new one finishes downloading. `model` is
-        trusted to already be MODEL_CHOICES-valid (the do_POST
-        /download-model handler validates it first, same as
+        start_url_job. Runs concurrently with the live server (disk-
+        only, no port/model conflict) — the caller keeps transcribing
+        on the current model until the new one finishes downloading.
+        `model` is trusted to already be MODEL_CHOICES-valid (the
+        do_POST /download-model handler validates it first, same as
         start_url_job trusts do_POST /ingest-url's own
-        validate_ingest_url call)."""
-        job = new_job(False, display_name=model, kind="download")
-        job_id = job["id"]
+        validate_ingest_url call).
+
+        Single-flight (S4 review finding, HIGH — see
+        active_download_job_id's own docstring for why per-job disk
+        prechecks alone don't stop several simultaneous downloads from
+        exhausting disk together): refuses to start a second download
+        job — same model OR a different one, doesn't matter — while
+        any kind=="download" job is still queued/running. A serial
+        queue (accept the request, run it once the current one
+        finishes) is over-engineered for v1; callers just retry after.
+
+        The check (active_download_job_id) and the create both happen
+        inside ONE `with self.lock:` block below, not two, so two
+        POSTs racing each other on ThreadingHTTPServer's separate
+        per-request threads (see run_http_server) can never both
+        observe "none active" before either job is actually recorded.
+        This can't lean on WhisperServer-style single-flight flags
+        (ConnectionState.diar_in_flight/partial_in_flight) — those are
+        plain bools, safe only because everything touching them runs
+        on the one asyncio event-loop thread; /download-model POSTs
+        arrive on the HTTP server's own thread pool instead, so a real
+        threading.Lock is required — `self.lock`, the same one
+        _set/get/start_job etc. already use for this dict.
+
+        Returns (job_id, active_job_id): exactly one is not None. A
+        non-None active_job_id means no new job was created/started —
+        do_POST /download-model turns that into a 409 naming it, so a
+        client could poll that job instead of retrying blind."""
         with self.lock:
+            active_id = active_download_job_id(self.jobs)
+            if active_id is not None:
+                return None, active_id
+
+            job = new_job(False, display_name=model, kind="download")
+            job_id = job["id"]
             self.jobs[job_id] = job
 
         thread = threading.Thread(
@@ -1541,7 +1592,7 @@ class JobManager:
             daemon=True,
         )
         thread.start()
-        return job_id
+        return job_id, None
 
     def _run_download_job(self, job_id: str, model: str) -> None:
         def on_progress(downloaded: int, total: int) -> None:
@@ -1903,7 +1954,18 @@ def make_job_http_handler(
                     self._send_json(HTTPStatus.BAD_REQUEST, {"error": model_error})
                     return
 
-                job_id = job_manager.start_download_job(model)
+                # Single-flight (S4 review finding, HIGH — see
+                # JobManager.start_download_job's own docstring):
+                # job_id is None iff another download job is already
+                # in flight, in which case active_job_id names it and
+                # no new job was created/started.
+                job_id, active_job_id = job_manager.start_download_job(model)
+                if job_id is None:
+                    self._send_json(
+                        HTTPStatus.CONFLICT,
+                        download_conflict_response(active_job_id),
+                    )
+                    return
                 self._send_json(HTTPStatus.ACCEPTED, {"job_id": job_id})
                 return
 
@@ -2081,6 +2143,20 @@ def validate_download_model(model: Any) -> Optional[str]:
     if not isinstance(model, str) or model not in MODEL_CHOICES:
         return f"未知模型：{model}"
     return None
+
+
+def download_conflict_response(active_job_id: str) -> dict[str, Any]:
+    """JSON body for do_POST /download-model's 409 (HTTPStatus.
+    CONFLICT) when JobManager.start_download_job refuses to start a
+    new download because one is already in flight (single-flight, S4
+    review finding — see start_download_job's own docstring) — names
+    the in-flight job so a client could poll it (GET /jobs/{id})
+    instead of retrying blind. Factored out as its own pure function,
+    mirroring this file's validate_download_model/
+    ingest_url_display_name/etc. convention, so its shape is directly
+    unit-testable without constructing a live handler — see
+    test_download.py."""
+    return {"error": "已有模型下载任务进行中，请稍后再试", "active_job_id": active_job_id}
 
 
 def check_disk_space(total_bytes: int, check_dir: str) -> None:

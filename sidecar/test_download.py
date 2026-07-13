@@ -36,19 +36,32 @@ Covers:
     a raising download, with download_model_snapshot itself stubbed
     out (module-attribute monkeypatch) so no network/model touches
     this process at all
+  - active_download_job_id / start_download_job's single-flight guard
+    (S4 review finding, HIGH: unbounded parallel POST /download-model
+    could each individually pass their own disk precheck and still
+    collectively fill disk) — a second call while one download job is
+    still queued/running is refused (returns (None, active_job_id))
+    regardless of whether it names the same or a different model; a
+    new call is accepted again once that job reaches either terminal
+    status, "done" OR "error"
   - do_POST /download-model's validation wiring uses
     validate_download_model for its 400 (HTTPStatus.BAD_REQUEST) —
     asserted at the "same pure function, same status code convention
     as /ingest-url" level, matching how test_ingest_url.py covers
     validate_ingest_url without ever spinning up a live handler (no
     test file in this suite does; do_POST/do_GET/do_PUT are exercised
-    by inspection, not a real socket)
+    by inspection, not a real socket). Its 409 (HTTPStatus.CONFLICT)
+    counterpart for the single-flight guard is covered the same way,
+    via download_conflict_response's own shape (a thin handler
+    assertion — see that section below for why a live handler isn't
+    constructed here either)
 """
 
 from __future__ import annotations
 
 import shutil
 import sys
+import threading
 import time
 import types
 from pathlib import Path
@@ -59,7 +72,9 @@ import whisper_server  # noqa: E402 - module import, for monkeypatching below
 from whisper_server import (  # noqa: E402
     MODEL_CHOICES,
     JobManager,
+    active_download_job_id,
     check_disk_space,
+    download_conflict_response,
     should_emit_download_progress,
     validate_download_model,
 )
@@ -277,6 +292,74 @@ except ImportError as exc:  # pragma: no cover - only if tqdm truly isn't instal
 
 
 # =================================================================
+# active_download_job_id (single-flight gate, S4 review finding HIGH)
+# — pure, no JobManager/threads involved. Mirrors test_ingest_url.py's
+# own count_active_url_jobs section (same "pre-release review finding"
+# style/shape).
+# =================================================================
+
+check(
+    "active_download_job_id: an empty jobs dict has no active download",
+    active_download_job_id({}) is None,
+)
+check(
+    "active_download_job_id: a queued download job is active",
+    active_download_job_id({"a": {"id": "a", "kind": "download", "status": "queued"}}) == "a",
+)
+check(
+    "active_download_job_id: a running download job is active",
+    active_download_job_id({"a": {"id": "a", "kind": "download", "status": "running"}}) == "a",
+)
+check(
+    "active_download_job_id: a done download job is NOT active (terminal)",
+    active_download_job_id({"a": {"id": "a", "kind": "download", "status": "done"}}) is None,
+)
+check(
+    "active_download_job_id: an error download job is NOT active (terminal)",
+    active_download_job_id({"a": {"id": "a", "kind": "download", "status": "error"}}) is None,
+)
+check(
+    "active_download_job_id: ignores non-download kinds (upload/url), however active",
+    active_download_job_id(
+        {
+            "a": {"id": "a", "kind": "upload", "status": "running"},
+            "b": {"id": "b", "kind": "url", "status": "queued"},
+        }
+    )
+    is None,
+)
+check(
+    "active_download_job_id: a mixed dict of many kinds/statuses finds exactly the active download one",
+    active_download_job_id(
+        {
+            "a": {"id": "a", "kind": "download", "status": "done"},
+            "b": {"id": "b", "kind": "url", "status": "running"},
+            "c": {"id": "c", "kind": "download", "status": "running"},
+            "d": {"id": "d", "kind": "upload", "status": "queued"},
+        }
+    )
+    == "c",
+)
+
+
+# =================================================================
+# download_conflict_response — the do_POST /download-model 409 body
+# shape (thin handler assertion; see module docstring's own note on
+# why no test file in this suite constructs a live handler).
+# =================================================================
+
+check(
+    "download_conflict_response: names the in-flight job as active_job_id",
+    download_conflict_response("job-123")["active_job_id"] == "job-123",
+)
+check(
+    "download_conflict_response: carries a non-empty zh error message",
+    isinstance(download_conflict_response("job-123")["error"], str)
+    and len(download_conflict_response("job-123")["error"]) > 0,
+)
+
+
+# =================================================================
 # JobManager.start_download_job / _run_download_job — job dict shape,
 # with download_model_snapshot stubbed at the module level (monkey-
 # patch) so nothing here ever touches the network or a real model.
@@ -310,7 +393,9 @@ def _fake_download_ok(model, on_progress=None):  # noqa: ARG001 - model unused b
 whisper_server.download_model_snapshot = _fake_download_ok
 try:
     jm = _make_job_manager()
-    job_id = jm.start_download_job("medium")
+    job_id, active_job_id = jm.start_download_job("medium")
+    check("start_download_job (success): job_id is set", job_id is not None)
+    check("start_download_job (success): active_job_id is None (nothing else in flight)", active_job_id is None)
     job = _wait_for_job(jm, job_id)
     check("start_download_job (success): status reaches 'done'", job["status"] == "done")
     check("start_download_job (success): progress reaches 1.0", job["progress"] == 1.0)
@@ -349,7 +434,9 @@ def _fake_download_fail(model, on_progress=None):  # noqa: ARG001
 whisper_server.download_model_snapshot = _fake_download_fail
 try:
     jm = _make_job_manager()
-    job_id = jm.start_download_job("small")
+    job_id, active_job_id = jm.start_download_job("small")
+    check("start_download_job (failure): job_id is set", job_id is not None)
+    check("start_download_job (failure): active_job_id is None (nothing else in flight)", active_job_id is None)
     job = _wait_for_job(jm, job_id)
     check("start_download_job (failure): status lands on 'error'", job["status"] == "error")
     check(
@@ -365,7 +452,7 @@ finally:
 whisper_server.download_model_snapshot = _fake_download_ok
 try:
     jm = _make_job_manager()
-    job_id = jm.start_download_job("tiny")
+    job_id, active_job_id = jm.start_download_job("tiny")
     immediate = jm.get(job_id)
     check(
         "start_download_job: returns before the background thread necessarily "
@@ -374,6 +461,81 @@ try:
         immediate is not None,
     )
     _wait_for_job(jm, job_id)  # drain so the daemon thread isn't left mid-flight
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+
+# =================================================================
+# start_download_job's single-flight guard (S4 review finding, HIGH):
+# a second call while a download job is still queued/running is
+# refused — same model OR a different one — and names the in-flight
+# job; a new call is accepted again once that job reaches EITHER
+# terminal status ("done" or "error"). Uses a threading.Event to hold
+# the fake download open exactly long enough to make the "still in
+# flight" window deterministic, rather than racing real timing.
+# =================================================================
+
+_release_download = threading.Event()
+
+
+def _fake_download_blocks_until_released(model, on_progress=None):  # noqa: ARG001
+    if not _release_download.wait(timeout=5.0):
+        raise AssertionError("test bug: _release_download was never set")
+    return "fake/repo-id"
+
+
+whisper_server.download_model_snapshot = _fake_download_blocks_until_released
+try:
+    _release_download.clear()
+    jm = _make_job_manager()
+    job_id_1, active_1 = jm.start_download_job("medium")
+    check("single-flight: the first call is accepted", job_id_1 is not None and active_1 is None)
+
+    # Second call arrives while the first is still queued/running
+    # (new_job() itself starts a job out at status=="queued", inside
+    # the SAME locked section start_download_job's single-flight check
+    # runs in — see its docstring — so this is deterministic
+    # regardless of whether the background thread has already flipped
+    # it to "running").
+    job_id_2, active_2 = jm.start_download_job("small")  # deliberately a DIFFERENT model
+    check(
+        "single-flight: a second call while the first is still in flight is refused "
+        "(job_id is None), even for a different model",
+        job_id_2 is None,
+    )
+    check(
+        "single-flight: the refusal names the in-flight job as active_job_id",
+        active_2 == job_id_1,
+    )
+
+    _release_download.set()  # let the first job finish
+    job_1 = _wait_for_job(jm, job_id_1)
+    check("single-flight: the first job reaches 'done' once released", job_1["status"] == "done")
+
+    job_id_3, active_3 = jm.start_download_job("tiny")
+    check(
+        "single-flight: a new call is accepted once the prior job reaches 'done'",
+        job_id_3 is not None and active_3 is None,
+    )
+    _wait_for_job(jm, job_id_3)
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+    _release_download.set()
+
+whisper_server.download_model_snapshot = _fake_download_fail
+try:
+    jm = _make_job_manager()
+    job_id_1, active_1 = jm.start_download_job("small")
+    job_1 = _wait_for_job(jm, job_id_1)
+    check("single-flight (error path): the first job lands on 'error'", job_1["status"] == "error")
+
+    job_id_2, active_2 = jm.start_download_job("medium")
+    check(
+        "single-flight: an 'error' terminal job also unblocks a new call "
+        "(not just 'done')",
+        job_id_2 is not None and active_2 is None,
+    )
+    _wait_for_job(jm, job_id_2)
 finally:
     whisper_server.download_model_snapshot = _real_download_model_snapshot
 
