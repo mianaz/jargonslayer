@@ -315,6 +315,10 @@ python -m sidecar.agent_server --port 8767
 
 Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB，npm workspaces 结构（`apps/web` + `packages/core`，共享核心为纯 TS）；LLM 调用走服务端路由代理（Anthropic Messages API 或 OpenAI 兼容端点，结构化输出 + 修复重试）；本地转录 faster-whisper sidecar（websocket + 能量 VAD）；说话人分离 pyannote 4.x。桌面版（`apps/desktop`）用 Tauri v2 外壳包同一个应用，Rust 核心通过版本锁定、校验和验证的 `uv` 安装独立 Python 运行环境——参数按固定形状白名单校验，webview 拿不到 shell。
 
+## 参与、修改与分叉
+
+欢迎提 issue、发 PR、fork、发布你自己的修改版——这个许可就是为了让这些事变得容易，不是为了看守代码。这是个业余项目，review 可能很慢，等不及就直接 fork，这是完全正当的做法。基于本项目构建时，请保留版权与许可声明（AGPL 本身要求这一点）；如果能在你发布的版本里放一个指回本仓库的链接，就更感谢了。提交的贡献按项目的 AGPL-3.0 许可接受。
+
 ## 许可证
 
 [AGPL-3.0](LICENSE) © 2026 Miana Zeng。在任何场合（包括工作中）都可以免费使用；若修改后再分发、或改造后作为服务对外提供，必须以相同许可公开你的源码。v0.3.0 及更早的已发布版本仍按当时的 MIT 许可提供。

@@ -315,6 +315,10 @@ It is also interactive. Try clicking it. Try clicking it three times fast. Try h
 
 Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB, organized as npm workspaces (`apps/web` + `packages/core`, pure-TS shared core); LLM calls go through server-side route proxies (Anthropic Messages API or OpenAI-compatible, structured output with repair-retry); local transcription is a faster-whisper sidecar over websocket with energy-based VAD; diarization via pyannote 4.x. The desktop build (`apps/desktop`) wraps the same app in a Tauri v2 shell whose Rust core provisions an isolated Python runtime through a pinned, checksum-verified `uv` — exact-shape argument validation, no shell access from the webview.
 
+## Contributing & forks
+
+Issues, pull requests, forks, and modified versions are all welcome — the license exists to make that easy, not to guard the code. This is a best-effort side project, so reviews may be slow; forking ahead instead of waiting is a perfectly good answer. If you build on it, keep the copyright and license notices intact (the AGPL requires this), and a visible link back to this repository in whatever you publish is appreciated. Contributions you submit are accepted under the project's AGPL-3.0 license.
+
 ## License
 
 [AGPL-3.0](LICENSE) © 2026 Miana Zeng. Free to use anywhere, including at work; if you modify it and redistribute or host it as a service, you must share your source under the same terms. Releases up to and including v0.3.0 were published under MIT and remain so.
