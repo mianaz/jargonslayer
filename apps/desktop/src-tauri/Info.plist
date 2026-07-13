@@ -4,5 +4,15 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>JargonSlayer 需要访问麦克风以实时转录会议语音</string>
+	<!-- v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md,
+	     D6): its own TCC category ("System Audio Recording Only"),
+	     separate from the microphone one above. Same string as the
+	     audiocap-helper's own embedded __info_plist (D6: "in BOTH app
+	     Info.plist and helper __info_plist") — this app is the
+	     responsible process CoreAudio's TCC prompt is expected to
+	     attribute to (D2), so this copy is the one most likely to
+	     actually be shown to the user. -->
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>JargonSlayer 需要录制系统音频以实时转录会议中对方的语音；音频仅发送到本机转录服务，不会离开这台电脑。</string>
 </dict>
 </plist>

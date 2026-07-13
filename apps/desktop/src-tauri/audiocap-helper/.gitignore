@@ -1,0 +1,7 @@
+# Swift Package Manager build artifacts — mirrors ../.gitignore's
+# /target/ entry for the sibling Cargo crate (this file is scoped to
+# its own package root the same way SwiftPM's own `swift package init`
+# template does, rather than adding a Swift-specific pattern to the
+# Cargo-focused .gitignore next door).
+.build/
+.swiftpm/

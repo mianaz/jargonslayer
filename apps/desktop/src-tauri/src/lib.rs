@@ -8,6 +8,7 @@
 // exclusivity check should run before anything else does real work (it
 // also means we never get a chance to double-provision from two
 // concurrently-running instances, blueprint §Critical details).
+mod audiocap;
 mod paths;
 mod provision;
 mod server;
@@ -60,6 +61,17 @@ pub fn run() {
             provision::write_provision_marker,
             provision::read_sidecar_log,
         ])
+        // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
+        // — the audiocap TCC-attribution spike rig: inert unless
+        // JARGONSLAYER_SPIKE_AUDIOCAP=1 (see audiocap::maybe_spawn_spike's
+        // own doc comment). Lives in `.setup()`, not behind any command/UI
+        // affordance, because the spike's whole point is that the PACKAGED
+        // APP ITSELF has to be the one spawning the helper for D2's TCC
+        // responsible-process question to mean anything.
+        .setup(|app| {
+            audiocap::maybe_spawn_spike(app.handle());
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
