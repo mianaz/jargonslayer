@@ -380,10 +380,11 @@ interface AppState {
  *  coercions, both no-ops when `isPreview` is false (full tier
  *  unaffected):
  *   1. A saved engine of "whisper"/"tabaudio" (sidecar-only, greyed in
- *      preview — see Header.tsx's ENGINE_OPTIONS) is coerced to
- *      "webspeech" so a returning preview user's start button still
- *      does real transcription instead of silently trying a disabled
- *      engine.
+ *      preview — see Header.tsx's ENGINE_OPTIONS) OR "soniox" (BYOK
+ *      cloud, same preview lock via ENGINE_OPTIONS' byokOnly — v0.4 S4
+ *      blueprint decision E) is coerced to "webspeech" so a returning
+ *      preview user's start button still does real transcription
+ *      instead of silently trying a disabled engine.
  *   2. True first run only — `hadSavedEngine` is false — is coerced
  *      from the default "demo" to "webspeech" so the start button does
  *      real transcription out of the box, without a trip to Settings.
@@ -398,7 +399,7 @@ export function applyTierDefaults(
   hadSavedEngine: boolean,
 ): Settings {
   if (!isPreview) return settings;
-  if (settings.engine === "whisper" || settings.engine === "tabaudio") {
+  if (settings.engine === "whisper" || settings.engine === "tabaudio" || settings.engine === "soniox") {
     return { ...settings, engine: "webspeech" };
   }
   if (!hadSavedEngine && settings.engine === "demo") {

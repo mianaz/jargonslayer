@@ -52,6 +52,7 @@ import { clearDiag, getDiagEntries, type DiagEntry } from "@/lib/diag/log";
 import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
+import ModelPicker from "@/components/desktop/ModelPicker";
 import CredentialFields, {
   presetIdFor,
   type ProviderPreset,
@@ -86,6 +87,13 @@ const ENGINE_CARDS: {
   // and dead-end on ws://localhost until the next reload's
   // applyTierDefaults coercion).
   sidecarOnly?: boolean;
+  // v0.4 S4 (blueprint decision E): a BYOK cloud engine that hasn't
+  // cleared the zh-en benchmark gate yet — same preview lock as
+  // sidecarOnly (preview never collects a visitor's own credentials),
+  // AND doubles as this card's "实验" tag trigger below (every byokOnly
+  // engine is, by definition, still opt-in experimental — see soniox's
+  // own hint copy).
+  byokOnly?: boolean;
 }[] = [
   {
     value: "webspeech",
@@ -112,6 +120,16 @@ const ENGINE_CARDS: {
     posture: "local",
     disabled: true,
     sidecarOnly: true,
+  },
+  {
+    value: "soniox",
+    label: "Soniox 云端识别",
+    // Honest per the blueprint's benchmark gate (decision E) — BYOK,
+    // opt-in, NOT claimed to beat local Whisper until Miana's zh-en
+    // clip benchmark clears it.
+    hint: "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
+    posture: "cloud",
+    byokOnly: true,
   },
 ];
 
@@ -438,6 +456,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // effect below can wait for the real persisted settings instead of
   // evaluating (and never re-evaluating) DEFAULT_SETTINGS.
   const hydrated = useApp((s) => s.hydrated);
+  // v0.4 S4 chunk 4 (risk 2 — "disable/confirm the switch while a
+  // meeting is listening", the model-switch flow stops+relaunches the
+  // sidecar): the SAME meetingActive signal Header.tsx's HamburgerMenu
+  // already gates 学习中心/演示 on (that file's own comment on why
+  // "paused" counts too — starting something new while paused would
+  // silently clobber a meeting the user intends to resume). No shared
+  // export exists for this predicate (it's local to that component), so
+  // this mirrors the exact same three-status rule rather than importing
+  // one — same "mirror, don't hand-duplicate a DIFFERENT rule" posture
+  // provisionMachine.ts's own ALLOWED_MARKER_MODELS doc comment already
+  // uses for server.rs's ALLOWED_MODELS.
+  const meetingStatus = useApp((s) => s.status);
+  const meetingActive =
+    meetingStatus === "connecting" || meetingStatus === "listening" || meetingStatus === "paused";
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
@@ -472,6 +504,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 订阅直连's agentHealthState `!agentHealthState` idiom below).
   const [sidecarStatus, setSidecarStatus] = useState<SidecarProbeResult | null>(null);
   const [checkingSidecarStatus, setCheckingSidecarStatus] = useState(false);
+  // Soniox API Key masked-input toggle (v0.4 S4 chunk 6) — same
+  // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
+  // field itself only renders when draft.engine === "soniox".
+  const [showSonioxKey, setShowSonioxKey] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -509,6 +545,24 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 转录引擎 category, desktop-only: 「重新运行安装向导」busy flag — see
   // handleReprovisionDesktop below.
   const [reprovisioningDesktop, setReprovisioningDesktop] = useState(false);
+  // 转录引擎 category, desktop-managed only (v0.4 S4 chunk 4, blueprint
+  // decision C's switch flow): 当前模型 line + 更换模型 flow state.
+  // installedModel is the TRUTHFUL installed model (read from the
+  // provision marker via handle.installedModel(), see that method's own
+  // doc comment) — null renders as an em-dash, both while still loading
+  // (the effect below hasn't resolved yet) and if the marker genuinely
+  // can't be read; deliberately NOT settings.whisperModel, which is
+  // only the user's target/preference and can briefly diverge from
+  // what's actually running (decision C).
+  const [installedModel, setInstalledModel] = useState<string | null>(null);
+  const [modelPickerOpen, setModelPickerOpen] = useState(false);
+  const [pickedModel, setPickedModel] = useState<string>("");
+  const [switchingModel, setSwitchingModel] = useState(false);
+  // Poll phase readout the confirm button drives handle.switchModel
+  // with (blueprint: "下载中 {pct}% → 重启本地服务… → 已切换到 {model}") —
+  // null = no attempt in flight / not yet shown this open of the picker.
+  const [switchModelStatusText, setSwitchModelStatusText] = useState<string | null>(null);
+  const [switchModelError, setSwitchModelError] = useState<string | null>(null);
 
   // Settings redesign: which nav-rail category the content pane shows.
   // Local-only (NOT the zustand store, not part of draft) — pure
@@ -698,6 +752,31 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draft.engine]);
 
+  // 转录引擎 当前模型 line (v0.4 S4 chunk 4): fetches the TRUTHFUL
+  // installed model via the SAME module-level bootstrap handle
+  // DesktopBootstrap.tsx already drives (initDesktop() is idempotent —
+  // see bootstrap.ts's own doc comment, and handleReprovisionDesktop/
+  // handleViewSidecarLog's own identical rationale for reusing it
+  // rather than calling getInvoke() a second, independent time).
+  // Re-runs whenever the section becomes relevant (dialog opens with
+  // 由应用管理 already selected, or the user flips 托管模式 into it while
+  // the dialog stays open) — mirrors the 本地服务 status effect just
+  // above. IS_DESKTOP is a build-time const (see platform/desktop.ts),
+  // so this is inert on a web build.
+  useEffect(() => {
+    if (!open || !IS_DESKTOP || draft.sidecarMode !== "managed") return;
+    let cancelled = false;
+    void initDesktop()
+      .then((handle) => handle.installedModel())
+      .then((model) => {
+        if (!cancelled) setInstalledModel(model);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draft.sidecarMode]);
+
   if (!open) return null;
 
   const patch = (p: Partial<Settings>) => setDraft((d) => ({ ...d, ...p }));
@@ -874,6 +953,65 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       showToast(err instanceof Error ? `重新运行安装向导失败：${err.message}` : "重新运行安装向导失败");
     } finally {
       setReprovisioningDesktop(false);
+    }
+  };
+
+  // v0.4 S4 chunk 4 (blueprint decision C): 转录引擎 更换模型 — opens the
+  // inline <ModelPicker>, preselected to the truthful installed model
+  // (falling back to the user's own persisted preference,
+  // draft.whisperModel, while that's still loading/unknown — decision
+  // C's own "target vs truth" distinction). Clears any status/error
+  // text left over from a PRIOR attempt this dialog-open.
+  const handleOpenModelPicker = () => {
+    setPickedModel(installedModel ?? draft.whisperModel);
+    setSwitchModelStatusText(null);
+    setSwitchModelError(null);
+    setModelPickerOpen(true);
+  };
+
+  // v0.4 S4 chunk 4 (blueprint decision C's switch flow): 下载并切换 —
+  // an IMMEDIATE action (like 重新运行安装向导 above), not a draft-saved
+  // setting — settings.whisperModel is written by handle.switchModel()
+  // itself on success, so this deliberately never runs through
+  // patch()/handleSave's draft flow. Reuses the SAME module-level
+  // bootstrap handle every other desktop action on this dialog already
+  // does (handleReprovisionDesktop's own rationale above), with a live
+  // progress readout via handle.switchModelProgress$ — poll phase
+  // labels "下载中 {pct}%" → "重启本地服务…" → "已切换到 {model}", per
+  // the blueprint. Errors surface via BOTH showToast (this file's
+  // existing convention) and an inline switchModelError string
+  // (mirrors 本地服务's own inline-text posture just above in this same
+  // section).
+  const handleSwitchModel = async () => {
+    const model = pickedModel;
+    setSwitchingModel(true);
+    setSwitchModelError(null);
+    setSwitchModelStatusText("下载中 0%");
+    try {
+      const handle = await initDesktop();
+      const unsubscribe = handle.switchModelProgress$((progress) => {
+        if (!progress) return;
+        setSwitchModelStatusText(
+          progress.phase === "downloading"
+            ? `下载中 ${Math.round((progress.progress ?? 0) * 100)}%`
+            : "重启本地服务…",
+        );
+      });
+      try {
+        await handle.switchModel(model);
+      } finally {
+        unsubscribe();
+      }
+      setInstalledModel(model);
+      setSwitchModelStatusText(`已切换到 ${model}`);
+      showToast(`已切换到模型 ${model}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "切换模型失败";
+      setSwitchModelStatusText(null);
+      setSwitchModelError(message);
+      showToast(`切换模型失败：${message}`);
+    } finally {
+      setSwitchingModel(false);
     }
   };
 
@@ -1141,14 +1279,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <SectionHeading>转录引擎</SectionHeading>
             <div className="grid grid-cols-2 gap-2">
               {ENGINE_CARDS.map((opt) => {
-                const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
+                // v0.4 S4 (blueprint decision E, risk 4): byokOnly
+                // joins sidecarOnly in the preview lock — see
+                // ENGINE_CARDS' own byokOnly doc comment above.
+                const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
                 return (
                   <button
                     key={opt.value}
                     type="button"
                     disabled={opt.disabled || previewLocked}
                     onClick={() => patch({ engine: opt.value })}
-                    title={previewLocked ? "本地版功能：需要本地 sidecar" : undefined}
+                    title={previewLocked ? "本地版功能：体验版暂未开放" : undefined}
                     className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                       draft.engine === opt.value
                         ? "border-act bg-panel3 text-fg"
@@ -1159,6 +1300,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <span className="font-medium">{opt.label}</span>
                       <span className="flex shrink-0 items-center gap-1.5">
                         {previewLocked && <PreviewLockedBadge />}
+                        {/* 实验 tag (v0.4 S4): every byokOnly engine is,
+                           by definition, opt-in experimental until its
+                           own benchmark gate clears — reuses this same
+                           card's posture-chip idiom (bordered, 10px),
+                           just a different color so it doesn't blend
+                           with 云端/本地 next to it. */}
+                        {opt.byokOnly && (
+                          <span className="shrink-0 border border-lab-purple/30 px-1.5 py-0 text-[10px] text-lab-purple">
+                            实验
+                          </span>
+                        )}
                         <span
                           className={`shrink-0 border px-1.5 py-0 text-[10px] ${
                             opt.posture === "local"
@@ -1226,6 +1378,48 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     </a>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Soniox API Key (v0.4 S4 chunk 6, blueprint decision E):
+               engine-conditional like 本地服务 above — unlike 麦克风/识别
+               语言/Whisper 地址 below (always shown, scope explained by
+               their own hint text), this field is meaningless for any
+               engine but soniox, so it only mounts once picked. Same
+               hand-rolled masked-input pattern as HF Token (说话人分离
+               section below): showSonioxKey toggle, disabled={PREVIEW_
+               TIER} — preview-tier gate 3 of 3, alongside ENGINE_CARDS'
+               byokOnly lock above and store.ts applyTierDefaults'
+               coercion. */}
+            {draft.engine === "soniox" && (
+              <div>
+                <label className="text-xs text-mut">Soniox API Key</label>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type={showSonioxKey ? "text" : "password"}
+                    value={draft.sonioxKey}
+                    disabled={PREVIEW_TIER}
+                    onChange={(e) => patch({ sonioxKey: e.target.value })}
+                    placeholder="粘贴你的 Soniox API Key"
+                    className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    disabled={PREVIEW_TIER}
+                    onClick={() => setShowSonioxKey((v) => !v)}
+                    aria-label={showSonioxKey ? "隐藏" : "显示"}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {showSonioxKey ? (
+                      <EyeSlash size={18} weight="regular" />
+                    ) : (
+                      <Eye size={18} weight="regular" />
+                    )}
+                  </button>
+                </div>
+                <div className="mt-1 text-xs text-mut2">
+                  按量计费；Key 随会话直接发给 Soniox 云端（wss://stt-rt.soniox.com），不经我们的服务器
+                </div>
               </div>
             )}
 
@@ -1301,14 +1495,86 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     : "连接我自己启动的服务：按 README「本地版安装」手动跑 whisper_server.py，下方 Whisper 地址可以编辑。"}
                 </div>
                 {draft.sidecarMode === "managed" && (
-                  <button
-                    type="button"
-                    onClick={() => void handleReprovisionDesktop()}
-                    disabled={reprovisioningDesktop}
-                    className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {reprovisioningDesktop ? "处理中…" : "重新运行安装向导"}
-                  </button>
+                  <>
+                    {/* 当前模型 + 更换模型 (v0.4 S4 chunk 4, blueprint
+                       decision C's switch flow) — an IMMEDIATE action,
+                       deliberately laid out beside 重新运行安装向导 below
+                       (same "act now, not on 保存" posture) rather than
+                       going through patch()/draft/保存: switchModel()
+                       itself writes settings.whisperModel on success, so
+                       routing this through the draft flow too would let
+                       an unrelated 保存 click accidentally fire a SECOND
+                       write of a stale value. installedModel is null
+                       both while still loading and if the marker
+                       genuinely can't be read — em-dash either way (see
+                       that state's own doc comment above).
+
+                       S4 review pair Finding 1c: 更换模型/下载并切换 and
+                       重新运行安装向导 below now disable EACH OTHER too
+                       (not just themselves) — bootstrap.ts's own shared
+                       sidecar-lifecycle latch (Finding 1a) already
+                       rejects an overlapping call either way, but UI
+                       mutual exclusion means the user never has to hit
+                       that rejection at all; both also gate on
+                       meetingActive (Finding 2), since a switch/reset
+                       mid-meeting kills the very sidecar transcription
+                       depends on. */}
+                    <div className="flex items-center justify-between gap-3 border-t border-edge pt-3">
+                      <div className="text-sm text-fg">
+                        当前模型：
+                        <span className="font-mono text-mut">{installedModel ?? "—"}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : handleOpenModelPicker())}
+                        disabled={meetingActive || switchingModel || reprovisioningDesktop}
+                        title={meetingActive ? "会议进行中，结束后可切换模型" : undefined}
+                        className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        更换模型
+                      </button>
+                    </div>
+
+                    {modelPickerOpen && (
+                      <div className="space-y-2 border border-edge bg-panel2 p-3">
+                        <ModelPicker value={pickedModel} onChange={setPickedModel} />
+                        {switchModelStatusText && (
+                          <div className="text-xs text-lab-cyan">{switchModelStatusText}</div>
+                        )}
+                        {switchModelError && (
+                          <div className="text-xs text-warn-soft">{switchModelError}</div>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleSwitchModel()}
+                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive}
+                            className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {switchingModel ? "处理中…" : "下载并切换"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setModelPickerOpen(false)}
+                            disabled={switchingModel}
+                            className="btn-tactile px-3 py-1.5 text-sm text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => void handleReprovisionDesktop()}
+                      disabled={reprovisioningDesktop || switchingModel || meetingActive}
+                      title={meetingActive ? "会议进行中，结束后可重新运行安装向导" : undefined}
+                      className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {reprovisioningDesktop ? "处理中…" : "重新运行安装向导"}
+                    </button>
+                  </>
                 )}
               </div>
             )}
@@ -2057,8 +2323,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div>
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
-                    取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Webhook /
-                    连接码），请妥善保管
+                    取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Soniox Key /
+                    Webhook / 连接码），请妥善保管
                   </div>
                 </div>
                 <ToggleSwitch

@@ -183,6 +183,17 @@ describe("Header — pause/resume/end button matrix (B4)", () => {
     expect(container!.querySelector('[data-testid="btn-pause"]')).not.toBeNull();
   });
 
+  it("listening + soniox: hides 暂停 entirely (v0.4 S4, canPause=false — no pause/resume implemented), 结束 still shows", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "soniox" },
+      status: "listening",
+    });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="btn-pause"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-stop"]')).not.toBeNull();
+  });
+
   it("clicking 暂停/继续 fires onPause/onResume", async () => {
     const onPause = vi.fn();
     const onResume = vi.fn();

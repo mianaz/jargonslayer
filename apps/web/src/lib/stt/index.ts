@@ -5,6 +5,7 @@ import { WebSpeechEngine } from "./webSpeech";
 import { WhisperSocketEngine } from "./whisperSocket";
 import { TabAudioEngine } from "./tabAudio";
 import { DemoEngine } from "./demo";
+import { SonioxEngine } from "./soniox";
 
 export function createEngine(kind: STTEngineKind): STTEngine {
   switch (kind) {
@@ -16,6 +17,12 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       return new TabAudioEngine();
     case "demo":
       return new DemoEngine();
+    case "soniox":
+      // v0.4 S4 chunk 5 (blueprint decision E) — BYOK cloud engine, no
+      // local sidecar. Still unreachable from the UI until chunk 6
+      // adds the engine card/gating (ENGINE_CARDS, Header
+      // ENGINE_OPTIONS, applyTierDefaults' preview coercion).
+      return new SonioxEngine();
     case "import":
       // "import" (#43) is never a live capture engine — imported
       // sessions are built fully offline by importText.ts and never

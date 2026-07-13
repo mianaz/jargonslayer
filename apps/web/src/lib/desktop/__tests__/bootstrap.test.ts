@@ -4,7 +4,7 @@
 // initDesktop's own idempotency/IS_DESKTOP-guard wrapper tested
 // separately, in the test env's default (NEXT_PUBLIC_DESKTOP unset)
 // state, so it never needs to touch a real `@tauri-apps/*` package.
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   bootstrapDesktop,
@@ -15,8 +15,10 @@ import {
   type DesktopBootstrapHandle,
   type DesktopBootstrapState,
   type DesktopLogLine,
+  type SwitchModelProgress,
 } from "../bootstrap";
-import { MAX_RESTARTS_PER_WINDOW } from "../provisionMachine";
+import { MAX_RESTARTS_PER_WINDOW, POLLING_HEALTH_ATTEMPT_CAP } from "../provisionMachine";
+import type { PrewarmProgressEvent } from "../provisionRunner";
 import type { InvokeFn, ListenFn, TauriEvent, TauriFetchFn } from "../tauriApi";
 import type { DesktopPaths } from "../uvCommands";
 import { clearDiag, getDiagEntries } from "../../diag/log";
@@ -78,6 +80,18 @@ function makeEmittableListen() {
 }
 
 const fakeTauriFetch = (async () => new Response("{}")) as unknown as TauriFetchFn;
+
+/** S4 chunk 4 — switchModel()'s two HTTP calls (POST /download-model,
+ *  GET /jobs/{id} via upload.ts's pollJob) go through the real global
+ *  fetch, not deps.tauriFetch (see bootstrap.ts's own postDownloadModel
+ *  doc comment) — mirrors sidecarHealth.test.ts's own jsonResponse
+ *  helper for stubbing it. */
+function jsonResponse(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 
 /** Subscribes and resolves once the machine reaches a stopping point —
  *  HEALTHY, TERMINAL_ERROR, STEP&&ERROR ("NEEDS_PROVISION-wizard-
@@ -411,6 +425,14 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
     await expect(handle.recheckHealth()).resolves.toBeUndefined();
     await expect(handle.reprovision()).resolves.toBeUndefined();
     await expect(handle.readSidecarLog(200)).resolves.toBe("");
+    // S4 chunk 2: downloadProgress$/currentDownloadProgress are inert
+    // outside a desktop build too — same posture as every other handle
+    // method above.
+    expect(handle.currentDownloadProgress()).toBeNull();
+    const unsubscribeDownloadProgress = handle.downloadProgress$(() => {
+      throw new Error("should never be called on NOT_DESKTOP");
+    });
+    unsubscribeDownloadProgress(); // must not throw
   });
 
   it("is idempotent: two calls return the exact same cached promise, resolving to the exact same handle", async () => {
@@ -480,6 +502,158 @@ describe("bootstrapDesktop — log$ subscription (chunk 6 wizard 详细日志 pa
     unsubscribe();
     emit("uv://log", { stream: "stdout", line: "should not arrive" });
     expect(lines).toEqual([]);
+  });
+});
+
+describe("bootstrapDesktop — downloadProgress$ / currentDownloadProgress() (S4 chunk 2 prewarm://progress)", () => {
+  it("forwards prewarm://progress updates emitted during DOWNLOAD_MODEL to downloadProgress$ subscribers and the snapshot getter", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 1000, total: 4000 });
+          emit("prewarm://progress", { downloaded: 4000, total: 4000 });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const updates: Array<PrewarmProgressEvent | null> = [];
+    handle.downloadProgress$((p) => updates.push(p));
+
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    expect(handle.currentDownloadProgress()).toBeNull(); // nothing has downloaded yet
+
+    handle.beginProvision();
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(updates).toContainEqual({ downloaded: 1000, total: 4000 });
+    expect(updates).toContainEqual({ downloaded: 4000, total: 4000 });
+  });
+
+  it("resets the snapshot to null once the DOWNLOAD_MODEL step completes (moves on to STARTING)", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 2000, total: 4000 });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
+    // Waits for the STARTING row specifically (rather than jumping
+    // straight to waitForStable's HEALTHY) so this test actually
+    // observes the reset AT the DOWNLOAD_MODEL -> STARTING boundary,
+    // not just "eventually null once everything is done".
+    const starting = await waitForNextState(
+      handle,
+      (s) => s.phase === "STEP" && s.step === "STARTING" && s.status === "RUNNING",
+    );
+    expect(starting).toMatchObject({ step: "STARTING" });
+    expect(handle.currentDownloadProgress()).toBeNull();
+
+    await waitForStable(handle); // -> HEALTHY
+    expect(handle.currentDownloadProgress()).toBeNull();
+  });
+
+  it("resets the snapshot to null once the DOWNLOAD_MODEL step errors out too", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: 0 }), // INSTALL_PYTHON/CREATE_VENV/INSTALL_DEPS all succeed
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 500, total: 4000 });
+          return { code: 1 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
+    const errored = await waitForStable(handle);
+    expect(errored).toMatchObject({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR" });
+    expect(handle.currentDownloadProgress()).toBeNull();
+  });
+
+  it("an unsubscribed downloadProgress$ listener stops receiving updates", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted, nothing to report yet)
+    const updates: Array<PrewarmProgressEvent | null> = [];
+    const unsubscribe = handle.downloadProgress$((p) => updates.push(p));
+    unsubscribe();
+    emit("prewarm://progress", { downloaded: 1, total: 2 });
+    expect(updates).toEqual([]);
+  });
+
+  it("does not replay past updates to a late subscriber — a listener added after DOWNLOAD_MODEL finished sees nothing, and the snapshot is already back to null", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 1000, total: 4000 });
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+    await waitForStable(handle); // -> HEALTHY, DOWNLOAD_MODEL long since finished
+
+    const updates: Array<PrewarmProgressEvent | null> = [];
+    handle.downloadProgress$((p) => updates.push(p));
+    expect(updates).toEqual([]); // no replay
+    expect(handle.currentDownloadProgress()).toBeNull();
   });
 });
 
@@ -778,7 +952,7 @@ describe("bootstrapDesktop — external sidecar mode (Finding 2)", () => {
 });
 
 describe("bootstrapDesktop — drive-loop re-entrancy guards (Finding 3)", () => {
-  it("reprovision() is single-flighted: two interleaved calls run stop_server/write_provision_marker exactly once each, and both callers observe the same outcome", async () => {
+  it("reprovision() single-flights via the shared sidecar-lifecycle latch: two interleaved calls run stop_server/write_provision_marker exactly once, and the SECOND caller REJECTS instead of joining (S4 review pair Finding 1a)", async () => {
     let stopServerCalls = 0;
     let writeMarkerCalls = 0;
     let probeCalls = 0;
@@ -807,14 +981,41 @@ describe("bootstrapDesktop — drive-loop re-entrancy guards (Finding 3)", () =>
     await waitForStable(handle); // -> HEALTHY (adopted)
 
     const p1 = handle.reprovision();
-    const p2 = handle.reprovision(); // interleaved — must join p1, not double-run
-    await Promise.all([p1, p2]);
+    const p2 = handle.reprovision(); // interleaved — rejects rather than joining p1
+    await expect(p2).rejects.toThrow("另一项本地服务操作正在进行");
+    await p1;
 
     expect(stopServerCalls).toBe(1);
     expect(writeMarkerCalls).toBe(1);
 
     const gated = await waitForStable(handle);
     expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+  });
+
+  it("switchModel() rejects while reprovision() is in flight — the shared sidecar-lifecycle latch, not just a coincidental type match (S4 review pair Finding 1a)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => undefined,
+        write_provision_marker: () => undefined,
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }), // adopt -> HEALTHY, so switchModel()'s own phase-gate passes
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    const reprovisionPromise = handle.reprovision();
+    await expect(handle.switchModel("medium")).rejects.toThrow("另一项本地服务操作正在进行");
+    expect(fetchMock).not.toHaveBeenCalled(); // never even reached postDownloadModel
+
+    await reprovisionPromise; // cleanup — let the winning call settle
+    vi.unstubAllGlobals();
   });
 
   it("a superseded drive applies no further transitions once a newer reprovision() takes over its generation", async () => {
@@ -907,5 +1108,763 @@ describe("bootstrapDesktop — diag redaction at the STEP_ERROR choke point (Fin
 
     const stepErrorEntry = getDiagEntries().find((e) => e.tag === "desktop-provision" && e.level === "error");
     expect(stepErrorEntry?.detail).toBe("failed to create ~/Library/Application Support/x: permission denied");
+  });
+});
+
+describe("bootstrapDesktop — S4 chunk 3: model picker wiring (beginProvision(model), getDesktopModel, ctx-seed clamp)", () => {
+  it("beginProvision(model) reseeds ctx so DOWNLOAD_MODEL/STARTING (and the written marker) all carry the newly-chosen model", async () => {
+    const modelsSeen: { prewarm?: string; marker?: string; start?: string } = {};
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: 0 }),
+        prewarm_model: (args) => {
+          modelsSeen.prewarm = args?.model as string;
+          return { code: 0 };
+        },
+        write_provision_marker: (args) => {
+          modelsSeen.marker = (JSON.parse(args?.json as string) as { model: string }).model;
+          return undefined;
+        },
+        start_server: (args) => {
+          modelsSeen.start = args?.model as string;
+          return { alreadyRunning: false };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision("large-v3-turbo");
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+
+    expect(modelsSeen.prewarm).toBe("large-v3-turbo");
+    expect(modelsSeen.marker).toBe("large-v3-turbo");
+    expect(modelsSeen.start).toBe("large-v3-turbo");
+  });
+
+  it("beginProvision(model) persists settings.whisperModel via deps.persistDesktopModel — the same dynamic-import store path getDesktopModel/getSidecarMode use", async () => {
+    const persisted: string[] = [];
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke(successfulPipelineHandlers),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+      persistDesktopModel: async (model) => {
+        persisted.push(model);
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+    handle.beginProvision("medium");
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(persisted).toEqual(["medium"]);
+  });
+
+  it("getDesktopModel seeds ctx.model for a fresh provision (no marker) — every step-producing effect and the written marker carry it, even through a no-arg beginProvision()", async () => {
+    const modelsSeen: { prewarm?: string; marker?: string } = {};
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: (args) => {
+          modelsSeen.prewarm = args?.model as string;
+          return { code: 0 };
+        },
+        write_provision_marker: (args) => {
+          modelsSeen.marker = (JSON.parse(args?.json as string) as { model: string }).model;
+          return undefined;
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+      getDesktopModel: async () => "large-v3",
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision(); // no-arg — must still carry the getDesktopModel-seeded value through
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(modelsSeen.prewarm).toBe("large-v3");
+    expect(modelsSeen.marker).toBe("large-v3");
+  });
+
+  it("clamp: a getDesktopModel value outside ALLOWED_MARKER_MODELS falls back to the small default rather than riding a bogus model into prewarmModel", async () => {
+    const modelsSeen: { prewarm?: string } = {};
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: (args) => {
+          modelsSeen.prewarm = args?.model as string;
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+      getDesktopModel: async () => "not-a-real-model",
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+    handle.beginProvision();
+    await waitForStable(handle); // -> HEALTHY
+
+    expect(modelsSeen.prewarm).toBe("small");
+  });
+
+  it("no-arg beginProvision() is unchanged for callers that never wire getDesktopModel/deps.model — still drives the small default through, exactly like every pre-S4 test in this file", async () => {
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke(successfulPipelineHandlers),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+    handle.beginProvision();
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+  });
+});
+
+// ---------------------------------------------------------------
+// S4 chunk 4 (blueprint decision C: switch flow) — switchModel() +
+// installedModel(). Every test below starts from a HEALTHY (adopted)
+// handle via healthyDeps() — switchModel() is only ever meaningful
+// from there (see the "non-HEALTHY rejection" test for the opposite
+// case) — and fakes deps.sleep as an instant no-op so the health-poll-
+// exhaustion test doesn't actually wait 30x2000ms of real wall-clock
+// time.
+// ---------------------------------------------------------------
+
+const existingMarkerJson = JSON.stringify({
+  schema: 1,
+  model: "small",
+  py: "3.12",
+  deps: "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1",
+  ts: "2026-06-01T00:00:00.000Z",
+});
+
+function healthyDeps(overrides: Partial<BootstrapDeps> = {}): BootstrapDeps {
+  return {
+    invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => existingMarkerJson }),
+    listen: makeFakeListen(),
+    tauriFetch: fakeTauriFetch,
+    setTransport: () => {},
+    probeSidecarFn: async () => ({ up: true }), // adopt path -> HEALTHY immediately
+    sleep: async () => {}, // instant — no real download/health-poll wait
+    now: () => "2026-07-12T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("happy path: download poll -> marker+settings written -> stop -> start -> health, ordering asserted (S4 review pair Finding 3 reorder)", async () => {
+    const order: string[] = [];
+    let jobPolls = 0;
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) {
+        order.push("fetch:download-model");
+        expect(JSON.parse(String(init?.body))).toEqual({ model: "medium" });
+        return jsonResponse({ job_id: "job-1" }, 202);
+      }
+      if (url.includes("/jobs/job-1")) {
+        jobPolls += 1;
+        order.push(`fetch:jobs(${jobPolls})`);
+        return jobPolls === 1
+          ? jsonResponse({ status: "running", progress: 0.4, error: null })
+          : jsonResponse({ status: "done", progress: 1, error: null });
+      }
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let writtenMarkerJson: unknown;
+    const persisted: string[] = [];
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        order.push("invoke:stop_server");
+        return undefined;
+      },
+      start_server: (args) => {
+        order.push("invoke:start_server");
+        expect(args?.model).toBe("medium");
+        return { alreadyRunning: false };
+      },
+      write_provision_marker: (args) => {
+        order.push("invoke:write_provision_marker");
+        writtenMarkerJson = args?.json;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({
+      invoke,
+      probeSidecarFn: async () => {
+        order.push("probe");
+        return { up: true };
+      },
+      persistDesktopModel: async (model) => {
+        order.push("persistDesktopModel");
+        persisted.push(model);
+      },
+    });
+
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+    order.length = 0; // discard the adopt-path CHECKING probe's own push
+
+    const progressSeen: Array<SwitchModelProgress | null> = [];
+    handle.switchModelProgress$((p) => progressSeen.push(p));
+
+    await handle.switchModel("medium");
+
+    expect(order).toEqual([
+      "fetch:download-model",
+      "fetch:jobs(1)",
+      "fetch:jobs(2)",
+      "invoke:write_provision_marker",
+      "persistDesktopModel",
+      "invoke:stop_server",
+      "invoke:start_server",
+      "probe",
+    ]);
+    expect(persisted).toEqual(["medium"]);
+    // py/deps reused verbatim from the marker already on disk — only
+    // `model` (and a fresh `ts`) actually change.
+    expect(JSON.parse(String(writtenMarkerJson))).toEqual({
+      schema: 1,
+      model: "medium",
+      py: "3.12",
+      deps: "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1",
+      ts: "2026-07-12T00:00:00.000Z",
+    });
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" }); // still HEALTHY throughout
+    expect(progressSeen).toContainEqual({ phase: "downloading", progress: 0 });
+    expect(progressSeen).toContainEqual({ phase: "downloading", progress: 0.4 });
+    expect(progressSeen).toContainEqual({ phase: "downloading", progress: 1 });
+    expect(progressSeen).toContainEqual({ phase: "restarting" });
+    expect(progressSeen[progressSeen.length - 1]).toBeNull(); // reset on settle
+    expect(handle.currentSwitchModelProgress()).toBeNull();
+  });
+
+  it("a same-session crash-restart AFTER a successful switch relaunches the NEW model, not the pre-switch one (ctx reseed)", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-ctx" }, 202);
+      if (url.includes("/jobs/job-ctx")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const startServerModels: string[] = [];
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => undefined,
+      start_server: (args) => {
+        startServerModels.push(args?.model as string);
+        return { alreadyRunning: false };
+      },
+      write_provision_marker: () => undefined,
+    });
+    const deps = healthyDeps({ invoke, listen });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    await handle.switchModel("large-v3");
+    expect(startServerModels).toEqual(["large-v3"]); // the switch's own restart
+
+    const healthyAgain = waitForNextState(handle, (s) => s.phase === "HEALTHY");
+    emit("server://exit", { code: 1 }); // simulate a crash AFTER the switch
+    await healthyAgain;
+
+    expect(startServerModels).toEqual(["large-v3", "large-v3"]); // crash-restart used the SWITCHED model, not "small"
+  });
+
+  it("download-job error path: rejects with the job's own error message, and the OLD server is never touched (no stop_server call)", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-err" }, 202);
+      if (url.includes("/jobs/job-err")) {
+        return jsonResponse({ status: "error", progress: 0, error: "磁盘空间不足" });
+      }
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    await expect(handle.switchModel("large-v3")).rejects.toThrow("磁盘空间不足");
+
+    expect(stopServerCalls).toBe(0);
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" }); // truthful: nothing changed, old server still running
+    expect(handle.currentSwitchModelProgress()).toBeNull(); // reset even on this failure path
+  });
+
+  it("post-stop health-failure path: the new server never comes back healthy -> lands on STEP/POLLING_HEALTH/ERROR (the wizard's existing escape hatch); the marker already says the NEW model despite the failure (S4 review pair Finding 3)", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-2" }, 202);
+      if (url.includes("/jobs/job-2")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let probeCalls = 0;
+    let writeMarkerCalls = 0;
+    // Stateful — a subsequent read_provision_marker (installedModel())
+    // must reflect what write_provision_marker just wrote, or the
+    // assertion below would trivially read back the pre-switch marker.
+    let markerJson: string | null = existingMarkerJson;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => markerJson,
+      stop_server: () => undefined,
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: (args) => {
+        writeMarkerCalls += 1;
+        markerJson = args?.json as string;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({
+      invoke,
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        // 1st call = the adopt-path CHECKING probe (must be healthy to
+        // reach HEALTHY at all); every call after (switchModel's own
+        // post-restart health-poll) stays down — the new server never
+        // comes up.
+        return { up: probeCalls === 1 };
+      },
+    });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    const expectedMessage = `切换到 large-v3 后本地服务在 ${POLLING_HEALTH_ATTEMPT_CAP} 次检测内仍未恢复健康`;
+    await expect(handle.switchModel("large-v3")).rejects.toThrow(expectedMessage);
+
+    expect(handle.currentState()).toEqual({
+      phase: "STEP",
+      step: "POLLING_HEALTH",
+      status: "ERROR",
+      error: expectedMessage,
+      retriable: true,
+    });
+    // The marker+settings write (S4 review pair Finding 3) happens right
+    // after the download succeeds, BEFORE stop_server — so it already
+    // ran, once, before this health failure even started. 当前模型 (via
+    // installedModel(), the marker) already reads "large-v3" even though
+    // health never came up — self-describing, not a silent revert to
+    // whatever was running pre-switch.
+    expect(writeMarkerCalls).toBe(1);
+    await expect(handle.installedModel()).resolves.toBe("large-v3");
+  });
+
+  it("post-stop start_server-invoke failure (fails before any health poll) -> lands on STEP/STARTING/ERROR; a RETRY starts the NEW model — the marker already said so before the retry even ran (S4 review pair Finding 3)", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-3" }, 202);
+      if (url.includes("/jobs/job-3")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let startServerCalls = 0;
+    let writeMarkerCalls = 0;
+    const startServerModels: string[] = [];
+    // Stateful — see the previous test's own comment on why.
+    let markerJson: string | null = existingMarkerJson;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => markerJson,
+      stop_server: () => undefined,
+      start_server: (args) => {
+        startServerCalls += 1;
+        startServerModels.push(args?.model as string);
+        if (startServerCalls === 1) throw new Error("spawn failed"); // the switch's own attempt
+        return { alreadyRunning: false }; // the retry
+      },
+      write_provision_marker: (args) => {
+        writeMarkerCalls += 1;
+        markerJson = args?.json as string;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    await expect(handle.switchModel("large-v3")).rejects.toThrow("spawn failed");
+
+    expect(handle.currentState()).toEqual({
+      phase: "STEP",
+      step: "STARTING",
+      status: "ERROR",
+      error: "spawn failed",
+      retriable: true,
+    });
+    // Already committed to "large-v3" — written right after the download
+    // succeeded, before stop_server/start_server ever ran (Finding 3).
+    expect(writeMarkerCalls).toBe(1);
+    await expect(handle.installedModel()).resolves.toBe("large-v3");
+
+    // "add: post-stop start failure then RETRY → starts B and marker
+    // already says B" — 重试 goes through provisionMachine.ts's own
+    // handleRetry (STARTING's leading stopServer + re-enter STARTING
+    // with ctx.model, already reseeded to "large-v3" by the switch
+    // itself), NOT performSwitchModel — so it starts the model ctx
+    // already carries and, matching handleStepOk's own contract (only
+    // DOWNLOAD_MODEL's STEP_OK writes a marker), never touches the
+    // marker again — it doesn't need to, the marker already said so.
+    const healthyAgain = waitForNextState(handle, (s) => s.phase === "HEALTHY");
+    handle.retryStep();
+    await healthyAgain;
+
+    expect(startServerModels).toEqual(["large-v3", "large-v3"]);
+    expect(writeMarkerCalls).toBe(1); // unchanged by the retry
+    await expect(handle.installedModel()).resolves.toBe("large-v3");
+  });
+
+  it("rejects (never silently no-ops) when the current phase isn't HEALTHY, without calling fetch at all", async () => {
+    // mid-INSTALL_PYTHON — run_uv held open, mirrors this file's own
+    // "server://exit received while NOT HEALTHY" test precedent above.
+    let resolveRunUv: (() => void) | null = null;
+    const runUvGate = new Promise<void>((resolve) => {
+      resolveRunUv = resolve;
+    });
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: async () => {
+          await runUvGate;
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    handle.beginProvision();
+    expect(handle.currentState()).toEqual({ phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" });
+
+    await expect(handle.switchModel("medium")).rejects.toThrow("本地服务当前不可用，暂时无法切换模型");
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    resolveRunUv!(); // cleanup — avoid a dangling promise
+  });
+
+  it("single-flights via the shared sidecar-lifecycle latch: two interleaved calls download/restart exactly once, and the SECOND caller REJECTS instead of joining (S4 review pair Finding 1a)", async () => {
+    let downloadModelPosts = 0;
+    let stopServerCalls = 0;
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) {
+        downloadModelPosts += 1;
+        return jsonResponse({ job_id: "job-sf" }, 202);
+      }
+      if (url.includes("/jobs/job-sf")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: () => undefined,
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    const p1 = handle.switchModel("medium");
+    const p2 = handle.switchModel("medium"); // interleaved — rejects rather than joining p1
+    await expect(p2).rejects.toThrow("另一项本地服务操作正在进行");
+    await p1;
+
+    expect(downloadModelPosts).toBe(1);
+    expect(stopServerCalls).toBe(1);
+  });
+
+  it("reprovision() rejects while switchModel() is in flight — the shared sidecar-lifecycle latch works both directions (S4 review pair Finding 1a)", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-cross" }, 202);
+      if (url.includes("/jobs/job-cross")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    let writeMarkerCalls = 0;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: () => {
+        writeMarkerCalls += 1;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    const switchPromise = handle.switchModel("medium");
+    await expect(handle.reprovision()).rejects.toThrow("另一项本地服务操作正在进行");
+    await switchPromise; // the switch itself completes untouched — no marker cleared, no WIZARD_CONSENT_REQUIRED parking mid-switch
+
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    // "重新运行安装向导" never got far enough to clear the marker (its own
+    // write_provision_marker call uses `json: "null"`) — the ONE
+    // write_provision_marker call observed is switchModel's own
+    // marker-write of the real "medium" marker.
+    expect(writeMarkerCalls).toBe(1);
+    expect(stopServerCalls).toBe(1); // switchModel's own stop, not a second one from reprovision()
+  });
+
+  it("meeting-active recheck right before stop_server cancels the switch, leaves state HEALTHY, and never touches the marker/settings/server — the download stays cached for a later attempt (S4 review pair Finding 2)", async () => {
+    let jobPolls = 0;
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-meeting" }, 202);
+      if (url.includes("/jobs/job-meeting")) {
+        jobPolls += 1;
+        return jsonResponse({ status: "done", progress: 1, error: null });
+      }
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    let writeMarkerCalls = 0;
+    let persistCalls = 0;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: () => {
+        writeMarkerCalls += 1;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({
+      invoke,
+      isMeetingActive: () => true,
+      persistDesktopModel: async () => {
+        persistCalls += 1;
+      },
+    });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    await expect(handle.switchModel("medium")).rejects.toThrow(
+      "会议进行中，已取消切换（模型已下载，可稍后一键切换）",
+    );
+
+    expect(jobPolls).toBe(1); // the download DID complete — it's cached sidecar-side
+    expect(stopServerCalls).toBe(0);
+    expect(writeMarkerCalls).toBe(0); // marker must NOT move to "medium" for a switch that never happened
+    expect(persistCalls).toBe(0);
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    await expect(handle.installedModel()).resolves.toBe("small"); // still the pre-switch marker
+  });
+
+  it("crash-window divergence (marker written, settings persist fails/never runs): installedModel() — the marker — is self-describing, independent of whisperModel (S4 review pair Finding 3)", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-divergence" }, 202);
+      if (url.includes("/jobs/job-divergence")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    // Stateful (unlike this file's other fakes, which mostly just COUNT
+    // write_provision_marker calls): a subsequent read_provision_marker
+    // must reflect what was just written, or the installedModel() check
+    // below would trivially read back the pre-switch marker regardless
+    // of what this test is actually exercising.
+    let markerJson: string | null = existingMarkerJson;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => markerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+      write_provision_marker: (args) => {
+        markerJson = args?.json as string;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({
+      invoke,
+      // Simulates the crash window between the marker write succeeding
+      // and settings.whisperModel actually persisting — e.g. the app
+      // quits right here. current.state is untouched (still HEALTHY,
+      // since stop_server below never even runs), so this rejection is
+      // the ONLY signal; the marker is already durable regardless.
+      persistDesktopModel: async () => {
+        throw new Error("simulated crash before settings persisted");
+      },
+    });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    await expect(handle.switchModel("medium")).rejects.toThrow("simulated crash before settings persisted");
+
+    expect(stopServerCalls).toBe(0); // never reached — the marker write already committed to "medium" first
+    // Settings never wrote "medium" (persistDesktopModel threw) — a
+    // caller reading settings.whisperModel here would see the STALE
+    // "small". SettingsDialog's own 当前模型 line deliberately does NOT
+    // read settings.whisperModel for exactly this reason (see
+    // installedModel()'s own doc comment: "TRUTHFUL... rather than
+    // settings.whisperModel, which is only the user's TARGET/preference
+    // ... and can briefly diverge from what's actually running") — it
+    // reads the marker, which already says "medium".
+    await expect(handle.installedModel()).resolves.toBe("medium");
+  });
+
+  it("allowlist rejection: an unknown model is rejected before any fetch/invoke call", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const deps = healthyDeps();
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    await expect(handle.switchModel("not-a-real-model")).rejects.toThrow("不支持的模型：not-a-real-model");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+  });
+});
+
+describe("bootstrapDesktop — installedModel() (S4 chunk 4)", () => {
+  it("reads the marker's own model via read_provision_marker + parseMarker", async () => {
+    const validMarkerJson = JSON.stringify({
+      schema: 1,
+      model: "large-v3",
+      py: "3.12",
+      deps: "x",
+      ts: "2026-07-01T00:00:00.000Z",
+    });
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => validMarkerJson }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+    await expect(handle.installedModel()).resolves.toBe("large-v3");
+  });
+
+  it("returns null on a missing/invalid marker (mirrors parseMarker's own fail-open contract)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+    await expect(handle.installedModel()).resolves.toBeNull();
+  });
+
+  it("returns null (fails open) when the invoke() itself rejects", async () => {
+    let readCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => {
+          readCalls += 1;
+          if (readCalls === 1) return null; // the initial CHECKING read
+          throw new Error("boom");
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+    await expect(handle.installedModel()).resolves.toBeNull();
   });
 });

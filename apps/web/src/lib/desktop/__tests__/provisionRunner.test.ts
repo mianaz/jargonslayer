@@ -344,6 +344,61 @@ describe("runEffects — prewarmModel (DOWNLOAD_MODEL)", () => {
       retriable: true,
     });
   });
+
+  it("also subscribes to prewarm://progress BEFORE invoking (after uv://log), forwards payloads to onDownloadProgress, unsubscribes after", async () => {
+    const { invoke } = makeFakeInvoke({
+      prewarm_model: () => {
+        // Emitted "during" the call — proves BOTH listeners were
+        // already active by the time this handler ran (mirrors the
+        // uv://log test above; see provisionRunner.ts's
+        // withDownloadProgress).
+        emit("prewarm://progress", { downloaded: 1_000_000, total: 3_000_000 });
+        emit("prewarm://progress", { downloaded: 3_000_000, total: 3_000_000 });
+        return { code: 0 };
+      },
+    });
+    const { listen, emit, activeCount, listenCalls } = makeFakeListen();
+    const progressUpdates: Array<{ downloaded: number; total: number }> = [];
+    const deps: RunnerDeps = {
+      invoke,
+      listen,
+      settings: DEFAULT_SETTINGS,
+      onDownloadProgress: (progress) => progressUpdates.push(progress),
+    };
+
+    const event = await runEffects(
+      { phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" },
+      [{ kind: "prewarmModel", model: "small" }],
+      deps,
+    );
+
+    expect(event).toEqual({ type: "STEP_OK", step: "DOWNLOAD_MODEL" });
+    expect(listenCalls).toEqual(["uv://log", "prewarm://progress"]);
+    expect(progressUpdates).toEqual([
+      { downloaded: 1_000_000, total: 3_000_000 },
+      { downloaded: 3_000_000, total: 3_000_000 },
+    ]);
+    expect(activeCount("prewarm://progress")).toBe(0); // unlistened after the call settled
+  });
+
+  it("a download_error rejection (server.rs's own captured-message Err) -> STEP_ERROR carrying that exact message", async () => {
+    const invoke: InvokeFn = (async () => {
+      throw new Error("磁盘空间不足，需要至少 3.6GB 可用空间");
+    }) as InvokeFn;
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS };
+    const event = await runEffects(
+      { phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" },
+      [{ kind: "prewarmModel", model: "small" }],
+      deps,
+    );
+    expect(event).toEqual({
+      type: "STEP_ERROR",
+      step: "DOWNLOAD_MODEL",
+      error: "磁盘空间不足，需要至少 3.6GB 可用空间",
+      retriable: true,
+    });
+  });
 });
 
 describe("runEffects — startServer (STARTING), with and without a bundled writeMarker", () => {

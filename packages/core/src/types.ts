@@ -26,6 +26,12 @@ export type STTEngineKind =
   | "webspeech"
   | "whisper"
   | "tabaudio"
+  // v0.4 S4: Soniox cloud STT (BYOK, experimental until the zh-en
+  // benchmark clears it — docs/design-explorations/s4-model-wizard-
+  // blueprint.md §E). Preview tier must never offer it: it joins
+  // whisper/tabaudio's triple gate (ENGINE_CARDS/Header previewLocked +
+  // store.ts applyTierDefaults coercion + key field disabled).
+  | "soniox"
   | "import"
   | "browser-whisper";
 
@@ -346,6 +352,14 @@ export interface Settings {
   // SETTINGS) allow-list both pick this up automatically, same as
   // partials/preferOnDeviceSpeech — no extra migration code needed.
   sidecarMode: "managed" | "external";
+  // v0.4 S4 (blueprint decision C): the user's TARGET Whisper model for
+  // the managed desktop sidecar — a preference, not the installed
+  // truth. The provision marker's own `model` field stays what
+  // start_server actually launches (marker wins on provisioned-dead
+  // restart); the model-SWITCH flow is the only writer that updates
+  // both together. Web builds never read it. Same zero-migration
+  // fold-in as sidecarMode above.
+  whisperModel: string;
   provider: LlmProvider;
   baseUrl: string; // openai-compat only, e.g. https://api.deepseek.com/v1
   apiKey: string; // "" = rely on server-side env ANTHROPIC_API_KEY
@@ -383,6 +397,13 @@ export interface Settings {
   // diarization (pyannote); "" = disabled. Never leaves the browser
   // except over localhost to the sidecar (see upload.ts).
   hfToken: string;
+  // v0.4 S4 (blueprint decision E): Soniox BYOK API key for the
+  // "soniox" cloud engine; "" = engine unavailable. Sent ONLY inside
+  // sonioxTransport.ts's wss config message to stt-rt.soniox.com.
+  // diag/report.ts's SECRET_KEY_RE catches the name automatically
+  // (→ hasSonioxKey), but history/autoExport.ts's stripKeyMaterial is a
+  // HAND-LISTED strip — sonioxKey must be added there (S4 chunk 6).
+  sonioxKey: string;
   // Realtime speaker diarization (beta, whisper/tabaudio only): labels
   // live transcript segments with SPEAKER_1/2/… as the meeting
   // progresses, via the sidecar's ws-side pyannote pass (see
@@ -495,6 +516,10 @@ export const DEFAULT_SETTINGS: Settings = {
   language: "en-US",
   whisperUrl: "ws://localhost:8765",
   sidecarMode: "managed",
+  // "small" mirrors bootstrap.ts's DEFAULT_DESKTOP_MODEL (S3 risk-1
+  // reliability default); the first-run picker overwrites it with the
+  // user's explicit choice (S4 chunk 3).
+  whisperModel: "small",
   provider: "anthropic",
   baseUrl: "",
   apiKey: "",
@@ -511,6 +536,7 @@ export const DEFAULT_SETTINGS: Settings = {
   explainLanguage: "zh",
   enabledPacks: null,
   hfToken: "",
+  sonioxKey: "",
   realtimeDiarize: false,
   partials: true,
   preferOnDeviceSpeech: true,

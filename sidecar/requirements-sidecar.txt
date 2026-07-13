@@ -18,3 +18,19 @@
 faster-whisper==1.2.1
 websockets==13.1
 numpy==2.5.1
+
+# S4 chunk 1: huggingface_hub is now a DIRECT import (whisper_server.py's
+# download_model_snapshot calls HfApi()/snapshot_download itself, for
+# the model-download wizard) rather than only a transitive dependency
+# of faster-whisper — pin it explicitly so a future faster-whisper
+# bump that relocates/removes it can't silently break downloads.
+# faster-whisper==1.2.1 declares `huggingface-hub>=0.21` (no upper
+# bound; verified 2026-07-12 against its installed METADATA) — 1.23.0
+# is the newest release satisfying that constraint (verified against
+# PyPI the same day) and is what `uv pip install faster-whisper==1.2.1`
+# itself resolves to unpinned. Verified live: HfApi().model_info(...,
+# files_metadata=True) and snapshot_download(..., tqdm_class=...)
+# behave as download_model_snapshot expects at this exact version
+# (see its own docstring/_make_progress_bar_class for what was
+# verified and why) — re-verify both before bumping this pin.
+huggingface-hub==1.23.0

@@ -48,4 +48,9 @@ describe("canPause — pause-button availability by engine (B4, STT protocol v2)
     expect(canPause("demo", { realtimeDiarize: false })).toBe(false);
     expect(canPause("demo", { realtimeDiarize: true })).toBe(false);
   });
+
+  it("hides pause for soniox — SonioxEngine (v0.4 S4) implements no pause()/resume(), teardown-pause fallback via useMeeting instead", () => {
+    expect(canPause("soniox", { realtimeDiarize: false })).toBe(false);
+    expect(canPause("soniox", { realtimeDiarize: true })).toBe(false);
+  });
 });

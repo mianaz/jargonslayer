@@ -142,6 +142,7 @@ Gray interim text while someone is speaking (the typing effect) is now app-contr
 | `small` (sidecar default) | Good | Realtime with headroom | Lightweight, fine for clean mostly-English audio |
 | `medium` | Better | Near realtime | **Recommended — best balance for live 中英夹杂 (code-switched zh-en)** |
 | `large-v3` | Best | Too slow live on Apple Silicon CPU | Best accuracy — batch/upload re-transcription on Mac, or live if you have an NVIDIA GPU |
+| `large-v3-turbo` | High, weaker on some CJK | ~4× faster than `large-v3` | English-primary with occasional zh — no translate task |
 
 Rule of thumb: Apple Silicon doing a live meeting → `medium`. Have an NVIDIA GPU → `large-v3` live is fine too. Old or no-GPU laptop → `small`. None of these switch languages mid-sentence flawlessly — Whisper picks one language per ~30-second window; the jargon detection and Chinese gloss layer on top is what actually carries the bilingual experience, not the transcription itself.
 

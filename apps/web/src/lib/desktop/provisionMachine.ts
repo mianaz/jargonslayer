@@ -84,7 +84,7 @@ export const MARKER_SCHEMA_VERSION = 1;
 // shape/types, not this exact value, on purpose: a value MISMATCH here
 // doesn't mean the venv is unusable, only that IT MIGHT be worth a fresh
 // install someday, which is a UX decision, not a validity one).
-const DEPS_TAG = "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1";
+const DEPS_TAG = "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1,huggingface-hub==1.23.0";
 
 function buildMarker(ctx: ProvisionContext): Omit<ProvisionMarker, "ts"> {
   return { schema: MARKER_SCHEMA_VERSION, model: ctx.model, py: PINNED_PYTHON_MINOR, deps: DEPS_TAG };
@@ -99,7 +99,18 @@ function buildMarker(ctx: ProvisionContext): Omit<ProvisionMarker, "ts"> {
 // A cheap shape guard ONLY — NOT the deliberately-avoided pin
 // comparison against ctx.model (see handleCheckResult below: a
 // marker's OWN model is meant to win over ctx's fixed default).
-const ALLOWED_MARKER_MODELS: readonly string[] = ["tiny", "base", "small", "medium", "large-v3"];
+// Exported (S4 chunk 3) so bootstrap.ts's ctx-seed clamp and the
+// MODEL_CATALOG invariant test (lib/desktop/modelCatalog.ts) validate
+// against this EXACT list rather than a hand-duplicated copy that could
+// silently drift — this module's own use above is otherwise unchanged.
+export const ALLOWED_MARKER_MODELS: readonly string[] = [
+  "tiny",
+  "base",
+  "small",
+  "medium",
+  "large-v3",
+  "large-v3-turbo",
+];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

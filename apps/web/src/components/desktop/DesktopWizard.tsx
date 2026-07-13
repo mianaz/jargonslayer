@@ -27,14 +27,23 @@ import {
   type DesktopBootstrapState,
   type DesktopLogLine,
 } from "@/lib/desktop/bootstrap";
+import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
 import type { ProvisionStep } from "@/lib/desktop/provisionMachine";
+import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
 import type { DesktopPaths } from "@/lib/desktop/uvCommands";
+import ModelPicker from "./ModelPicker";
 
 export interface DesktopWizardProps {
   state: DesktopBootstrapState;
   paths: DesktopPaths;
   logLines: DesktopLogLine[];
-  onBeginProvision: () => void;
+  /** S4 chunk 2's prewarm://progress snapshot, threaded through the
+   *  same "own it in DesktopBootstrap.tsx, pass it down as a plain
+   *  prop" shape as logLines — see StepRowsScreen's 下载模型 row below. */
+  downloadProgress: PrewarmProgressEvent | null;
+  /** S4 chunk 3 (decision A): the consent screen's own <ModelPicker>
+   *  pick, passed straight through to bootstrap.ts's beginProvision. */
+  onBeginProvision: (model: string) => void;
   onDismissConsent: () => void;
   onDismissTerminal: () => void;
   onRetry: () => void;
@@ -43,6 +52,22 @@ export interface DesktopWizardProps {
 }
 
 const README_URL = "https://github.com/mianaz/jargonslayer#readme";
+
+/** Human-readable byte size, one decimal place, GB above 1 else MB — the
+ *  下载模型 row's own progress readout (S4 chunk 2's prewarm://progress
+ *  is raw bytes; nothing else in this codebase already formats bytes
+ *  this way, see registry.ts's own "12.3MB" precedent for the same
+ *  one-decimal convention at a different unit). */
+function formatBytes(bytes: number): string {
+  const gb = bytes / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(1)}GB`;
+  return `${(bytes / 1024 ** 2).toFixed(1)}MB`;
+}
+
+function formatDownloadProgress(progress: PrewarmProgressEvent): string {
+  const pct = progress.total > 0 ? Math.round((progress.downloaded / progress.total) * 100) : 0;
+  return `${pct}% · ${formatBytes(progress.downloaded)}/${formatBytes(progress.total)}`;
+}
 
 type RowStatus = "pending" | "running" | "done" | "error";
 
@@ -165,7 +190,21 @@ function WizardFrame({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ConsentScreen({ onBeginProvision, onDismiss }: { onBeginProvision: () => void; onDismiss: () => void }) {
+function ConsentScreen({
+  onBeginProvision,
+  onDismiss,
+}: {
+  onBeginProvision: (model: string) => void;
+  onDismiss: () => void;
+}) {
+  // S4 chunk 3 (blueprint decision A): the picker's own selection state
+  // is UI-only, local to this screen — mirrors LogPane's `expanded`/
+  // EscapeHatch's `checking` above (this file's own "the only local
+  // state this file owns is its own UI-only toggles" header contract).
+  // Pre-selected to WIZARD_PRESELECTED_MODEL (medium — the veto window,
+  // see modelCatalog.ts's own doc comment on that constant).
+  const [model, setModel] = useState<string>(WIZARD_PRESELECTED_MODEL);
+  const chosen = MODEL_CATALOG.find((m) => m.id === model) ?? MODEL_CATALOG[0];
   return (
     <WizardFrame>
       <div data-testid="desktop-wizard-consent" className="space-y-4">
@@ -177,14 +216,25 @@ function ConsentScreen({ onBeginProvision, onDismiss }: { onBeginProvision: () =
           </p>
           <p className="text-mut2">预计下载体积约 0.5–1.5 GB，视网络情况需要几分钟到十几分钟。</p>
         </div>
+
+        <ModelPicker value={model} onChange={setModel} />
+
+        {/* zh-en guidance (blueprint decision A, verbatim) — honest,
+           no overselling: Whisper's own ~30s-per-window language
+           detection is stated plainly, right where the pick is made. */}
+        <div className="space-y-1.5 text-xs leading-[1.7] text-mut2">
+          <p>Whisper 每约 30 秒判定一种语言，句内中英混说无法做到完美；模型只负责转录，术语识别与中文注释是上层能力。</p>
+          <p>Apple Silicon 实时→medium；上传录音→large-v3；Win+NVIDIA→large-v3；无独显→small/turbo；英文为主偶尔中文→turbo；中英混说重→large-v3（turbo 在 CJK 上更弱）.</p>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
             type="button"
             data-testid="btn-begin-provision"
-            onClick={onBeginProvision}
+            onClick={() => onBeginProvision(model)}
             className="btn-terminal rounded-none bg-act px-4 py-2 text-sm font-semibold text-ink hover:bg-act/85"
           >
-            开始安装
+            开始安装（{chosen.id} · {chosen.size}）
           </button>
           <button
             type="button"
@@ -211,12 +261,14 @@ function StepRowsScreen({
   state,
   paths,
   logLines,
+  downloadProgress,
   onRetry,
   onRecheckHealth,
 }: {
   state: Extract<DesktopBootstrapState, { phase: "STEP" }>;
   paths: DesktopPaths;
   logLines: DesktopLogLine[];
+  downloadProgress: PrewarmProgressEvent | null;
   onRetry: () => void;
   onRecheckHealth: () => Promise<void>;
 }) {
@@ -229,10 +281,20 @@ function StepRowsScreen({
         <div className="space-y-1 border border-edge bg-panel2 p-3">
           {WIZARD_UI_STEPS.map((step) => {
             const status = rowStatus(step, state);
+            // S4 chunk 2's prewarm://progress only ever describes the
+            // 下载模型 row, and only while it's the currently-running
+            // step (see bootstrap.ts's own resetDownloadProgress —
+            // stale/finished-step values never survive to here).
+            const showProgress = step === "DOWNLOAD_MODEL" && status === "running" && downloadProgress !== null;
             return (
               <div key={step} data-testid={`wizard-step-${step}`} data-status={status} className="flex items-center gap-2 py-1.5">
                 <RowIcon status={status} />
                 <span className={status === "pending" ? "text-mut2" : "text-fg"}>{PROVISION_STEP_LABELS[step]}</span>
+                {showProgress && (
+                  <span data-testid="wizard-download-progress" className="font-mono text-xs text-mut2">
+                    {formatDownloadProgress(downloadProgress!)}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -314,6 +376,7 @@ export default function DesktopWizard({
   state,
   paths,
   logLines,
+  downloadProgress,
   onBeginProvision,
   onDismissConsent,
   onDismissTerminal,
@@ -325,7 +388,16 @@ export default function DesktopWizard({
     return <ConsentScreen onBeginProvision={onBeginProvision} onDismiss={onDismissConsent} />;
   }
   if (state.phase === "STEP") {
-    return <StepRowsScreen state={state} paths={paths} logLines={logLines} onRetry={onRetry} onRecheckHealth={onRecheckHealth} />;
+    return (
+      <StepRowsScreen
+        state={state}
+        paths={paths}
+        logLines={logLines}
+        downloadProgress={downloadProgress}
+        onRetry={onRetry}
+        onRecheckHealth={onRecheckHealth}
+      />
+    );
   }
   if (state.phase === "TERMINAL_ERROR") {
     return <TerminalErrorScreen state={state} onDismiss={onDismissTerminal} onReprovision={onReprovision} />;

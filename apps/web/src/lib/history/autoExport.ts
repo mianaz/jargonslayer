@@ -244,6 +244,10 @@ function stripKeyMaterial(settings: Settings): Settings {
     ...rest,
     apiKey: "",
     hfToken: "",
+    // v0.4 S4 (blueprint decision E): Soniox BYOK key — same hand-listed
+    // strip as the other BYOK/pairing fields here (types.ts's own
+    // sonioxKey doc comment points back at this exact line).
+    sonioxKey: "",
     agentToken: "",
     // Webhook URLs routinely embed capability tokens in the path
     // (n8n/飞书 style) — credential-like, stripped with the rest
@@ -256,8 +260,8 @@ function stripKeyMaterial(settings: Settings): Settings {
 /** Serialize sessions + glossary + learn-set + settings into one backup
  *  JSON. `includeKeys: false` (the Settings dialog's default-checked
  *  "不包含 API Key" option) strips apiKey/taskLlm[*].apiKey/hfToken/
- *  agentToken from the embedded settings — everything else round-trips
- *  as-is.
+ *  sonioxKey/agentToken from the embedded settings — everything else
+ *  round-trips as-is.
  *
  *  `learnset` (#48 step 4): the learn-set's `Record<string,
  *  LearnRecord>` (see learn/store.ts) as a fourth top-level field,

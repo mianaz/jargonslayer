@@ -19,7 +19,10 @@
 //   readMarker   -> invoke("read_provision_marker")            -> string | null
 //   writeMarker  -> invoke("write_provision_marker", { json }) -> void
 //   runUv        -> invoke("run_uv", { args, env })             -> ProcessResult, uv://log-streamed
-//   prewarmModel -> invoke("prewarm_model", { model })          -> ProcessResult, uv://log-streamed
+//   prewarmModel -> invoke("prewarm_model", { model })          -> ProcessResult, uv://log-
+//                   AND prewarm://progress-streamed (S4 chunk 2's
+//                   --download-only progress line -> {downloaded,total}
+//                   events; see withDownloadProgress)
 //   startServer  -> invoke("start_server", { model })           -> StartServerResult
 //   stopServer   -> invoke("stop_server")                       -> void (Finding 7: the
 //                   LEADING effect on a STARTING/POLLING_HEALTH retry
@@ -58,6 +61,17 @@ export interface UvLogEvent {
   line: string;
 }
 
+/** Mirrors apps/desktop/src-tauri/src/server.rs's `PrewarmProgressEvent`
+ *  payload — the `prewarm://progress` event prewarm_model emits while
+ *  its --download-only child reports download_progress lines (S4 chunk
+ *  2, decision B's first-run one-shot path). */
+export interface PrewarmProgressEvent {
+  downloaded: number;
+  total: number;
+}
+
+export type OnDownloadProgress = (progress: PrewarmProgressEvent) => void;
+
 export interface RunnerDeps {
   invoke: InvokeFn;
   listen: ListenFn;
@@ -72,6 +86,12 @@ export interface RunnerDeps {
   /** uv/prewarm combined stdout+stderr line sink — omitted (a no-op) in
    *  tests that don't care about log output. */
   onLog?: OnLog;
+  /** DOWNLOAD_MODEL's own prewarm://progress sink (S4 chunk 2) — omitted
+   *  (a no-op) in tests/callers that don't care about download progress,
+   *  same posture as onLog above. Only ever fires while a prewarmModel
+   *  effect is in flight (see withDownloadProgress) — runUv/startServer
+   *  never emit prewarm://progress. */
+  onDownloadProgress?: OnDownloadProgress;
   /** Swappable purely for hermetic unit tests (default: the real
    *  probeSidecar import) — NOT a duplicate implementation, still the
    *  exact same probe this file "reuses, does not duplicate". */
@@ -95,6 +115,7 @@ export interface RunnerDeps {
 }
 
 const noopLog: OnLog = () => {};
+const noopDownloadProgress: OnDownloadProgress = () => {};
 const defaultNow = () => new Date().toISOString();
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -122,7 +143,15 @@ async function readMarkerEffect(deps: RunnerDeps): Promise<string | null> {
   }
 }
 
-async function invokeWriteMarker(
+/** write_provision_marker — like stopServer/getAppPaths below, ALSO
+ *  exported for a caller outside the machine's own driven flow: S4
+ *  chunk 4's bootstrap.ts switchModel() (a thin bootstrap-only detour,
+ *  same rationale as reprovision()'s direct stopServer() call) reuses
+ *  this verbatim rather than hand-duplicating the "stamp `ts`, then
+ *  JSON.stringify + invoke" shape — the ONE place that does so stays
+ *  this one, regardless of how many external callers there end up
+ *  being. */
+export async function invokeWriteMarker(
   deps: RunnerDeps,
   marker: Omit<ProvisionMarker, "ts">,
   now: () => string,
@@ -138,6 +167,27 @@ async function invokeWriteMarker(
 async function withUvLog<T>(deps: RunnerDeps, onLog: OnLog, run: () => Promise<T>): Promise<T> {
   const unlisten = await deps.listen<UvLogEvent>("uv://log", (event) => {
     onLog(event.payload.stream, event.payload.line);
+  });
+  try {
+    return await run();
+  } finally {
+    unlisten();
+  }
+}
+
+/** Wraps a prewarm_model invoke with a prewarm://progress subscription,
+ *  active for the FULL duration of the call — same "subscribe before,
+ *  unlisten after" contract as withUvLog above. Composed ALONGSIDE
+ *  withUvLog (not merged into it) in runStepEffect's prewarmModel case
+ *  below, since only that one call shape ever emits prewarm://progress
+ *  — runUv/startServer never do. */
+async function withDownloadProgress<T>(
+  deps: RunnerDeps,
+  onDownloadProgress: OnDownloadProgress,
+  run: () => Promise<T>,
+): Promise<T> {
+  const unlisten = await deps.listen<PrewarmProgressEvent>("prewarm://progress", (event) => {
+    onDownloadProgress(event.payload);
   });
   try {
     return await run();
@@ -172,6 +222,7 @@ async function runStepEffect(
   effect: Extract<Effect, { kind: "runUv" | "prewarmModel" | "startServer" }>,
   deps: RunnerDeps,
   onLog: OnLog,
+  onDownloadProgress: OnDownloadProgress,
 ): Promise<MachineEvent> {
   try {
     switch (effect.kind) {
@@ -182,8 +233,17 @@ async function runStepEffect(
         return processResultToEvent(step, result);
       }
       case "prewarmModel": {
+        // S4 chunk 2: prewarm_model's own Err(message) — the download_
+        // error line server.rs captured (see that command's own doc
+        // comment) — surfaces here as an ordinary invoke() rejection,
+        // caught by this function's own try/catch below exactly like
+        // any other invoke failure; no special-casing needed on this
+        // side, it already carries the specific message through
+        // verbatim as STEP_ERROR.error.
         const result = await withUvLog(deps, onLog, () =>
-          deps.invoke<ProcessResult>("prewarm_model", { model: effect.model }),
+          withDownloadProgress(deps, onDownloadProgress, () =>
+            deps.invoke<ProcessResult>("prewarm_model", { model: effect.model }),
+          ),
         );
         return processResultToEvent(step, result);
       }
@@ -222,6 +282,7 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
   const probe = deps.probeSidecarFn ?? probeSidecar;
   const now = deps.now ?? defaultNow;
   const onLog = deps.onLog ?? noopLog;
+  const onDownloadProgress = deps.onDownloadProgress ?? noopDownloadProgress;
   const sleep = deps.sleep ?? defaultSleep;
 
   if (state.phase === "CHECKING") {
@@ -293,7 +354,7 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
       // trivial success rather than stalling the machine forever.
       return { type: "STEP_OK", step: state.step };
     }
-    return runStepEffect(state.step, stepEffect, deps, onLog);
+    return runStepEffect(state.step, stepEffect, deps, onLog, onDownloadProgress);
   }
 
   throw new Error(

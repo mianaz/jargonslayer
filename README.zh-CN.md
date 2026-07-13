@@ -142,6 +142,7 @@ http://127.0.0.1:8766 录音上传任务 API — PUT /transcribe, POST /ingest-u
 | `small`（sidecar 默认） | 好 | 实时有富余 | 轻量，干净的纯英文音频够用 |
 | `medium` | 更好 | 接近实时 | **推荐——中英夹杂实时转录的最佳平衡点** |
 | `large-v3` | 最好 | Apple Silicon 上实时跑不动 | 精度最高——Mac 上适合会后重转录，有 NVIDIA 显卡的话实时也能上 |
+| `large-v3-turbo` | 高，部分中文场景稍弱 | 比 `large-v3` 快约 4 倍 | 英语为主偶尔夹中文——不支持 translate 任务 |
 
 经验法则：Apple Silicon 开实时会议选 `medium`；有 NVIDIA 显卡实时也能上 `large-v3`；机器老或没独显就用 `small`。这几个模型都做不到句内中英切换零误差——Whisper 每约 30 秒的窗口只认一种语言；真正撑起双语体验的是上面那层术语检测和中文注释，不是转录本身。
 
