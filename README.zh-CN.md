@@ -12,7 +12,7 @@
 *Real-time English-meeting comprehension assistant · your meeting, as a running process*
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
-[![License](https://img.shields.io/github/license/mianaz/jargonslayer?style=flat-square&color=22D3EE&labelColor=121212)](LICENSE)
+[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-22D3EE?style=flat-square&labelColor=121212)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-1664%20passing-4ADE80?style=flat-square&labelColor=121212)](apps/web/src/lib/__tests__)
 [![数据路径](https://img.shields.io/badge/data-transparent%20paths-FFAA44?style=flat-square&labelColor=121212)](#隐私边界明确说清楚)
 
@@ -261,7 +261,7 @@ python -m sidecar.agent_server --port 8767
 
 ## 版本
 
-同一个产品按**形态**分层（不是按付费分层——全部免费开源）：
+同一个产品按**形态**分层（不是按付费分层——个人与非商业用途全部免费，源码完整公开、可读可审计）：
 
 | 能力 | Chrome 插件（Lite，规划中） | 体验版（[在线](https://apps.bioinfospace.com/jargonslayer)） | 本地版 / 桌面版 |
 |---|---|---|---|
@@ -317,4 +317,4 @@ Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB，npm work
 
 ## 许可证
 
-[MIT](LICENSE) © 2026 Miana Zeng
+[PolyForm Noncommercial 1.0.0](LICENSE) © 2026 Miana Zeng——个人及一切非商业用途免费，源码完整公开；**商业使用需另行授权**（提 GitHub issue 或联系作者）。v0.3.0 及更早的已发布版本仍按当时的 MIT 许可提供。

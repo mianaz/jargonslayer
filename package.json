@@ -2,7 +2,7 @@
   "name": "jargonslayer",
   "private": true,
   "description": "Real-time English-meeting comprehension assistant for non-native speakers — transparent by default, fully local when you choose (英文会议实时理解助手)",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Miana Zeng",
   "repository": {
     "type": "git",
