@@ -59,6 +59,41 @@ describe("savedLookups storage", () => {
     expect(all.map((e) => e.headword)).toEqual(["ARR", "MRR"]);
   });
 
+  // F6a (S7 review) — a duplicate 收藏 click for the SAME kind+headword
+  // (re-scanning the same paste, or the same word surfacing on both
+  // the paste area and a live-capture card) must not grow the list.
+  it("F6a: saveLookup returns the existing record unchanged for a same kind+headword duplicate, case/whitespace-insensitively", async () => {
+    const first = await saveLookup({
+      kind: "term",
+      headword: "ARR",
+      chinese_explanation: "年度经常性收入",
+    });
+
+    const second = await saveLookup({
+      kind: "term",
+      headword: "  arr ",
+      chinese_explanation: "a different gloss that must NOT overwrite the original",
+    });
+
+    expect(second).toEqual(first);
+    const all = await getSavedLookups();
+    expect(all).toHaveLength(1);
+    expect(all[0]).toEqual(first);
+  });
+
+  it("F6a: a different kind with the SAME headword text is not treated as a duplicate", async () => {
+    const term = await saveLookup({ kind: "term", headword: "ARR", chinese_explanation: "年度经常性收入" });
+    const expression = await saveLookup({
+      kind: "expression",
+      headword: "ARR",
+      chinese_explanation: "some expression sense of ARR",
+    });
+
+    expect(expression.id).not.toBe(term.id);
+    const all = await getSavedLookups();
+    expect(all).toHaveLength(2);
+  });
+
   it("removes a saved lookup by id, leaving the rest intact", async () => {
     const first = await saveLookup({ kind: "term", headword: "KPI", chinese_explanation: "关键绩效指标" });
     const second = await saveLookup({ kind: "term", headword: "ROI", chinese_explanation: "投资回报率" });

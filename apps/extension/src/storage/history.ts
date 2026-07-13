@@ -15,6 +15,7 @@
 // global — see storage/__tests__/history.test.ts's coexistence guard.
 
 import type { ExpressionCard, TermCard } from "@jargonslayer/core/types";
+import { diagLog } from "../lib/diag";
 
 const DB_NAME = "jargonslayer-extension";
 const DB_VERSION = 1;
@@ -38,7 +39,25 @@ function openDb(): Promise<IDBDatabase> {
         }
       };
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error);
+      // F4a: reset the module-level cache on failure too — otherwise a
+      // single transient open error (quota hiccup, a corrupt DB on this
+      // profile, …) would leave every future openDb() call awaiting
+      // this SAME already-rejected promise, bricking history for the
+      // rest of the document's lifetime instead of letting the next
+      // call retry with a fresh indexedDB.open().
+      req.onerror = () => {
+        dbPromise = null;
+        reject(req.error ?? new Error("indexedDB.open failed"));
+      };
+      // F4b: another open panel/tab holding an older-version connection
+      // can block this upgrade indefinitely — onsuccess/onerror never
+      // fire on their own in that case, which would otherwise hang
+      // openDb() (and every idbGet/Set/Del/Keys call awaiting it)
+      // forever. Same cache reset as onerror, for the same reason.
+      req.onblocked = () => {
+        dbPromise = null;
+        reject(new Error("indexedDB upgrade blocked by another open panel"));
+      };
     });
   }
   return dbPromise;
@@ -60,6 +79,11 @@ async function idbSet(key: string, value: unknown): Promise<void> {
     tx.objectStore(STORE_NAME).put(value, key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    // F4c: an abort (e.g. a quota error, or another connection's
+    // version-change forcing this tx out) doesn't always also fire
+    // onerror — without this, stop()'s awaited saveSession() could hang
+    // forever on a transaction that already died.
+    tx.onabort = () => reject(tx.error ?? new Error("transaction aborted"));
   });
 }
 
@@ -70,6 +94,9 @@ async function idbDel(key: string): Promise<void> {
     tx.objectStore(STORE_NAME).delete(key);
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
+    // F4c: see idbSet's identical handler for why onabort must settle
+    // this too.
+    tx.onabort = () => reject(tx.error ?? new Error("transaction aborted"));
   });
 }
 
@@ -128,13 +155,43 @@ export async function saveSession(
   await store.set(session.id, session);
 }
 
-/** All saved sessions, newest-first (by startedAt). */
+// F5: legacy/malformed records (a schema change, a partial write, hand
+// edits during dev, …) must never break rendering, delete, or export —
+// this is a structural shape check only (not a full schema validation),
+// matching the fields renderHistorySection/exportSession actually read.
+function isLiteSessionShape(value: unknown): value is LiteSession {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.id === "string" &&
+    typeof v.startedAt === "number" &&
+    Array.isArray(v.segments) &&
+    Array.isArray(v.cards) &&
+    Array.isArray(v.terms)
+  );
+}
+
+/** All saved sessions, newest-first (by startedAt). Records that don't
+ *  structurally look like a LiteSession (F5) are skipped rather than
+ *  thrown on or passed through — one diagLog "warn" for the whole
+ *  batch (count only, never record content). */
 export async function listSessions(store: KeyValueStore = idbStore): Promise<LiteSession[]> {
   const keys = await store.keys();
-  const sessions = await Promise.all(keys.map((key) => store.get(key)));
-  return (sessions.filter((s): s is LiteSession => s != null)).sort(
-    (a, b) => b.startedAt - a.startedAt,
-  );
+  const records = await Promise.all(keys.map((key) => store.get(key)));
+  const sessions: LiteSession[] = [];
+  let skipped = 0;
+  for (const record of records) {
+    if (record == null) continue; // deleted between keys() and get() — not a corrupt record
+    if (isLiteSessionShape(record)) {
+      sessions.push(record);
+    } else {
+      skipped += 1;
+    }
+  }
+  if (skipped > 0) {
+    diagLog("warn", "history-corrupt-record", "跳过结构不正确的历史记录", `skipped=${skipped}`);
+  }
+  return sessions.sort((a, b) => b.startedAt - a.startedAt);
 }
 
 /** A single saved session by id, or undefined if it was never saved
