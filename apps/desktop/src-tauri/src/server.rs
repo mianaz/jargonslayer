@@ -260,7 +260,15 @@ fn run_venv_python_streaming(
         },
         move |line| emit_uv_log(&app_err, "stderr", line),
     )
-    .map_err(|e| format!("failed to spawn {}: {e}", program.display()))?;
+    .map_err(|e| {
+        // Emitted as a uv://log line too — a spawn failure produces zero
+        // subprocess output, and this stream is the wizard 详细日志
+        // pane's only feed (same rationale as run_uv's own two failure
+        // paths, uv.rs).
+        let message = format!("failed to spawn {}: {e}", program.display());
+        emit_uv_log(app, "stderr", message.clone());
+        message
+    })?;
 
     let status = child.wait().map_err(|e| e.to_string())?;
     let _ = out_handle.join();
