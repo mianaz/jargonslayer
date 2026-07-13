@@ -44,6 +44,7 @@ import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
 import {
   runDetectionPipeline,
   buildSessionFromSegments,
+  fetchSidecarHealth,
   ingestUrl,
   importUrlAndTrack,
   withSidecarHint,
@@ -394,6 +395,80 @@ describe("ingestUrl — request shape (#43 phase 2c, LOCAL TIER ONLY)", () => {
     await expect(ingestUrl("https://example.com/watch?v=abc", settings)).rejects.toThrow(
       "导入失败（500）",
     );
+  });
+});
+
+// ---------------------------------------------------------------
+// fetchSidecarHealth — health-parse incl. the new S5 chunk 1
+// diarization_installed field (decision C/risk 5): undefined must
+// never be coerced to false, whether the sidecar is unreachable or it
+// simply predates S5. Mirrors ingestUrl's own direct global.fetch
+// mocking above (this file's convention); sidecarHealth.test.ts covers
+// the SAME field on probeSidecar's own parallel /health parse.
+// ---------------------------------------------------------------
+
+describe("fetchSidecarHealth — health-parse incl. diarization_installed (S5 chunk 3)", () => {
+  let settings: Settings;
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    settings = makeSettings({ whisperUrl: "ws://localhost:8765" });
+    mockFetch = vi.fn();
+    global.fetch = mockFetch as unknown as typeof fetch;
+  });
+
+  it("passes diarization_installed:true through untouched", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        diarization_installed: true,
+        diarization_ready: false,
+        diarization_error: "未配置 HF Token",
+      }),
+    });
+
+    const result = await fetchSidecarHealth(settings);
+
+    expect(result?.diarization_installed).toBe(true);
+  });
+
+  it("passes diarization_installed:false through (not just omitted)", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        ok: true,
+        diarization_installed: false,
+        diarization_ready: false,
+        diarization_error: null,
+      }),
+    });
+
+    const result = await fetchSidecarHealth(settings);
+
+    expect(result?.diarization_installed).toBe(false);
+  });
+
+  it("diarization_installed is undefined (never coerced) when a legacy/external sidecar omits it entirely", async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, diarization_ready: true, diarization_error: null }),
+    });
+
+    const result = await fetchSidecarHealth(settings);
+
+    expect(result?.diarization_installed).toBeUndefined();
+  });
+
+  it("returns null (never throws) when the sidecar is unreachable", async () => {
+    mockFetch.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    const result = await fetchSidecarHealth(settings);
+
+    expect(result).toBeNull();
   });
 });
 

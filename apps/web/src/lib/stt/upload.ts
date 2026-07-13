@@ -112,10 +112,25 @@ export async function uploadRecording(
  * diarization is ready to run (pyannote importable + a token
  * available). 3s timeout; returns null on any failure (sidecar
  * unreachable, timeout, bad response) so callers can render a single
- * "can't reach sidecar" state without try/catch plumbing. */
+ * "can't reach sidecar" state without try/catch plumbing.
+ *
+ * `diarization_installed` (S5 chunk 1, decision C) is the new,
+ * token-INDEPENDENT "is pyannote even importable" fact — optional
+ * because a legacy/external sidecar predating S5 simply omits the key;
+ * callers must render that `undefined` as 未知, never coerce it to
+ * 未安装 (risk 5). `diarization_ready`/`diarization_error` keep their
+ * pre-S5 meaning unchanged (token-gated actual readiness). */
 export async function fetchSidecarHealth(
   settings: Settings,
-): Promise<{ ok: boolean; diarization_ready: boolean; diarization_error: string | null } | null> {
+): Promise<
+  | {
+      ok: boolean;
+      diarization_installed?: boolean;
+      diarization_ready: boolean;
+      diarization_error: string | null;
+    }
+  | null
+> {
   const base = httpBaseFromWs(settings.whisperUrl);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 3000);
@@ -124,6 +139,7 @@ export async function fetchSidecarHealth(
     if (!res.ok) return null;
     return (await res.json()) as {
       ok: boolean;
+      diarization_installed?: boolean;
       diarization_ready: boolean;
       diarization_error: string | null;
     };

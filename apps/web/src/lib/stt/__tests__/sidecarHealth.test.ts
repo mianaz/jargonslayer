@@ -57,6 +57,68 @@ describe("probeSidecar", () => {
     expect(result).toEqual({ up: true, model: "small", diarize: false });
   });
 
+  // ---------------------------------------------------------------
+  // installed (S5 chunk 1's diarization_installed, decision C) — a
+  // token-INDEPENDENT fact distinct from diarize above. undefined must
+  // render as 未知, never coerced to 未安装 (risk 5); covered here at
+  // the parse layer, not by SettingsDialog (which sources its own
+  // install-state row from fetchSidecarHealth, not this probe — see
+  // upload.test.ts's own fetchSidecarHealth describe block for that
+  // side).
+  // ---------------------------------------------------------------
+
+  it("surfaces installed:true from diarization_installed:true (S5 decision C, token-independent)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          ok: true,
+          model: "small",
+          diarization_installed: true,
+          diarization_ready: false,
+          diarization_error: "未配置 HF Token",
+        }),
+      ),
+    );
+
+    const result = await probeSidecar(makeSettings());
+
+    expect(result).toEqual({ up: true, model: "small", diarize: false, installed: true });
+  });
+
+  it("surfaces installed:false (not just omitted) from diarization_installed:false", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({
+          ok: true,
+          model: "small",
+          diarization_installed: false,
+          diarization_ready: false,
+          diarization_error: null,
+        }),
+      ),
+    );
+
+    const result = await probeSidecar(makeSettings());
+
+    expect(result).toEqual({ up: true, model: "small", diarize: false, installed: false });
+  });
+
+  it("installed is undefined (never coerced to false/未安装) when a legacy/external sidecar omits diarization_installed entirely (risk 5)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        jsonResponse({ ok: true, model: "small", diarization_ready: true, diarization_error: null }),
+      ),
+    );
+
+    const result = await probeSidecar(makeSettings());
+
+    expect(result).toEqual({ up: true, model: "small", diarize: true });
+    expect(result.installed).toBeUndefined();
+  });
+
   it("returns up:false (never throws) when the sidecar is unreachable (fetch rejects)", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
 

@@ -679,3 +679,88 @@ describe("SettingsDialog — 转录引擎 更换模型 (v0.4 S4 chunk 4)", () =>
     expect(container!.textContent).not.toContain("当前模型");
   });
 });
+
+// ---------------------------------------------------------------
+// 说话人分离 安装扩展 (v0.4 S5 chunk 3, blueprint decision A). Same
+// IS_DESKTOP limitation the 转录引擎 更换模型 describe block just above
+// already documents in full ("PREVIEW_TIER/IS_DESKTOP are import-time
+// consts... a runtime vi.stubEnv can't flip it here any more than it
+// can PREVIEW_TIER" — not repeated verbatim here, see that block's own
+// comment). The whole install-state row/安装扩展 button/log tail/移除
+// 扩展 doc line, AND the realtime-toggle's inline "需先安装说话人分离扩展"
+// warning, all sit behind `IS_DESKTOP && draft.sidecarMode ===
+// "managed"` and are therefore structurally unreachable from any render
+// in this suite — so neither handleInstallDiarization's own busy/
+// meeting-guard wiring (mirrors handleSwitchModel's identical gap, same
+// rationale) nor the diarizationInstalled true/false/undefined
+// tri-state render is mount-testable here without the vi.resetModules()
+// workaround this file has never used for the analogous PREVIEW_TIER/
+// IS_DESKTOP gaps either; both are instead covered at the unit level
+// (bootstrap.test.ts's own installDiarization() single-flight/non-
+// HEALTHY-rejection tests) and by direct code inspection
+// (meetingActive/reprovisioningDesktop/switchingModel/installing gate
+// every button's `disabled`, diarizationInstalled === false gates both
+// the install button and the realtime-toggle note). What IS testable
+// without IS_DESKTOP: that the entire block stays fully absent on an
+// ordinary web build regardless of sidecarMode/meeting status — i.e.
+// nothing here accidentally leaks into a build that never provisions
+// anything. sidecarHealth.test.ts/upload.test.ts cover the new
+// diarization_installed parse (probeSidecar/fetchSidecarHealth) this
+// block's row is sourced from.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 说话人分离 安装扩展 (v0.4 S5 chunk 3)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function navButtons(): HTMLButtonElement[] {
+    return Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ status: "idle" }); // resetStore() doesn't cover this field — avoid leaking into later tests
+  });
+
+  it("renders no 安装扩展 install-state affordance on a non-desktop build, even with sidecarMode:\"managed\" and a meeting active — IS_DESKTOP gates the whole block", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", sidecarMode: "managed" },
+      status: "listening",
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    // Navigate into 说话人分离 itself (unlike 更换模型's own home category
+    // "转录引擎", this section is NOT the default-active category, so the
+    // absence check would be trivially true without this click — it
+    // would only be proving category-gating, not the IS_DESKTOP gate
+    // this test actually targets).
+    const diarBtn = navButtons().find((b) => b.textContent === "说话人分离");
+    if (!diarBtn) throw new Error('nav category "说话人分离" not found');
+    await act(async () => {
+      diarBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(container!.textContent).not.toContain("说话人分离扩展：");
+    expect(container!.textContent).not.toContain("安装扩展（约");
+    expect(container!.textContent).not.toContain("移除扩展");
+    expect(container!.textContent).not.toContain("需先安装说话人分离扩展");
+  });
+});
