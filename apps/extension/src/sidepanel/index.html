@@ -13,6 +13,37 @@
         <p class="js-sub">粘贴英文商务文本，秒查黑话与术语</p>
       </header>
 
+      <section class="js-capture-section">
+        <div class="js-row">
+          <button id="js-listen-btn" type="button" class="js-btn js-btn-primary">开始聆听</button>
+          <span id="js-listen-status" class="js-status"></span>
+        </div>
+
+        <p id="js-privacy-line" class="js-privacy-line" hidden></p>
+        <p id="js-capture-notice" class="js-status" hidden></p>
+        <p id="js-saved-notice" class="js-status" hidden>本次转录已保存到历史记录。</p>
+
+        <div id="js-grant-affordance" class="js-grant-affordance" hidden>
+          <h3 class="js-grant-title">需要麦克风权限</h3>
+          <p class="js-grant-desc">
+            侧边栏里没法直接弹出授权。点下面的按钮会打开一个页面来申请麦克风权限，允许之后回到这里就能开始聆听。
+          </p>
+          <button id="js-grant-btn" type="button" class="js-btn">打开授权页面</button>
+        </div>
+
+        <p id="js-unsupported-notice" class="js-unsupported-notice" hidden>
+          这个浏览器用不了语音识别，请用桌面版 Chrome。也可以直接粘贴文本来检测。
+        </p>
+
+        <div id="js-transcript" class="js-transcript">
+          <p class="js-empty-hint">开始聆听后，识别到的文字会显示在这里。</p>
+        </div>
+
+        <div id="js-capture-cards" class="js-results">
+          <p id="js-capture-empty-hint" class="js-empty-hint">检测结果会显示在这里。</p>
+        </div>
+      </section>
+
       <section class="js-input-section">
         <textarea
           id="js-input"
@@ -38,10 +69,16 @@
         <p id="js-empty-hint" class="js-empty-hint">检测结果会显示在这里。</p>
       </section>
 
+      <div id="js-history-mount"></div>
+
+      <div id="js-locked-mount"></div>
+
       <footer class="js-footer">
         <span>内置词典 · 428/11 packs</span>
         <span class="js-footer-sep">·</span>
         <span>本地存储，不上传</span>
+        <span class="js-footer-sep">·</span>
+        <span>语音识别仅支持桌面版 Chrome。</span>
       </footer>
     </div>
     <script type="module" src="./main.ts"></script>
