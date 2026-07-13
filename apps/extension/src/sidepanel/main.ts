@@ -93,6 +93,19 @@ function isSaved(headword: string): boolean {
   return savedHeadwords.has(headword.trim().toLowerCase());
 }
 
+// F6b (S7 review): a save from EITHER surface (the S6 paste area OR
+// the S7 live-capture cards area) must grey out the same headword on
+// BOTH — otherwise the same word stays saveable a second time from
+// whichever area didn't just re-render itself. Both re-renders below
+// are safe to call unconditionally even when the OTHER area has
+// nothing on screen yet: runScan() no-ops on an empty textarea,
+// renderCaptureCards() no-ops on the initial empty snapshot.
+async function refreshSavedStateAcrossAreas(): Promise<void> {
+  await refreshSavedHeadwords();
+  runScan();
+  renderCaptureCards(lastCaptureSnapshot);
+}
+
 async function handleSaveExpression(expr: DetectedExpression): Promise<void> {
   await saveLookup({
     kind: "expression",
@@ -100,8 +113,7 @@ async function handleSaveExpression(expr: DetectedExpression): Promise<void> {
     chinese_explanation: expr.chinese_explanation,
     source_sentence: expr.source_sentence,
   });
-  await refreshSavedHeadwords();
-  runScan(); // re-render so the just-saved card flips to "已收藏 ✓"
+  await refreshSavedStateAcrossAreas(); // re-renders both areas so the just-saved card flips to "已收藏 ✓" everywhere
 }
 
 async function handleSaveTerm(term: DetectedTerm): Promise<void> {
@@ -110,8 +122,7 @@ async function handleSaveTerm(term: DetectedTerm): Promise<void> {
     headword: term.term,
     chinese_explanation: term.gloss_zh,
   });
-  await refreshSavedHeadwords();
-  runScan();
+  await refreshSavedStateAcrossAreas();
 }
 
 function runScan(): void {
@@ -303,8 +314,7 @@ async function handleSaveCaptureExpression(expr: ExpressionCard): Promise<void> 
     chinese_explanation: expr.chinese_explanation,
     source_sentence: expr.source_sentence,
   });
-  await refreshSavedHeadwords();
-  renderCaptureCards(lastCaptureSnapshot); // re-render so the just-saved card flips to "已收藏 ✓"
+  await refreshSavedStateAcrossAreas(); // re-renders both areas so the just-saved card flips to "已收藏 ✓" everywhere
 }
 
 async function handleSaveCaptureTerm(term: TermCard): Promise<void> {
@@ -313,8 +323,7 @@ async function handleSaveCaptureTerm(term: TermCard): Promise<void> {
     headword: term.term,
     chinese_explanation: term.gloss_zh,
   });
-  await refreshSavedHeadwords();
-  renderCaptureCards(lastCaptureSnapshot);
+  await refreshSavedStateAcrossAreas();
 }
 
 function handlePrivacyMode(mode: "on-device" | "cloud"): void {
@@ -365,6 +374,16 @@ const captureController = new CaptureController({
     onNotice: handleNotice,
     onSaved: handleSaved,
   },
+});
+
+// F9 (S7 review): best-effort save-on-close — pagehide fires as the
+// side panel is closing/navigating away; calling stop() here attempts
+// to persist whatever was captured instead of silently discarding it.
+// Fire-and-forget and best-effort ONLY (one-line caveat, reviewers
+// accepted it): the document can be torn down before this promise —
+// let alone the IndexedDB write inside it — ever settles.
+window.addEventListener("pagehide", () => {
+  if (isListening) void captureController.stop();
 });
 
 listenBtn.addEventListener("click", () => {
