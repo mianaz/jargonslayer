@@ -23,7 +23,7 @@ import {
 } from "./fakeWs";
 import { deferred } from "./fakeMedia";
 import { makeFakeChannelFactory, makeFakeInvoke, makeFakeListen, type FakeInvokeCall } from "./fakeTauri";
-import type { ChannelFactory, InvokeFn, ListenFn, PcmChannel } from "../../desktop/tauriApi";
+import type { ChannelFactory, InvokeFn, ListenFn, PcmChannel, UnlistenFn } from "../../desktop/tauriApi";
 
 // Mirrors appAudio.ts's own (unexported) STOP_ENDED_TIMEOUT_MS — kept
 // in sync by the timeout-fallback test below, same convention as
@@ -87,9 +87,10 @@ async function settle(n = 5): Promise<void> {
 
 const SUPPORTED_CAPS = { appAudioSupported: true, reason: null as string | null };
 
-/** Wires the default fakes (capabilities: supported; start/stop_app_audio:
- *  succeed) into the mocked tauriApi module, with per-command overrides
- *  for tests that need a specific command to fail/defer. */
+/** Wires the default fakes (capabilities: supported; start/stop_app_audio/
+ *  pause_app_audio/resume_app_audio: succeed) into the mocked tauriApi
+ *  module, with per-command overrides for tests that need a specific
+ *  command to fail/defer. */
 function wireFakes(invokeOverrides: Record<string, (args?: Record<string, unknown>) => unknown> = {}): {
   calls: FakeInvokeCall[];
   emit: (event: string, payload: unknown) => void;
@@ -100,6 +101,10 @@ function wireFakes(invokeOverrides: Record<string, (args?: Record<string, unknow
     audiocap_capabilities: () => SUPPORTED_CAPS,
     start_app_audio: () => undefined,
     stop_app_audio: () => undefined,
+    // F4-js: pinned contract, Rust worker adds these as idempotent,
+    // no-arg commands — see AppAudioEngine.pause()/resume()'s own doc.
+    pause_app_audio: () => undefined,
+    resume_app_audio: () => undefined,
     ...invokeOverrides,
   });
   currentInvoke = invoke;
@@ -342,6 +347,36 @@ describe("AppAudioEngine", () => {
   });
 
   // ---------------------------------------------------------------
+  // F3 (adversarial review, HIGH, both reviewers converged): a helper-
+  // side TERMINAL status (permission-denied et al) that arrives BEFORE
+  // stop() is ever called must not force stop() to burn its own full
+  // STOP_ENDED_TIMEOUT_MS wait — the helper is already dead by then, so
+  // no "ended" will ever arrive to resolve that wait early.
+  // ---------------------------------------------------------------
+
+  it("permission-denied arriving pre-stop lets stop() resolve immediately, without consuming the 4s wait", async () => {
+    const { emit } = wireFakes();
+    const engine = new AppAudioEngine();
+    const events = noopEvents();
+    await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+
+    emit("audiocap://status", { kind: "permission-denied", message: "" });
+
+    vi.useFakeTimers();
+    let resolved = false;
+    const stopP = engine.stop().then(() => {
+      resolved = true;
+    });
+    // Only trivial microtask flushing below — deliberately NO
+    // vi.advanceTimersByTimeAsync() call at all, so this fails loudly
+    // (never resolves) on pre-fix code instead of passing by accident.
+    await settle();
+
+    expect(resolved).toBe(true);
+    await stopP;
+  });
+
+  // ---------------------------------------------------------------
   // stop() landing while start() is still in flight (post-acquire
   // re-check, mirrors tabAudio.ts's own guard)
   // ---------------------------------------------------------------
@@ -380,6 +415,44 @@ describe("AppAudioEngine", () => {
     // once (stop()'s own call; possibly a second time from start()'s
     // own post-acquire re-check, which is fine).
     expect(calls.filter((c) => c.cmd === "stop_app_audio").length).toBeGreaterThanOrEqual(1);
+  });
+
+  // F2 (adversarial review, HIGH): stop() can land WHILE listen() itself
+  // is still in flight — this.unlistenStatus is still null at that exact
+  // moment, so the pre-fix code's post-acquire re-checks (both placed
+  // AFTER an await had already returned) saw nothing to unregister and
+  // returned; once listen() finally resolved, start() installed the
+  // listener anyway, and nothing was left to ever unlisten it — a leaked
+  // `audiocap://status` subscription.
+  it("stop() landing WHILE listen() itself is still in flight leaves zero listeners — the just-installed listener is unregistered, not leaked", async () => {
+    const listenGate = deferred<UnlistenFn>();
+    const unlistenSpy = vi.fn();
+    const { calls } = wireFakes();
+    currentListen = (async () => {
+      await listenGate.promise;
+      return unlistenSpy;
+    }) as ListenFn;
+
+    const engine = new AppAudioEngine();
+    const events = noopEvents();
+
+    const startP = engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+    // Let capabilities resolve — start() is now stuck awaiting listen(),
+    // which listenGate holds open.
+    await flushUntil(() => calls.some((c) => c.cmd === "audiocap_capabilities"));
+    await settle();
+
+    // stop() runs to full completion while listen() is STILL pending —
+    // nothing it can see yet includes the not-yet-installed listener.
+    await engine.stop();
+
+    // THEN listen() finally resolves and start() would (pre-fix) install
+    // the listener — AFTER stop() already finished and will never call
+    // it again.
+    listenGate.resolve(unlistenSpy);
+    await startP;
+
+    expect(unlistenSpy).toHaveBeenCalledTimes(1);
   });
 
   // ---------------------------------------------------------------
@@ -424,6 +497,83 @@ describe("AppAudioEngine", () => {
     const chunk = new ArrayBuffer(8);
     channels[channels.length - 1].onmessage(chunk);
     expect(ws.sent).toEqual([chunk]);
+  });
+
+  // F4-js (adversarial review, HIGH — pinned contract: pause_app_audio()/
+  // resume_app_audio() are idempotent, no-arg Rust commands the worker
+  // adds alongside this fix): pause must gate in Rust too, not only via
+  // the JS-side transport.pauseFeed() belt-and-suspenders — ordering is
+  // pinned as invoke() THEN the local gate.
+  it("pause() invokes pause_app_audio BEFORE gating PCM locally via transport.pauseFeed() — ordering pinned", async () => {
+    const pauseAppAudio = deferred<undefined>();
+    const { emit, channels, calls } = wireFakes({
+      pause_app_audio: () => pauseAppAudio.promise,
+    });
+    const engine = new AppAudioEngine();
+    const events = noopEvents();
+    const ws = await startAndCapture(engine, events, emit, wsInstances);
+
+    const pauseP = engine.pause();
+    await flushUntil(() => calls.some((c) => c.cmd === "pause_app_audio"));
+
+    // Still awaiting the Rust-side invoke — the local gate must not have
+    // engaged yet (fails loudly, not silently, if pause() never actually
+    // calls pause_app_audio at all: flushUntil throws).
+    ws.sent = [];
+    const chunkDuringInvoke = new ArrayBuffer(8);
+    channels[channels.length - 1].onmessage(chunkDuringInvoke);
+    expect(ws.sent).toEqual([chunkDuringInvoke]);
+
+    pauseAppAudio.resolve(undefined);
+    await pauseP;
+
+    // NOW gated, belt-and-suspenders.
+    ws.sent = [];
+    channels[channels.length - 1].onmessage(new ArrayBuffer(8));
+    expect(ws.sent).toEqual([]);
+  });
+
+  it("resume() invokes resume_app_audio BEFORE restoring local PCM forwarding via transport.resumeFeed() — ordering pinned", async () => {
+    const resumeAppAudio = deferred<undefined>();
+    const { emit, channels, calls } = wireFakes({
+      resume_app_audio: () => resumeAppAudio.promise,
+    });
+    const engine = new AppAudioEngine();
+    const events = noopEvents();
+    const ws = await startAndCapture(engine, events, emit, wsInstances);
+    await engine.pause();
+
+    const resumeP = engine.resume();
+    await flushUntil(() => calls.some((c) => c.cmd === "resume_app_audio"));
+
+    // Still awaiting the Rust-side invoke — still gated locally.
+    ws.sent = [];
+    channels[channels.length - 1].onmessage(new ArrayBuffer(8));
+    expect(ws.sent).toEqual([]);
+
+    resumeAppAudio.resolve(undefined);
+    await resumeP;
+
+    const chunk = new ArrayBuffer(8);
+    channels[channels.length - 1].onmessage(chunk);
+    expect(ws.sent).toEqual([chunk]);
+  });
+
+  it("a pause_app_audio invoke() rejection is logged-not-fatal — the JS-side gate (transport.pauseFeed()) still holds", async () => {
+    const { emit, channels } = wireFakes({
+      pause_app_audio: () => {
+        throw new Error("ipc failure");
+      },
+    });
+    const engine = new AppAudioEngine();
+    const events = noopEvents();
+    const ws = await startAndCapture(engine, events, emit, wsInstances);
+
+    await expect(engine.pause()).resolves.toBeUndefined();
+
+    ws.sent = [];
+    channels[channels.length - 1].onmessage(new ArrayBuffer(8));
+    expect(ws.sent).toEqual([]);
   });
 
   // ---------------------------------------------------------------

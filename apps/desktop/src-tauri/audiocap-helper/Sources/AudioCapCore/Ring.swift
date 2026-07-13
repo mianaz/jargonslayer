@@ -22,15 +22,17 @@ public final class SPSCByteRing {
     private let mask: Int
     private let storage: UnsafeMutableRawPointer
 
-    // Three cross-thread 8-byte C11 atomic counters — head, tail,
-    // overflow, in that order — backing storage for the shim in
-    // CAudioCapAtomics.h. ONLY ever touched through jsac_atomic_*
-    // (never dereferenced directly from Swift); see that header's own
-    // comment for why that's load-bearing, not just style.
+    // Four cross-thread 8-byte C11 atomic counters — head, tail,
+    // overflow, droppedFrames (F5, adversarial-review fix round), in
+    // that order — backing storage for the shim in CAudioCapAtomics.h.
+    // ONLY ever touched through jsac_atomic_* (never dereferenced
+    // directly from Swift); see that header's own comment for why
+    // that's load-bearing, not just style.
     private let atomics: UnsafeMutableRawPointer
     private var headSlot: OpaquePointer { OpaquePointer(atomics) }
     private var tailSlot: OpaquePointer { OpaquePointer(atomics + 8) }
     private var overflowSlot: OpaquePointer { OpaquePointer(atomics + 16) }
+    private var droppedFramesSlot: OpaquePointer { OpaquePointer(atomics + 24) }
 
     // Producer-private cache of the last value it published as `tail`.
     // Safe as plain (non-atomic) storage: AudioDeviceCreateIOProcIDWithBlock
@@ -57,8 +59,8 @@ public final class SPSCByteRing {
         self.capacity = capacity
         self.mask = capacity - 1
         self.storage = UnsafeMutableRawPointer.allocate(byteCount: capacity, alignment: 8)
-        self.atomics = UnsafeMutableRawPointer.allocate(byteCount: 24, alignment: 8)
-        atomics.initializeMemory(as: UInt8.self, repeating: 0, count: 24)
+        self.atomics = UnsafeMutableRawPointer.allocate(byteCount: 32, alignment: 8)
+        atomics.initializeMemory(as: UInt8.self, repeating: 0, count: 32)
         self.scratchCapacity = 16 * 1024
         self.scratch = UnsafeMutableRawPointer.allocate(byteCount: scratchCapacity, alignment: 8)
     }
@@ -74,6 +76,19 @@ public final class SPSCByteRing {
     /// `stats` NDJSON record, never reset.
     public func overflowCount() -> UInt64 {
         jsac_atomic_load_u64(overflowSlot)
+    }
+
+    /// F5 (adversarial-review fix round): cumulative count of AUDIO
+    /// FRAMES dropped across every overflow event (as opposed to
+    /// `overflowCount`, which counts REJECTED CALLBACKS — a single
+    /// dropped IOProc callback can represent anywhere from one to
+    /// hundreds of frames). The writer thread reads the delta since its
+    /// last poll and inserts exactly that many zero frames into the
+    /// outgoing stream (Writer.insertSilenceForAnyNewlyDroppedFrames) so
+    /// downstream frame-count-driven timestamps never silently
+    /// compress across a ring overflow. Never reset.
+    public func droppedFrameCount() -> UInt64 {
+        jsac_atomic_load_u64(droppedFramesSlot)
     }
 
     /// Bytes currently used (tail - head), for the writer thread's
@@ -93,10 +108,15 @@ public final class SPSCByteRing {
     /// buffer in `buffers` as ONE atomically-published record: {frame
     /// Count u32}{byteLen u32}{payload}. Never blocks, allocates, or
     /// logs. If the record doesn't fit in the free space remaining, the
-    /// WHOLE callback's audio is dropped and the overflow counter is
-    /// incremented instead of a partial write — a partial write would
-    /// corrupt framing for the consumer (see `drain`'s own invariant
-    /// comment).
+    /// WHOLE callback's audio is dropped and BOTH the overflow counter
+    /// (rejected callbacks) and the dropped-frame counter (F5: the
+    /// actual audio frames that callback represented — droppedFrameCount's
+    /// own doc comment) are incremented instead of a partial write — a
+    /// partial write would corrupt framing for the consumer (see
+    /// `drain`'s own invariant comment). The extra fetch_add on this
+    /// (already non-hot, already-rejecting) path is exactly as RT-safe
+    /// as the existing overflow counter: same C11 atomics shim, same
+    /// relaxed ordering, no allocation/lock/IO.
     @discardableResult
     public func tryPush(frameCount: UInt32, buffers: UnsafeMutableAudioBufferListPointer) -> Bool {
         var payloadBytes = 0
@@ -110,6 +130,7 @@ public final class SPSCByteRing {
         let free = capacity - used
         guard recordBytes <= free, recordBytes <= capacity else {
             _ = jsac_atomic_fetch_add_u64(overflowSlot, 1)
+            _ = jsac_atomic_fetch_add_u64(droppedFramesSlot, UInt64(frameCount))
             return false
         }
 

@@ -16,6 +16,11 @@ public final class Writer {
     private var seq: UInt64 = 0
     private var framesOut: UInt64 = 0
     private var ringHighWater: UInt64 = 0
+    // F5 (adversarial-review fix round) — the ring's own cumulative,
+    // never-reset droppedFrameCount() as of the last poll; the DELTA
+    // since this is what gets inserted as zero frames each cycle (see
+    // insertSilenceForAnyNewlyDroppedFrames's own doc comment).
+    private var lastObservedDroppedFrames: UInt64 = 0
 
     // Interleaved-f32 bytes accumulated since the last stdout flush, and
     // how many frames that represents — flushed as one Framing.encodeChunk
@@ -33,11 +38,54 @@ public final class Writer {
     private let statsInterval: TimeInterval = 5.0
     private let pollInterval: TimeInterval = 0.004
 
-    public init(ring: SPSCByteRing, sampleRate: UInt32, channels: UInt16, isNonInterleaved: Bool, output: FileHandle = .standardOutput) {
+    // F6 (adversarial-review fix round) — IO-starvation dead-man switch.
+    // `lastActivityTime` stays `nil` until the FIRST real signal of life
+    // from the ring (a drained frame OR a newly-observed drop — either
+    // proves the IOProc is still actually firing on the device clock),
+    // which is exactly what keeps starvation detection OFF during the
+    // pre-capturing phase (e.g. a user still sitting at the TCC prompt)
+    // per this fix's own requirement. `starvationTimeout` is injectable
+    // (default 3s, the real spec'd value) purely so tests can exercise
+    // this without a real 3-second wait — same rationale as `output`'s
+    // own injectable default just above.
+    private var lastActivityTime: Date?
+    private let starvationTimeout: TimeInterval
+
+    // F12 (adversarial-review fix round) — invoked once per FAILED
+    // stdout write (flush/writeEOS below), never more than that call's
+    // own failure. Defaults to a no-op so existing/test callers that
+    // don't care keep working unchanged; main.swift's real production
+    // wiring passes `shutdown.requestShutdownFromWriteFailure` (see
+    // that method's own doc comment) so a closed parent pipe (EPIPE —
+    // the parent read our stdout and is gone) is treated exactly like
+    // any other shutdown trigger (SIGTERM/SIGINT/stdin-EOF), reaching
+    // the SAME graceful teardown path, instead of the write itself
+    // crashing the process via an uncaught NSException (the failure
+    // mode `FileHandle.write(_:)`, no longer used below, was prone to).
+    private let onWriteFailure: () -> Void
+
+    /// What ended `run(shouldStop:)` — see that function's own doc
+    /// comment.
+    public enum StopReason: Equatable {
+        case requested
+        case starved
+    }
+
+    public init(
+        ring: SPSCByteRing,
+        sampleRate: UInt32,
+        channels: UInt16,
+        isNonInterleaved: Bool,
+        output: FileHandle = .standardOutput,
+        starvationTimeout: TimeInterval = 3.0,
+        onWriteFailure: @escaping () -> Void = {}
+    ) {
         self.ring = ring
         self.channels = channels
         self.isNonInterleaved = isNonInterleaved
         self.output = output
+        self.starvationTimeout = starvationTimeout
+        self.onWriteFailure = onWriteFailure
         let bytesPerFrame = max(1, Int(channels) * 4)
         self.targetChunkBytes = max(bytesPerFrame, Int(Double(sampleRate) * 0.02) * bytesPerFrame)
     }
@@ -48,24 +96,35 @@ public final class Writer {
     /// stats line for a session is never more than one drain-cycle
     /// stale the way the periodic ~5s cadence alone could leave it.
     public func emitFinalStats() {
-        StatusEvents.emitStats(overflows: ring.overflowCount(), ringHighWater: ringHighWater, framesOut: framesOut)
+        StatusEvents.emitStats(overflows: ring.overflowCount(), ringHighWater: ringHighWater, framesOut: framesOut, droppedFrames: ring.droppedFrameCount())
     }
 
-    /// Blocks, polling the ring, until `shouldStop()` returns true, then
-    /// returns — it does NOT do a final drain itself. That's deliberate:
-    /// the IOProc can still legally fire (and push more audio into the
-    /// ring) right up until AudioDeviceStop actually takes effect, which
-    /// hasn't happened yet at the moment `shouldStop()` first turns
-    /// true — see `drainRemaining()`'s own comment for why that call,
-    /// not this loop, is where the true last drain belongs. Does NOT
-    /// write the EOS record either — the caller writes that only after
-    /// CoreAudio teardown has actually run, per the S9.1 teardown order
-    /// (see main.swift).
-    public func run(shouldStop: () -> Bool) {
+    /// Blocks, polling the ring, until EITHER `shouldStop()` returns true
+    /// (`.requested`) OR F6's own IO-starvation dead-man switch trips
+    /// (`.starved`: no new ring activity — no drained frame, no
+    /// newly-observed drop — for `starvationTimeout` since the first
+    /// frame ever arrived; device switched, system slept, or the HAL
+    /// otherwise wedged, since the IOProc fires on the device clock even
+    /// for silent audio). Either way this does NOT do a final drain
+    /// itself. That's deliberate: the IOProc can still legally fire (and
+    /// push more audio into the ring) right up until AudioDeviceStop
+    /// actually takes effect, which hasn't happened yet at the moment
+    /// this returns — see `drainRemaining()`'s own comment for why that
+    /// call, not this loop, is where the true last drain belongs. Does
+    /// NOT write the EOS record either — the caller writes that only
+    /// after CoreAudio teardown has actually run, per the S9.1 teardown
+    /// order (see main.swift) — and, per F6, never at all for a
+    /// `.starved` return (an EOS record claims a clean, complete stream,
+    /// which a starvation-truncated one is not; main.swift emits a typed
+    /// `device-changed` error and exits nonzero instead).
+    public func run(shouldStop: () -> Bool) -> StopReason {
         while !shouldStop() {
-            pollOnce()
+            if pollOnce() {
+                return .starved
+            }
             Thread.sleep(forTimeInterval: pollInterval)
         }
+        return .requested
     }
 
     /// The TRUE final drain+flush — call this only AFTER AudioDeviceStop
@@ -78,20 +137,41 @@ public final class Writer {
     /// silently lost, not represented as a drop/overflow either, since
     /// the ring itself had room for it.
     public func drainRemaining() {
-        pollOnce()
+        // Return value (starvation) is meaningless here: this runs once,
+        // after teardown has already begun — nothing left to decide
+        // based on it either way.
+        _ = pollOnce()
         flush()
     }
 
     public func writeEOS() {
-        output.write(Data(Framing.encodeEOS(seq: seq)))
+        // F12: throwing write(contentsOf:), never the exception-raising
+        // write(_:) — see `onWriteFailure`'s own doc comment.
+        do {
+            try output.write(contentsOf: Data(Framing.encodeEOS(seq: seq)))
+        } catch {
+            onWriteFailure()
+        }
     }
 
     // ---- internals ----
 
-    private func pollOnce() {
+    /// Returns `true` the moment F6's starvation timeout is newly
+    /// exceeded (checked every call, i.e. every ~4ms via `run`'s own
+    /// poll loop) — `run` is the only caller that acts on this;
+    /// `drainRemaining` ignores it (see that function's own comment).
+    @discardableResult
+    private func pollOnce() -> Bool {
         ring.drain { [self] frameCount, payload in
             append(frameCount: frameCount, payload: payload)
         }
+        // F5: appended AFTER draining whatever real audio the ring
+        // already held — chronologically correct, since an overflow can
+        // only happen once the ring is already full, i.e. the dropped
+        // frames are newer than anything drain() above just pulled out
+        // and older than whatever the next successful push resumes
+        // with.
+        insertSilenceForAnyNewlyDroppedFrames()
         ringHighWater = max(ringHighWater, UInt64(ring.approximateUsedBytes()))
 
         let now = Date()
@@ -100,13 +180,56 @@ public final class Writer {
             flush()
         }
         if now.timeIntervalSince(lastStats) >= statsInterval {
-            StatusEvents.emitStats(overflows: ring.overflowCount(), ringHighWater: ringHighWater, framesOut: framesOut)
+            StatusEvents.emitStats(overflows: ring.overflowCount(), ringHighWater: ringHighWater, framesOut: framesOut, droppedFrames: ring.droppedFrameCount())
             lastStats = now
         }
+
+        // F6: `lastActivityTime` is nil until the first-ever sign of
+        // life from the ring (see that property's own doc comment) —
+        // this is what keeps starvation detection off during the
+        // pre-capturing phase.
+        if let lastActivityTime, now.timeIntervalSince(lastActivityTime) >= starvationTimeout {
+            return true
+        }
+        return false
+    }
+
+    /// F5 (adversarial-review fix round, risk register item 3/10: "ring
+    /// overflow policy = drop + count + silence-insertion downstream" /
+    /// "never time-compress"): reads the DELTA in the ring's cumulative
+    /// droppedFrameCount() since the last poll and inserts exactly that
+    /// many zero interleaved-f32 frames into `accumulated` — the SAME
+    /// buffer real drained audio also accumulates into, at the native
+    /// sample rate, BEFORE framing (Framing.encodeChunk never
+    /// distinguishes real from inserted-silence frames; downstream,
+    /// neither does Rust). Without this, an overflow would silently
+    /// compress elapsed time: frameCount-driven timestamps on both the
+    /// Rust and transcript sides would drift earlier by exactly the
+    /// dropped duration, with nothing on the wire ever indicating it
+    /// happened. Idempotent across repeated polls with no NEW overflow
+    /// in between (delta is 0, a no-op) — never double-inserts the same
+    /// drop.
+    private func insertSilenceForAnyNewlyDroppedFrames() {
+        let currentDropped = ring.droppedFrameCount()
+        let delta = currentDropped &- lastObservedDroppedFrames
+        guard delta > 0 else { return }
+        lastObservedDroppedFrames = currentDropped
+        // F6: a drop is proof the IOProc IS still firing (it's the
+        // RING that's out of room, not the device gone silent/switched)
+        // — counts as activity for starvation purposes exactly like a
+        // real drained frame does, right below in `append`.
+        lastActivityTime = Date()
+
+        let bytesPerFrame = max(1, Int(channels) * 4)
+        accumulated.append(contentsOf: repeatElement(0, count: Int(delta) * bytesPerFrame))
+        accumulatedFrameCount += UInt32(truncatingIfNeeded: delta)
     }
 
     private func append(frameCount: UInt32, payload: UnsafeRawBufferPointer) {
         guard frameCount > 0, payload.count > 0 else { return }
+        // F6: proof of life for the starvation dead-man switch — see
+        // `lastActivityTime`'s own doc comment.
+        lastActivityTime = Date()
         if isNonInterleaved {
             var interleaved = [UInt8](repeating: 0, count: payload.count)
             interleaved.withUnsafeMutableBytes { destination in
@@ -122,7 +245,19 @@ public final class Writer {
     private func flush() {
         guard accumulatedFrameCount > 0 else { return }
         let record = Framing.encodeChunk(seq: seq, frameCount: accumulatedFrameCount, payload: accumulated)
-        output.write(Data(record))
+        // F12: throwing write(contentsOf:), never the exception-raising
+        // write(_:) — a closed parent pipe (EPIPE) must reach
+        // `onWriteFailure` as a normal Swift error, not crash this
+        // process via an uncaught NSException. Bookkeeping below still
+        // advances regardless of success/failure — seq must stay
+        // monotonic, and there's no value in re-attempting the same
+        // bytes on a later flush call before shutdown actually takes
+        // effect.
+        do {
+            try output.write(contentsOf: Data(record))
+        } catch {
+            onWriteFailure()
+        }
         framesOut += UInt64(accumulatedFrameCount)
         seq += 1
         accumulated.removeAll(keepingCapacity: true)

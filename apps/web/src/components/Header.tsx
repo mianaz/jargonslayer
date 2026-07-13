@@ -27,6 +27,14 @@ import type { MeetingStatus, Settings, STTEngineKind } from "@jargonslayer/core/
 import { withBase } from "@/lib/basePath";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import {
+  appAudioLockReason,
+  getAudiocapCapsSnapshot,
+  isAppAudioFloorLocked,
+  probeAudiocapCaps,
+  subscribeAudiocapCaps,
+  type AudiocapCapabilities,
+} from "@/lib/desktop/audiocapCaps";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -81,6 +89,25 @@ export function canPause(
   // matrix), so soniox already falls back to teardown-pause there.
   if (engine === "soniox") return false;
   return engine === "webspeech" || engine === "tabaudio" || engine === "appaudio";
+}
+
+// S9.4/D6 macOS-floor gating (adversarial review finding F9): subscribes
+// to the shared audiocapCaps probe (lib/desktop/audiocapCaps.ts) and
+// kicks it off on mount — IS_DESKTOP-guarded INSIDE that module itself,
+// so this is an inert no-op call on a web build (never reaches
+// getInvoke()). Local to this file (not exported) since
+// EnginePillGroup/MobileEngineSelect below are its only two callers —
+// mirrors isEngineControlBusy's own "extract once, reuse across both
+// surfaces" rationale above, just for a per-component hook instead of a
+// pure function.
+function useAudiocapCaps(): AudiocapCapabilities | null {
+  const [caps, setCaps] = useState<AudiocapCapabilities | null>(() => getAudiocapCapsSnapshot());
+  useEffect(() => {
+    const unsubscribe = subscribeAudiocapCaps(() => setCaps(getAudiocapCapsSnapshot()));
+    void probeAudiocapCaps().then(() => setCaps(getAudiocapCapsSnapshot()));
+    return unsubscribe;
+  }, []);
+  return caps;
 }
 
 // Real capture engines only — demo is a scripted preview, not a peer
@@ -238,6 +265,7 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
   const status = useApp((s) => s.status);
   const updateSettings = useApp((s) => s.updateSettings);
   const busy = isEngineControlBusy(status);
+  const audiocapCaps = useAudiocapCaps();
 
   return (
     <div className="hidden items-center gap-0.5 border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
@@ -246,7 +274,12 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
         // pills stay visible but disabled — never removed (showroom
         // posture).
         const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
-        const disabled = busy || previewLocked;
+        // S9.4, D6 (F9): appaudio's own macOS-floor gate — "shown-but-
+        // disabled below floor", never hidden (mirrors SettingsDialog.
+        // tsx's ENGINE_CARDS' own floorLocked — same shared policy
+        // function, see audiocapCaps.ts).
+        const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
+        const disabled = busy || previewLocked || floorLocked;
         return (
           <button
             key={opt.value}
@@ -256,9 +289,11 @@ function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
             title={
               previewLocked
                 ? PREVIEW_LOCKED_TITLE
-                : opt.posture === "local"
-                  ? "本地：音频不出本机"
-                  : "云端：音频会离开设备"
+                : floorLocked
+                  ? appAudioLockReason(audiocapCaps)
+                  : opt.posture === "local"
+                    ? "本地：音频不出本机"
+                    : "云端：音频会离开设备"
             }
             className={`px-2.5 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               engine === opt.value
@@ -303,6 +338,7 @@ function MobileEngineSelect() {
   const status = useApp((s) => s.status);
   const updateSettings = useApp((s) => s.updateSettings);
   const disabled = isEngineControlBusy(status);
+  const audiocapCaps = useAudiocapCaps();
 
   return (
     <select
@@ -326,12 +362,14 @@ function MobileEngineSelect() {
         // <select> can't grey a single option's styling — disabled +
         // title is the full affordance a native option supports.
         const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
+        // S9.4, D6 (F9): same floor gate as EnginePillGroup above.
+        const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
         return (
           <option
             key={opt.value}
             value={opt.value}
-            disabled={previewLocked}
-            title={previewLocked ? PREVIEW_LOCKED_TITLE : undefined}
+            disabled={previewLocked || floorLocked}
+            title={previewLocked ? PREVIEW_LOCKED_TITLE : floorLocked ? appAudioLockReason(audiocapCaps) : undefined}
           >
             {opt.label}
           </option>

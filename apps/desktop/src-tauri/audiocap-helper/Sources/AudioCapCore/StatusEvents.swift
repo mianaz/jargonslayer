@@ -26,6 +26,11 @@ public enum StatusEvents {
         let overflows: UInt64
         let ringHighWater: UInt64
         let framesOut: UInt64
+        /// F5 (adversarial-review fix round) — cumulative AUDIO FRAMES
+        /// dropped across every ring overflow (SPSCByteRing
+        /// .droppedFrameCount's own doc comment), distinct from
+        /// `overflows`' rejected-CALLBACK count.
+        let droppedFrames: UInt64
     }
 
     /// Freeform informational status (still `type:"status"`, one
@@ -54,13 +59,23 @@ public enum StatusEvents {
         emit(ErrorRecord(code: error.code, message: error.message))
     }
 
-    public static func emitStats(overflows: UInt64, ringHighWater: UInt64, framesOut: UInt64) {
-        emit(StatsRecord(overflows: overflows, ringHighWater: ringHighWater, framesOut: framesOut))
+    public static func emitStats(overflows: UInt64, ringHighWater: UInt64, framesOut: UInt64, droppedFrames: UInt64) {
+        emit(StatsRecord(overflows: overflows, ringHighWater: ringHighWater, framesOut: framesOut, droppedFrames: droppedFrames))
     }
 
     private static func emit(_ record: some Encodable) {
         guard var data = try? JSONEncoder().encode(record) else { return }
         data.append(0x0A) // "\n" — one record per line, NDJSON
-        FileHandle.standardError.write(data)
+        // F12 (adversarial-review fix round): throwing write(contentsOf:),
+        // never the exception-raising write(_:) — a closed parent pipe
+        // (EPIPE, e.g. the parent died) must never crash this process
+        // via an uncaught NSException. `try?` (not typed handling like
+        // Writer's own flush/writeEOS): there is no shutdown-request
+        // wiring reachable from this static/stateless enum, and a
+        // stderr write failing on its own is not, by itself, this
+        // helper's primary "the parent is gone" signal (stdout's own
+        // write failures are — see Writer.onWriteFailure) — silently
+        // dropping one NDJSON line is the correct degraded behavior.
+        try? FileHandle.standardError.write(contentsOf: data)
     }
 }

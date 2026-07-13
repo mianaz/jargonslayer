@@ -236,13 +236,23 @@ export function useMeeting(): UseMeetingResult {
         ) {
           // F6: same synchronous-before-await set as the error branch.
           terminalTeardownRef.current = true;
-          // "音频捕获已结束" (not the old "共享已结束"): capture_ended is
-          // shared by tabaudio's browser stop-share control AND appaudio's
-          // helper ending (S9.4 lead fix) — "共享" was share-picker
-          // phrasing that read wrong for a CoreAudio tap ending.
+          // capture_ended toast copy is engine-kind-conditional
+          // (adversarial review finding F10): an earlier S9.4 fix here
+          // changed this to "音频捕获已结束" UNCONDITIONALLY, which
+          // silently altered tabaudio's (and any other non-appaudio
+          // engine's) WEB-build toast too, violating D7's "browser
+          // behavior stays byte-identical" pin. tabaudio (and anything
+          // else) keeps the ORIGINAL "共享已结束" share-picker phrasing;
+          // only appaudio's own CoreAudio-tap ending gets "音频捕获已结束"
+          // — "共享" reads wrong there, since a tap never opened a share
+          // picker in the first place. `engine` (this attachEngine()
+          // call's own instance, same closure the pause branch below
+          // reads `engine?.pause` from) is what carries the kind.
           const endToast =
             detail === "capture_ended"
-              ? "音频捕获已结束，会议已保存到历史记录"
+              ? engine.kind === "appaudio"
+                ? "音频捕获已结束，会议已保存到历史记录"
+                : "共享已结束，会议已保存到历史记录"
               : "演示结束，打开右侧「纪要」标签生成会后报告试试";
           void runStopFlow()
             .then(() => {

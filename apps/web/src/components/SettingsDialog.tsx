@@ -29,7 +29,12 @@ import {
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import { probeSidecar, type SidecarProbeResult } from "@/lib/stt/sidecarHealth";
-import type { AudiocapCapabilities } from "@/lib/stt/appAudio";
+import {
+  appAudioLockReason,
+  isAppAudioFloorLocked,
+  probeAudiocapCaps,
+  type AudiocapCapabilities,
+} from "@/lib/desktop/audiocapCaps";
 import type {
   EnglishLevel,
   ExplainLanguage,
@@ -547,14 +552,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // 订阅直连's agentHealthState `!agentHealthState` idiom below).
   const [sidecarStatus, setSidecarStatus] = useState<SidecarProbeResult | null>(null);
   const [checkingSidecarStatus, setCheckingSidecarStatus] = useState(false);
-  // 转录引擎 系统/App 音频 macOS-floor gating (S9.4, D6) — audiocap_
-  // capabilities() probed once per dialog-open (see the IS_DESKTOP-gated
-  // effect below), cached for the rest of that open same as sidecarStatus/
-  // installedModel/diarizationInstalled above. null = not probed yet
-  // this open; the ENGINE_CARDS render below treats null the same as
-  // "supported" (fails open — D6: "runtime commands re-check support,
-  // UI gating is not a boundary", so an optimistic default here is only
-  // ever a brief cosmetic gap, never a real safety hole).
+  // 转录引擎 系统/App 音频 macOS-floor gating (S9.4, D6; centralized onto
+  // lib/desktop/audiocapCaps.ts by adversarial review finding F9 — that
+  // module is now the ONE place probing/caching audiocap_capabilities(),
+  // shared with Header.tsx's ENGINE_OPTIONS) — probed once per
+  // dialog-open (see the IS_DESKTOP-gated effect below), cached for the
+  // rest of that open same as sidecarStatus/installedModel/
+  // diarizationInstalled above. null = not probed yet this open; the
+  // ENGINE_CARDS render below treats null the same as "supported" (see
+  // isAppAudioFloorLocked's own POLICY doc — fails open, since D6 says
+  // "runtime commands re-check support, UI gating is not a boundary", so
+  // an optimistic default here is only ever a brief cosmetic gap, never
+  // a real safety hole).
   const [audiocapCaps, setAudiocapCaps] = useState<AudiocapCapabilities | null>(null);
   // Soniox API Key masked-input toggle (v0.4 S4 chunk 6) — same
   // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
@@ -855,34 +864,27 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, draft.sidecarMode]);
 
-  // 转录引擎 系统/App 音频 macOS-floor gating (S9.4, D6): audiocap_
+  // 转录引擎 系统/App 音频 macOS-floor gating (S9.4, D6; F9): audiocap_
   // capabilities() is a synchronous OS-version check on the Rust side
-  // (NSProcessInfo, no I/O) — probed once per dialog-open, cached for
-  // the rest of that open (see audiocapCaps' own doc comment above).
-  // IS_DESKTOP-gated since audiocap_capabilities doesn't exist outside
-  // a desktop build (and getInvoke() itself throws there — tauriApi.ts's
-  // own guard). Unlike the 本地服务/diarization effects just above,
-  // deliberately NOT keyed on draft.engine/draft.sidecarMode — floor
-  // support depends only on which macOS this machine runs, not on
-  // which engine happens to be drafted, so ENGINE_CARDS can render the
-  // right disabled/enabled state for 系统/App 音频 even before it's ever
-  // been selected this open.
+  // (NSProcessInfo, no I/O) — probed once per dialog-open via the
+  // shared lib/desktop/audiocapCaps.ts module (also Header.tsx's own
+  // ENGINE_OPTIONS gate — see that module's POLICY doc), cached for the
+  // rest of that open (see audiocapCaps' own doc comment above).
+  // probeAudiocapCaps() is IS_DESKTOP-guarded internally (never reaches
+  // getInvoke() outside a desktop build) AND never rejects (an error
+  // resolves its own fail-open shape — see that module's own doc), so
+  // this effect needs no separate .catch() of its own anymore. Unlike
+  // the 本地服务/diarization effects just above, deliberately NOT keyed
+  // on draft.engine/draft.sidecarMode — floor support depends only on
+  // which macOS this machine runs, not on which engine happens to be
+  // drafted, so ENGINE_CARDS can render the right disabled/enabled
+  // state for 系统/App 音频 even before it's ever been selected this open.
   useEffect(() => {
     if (!open || !IS_DESKTOP) return;
     let cancelled = false;
-    void getInvoke()
-      .then((invoke) => invoke<AudiocapCapabilities>("audiocap_capabilities"))
-      .then((caps) => {
-        if (!cancelled) setAudiocapCaps(caps);
-      })
-      .catch(() => {
-        // Fails open (mirrors D6: "runtime commands re-check support —
-        // UI gating is not a boundary") — a probe hiccup leaves the
-        // card enabled rather than permanently locking it out for the
-        // rest of this dialog-open; start_app_audio re-checks the real
-        // floor itself regardless.
-        if (!cancelled) setAudiocapCaps({ appAudioSupported: true, reason: null });
-      });
+    void probeAudiocapCaps().then((caps) => {
+      if (!cancelled) setAudiocapCaps(caps);
+    });
     return () => {
       cancelled = true;
     };
@@ -1462,16 +1464,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // joins sidecarOnly in the preview lock — see
                 // ENGINE_CARDS' own byokOnly doc comment above.
                 const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
-                // S9.4, D6: 系统/App 音频's own macOS-floor gate —
+                // S9.4, D6 (F9): 系统/App 音频's own macOS-floor gate —
                 // "shown-but-disabled below floor", never hidden (see
                 // ENGINE_CARDS' own appaudio doc comment above for why
                 // this is computed here instead of a static `disabled`
-                // on the card itself). audiocapCaps null (not probed
-                // yet this open, or this isn't even the appaudio card)
-                // never locks — only an EXPLICIT appAudioSupported:false
-                // does.
-                const floorLocked =
-                  opt.value === "appaudio" && audiocapCaps !== null && !audiocapCaps.appAudioSupported;
+                // on the card itself). isAppAudioFloorLocked is the SAME
+                // shared policy function Header.tsx's ENGINE_OPTIONS now
+                // consumes too (lib/desktop/audiocapCaps.ts) — audiocapCaps
+                // null (not probed yet this open, or this isn't even the
+                // appaudio card) never locks — only an EXPLICIT
+                // appAudioSupported:false does (see that module's own
+                // POLICY doc).
+                const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
                 return (
                   <button
                     key={opt.value}
@@ -1482,7 +1486,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       previewLocked
                         ? "本地版功能：体验版暂未开放"
                         : floorLocked
-                          ? (audiocapCaps?.reason ?? "需要 macOS 14.4 或更高版本")
+                          ? appAudioLockReason(audiocapCaps)
                           : undefined
                     }
                     className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${

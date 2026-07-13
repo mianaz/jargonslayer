@@ -77,10 +77,32 @@ final class SPSCByteRingTests: XCTestCase {
             XCTAssertFalse(ring.tryPush(frameCount: 16, buffers: bufferList), "a record larger than the whole ring must never be written, partially or otherwise")
         }
         XCTAssertEqual(ring.overflowCount(), 1)
+        XCTAssertEqual(ring.droppedFrameCount(), 16, "F5: the dropped FRAME count (not just the rejected-callback count) must be tracked too")
 
         var callCount = 0
         ring.drain { _, _ in callCount += 1 }
         XCTAssertEqual(callCount, 0, "a dropped record must never surface as a partial/corrupt record on drain")
+    }
+
+    // ---- F5 (adversarial-review fix round): dropped-frame accounting ----
+
+    func testDroppedFrameCountIsZeroWhenNothingHasOverflowed() {
+        let ring = SPSCByteRing(capacity: 1024)
+        withSingleBufferList([1, 2, 3, 4]) { bufferList in
+            XCTAssertTrue(ring.tryPush(frameCount: 1, buffers: bufferList))
+        }
+        XCTAssertEqual(ring.droppedFrameCount(), 0)
+    }
+
+    func testDroppedFrameCountAccumulatesAcrossMultipleOverflowsWithDifferentFrameCounts() {
+        let ring = SPSCByteRing(capacity: 16)
+        let big: [UInt8] = Array(repeating: 0xFF, count: 64)
+        withSingleBufferList(big) { bufferList in
+            XCTAssertFalse(ring.tryPush(frameCount: 10, buffers: bufferList))
+            XCTAssertFalse(ring.tryPush(frameCount: 5, buffers: bufferList))
+        }
+        XCTAssertEqual(ring.droppedFrameCount(), 15, "dropped frames must ACCUMULATE across separate overflow events, not just reflect the latest one")
+        XCTAssertEqual(ring.overflowCount(), 2, "sanity: two separate rejected callbacks, distinct from the 15 frames they represent")
     }
 
     func testWraparoundPreservesByteContentAcrossTheRingBoundary() {

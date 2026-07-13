@@ -9,7 +9,7 @@
 // launched helper proves nothing" — the packaged app itself has to do
 // the spawning). No IPC commands here — that's S9.2's
 // start_app_audio/stop_app_audio/capabilities() surface.
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -377,9 +377,12 @@ impl StatusKind {
 
 /// Maps a `type:"status"` record's `state` to a StatusKind for states
 /// that are immediately actionable on their own. `"device-changed"` is
-/// NOT emitted by jargonslayer-audiocap today (v1 has no hot device-
-/// change detection — the blueprint's own "no hot re-tap in v1"
-/// non-goal) but is kept as a forward-compatible mapping: StatusEvents
+/// still NOT emitted as a STATUS record by jargonslayer-audiocap (F6,
+/// adversarial-review fix round: the helper's own IO-starvation dead-man
+/// switch emits it as a typed `type:"error"` record instead —
+/// `error_record_kind` below — the same deferred-to-exit shape
+/// permission-denied/unsupported-os already use) but this mapping is
+/// kept as a forward-compatible reservation regardless: StatusEvents
 /// .emitNote's `state` is a free string, and this wire contract's own
 /// typed-exit list already reserves the kind. Any other/unknown state
 /// (e.g. a future note this contract doesn't yet know about) returns
@@ -395,16 +398,20 @@ fn status_record_kind(state: &str) -> Option<StatusKind> {
     }
 }
 
-/// Maps a `type:"error"` record's `code` to a StatusKind — only the two
-/// codes this wire contract has a dedicated kind for. AudioCapError's
-/// other four codes (pid-translate-failed / tap-create-failed /
-/// aggregate-create-failed / device-start-failed) have no kind of their
-/// own here; they fall through to `exit_status_kind`'s "crashed"
-/// default once the process actually exits non-zero.
+/// Maps a `type:"error"` record's `code` to a StatusKind — only the
+/// three codes this wire contract has a dedicated kind for (the third,
+/// F6's `device-changed`, is jargonslayer-audiocap's own IO-starvation
+/// dead-man switch — Writer.StopReason.starved/AudioCapError
+/// .deviceChanged). AudioCapError's other four codes (pid-translate-
+/// failed / tap-create-failed / aggregate-create-failed / device-start-
+/// failed) have no kind of their own here; they fall through to
+/// `exit_status_kind`'s "crashed" default once the process actually
+/// exits non-zero.
 fn error_record_kind(code: &str) -> Option<StatusKind> {
     match code {
         "permission-denied" => Some(StatusKind::PermissionDenied),
         "unsupported-os" => Some(StatusKind::Unsupported),
+        "device-changed" => Some(StatusKind::DeviceChanged),
         _ => None,
     }
 }
@@ -416,9 +423,21 @@ fn error_record_kind(code: &str) -> Option<StatusKind> {
 /// ambiguously for (an intentional stop that had to escalate to
 /// SIGKILL); this function stays a direct, literal implementation of
 /// the stated rule on its own so both are independently testable.
-pub fn exit_status_kind(code: Option<i32>, last_error_code: Option<&str>) -> StatusKind {
+///
+/// F8 (adversarial-review fix round): `eos_seen` — did
+/// FramingReader ever actually observe a terminal EOS record on stdout
+/// for this session — is now load-bearing for the `code == Some(0)`
+/// branch, not just the exit code alone: this rule's own words already
+/// said "clean EOS/exit-0", but the exit code used to be trusted on its
+/// own. A clean exit-0 that never produced an EOS record is a truncated
+/// stream (the helper died/was reaped some other way without ever
+/// finishing its own normal teardown-then-writeEOS-then-exit(0)
+/// sequence) and is now reported as `Crashed`, never `Ended`. Only
+/// matters for the `code == Some(0)` branch — irrelevant to every
+/// nonzero-exit outcome below it.
+pub fn exit_status_kind(code: Option<i32>, last_error_code: Option<&str>, eos_seen: bool) -> StatusKind {
     if code == Some(0) {
-        return StatusKind::Ended;
+        return if eos_seen { StatusKind::Ended } else { StatusKind::Crashed };
     }
     last_error_code.and_then(error_record_kind).unwrap_or(StatusKind::Crashed)
 }
@@ -428,13 +447,17 @@ pub fn exit_status_kind(code: Option<i32>, last_error_code: Option<&str>) -> Sta
 /// exited, the outcome is reported as `Ended` unconditionally — even if
 /// reaching that point required the grace-timeout SIGKILL fallback
 /// (which reports as a signal kill, i.e. `code: None`, not a clean
-/// `Some(0)`). A user-requested stop that took the hard path is still a
-/// requested stop, not a crash, from the UI's point of view.
-pub fn final_kind(code: Option<i32>, last_error_code: Option<&str>, stop_was_requested: bool) -> StatusKind {
+/// `Some(0)`) and even if THAT meant EOS was never written either (a
+/// forced kill has no obligation to have reached its own normal
+/// teardown sequence). A user-requested stop that took the hard path is
+/// still a requested stop, not a crash, from the UI's point of view —
+/// this short-circuit is deliberately unconditional on `eos_seen`,
+/// unlike `exit_status_kind`'s own `code == Some(0)` branch.
+pub fn final_kind(code: Option<i32>, last_error_code: Option<&str>, stop_was_requested: bool, eos_seen: bool) -> StatusKind {
     if stop_was_requested {
         return StatusKind::Ended;
     }
-    exit_status_kind(code, last_error_code)
+    exit_status_kind(code, last_error_code, eos_seen)
 }
 
 /// jargonslayer-audiocap's stderr NDJSON wire shape (StatusEvents.swift):
@@ -459,6 +482,11 @@ struct RawAudiocapLine {
     ring_high_water: Option<u64>,
     #[serde(rename = "framesOut")]
     frames_out: Option<u64>,
+    /// F5 (adversarial-review fix round) — StatusEvents.StatsRecord's
+    /// own new field: cumulative audio frames dropped across every ring
+    /// overflow (distinct from `overflows`' rejected-callback count).
+    #[serde(rename = "droppedFrames")]
+    dropped_frames: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -477,6 +505,8 @@ enum ParsedAudiocapLine {
         overflows: u64,
         ring_high_water: u64,
         frames_out: u64,
+        /// F5: see RawAudiocapLine.dropped_frames's own doc comment.
+        dropped_frames: u64,
     },
     /// Not valid JSON at all, valid JSON with an unrecognized/missing
     /// "type", or a known "type" missing the fields that shape
@@ -509,11 +539,12 @@ fn parse_audiocap_line(line: &str) -> ParsedAudiocapLine {
             (Some(code), Some(message)) => ParsedAudiocapLine::Error { code, message },
             _ => ParsedAudiocapLine::Unrecognized,
         },
-        "stats" => match (raw.overflows, raw.ring_high_water, raw.frames_out) {
-            (Some(overflows), Some(ring_high_water), Some(frames_out)) => ParsedAudiocapLine::Stats {
+        "stats" => match (raw.overflows, raw.ring_high_water, raw.frames_out, raw.dropped_frames) {
+            (Some(overflows), Some(ring_high_water), Some(frames_out), Some(dropped_frames)) => ParsedAudiocapLine::Stats {
                 overflows,
                 ring_high_water,
                 frames_out,
+                dropped_frames,
             },
             _ => ParsedAudiocapLine::Unrecognized,
         },
@@ -540,6 +571,15 @@ fn parse_audiocap_line(line: &str) -> ParsedAudiocapLine {
 pub struct AudiocapState {
     generation: AtomicU64,
     running: Mutex<Option<RunningSession>>,
+    /// F4 (soft pause, adversarial-review fix round) — PINNED CONTRACT:
+    /// the JS worker wires engine.pause()/resume() to the
+    /// `pause_app_audio`/`resume_app_audio` commands below, which just
+    /// flip this. Lock-free like `generation` (mirrors `is_current`'s
+    /// own "cheap enough for a hot path" reasoning — `spawn_session_task`
+    /// checks it on every event it processes). Reset to `false` by every
+    /// `try_begin` so a leftover pause from a finished session can never
+    /// leak into the next one.
+    paused: AtomicBool,
 }
 
 struct RunningSession {
@@ -549,6 +589,18 @@ struct RunningSession {
     /// also how `finish` tells a requested stop apart from a
     /// spontaneous exit (see that function's own doc comment).
     child: Option<CommandChild>,
+    /// F1 fix (adversarial-review fix round): set by
+    /// `take_child_for_stop` when it runs during the window between
+    /// `try_begin` and `attach_child` — the sidecar spawn is still in
+    /// flight, so there's no `CommandChild` yet to take/drop. Before
+    /// this flag existed, a stop landing in exactly that window read as
+    /// a no-op ("nothing to stop", child was already `None`) and was
+    /// silently lost: `attach_child` later installed the just-spawned
+    /// helper completely unconditionally, leaving a live, un-stoppable
+    /// capture running behind a UI that already believed it had
+    /// stopped. `is_attachable`/`attach_child` below now consult this
+    /// instead of attaching blindly.
+    cancel_requested: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -579,21 +631,94 @@ impl AudiocapState {
             return Err("app audio capture is already running".to_string());
         }
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        *guard = Some(RunningSession { generation, child: None });
+        *guard = Some(RunningSession { generation, child: None, cancel_requested: false });
+        // F4: a fresh session always starts unpaused, regardless of
+        // whatever the previous (now fully finished) session's own
+        // pause state was left at.
+        self.paused.store(false, Ordering::SeqCst);
         Ok(generation)
     }
 
+    /// F4: cheap, lock-free — called on every event `spawn_session_task`
+    /// processes (same "hot enough to matter" posture as `is_current`).
+    fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
+    }
+
+    /// F4 — backs `pause_app_audio`/`resume_app_audio`: idempotent, and
+    /// a no-op whenever nothing is actually running (both commands'
+    /// own "no-op Ok when no session" contract) — harmless either way,
+    /// since `try_begin` always resets this flag for the NEXT session
+    /// regardless of whatever a stray call left it at. Unlike F1's own
+    /// race, a session ending in the small window between this
+    /// function's own read of `running` and its `paused` store below is
+    /// truly inert, not a correctness bug: nothing is left reading a
+    /// flag from a session that's already gone, and the value plays no
+    /// part in whether/how a NEW session ever starts (see `try_begin`'s
+    /// own unconditional reset) — so this doesn't need the same
+    /// single-lock-acquisition treatment `attach_child` needed.
+    fn set_paused(&self, paused: bool) {
+        if self.running.lock().map(|guard| guard.is_some()).unwrap_or(false) {
+            self.paused.store(paused, Ordering::SeqCst);
+        }
+    }
+
+    /// F1: pure, `CommandChild`-free predicate behind `attach_child`'s
+    /// own decision — split out specifically so this decision is
+    /// unit-testable. `tauri_plugin_shell::process::CommandChild` has no
+    /// constructor reachable outside an actual process spawn (its only
+    /// constructor lives inside that crate's own private `spawn()`), so
+    /// `attach_child` itself never can be unit-tested directly; this
+    /// function is the actual seam the F1 fix's tests exercise. Shared
+    /// by both `should_attach_child` (the test-facing query) and
+    /// `attach_child` (the real mutator) so there is exactly one place
+    /// this condition is spelled out.
+    fn is_attachable(session: &RunningSession, generation: u64) -> bool {
+        session.generation == generation && !session.cancel_requested
+    }
+
+    /// Read-only mirror of the check `attach_child` itself makes, kept
+    /// separately callable so F1's actual decision logic — "does a
+    /// cancellation already on record for this generation block the
+    /// attach?" — has a seam unit tests can exercise without ever
+    /// constructing a real `CommandChild`. Not used by any production
+    /// caller; `attach_child` re-derives the same answer itself, under
+    /// the SAME lock acquisition it uses to also perform the attach (a
+    /// separate peek-then-act here would reopen a smaller version of
+    /// F1's own race). `#[cfg(test)]`-only: production code never calls
+    /// this (see this fn's own doc comment), so a non-test build has no
+    /// caller for it at all.
+    #[cfg(test)]
+    fn should_attach_child(&self, generation: u64) -> bool {
+        self.running
+            .lock()
+            .map(|guard| guard.as_ref().is_some_and(|session| Self::is_attachable(session, generation)))
+            .unwrap_or(false)
+    }
+
     /// Attaches the just-spawned CommandChild to `generation`'s slot —
-    /// a no-op if that generation is no longer the occupant (defensive;
-    /// shouldn't happen given single-flight, since nothing else can
-    /// clear the slot before this session's own `finish`).
-    fn attach_child(&self, generation: u64, child: CommandChild) {
-        if let Ok(mut guard) = self.running.lock() {
-            if let Some(session) = guard.as_mut() {
-                if session.generation == generation {
-                    session.child = Some(child);
-                }
+    /// `Ok(())` on the normal path (the session becomes the Running
+    /// occupant of its own slot). `Err(child)` hands the SAME child
+    /// straight back, unstored, whenever `is_attachable` says no: either
+    /// F1's own race (a stop already landed for this generation while
+    /// the spawn was still in flight) or the defensive/shouldn't-happen
+    /// case of `generation` no longer being the slot's occupant at all
+    /// (nothing else can clear/replace the slot before this session's
+    /// own `finish` — unchanged from before this fix). Either way the
+    /// caller (`start_app_audio`) is expected to tear the returned child
+    /// down immediately — drop for stdin-EOF plus the grace/SIGKILL
+    /// watchdog, exactly like `stop_app_audio`'s own
+    /// post-`take_child_for_stop` path.
+    fn attach_child(&self, generation: u64, child: CommandChild) -> Result<(), CommandChild> {
+        let Ok(mut guard) = self.running.lock() else {
+            return Err(child);
+        };
+        match guard.as_mut() {
+            Some(session) if Self::is_attachable(session, generation) => {
+                session.child = Some(child);
+                Ok(())
             }
+            _ => Err(child),
         }
     }
 
@@ -604,19 +729,29 @@ impl AudiocapState {
         self.generation.load(Ordering::SeqCst) == generation
     }
 
-    /// Idempotent stop-request: `None` when nothing is running, or a
-    /// stop was already requested for the current session (its child
-    /// slot is already empty) — `stop_app_audio` maps either case to
-    /// `Ok(())`. `Some((child, pid, generation))` otherwise, after
-    /// taking the child (the caller is now responsible for dropping it
-    /// to close its stdin — see stop_app_audio's own comment).
+    /// Idempotent stop-request: `None` when nothing is running, a stop
+    /// was already requested for the current session (its child slot is
+    /// already empty), OR — F1 — the session is still in its `Starting`
+    /// window (spawn in flight, no `CommandChild` attached yet): all
+    /// three record `cancel_requested = true` before returning, so a
+    /// LATER `attach_child` call (see that function's own doc comment)
+    /// knows to refuse the attach rather than silently starting a
+    /// session the caller already believes it stopped.
+    /// `stop_app_audio` maps every `None` case to `Ok(())`.
+    /// `Some((child, pid, generation))` otherwise, after taking the
+    /// child (the caller is now responsible for dropping it to close
+    /// its stdin — see stop_app_audio's own comment).
     fn take_child_for_stop(&self) -> Result<Option<(CommandChild, u32, u64)>, String> {
         let mut guard = self.running.lock().map_err(poison_err)?;
-        Ok(guard.as_mut().and_then(|session| {
-            session.child.take().map(|child| {
+        Ok(guard.as_mut().and_then(|session| match session.child.take() {
+            Some(child) => {
                 let pid = child.pid();
-                (child, pid, session.generation)
-            })
+                Some((child, pid, session.generation))
+            }
+            None => {
+                session.cancel_requested = true;
+                None
+            }
         }))
     }
 
@@ -656,6 +791,18 @@ impl AudiocapState {
             .map(|guard| matches!(&*guard, Some(session) if session.generation == generation))
             .unwrap_or(true) // poisoned -> assume still running: a spurious kill is harmless, a missed one is a real leak
     }
+
+    /// F13 (adversarial-review fix round) — true if ANY session
+    /// (Starting, Running, or already-Stopping) currently occupies the
+    /// slot, regardless of generation. Backs `sweep_orphans_best_effort`'s
+    /// own startup-race guard: that sweep's enumerate+destroy pass has no
+    /// way to tell "an old orphan from a previous run" apart from "the
+    /// aggregate device a session just created" — both carry the exact
+    /// same UID prefix (OrphanSweep.ownedAggregateUIDPrefix, Swift side)
+    /// — so it must never run while a session might already be live.
+    fn any_session_active(&self) -> bool {
+        self.running.lock().map(|guard| guard.is_some()).unwrap_or(true) // poisoned -> assume active: skipping a legitimate sweep is harmless, destroying a live session's aggregate device is not
+    }
 }
 
 // ---- start_app_audio / stop_app_audio ----
@@ -691,7 +838,23 @@ pub fn start_app_audio(
     match spawn_result {
         Ok((rx, child)) => {
             let pid = child.pid();
-            state.attach_child(generation, child);
+            if let Err(child) = state.attach_child(generation, child) {
+                // F1: a stop already landed for this generation while
+                // the spawn was still in flight (see attach_child/
+                // should_attach_child's own doc comments for the exact
+                // race) — tear this child down right now instead of
+                // letting it become a live, un-stoppable session. Same
+                // teardown stop_app_audio's own post-take_child_for_stop
+                // path uses: drop closes stdin (jargonslayer-audiocap's
+                // own dead-man switch), the grace/SIGKILL watchdog
+                // covers whatever that doesn't. finish() — reached once
+                // spawn_session_task (started below) sees this child's
+                // own Terminated event — reports the outcome as "ended",
+                // never "crashed": session.child never having been
+                // attached reads identically to a normal requested stop.
+                drop(child);
+                spawn_stop_watchdog(app.clone(), generation, pid);
+            }
             spawn_session_task(app, channel, generation, pid, rx);
             Ok(())
         }
@@ -732,6 +895,46 @@ pub fn stop_app_audio(app: tauri::AppHandle, state: tauri::State<'_, AudiocapSta
     Ok(())
 }
 
+// ---- pause_app_audio / resume_app_audio (F4, adversarial-review fix
+// round) ----
+
+/// PINNED CONTRACT: the JS worker wires engine.pause() to exactly this
+/// command name. Idempotent; a no-op `Ok(())` when nothing is running
+/// (AudiocapState::set_paused's own doc comment). The actual pause
+/// behavior — flushing the current partial batch through the Channel,
+/// then dropping all further decoded PCM at the pipeline's own input —
+/// happens inside spawn_session_task, the only place that has access to
+/// the running session's Channel/AudioPipeline (both live only as that
+/// task's own local variables); this command can only flip the shared
+/// flag it reads on its next loop iteration. See AudioPipeline::pause's
+/// own doc comment for the full semantics.
+#[tauri::command]
+pub fn pause_app_audio(state: tauri::State<'_, AudiocapState>) -> Result<(), String> {
+    state.set_paused(true);
+    Ok(())
+}
+
+/// PINNED CONTRACT: the JS worker wires engine.resume() to exactly this
+/// command name. See `pause_app_audio`/`AudioPipeline::resume`'s own doc
+/// comments for the full semantics (notably: resets the resampler to
+/// avoid a discontinuity artifact at the resume boundary).
+#[tauri::command]
+pub fn resume_app_audio(state: tauri::State<'_, AudiocapState>) -> Result<(), String> {
+    state.set_paused(false);
+    Ok(())
+}
+
+// Cross-language invariant (adversarial-review fix round): the JS
+// AppAudioEngine's own stop path waits up to ~4s for a matching "ended"
+// audiocap://status event before giving up on the drain handshake (the
+// JS worker owns that side and is adding the mirror comment there). This
+// 3s grace period MUST stay strictly shorter than JS's own wait: it's
+// what guarantees Rust has cleared AudiocapState's single-flight slot
+// (`finish`, reached once the child actually exits — gracefully or via
+// this watchdog's own SIGKILL fallback) and emitted the final status
+// BEFORE JS times out — if the two ever crossed (grace >= JS timeout),
+// a slow-to-die helper could leave JS waiting past its own deadline for
+// an event Rust hasn't sent yet.
 const STOP_GRACE_PERIOD: Duration = Duration::from_secs(3);
 
 fn spawn_stop_watchdog(app: tauri::AppHandle, generation: u64, pid: u32) {
@@ -806,8 +1009,32 @@ fn spawn_session_task(
         let mut capturing = false;
         let mut last_error: Option<(String, String)> = None;
         let mut last_diag = Instant::now();
+        // F4 — local mirror of AudiocapState's own (shared, generation-
+        // wide) paused flag, edge-detected once per loop iteration so
+        // pipeline.pause()/resume() each run EXACTLY once per actual
+        // transition (resume()'s resampler rebuild in particular must
+        // not fire on every single event while already resumed).
+        let mut paused = false;
 
         while let Some(event) = rx.recv().await {
+            // Checked on every event this task sees (not just Stdout) —
+            // jargonslayer-audiocap's writer flushes to stdout at least
+            // every ~20-50ms while capturing (Writer.swift's own
+            // targetChunkBytes/maxFlushLatency), so a pause/resume
+            // request is observed and acted on well within that same
+            // window regardless of which event happens to arrive next.
+            let now_paused = app.state::<AudiocapState>().is_paused();
+            if now_paused && !paused {
+                let batches = pipeline.pause();
+                send_batches(&app, &channel, generation, &mut pipeline, batches);
+                paused = true;
+            } else if !now_paused && paused {
+                if let Err(e) = pipeline.resume() {
+                    emit_uv_log(&app, "stderr", format!("[audiocap] failed to reset resampler on resume: {e}"));
+                }
+                paused = false;
+            }
+
             match event {
                 CommandEvent::Stdout(bytes) => match framing.feed(&bytes) {
                     Ok(items) => {
@@ -898,7 +1125,17 @@ fn spawn_session_task(
                 CommandEvent::Terminated(payload) => {
                     let outcome = app.state::<AudiocapState>().finish(generation);
                     if outcome.was_current {
-                        let kind = final_kind(payload.code, last_error.as_ref().map(|(c, _)| c.as_str()), outcome.stop_was_requested);
+                        // F8: framing.eos_seen() reflects whether a
+                        // terminal EOS record was ever actually parsed
+                        // from stdout — see final_kind/exit_status_kind's
+                        // own doc comments for why this now matters even
+                        // for a clean exit-0.
+                        let kind = final_kind(
+                            payload.code,
+                            last_error.as_ref().map(|(c, _)| c.as_str()),
+                            outcome.stop_was_requested,
+                            framing.eos_seen(),
+                        );
                         let message = final_message(kind, payload.code, last_error.as_ref());
                         emit_status(&app, generation, kind, message);
                     }
@@ -973,12 +1210,17 @@ fn emit_status(app: &tauri::AppHandle, generation: u64, kind: StatusKind, messag
 /// via `kind` alone).
 fn final_message(kind: StatusKind, code: Option<i32>, last_error: Option<&(String, String)>) -> Option<String> {
     match kind {
-        StatusKind::PermissionDenied | StatusKind::Unsupported => last_error.map(|(_, msg)| msg.clone()),
+        // F6: DeviceChanged joins this arm (not the no-message one
+        // below) — its only source is a deferred `type:"error"` record
+        // (error_record_kind), same shape as the two it's now grouped
+        // with, and its message is the one actionable thing the user
+        // actually needs to see.
+        StatusKind::PermissionDenied | StatusKind::Unsupported | StatusKind::DeviceChanged => last_error.map(|(_, msg)| msg.clone()),
         StatusKind::Crashed => Some(match last_error {
             Some((code_str, msg)) => format!("{code_str}: {msg}"),
             None => format!("helper exited unexpectedly (code {code:?})"),
         }),
-        StatusKind::Ended | StatusKind::Starting | StatusKind::Capturing | StatusKind::ExcludePidInactive | StatusKind::DeviceChanged => None,
+        StatusKind::Ended | StatusKind::Starting | StatusKind::Capturing | StatusKind::ExcludePidInactive => None,
     }
 }
 
@@ -994,8 +1236,32 @@ fn final_message(kind: StatusKind, code: Option<i32>, last_error: Option<&(Strin
 /// already says the feature is supported — a below-floor machine could
 /// never have created one of these aggregate devices in the first
 /// place.
+///
+/// F13 (adversarial-review fix round): also skips entirely — logged,
+/// never silent — if AudiocapState already shows a live/reserved
+/// session at the moment this is called. lib.rs calls this from
+/// `.setup()`, strictly before the webview/JS layer could ever have
+/// reached `start_app_audio` (Tauri commands aren't dispatchable until
+/// setup returns and the app finishes initializing), so
+/// `any_session_active()` can't actually be true here in practice
+/// today — this closes the race defensively anyway, against a FUTURE
+/// change to that ordering (e.g. a dev/spike hook, or a refactor that
+/// calls this from somewhere less strictly "before a start is
+/// possible"). The sweep's own enumerate+destroy pass (OrphanSweep.swift)
+/// has no way to distinguish an old orphan from a session's own
+/// just-created aggregate device — both carry the exact same UID prefix
+/// — so it must never run concurrently with a session that might be
+/// creating or already holding one.
 pub fn sweep_orphans_best_effort(app: &tauri::AppHandle) {
     if !is_macos_version_supported(macos_version()) {
+        return;
+    }
+    if app.state::<AudiocapState>().any_session_active() {
+        emit_uv_log(
+            app,
+            "stderr",
+            "[audiocap] orphan sweep: skipped — a session is already active (startup race guard)".to_string(),
+        );
         return;
     }
     let app = app.clone();
@@ -1253,15 +1519,45 @@ mod tests {
 
     #[test]
     fn parses_a_stats_line() {
-        let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000}"#;
+        let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
         assert_eq!(
             parse_audiocap_line(line),
             ParsedAudiocapLine::Stats {
                 overflows: 0,
                 ring_high_water: 1024,
-                frames_out: 48_000
+                frames_out: 48_000,
+                dropped_frames: 0,
             }
         );
+    }
+
+    #[test]
+    fn parses_a_stats_line_with_a_nonzero_dropped_frames_count() {
+        // F5 (adversarial-review fix round): distinct from `overflows`
+        // (rejected-callback count) — this is the actual audio frame
+        // count SPSCByteRing.droppedFrameCount() reports.
+        let line = r#"{"type":"stats","overflows":2,"ringHighWater":2048,"framesOut":96000,"droppedFrames":37}"#;
+        assert_eq!(
+            parse_audiocap_line(line),
+            ParsedAudiocapLine::Stats {
+                overflows: 2,
+                ring_high_water: 2048,
+                frames_out: 96_000,
+                dropped_frames: 37,
+            }
+        );
+    }
+
+    #[test]
+    fn a_stats_line_missing_dropped_frames_is_unrecognized_not_defaulted() {
+        // Same closed-wire-contract posture as the other three stats
+        // fields (see garbage_and_malformed_lines_are_unrecognized_not_a_panic's
+        // own "stats missing fields" case) — Rust and Swift are built
+        // and shipped together, so a stats line missing a field this
+        // parser expects means something is actually wrong, not a
+        // version skew to silently paper over with a 0 default.
+        let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000}"#;
+        assert_eq!(parse_audiocap_line(line), ParsedAudiocapLine::Unrecognized);
     }
 
     #[test]
@@ -1304,31 +1600,48 @@ mod tests {
     }
 
     #[test]
-    fn error_record_kind_maps_only_the_two_codes_the_wire_contract_has_a_kind_for() {
+    fn error_record_kind_maps_only_the_three_codes_the_wire_contract_has_a_kind_for() {
         assert_eq!(error_record_kind("permission-denied"), Some(StatusKind::PermissionDenied));
         assert_eq!(error_record_kind("unsupported-os"), Some(StatusKind::Unsupported));
+        // F6 (adversarial-review fix round): jargonslayer-audiocap's own
+        // IO-starvation dead-man switch (Writer.StopReason.starved)
+        // emits this as a typed `type:"error"` record (AudioCapError
+        // .deviceChanged), same deferred-to-exit shape as the two above.
+        assert_eq!(error_record_kind("device-changed"), Some(StatusKind::DeviceChanged));
         for code in ["pid-translate-failed", "tap-create-failed", "aggregate-create-failed", "device-start-failed"] {
             assert_eq!(error_record_kind(code), None, "{code} has no dedicated kind — falls through to crashed at exit");
         }
     }
 
     #[test]
-    fn exit_status_kind_maps_clean_exit_to_ended() {
-        assert_eq!(exit_status_kind(Some(0), None), StatusKind::Ended);
-        assert_eq!(exit_status_kind(Some(0), Some("permission-denied")), StatusKind::Ended);
+    fn exit_status_kind_maps_clean_exit_to_ended_when_eos_was_seen() {
+        assert_eq!(exit_status_kind(Some(0), None, true), StatusKind::Ended);
+        assert_eq!(exit_status_kind(Some(0), Some("permission-denied"), true), StatusKind::Ended);
+    }
+
+    #[test]
+    fn exit_status_kind_maps_clean_exit_without_eos_to_crashed() {
+        // F8 (adversarial-review fix round): a clean exit-0 that never
+        // produced a terminal EOS record is a truncated stream, not a
+        // normal end — the wire contract's own literal rule was always
+        // "clean EOS/exit-0", not exit-0 alone.
+        assert_eq!(exit_status_kind(Some(0), None, false), StatusKind::Crashed);
     }
 
     #[test]
     fn exit_status_kind_maps_a_nonzero_exit_with_a_mapped_error_to_that_kind() {
-        assert_eq!(exit_status_kind(Some(1), Some("permission-denied")), StatusKind::PermissionDenied);
-        assert_eq!(exit_status_kind(Some(1), Some("unsupported-os")), StatusKind::Unsupported);
+        // eos_seen is irrelevant once code != Some(0) — picked false
+        // here specifically to demonstrate that (a nonzero exit is never
+        // "upgraded" to Ended just because EOS happened to be seen).
+        assert_eq!(exit_status_kind(Some(1), Some("permission-denied"), false), StatusKind::PermissionDenied);
+        assert_eq!(exit_status_kind(Some(1), Some("unsupported-os"), false), StatusKind::Unsupported);
     }
 
     #[test]
     fn exit_status_kind_maps_a_nonzero_exit_with_no_or_an_unmapped_error_to_crashed() {
-        assert_eq!(exit_status_kind(Some(1), None), StatusKind::Crashed);
-        assert_eq!(exit_status_kind(None, None), StatusKind::Crashed);
-        assert_eq!(exit_status_kind(Some(1), Some("device-start-failed")), StatusKind::Crashed);
+        assert_eq!(exit_status_kind(Some(1), None, false), StatusKind::Crashed);
+        assert_eq!(exit_status_kind(None, None, false), StatusKind::Crashed);
+        assert_eq!(exit_status_kind(Some(1), Some("device-start-failed"), false), StatusKind::Crashed);
     }
 
     #[test]
@@ -1338,16 +1651,27 @@ mod tests {
         // view, not a crash — the refinement final_kind layers on top
         // of exit_status_kind's own literal exit-code table, applied
         // whenever stop_app_audio (or supersession) already took the
-        // child before the process actually exited.
-        assert_eq!(final_kind(None, None, true), StatusKind::Ended);
-        assert_eq!(final_kind(Some(1), Some("device-start-failed"), true), StatusKind::Ended);
+        // child before the process actually exited. eos_seen=false in
+        // both cases here — F8: a forced kill has no obligation to have
+        // reached its own normal EOS-writing teardown either, and this
+        // short-circuit must stay unconditional on that.
+        assert_eq!(final_kind(None, None, true, false), StatusKind::Ended);
+        assert_eq!(final_kind(Some(1), Some("device-start-failed"), true, false), StatusKind::Ended);
     }
 
     #[test]
     fn final_kind_falls_back_to_exit_status_kind_when_no_stop_was_requested() {
-        assert_eq!(final_kind(Some(0), None, false), StatusKind::Ended);
-        assert_eq!(final_kind(Some(1), Some("permission-denied"), false), StatusKind::PermissionDenied);
-        assert_eq!(final_kind(Some(1), None, false), StatusKind::Crashed);
+        assert_eq!(final_kind(Some(0), None, false, true), StatusKind::Ended);
+        assert_eq!(final_kind(Some(1), Some("permission-denied"), false, false), StatusKind::PermissionDenied);
+        assert_eq!(final_kind(Some(1), None, false, false), StatusKind::Crashed);
+    }
+
+    #[test]
+    fn final_kind_falls_back_to_crashed_for_a_spontaneous_clean_exit_that_never_saw_eos() {
+        // F8: NOT a requested stop, exit code 0, but EOS never arrived —
+        // a truncated stream must never read as a normal Ended session
+        // just because the process happened to exit 0.
+        assert_eq!(final_kind(Some(0), None, false, false), StatusKind::Crashed);
     }
 
     #[test]
@@ -1359,6 +1683,21 @@ mod tests {
     fn final_message_uses_the_last_errors_message_for_permission_denied_and_unsupported() {
         let err = ("permission-denied".to_string(), "denied by TCC".to_string());
         assert_eq!(final_message(StatusKind::PermissionDenied, Some(1), Some(&err)), Some("denied by TCC".to_string()));
+    }
+
+    #[test]
+    fn final_message_uses_the_last_errors_message_for_device_changed_too() {
+        // F6: the actionable Chinese message (main.swift's own
+        // AudioCapError.deviceChanged literal) must reach the FINAL
+        // status event, not just the (also-emitted, via
+        // error_record_kind's own deferred-to-exit design) intermediate
+        // one — a message-less duplicate at exit would blank out the
+        // one piece of text that actually tells the user what to do.
+        let err = ("device-changed".to_string(), "音频设备停止供给（设备切换或系统休眠）— 请重新开始转录".to_string());
+        assert_eq!(
+            final_message(StatusKind::DeviceChanged, Some(1), Some(&err)),
+            Some("音频设备停止供给（设备切换或系统休眠）— 请重新开始转录".to_string())
+        );
     }
 
     #[test]
@@ -1461,5 +1800,115 @@ mod tests {
         assert!(state.still_running(generation));
         state.finish(generation);
         assert!(!state.still_running(generation));
+    }
+
+    // ---- F13 (adversarial-review fix round): orphan-sweep-vs-live-
+    // session race guard ----
+
+    #[test]
+    fn any_session_active_is_false_when_nothing_is_running() {
+        let state = AudiocapState::default();
+        assert!(!state.any_session_active());
+    }
+
+    #[test]
+    fn any_session_active_is_true_once_try_begin_has_reserved_the_slot() {
+        // "Active" starts at try_begin (Starting), not attach_child
+        // (Running) — sweep_orphans_best_effort's own race is exactly
+        // about the window BEFORE a child (and its aggregate device)
+        // ever attaches.
+        let state = AudiocapState::default();
+        state.try_begin().unwrap();
+        assert!(state.any_session_active());
+    }
+
+    #[test]
+    fn any_session_active_is_false_again_after_finish() {
+        let state = AudiocapState::default();
+        let generation = state.try_begin().unwrap();
+        state.finish(generation);
+        assert!(!state.any_session_active());
+    }
+
+    // ---- F1: stop lost during the spawn window (adversarial-review
+    // fix round) — `attach_child` cannot be unit-tested directly
+    // (CommandChild has no test-reachable constructor), so these pin
+    // `is_attachable`/`should_attach_child`, the pure decision that
+    // fully determines what `attach_child` does with a real one. ----
+
+    #[test]
+    fn should_attach_child_is_true_when_no_stop_was_requested_during_starting() {
+        let state = AudiocapState::default();
+        let generation = state.try_begin().unwrap();
+        assert!(state.should_attach_child(generation));
+    }
+
+    #[test]
+    fn should_attach_child_is_false_when_nothing_is_reserved() {
+        let state = AudiocapState::default();
+        assert!(!state.should_attach_child(1));
+    }
+
+    #[test]
+    fn should_attach_child_is_false_for_a_generation_that_is_no_longer_the_occupant() {
+        let state = AudiocapState::default();
+        let first = state.try_begin().unwrap();
+        state.finish(first);
+        state.try_begin().unwrap(); // a second session now occupies the slot
+        assert!(!state.should_attach_child(first));
+    }
+
+    #[test]
+    fn f1_stop_during_the_starting_window_blocks_a_later_attach() {
+        // The exact race F1 fixes: try_begin (Starting, no child yet) ->
+        // stop lands before the spawn's CommandChild could ever be
+        // attached. Pre-fix, take_child_for_stop just returns None
+        // (idempotent "nothing to do") and leaves NOTHING behind that a
+        // later attach_child could ever consult — the just-spawned child
+        // would be attached and left running, unstoppable. This is RED
+        // against the version of `is_attachable` that only checks
+        // `generation` (mirrors the pre-fix `attach_child`, which
+        // attached unconditionally once the generation matched).
+        let state = AudiocapState::default();
+        let generation = state.try_begin().unwrap();
+        assert!(
+            state.take_child_for_stop().unwrap().is_none(),
+            "stop reports idempotent success even though nothing has actually stopped yet"
+        );
+        assert!(
+            !state.should_attach_child(generation),
+            "F1: a stop recorded during Starting must block a later attach_child — \
+             never silently start a session the caller was already told had stopped"
+        );
+    }
+
+    #[test]
+    fn f1_finish_after_a_cancel_during_starting_reports_a_requested_stop_never_a_crash() {
+        // Closes the loop with exit_status_kind/final_kind's own tests
+        // above: once should_attach_child has refused the attach (this
+        // test's sibling above), the session must still resolve as a
+        // normal, requested "ended" outcome when its (torn-down) child
+        // eventually reports Terminated — never "crashed", and never a
+        // session AudiocapState still thinks is running.
+        let state = AudiocapState::default();
+        let generation = state.try_begin().unwrap();
+        assert!(state.take_child_for_stop().unwrap().is_none());
+        assert!(!state.should_attach_child(generation));
+
+        let outcome = state.finish(generation);
+        assert!(outcome.was_current);
+        assert!(
+            outcome.stop_was_requested,
+            "F1: a cancellation recorded during Starting must still finish as a requested stop"
+        );
+        assert_eq!(
+            // eos_seen=false: this generation's child was torn down
+            // before it ever attached — EOS was never a possibility —
+            // and F8's own final_kind contract keeps stop_was_requested
+            // unconditional on eos_seen for exactly this reason.
+            final_kind(None, None, outcome.stop_was_requested, false),
+            StatusKind::Ended,
+            "F1: the end-to-end outcome must be Ended, never a phantom running/crashed session"
+        );
     }
 }

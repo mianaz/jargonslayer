@@ -50,6 +50,19 @@ public final class ShutdownSignal {
         _ = jsac_atomic_fetch_add_u64(requestedSlot, 1)
     }
 
+    /// F12 (adversarial-review fix round) — a failed stdout write
+    /// (Writer's own `onWriteFailure` callback, wired from main.swift)
+    /// is functionally the SAME "the parent is gone" signal stdin-EOF
+    /// already covers, just observed from the opposite direction
+    /// (writing TO the parent instead of reading FROM it): reuses the
+    /// exact same atomic flag/`isRequested()` mechanism rather than
+    /// inventing a parallel one, so `run(shouldStop:)`'s existing
+    /// `shutdown.isRequested()` check picks it up on its very next poll
+    /// with no other plumbing required.
+    public func requestShutdownFromWriteFailure() {
+        requestShutdown()
+    }
+
     /// Must run before any blocking CoreAudio call, so SIGTERM/SIGINT
     /// are never handled by the process-default action (immediate
     /// death, skipping this helper's own teardown of the tap/aggregate/

@@ -75,7 +75,9 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
 
 func printUsageAndExit() -> Never {
     let usage = "usage: jargonslayer-audiocap --exclude-pid <pid> [--duration <seconds>] | jargonslayer-audiocap --sweep-orphans\n"
-    FileHandle.standardError.write(Data(usage.utf8))
+    // F12 follow-up (lead): throwing write, same NSException class as
+    // Writer/StatusEvents — a closed stderr must not crash even here.
+    try? FileHandle.standardError.write(contentsOf: Data(usage.utf8))
     exit(2)
 }
 
@@ -176,31 +178,69 @@ func runCapture(excludePID: pid_t, durationSeconds: Double?) -> Never {
         // Stream header + "starting" status: both emitted once the real
         // tap format is known but BEFORE AudioDeviceStart — the call D1
         // documents as where the TCC prompt actually fires.
-        FileHandle.standardOutput.write(Data(Framing.encodeStreamHeader(sampleRate: sampleRate, channels: channels)))
+        //
+        // F12 follow-up (lead): this write sits AFTER tap/aggregate/
+        // IOProc creation — the one place the raising FileHandle.write
+        // could crash past teardown and leak them. A failed header
+        // write means the parent is already gone; throw so the normal
+        // catch -> teardownAndExit path runs (the error record's own
+        // write is itself failure-safe by then — StatusEvents post-F12).
+        do {
+            try FileHandle.standardOutput.write(contentsOf: Data(Framing.encodeStreamHeader(sampleRate: sampleRate, channels: channels)))
+        } catch {
+            throw AudioCapError.deviceStartFailed("stdout closed before the stream header could be written (parent process gone) — tearing down")
+        }
         StatusEvents.emitStatus(state: "starting", sampleRate: sampleRate, channels: channels)
 
         try ProcessTapCapture.start(aggregateDeviceID: resolvedAggregateDeviceID, ioProcID: resolvedIOProcID)
         StatusEvents.emitStatus(state: "capturing", sampleRate: sampleRate, channels: channels)
 
         let durationDeadline = durationSeconds.map { Date().addingTimeInterval($0) }
-        let writer = Writer(ring: ring, sampleRate: sampleRate, channels: channels, isNonInterleaved: isNonInterleaved)
-        writer.run {
+        // F12 (adversarial-review fix round): a failed stdout write
+        // (closed parent pipe — EPIPE) is wired to the SAME shutdown
+        // mechanism SIGTERM/SIGINT/stdin-EOF already use, so `run`'s own
+        // `shouldStop` check below picks it up and this reaches the
+        // normal graceful teardown path instead of crashing.
+        let writer = Writer(
+            ring: ring, sampleRate: sampleRate, channels: channels, isNonInterleaved: isNonInterleaved,
+            onWriteFailure: shutdown.requestShutdownFromWriteFailure
+        )
+        let stopReason = writer.run {
             shutdown.isRequested() || (durationDeadline.map { Date() >= $0 } ?? false)
         }
 
         // Teardown order per the S9.1 deliverable list: stop -> destroy
-        // IOProc -> destroy aggregate -> destroy tap -> write EOS -> exit 0.
-        // stopDevice is called BEFORE the writer's true final drain
+        // IOProc -> destroy aggregate -> destroy tap -> (write EOS ->
+        // exit 0, ONLY for a requested stop — see below). stopDevice is
+        // called BEFORE the writer's true final drain
         // (Writer.drainRemaining/stopDevice's own doc comments) —
         // AudioDeviceStop returning is what actually guarantees the
         // IOProc can't push any more audio into the ring, which is what
         // makes that drain the real last one rather than a racy one.
+        // Unchanged for BOTH stop reasons — F6: "run full teardown"
+        // applies just as much to a starvation-triggered stop as a
+        // requested one.
         ProcessTapCapture.stopDevice(aggregateDeviceID: resolvedAggregateDeviceID, ioProcID: resolvedIOProcID)
         writer.drainRemaining()
         ProcessTapCapture.teardown(tapID: tapID, aggregateDeviceID: aggregateDeviceID, ioProcID: ioProcID)
         writer.emitFinalStats()
-        writer.writeEOS()
-        exit(0)
+
+        switch stopReason {
+        case .requested:
+            writer.writeEOS()
+            exit(0)
+        case .starved:
+            // F6: no EOS — an EOS record claims a clean, complete
+            // stream, and a starvation-truncated one is deliberately
+            // not represented as one (mirrors the catch blocks below,
+            // which also never write EOS on an error exit). Rust maps
+            // this typed code to StatusKind::DeviceChanged via the
+            // SAME deferred "last error code wins at exit" path
+            // permission-denied/unsupported-os already use — see
+            // audiocap.rs's error_record_kind.
+            StatusEvents.emitError(.deviceChanged("音频设备停止供给（设备切换或系统休眠）— 请重新开始转录"))
+            exit(1)
+        }
     } catch let error as AudioCapError {
         StatusEvents.emitError(error)
         teardownAndExit(code: 1)

@@ -68,6 +68,17 @@ pub enum FramingError {
     BadMagic,
     UnsupportedVersion(u16),
     UnsupportedFormat(u16),
+    /// F8 (adversarial-review fix round) — a chunk record's `byte_len`
+    /// didn't equal `frame_count * channels * 4` (interleaved LE f32,
+    /// the only format this wire contract ever declares — see
+    /// FORMAT_INTERLEAVED_F32's own doc comment). The two fields must
+    /// always agree; once they don't, no byte boundary in the rest of
+    /// the stream can be trusted either.
+    InconsistentChunkLength { frame_count: u32, channels: u16, byte_len: u32 },
+    /// F8 — a record (chunk OR another EOS) arrived after this reader
+    /// had already observed a terminal EOS. The wire contract allows
+    /// exactly one EOS, always last.
+    RecordAfterEos,
 }
 
 impl std::fmt::Display for FramingError {
@@ -79,6 +90,12 @@ impl std::fmt::Display for FramingError {
                 f,
                 "unsupported sample format {fmt} (expected {FORMAT_INTERLEAVED_F32}, interleaved f32)"
             ),
+            Self::InconsistentChunkLength { frame_count, channels, byte_len } => write!(
+                f,
+                "chunk byte_len {byte_len} does not match frame_count {frame_count} * channels {channels} * 4 (expected {})",
+                *frame_count as u64 * *channels as u64 * 4
+            ),
+            Self::RecordAfterEos => write!(f, "a record arrived after the terminal EOS record"),
         }
     }
 }
@@ -114,6 +131,12 @@ pub struct FramingReader {
     header: Option<StreamHeader>,
     next_seq: Option<u64>,
     seq_gaps: u64,
+    /// F8: set once a terminal EOS record has been observed — used both
+    /// to reject any further record (`RecordAfterEos`) and, via
+    /// `eos_seen()`, by audiocap.rs's session task to tell a genuinely
+    /// clean stream-end apart from a truncated one even when the
+    /// process's own exit code is 0.
+    eos_seen: bool,
 }
 
 impl FramingReader {
@@ -123,6 +146,7 @@ impl FramingReader {
             header: None,
             next_seq: None,
             seq_gaps: 0,
+            eos_seen: false,
         }
     }
 
@@ -135,6 +159,11 @@ impl FramingReader {
     /// never observed, across the whole session so far.
     pub fn seq_gaps(&self) -> u64 {
         self.seq_gaps
+    }
+
+    /// F8: whether a terminal EOS record has been observed yet.
+    pub fn eos_seen(&self) -> bool {
+        self.eos_seen
     }
 
     /// Appends `chunk` and returns every record that becomes fully
@@ -167,8 +196,32 @@ impl FramingReader {
                 break; // the record's payload hasn't fully arrived yet
             }
 
+            // F8: exactly one terminal EOS, always last — nothing
+            // (chunk or another EOS) may follow it. Checked before
+            // draining `pending` — an error here means this reader is
+            // done for good (its own doc comment), so there's nothing
+            // to gain from consuming the offending bytes first.
+            if self.eos_seen {
+                return Err(FramingError::RecordAfterEos);
+            }
+
+            let is_eos = frame_count == 0 && byte_len == 0;
+            if !is_eos {
+                // F8: byte_len must always equal frame_count * channels
+                // * 4 (interleaved LE f32, this wire contract's only
+                // declared format) — `self.header` is always `Some` by
+                // this point (the block above returns early until it
+                // is).
+                let channels = self.header.expect("header parsed before any record loop iteration").channels;
+                let expected_byte_len = frame_count as u64 * channels as u64 * 4;
+                if byte_len as u64 != expected_byte_len {
+                    return Err(FramingError::InconsistentChunkLength { frame_count, channels, byte_len });
+                }
+            }
+
             let gap_before = self.note_seq(seq);
-            let record = if frame_count == 0 && byte_len == 0 {
+            let record = if is_eos {
+                self.eos_seen = true;
                 self.pending.drain(..total_len);
                 Record::Eos { seq }
             } else {
@@ -336,8 +389,8 @@ mod tests {
     fn seq_gap_is_detected_when_a_sequence_number_is_skipped() {
         let mut reader = FramingReader::new();
         reader.feed(&header_bytes()).unwrap();
-        reader.feed(&chunk_bytes(0, &[1, 2])).unwrap();
-        let items = reader.feed(&chunk_bytes(2, &[3, 4])).unwrap(); // seq jumps 0 -> 2, skipping 1
+        reader.feed(&chunk_bytes(0)).unwrap();
+        let items = reader.feed(&chunk_bytes(2)).unwrap(); // seq jumps 0 -> 2, skipping 1
 
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].gap_before, 1);
@@ -348,8 +401,8 @@ mod tests {
     fn multiple_skipped_sequence_numbers_are_all_counted() {
         let mut reader = FramingReader::new();
         reader.feed(&header_bytes()).unwrap();
-        reader.feed(&chunk_bytes(10, &[1, 2])).unwrap();
-        let items = reader.feed(&chunk_bytes(15, &[3, 4])).unwrap(); // skips 11,12,13,14
+        reader.feed(&chunk_bytes(10)).unwrap();
+        let items = reader.feed(&chunk_bytes(15)).unwrap(); // skips 11,12,13,14
 
         assert_eq!(items[0].gap_before, 4);
         assert_eq!(reader.seq_gaps(), 4);
@@ -359,7 +412,7 @@ mod tests {
     fn no_gap_is_flagged_for_the_first_record_ever_seen_even_if_seq_is_not_zero() {
         let mut reader = FramingReader::new();
         reader.feed(&header_bytes()).unwrap();
-        let items = reader.feed(&chunk_bytes(5, &[1, 2])).unwrap();
+        let items = reader.feed(&chunk_bytes(5)).unwrap();
         assert_eq!(items[0].gap_before, 0);
         assert_eq!(reader.seq_gaps(), 0);
     }
@@ -368,8 +421,8 @@ mod tests {
     fn consecutive_sequence_numbers_never_count_as_a_gap() {
         let mut reader = FramingReader::new();
         reader.feed(&header_bytes()).unwrap();
-        reader.feed(&chunk_bytes(0, &[1, 2])).unwrap();
-        let items = reader.feed(&chunk_bytes(1, &[3, 4])).unwrap();
+        reader.feed(&chunk_bytes(0)).unwrap();
+        let items = reader.feed(&chunk_bytes(1)).unwrap();
         assert_eq!(items[0].gap_before, 0);
         assert_eq!(reader.seq_gaps(), 0);
     }
@@ -421,12 +474,85 @@ mod tests {
         ]
     }
 
-    fn chunk_bytes(seq: u64, payload_i16_pairs: &[u8]) -> Vec<u8> {
-        let payload: Vec<u8> = payload_i16_pairs.to_vec();
+    /// A single-frame chunk record, consistent (F8: byte_len ==
+    /// frame_count * channels * 4) with `header_bytes()`'s own
+    /// channels=2 fixture — 8 bytes of arbitrary-but-valid payload. The
+    /// seq-gap tests below only ever care about `seq`, never payload
+    /// content.
+    fn chunk_bytes(seq: u64) -> Vec<u8> {
+        let payload = [0xAAu8; 8]; // 1 frame * 2 channels * 4 bytes
         let mut bytes = seq.to_le_bytes().to_vec();
-        bytes.extend_from_slice(&1u32.to_le_bytes()); // frameCount = 1 (arbitrary, non-zero)
-        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&1u32.to_le_bytes()); // frameCount = 1
+        bytes.extend_from_slice(&(payload.len() as u32).to_le_bytes()); // byteLen = 8 = 1*2*4
         bytes.extend_from_slice(&payload);
         bytes
+    }
+
+    /// A bare EOS record (Framing.encodeEOS's own shape: frameCount=0,
+    /// byteLen=0, no payload).
+    fn eos_bytes(seq: u64) -> Vec<u8> {
+        let mut bytes = seq.to_le_bytes().to_vec();
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes
+    }
+
+    // ---- F8 (adversarial-review fix round): byte_len consistency +
+    // exactly-one-terminal-EOS ----
+
+    #[test]
+    fn chunk_with_byte_len_inconsistent_with_frame_count_and_channels_is_rejected() {
+        let mut reader = FramingReader::new();
+        reader.feed(&header_bytes()).unwrap(); // channels = 2
+
+        // frameCount=1 with channels=2 (interleaved f32) requires
+        // byteLen=8 (1*2*4); this declares 4, as if mono — inconsistent.
+        let mut bad = 0u64.to_le_bytes().to_vec();
+        bad.extend_from_slice(&1u32.to_le_bytes()); // frameCount = 1
+        bad.extend_from_slice(&4u32.to_le_bytes()); // byteLen = 4 (WRONG — should be 8)
+        bad.extend_from_slice(&[0, 0, 0, 0]);
+
+        assert_eq!(
+            reader.feed(&bad),
+            Err(FramingError::InconsistentChunkLength { frame_count: 1, channels: 2, byte_len: 4 })
+        );
+    }
+
+    #[test]
+    fn a_chunk_with_correct_byte_len_for_multi_channel_is_accepted() {
+        let mut reader = FramingReader::new();
+        reader.feed(&header_bytes()).unwrap(); // channels = 2
+        let items = reader.feed(&chunk_bytes(0)).unwrap();
+        assert_eq!(items.len(), 1, "a byte_len that DOES match frame_count * channels * 4 must parse cleanly");
+    }
+
+    #[test]
+    fn a_record_arriving_after_eos_is_rejected() {
+        let mut reader = FramingReader::new();
+        reader.feed(&header_bytes()).unwrap();
+        reader.feed(&eos_bytes(0)).unwrap();
+        assert!(reader.eos_seen());
+
+        let extra = chunk_bytes(1);
+        assert_eq!(reader.feed(&extra), Err(FramingError::RecordAfterEos));
+    }
+
+    #[test]
+    fn a_second_eos_after_the_first_is_also_rejected() {
+        let mut reader = FramingReader::new();
+        reader.feed(&header_bytes()).unwrap();
+        reader.feed(&eos_bytes(0)).unwrap();
+        assert_eq!(reader.feed(&eos_bytes(1)), Err(FramingError::RecordAfterEos));
+    }
+
+    #[test]
+    fn eos_seen_is_false_until_an_eos_record_is_actually_parsed() {
+        let mut reader = FramingReader::new();
+        reader.feed(&header_bytes()).unwrap();
+        assert!(!reader.eos_seen());
+        reader.feed(&chunk_bytes(0)).unwrap();
+        assert!(!reader.eos_seen());
+        reader.feed(&eos_bytes(1)).unwrap();
+        assert!(reader.eos_seen());
     }
 }
