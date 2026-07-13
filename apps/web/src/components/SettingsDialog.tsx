@@ -1094,8 +1094,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // so the row reflects exactly what the sidecar itself now reports.
   // Errors surface via showToast only — bootstrap.ts's own doc comment
   // on installDiarization() confirms every rejection message is already
-  // a zh phrase (not-HEALTHY, the shared-latch busy message, or a
-  // run_uv non-zero exit), same as handleReprovisionDesktop's identical
+  // a BARE zh phrase (external-mode, not-HEALTHY, the shared-latch busy
+  // message, or a run_uv non-zero exit — S5 review pair Finding 3 made
+  // the exit-code case bare too, dropping its own baked-in "安装说话人
+  // 分离扩展失败" prefix, which used to double up with the one this toast
+  // adds below), same as handleReprovisionDesktop's identical
   // `err.message` toast posture just above.
   const handleInstallDiarization = async () => {
     setInstallingDiarization(true);

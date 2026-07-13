@@ -1621,6 +1621,30 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     resolveRunUv!(); // cleanup — avoid a dangling promise
   });
 
+  it('rejects when sidecarMode is "external" — even though external mode can itself reach HEALTHY (the exact gap this finding closes), zero invokes and no fetch at all (S5 review pair Finding 2)', async () => {
+    const invokeCalls: string[] = [];
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths }, (cmd) => invokeCalls.push(cmd)),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => ({ up: true }), // external sidecar IS up -> HEALTHY; the old phase-only gate would have let this through
+    };
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" }); // confirms the precondition Finding 2 is about
+
+    await expect(handle.switchModel("medium")).rejects.toThrow("当前为外部管理模式，此操作仅适用于内置本地服务");
+    expect(invokeCalls).toEqual(["app_paths"]); // only bootstrap's own call — switchModel() itself never invoked anything
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+  });
+
   it("single-flights via the shared sidecar-lifecycle latch: two interleaved calls download/restart exactly once, and the SECOND caller REJECTS instead of joining (S4 review pair Finding 1a)", async () => {
     let downloadModelPosts = 0;
     let stopServerCalls = 0;
@@ -1928,7 +1952,7 @@ describe("bootstrapDesktop — installDiarization() (S5 chunk 2, diarization add
     expect(lines).toContainEqual({ stream: "stdout", line: "Successfully installed pyannote.audio-4.0.7" });
   });
 
-  it("non-zero/null exit code rejects with a zh message naming the exit code", async () => {
+  it("non-zero/null exit code rejects with a BARE zh message naming the exit code — no embedded 安装说话人分离扩展失败 prefix (S5 review pair Finding 3: that duplicated the ONE prefix SettingsDialog.tsx's own toast adds)", async () => {
     let exitCode: number | null = 1;
     const deps: BootstrapDeps = {
       invoke: makeFakeInvoke({
@@ -1944,10 +1968,14 @@ describe("bootstrapDesktop — installDiarization() (S5 chunk 2, diarization add
     const handle = await bootstrapDesktop(deps);
     await waitForStable(handle); // -> HEALTHY (adopted)
 
-    await expect(handle.installDiarization()).rejects.toThrow("安装说话人分离扩展失败（退出码 1）");
+    // Anchored regex, not a plain substring — a plain "退出码 1" substring
+    // check would ALSO pass against the old, doubled-up message (it's a
+    // substring of that too), so it wouldn't actually catch a regression
+    // back to the old prefixed form.
+    await expect(handle.installDiarization()).rejects.toThrow(/^退出码 1$/);
 
     exitCode = null;
-    await expect(handle.installDiarization()).rejects.toThrow("安装说话人分离扩展失败（退出码 null）");
+    await expect(handle.installDiarization()).rejects.toThrow(/^退出码 null$/);
   });
 
   it("rejects when current.state.phase isn't HEALTHY, without ever calling run_uv", async () => {
@@ -1977,6 +2005,35 @@ describe("bootstrapDesktop — installDiarization() (S5 chunk 2, diarization add
 
     await expect(handle.installDiarization()).rejects.toThrow("本地服务未就绪，无法安装扩展");
     expect(runUvCalls).toBe(0);
+  });
+
+  it('rejects when sidecarMode is "external" — even though external mode can itself reach HEALTHY (the exact gap this finding closes), zero invokes (S5 review pair Finding 2)', async () => {
+    const invokeCalls: string[] = [];
+    let runUvCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke(
+        {
+          app_paths: () => paths,
+          run_uv: () => {
+            runUvCalls += 1;
+            return { code: 0 };
+          },
+        },
+        (cmd) => invokeCalls.push(cmd),
+      ),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => ({ up: true }), // external sidecar IS up -> HEALTHY; the old phase-only gate would have let this through
+    };
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" }); // confirms the precondition Finding 2 is about
+
+    await expect(handle.installDiarization()).rejects.toThrow("当前为外部管理模式，此操作仅适用于内置本地服务");
+    expect(runUvCalls).toBe(0);
+    expect(invokeCalls).toEqual(["app_paths"]); // only bootstrap's own call — installDiarization() itself never invoked anything
   });
 
   it("busy-latch: an in-flight reprovision() blocks installDiarization() (shared latch, S4 review pair Finding 1a)", async () => {

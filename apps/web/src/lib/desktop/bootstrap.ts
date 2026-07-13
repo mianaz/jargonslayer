@@ -222,6 +222,12 @@ const SWITCH_HEALTH_POLL_INTERVAL_MS = 2000;
  *  similar wordings for the same condition. */
 const SIDECAR_LIFECYCLE_BUSY_MESSAGE = "另一项本地服务操作正在进行";
 
+/** S5 review pair Finding 2: switchModel()/installDiarization()'s own
+ *  rejection when the persisted sidecarMode is "external" — extracted
+ *  once, same "two call sites can't drift into two different-but-
+ *  similar wordings" rationale as SIDECAR_LIFECYCLE_BUSY_MESSAGE above. */
+const EXTERNAL_SIDECAR_MODE_MESSAGE = "当前为外部管理模式，此操作仅适用于内置本地服务";
+
 /** Mirrors provisionRunner.ts's own (module-private, unexported)
  *  defaultNow/defaultSleep — this file needs its own copies for
  *  switchModel()'s marker write (invokeWriteMarker's own `now` param)
@@ -415,13 +421,21 @@ export interface DesktopBootstrapHandle {
    *  reprovision()/recheckHealth() above — provisionMachine.ts itself
    *  gains no new state for this.
    *
-   *  Rejects (never silently no-ops) in four cases: `model` isn't
-   *  ALLOWED_MARKER_MODELS-valid; current.state.phase isn't HEALTHY
-   *  (switching only makes sense from an already-running managed
-   *  sidecar — the UI is expected to only ever offer this button then,
-   *  same "mode gating lives in SettingsDialog, not the handle" posture
-   *  reprovision()'s own sidecarMode-agnostic implementation already
-   *  established); a meeting is active right as the download finishes
+   *  Rejects (never silently no-ops) in five cases: the persisted
+   *  sidecarMode is "external" (S5 review pair Finding 2 — checked
+   *  FIRST, ahead of every other case below: external mode can reach
+   *  HEALTHY too, since that phase there just reflects the EXTERNAL
+   *  sidecar's own health probe, nothing this handle provisioned — a
+   *  draft-flipped UI, or any future caller, must not be able to reach
+   *  stop_server/start_server against whatever's actually listening on
+   *  managed mode's fixed ports; this replaces switchModel()'s own
+   *  former "mode gating lives in SettingsDialog, not the handle"
+   *  posture, which this finding showed was the wrong layer for an
+   *  action that mutates/restarts a process rather than just reading
+   *  one); `model` isn't ALLOWED_MARKER_MODELS-valid; current.state.
+   *  phase isn't HEALTHY (switching only makes sense from an already-
+   *  running managed sidecar); a meeting is active right as the
+   *  download finishes
    *  (S4 review pair Finding 2 — deps.isMeetingActive, rechecked fresh
    *  since SettingsDialog's own picker-open-time check is stale by the
    *  time a minutes-long download completes; current.state stays
@@ -478,13 +492,16 @@ export interface DesktopBootstrapHandle {
    *  run, aborting it silently rather than reporting success/failure for
    *  a venv that's already been recreated out from under it.
    *
-   *  Rejects (never silently no-ops) in two cases: `current.state.phase`
-   *  isn't HEALTHY (installing only makes sense against an already-
-   *  running managed sidecar — same "the caller's own precondition
-   *  check, not a UI-only gate" posture reprovision()/switchModel()
-   *  already established); or the shared sidecarLifecycleInFlight latch
-   *  (S4 review pair Finding 1a) is already held by an in-flight
-   *  reprovision()/switchModel() call — an install must never race
+   *  Rejects (never silently no-ops) in three cases: the persisted
+   *  sidecarMode is "external" (S5 review pair Finding 2 — checked
+   *  FIRST, same rationale as switchModel()'s own identical leading
+   *  check just above); `current.state.phase` isn't HEALTHY (installing
+   *  only makes sense against an already-running managed sidecar — same
+   *  "the caller's own precondition check, not a UI-only gate" posture
+   *  reprovision()/switchModel() already established); or the shared
+   *  sidecarLifecycleInFlight latch (S4 review pair Finding 1a) is
+   *  already held by an in-flight reprovision()/switchModel() call —
+   *  an install must never race
    *  reprovision()'s venv recreation (it would either install into a
    *  venv about to be destroyed, or destroy a venv mid-install) or a
    *  model switch's own stop/start of the SAME server process. Held for
@@ -688,6 +705,9 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   const paths = await getAppPaths(deps.invoke);
   // Finding 2: read BEFORE any provisioning decision — "external"
   // branches away from the managed drive loop entirely, further down.
+  // S5 review pair Finding 2: this SAME closure variable is also read
+  // directly by switchModel()/installDiarization() below (no separate
+  // copy) — see each method's own doc comment on DesktopBootstrapHandle.
   const sidecarMode = (await deps.getSidecarMode?.()) ?? "managed";
   // S4 chunk 3 (decision C's clamp): the user's persisted whisperModel
   // preference, read the same "await early, before any provisioning
@@ -1172,7 +1192,17 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     }
     if (generation !== myGeneration) return; // superseded — see this function's own doc comment.
     if (result.code !== 0) {
-      const message = `安装说话人分离扩展失败（退出码 ${result.code === null ? "null" : result.code}）`;
+      // S5 review pair Finding 3: bare — no "安装说话人分离扩展失败" prefix
+      // here. SettingsDialog.tsx's handleInstallDiarization is the ONE
+      // place that adds that prefix (mirrors handleReprovisionDesktop's
+      // identical `失败：${err.message}` posture); this thrown message
+      // used to carry the SAME phrase baked in too, so the toast doubled
+      // it up ("安装说话人分离扩展失败：安装说话人分离扩展失败（退出码 1）").
+      // Every OTHER rejection this function can throw (the run_uv
+      // invoke-failure catch above, and installDiarization()'s own
+      // not-HEALTHY/external-mode/busy-latch gates) was already bare —
+      // this was the one holdout.
+      const message = `退出码 ${result.code === null ? "null" : result.code}`;
       diagLog("error", "desktop-provision", "安装说话人分离扩展失败", redactHomePath(message));
       throw new Error(message);
     }
@@ -1299,6 +1329,16 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       }
     },
     async switchModel(model: string) {
+      // S5 review pair Finding 2: checked FIRST — external mode can
+      // reach HEALTHY too (the phase below reflects the EXTERNAL
+      // sidecar's own health, not anything this handle provisioned), so
+      // the phase check alone let a draft-flipped UI (or any future
+      // caller) drive start_server against whatever's actually
+      // listening on managed mode's fixed ports. See this method's own
+      // doc comment on DesktopBootstrapHandle for the full rationale.
+      if (sidecarMode === "external") {
+        return Promise.reject(new Error(EXTERNAL_SIDECAR_MODE_MESSAGE));
+      }
       if (!ALLOWED_MARKER_MODELS.includes(model)) {
         return Promise.reject(new Error(`不支持的模型：${model}`));
       }
@@ -1327,6 +1367,11 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       return switchModelProgress;
     },
     async installDiarization() {
+      // S5 review pair Finding 2 — see switchModel()'s own identical
+      // leading check above for the full rationale.
+      if (sidecarMode === "external") {
+        return Promise.reject(new Error(EXTERNAL_SIDECAR_MODE_MESSAGE));
+      }
       if (current.state.phase !== "HEALTHY") {
         return Promise.reject(new Error("本地服务未就绪，无法安装扩展"));
       }

@@ -392,7 +392,22 @@ class _SharedDiarizePipeline:
         loads it first. A later caller supplying a *different* token
         won't force a reload; that's an accepted edge case for a
         local, single-user sidecar (mirrors the in-memory-only job
-        store tradeoff noted on JobManager)."""
+        store tradeoff noted on JobManager).
+
+        S5 review pair Finding 1: the cache is latched ONLY on success —
+        a failed load hands (None, error) back to every CURRENT caller
+        but leaves the instance retry-eligible, so the NEXT get() call
+        attempts the whole load again instead of staying permanently
+        "unavailable" process-wide until the sidecar is restarted. This
+        is what actually makes two real recoveries possible without a
+        restart: a mid-install import against a half-written venv (pip
+        install finishes moments later — the very next meeting arms
+        cleanly) and an unaccepted-license/bad HF token
+        (Pipeline.from_pretrained 403s — once the user accepts the
+        license, the next meeting just works). The cost is a repeated
+        failing attempt per meeting until then — for the missing-module
+        case that's one cheap, fast ModuleNotFoundError, well worth
+        paying for the retry."""
         if self._loaded:
             return self._pipeline, self._error
         with self._load_lock:
@@ -413,11 +428,21 @@ class _SharedDiarizePipeline:
                         use_auth_token=hf_token,
                     )
                 self._error = None
+                # Set the latch LAST so no reader ever observes loaded-
+                # but-empty — and ONLY on this success path (S5 review
+                # pair Finding 1): a caller that was blocked on
+                # _load_lock behind a FAILING load must not inherit a
+                # permanent latch it never asked for.
+                self._loaded = True
             except Exception as exc:  # noqa: BLE001 - see docstring
                 self._pipeline = None
                 self._error = f"{type(exc).__name__}: {exc}"
-            # Set the latch LAST so no reader ever observes loaded-but-empty.
-            self._loaded = True
+                # Deliberately NOT latched — see this method's own
+                # docstring (S5 review pair Finding 1). The NEXT get()
+                # (this connection's next diarization window, or a
+                # brand-new meeting) retries the load from scratch;
+                # `_load_lock` above still serializes it against any
+                # other thread's concurrent attempt exactly as before.
             return self._pipeline, self._error
 
 

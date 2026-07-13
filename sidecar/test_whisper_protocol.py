@@ -53,6 +53,13 @@ Covers (protocol v2, see whisper_server.py's own module docstring):
     why); health_payload's /health shape, including the new
     diarization_installed field and the unchanged-on-purpose
     diarization_ready/diarization_error back-compat semantics
+  - _SharedDiarizePipeline.get() (S5 review pair Finding 1): a failed
+    load (missing module, or Pipeline.from_pretrained itself raising —
+    e.g. an unaccepted-license/bad-token 403) is NOT latched — the next
+    get() call on the SAME instance retries the whole load rather than
+    staying "unavailable" forever; a SUCCEEDED load stays cached
+    exactly as before (the loader runs exactly once across repeated
+    get() calls)
 """
 
 from __future__ import annotations
@@ -73,6 +80,7 @@ from whisper_server import (  # noqa: E402
     FinalizeJob,
     JobManager,
     WhisperServer,
+    _SharedDiarizePipeline,
     health_payload,
 )
 
@@ -780,6 +788,137 @@ def test_diarization_probe_installed_with_token() -> None:
 
 
 # =================================================================
+# _SharedDiarizePipeline.get() — failure-latched cache fix (S5 review
+# pair Finding 1): a failed load must not permanently latch process-
+# wide (see that method's own docstring for the two concrete
+# recoveries this enables). pyannote is faked via sys.modules, same
+# idiom as diarization_probe's own tests just above, but the stub also
+# needs an actual `Pipeline.from_pretrained` attached —
+# diarization_probe never imports that symbol (a plain `import
+# pyannote.audio`), so _set_pyannote_importable(True)'s bare module
+# stub alone isn't enough for get()'s own `from pyannote.audio import
+# Pipeline`. Every test below builds its OWN fresh _SharedDiarizePipeline
+# instance rather than touching whisper_server's module-level
+# `_shared_diarize_pipeline` singleton, so these tests can't leak
+# cached state into each other (or into anything else importing this
+# module) regardless of run order.
+# =================================================================
+
+
+def _set_pyannote_pipeline_stub(from_pretrained) -> dict[str, object]:
+    """Like _set_pyannote_importable(True), but the stubbed
+    `pyannote.audio` module also exposes a `Pipeline` object whose
+    `from_pretrained` is `from_pretrained` verbatim — reuses
+    _restore_pyannote_importable for teardown (same sys.modules keys)."""
+    saved: dict[str, object] = {
+        name: sys.modules.get(name, _UNSET) for name in ("pyannote", "pyannote.audio")
+    }
+    sys.modules["pyannote"] = types.ModuleType("pyannote")
+    audio_module = types.ModuleType("pyannote.audio")
+    audio_module.Pipeline = types.SimpleNamespace(from_pretrained=from_pretrained)  # type: ignore[attr-defined]
+    sys.modules["pyannote.audio"] = audio_module
+    return saved
+
+
+def test_shared_diarize_pipeline_retries_after_missing_module() -> None:
+    """Recovery 1 (get()'s own docstring): a mid-install import against
+    a half-written venv fails now, but completes moments later — the
+    NEXT get() call (this connection's next diarization window, or a
+    brand-new meeting) must retry the load rather than staying
+    permanently "unavailable" on this process."""
+    pipeline = _SharedDiarizePipeline()
+    saved = _set_pyannote_importable(False)
+    try:
+        result, error = pipeline.get(None)
+        check("missing-module load: pipeline is None", result is None)
+        check(
+            "missing-module load: error names the ModuleNotFoundError",
+            error is not None and "ModuleNotFoundError" in error,
+        )
+        check("missing-module load: NOT latched — a retry is still possible", pipeline._loaded is False)
+    finally:
+        _restore_pyannote_importable(saved)
+
+    # "install completes" — pyannote becomes importable and loads fine.
+    calls = 0
+    sentinel = object()
+
+    def fake_from_pretrained(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return sentinel
+
+    saved = _set_pyannote_pipeline_stub(fake_from_pretrained)
+    try:
+        result, error = pipeline.get(None)
+        check("retry after install: the SAME instance recovers, no restart needed", result is sentinel)
+        check("retry after install: error is cleared", error is None)
+        check("retry after install: the loader ran exactly once for this recovery", calls == 1)
+        check("retry after install: now latched", pipeline._loaded is True)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_shared_diarize_pipeline_retries_after_from_pretrained_failure() -> None:
+    """Recovery 2 (get()'s own docstring): pyannote imports fine but
+    Pipeline.from_pretrained itself fails — the unaccepted-license/
+    bad-token 403 case. Once the user accepts the license, the NEXT
+    get() call must retry and succeed, still with no sidecar restart."""
+    pipeline = _SharedDiarizePipeline()
+
+    def failing_from_pretrained(*args, **kwargs):
+        raise RuntimeError("403 Client Error: token lacks access to pyannote/speaker-diarization-3.1")
+
+    saved = _set_pyannote_pipeline_stub(failing_from_pretrained)
+    try:
+        result, error = pipeline.get("bad-token")
+        check("from_pretrained failure: pipeline is None", result is None)
+        check("from_pretrained failure: error names the RuntimeError", error is not None and "RuntimeError" in error)
+        check("from_pretrained failure: NOT latched — a retry is still possible", pipeline._loaded is False)
+    finally:
+        _restore_pyannote_importable(saved)
+
+    sentinel = object()
+
+    def working_from_pretrained(*args, **kwargs):
+        return sentinel
+
+    saved = _set_pyannote_pipeline_stub(working_from_pretrained)
+    try:
+        result, error = pipeline.get("good-token")
+        check("retry after license accept: the SAME instance recovers", result is sentinel)
+        check("retry after license accept: error is cleared", error is None)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+def test_shared_diarize_pipeline_success_is_cached() -> None:
+    """A SUCCEEDED load must still behave exactly as before this
+    finding: the loader never runs twice — only a FAILED load retries."""
+    pipeline = _SharedDiarizePipeline()
+    calls = 0
+    sentinel = object()
+
+    def fake_from_pretrained(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return sentinel
+
+    saved = _set_pyannote_pipeline_stub(fake_from_pretrained)
+    try:
+        first_result, first_error = pipeline.get(None)
+        second_result, second_error = pipeline.get(None)
+        check(
+            "success caching: both calls return the identical cached pipeline",
+            first_result is sentinel and second_result is sentinel,
+        )
+        check("success caching: both calls report no error", first_error is None and second_error is None)
+        check("success caching: the loader ran exactly once across two get()s", calls == 1)
+    finally:
+        _restore_pyannote_importable(saved)
+
+
+# =================================================================
 # health_payload — GET /health's shape (S5 decision C adds
 # diarization_installed). No test in this suite previously asserted
 # /health's shape at all (grep confirms: nothing referenced
@@ -854,6 +993,9 @@ test_partials_override_both_directions()
 test_diarization_probe_not_installed()
 test_diarization_probe_installed_no_token()
 test_diarization_probe_installed_with_token()
+test_shared_diarize_pipeline_retries_after_missing_module()
+test_shared_diarize_pipeline_retries_after_from_pretrained_failure()
+test_shared_diarize_pipeline_success_is_cached()
 test_health_payload_shape()
 asyncio.run(run_async_tests())
 
