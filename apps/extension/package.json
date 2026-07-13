@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Chrome MV3 side-panel extension — Plugin Lite: dictionary + Translator API core loop (PLAN-v0.4 S6). Paste English text, get zh explanations from @jargonslayer/core plus on-device translation when Chrome's Translator API is available.",
-  "license": "PolyForm-Noncommercial-1.0.0",
+  "license": "AGPL-3.0-only",
   "author": "Miana Zeng",
   "scripts": {
     "dev": "vite",

@@ -12,7 +12,7 @@
 *英文会议实时理解助手 · 把会议变成一个正在运行的进程*
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
-[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-22D3EE?style=flat-square&labelColor=121212)](LICENSE)
+[![License](https://img.shields.io/badge/license-AGPL--3.0-22D3EE?style=flat-square&labelColor=121212)](LICENSE)
 [![Tests](https://img.shields.io/badge/tests-1664%20passing-4ADE80?style=flat-square&labelColor=121212)](apps/web/src/lib/__tests__)
 [![Data paths](https://img.shields.io/badge/data-transparent%20paths-FFAA44?style=flat-square&labelColor=121212)](#privacy-boundaries-stated-explicitly)
 
@@ -261,7 +261,7 @@ The Settings section shows host status and each provider's own login status; on 
 
 ## Versions
 
-The same product ships in tiers that differ in **form factor, not payment** — everything is free for personal and non-commercial use, with the full source available to read and audit:
+The same product ships in tiers that differ in **form factor, not payment** — everything is free and open source (AGPL):
 
 | Capability | Chrome extension (Lite, planned) | Preview ([hosted](https://apps.bioinfospace.com/jargonslayer)) | Local / Desktop |
 |---|---|---|---|
@@ -317,4 +317,6 @@ Next.js 15 (App Router) + TypeScript + Tailwind + zustand + IndexedDB, organized
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) © 2026 Miana Zeng — free for personal and any other non-commercial use, source fully available; **commercial use requires a separate license** (open a GitHub issue or contact the author). Releases up to and including v0.3.0 were published under MIT and remain so.
+[AGPL-3.0](LICENSE) © 2026 Miana Zeng. Free to use anywhere, including at work; if you modify it and redistribute or host it as a service, you must share your source under the same terms. Releases up to and including v0.3.0 were published under MIT and remain so.
+
+This is a personal side project, maintained on a best-effort basis — no support, uptime, or fitness for any purpose is promised (see the license's warranty disclaimer).
