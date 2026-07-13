@@ -13,7 +13,7 @@ export default defineManifest({
   manifest_version: 3,
   name: "JargonSlayer Lite",
   description:
-    "Paste English business text, get instant Chinese explanations for idioms, jargon, and terms — no login, no cost (中英文商务黑话即时详解，无需登录).",
+    "Live English captions from your mic + instant Chinese explanations for idioms, jargon, and terms (英文实时黑话详解，无需登录).",
   version: pkg.version,
   icons: {
     16: "icons/icon16.png",
