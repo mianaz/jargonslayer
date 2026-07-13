@@ -29,14 +29,25 @@ import Foundation
 //     an unmatched PID through as if it were a real exclusion target.
 @available(macOS 14.2, *)
 public enum ProcessTapCapture {
-    /// D3: "Rust passes its own PID to the helper (--exclude-pid);
-    /// helper translates via kAudioHardwarePropertyTranslatePIDToProcessObject
-    /// and excludes the result; translation failure = typed error and
-    /// refuse to start (never silently self-capture)." This is the
-    /// FIRST CoreAudio call this helper ever makes — reached before any
+    /// D3 (as amended after the 2026-07-13 spike run — blueprint
+    /// §S9.1-outcome): "Rust passes its own PID to the helper
+    /// (--exclude-pid); helper translates via
+    /// kAudioHardwarePropertyTranslatePIDToProcessObject and excludes
+    /// the result" — but a noErr + kAudioObjectUnknown answer returns
+    /// nil instead of throwing. Field finding: a process that has never
+    /// registered with the audio HAL (played or captured nothing —
+    /// exactly the JargonSlayer GUI app at startup) simply has NO
+    /// CoreAudio process object; the spike run hit this on the app's
+    /// own live pid. Such a process also CANNOT be captured by a tap
+    /// (taps mix HAL process objects), so "nothing to exclude" is the
+    /// truthful reading, not a failure — the caller proceeds with an
+    /// empty exclusion list and says so loudly on stderr (main.swift).
+    /// A non-noErr status remains a hard typed error: that's the HAL
+    /// itself misbehaving, not a benign absence. This is the FIRST
+    /// CoreAudio call this helper ever makes — reached before any
     /// tap/aggregate/device object exists, so its failure path is pure
     /// (nothing to tear down yet).
-    public static func translateExcludePID(_ pid: pid_t) throws -> AudioObjectID {
+    public static func translateExcludePID(_ pid: pid_t) throws -> AudioObjectID? {
         let systemObject = AudioObjectID(kAudioObjectSystemObject)
         var address = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
@@ -49,11 +60,13 @@ public enum ProcessTapCapture {
         let status = withUnsafeMutablePointer(to: &mutablePID) { pidPointer -> OSStatus in
             AudioObjectGetPropertyData(systemObject, &address, UInt32(MemoryLayout<pid_t>.size), pidPointer, &dataSize, &processObjectID)
         }
-        // Both checks are required — see this file's own header comment.
-        guard status == kAudioHardwareNoError, processObjectID != kAudioObjectUnknown else {
+        guard status == kAudioHardwareNoError else {
             throw AudioCapError.pidTranslateFailed(
-                "kAudioHardwarePropertyTranslatePIDToProcessObject failed for pid \(pid) (status \(osStatusDescription(status)), processObjectID \(processObjectID))"
+                "kAudioHardwarePropertyTranslatePIDToProcessObject failed for pid \(pid) (status \(osStatusDescription(status)))"
             )
+        }
+        guard processObjectID != kAudioObjectUnknown else {
+            return nil // no HAL presence -> nothing to exclude (see doc comment)
         }
         return processObjectID
     }
@@ -73,10 +86,14 @@ public enum ProcessTapCapture {
     /// default to set. Flagged here and in the PR report as a spec
     /// delta, not silently added.
     public static func createProcessTap(
-        excluding processObjectID: AudioObjectID,
+        excluding processObjectID: AudioObjectID?,
         name: String
     ) throws -> (tapID: AudioObjectID, tapUID: String, format: AudioStreamBasicDescription) {
-        let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [processObjectID])
+        // nil = the exclude PID has no HAL process object (see
+        // translateExcludePID's doc comment): a global tap with an
+        // EMPTY exclusion list — safe precisely because a HAL-absent
+        // process contributes no audio for the tap to mix in.
+        let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: processObjectID.map { [$0] } ?? [])
         tapDescription.name = name
         tapDescription.muteBehavior = .unmuted
         tapDescription.isPrivate = true

@@ -28,12 +28,26 @@ public enum StatusEvents {
         let framesOut: UInt64
     }
 
+    /// Freeform informational status (still `type:"status"`, one
+    /// `state` + human-readable `message`) — for conditions worth
+    /// surfacing that aren't part of the starting/capturing lifecycle,
+    /// e.g. "exclude-pid-inactive" (translateExcludePID's nil case).
+    private struct NoteRecord: Encodable {
+        let type = "status"
+        let state: String
+        let message: String
+    }
+
     /// `state` is "starting" (emitted once the tap's real format is
     /// known, right before the AudioDeviceStart call that's actually
     /// gated by TCC — see main.swift's runCapture) or "capturing"
     /// (emitted right after AudioDeviceStart returns success).
     public static func emitStatus(state: String, sampleRate: UInt32, channels: UInt16) {
         emit(StatusRecord(state: state, sampleRate: sampleRate, channels: channels))
+    }
+
+    public static func emitNote(state: String, message: String) {
+        emit(NoteRecord(state: state, message: message))
     }
 
     public static func emitError(_ error: AudioCapError) {

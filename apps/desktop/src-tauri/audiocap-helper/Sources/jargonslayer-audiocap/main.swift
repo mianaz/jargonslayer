@@ -82,7 +82,30 @@ func runCapture(excludePID: pid_t, durationSeconds: Double?) -> Never {
     }
 
     do {
+        // A NONEXISTENT pid and an alive-but-never-audio-active pid are
+        // indistinguishable at the HAL (both answer noErr +
+        // kAudioObjectUnknown — translateExcludePID's doc comment), so
+        // liveness is checked here via POSIX first: kill(pid, 0) == 0
+        // means alive-and-ours (the parent app always is); -1/EPERM
+        // means alive-but-not-ours; -1/ESRCH means the pid doesn't
+        // exist at all — a caller bug, kept as the hard typed error it
+        // always was (and the no-CoreAudio-touched negative-test path:
+        // `--exclude-pid 99999999`).
+        guard kill(excludePID, 0) == 0 || errno == EPERM else {
+            throw AudioCapError.pidTranslateFailed("pid \(excludePID) does not exist (kill(pid, 0) -> ESRCH)")
+        }
+
         let processObjectID = try ProcessTapCapture.translateExcludePID(excludePID)
+        if processObjectID == nil {
+            // Blueprint D3 as amended (2026-07-13 spike finding): the
+            // exclude PID has no HAL process object — it has never
+            // played/captured audio, so it cannot be tapped either;
+            // proceed with an empty exclusion list, but say so loudly.
+            StatusEvents.emitNote(
+                state: "exclude-pid-inactive",
+                message: "pid \(excludePID) has no CoreAudio process object (never audio-active) — nothing to exclude; proceeding with a global tap and an empty exclusion list"
+            )
+        }
 
         let created = try ProcessTapCapture.createProcessTap(excluding: processObjectID, name: "JargonSlayer System Audio Tap")
         tapID = created.tapID
