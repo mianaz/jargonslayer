@@ -24,6 +24,7 @@ import {
 import { deferred } from "./fakeMedia";
 import { makeFakeChannelFactory, makeFakeInvoke, makeFakeListen, type FakeInvokeCall } from "./fakeTauri";
 import type { ChannelFactory, InvokeFn, ListenFn, PcmChannel, UnlistenFn } from "../../desktop/tauriApi";
+import { clearDiag, getDiagEntries } from "../../diag/log";
 
 // Mirrors appAudio.ts's own (unexported) STOP_ENDED_TIMEOUT_MS — kept
 // in sync by the timeout-fallback test below, same convention as
@@ -155,6 +156,11 @@ describe("AppAudioEngine", () => {
   beforeEach(() => {
     ({ instances: wsInstances } = installFakeWebSocket());
     ({ contexts, workletNodes } = installFakeAudioGraph());
+    // Isolate each test's diag ring-buffer entries (S9 live-failure
+    // investigation's own new stt-appaudio markers below) — additive/
+    // no-op for every pre-existing test, which never reads the diag
+    // buffer at all.
+    clearDiag();
   });
 
   afterEach(() => {
@@ -590,5 +596,164 @@ describe("AppAudioEngine", () => {
     await engine.stop(); // reentrant — must be a clean no-op
 
     expect(calls.filter((c) => c.cmd === "stop_app_audio").length).toBe(1);
+  });
+
+  // ---------------------------------------------------------------
+  // S9 live-failure investigation: diag markers + defensive Channel
+  // payload normalization. `channels[n].onmessage(...)` is typed
+  // `(data: ArrayBuffer) => void` (PcmChannel's own declared shape) —
+  // every non-ArrayBuffer value pushed through it below is deliberately
+  // cast `as unknown as ArrayBuffer` at the CALL SITE only, simulating
+  // exactly the "the real runtime shape doesn't match the declared
+  // type" scenario this normalization exists to defend against.
+  // ---------------------------------------------------------------
+
+  describe("diag markers + Channel payload normalization", () => {
+    function sttAppaudioEntries(): ReturnType<typeof getDiagEntries> {
+      return getDiagEntries().filter((e) => e.tag === "stt-appaudio");
+    }
+
+    it("start() logs an 'engine start requested' marker synchronously", async () => {
+      wireFakes();
+      const engine = new AppAudioEngine();
+      const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "appaudio" });
+
+      // Logged before ANY await — observable even if start() never
+      // resolves for some other reason.
+      expect(sttAppaudioEntries().some((e) => e.message.includes("启动请求"))).toBe(true);
+      await startP;
+    });
+
+    it("logs a marker for every audiocap://status kind received", async () => {
+      const { emit } = wireFakes();
+      const engine = new AppAudioEngine();
+      await engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "appaudio" });
+
+      emit("audiocap://status", { kind: "starting", message: "" });
+      emit("audiocap://status", { kind: "capturing", message: "" });
+      emit("audiocap://status", { kind: "permission-denied", message: "拒绝了" });
+
+      const statusEntries = sttAppaudioEntries().filter((e) => e.message.includes("audiocap://status"));
+      expect(statusEntries.map((e) => e.message)).toEqual([
+        expect.stringContaining("starting"),
+        expect.stringContaining("capturing"),
+        expect.stringContaining("permission-denied"),
+      ]);
+      expect(statusEntries[2].detail).toBe("拒绝了");
+    });
+
+    it("the FIRST Channel message logs a runtime-shape marker ({ctor, byteLength, isArray}), exactly once per session", async () => {
+      const { emit, channels } = wireFakes();
+      const engine = new AppAudioEngine();
+      await engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "appaudio" });
+      emit("audiocap://status", { kind: "capturing", message: "" });
+
+      const chunk = new ArrayBuffer(8);
+      channels[channels.length - 1].onmessage(chunk);
+      channels[channels.length - 1].onmessage(new ArrayBuffer(8)); // second message — must NOT log again
+
+      const firstMsgEntries = sttAppaudioEntries().filter((e) => e.message.includes("首个 Channel 消息"));
+      expect(firstMsgEntries).toHaveLength(1);
+      const shape = JSON.parse(firstMsgEntries[0].detail ?? "{}");
+      expect(shape).toEqual({ ctor: "ArrayBuffer", byteLength: 8, isArray: false });
+    });
+
+    it("a real ArrayBuffer is forwarded as-is (same reference, never copied)", async () => {
+      const { emit, channels } = wireFakes();
+      const engine = new AppAudioEngine();
+      const ws = await startAndCapture(engine, noopEvents(), emit, wsInstances);
+
+      const chunk = new ArrayBuffer(16);
+      ws.sent = [];
+      channels[channels.length - 1].onmessage(chunk);
+
+      expect(ws.sent).toEqual([chunk]);
+      expect(ws.sent[0]).toBe(chunk);
+      expect(sttAppaudioEntries().some((e) => e.level === "warn" || e.level === "error")).toBe(false);
+    });
+
+    it("an ArrayBufferView (TypedArray) is forwarded as an EXACT-WINDOW copy of its buffer, not the whole backing buffer", async () => {
+      const { emit, channels } = wireFakes();
+      const engine = new AppAudioEngine();
+      const ws = await startAndCapture(engine, noopEvents(), emit, wsInstances);
+
+      // A 16-byte backing buffer; the view only spans bytes [4, 10) —
+      // the surrounding bytes must never leak into what's forwarded.
+      const backing = new ArrayBuffer(16);
+      new Uint8Array(backing).set([9, 9, 9, 9, 1, 2, 3, 4, 5, 6, 9, 9, 9, 9, 9, 9]);
+      const view = new Uint8Array(backing, 4, 6); // [1,2,3,4,5,6]
+
+      ws.sent = [];
+      channels[channels.length - 1].onmessage(view as unknown as ArrayBuffer);
+
+      expect(ws.sent).toHaveLength(1);
+      const forwarded = ws.sent[0] as ArrayBuffer;
+      expect(forwarded).toBeInstanceOf(ArrayBuffer);
+      expect(forwarded).not.toBe(backing); // a copy, never the original backing buffer
+      expect(Array.from(new Uint8Array(forwarded))).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it("a DataView is also normalized via its own exact byte window", async () => {
+      const { emit, channels } = wireFakes();
+      const engine = new AppAudioEngine();
+      const ws = await startAndCapture(engine, noopEvents(), emit, wsInstances);
+
+      const backing = new ArrayBuffer(8);
+      new Uint8Array(backing).set([1, 2, 3, 4, 5, 6, 7, 8]);
+      const view = new DataView(backing, 2, 4); // [3,4,5,6]
+
+      ws.sent = [];
+      channels[channels.length - 1].onmessage(view as unknown as ArrayBuffer);
+
+      expect(ws.sent).toHaveLength(1);
+      expect(Array.from(new Uint8Array(ws.sent[0] as ArrayBuffer))).toEqual([3, 4, 5, 6]);
+    });
+
+    it("a plain JS number array (the serde JSON-degraded fallback) is converted and forwarded, with a ONE-TIME warn diag marker", async () => {
+      const { emit, channels } = wireFakes();
+      const engine = new AppAudioEngine();
+      const ws = await startAndCapture(engine, noopEvents(), emit, wsInstances);
+
+      ws.sent = [];
+      channels[channels.length - 1].onmessage([1, 2, 3] as unknown as ArrayBuffer);
+      channels[channels.length - 1].onmessage([4, 5] as unknown as ArrayBuffer);
+
+      expect(ws.sent).toHaveLength(2);
+      expect(Array.from(new Uint8Array(ws.sent[0] as ArrayBuffer))).toEqual([1, 2, 3]);
+      expect(Array.from(new Uint8Array(ws.sent[1] as ArrayBuffer))).toEqual([4, 5]);
+
+      const warnEntries = sttAppaudioEntries().filter((e) => e.level === "warn" && e.message.includes("JSON 数组"));
+      expect(warnEntries).toHaveLength(1); // logged once, not once per message
+    });
+
+    it("an unrecognized payload (never an ArrayBuffer/view/array) is dropped — never forwarded to the ws — with a ONE-TIME error diag marker", async () => {
+      const { emit, channels } = wireFakes();
+      const engine = new AppAudioEngine();
+      const ws = await startAndCapture(engine, noopEvents(), emit, wsInstances);
+
+      ws.sent = [];
+      channels[channels.length - 1].onmessage({ not: "a buffer" } as unknown as ArrayBuffer);
+      channels[channels.length - 1].onmessage("also not a buffer" as unknown as ArrayBuffer);
+
+      expect(ws.sent).toEqual([]); // never ws.send() a non-buffer value
+
+      const errorEntries = sttAppaudioEntries().filter((e) => e.level === "error");
+      expect(errorEntries).toHaveLength(1); // logged once, not once per message
+    });
+
+    it("logs a cumulative Channel message count+bytes marker at stop()", async () => {
+      const { emit, channels } = wireFakes();
+      const engine = new AppAudioEngine();
+      const ws = await startAndCapture(engine, noopEvents(), emit, wsInstances);
+
+      channels[channels.length - 1].onmessage(new ArrayBuffer(10));
+      channels[channels.length - 1].onmessage(new ArrayBuffer(6));
+
+      await stopViaEnded(engine, emit, ws);
+
+      const stopEntries = sttAppaudioEntries().filter((e) => e.message.includes("引擎停止"));
+      expect(stopEntries).toHaveLength(1);
+      expect(stopEntries[0].detail).toBe("channelMessages=2 channelBytes=16");
+    });
   });
 });

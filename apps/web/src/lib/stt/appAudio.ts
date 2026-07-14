@@ -128,11 +128,32 @@ export class AppAudioEngine implements STTEngine {
   private stopEndedResolve: (() => void) | null = null;
   private stopEndedTimer: ReturnType<typeof setTimeout> | null = null;
 
+  // S9 live-failure investigation (docs/design-explorations/
+  // s9-app-audio-tap-blueprint.md) — the field export showed ZERO
+  // appaudio diag entries even though a capture had actually run, so
+  // this engine had no visibility into which of three things happened:
+  // (a) the tap captured pure silence, (b) the Channel delivered a
+  // different runtime shape than source-reading suggested, or (c) the
+  // helper failed at start with a status the user missed. These fields
+  // back the one-time/first-arrival diag markers below — all reset per
+  // start() alongside feedAttached/helperTerminated above.
+  private firstChannelMessageLogged = false;
+  private jsonDegradedChannelLogged = false;
+  private unrecognizedChannelPayloadLogged = false;
+  private channelMessageCount = 0;
+  private channelByteTotal = 0;
+
   async start(events: STTEvents, settings: Settings): Promise<void> {
+    diagLog("info", "stt-appaudio", "系统音频引擎启动请求");
     this.events = events;
     this.stopping = false;
     this.feedAttached = false;
     this.helperTerminated = false;
+    this.firstChannelMessageLogged = false;
+    this.jsonDegradedChannelLogged = false;
+    this.unrecognizedChannelPayloadLogged = false;
+    this.channelMessageCount = 0;
+    this.channelByteTotal = 0;
     const myGeneration = ++this.generation;
 
     // S9 adversarial review, finding F2: stop() can land at ANY await
@@ -263,6 +284,13 @@ export class AppAudioEngine implements STTEngine {
   }
 
   private handleStatus(myGeneration: number, payload: AudiocapStatusPayload): void {
+    // S9 live-failure investigation: logged for EVERY status this
+    // listener ever receives, before the generation guard below — a
+    // status the user "missed" (hypothesis c) is exactly the kind of
+    // thing this must never silently drop from the diag ring, even for
+    // a generation this particular engine instance goes on to ignore.
+    diagLog("info", "stt-appaudio", `audiocap://status 收到: ${payload.kind}`, payload.message);
+
     if (myGeneration !== this.generation) return; // D5 generation guard — stale session
 
     // F3: latch BEFORE branching on this.stopping below — a terminal
@@ -334,8 +362,30 @@ export class AppAudioEngine implements STTEngine {
     }
   }
 
-  private handleChannelMessage(myGeneration: number, data: ArrayBuffer): void {
+  private handleChannelMessage(myGeneration: number, data: unknown): void {
     if (myGeneration !== this.generation) return; // D5 generation guard — stale session
+
+    // S9 live-failure investigation: logged once, for the very FIRST
+    // Channel message this (current-generation) session ever receives
+    // — the runtime shape is exactly what discriminates hypothesis (b)
+    // (production IPC handing back something other than the ArrayBuffer
+    // source-reading predicts) from a healthy channel.
+    if (!this.firstChannelMessageLogged) {
+      this.firstChannelMessageLogged = true;
+      const shape = {
+        ctor: (data as { constructor?: { name?: string } } | null | undefined)?.constructor?.name,
+        byteLength: (data as { byteLength?: number } | null | undefined)?.byteLength,
+        isArray: Array.isArray(data),
+      };
+      diagLog("info", "stt-appaudio", "首个 Channel 消息到达", JSON.stringify(shape));
+    }
+
+    const buffer = this.normalizeChannelPayload(data);
+    if (!buffer) return;
+
+    this.channelMessageCount++;
+    this.channelByteTotal += buffer.byteLength;
+
     // Deliberately NOT gated on `this.stopping`: the D5 stop ordering
     // has the helper's own drain/flush tail still arriving over this
     // SAME channel right up until "ended" — that tail must still reach
@@ -343,7 +393,59 @@ export class AppAudioEngine implements STTEngine {
     // stop() below). transport.pushPcm() applies its own guard once
     // that later drain is actually underway; a null transport (already
     // torn down) is a silent no-op here.
-    this.transport?.pushPcm(data);
+    this.transport?.pushPcm(buffer);
+  }
+
+  /** Defensive normalization for whatever runtime shape the Channel
+   *  actually hands `onmessage` (S9 live-failure investigation):
+   *  source-reading (@tauri-apps/api 2.11.1) says InvokeResponseBody
+   *  ::Raw arrives as ArrayBuffer, but that's source, not a pinned
+   *  runtime guarantee — production IPC could hand back a different JS
+   *  shape than source suggests (hypothesis b), so every shape short of
+   *  a real ArrayBuffer is handled explicitly rather than forwarded to
+   *  pushPcm()/ws.send() blind:
+   *   - ArrayBuffer: forwarded AS-IS (same reference, never copied —
+   *     matches the existing arrival-shape pin in appAudio.test.ts).
+   *   - any other ArrayBufferView (TypedArray/DataView): an
+   *     EXACT-WINDOW copy of its buffer — `.buffer` can be a larger
+   *     backing store than the view itself spans.
+   *   - a plain JS array (the serde JSON-number-array fallback D5's
+   *     own blueprint comment warns "would hide silently" at this
+   *     bitrate): converted via Uint8Array.from(...).buffer, flagged
+   *     with a ONE-TIME diag marker so a live JSON-degraded channel is
+   *     never silently absorbed.
+   *   - anything else: dropped, one-time diag marker — pushPcm() (and
+   *     therefore ws.send()) must never be called with a non-buffer
+   *     value. */
+  private normalizeChannelPayload(data: unknown): ArrayBuffer | null {
+    if (data instanceof ArrayBuffer) return data;
+
+    if (ArrayBuffer.isView(data)) {
+      return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+    }
+
+    if (Array.isArray(data)) {
+      if (!this.jsonDegradedChannelLogged) {
+        this.jsonDegradedChannelLogged = true;
+        diagLog(
+          "warn",
+          "stt-appaudio",
+          "Channel 消息以 JSON 数组形式到达（应为 ArrayBuffer），已转换但性能受影响",
+        );
+      }
+      return Uint8Array.from(data).buffer;
+    }
+
+    if (!this.unrecognizedChannelPayloadLogged) {
+      this.unrecognizedChannelPayloadLogged = true;
+      diagLog(
+        "error",
+        "stt-appaudio",
+        "Channel 消息类型无法识别，已丢弃",
+        `ctor=${(data as { constructor?: { name?: string } } | null | undefined)?.constructor?.name ?? typeof data}`,
+      );
+    }
+    return null;
   }
 
   private resolveStopEnded(): void {
@@ -446,6 +548,18 @@ export class AppAudioEngine implements STTEngine {
     if (this.unlistenStatus && !this.helperTerminated) {
       await this.waitForEndedOrTimeout();
     }
+
+    // S9 live-failure investigation: cumulative Channel message
+    // count/bytes for the WHOLE session, logged once at teardown — the
+    // drain/flush tail above (if any) has already arrived by this
+    // point, so this is the true final tally, not a mid-session
+    // snapshot.
+    diagLog(
+      "info",
+      "stt-appaudio",
+      "系统音频引擎停止",
+      `channelMessages=${this.channelMessageCount} channelBytes=${this.channelByteTotal}`,
+    );
 
     const transport = this.transport;
     this.transport = null;
