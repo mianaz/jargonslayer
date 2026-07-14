@@ -1851,18 +1851,21 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jargonslayer"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "libc",
  "objc2-foundation",
+ "percent-encoding",
  "rubato",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-http",
+ "tauri-plugin-opener",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
+ "url",
 ]
 
 [[package]]
@@ -3928,6 +3931,28 @@ dependencies = [
  "tokio",
  "url",
  "urlpattern",
+]
+
+[[package]]
+name = "tauri-plugin-opener"
+version = "2.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "17e1bea14edce6b793a04e2417e3fd924b9bc4faae83cdee7d714156cceeed29"
+dependencies = [
+ "dunce",
+ "glob",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "open",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "url",
+ "windows",
+ "zbus",
 ]
 
 [[package]]

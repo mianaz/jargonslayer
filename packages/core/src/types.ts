@@ -106,7 +106,7 @@ export interface STTEvents {
   // it ended up running in (post any defensive cloud fallback — never
   // the merely-decided mode if starting on-device threw and it fell
   // back). webspeech-only; other engines never call this. Lets
-  // StatusLine's privacy indicator show the same green "音频未离开本机"
+  // StatusLine's privacy indicator show the same green "音频在本地处理"
   // posture whisper/tabaudio use instead of the amber cloud warning.
   onEngineMode?: (mode: "on-device" | "cloud") => void;
 }

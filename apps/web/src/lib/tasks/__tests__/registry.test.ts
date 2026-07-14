@@ -56,6 +56,18 @@ describe("task registry lifecycle (#58)", () => {
     expect(useTasks.getState().tasks.t1).toEqual(task);
   });
 
+  // S10 field-fix #6: TaskKind grew "model-download"/"diar-install"
+  // (jobsBridge.ts's trackSwitchModel/trackInstallDiar, desktop-only) —
+  // registry.ts itself has no kind-specific runtime branching, but this
+  // pins that both new kinds flow through startTask exactly like every
+  // existing one.
+  it("startTask accepts the S10 desktop kinds (model-download/diar-install) exactly like any other kind", () => {
+    const download = startTask("t-model", "model-download", "均衡·推荐 (zh-en)");
+    expect(download.kind).toBe("model-download");
+    const diar = startTask("t-diar", "diar-install", "说话人分离扩展");
+    expect(diar.kind).toBe("diar-install");
+  });
+
   it("updateTaskProgress patches stage/progress and bumps updatedAt without touching status", async () => {
     startTask("t1", "import-audio", "meeting.wav");
     const before = useTasks.getState().tasks.t1.updatedAt;

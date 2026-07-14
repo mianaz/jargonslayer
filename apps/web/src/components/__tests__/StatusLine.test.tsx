@@ -13,6 +13,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
+import { useLatencyStats } from "../../lib/stt/latencyStats";
 import StatusLine from "../StatusLine";
 
 describe("StatusLine — detect-mode toggle", () => {
@@ -63,7 +64,7 @@ describe("StatusLine — detect-mode toggle", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     const toggle = container!.querySelector('[data-testid="statusline-detect-toggle"]');
@@ -95,7 +96,7 @@ describe("StatusLine — detect-mode toggle", () => {
     useApp.setState({ detectMode: "off" });
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(container!.querySelector('[data-testid="statusline-detect-toggle"]')).toBeNull();
@@ -171,7 +172,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("本地 Whisper sidecar 未连接——见 设置 → 转录引擎");
@@ -185,7 +186,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).not.toBe("");
@@ -199,7 +200,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).not.toBe("");
@@ -213,7 +214,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -227,7 +228,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -241,7 +242,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -255,7 +256,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -265,11 +266,12 @@ describe("StatusLine — sidecar-down tooltip", () => {
 // ---------------------------------------------------------------
 // On-device Web Speech privacy posture (docs/research/
 // stt-live-engines-2026-07.md item #1): the privacy segment shows the
-// same green "音频未离开本机" posture whisper/tabaudio use whenever the
+// same green "音频在本地处理" posture whisper/tabaudio use whenever the
 // ACTIVE webspeech session reported on-device mode
 // (store.sttEngineMode, written by useMeeting.ts's onEngineMode
 // handler) — instead of the default amber cloud warning webspeech
-// otherwise always shows (ENGINE_POSTURE['webspeech'] === 'cloud').
+// otherwise always shows (ENGINE_OPTIONS's webspeech entry is
+// posture:'cloud').
 // ---------------------------------------------------------------
 
 describe("StatusLine — on-device privacy posture", () => {
@@ -327,10 +329,10 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频未离开本机");
+    expect(privacySegment().textContent).toContain("音频在本地处理");
     expect(privacySegment().className).toContain("text-lab-green");
     expect(privacySegment().className).not.toContain("text-warn-soft");
   });
@@ -343,7 +345,7 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
@@ -358,7 +360,7 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
@@ -373,13 +375,328 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     // Still green (whisper's own posture is local) — but via
-    // ENGINE_POSTURE, not the stale on-device flag; the point is this
+    // ENGINE_OPTIONS, not the stale on-device flag; the point is this
     // doesn't crash/misbehave for a non-webspeech engine.
-    expect(privacySegment().textContent).toContain("音频未离开本机");
+    expect(privacySegment().textContent).toContain("音频在本地处理");
+    expect(privacySegment().className).toContain("text-lab-green");
+  });
+
+  // S10 field-fix #2 (HIGH, adversarial review): posture now derives
+  // from ENGINE_OPTIONS (lib/stt/engineOptions.ts) instead of a
+  // second, drifted-out-of-sync local map — soniox is posture:"cloud"
+  // there and must render the amber cloud sentence, never the green
+  // local one.
+  it("shows the amber cloud posture for engine:soniox (a CLOUD engine, not local)", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, engine: "soniox" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().className).toContain("text-warn-soft");
+    expect(privacySegment().className).not.toContain("text-lab-green");
+  });
+
+  it("short variant also stays cloud for engine:soniox", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, engine: "soniox" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(privacySegment().textContent).toContain("音频将经厂商云端");
+  });
+
+  it("an engine value absent from ENGINE_OPTIONS falls back to cloud — never defaults to local for an unrecognized engine", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: {
+        ...s.settings,
+        engine: "future-engine" as unknown as typeof s.settings.engine,
+      },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().className).toContain("text-warn-soft");
+    expect(privacySegment().className).not.toContain("text-lab-green");
+  });
+
+  // Lead adjudication on F2's flagged side effect: "demo" is the
+  // scripted preview — no audio exists at all, so the amber cloud
+  // warning would be a false claim in the OTHER direction. It keeps
+  // the green local posture the old ENGINE_POSTURE map always gave it
+  // (see StatusLine.tsx's posture derivation comment).
+  it("demo (scripted preview, no audio at all) keeps the green local posture", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: {
+        ...s.settings,
+        engine: "demo" as unknown as typeof s.settings.engine,
+      },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(privacySegment().textContent).toContain("音频在本地处理");
     expect(privacySegment().className).toContain("text-lab-green");
   });
 });
+
+// ---------------------------------------------------------------
+// S10 field-fix #5/#8: 延迟 chip — sustained (not momentary) local-
+// Whisper transcribe latency, hidden whenever healthy/null/not-
+// listening/not-local-whisper/not-yet-sustained. lagMs/sustained come
+// from lib/stt/latencyStats.ts (fed by wsTransport.ts's own lag_ms
+// passthrough — untested here, that wiring's own coverage lives in
+// wsTransport.test.ts). The hysteresis ITSELF (3-consecutive-samples
+// ON, <1200ms OFF, dead-zone hold) is latencyStats.test.ts's own
+// coverage — StatusLine just reads the derived `sustained` flag, so
+// these tests set it directly rather than re-deriving it from lagMs.
+// ---------------------------------------------------------------
+
+describe("StatusLine — 延迟 (sustained latency) chip", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: { ...s.settings, engine: "demo" },
+    }));
+    useLatencyStats.setState({ lagMs: null, sustained: false });
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function chip(): Element | null {
+    return container!.querySelector('[data-testid="statusline-latency-chip"]');
+  }
+
+  it("shows once latencyStats reports sustained:true, while listening on whisper", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: 3200, sustained: true });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).not.toBeNull();
+    expect(chip()!.textContent).toBe("延迟 ~3s");
+  });
+
+  it("hidden when lagMs is null (no sample yet), even if sustained were somehow true", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: null, sustained: true });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden while sustained:false, however high lagMs reads — StatusLine trusts the hysteresis, computes no threshold of its own", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: 5000, sustained: false });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden while not listening (e.g. paused), even with sustained:true left over", async () => {
+    useApp.setState((s) => ({ status: "paused", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: 5000, sustained: true });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden for engines that never route through the local Whisper sidecar (e.g. webspeech), even with sustained:true somehow set", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "webspeech" } }));
+    useLatencyStats.setState({ lagMs: 5000, sustained: true });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("shows for tabaudio and appaudio too — every engine that actually flows through wsTransport.ts", async () => {
+    for (const engine of ["tabaudio", "appaudio"] as const) {
+      useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine } }));
+      useLatencyStats.setState({ lagMs: 4000, sustained: true });
+      renderStatusLine();
+      await act(async () => {
+        root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+      });
+      expect(chip()).not.toBeNull();
+      act(() => root!.unmount());
+      container!.remove();
+      container = null;
+      root = null;
+    }
+  });
+});
+
+// ---------------------------------------------------------------
+// S10 field-fix — engine picker as a bottom-bar dropdown (her words:
+// 与其作为tab，engine不如改成dropdown，且显示在下方状态栏). Header.tsx no
+// longer has ANY engine control (pills or mobile <select>) — this is
+// THE picker at every width now.
+// ---------------------------------------------------------------
+
+describe("StatusLine — engine dropdown", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function select(): HTMLSelectElement {
+    const el = container!.querySelector('[data-testid="statusline-engine-select"]');
+    if (!el) throw new Error("engine select not found");
+    return el as HTMLSelectElement;
+  }
+
+  it("lists every ENGINE_OPTIONS value (web build: webspeech/whisper/tabaudio/soniox, D7 keeps tabaudio)", async () => {
+    useApp.setState((s) => ({ settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const values = Array.from(select().querySelectorAll("option"))
+      .map((o) => o.getAttribute("value"))
+      .filter((v) => v !== "");
+    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox"]);
+  });
+
+  it("changing the value writes settings.engine (same store write as the old mobile <select>)", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    await act(async () => {
+      select().value = "soniox";
+      select().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.engine).toBe("soniox");
+  });
+
+  it("disabled while a meeting is connecting/listening (isEngineControlBusy) — same gate the old header controls used", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().disabled).toBe(true);
+  });
+
+  it("not disabled while idle/stopped/paused", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().disabled).toBe(false);
+  });
+
+  it("shows a disabled 选择引擎 placeholder while engine is demo (mirrors the old mobile <select>'s own placeholder)", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().value).toBe("");
+    const placeholder = Array.from(select().querySelectorAll("option")).find(
+      (o) => o.value === "",
+    );
+    expect(placeholder).toBeDefined();
+    expect(placeholder!.disabled).toBe(true);
+    expect(placeholder!.textContent).toBe("选择引擎");
+  });
+});
+

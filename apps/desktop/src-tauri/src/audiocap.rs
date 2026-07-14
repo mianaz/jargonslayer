@@ -83,6 +83,21 @@ impl LineReassembler {
     }
 }
 
+/// Shared boilerplate behind BOTH the spike rig's own `audiocap-spike
+/// .log` tee below and `SessionLog`'s `audiocap.log` (S9 live-failure
+/// investigation, further down): resolve `<app_log_dir>`, create it if
+/// needed, and open `file_name` inside it in append mode. `None` —
+/// never surfaced as an `Err` to any caller — whenever the dir can't be
+/// resolved/created or the open itself fails; every caller already
+/// degrades to "no file tee" rather than failing whatever it's
+/// actually doing (the spike run, or a real capture session) over a
+/// log file it couldn't open.
+fn open_log_file_in_app_log_dir(app: &tauri::AppHandle, file_name: &str) -> Option<std::fs::File> {
+    let dir = app.path().app_log_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    std::fs::OpenOptions::new().create(true).append(true).open(dir.join(file_name)).ok()
+}
+
 /// S9.1's own go/no-go spike rig (blueprint D2's spike gate): spawns
 /// jargonslayer-audiocap for a few seconds so a PACKAGED build's TCC
 /// prompt attribution can be verified interactively with Miana against
@@ -98,6 +113,7 @@ impl LineReassembler {
 ///     environment variables, hence an argv flag at all;
 ///   - JARGONSLAYER_SPIKE_AUDIOCAP=1 in the environment (dev/terminal
 ///     convenience only — see the attribution caveat above).
+///
 /// The packaged app itself has to be the one spawning the helper for
 /// the spike to mean anything, so this hook lives at app setup, not
 /// behind any UI affordance.
@@ -126,20 +142,7 @@ pub fn maybe_spawn_spike(app: &tauri::AppHandle) {
         // stderr note) rather than an error if the log dir can't be
         // resolved/created: the spike should still run and emit to the
         // other two channels.
-        let mut spike_file: Option<std::fs::File> = {
-            use tauri::Manager;
-            app.path()
-                .app_log_dir()
-                .ok()
-                .and_then(|dir| {
-                    std::fs::create_dir_all(&dir).ok()?;
-                    std::fs::OpenOptions::new()
-                        .create(true)
-                        .append(true)
-                        .open(dir.join("audiocap-spike.log"))
-                        .ok()
-                })
-        };
+        let mut spike_file: Option<std::fs::File> = open_log_file_in_app_log_dir(&app, "audiocap-spike.log");
         if spike_file.is_none() {
             eprintln!("[audiocap-spike] could not open audiocap-spike.log — continuing with event lane + stderr only");
         }
@@ -979,15 +982,143 @@ struct AudiocapStatusEvent {
     message: Option<String>,
 }
 
+// ---- S9 live-failure investigation: always-on session log ----
+//
+// The spike rig above has always kept its own append-only
+// `audiocap-spike.log` for exactly one reason: a provisioned machine
+// never shows the wizard's 详细日志 pane, so a live/ephemeral event (like
+// `emit_uv_log`'s own `uv://log`, which every stderr line ALSO still
+// reaches unconditionally below — unchanged) is not something anyone
+// can actually read back after the fact. NORMAL (non-spike) sessions
+// had no equivalent — this generalizes that same "durable, readable-
+// without-the-app-open" file tee to every real capture session,
+// `<app_log_dir>/audiocap.log`, WITHOUT changing the spike rig's own
+// behavior (`open_log_file_in_app_log_dir` above is the shared part).
+
+/// ~2 MiB size guard (task's own "trivial" example) — checked once, at
+/// session-open, so a long-lived install's `audiocap.log` can never
+/// grow unbounded across MANY sessions (a single session's own lines
+/// never approach this on their own). Best-effort/swallowed exactly
+/// like `open_log_file_in_app_log_dir` itself — a failed truncate just
+/// means the file opens (and keeps growing) as it would have without
+/// the guard, which is still strictly better than failing the session
+/// over it.
+const AUDIOCAP_LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+fn open_normal_session_log_file(app: &tauri::AppHandle) -> Option<std::fs::File> {
+    if let Ok(dir) = app.path().app_log_dir() {
+        let path = dir.join("audiocap.log");
+        if std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > AUDIOCAP_LOG_MAX_BYTES {
+            let _ = std::fs::write(&path, []); // best-effort truncate-to-empty
+        }
+    }
+    open_log_file_in_app_log_dir(app, "audiocap.log")
+}
+
+/// Pure cadence rule behind `SessionLog::note_batch_sent` below:
+/// `Some(line)` exactly for the FIRST batch ever sent this session (its
+/// own byte length only — no running total is meaningful yet) and
+/// every 64th batch after that (cumulative batches+bytes so far);
+/// `None` on every other call, so a caller incrementing once per batch
+/// and always consulting this never double-logs. `batch_number` is
+/// 1-based — the count AFTER the batch this call is describing (i.e.
+/// what `note_batch_sent` already incremented to).
+fn batch_forwarding_log_line(batch_number: u64, this_batch_bytes: u64, cumulative_bytes: u64) -> Option<String> {
+    if batch_number == 1 {
+        Some(format!("channel-forwarding first batch: bytes={this_batch_bytes}"))
+    } else if batch_number != 0 && batch_number.is_multiple_of(64) {
+        // `batch_number != 0` guard: batch_number is documented 1-based
+        // (never actually 0 from `note_batch_sent`'s own always-
+        // increment-first call), but 0 is also mathematically a
+        // multiple of 64 — without this guard this function would
+        // silently treat a hypothetical 0 as its own milestone too,
+        // contradicting that contract.
+        Some(format!("channel-forwarding progress: batches={batch_number} bytes={cumulative_bytes}"))
+    } else {
+        None
+    }
+}
+
+/// Always-on (non-spike) session log — `<app_log_dir>/audiocap.log`.
+/// One `spawn_session_task` call opens exactly one `SessionLog`
+/// (`SessionLog::open`, at the top of that task) and owns it for the
+/// session's whole lifetime; every method below is a plain, synchronous
+/// append — see `append`'s own doc comment for the error-swallowing
+/// contract that keeps this lane out of the byte-hot loop's error path.
+/// NEVER logs PCM payload bytes/content — only byte LENGTHS/COUNTS, the
+/// same posture the wire's own `stats` counters already take.
+struct SessionLog {
+    file: Option<std::fs::File>,
+    batches_sent: u64,
+    bytes_sent: u64,
+}
+
+impl SessionLog {
+    fn open(app: &tauri::AppHandle) -> Self {
+        Self {
+            file: open_normal_session_log_file(app),
+            batches_sent: 0,
+            bytes_sent: 0,
+        }
+    }
+
+    /// Appends one timestamped line — `None` `file` (couldn't be
+    /// opened) is a silent no-op, and a write failure PERMANENTLY
+    /// disables further appends for the rest of this session (rather
+    /// than retrying a possibly-wedged fd on every subsequent line):
+    /// either way, an io error writing this log must never fail — or
+    /// even slow down — the actual capture session it only ever
+    /// describes.
+    fn append(&mut self, line: &str) {
+        let Some(file) = self.file.as_mut() else { return };
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        use std::io::Write;
+        if writeln!(file, "[unix {now_unix}] {line}").is_err() {
+            self.file = None;
+        }
+    }
+
+    /// `send_batches`' own per-successfully-sent-batch hook — advances
+    /// the running totals and appends a line per
+    /// `batch_forwarding_log_line`'s own cadence (batch 1 alone, then
+    /// every 64th, cumulative both times).
+    fn note_batch_sent(&mut self, byte_len: u64) {
+        self.batches_sent += 1;
+        self.bytes_sent += byte_len;
+        if let Some(line) = batch_forwarding_log_line(self.batches_sent, byte_len, self.bytes_sent) {
+            self.append(&line);
+        }
+    }
+
+    /// Session-end totals — called once by EVERY one of
+    /// `spawn_session_task`'s own termination points, regardless of
+    /// where `batches_sent` last landed relative to the 64-cadence, so
+    /// the log always shows the true final count even for a session
+    /// that ended between milestones (including zero batches ever
+    /// sent — e.g. a permission-denied session that never reached
+    /// "capturing").
+    fn note_session_end_totals(&mut self) {
+        self.append(&format!("channel-forwarding session total: batches={} bytes={}", self.batches_sent, self.bytes_sent));
+    }
+}
+
 /// Owns one session's entire lifetime: reads CommandEvents until
 /// Terminated, feeds stdout through FramingReader -> AudioPipeline ->
 /// the Channel (gated on both `capturing` and the generation guard),
 /// reassembles+mirrors every stderr line to the log lane, maps
 /// status/error records + the eventual exit to one `audiocap://status`
-/// event, and clears its own AudiocapState slot when done. The tauri
-/// glue (CommandEvent/Channel/AppHandle) stays as thin as the mixing
-/// allows — all the actual decoding/resampling/batching/kind-mapping is
-/// delegated to pure functions/structs tested on their own.
+/// event, and clears its own AudiocapState slot when done. Also owns
+/// this session's own `SessionLog` (S9 live-failure investigation) —
+/// the durable `<app_log_dir>/audiocap.log` companion to the ephemeral
+/// `uv://log` lane above, covering session start, every parsed status/
+/// error record, channel-forwarding batch/byte milestones, and the
+/// final exit/kind resolution — see SessionLog's own doc comment. The
+/// tauri glue (CommandEvent/Channel/AppHandle) stays as thin as the
+/// mixing allows — all the actual decoding/resampling/batching/kind-
+/// mapping is delegated to pure functions/structs tested on their own.
 fn spawn_session_task(
     app: tauri::AppHandle,
     channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
@@ -1015,6 +1146,12 @@ fn spawn_session_task(
         // transition (resume()'s resampler rebuild in particular must
         // not fire on every single event while already resumed).
         let mut paused = false;
+        // S9 live-failure investigation — one `SessionLog` per session,
+        // opened once here and threaded through the rest of this task;
+        // see its own doc comment for what it logs (and, just as
+        // deliberately, what it never does: PCM payload content).
+        let mut session_log = SessionLog::open(&app);
+        session_log.append(&format!("session start generation={generation}"));
 
         while let Some(event) = rx.recv().await {
             // Checked on every event this task sees (not just Stdout) —
@@ -1026,7 +1163,7 @@ fn spawn_session_task(
             let now_paused = app.state::<AudiocapState>().is_paused();
             if now_paused && !paused {
                 let batches = pipeline.pause();
-                send_batches(&app, &channel, generation, &mut pipeline, batches);
+                send_batches(&app, &channel, generation, &mut pipeline, &mut session_log, batches);
                 paused = true;
             } else if !now_paused && paused {
                 if let Err(e) = pipeline.resume() {
@@ -1048,7 +1185,7 @@ fn spawn_session_task(
                         for item in items {
                             if item.gap_before > 0 {
                                 match pipeline.process_gap(item.gap_before) {
-                                    Ok(batches) => send_batches(&app, &channel, generation, &mut pipeline, batches),
+                                    Ok(batches) => send_batches(&app, &channel, generation, &mut pipeline, &mut session_log, batches),
                                     Err(e) => emit_uv_log(&app, "stderr", format!("[audiocap] gap-silence error: {e}")),
                                 }
                             }
@@ -1058,12 +1195,12 @@ fn spawn_session_task(
                                         continue;
                                     }
                                     match pipeline.process_chunk(frame_count, &payload) {
-                                        Ok(batches) => send_batches(&app, &channel, generation, &mut pipeline, batches),
+                                        Ok(batches) => send_batches(&app, &channel, generation, &mut pipeline, &mut session_log, batches),
                                         Err(e) => emit_uv_log(&app, "stderr", format!("[audiocap] resample error: {e}")),
                                     }
                                 }
                                 Record::Eos { .. } => match pipeline.flush() {
-                                    Ok(batches) => send_batches(&app, &channel, generation, &mut pipeline, batches),
+                                    Ok(batches) => send_batches(&app, &channel, generation, &mut pipeline, &mut session_log, batches),
                                     Err(e) => emit_uv_log(&app, "stderr", format!("[audiocap] flush error: {e}")),
                                 },
                             }
@@ -1079,6 +1216,13 @@ fn spawn_session_task(
                         emit_uv_log(&app, "stderr", format!("[audiocap] fatal framing error: {e} — stopping session"));
                         force_kill_pid(pid);
                         let outcome = app.state::<AudiocapState>().finish(generation);
+                        session_log.append(&format!(
+                            "session end kind={} exit_code=None eos_seen={} was_current={} reason=fatal_framing_error",
+                            StatusKind::Crashed.as_str(),
+                            framing.eos_seen(),
+                            outcome.was_current
+                        ));
+                        session_log.note_session_end_totals();
                         if outcome.was_current {
                             emit_status(&app, generation, StatusKind::Crashed, Some(format!("malformed audio stream: {e}")));
                         }
@@ -1094,6 +1238,13 @@ fn spawn_session_task(
                         emit_uv_log(&app, "stderr", format!("[audiocap] {line}"));
                         match parse_audiocap_line(&line) {
                             ParsedAudiocapLine::Status { state, sample_rate, channels, message } => {
+                                // S9 live-failure investigation: tee the
+                                // exact raw NDJSON line (state/message/
+                                // sampleRate/channels all fall straight
+                                // out of it, whichever this record
+                                // actually carries — no need to
+                                // hand-reassemble a summary here).
+                                session_log.append(&format!("status {line}"));
                                 if state == "capturing" {
                                     capturing = true;
                                 }
@@ -1106,6 +1257,7 @@ fn spawn_session_task(
                                 }
                             }
                             ParsedAudiocapLine::Error { code, message } => {
+                                session_log.append(&format!("error {line}"));
                                 // Deferred, not emitted immediately — the
                                 // wire contract ties error kinds to the
                                 // process's eventual exit (see
@@ -1115,7 +1267,17 @@ fn spawn_session_task(
                                 // (main.swift's own catch blocks).
                                 last_error = Some((code, message));
                             }
-                            ParsedAudiocapLine::Stats { .. } | ParsedAudiocapLine::Unrecognized => {}
+                            ParsedAudiocapLine::Stats { .. } => {
+                                // S9 live-failure investigation: stats
+                                // records carry peak/windowPeak — the
+                                // amplitude evidence that separates a
+                                // silent-tap failure from a plumbing
+                                // one — so they're teed like status/
+                                // error. ~1 line / 5s; audiocap.log's
+                                // 2MB session-open truncation bounds it.
+                                session_log.append(&format!("stats {line}"));
+                            }
+                            ParsedAudiocapLine::Unrecognized => {}
                         }
                     }
                 }
@@ -1124,18 +1286,30 @@ fn spawn_session_task(
                 }
                 CommandEvent::Terminated(payload) => {
                     let outcome = app.state::<AudiocapState>().finish(generation);
+                    // F8: framing.eos_seen() reflects whether a terminal
+                    // EOS record was ever actually parsed from stdout —
+                    // see final_kind/exit_status_kind's own doc comments
+                    // for why this now matters even for a clean exit-0.
+                    // Computed (and logged) regardless of `was_current`
+                    // — pure/side-effect-free either way — but only
+                    // EMITTED as an audiocap://status event when this
+                    // session is still the authoritative one, unchanged
+                    // from before.
+                    let kind = final_kind(
+                        payload.code,
+                        last_error.as_ref().map(|(c, _)| c.as_str()),
+                        outcome.stop_was_requested,
+                        framing.eos_seen(),
+                    );
+                    session_log.append(&format!(
+                        "session end kind={} exit_code={:?} eos_seen={} was_current={}",
+                        kind.as_str(),
+                        payload.code,
+                        framing.eos_seen(),
+                        outcome.was_current
+                    ));
+                    session_log.note_session_end_totals();
                     if outcome.was_current {
-                        // F8: framing.eos_seen() reflects whether a
-                        // terminal EOS record was ever actually parsed
-                        // from stdout — see final_kind/exit_status_kind's
-                        // own doc comments for why this now matters even
-                        // for a clean exit-0.
-                        let kind = final_kind(
-                            payload.code,
-                            last_error.as_ref().map(|(c, _)| c.as_str()),
-                            outcome.stop_was_requested,
-                            framing.eos_seen(),
-                        );
                         let message = final_message(kind, payload.code, last_error.as_ref());
                         emit_status(&app, generation, kind, message);
                     }
@@ -1159,6 +1333,13 @@ fn spawn_session_task(
             emit_uv_log(&app, "stderr", format!("[audiocap] {line}"));
         }
         let outcome = app.state::<AudiocapState>().finish(generation);
+        session_log.append(&format!(
+            "session end kind={} exit_code=None eos_seen={} was_current={} reason=rx_closed_without_terminated",
+            StatusKind::Crashed.as_str(),
+            framing.eos_seen(),
+            outcome.was_current
+        ));
+        session_log.note_session_end_totals();
         if outcome.was_current {
             emit_status(
                 &app,
@@ -1178,6 +1359,7 @@ fn send_batches(
     channel: &tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
     generation: u64,
     pipeline: &mut AudioPipeline,
+    session_log: &mut SessionLog,
     batches: Vec<Vec<u8>>,
 ) {
     for batch in batches {
@@ -1187,6 +1369,11 @@ fn send_batches(
         let len = batch.len() as u64;
         if channel.send(tauri::ipc::InvokeResponseBody::Raw(batch)).is_ok() {
             pipeline.note_bytes_sent(len);
+            // S9 live-failure investigation: only counts SUCCESSFULLY
+            // sent batches — mirrors pipeline.note_bytes_sent's own
+            // gating on the exact same `channel.send(...).is_ok()`
+            // check, immediately above.
+            session_log.note_batch_sent(len);
         }
     }
 }
@@ -1910,5 +2097,52 @@ mod tests {
             StatusKind::Ended,
             "F1: the end-to-end outcome must be Ended, never a phantom running/crashed session"
         );
+    }
+
+    // ---- S9 live-failure investigation: always-on session log — pure
+    // parts only. `SessionLog` itself needs a real `tauri::AppHandle` to
+    // resolve `app_log_dir()`, so it isn't unit-testable directly (same
+    // posture as the rest of this file's tauri-coupled glue); this pins
+    // the one piece of it that IS pure. ----
+
+    #[test]
+    fn batch_forwarding_log_line_fires_for_the_first_batch_with_its_own_byte_length_only() {
+        assert_eq!(
+            batch_forwarding_log_line(1, 4096, 4096),
+            Some("channel-forwarding first batch: bytes=4096".to_string())
+        );
+    }
+
+    #[test]
+    fn batch_forwarding_log_line_fires_every_64th_batch_with_cumulative_totals() {
+        assert_eq!(
+            batch_forwarding_log_line(64, 4096, 64 * 4096),
+            Some("channel-forwarding progress: batches=64 bytes=262144".to_string())
+        );
+        assert_eq!(
+            batch_forwarding_log_line(128, 4096, 128 * 4096),
+            Some("channel-forwarding progress: batches=128 bytes=524288".to_string())
+        );
+    }
+
+    #[test]
+    fn batch_forwarding_log_line_is_none_for_every_non_milestone_batch() {
+        assert_eq!(batch_forwarding_log_line(2, 100, 200), None);
+        assert_eq!(batch_forwarding_log_line(63, 100, 6300), None);
+        assert_eq!(batch_forwarding_log_line(65, 100, 6500), None);
+        assert_eq!(
+            batch_forwarding_log_line(0, 100, 0),
+            None,
+            "batch_number is documented 1-based — 0 % 64 == 0 must not falsely match"
+        );
+    }
+
+    #[test]
+    fn batch_forwarding_log_line_never_double_logs_batch_one_as_also_a_64th_milestone() {
+        // batch_number == 1 takes the FIRST branch only, never both —
+        // trivially true for u64 (1 % 64 != 0) but pinned explicitly
+        // since SessionLog::note_batch_sent relies on "at most one line
+        // per batch".
+        assert!(batch_forwarding_log_line(1, 10, 10).unwrap().starts_with("channel-forwarding first batch"));
     }
 }

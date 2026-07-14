@@ -73,7 +73,7 @@ picking up saved changes.
   test suites, including the 8-scenario word-loss harness). On Chrome 139+
   it prefers **on-device recognition** (`processLocally`) with automatic
   cloud fallback; the privacy line above the transcript always states
-  which path is active（设备端识别，音频未离开本机。/ 云端模式，音频会发送给
+  which path is active（设备端识别，音频在本地处理。/ 云端模式，音频会发送给
   Google 处理。）.
 - **One-time mic grant page** — Chrome cannot render the `getUserMedia`
   permission prompt inside a side panel, so the first 开始聆听 opens

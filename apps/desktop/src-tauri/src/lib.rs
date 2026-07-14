@@ -13,6 +13,7 @@ mod audiocap_batch;
 mod audiocap_framing;
 mod audiocap_pipeline;
 mod audiocap_resample;
+mod oauth;
 mod paths;
 mod provision;
 mod server;
@@ -41,6 +42,11 @@ pub fn run() {
         // side LLM transport seam (S2's setTransport()) — native fetch,
         // bypasses CORS uniformly for BYOK provider calls.
         .plugin(tauri_plugin_http::init())
+        // S10 field-fix, Chunk A — registers `@tauri-apps/plugin-opener`'s
+        // `openUrl` for every desktop external link (OAuth authorize URL,
+        // update download page, pyannote/HF gated-model links); scoped by
+        // capabilities/default.json's own opener:allow-open-url grant.
+        .plugin(tauri_plugin_opener::init())
         // Holds the spawned whisper_server.py child, if any — see
         // server::ServerState's own doc comment for who's allowed to
         // touch it.
@@ -49,6 +55,10 @@ pub fn run() {
         // audiocap session (see audiocap::AudiocapState's own doc
         // comment).
         .manage(audiocap::AudiocapState::default())
+        // S10 field-fix, Chunk A — single-flight generation guard for the
+        // RFC 8252 loopback OAuth listener (see oauth::OauthState's own
+        // doc comment).
+        .manage(oauth::OauthState::default())
         // App-owned commands (not plugin commands) need no capability/
         // permission entry: Tauri's ACL only gates a command when it's a
         // plugin command, the app declares its OWN acl manifest under
@@ -74,6 +84,8 @@ pub fn run() {
             audiocap::pause_app_audio,
             audiocap::resume_app_audio,
             audiocap::open_privacy_settings,
+            oauth::oauth_loopback_start,
+            oauth::oauth_loopback_cancel,
         ])
         // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
         // — the audiocap TCC-attribution spike rig: inert unless

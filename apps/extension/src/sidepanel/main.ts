@@ -329,7 +329,7 @@ async function handleSaveCaptureTerm(term: TermCard): Promise<void> {
 function handlePrivacyMode(mode: "on-device" | "cloud"): void {
   privacyLine.hidden = false;
   if (mode === "on-device") {
-    privacyLine.textContent = "设备端识别，音频未离开本机。";
+    privacyLine.textContent = "设备端识别，音频在本地处理。";
     privacyLine.className = "js-privacy-line js-privacy-line--on-device";
   } else {
     privacyLine.textContent = "云端模式，音频会发送给 Google 处理。";

@@ -16,6 +16,15 @@ public final class Writer {
     private var seq: UInt64 = 0
     private var framesOut: UInt64 = 0
     private var ringHighWater: UInt64 = 0
+    // S9 live-failure investigation — PeakMeter.maxAbsoluteSample
+    // folded into a running session-lifetime max (`peak`, never reset)
+    // and a since-last-stats-emission max (`windowPeak`, reset to 0
+    // right after each emission — see pollOnce/emitFinalStats). See
+    // PeakMeter.swift's own header comment for why this exists: byte
+    // counts alone can't distinguish a healthy capture from a tap
+    // silently receiving pure digital silence.
+    private var peak: Float = 0
+    private var windowPeak: Float = 0
     // F5 (adversarial-review fix round) — the ring's own cumulative,
     // never-reset droppedFrameCount() as of the last poll; the DELTA
     // since this is what gets inserted as zero frames each cycle (see
@@ -35,7 +44,11 @@ public final class Writer {
 
     private var lastFlush = Date()
     private var lastStats = Date()
-    private let statsInterval: TimeInterval = 5.0
+    // Injectable (default 5s, the real spec'd cadence) purely so tests
+    // can exercise the periodic-emission/windowPeak-reset behavior
+    // without a real 5-second wait — same rationale as
+    // `starvationTimeout`'s own injectable default just below.
+    private let statsInterval: TimeInterval
     private let pollInterval: TimeInterval = 0.004
 
     // F6 (adversarial-review fix round) — IO-starvation dead-man switch.
@@ -78,6 +91,7 @@ public final class Writer {
         isNonInterleaved: Bool,
         output: FileHandle = .standardOutput,
         starvationTimeout: TimeInterval = 3.0,
+        statsInterval: TimeInterval = 5.0,
         onWriteFailure: @escaping () -> Void = {}
     ) {
         self.ring = ring
@@ -85,10 +99,24 @@ public final class Writer {
         self.isNonInterleaved = isNonInterleaved
         self.output = output
         self.starvationTimeout = starvationTimeout
+        self.statsInterval = statsInterval
         self.onWriteFailure = onWriteFailure
         let bytesPerFrame = max(1, Int(channels) * 4)
         self.targetChunkBytes = max(bytesPerFrame, Int(Double(sampleRate) * 0.02) * bytesPerFrame)
     }
+
+    #if DEBUG
+    /// Test-only peek at the running peak/windowPeak — StatusEvents
+    /// .emitStats has no injectable output the way `output`/
+    /// `onWriteFailure` above do (see PeakMeterTests.swift's own header
+    /// comment), so this is the seam WriterTests.swift uses to verify
+    /// peak/windowPeak actually get folded from drained ring data.
+    /// Never called in production (excluded from release builds by the
+    /// `#if DEBUG` itself) — mirrors audiocap.rs's own `#[cfg(test)]`-only
+    /// `AudiocapState.should_attach_child`, the same "test-only accessor
+    /// for otherwise-private state" idiom one layer down the pipeline.
+    var debugPeakAndWindowPeak: (peak: Float, windowPeak: Float) { (peak, windowPeak) }
+    #endif
 
     /// Emits one last `stats` record reflecting everything up through
     /// the true final drain (Writer.drainRemaining) — called by
@@ -96,7 +124,14 @@ public final class Writer {
     /// stats line for a session is never more than one drain-cycle
     /// stale the way the periodic ~5s cadence alone could leave it.
     public func emitFinalStats() {
-        StatusEvents.emitStats(overflows: ring.overflowCount(), ringHighWater: ringHighWater, framesOut: framesOut, droppedFrames: ring.droppedFrameCount())
+        StatusEvents.emitStats(
+            overflows: ring.overflowCount(),
+            ringHighWater: ringHighWater,
+            framesOut: framesOut,
+            droppedFrames: ring.droppedFrameCount(),
+            peak: peak,
+            windowPeak: windowPeak
+        )
     }
 
     /// Blocks, polling the ring, until EITHER `shouldStop()` returns true
@@ -180,8 +215,21 @@ public final class Writer {
             flush()
         }
         if now.timeIntervalSince(lastStats) >= statsInterval {
-            StatusEvents.emitStats(overflows: ring.overflowCount(), ringHighWater: ringHighWater, framesOut: framesOut, droppedFrames: ring.droppedFrameCount())
+            StatusEvents.emitStats(
+                overflows: ring.overflowCount(),
+                ringHighWater: ringHighWater,
+                framesOut: framesOut,
+                droppedFrames: ring.droppedFrameCount(),
+                peak: peak,
+                windowPeak: windowPeak
+            )
             lastStats = now
+            // S9 live-failure investigation: `windowPeak` is "since the
+            // LAST emission" by definition — reset right after this
+            // emission reads it, so the NEXT periodic record reflects
+            // only what happened in the window that follows. `peak`
+            // (session-lifetime) is deliberately untouched here.
+            windowPeak = 0
         }
 
         // F6: `lastActivityTime` is nil until the first-ever sign of
@@ -230,6 +278,14 @@ public final class Writer {
         // F6: proof of life for the starvation dead-man switch — see
         // `lastActivityTime`'s own doc comment.
         lastActivityTime = Date()
+        // S9 live-failure investigation: scanned on the RAW payload,
+        // before the isNonInterleaved branch below ever runs —
+        // PeakMeter.maxAbsoluteSample is channel/frame-order-agnostic
+        // (see its own doc comment), so this doesn't need to wait for
+        // (or duplicate work with) Interleave.planarToInterleaved.
+        let sample = PeakMeter.maxAbsoluteSample(in: payload)
+        if sample > peak { peak = sample }
+        if sample > windowPeak { windowPeak = sample }
         if isNonInterleaved {
             var interleaved = [UInt8](repeating: 0, count: payload.count)
             interleaved.withUnsafeMutableBytes { destination in

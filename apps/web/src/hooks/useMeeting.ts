@@ -9,6 +9,7 @@ import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
 import { diagLog } from "../lib/diag/log";
+import { resetLagStats } from "../lib/stt/latencyStats";
 import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
@@ -318,6 +319,13 @@ export function useMeeting(): UseMeetingResult {
     if (status === "listening" || status === "connecting") return;
 
     diarReadyToastedRef.current = false;
+    // S10 field-fix #6: a fresh session must never show a stale EMA
+    // reading carried over from the previous one (lib/stt/latencyStats.
+    // ts's own resetLagStats doc comment) — same per-session-start seam
+    // as diarReadyToastedRef's reset just above. Not called from
+    // resume()'s soft/teardown-resume paths below — those continue the
+    // SAME session (a pause never counts as "the next" one).
+    resetLagStats();
     useApp.getState().beginMeeting();
     // Captured once, right after beginMeeting() bumps meetingGen —
     // this is "this engine session's gen" for the meeting-boundary

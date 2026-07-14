@@ -4,10 +4,15 @@
 // top strip = mono path-style title + ⌘K hint (the v3.3-era three fake
 // window dots were removed in v0.2.1 — decorative macOS chrome that
 // didn't earn its place, see 可读性与主题机制 polish pass);
-// brand row = dragon mark + JargonSlayer wordmark + engine posture +
-// primary start/stop + engine pills + ≡ menu (演示/历史/学习中心/设置/帮助
+// brand row = dragon mark + JargonSlayer wordmark + engine posture chip
+// + primary start/stop + 历史/后台任务 + ≡ menu (演示/学习中心/设置/帮助
 // moved inside per the v3 汉堡收纳 decision — every old data-testid is
 // preserved inside the dropdown so existing tests/QA flows still pass).
+// S10 field-fix: the engine PICKER itself (pills on desktop, a <select>
+// on mobile) moved out of this header entirely — StatusLine's bottom
+// bar now owns it at every width (see lib/stt/engineOptions.ts); this
+// file keeps only the posture chip (EnginePostureChip below) and the
+// 后台任务 launcher (TaskCenterLauncher below, desktop-only).
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
@@ -16,6 +21,7 @@ import {
   GearSix,
   GraduationCap,
   List,
+  ListChecks,
   Play,
   Question,
   Shield,
@@ -25,16 +31,10 @@ import {
 import { elapsedActiveMs, useApp } from "@/lib/store";
 import type { MeetingStatus, Settings, STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
-import { PREVIEW_TIER } from "@/lib/deployTier";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
-import {
-  appAudioLockReason,
-  getAudiocapCapsSnapshot,
-  isAppAudioFloorLocked,
-  probeAudiocapCaps,
-  subscribeAudiocapCaps,
-  type AudiocapCapabilities,
-} from "@/lib/desktop/audiocapCaps";
+import { ENGINE_OPTIONS, POSTURE_LABEL } from "@/lib/stt/engineOptions";
+import { selectRunningCount, useTasks } from "@/lib/tasks/registry";
+import { useUpdateCheck } from "@/lib/desktop/updateCheck";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -46,6 +46,11 @@ export interface HeaderProps {
   onOpenSettings: () => void;
   onOpenHelp: () => void;
   onOpenImport: () => void;
+  /** S10 field-fix #6 (Q2 verdict — header-launched slide-over drawer):
+   *  opens the SAME TaskCenterDrawer instance StatusLine's TaskTray chip
+   *  already opens on web/mobile — threaded from page.tsx exactly like
+   *  onOpenHistory/onOpenSettings above. */
+  onOpenTaskCenter: () => void;
 }
 
 // Shared "is a meeting live enough that switching engines (or opening
@@ -91,71 +96,6 @@ export function canPause(
   return engine === "webspeech" || engine === "tabaudio" || engine === "appaudio";
 }
 
-// S9.4/D6 macOS-floor gating (adversarial review finding F9): subscribes
-// to the shared audiocapCaps probe (lib/desktop/audiocapCaps.ts) and
-// kicks it off on mount — IS_DESKTOP-guarded INSIDE that module itself,
-// so this is an inert no-op call on a web build (never reaches
-// getInvoke()). Local to this file (not exported) since
-// EnginePillGroup/MobileEngineSelect below are its only two callers —
-// mirrors isEngineControlBusy's own "extract once, reuse across both
-// surfaces" rationale above, just for a per-component hook instead of a
-// pure function.
-function useAudiocapCaps(): AudiocapCapabilities | null {
-  const [caps, setCaps] = useState<AudiocapCapabilities | null>(() => getAudiocapCapsSnapshot());
-  useEffect(() => {
-    const unsubscribe = subscribeAudiocapCaps(() => setCaps(getAudiocapCapsSnapshot()));
-    void probeAudiocapCaps().then(() => setCaps(getAudiocapCapsSnapshot()));
-    return unsubscribe;
-  }, []);
-  return caps;
-}
-
-// Real capture engines only — demo is a scripted preview, not a peer
-// engine, so it has exactly one affordance: the menu's 演示 item.
-// posture drives the 本地/云端 label: local engines process audio on
-// this machine; cloud engines send audio to a third-party service.
-// sidecarOnly (#61 preview tier): whisper/tabaudio/appaudio require the
-// local sidecar process, which the hosted preview build never has —
-// greyed out there rather than removed (showroom posture: show
-// everything, no dead ends). byokOnly (v0.4 S4, blueprint decision E):
-// soniox is an unproven BYOK cloud engine (no local sidecar involved,
-// but not benchmark-cleared either) — same preview lock as
-// sidecarOnly, see previewLocked below.
-//
-// D7 desktop tabaudio replacement (docs/design-explorations/
-// s9-app-audio-tap-blueprint.md): tabaudio (getDisplayMedia) can only
-// ever fail inside Tauri's WKWebView — there is no tab-share picker to
-// launch there — so desktop shows appaudio (a CoreAudio process tap,
-// S9) in its slot instead; the web build keeps tabaudio exactly as
-// before (D7 pinned decision: browser behavior stays byte-identical).
-// IS_DESKTOP is a build-time const, so this swap is resolved once at
-// module load, not per render.
-const ENGINE_OPTIONS: {
-  value: Exclude<STTEngineKind, "demo">;
-  label: string;
-  posture: "local" | "cloud";
-  sidecarOnly?: boolean;
-  byokOnly?: boolean;
-}[] = [
-  { value: "webspeech", label: "浏览器识别", posture: "cloud" },
-  { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true },
-  IS_DESKTOP
-    ? { value: "appaudio", label: "系统/App 音频", posture: "local", sidecarOnly: true }
-    : { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
-  { value: "soniox", label: "Soniox 云端识别", posture: "cloud", byokOnly: true },
-];
-
-// v0.4 S4: renamed from PREVIEW_SIDECAR_TITLE — now covers TWO
-// distinct preview-lock reasons (sidecarOnly: needs the local sidecar;
-// byokOnly: needs a BYOK credential preview doesn't collect), so the
-// copy stays reason-agnostic rather than claiming "sidecar" for both.
-const PREVIEW_LOCKED_TITLE = "本地版功能：体验版暂未开放";
-
-const POSTURE_LABEL: Record<"local" | "cloud", string> = {
-  local: "本地",
-  cloud: "云端",
-};
-
 function formatElapsed(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
   const min = Math.floor(totalSec / 60);
@@ -189,7 +129,9 @@ function DetectModeBadge() {
   );
 
   // hidden <md (#55): the bottom StatusLine shows the same mode text,
-  // and the mobile header row needs the width for the engine select.
+  // and the mobile header row needs the width for the import/start
+  // buttons (S10: the engine select that used to share this row moved
+  // to StatusLine's own bottom-bar dropdown — see engineOptions.ts).
   // Borderless (E2E feedback 2026-07-11): the old bordered span read as
   // a disabled control even though it never did anything — chrome with
   // no affordance behind it is worse than plain text. Border removed in
@@ -260,130 +202,37 @@ function ElapsedTimer() {
   );
 }
 
-function EnginePillGroup({ onOpenImport }: { onOpenImport: () => void }) {
-  const engine = useApp((s) => s.settings.engine);
+// #62 item 2 (owner's explicit ask: upload local audio/video side by
+// side with the other modes) — desktop-width counterpart of
+// MobileImportButton below. S10 wave 2: used to be the last pill in a
+// since-removed EnginePillGroup (StatusLine's engine dropdown is now
+// THE picker at every width — see lib/stt/engineOptions.ts); this
+// keeps the exact same testid/gating/click behavior as its own
+// standalone control instead of a pill-row peer.
+function ImportButton({ onOpenImport }: { onOpenImport: () => void }) {
   const status = useApp((s) => s.status);
-  const updateSettings = useApp((s) => s.updateSettings);
   const busy = isEngineControlBusy(status);
-  const audiocapCaps = useAudiocapCaps();
 
   return (
-    <div className="hidden items-center gap-0.5 border border-edge bg-panel2 p-0.5 md:flex whitespace-nowrap">
-      {ENGINE_OPTIONS.map((opt) => {
-        // Preview tier (#61): sidecar-only AND byokOnly (v0.4 S4)
-        // pills stay visible but disabled — never removed (showroom
-        // posture).
-        const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
-        // S9.4, D6 (F9): appaudio's own macOS-floor gate — "shown-but-
-        // disabled below floor", never hidden (mirrors SettingsDialog.
-        // tsx's ENGINE_CARDS' own floorLocked — same shared policy
-        // function, see audiocapCaps.ts).
-        const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
-        const disabled = busy || previewLocked || floorLocked;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            disabled={disabled}
-            onClick={() => updateSettings({ engine: opt.value })}
-            title={
-              previewLocked
-                ? PREVIEW_LOCKED_TITLE
-                : floorLocked
-                  ? appAudioLockReason(audiocapCaps)
-                  : opt.posture === "local"
-                    ? "本地：音频不出本机"
-                    : "云端：音频会离开设备"
-            }
-            className={`px-2.5 py-1 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              engine === opt.value
-                ? "bg-panel3 text-fg"
-                : "text-mut hover:text-fg"
-            }`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-      {/* 导入 (#62 item 2, owner's explicit ask: upload local audio/
-          video side by side with the other modes) — sits in the same
-          pill row as a PEER of the engine buttons above, but it is an
-          action (opens ImportHub), never a selectable engine: no
-          active/inactive styling, a left divider + icon mark it as
-          distinct, and its onClick never touches settings.engine. */}
-      <button
-        type="button"
-        data-testid="btn-import"
-        disabled={busy}
-        onClick={onOpenImport}
-        title="导入本地音频/视频或文稿"
-        className="ml-0.5 flex items-center gap-1 border-l border-edge px-2.5 py-1 font-mono text-xs text-mut transition-colors hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <UploadSimple size={13} weight="regular" />
-        导入
-      </button>
-    </div>
-  );
-}
-
-// #55: below md the pill group above is hidden — without this select,
-// mobile had NO way to pick a realtime engine at all (Settings has no
-// engine field either), so the default demo engine stuck and 开始监听
-// could only ever replay the demo script. A native <select> keeps the
-// row narrow enough for 375px. While the engine is still the default
-// "demo" it shows a disabled 选择引擎 placeholder — demo isn't a pill
-// on desktop either (it lives in the ≡ menu as 演示).
-function MobileEngineSelect() {
-  const engine = useApp((s) => s.settings.engine);
-  const status = useApp((s) => s.status);
-  const updateSettings = useApp((s) => s.updateSettings);
-  const disabled = isEngineControlBusy(status);
-  const audiocapCaps = useAudiocapCaps();
-
-  return (
-    <select
-      aria-label="转录引擎"
-      disabled={disabled}
-      value={engine === "demo" || engine === "import" ? "" : engine}
-      onChange={(e) => {
-        const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
-        if (v) updateSettings({ engine: v });
-      }}
-      className="h-8 max-w-[8.5rem] border border-edge bg-panel2 px-1.5 font-mono text-xs text-fg disabled:cursor-not-allowed disabled:opacity-50 md:hidden"
+    <button
+      type="button"
+      data-testid="btn-import"
+      disabled={busy}
+      onClick={onOpenImport}
+      title="导入本地音频/视频或文稿"
+      className="hidden items-center gap-1.5 border border-edge bg-panel2 px-2.5 py-1 font-mono text-xs text-mut transition-colors hover:border-edge2 hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50 md:flex whitespace-nowrap"
     >
-      {(engine === "demo" || engine === "import") && (
-        <option value="" disabled>
-          选择引擎
-        </option>
-      )}
-      {ENGINE_OPTIONS.map((opt) => {
-        // Preview tier (#61): same sidecarOnly/byokOnly lock as the
-        // pill group above, applied per-<option> since a native
-        // <select> can't grey a single option's styling — disabled +
-        // title is the full affordance a native option supports.
-        const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
-        // S9.4, D6 (F9): same floor gate as EnginePillGroup above.
-        const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
-        return (
-          <option
-            key={opt.value}
-            value={opt.value}
-            disabled={previewLocked || floorLocked}
-            title={previewLocked ? PREVIEW_LOCKED_TITLE : floorLocked ? appAudioLockReason(audiocapCaps) : undefined}
-          >
-            {opt.label}
-          </option>
-        );
-      })}
-    </select>
+      <UploadSimple size={13} weight="regular" />
+      导入
+    </button>
   );
 }
 
-// Mobile counterpart of EnginePillGroup's 导入 pill (#62 item 2): the
-// native <select> above can't host a non-engine action as a peer
-// option without misrepresenting it as a selectable engine, so this
-// sits directly beside it instead — same row, same busy gating, same
-// dialog. Icon-only (375px width budget, see MobileEngineSelect above).
+// Mobile counterpart of ImportButton above (#62 item 2): the StatusLine
+// engine dropdown replaces the old mobile engine <select> this button
+// used to sit beside (S10 wave 2) — kept as its own standalone control,
+// same row, same busy gating, same dialog. Icon-only (375px width
+// budget).
 function MobileImportButton({ onOpenImport }: { onOpenImport: () => void }) {
   const status = useApp((s) => s.status);
   const disabled = isEngineControlBusy(status);
@@ -421,6 +270,47 @@ function EnginePostureChip() {
     >
       {POSTURE_LABEL[opt.posture]}
     </span>
+  );
+}
+
+// S10 field-fix #6 (Q2 verdict — header-launched slide-over drawer):
+// desktop-only launcher for TaskCenterDrawer, mirroring 历史's own
+// standalone-button treatment (not buried in the ≡ menu) — but LABELED
+// rather than icon-only, since a bare "后台任务" icon has none of 历史's
+// clock glyph's universal recognizability. Activity dot: any registry
+// task actually RUNNING (selectRunningCount — a primitive selector,
+// safe bare per registry.ts's own useShallow invariant doc) OR an
+// available app update (lib/desktop/updateCheck.ts) — both worth a
+// glance even with the drawer closed. Web/mobile skip this entirely —
+// StatusLine's TaskTray chip already covers discoverability there (Q2
+// verdict) — so this returns null off IS_DESKTOP rather than being
+// conditionally mounted by the caller, mirroring DesktopBootstrap.tsx's
+// own belt-and-suspenders IS_DESKTOP posture.
+function TaskCenterLauncher({ onOpenTaskCenter }: { onOpenTaskCenter: () => void }) {
+  const runningCount = useTasks((s) => selectRunningCount(s.tasks));
+  const updateAvailable = useUpdateCheck((s) => s.status === "available");
+  const hasActivity = runningCount > 0 || updateAvailable;
+
+  if (!IS_DESKTOP) return null;
+
+  return (
+    <button
+      type="button"
+      data-testid="btn-task-center"
+      onClick={onOpenTaskCenter}
+      title="后台任务"
+      className="relative flex h-9 items-center gap-1.5 border border-edge px-2.5 font-mono text-xs text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg whitespace-nowrap"
+    >
+      <ListChecks size={16} weight="regular" />
+      后台任务
+      {hasActivity && (
+        <span
+          data-testid="btn-task-center-dot"
+          aria-hidden="true"
+          className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-lab-orange"
+        />
+      )}
+    </button>
   );
 }
 
@@ -592,6 +482,7 @@ export default function Header({
   onOpenSettings,
   onOpenHelp,
   onOpenImport,
+  onOpenTaskCenter,
 }: HeaderProps) {
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
@@ -624,8 +515,10 @@ export default function Header({
             className="scheme-light-only h-9 w-auto"
           />
           {/* wordmark hidden <sm (#55): the phone-width row needs the
-              space for the engine select + start button; the icon (now
-              Bit himself) carries the brand there. */}
+              space for the import/start buttons (S10: the engine select
+              that used to share this budget moved to StatusLine's
+              bottom-bar dropdown); the icon (now Bit himself) carries
+              the brand there. */}
           <div className="hidden flex-col leading-tight sm:flex">
             <span className="font-mono font-bold tracking-wide text-fg">
               JargonSlayer
@@ -636,8 +529,7 @@ export default function Header({
           </div>
         </div>
 
-        <EnginePillGroup onOpenImport={onOpenImport} />
-        <MobileEngineSelect />
+        <ImportButton onOpenImport={onOpenImport} />
         <MobileImportButton onOpenImport={onOpenImport} />
         <EnginePostureChip />
 
@@ -727,6 +619,8 @@ export default function Header({
           >
             <ClockCounterClockwise size={18} weight="regular" />
           </button>
+
+          <TaskCenterLauncher onOpenTaskCenter={onOpenTaskCenter} />
 
           <HamburgerMenu
             onDemo={onDemo}

@@ -18,6 +18,7 @@ import {
   type FakeAudioWorkletNode,
 } from "./fakeWs";
 import { WsTransport } from "../wsTransport";
+import { useLatencyStats } from "../latencyStats";
 
 // Mirrors wsTransport.ts's own (unexported) constants — kept in sync
 // by the tests below that specifically exercise the boundary.
@@ -579,5 +580,71 @@ describe("WsTransport — protocol v2", () => {
       expect(contexts.length).toBe(0);
       expect(workletNodes.length).toBe(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------
+// S10 field-fix #5: lag_ms passthrough — additive parse only, the ONE
+// change this byte-sensitive file gets for the latency indicator (see
+// wsTransport.ts's own doc comments on both message interfaces).
+// Exercises the real latencyStats store (a tiny pure zustand store, not
+// worth mocking) rather than spying on pushLagSample.
+// ---------------------------------------------------------------
+
+describe("WsTransport — lag_ms passthrough (S10 field-fix #5)", () => {
+  let wsInstances: FakeWebSocket[];
+  let events: STTEvents;
+
+  beforeEach(() => {
+    ({ instances: wsInstances } = installFakeWebSocket());
+    installFakeAudioGraph();
+    events = {
+      onInterim: vi.fn(),
+      onFinal: vi.fn(),
+      onStatus: vi.fn(),
+    } as unknown as STTEvents;
+    useLatencyStats.setState({ lagMs: null });
+  });
+
+  afterEach(() => {
+    uninstallFakeWebSocket();
+    uninstallFakeAudioGraph();
+    useLatencyStats.setState({ lagMs: null });
+  });
+
+  async function connectedWs(): Promise<FakeWebSocket> {
+    const transport = new WsTransport({
+      events,
+      settings: DEFAULT_SETTINGS,
+      connectFailureMessage: (url) => `failed: ${url}`,
+    });
+    await transport.attachStream(fakeMediaStream());
+    const ws = wsInstances[wsInstances.length - 1];
+    ws.simulateOpen();
+    return ws;
+  }
+
+  it("a final message's lag_ms feeds latencyStats", async () => {
+    const ws = await connectedWs();
+    ws.simulateMessage({ type: "final", text: "hi", seg_id: 0, lag_ms: 2500 });
+    expect(useLatencyStats.getState().lagMs).toBe(2500);
+  });
+
+  it("a partial message's lag_ms feeds latencyStats too", async () => {
+    const ws = await connectedWs();
+    ws.simulateMessage({ type: "partial", text: "hi", lag_ms: 1800 });
+    expect(useLatencyStats.getState().lagMs).toBe(1800);
+  });
+
+  it("an absent lag_ms (older sidecar build) is silently ignored — no store write", async () => {
+    const ws = await connectedWs();
+    ws.simulateMessage({ type: "final", text: "hi", seg_id: 0 });
+    expect(useLatencyStats.getState().lagMs).toBeNull();
+  });
+
+  it("a non-finite lag_ms is ignored rather than pushed as NaN", async () => {
+    const ws = await connectedWs();
+    ws.simulateMessage({ type: "final", text: "hi", seg_id: 0, lag_ms: Number.NaN });
+    expect(useLatencyStats.getState().lagMs).toBeNull();
   });
 });

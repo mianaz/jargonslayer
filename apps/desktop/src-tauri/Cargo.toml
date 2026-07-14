@@ -1,6 +1,6 @@
 [package]
 name = "jargonslayer"
-version = "0.4.1"
+version = "0.4.2"
 description = "JargonSlayer desktop shell"
 authors = ["Miana Zeng"]
 license = "AGPL-3.0-only"
@@ -22,6 +22,11 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
 tauri-plugin-http = "2"
+# S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
+# Chunk A) — desktop external-link opens (OAuth authorize URL, update
+# download page, pyannote/HF gated-model links) via the system browser.
+# See capabilities/default.json's own opener:allow-open-url grant.
+tauri-plugin-opener = "2"
 # Chunk 3's own command/event payload structs (AppPaths, ProcessResult,
 # UvLogEvent, ...) — already resolved transitively via tauri itself, made
 # explicit here since this crate's own code derives Serialize directly.
@@ -31,6 +36,22 @@ serde = { version = "1", features = ["derive"] }
 # parsing --download-only's NDJSON stdout lines directly; made explicit
 # now that this crate's own code calls serde_json::from_str itself.
 serde_json = "1"
+# S10 field-fix, Chunk A — oauth.rs's own request-line query-string
+# decoding for the RFC 8252 loopback OAuth callback (url::form_urlencoded
+# ::parse). Already resolved transitively (tauri itself depends on it —
+# see Cargo.lock) at 2.5.8; made explicit now that this crate's own code
+# calls it directly, same "already-transitive, made explicit for direct
+# use" precedent as objc2-foundation below.
+url = "2"
+# S10 field-fix, Chunk A (F13 fix round) — oauth.rs's own PATH-segment
+# percent-decoding for the callback's nonce (moved off a `?ns=` query
+# param, see that file's own parse_callback doc comment). url::form_
+# urlencoded above is query-string-shaped (`+` means space) and wrong
+# for a raw path segment; percent-encoding is url's own transitive dep
+# for exactly this (see Cargo.lock) — already resolved at 2.3.2 via
+# url itself, made explicit now for the same "already-transitive, made
+# explicit for direct use" reason url was above.
+percent-encoding = "2"
 # S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
 # device-native -> 16kHz mono resampling for the audiocap pipeline.
 # Pinned to the pre-1.0 Vec<Vec<f32>>-style API (FftFixedIn + the

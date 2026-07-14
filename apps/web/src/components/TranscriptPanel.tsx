@@ -1009,7 +1009,7 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
               </span>
             </div>
             <div className="mt-3 max-w-sm text-[15px] leading-[26px] text-mut">
-              选择上方引擎并点「开始监听」，或先看演示——无需麦克风与 API Key。
+              选择下方引擎并点「开始监听」，或先看演示——无需麦克风与 API Key。
             </div>
             {onDemo && (
               <button

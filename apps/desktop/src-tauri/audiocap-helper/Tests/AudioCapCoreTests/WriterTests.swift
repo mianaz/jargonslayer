@@ -240,4 +240,91 @@ final class WriterTests: XCTestCase {
         let writer = Writer(ring: SPSCByteRing(capacity: 1024), sampleRate: 48_000, channels: 1, isNonInterleaved: false, output: pipe.fileHandleForWriting)
         writer.writeEOS() // must return normally, not crash
     }
+
+    // ---- S9 live-failure investigation: peak/windowPeak (drain-path
+    // amplitude tracking, PeakMeter.swift). PeakMeterTests.swift covers
+    // the pure byte-scan directly; these cover Writer's own bookkeeping
+    // around it (running session peak vs. reset-per-emission
+    // windowPeak) via the DEBUG-only debugPeakAndWindowPeak accessor —
+    // StatusEvents.emitStats has no injectable output the way
+    // `output`/`onWriteFailure` above do, so there is no way to observe
+    // the actually-EMITTED stats record from a test. ----
+
+    /// Native-byte-order bytes for `floats` — same shape
+    /// `withSingleBufferList` above expects.
+    private func bytes(from floats: [Float32]) -> [UInt8] {
+        floats.withUnsafeBytes { Array($0) }
+    }
+
+    func testPeakAndWindowPeakAccumulateTheMaximumAbsoluteSampleFromDrainedAudio() {
+        let ring = SPSCByteRing(capacity: 1024)
+        withSingleBufferList(bytes(from: [0.2, -0.6, 0.1])) { bufferList in
+            XCTAssertTrue(ring.tryPush(frameCount: 3, buffers: bufferList))
+        }
+
+        let writer = Writer(ring: ring, sampleRate: 48_000, channels: 1, isNonInterleaved: false, output: FileHandle.nullDevice)
+        writer.drainRemaining()
+
+        let (peak, windowPeak) = writer.debugPeakAndWindowPeak
+        XCTAssertEqual(peak, 0.6, accuracy: 0.0001, "peak must reflect the loudest sample seen, not just the last one")
+        XCTAssertEqual(windowPeak, 0.6, accuracy: 0.0001, "no emission has happened yet — windowPeak mirrors peak until the first reset")
+    }
+
+    func testPeakNeverDecreasesAcrossMultipleDrainsEvenAfterAQuieterOne() {
+        let ring = SPSCByteRing(capacity: 1024)
+        let writer = Writer(ring: ring, sampleRate: 48_000, channels: 1, isNonInterleaved: false, output: FileHandle.nullDevice)
+
+        withSingleBufferList(bytes(from: [0.8])) { bufferList in
+            _ = ring.tryPush(frameCount: 1, buffers: bufferList)
+        }
+        writer.drainRemaining()
+        XCTAssertEqual(writer.debugPeakAndWindowPeak.peak, 0.8, accuracy: 0.0001)
+
+        withSingleBufferList(bytes(from: [0.1])) { bufferList in
+            _ = ring.tryPush(frameCount: 1, buffers: bufferList)
+        }
+        writer.drainRemaining()
+        XCTAssertEqual(writer.debugPeakAndWindowPeak.peak, 0.8, accuracy: 0.0001, "a later, quieter chunk must never lower the running peak")
+    }
+
+    func testWindowPeakResetsAfterAPeriodicStatsEmissionButPeakDoesNot() {
+        // statsInterval injected short (mirrors starvationTimeout's own
+        // tests above) so this stays a fast unit test, never a real 5s
+        // wait.
+        let ring = SPSCByteRing(capacity: 1024)
+        let writer = Writer(
+            ring: ring, sampleRate: 48_000, channels: 1, isNonInterleaved: false,
+            output: FileHandle.nullDevice, statsInterval: 0.01
+        )
+
+        // Poll 1 (right after construction, well under the 10ms
+        // interval): drains the loud sample — no emission/reset has
+        // happened yet, so windowPeak mirrors peak.
+        withSingleBufferList(bytes(from: [0.5])) { bufferList in
+            _ = ring.tryPush(frameCount: 1, buffers: bufferList)
+        }
+        writer.drainRemaining()
+        XCTAssertEqual(writer.debugPeakAndWindowPeak.windowPeak, 0.5, accuracy: 0.0001)
+
+        Thread.sleep(forTimeInterval: 0.02) // past the 10ms statsInterval
+
+        // Poll 2: nothing new to drain, but statsInterval has now
+        // elapsed — this poll's own stats-check emits (windowPeak=0.5
+        // as of just before this call) then resets windowPeak to 0.
+        writer.drainRemaining()
+        XCTAssertEqual(writer.debugPeakAndWindowPeak.windowPeak, 0, "windowPeak must be reset once a periodic emission has happened")
+        XCTAssertEqual(writer.debugPeakAndWindowPeak.peak, 0.5, accuracy: 0.0001, "peak (session-lifetime) must never be reset")
+
+        // Poll 3, immediately after (statsInterval has NOT elapsed
+        // again yet): drains a quiet sample into the freshly-reset
+        // window.
+        withSingleBufferList(bytes(from: [0.05])) { bufferList in
+            _ = ring.tryPush(frameCount: 1, buffers: bufferList)
+        }
+        writer.drainRemaining()
+
+        let (peak, windowPeak) = writer.debugPeakAndWindowPeak
+        XCTAssertEqual(peak, 0.5, accuracy: 0.0001, "session-lifetime peak must still remember the earlier loud sample")
+        XCTAssertEqual(windowPeak, 0.05, accuracy: 0.0001, "windowPeak reflects only what arrived since the reset")
+    }
 }

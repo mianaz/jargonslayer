@@ -31,7 +31,10 @@ import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCata
 import type { ProvisionStep } from "@/lib/desktop/provisionMachine";
 import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
 import type { DesktopPaths } from "@/lib/desktop/uvCommands";
+import { openExternal } from "@/lib/platform/openExternal";
 import ModelPicker from "./ModelPicker";
+import OnboardingByokStep from "./OnboardingByokStep";
+import OnboardingDiarizeStep from "./OnboardingDiarizeStep";
 
 export interface DesktopWizardProps {
   state: DesktopBootstrapState;
@@ -153,9 +156,13 @@ function EscapeHatch({ paths, onRecheckHealth }: { paths: DesktopPaths; onRechec
       <div className="text-fg">装不上？也可以自己动手：</div>
       <div>
         参考{" "}
-        <a href={README_URL} target="_blank" rel="noreferrer" className="text-lab-cyan underline decoration-lab-cyan/40">
+        <button
+          type="button"
+          onClick={() => void openExternal(README_URL)}
+          className="text-lab-cyan underline decoration-lab-cyan/40"
+        >
           README「本地版安装」
-        </a>{" "}
+        </button>{" "}
         手动安装 Python 环境和依赖，或者在 设置 → 转录引擎 中把托管模式切换为「外部」，直接连接你自己启动的 sidecar。
       </div>
       <div className="space-y-0.5 font-mono text-[11px] text-mut2">
@@ -183,7 +190,10 @@ function EscapeHatch({ paths, onRecheckHealth }: { paths: DesktopPaths; onRechec
   );
 }
 
-function WizardFrame({ children }: { children: React.ReactNode }) {
+/** Exported for DesktopOnboardingSteps below (same file) and any future
+ *  caller that wants the identical full-screen chrome — see that
+ *  export's own header comment. */
+export function WizardFrame({ children }: { children: React.ReactNode }) {
   return (
     <div data-testid="desktop-wizard" className="fixed inset-0 z-50 flex flex-col bg-panel font-mono text-fg">
       <div className="flex shrink-0 items-center gap-2 border-b border-edge px-5 py-4">
@@ -254,9 +264,13 @@ function ConsentScreen({
         </div>
         <div className="border-t border-edge pt-3 text-xs leading-[1.7] text-mut2">
           稍后再说也完全可以正常使用云端 / BYOK 转录与检测；随时可以在 设置 → 转录引擎 里重新打开这个向导。已经有自己的本地 sidecar？见{" "}
-          <a href={README_URL} target="_blank" rel="noreferrer" className="text-lab-cyan underline decoration-lab-cyan/40">
+          <button
+            type="button"
+            onClick={() => void openExternal(README_URL)}
+            className="text-lab-cyan underline decoration-lab-cyan/40"
+          >
             README「本地版安装」
-          </a>
+          </button>
           ，装好后在 设置 → 转录引擎 中把托管模式切换为「外部」即可直接连接。
         </div>
       </div>
@@ -459,4 +473,55 @@ export default function DesktopWizard({
     return <TerminalErrorScreen state={state} onDismiss={onDismissTerminal} onReprovision={onReprovision} />;
   }
   return null;
+}
+
+// ---------------------------------------------------------------
+// S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
+// item #3 / Chunk C) — two OPTIONAL, SKIPPABLE onboarding steps shown
+// AFTER the provisioning flow above. Deliberately NOT woven into the
+// phase switch in the default export above: provisionMachine.ts stays
+// completely untouched, and DesktopWizard's own phase-driven behavior
+// is unchanged (this file's own "HEALTHY -> renders nothing" test
+// still holds — HEALTHY never routes here on its own).
+//
+// Mount/timing is a HANDOFF, owned by whichever file actually renders
+// this (expected: DesktopBootstrap.tsx, foreign to this worker) — the
+// intended contract: render <DesktopOnboardingSteps> once, right after
+// observing a STEP -> HEALTHY transition (i.e. the user just watched a
+// REAL provision run finish), never on an ordinary launch that merely
+// adopts an already-healthy sidecar (CHECKING -> HEALTHY, skipping
+// STEP entirely) — so a returning user is never nagged. A second
+// mount point from a future Settings "重新查看引导" entry is expected
+// too (also HANDOFF) — this component doesn't care WHY it was mounted,
+// only that `onDone` fires when both steps are behind the user.
+// ---------------------------------------------------------------
+
+export type OnboardingStep = "byok" | "diarize";
+
+export interface DesktopOnboardingStepsProps {
+  /** Fires once the user is past both steps (via 跳过 or a save on
+   *  either one) — see this section's own header comment for who's
+   *  expected to call this and when. */
+  onDone: () => void;
+}
+
+/** Sequences the two S10 onboarding steps inside ONE WizardFrame (no
+ *  remount flash between them). `onNext`/`onDone` only ever mean
+ *  "advance" — each step decides for itself whether skipping vs.
+ *  saving actually touched Settings; this sequencer doesn't need to
+ *  know which happened. */
+export function DesktopOnboardingSteps({ onDone }: DesktopOnboardingStepsProps) {
+  const [step, setStep] = useState<OnboardingStep>("byok");
+  return (
+    <WizardFrame>
+      <div data-testid="desktop-onboarding-steps" className="space-y-4">
+        <div className="text-xs text-mut2">可选步骤 · {step === "byok" ? "1" : "2"} / 2</div>
+        {step === "byok" ? (
+          <OnboardingByokStep onNext={() => setStep("diarize")} />
+        ) : (
+          <OnboardingDiarizeStep onNext={onDone} />
+        )}
+      </div>
+    </WizardFrame>
+  );
 }
