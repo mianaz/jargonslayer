@@ -89,6 +89,16 @@ export interface CredentialFieldsProps {
    *  fresh OAuth key is meant to land in the primary field once, then
    *  be reused/overridden per-domain from there). */
   onConnectOpenRouter?: () => void;
+  /** S10 field-fix (desktop OAuth branch, SettingsDialog.tsx's own
+   *  primary block only — OnboardingByokStep.tsx has its own INLINE
+   *  button and never renders this shared component): true while a
+   *  desktop connectOpenRouterDesktop() loopback attempt is in flight.
+   *  Disables/relabels ONLY this button — mirrors OnboardingByokStep's
+   *  own posture of keeping every other field (paste-key path
+   *  included) interactive the whole ~180s wait, never gated on it. A
+   *  no-op for every caller that doesn't pass onConnectOpenRouter in
+   *  the first place (the #56 domain blocks never do). */
+  connectingOpenRouter?: boolean;
 }
 
 /** Shared provider + Base URL + API Key + model(s) block. Owns its own
@@ -109,6 +119,7 @@ export default function CredentialFields({
   presets,
   disabled,
   onConnectOpenRouter,
+  connectingOpenRouter,
 }: CredentialFieldsProps) {
   const [showKey, setShowKey] = useState(false);
   const activePreset = presetIdFor(presets, { provider, baseUrl });
@@ -149,11 +160,11 @@ export default function CredentialFields({
         <div className="space-y-1.5">
           <button
             type="button"
-            disabled={disabled}
+            disabled={disabled || connectingOpenRouter}
             onClick={onConnectOpenRouter}
             className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
           >
-            一键连接 OpenRouter 账号
+            {connectingOpenRouter ? "连接中…" : "一键连接 OpenRouter 账号"}
           </button>
           <div className="text-xs leading-[1.7] text-mut2">
             跳转 OpenRouter 完成授权，自动生成并填入 API Key；也可在下方手动粘贴已有 Key

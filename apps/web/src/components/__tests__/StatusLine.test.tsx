@@ -508,3 +508,116 @@ describe("StatusLine — 延迟 (sustained latency) chip", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------
+// S10 field-fix — engine picker as a bottom-bar dropdown (her words:
+// 与其作为tab，engine不如改成dropdown，且显示在下方状态栏). Header.tsx no
+// longer has ANY engine control (pills or mobile <select>) — this is
+// THE picker at every width now.
+// ---------------------------------------------------------------
+
+describe("StatusLine — engine dropdown", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function select(): HTMLSelectElement {
+    const el = container!.querySelector('[data-testid="statusline-engine-select"]');
+    if (!el) throw new Error("engine select not found");
+    return el as HTMLSelectElement;
+  }
+
+  it("lists every ENGINE_OPTIONS value (web build: webspeech/whisper/tabaudio/soniox, D7 keeps tabaudio)", async () => {
+    useApp.setState((s) => ({ settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const values = Array.from(select().querySelectorAll("option"))
+      .map((o) => o.getAttribute("value"))
+      .filter((v) => v !== "");
+    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox"]);
+  });
+
+  it("changing the value writes settings.engine (same store write as the old mobile <select>)", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    await act(async () => {
+      select().value = "soniox";
+      select().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.engine).toBe("soniox");
+  });
+
+  it("disabled while a meeting is connecting/listening (isEngineControlBusy) — same gate the old header controls used", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().disabled).toBe(true);
+  });
+
+  it("not disabled while idle/stopped/paused", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().disabled).toBe(false);
+  });
+
+  it("shows a disabled 选择引擎 placeholder while engine is demo (mirrors the old mobile <select>'s own placeholder)", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().value).toBe("");
+    const placeholder = Array.from(select().querySelectorAll("option")).find(
+      (o) => o.value === "",
+    );
+    expect(placeholder).toBeDefined();
+    expect(placeholder!.disabled).toBe(true);
+    expect(placeholder!.textContent).toBe("选择引擎");
+  });
+});

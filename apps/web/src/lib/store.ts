@@ -182,7 +182,7 @@ interface AppState {
   // lib/stt/onDeviceSpeech.ts): which mode the ACTIVE webspeech
   // session actually reported at start (STTEvents.onEngineMode, wired
   // through useMeeting.ts). Lets StatusLine's privacy indicator show
-  // the same green "音频未离开本机" posture whisper/tabaudio use instead
+  // the same green "音频在本地处理" posture whisper/tabaudio use instead
   // of the amber cloud warning. null = no active webspeech session has
   // reported a mode yet this meeting — every other engine never calls
   // onEngineMode, so StatusLine falls back to its existing

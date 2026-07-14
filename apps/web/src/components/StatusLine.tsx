@@ -9,6 +9,8 @@
 import { useApp } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
+import { ENGINE_OPTIONS, engineOptionGate, useAudiocapCaps } from "@/lib/stt/engineOptions";
+import { isEngineControlBusy } from "@/components/Header";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
 
@@ -39,6 +41,59 @@ const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
 // Sustained-latency threshold (#5: "延迟 ~Ns" once it stays above this)
 // — matches the blueprint's own >2s example verbatim.
 const LATENCY_CHIP_THRESHOLD_MS = 2000;
+
+// S10 field-fix — engine picker as a bottom-bar dropdown (Miana's
+// explicit ask: 与其作为tab，engine不如改成dropdown，且显示在下方状态栏).
+// Native <select>, same house terminal aesthetic + handler semantics as
+// Header.tsx's pre-S10 mobile <select> variant it replaces (0px radius,
+// mono, border-edge, bg-panel2; same store write on change; same
+// disabled-while-meeting-active gate, isEngineControlBusy — reused
+// verbatim rather than re-implemented, still exported from Header.tsx).
+// Per-<option> gating (engineOptionGate, lib/stt/engineOptions.ts) is
+// the same preview-tier/macOS-floor policy every other engine surface
+// shares. The SELECT's own `title` additionally carries the CURRENTLY
+// SELECTED option's own lock reason (if any) — a per-<option> title is
+// only ever visible while the dropdown is actually open; the closed
+// control needs its own tooltip for a locked selection to be
+// explorable at all.
+function EngineDropdown() {
+  const engine = useApp((s) => s.settings.engine);
+  const status = useApp((s) => s.status);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const disabled = isEngineControlBusy(status);
+  const audiocapCaps = useAudiocapCaps();
+  const selectedOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
+  const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps) : undefined;
+
+  return (
+    <select
+      aria-label="转录引擎"
+      data-testid="statusline-engine-select"
+      disabled={disabled}
+      title={selectedGate?.title}
+      value={engine === "demo" || engine === "import" ? "" : engine}
+      onChange={(e) => {
+        const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
+        if (v) updateSettings({ engine: v });
+      }}
+      className="h-full max-w-[6.5rem] shrink-0 border-x border-edge bg-panel2 px-1.5 font-mono text-fg disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[8.5rem] sm:px-2"
+    >
+      {(engine === "demo" || engine === "import") && (
+        <option value="" disabled>
+          选择引擎
+        </option>
+      )}
+      {ENGINE_OPTIONS.map((opt) => {
+        const gate = engineOptionGate(opt, audiocapCaps);
+        return (
+          <option key={opt.value} value={opt.value} disabled={gate.disabled} title={gate.title}>
+            {opt.label}
+          </option>
+        );
+      })}
+    </select>
+  );
+}
 
 export interface StatusLineProps {
   onOpenTaskCenter: () => void;
@@ -181,15 +236,15 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
         <span className="hidden sm:inline">{privacyLabel}</span>
         <span className="sm:hidden">{privacyLabelShort}</span>
       </span>
+      {/* Engine dropdown (S10 field-fix wave 2, EngineDropdown above):
+          right here, between the privacy segment and the latency chip,
+          reads most naturally (STT posture/health cluster together
+          left-to-right) — THE picker at every width now (Header.tsx's
+          old desktop pills + mobile <select> are both gone). */}
+      <EngineDropdown />
       {/* S10 field-fix #5: compact caution chip, hidden whenever
           healthy/null/not-listening/not-local-whisper — see the inline
-          condition's own doc comment above. Wave 2 note: the incoming
-          engine dropdown (extracted from Header.tsx's ENGINE_OPTIONS)
-          slots into this bar too — right here, between the privacy
-          segment and this chip, reads most naturally (STT posture/
-          health cluster together left-to-right); this row's existing
-          `hidden sm:inline` / short-label fallbacks already leave the
-          pattern to add one more compact <sm-collapsing control. */}
+          condition's own doc comment above. */}
       {isListening && LOCAL_WHISPER_ENGINES.has(engine) && lagMs !== null && lagMs > LATENCY_CHIP_THRESHOLD_MS && (
         <span
           data-testid="statusline-latency-chip"

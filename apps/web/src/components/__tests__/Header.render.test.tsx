@@ -51,6 +51,7 @@ describe("Header — standalone 历史 button", () => {
           onOpenSettings={noop}
           onOpenHelp={noop}
           onOpenImport={noop}
+          onOpenTaskCenter={noop}
         />,
       );
     });
@@ -112,6 +113,7 @@ describe("Header — pause/resume/end button matrix (B4)", () => {
           onOpenSettings={noop}
           onOpenHelp={noop}
           onOpenImport={noop}
+          onOpenTaskCenter={noop}
         />,
       );
     });
@@ -234,6 +236,7 @@ describe("Header — pause/resume/end button matrix (B4)", () => {
           onOpenSettings={noop}
           onOpenHelp={noop}
           onOpenImport={noop}
+          onOpenTaskCenter={noop}
         />,
       );
     });
@@ -284,6 +287,7 @@ describe("Header — chip-saved (E2E batch item 1)", () => {
           onOpenSettings={noop}
           onOpenHelp={noop}
           onOpenImport={noop}
+          onOpenTaskCenter={noop}
         />,
       );
     });
@@ -353,6 +357,7 @@ describe("Header — header-detect-toggle (E2E batch item 2)", () => {
           onOpenSettings={noop}
           onOpenHelp={noop}
           onOpenImport={noop}
+          onOpenTaskCenter={noop}
         />,
       );
     });
@@ -431,6 +436,7 @@ describe("HamburgerMenu — btn-review gating (E2E batch item 3)", () => {
           onOpenSettings={noop}
           onOpenHelp={noop}
           onOpenImport={noop}
+          onOpenTaskCenter={noop}
         />,
       );
     });

@@ -20,7 +20,7 @@
 // deployTier.ts's own "a plain re-exported const is fine here" note
 // for the same presentation-only-gate reasoning).
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
 import { diagLog } from "@/lib/diag/log";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
@@ -32,7 +32,7 @@ import {
   type DesktopLogLine,
 } from "@/lib/desktop/bootstrap";
 import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
-import DesktopWizard from "./DesktopWizard";
+import DesktopWizard, { DesktopOnboardingSteps } from "./DesktopWizard";
 
 // Blueprint §Chunk 6: "cap the buffer ~500 lines".
 const LOG_BUFFER_CAP = 500;
@@ -65,6 +65,22 @@ export default function DesktopBootstrap() {
   const [consentDismissed, setConsentDismissed] = useState(false);
   const [terminalDismissed, setTerminalDismissed] = useState(false);
   const [stepErrorDismissed, setStepErrorDismissed] = useState(false);
+  // S10 field-fix (item #3 / Chunk C handoff, wave 2 mount): the two
+  // OPTIONAL onboarding steps (DesktopWizard.tsx's own
+  // DesktopOnboardingSteps — see that export's header comment for the
+  // full contract) show exactly ONCE per app session, right after
+  // observing a REAL STEP -> HEALTHY transition (this launch's own
+  // provisioning wizard just finished) — never on CHECKING -> HEALTHY
+  // (an ordinary launch adopting an already-healthy sidecar; a
+  // returning user is never nagged), never persisted. prevPhaseRef/
+  // onboardingShownRef are plain session-local refs, not store/
+  // localStorage state — a fresh app launch always starts both unset,
+  // and this component itself only ever mounts once for the app's
+  // whole lifetime (see page.tsx's own `{IS_DESKTOP && <DesktopBootstrap
+  // />}`).
+  const prevPhaseRef = useRef<DesktopBootstrapState["phase"] | null>(null);
+  const onboardingShownRef = useRef(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     if (!IS_DESKTOP) return;
@@ -116,6 +132,23 @@ export default function DesktopBootstrap() {
     if (!inStepError) setStepErrorDismissed(false);
   }, [inStepError]);
 
+  // S10 field-fix onboarding mount: watches for a STEP -> HEALTHY
+  // transition (this launch's own provisioning wizard just finished) —
+  // see prevPhaseRef/onboardingShownRef's own doc comment above for the
+  // full contract. prevPhaseRef starts `null`, so the FIRST snapshot
+  // ever observed (whatever phase it lands on, including an immediate
+  // HEALTHY on a returning user's ordinary launch) can never itself
+  // satisfy `prevPhase === "STEP"` — CHECKING -> HEALTHY is excluded by
+  // construction, not a special case below.
+  useEffect(() => {
+    const prevPhase = prevPhaseRef.current;
+    prevPhaseRef.current = state?.phase ?? null;
+    if (!onboardingShownRef.current && prevPhase === "STEP" && state?.phase === "HEALTHY") {
+      onboardingShownRef.current = true;
+      setShowOnboarding(true);
+    }
+  }, [state?.phase]);
+
   // chunk 7: "TERMINAL_ERROR -> wizard error surface + toast" — the
   // wizard screen itself is the "surface" (rendered below regardless of
   // this toast); this effect adds the toast half exactly once per
@@ -137,6 +170,16 @@ export default function DesktopBootstrap() {
   }, [terminalReason, showToast]);
 
   if (!IS_DESKTOP || !handle || !state) return null;
+
+  // Onboarding takes priority once triggered — by construction it only
+  // ever fires after landing on HEALTHY (see the effect above), which
+  // is exactly the phase the `visible` computation below always treats
+  // as "nothing to show" anyway, so there's no real overlay conflict to
+  // adjudicate here. onDone unmounts it (falls back through to the
+  // `visible` branch below, which stays false for HEALTHY).
+  if (showOnboarding) {
+    return <DesktopOnboardingSteps onDone={() => setShowOnboarding(false)} />;
+  }
 
   const visible =
     state.phase === "WIZARD_CONSENT_REQUIRED"

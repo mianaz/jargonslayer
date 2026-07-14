@@ -20,6 +20,7 @@ import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverla
 import LookupPopover from "@/components/LookupPopover";
 import Toast from "@/components/Toast";
 import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
+import { checkAppUpdate } from "@/lib/desktop/updateCheck";
 
 type RightTab = "cards" | "summary" | "glossary";
 
@@ -151,6 +152,15 @@ export default function Home() {
     // lib/diag/globalHandlers.ts's own doc comment.
     installGlobalDiagHandlers();
     if (shouldShowTutorial()) setHelpOpen(true);
+    // S10 field-fix #8: on-launch update check, desktop only, quiet —
+    // no toast/banner, Header's 后台任务 dot + TaskCenterDrawer's own
+    // system-status row are the only surfacing (Q2 verdict). Fires
+    // once per app session alongside this same mount effect.
+    // checkAppUpdate() is IS_DESKTOP-guarded internally too (inert
+    // no-op on a web build, never throws — see that module's own doc
+    // comment); the check here just skips the call outright on web
+    // rather than relying on that internal guard alone.
+    if (IS_DESKTOP) void checkAppUpdate();
   }, [hydrate]);
 
   // Jump to the report tab the moment a summary lands.
@@ -174,6 +184,7 @@ export default function Home() {
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenHelp={() => setHelpOpen(true)}
         onOpenImport={() => setImportHubOpen(true)}
+        onOpenTaskCenter={() => setTaskCenterOpen(true)}
       />
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">

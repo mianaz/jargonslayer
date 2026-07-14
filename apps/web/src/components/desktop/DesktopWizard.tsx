@@ -31,6 +31,7 @@ import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCata
 import type { ProvisionStep } from "@/lib/desktop/provisionMachine";
 import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
 import type { DesktopPaths } from "@/lib/desktop/uvCommands";
+import { openExternal } from "@/lib/platform/openExternal";
 import ModelPicker from "./ModelPicker";
 import OnboardingByokStep from "./OnboardingByokStep";
 import OnboardingDiarizeStep from "./OnboardingDiarizeStep";
@@ -155,9 +156,13 @@ function EscapeHatch({ paths, onRecheckHealth }: { paths: DesktopPaths; onRechec
       <div className="text-fg">装不上？也可以自己动手：</div>
       <div>
         参考{" "}
-        <a href={README_URL} target="_blank" rel="noreferrer" className="text-lab-cyan underline decoration-lab-cyan/40">
+        <button
+          type="button"
+          onClick={() => void openExternal(README_URL)}
+          className="text-lab-cyan underline decoration-lab-cyan/40"
+        >
           README「本地版安装」
-        </a>{" "}
+        </button>{" "}
         手动安装 Python 环境和依赖，或者在 设置 → 转录引擎 中把托管模式切换为「外部」，直接连接你自己启动的 sidecar。
       </div>
       <div className="space-y-0.5 font-mono text-[11px] text-mut2">
@@ -259,9 +264,13 @@ function ConsentScreen({
         </div>
         <div className="border-t border-edge pt-3 text-xs leading-[1.7] text-mut2">
           稍后再说也完全可以正常使用云端 / BYOK 转录与检测；随时可以在 设置 → 转录引擎 里重新打开这个向导。已经有自己的本地 sidecar？见{" "}
-          <a href={README_URL} target="_blank" rel="noreferrer" className="text-lab-cyan underline decoration-lab-cyan/40">
+          <button
+            type="button"
+            onClick={() => void openExternal(README_URL)}
+            className="text-lab-cyan underline decoration-lab-cyan/40"
+          >
             README「本地版安装」
-          </a>
+          </button>
           ，装好后在 设置 → 转录引擎 中把托管模式切换为「外部」即可直接连接。
         </div>
       </div>

@@ -45,8 +45,13 @@ import type {
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { openExternal } from "@/lib/platform/openExternal";
 import { getInvoke } from "@/lib/desktop/tauriApi";
-import { initDesktop, type DesktopLogLine } from "@/lib/desktop/bootstrap";
+import { initDesktop } from "@/lib/desktop/bootstrap";
+import { trackInstallDiar, trackSwitchModel } from "@/lib/desktop/jobsBridge";
+import { useTasks } from "@/lib/tasks/registry";
+import { connectOpenRouterDesktop } from "@/lib/oauth/openrouterDesktop";
+import { describeOAuthFailure } from "@/components/desktop/onboardingSettings";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import {
   isSectionVisible,
@@ -82,16 +87,16 @@ export interface SettingsDialogProps {
 // engine (see Header.tsx's 演示 button, the app's single demo entry
 // point). posture drives the 本地/云端 chip: local engines never send
 // audio off this machine; cloud engines do.
-const ENGINE_CARDS: {
+const ALL_ENGINE_CARDS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   hint: string;
   posture: "local" | "cloud";
   disabled?: boolean;
   // #61 preview tier: needs the local sidecar — greyed there (same
-  // lock as Header.tsx's ENGINE_OPTIONS.sidecarOnly; without it a
-  // preview user could still save engine:"whisper" from THIS dialog
-  // and dead-end on ws://localhost until the next reload's
+  // lock as lib/stt/engineOptions.ts's ENGINE_OPTIONS.sidecarOnly;
+  // without it a preview user could still save engine:"whisper" from
+  // THIS dialog and dead-end on ws://localhost until the next reload's
   // applyTierDefaults coercion).
   sidecarOnly?: boolean;
   // v0.4 S4 (blueprint decision E): a BYOK cloud engine that hasn't
@@ -160,6 +165,19 @@ const ENGINE_CARDS: {
     byokOnly: true,
   },
 ];
+
+// S10 field-fix #1: desktop drops the webspeech card entirely —
+// WKWebView has no SpeechRecognition API, so it has never once worked
+// there (unlike tabaudio, which at least had a picker-shaped reason to
+// exist pre-S9 before D7's appaudio swap above). Mirrors lib/stt/
+// engineOptions.ts's own ENGINE_OPTIONS filter (same IS_DESKTOP
+// condition, same drop) rather than importing that module directly —
+// this card grid's richer per-card `hint` copy keeps the two arrays
+// from cleanly sharing one data shape (see that module's own header
+// comment), so the semantics are mirrored here instead of forked.
+const ENGINE_CARDS = IS_DESKTOP
+  ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
+  : ALL_ENGINE_CARDS;
 
 const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",
@@ -474,14 +492,6 @@ function TaskDomainBlock({
   );
 }
 
-// 说话人分离 安装扩展 (v0.4 S5 chunk 3): live log$ tail cap while
-// handleInstallDiarization's run_uv install is in flight — "the
-// wizard's 详细日志 idiom in miniature" (blueprint chunk 3), mirroring
-// DesktopBootstrap.tsx's own LOG_BUFFER_CAP slicing shape exactly, just
-// a small always-visible tail instead of that file's collapsible
-// 500-line pane.
-const DIAR_INSTALL_LOG_LINES = 6;
-
 export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -510,6 +520,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
   const [testingConnection, setTestingConnection] = useState(false);
+  // Desktop OAuth branch (S10 field-fix, Chunk A wave-2 wiring): mirrors
+  // OnboardingByokStep.tsx's own connecting/oauthHint pair — this
+  // dialog's OAuth button lives inside the shared CredentialFields
+  // component (primary AI 检测 block only, see that component's own
+  // onConnectOpenRouter/connectingOpenRouter doc), so the state is
+  // lifted here rather than local to a component that owns none of its
+  // own otherwise.
+  const [connectingOpenRouter, setConnectingOpenRouter] = useState(false);
+  const [openRouterOauthHint, setOpenRouterOauthHint] = useState<string | null>(null);
   const [exportFolderName, setExportFolderName] = useState<string | null>(null);
   // 全量备份/恢复 (#57): 「不包含 API Key」defaults to CHECKED (safe
   // default — a backup file is meant to be shareable/storable without
@@ -535,13 +554,23 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // new diarization_installed field (decision C) — `undefined` renders
   // 未知 (risk 5: legacy/external sidecars omit the field; also true
   // before this dialog's own probe effect below first resolves), never
-  // 未安装. installingDiarization mirrors switchingModel's own busy-
-  // flag pattern (S4 chunk 4) for handleInstallDiarization below;
-  // diarizationInstallLog is that same handler's own DIAR_INSTALL_LOG_
-  // LINES-capped log$ tail.
+  // 未安装.
   const [diarizationInstalled, setDiarizationInstalled] = useState<boolean | undefined>(undefined);
-  const [installingDiarization, setInstallingDiarization] = useState(false);
-  const [diarizationInstallLog, setDiarizationInstallLog] = useState<DesktopLogLine[]>([]);
+  // S10 field-fix #6 jobsBridge swap (wave 2): handleInstallDiarization
+  // below now DISPATCHES a "diar-install" registry task
+  // (jobsBridge.trackInstallDiar) instead of awaiting handle.
+  // installDiarization() inline — the task (and its progress) now
+  // outlives this dialog closing; TaskCenterDrawer/TaskTray own it from
+  // here on. installingDiarization is therefore DERIVED from the
+  // registry (this dialog's own last-dispatched task id's "running"
+  // status) rather than a separately-maintained local flag — the
+  // registry is the single source of truth, so there is no local
+  // progress/log state to duplicate it (no more diarizationInstallLog
+  // tail; see handleInstallDiarization's own doc comment below).
+  const [diarInstallTaskId, setDiarInstallTaskId] = useState<string | null>(null);
+  const installingDiarization = useTasks(
+    (s) => diarInstallTaskId !== null && s.tasks[diarInstallTaskId]?.status === "running",
+  );
   // 转录引擎 sidecar status line (owner ask 2026-07-11: "I cannot see in
   // the GUI if the local side got set up at all") — a lightweight GET
   // /health readout shown directly under the engine picker whenever the
@@ -618,12 +647,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [installedModel, setInstalledModel] = useState<string | null>(null);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [pickedModel, setPickedModel] = useState<string>("");
-  const [switchingModel, setSwitchingModel] = useState(false);
-  // Poll phase readout the confirm button drives handle.switchModel
-  // with (blueprint: "下载中 {pct}% → 重启本地服务… → 已切换到 {model}") —
-  // null = no attempt in flight / not yet shown this open of the picker.
-  const [switchModelStatusText, setSwitchModelStatusText] = useState<string | null>(null);
-  const [switchModelError, setSwitchModelError] = useState<string | null>(null);
+  // S10 field-fix #6 jobsBridge swap (wave 2): handleSwitchModel below
+  // now DISPATCHES a "model-download" registry task (jobsBridge.
+  // trackSwitchModel) instead of awaiting handle.switchModel() inline
+  // — the task (and its own progress phases, "下载中 {pct}%" → "启动中")
+  // now outlives this dialog closing; TaskCenterDrawer/TaskTray own it
+  // from here on. switchingModel is therefore DERIVED from the
+  // registry (this dialog's own last-dispatched task id's "running"
+  // status), same posture as installingDiarization above — no more
+  // local switchModelStatusText/switchModelError (that would be double
+  // progress tracking of the exact same job).
+  const [switchModelTaskId, setSwitchModelTaskId] = useState<string | null>(null);
+  const switchingModel = useTasks(
+    (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "running",
+  );
 
   // Settings redesign: which nav-rail category the content pane shows.
   // Local-only (NOT the zustand store, not part of draft) — pure
@@ -1005,18 +1042,53 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   };
 
   // "Connect with OpenRouter" — OAuth PKCE one-click key provisioning
-  // (https://openrouter.ai/docs/use-cases/oauth-pkce). Generates a
-  // fresh code_verifier + a random state, stashes both in
-  // sessionStorage (must survive the full-page redirect — see
-  // openrouterPkce.ts's module comment), then navigates the whole tab
-  // to OpenRouter's /auth. NOTE: the verified spec's /auth query params
-  // are only callback_url/code_challenge/code_challenge_method — no
-  // `state` param is documented, so it is NOT sent to OpenRouter (an
+  // (https://openrouter.ai/docs/use-cases/oauth-pkce).
+  //
+  // Desktop (S10 field-fix, Chunk A, Q1 verdict): RFC-8252 loopback via
+  // the system browser — WKWebView can't usefully navigate to an
+  // arbitrary https:// URL (blueprint triage table item 2), so this
+  // branch never falls through to the web tab-redirect flow below.
+  // Mirrors OnboardingByokStep.tsx's own connectWithOAuth exactly (same
+  // helper, same describeOAuthFailure hint copy — no duplicated failure
+  // labels).
+  //
+  // Web: BYTE-IDENTICAL to before this sprint — generates a fresh
+  // code_verifier + a random state, stashes both in sessionStorage
+  // (must survive the full-page redirect — see openrouterPkce.ts's
+  // module comment), then navigates the whole tab to OpenRouter's
+  // /auth. NOTE: the verified spec's /auth query params are only
+  // callback_url/code_challenge/code_challenge_method — no `state`
+  // param is documented, so it is NOT sent to OpenRouter (an
   // undocumented param could be silently dropped or rejected). The
   // stored state is still checked by the callback page IF OpenRouter
   // happens to echo one back; the real replay protection here is PKCE
   // itself — the code alone is useless without this verifier.
   const handleConnectOpenRouter = async () => {
+    if (IS_DESKTOP) {
+      setConnectingOpenRouter(true);
+      setOpenRouterOauthHint(null);
+      try {
+        const result = await connectOpenRouterDesktop();
+        if (result.ok) {
+          // connectOpenRouterDesktop() already wrote provider/baseUrl/
+          // apiKey straight to the LIVE store (pinned contract — the
+          // exact same write the web callback page does, see that
+          // module's own doc comment) — this dialog's own `draft` is a
+          // snapshot taken at open time, so it must be resynced here or
+          // 保存 would silently clobber the just-connected key with the
+          // stale draft (same hazard handleConfirmRestore's own
+          // post-restore resync guards against, mirrored verbatim).
+          setDraft(coercePreviewModels(useApp.getState().settings));
+          showToast("已成功连接 OpenRouter");
+        } else {
+          setOpenRouterOauthHint(describeOAuthFailure(result.reason, result.message));
+        }
+      } finally {
+        setConnectingOpenRouter(false);
+      }
+      return;
+    }
+
     const verifier = generateCodeVerifier();
     const state = generateCodeVerifier(43);
     sessionStorage.setItem(OAUTH_VERIFIER_STORAGE_KEY, verifier);
@@ -1092,59 +1164,30 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // inline <ModelPicker>, preselected to the truthful installed model
   // (falling back to the user's own persisted preference,
   // draft.whisperModel, while that's still loading/unknown — decision
-  // C's own "target vs truth" distinction). Clears any status/error
-  // text left over from a PRIOR attempt this dialog-open.
+  // C's own "target vs truth" distinction).
   const handleOpenModelPicker = () => {
     setPickedModel(installedModel ?? draft.whisperModel);
-    setSwitchModelStatusText(null);
-    setSwitchModelError(null);
     setModelPickerOpen(true);
   };
 
-  // v0.4 S4 chunk 4 (blueprint decision C's switch flow): 下载并切换 —
-  // an IMMEDIATE action (like 重新运行安装向导 above), not a draft-saved
-  // setting — settings.whisperModel is written by handle.switchModel()
-  // itself on success, so this deliberately never runs through
-  // patch()/handleSave's draft flow. Reuses the SAME module-level
-  // bootstrap handle every other desktop action on this dialog already
-  // does (handleReprovisionDesktop's own rationale above), with a live
-  // progress readout via handle.switchModelProgress$ — poll phase
-  // labels "下载中 {pct}%" → "重启本地服务…" → "已切换到 {model}", per
-  // the blueprint. Errors surface via BOTH showToast (this file's
-  // existing convention) and an inline switchModelError string
-  // (mirrors 本地服务's own inline-text posture just above in this same
-  // section).
+  // v0.4 S4 chunk 4 (blueprint decision C's switch flow), S10 field-fix
+  // #6 jobsBridge swap (wave 2): 下载并切换 — an IMMEDIATE action (like
+  // 重新运行安装向导 above), not a draft-saved setting — settings.
+  // whisperModel is written by handle.switchModel() itself on success
+  // (inside jobsBridge.trackSwitchModel), so this deliberately never
+  // runs through patch()/handleSave's draft flow. DISPATCHES the switch
+  // as a "model-download" registry task and returns immediately —
+  // TaskCenterDrawer/TaskTray own its progress/success/failure from
+  // here on (switchingModel above already derives from this same task
+  // id), so this dialog closes the picker right away rather than
+  // showing its own now-redundant "处理中…" wait.
   const handleSwitchModel = async () => {
     const model = pickedModel;
-    setSwitchingModel(true);
-    setSwitchModelError(null);
-    setSwitchModelStatusText("下载中 0%");
-    try {
-      const handle = await initDesktop();
-      const unsubscribe = handle.switchModelProgress$((progress) => {
-        if (!progress) return;
-        setSwitchModelStatusText(
-          progress.phase === "downloading"
-            ? `下载中 ${Math.round((progress.progress ?? 0) * 100)}%`
-            : "重启本地服务…",
-        );
-      });
-      try {
-        await handle.switchModel(model);
-      } finally {
-        unsubscribe();
-      }
-      setInstalledModel(model);
-      setSwitchModelStatusText(`已切换到 ${model}`);
-      showToast(`已切换到模型 ${model}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "切换模型失败";
-      setSwitchModelStatusText(null);
-      setSwitchModelError(message);
-      showToast(`切换模型失败：${message}`);
-    } finally {
-      setSwitchingModel(false);
-    }
+    const handle = await initDesktop();
+    const id = trackSwitchModel(handle, model);
+    setSwitchModelTaskId(id);
+    setModelPickerOpen(false);
+    showToast("已开始下载并切换模型，进度见右下角「后台任务」");
   };
 
   // v0.4 S3 chunk 7: 诊断信息 面板的 「查看本地服务日志」 — desktop-only,
@@ -1169,51 +1212,24 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
-  // v0.4 S5 chunk 3 (blueprint decisions A/B): 说话人分离 安装扩展 — an
-  // IMMEDIATE action (like 重新运行安装向导/下载并切换 above), never routed
-  // through patch()/draft/保存. Reuses the SAME module-level bootstrap
-  // handle every other desktop action on this dialog already does.
-  // Subscribes handle.log$ for the run's own duration (subscribe-
-  // before/unlisten-after, mirroring withUvLog's own pattern inside
-  // bootstrap.ts), keeping only the last DIAR_INSTALL_LOG_LINES lines —
-  // the wizard's 详细日志 idiom in miniature. Re-probes fetchSidecarHealth
-  // on success rather than optimistically setting diarizationInstalled
-  // true (decision C's own "the running server is the truth" posture),
-  // so the row reflects exactly what the sidecar itself now reports.
-  // Errors surface via showToast only — bootstrap.ts's own doc comment
-  // on installDiarization() confirms every rejection message is already
-  // a BARE zh phrase (external-mode, not-HEALTHY, the shared-latch busy
-  // message, or a run_uv non-zero exit — S5 review pair Finding 3 made
-  // the exit-code case bare too, dropping its own baked-in "安装说话人
-  // 分离扩展失败" prefix, which used to double up with the one this toast
-  // adds below), same as handleReprovisionDesktop's identical
-  // `err.message` toast posture just above.
+  // v0.4 S5 chunk 3 (blueprint decisions A/B), S10 field-fix #6
+  // jobsBridge swap (wave 2): 说话人分离 安装扩展 — an IMMEDIATE action
+  // (like 重新运行安装向导/下载并切换 above), never routed through
+  // patch()/draft/保存. DISPATCHES the install as a "diar-install"
+  // registry task and returns immediately — TaskCenterDrawer/TaskTray
+  // own its progress/success/failure from here on (installingDiarization
+  // above already derives from this same task id; jobsBridge.
+  // trackInstallDiar's own success handler re-probes the sidecar and
+  // mirrors sidecarUp into the store, decision C's "the running server
+  // is the truth" posture). This dialog's own diarizationInstalled/
+  // HF-token UI simply catches up next time this section becomes
+  // relevant again (dialog reopen, or a manual 检测状态/重新检测 click),
+  // same as installedModel's own dialog-reopen-refresh posture above.
   const handleInstallDiarization = async () => {
-    setInstallingDiarization(true);
-    setDiarizationInstallLog([]);
-    try {
-      const handle = await initDesktop();
-      const unsubscribe = handle.log$((line) => {
-        setDiarizationInstallLog((prev) => {
-          const next = [...prev, line];
-          return next.length > DIAR_INSTALL_LOG_LINES
-            ? next.slice(next.length - DIAR_INSTALL_LOG_LINES)
-            : next;
-        });
-      });
-      try {
-        await handle.installDiarization();
-      } finally {
-        unsubscribe();
-      }
-      showToast("说话人分离扩展安装完成");
-      const health = await fetchSidecarHealth(draft);
-      setDiarizationInstalled(health?.diarization_installed);
-    } catch (err) {
-      showToast(err instanceof Error ? `安装说话人分离扩展失败：${err.message}` : "安装说话人分离扩展失败");
-    } finally {
-      setInstallingDiarization(false);
-    }
+    const handle = await initDesktop();
+    const id = trackInstallDiar(handle);
+    setDiarInstallTaskId(id);
+    showToast("已开始安装说话人分离扩展，进度见右下角「后台任务」");
   };
 
   const handleCheckDiarizationStatus = async () => {
@@ -1568,14 +1584,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 {!sidecarStatus?.up && (
                   <div className="text-xs leading-[1.7] text-mut2">
                     需要本地 Whisper sidecar——见{" "}
-                    <a
-                      href="https://github.com/mianaz/jargonslayer#readme"
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://github.com/mianaz/jargonslayer#readme")}
                       className="text-lab-cyan underline decoration-lab-cyan/40"
                     >
                       README「本地版安装」
-                    </a>
+                    </button>
                   </div>
                 )}
               </div>
@@ -1769,12 +1784,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     {modelPickerOpen && (
                       <div className="space-y-2 border border-edge bg-panel2 p-3">
                         <ModelPicker value={pickedModel} onChange={setPickedModel} />
-                        {switchModelStatusText && (
-                          <div className="text-xs text-lab-cyan">{switchModelStatusText}</div>
-                        )}
-                        {switchModelError && (
-                          <div className="text-xs text-warn-soft">{switchModelError}</div>
-                        )}
                         <div className="flex flex-wrap items-center gap-2">
                           <button
                             type="button"
@@ -1885,11 +1894,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                Settings-only affordance, never a first-run wizard step —
                desktop-managed only, mirroring the SAME IS_DESKTOP &&
                sidecarMode==="managed" gate the 转录引擎 托管模式 block
-               above uses). diarizationInstalled/installingDiarization/
-               diarizationInstallLog are this dialog's own state (see
-               their declarations above); handleInstallDiarization drives
-               handle.installDiarization(). Deliberately placed ahead of
-               the pre-existing HF Token field below (kept EXACTLY as-is,
+               above uses). diarizationInstalled/installingDiarization are
+               this dialog's own state (see their declarations above);
+               handleInstallDiarization DISPATCHES handle.
+               installDiarization() as a registry task (S10 field-fix #6
+               jobsBridge swap) — TaskCenterDrawer/TaskTray own its
+               progress from here on. Deliberately placed ahead of the
+               pre-existing HF Token field below (kept EXACTLY as-is,
                decision E) — installing the runtime is the precondition
                token/license setup is otherwise meaningless without. */}
             {IS_DESKTOP && draft.sidecarMode === "managed" && (
@@ -1922,16 +1933,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       {installingDiarization ? "安装中…" : "安装扩展（约 1–1.5 GB · 需几分钟）"}
                     </button>
                     {installingDiarization && (
-                      <div className="border border-edge bg-panel p-2 font-mono text-[11px] leading-[1.6] text-mut2">
-                        {diarizationInstallLog.length === 0 ? (
-                          <div>等待输出…</div>
-                        ) : (
-                          diarizationInstallLog.map((l, i) => (
-                            <div key={i} className={l.stream === "stderr" ? "text-lab-orange" : undefined}>
-                              {l.line}
-                            </div>
-                          ))
-                        )}
+                      <div className="text-xs leading-[1.7] text-mut2">
+                        安装中，进度见右下角「后台任务」
                       </div>
                     )}
                   </>
@@ -1982,35 +1985,32 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <ol className="space-y-2 text-xs leading-[1.7] text-mut">
                   <li>
                     <span className="font-mono text-fg">①</span> 注册{" "}
-                    <a
-                      href="https://huggingface.co/settings/tokens"
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://huggingface.co/settings/tokens")}
                       className="text-lab-cyan underline decoration-lab-cyan/40"
                     >
                       huggingface.co
-                    </a>{" "}
+                    </button>{" "}
                     并在 Settings → Access Tokens 创建一个 Read token
                   </li>
                   <li>
                     <span className="font-mono text-fg">②</span> 分别打开并接受两个模型的使用条款：
-                    <a
-                      href="https://huggingface.co/pyannote/segmentation-3.0"
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://huggingface.co/pyannote/segmentation-3.0")}
                       className="text-lab-cyan underline decoration-lab-cyan/40"
                     >
                       pyannote/segmentation-3.0
-                    </a>{" "}
+                    </button>{" "}
                     与{" "}
-                    <a
-                      href="https://huggingface.co/pyannote/speaker-diarization-3.1"
-                      target="_blank"
-                      rel="noreferrer"
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://huggingface.co/pyannote/speaker-diarization-3.1")}
                       className="text-lab-cyan underline decoration-lab-cyan/40"
                     >
                       pyannote/speaker-diarization-3.1
-                    </a>
+                    </button>
                     （不接受会得到 403）
                   </li>
                   <li>
@@ -2111,6 +2111,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   presets={PROVIDER_PRESETS}
                   disabled={PREVIEW_TIER}
                   onConnectOpenRouter={() => void handleConnectOpenRouter()}
+                  connectingOpenRouter={connectingOpenRouter}
                   models={[
                     {
                       key: "detect",
@@ -2139,6 +2140,29 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     },
                   ]}
                 />
+
+                {/* Desktop OAuth failure hint (S10 field-fix, Chunk A
+                   wave-2 wiring): mirrors OnboardingByokStep.tsx's own
+                   oauthHint block verbatim — one-line zh reason
+                   (describeOAuthFailure, components/desktop/
+                   onboardingSettings.ts, no duplicated failure labels)
+                   plus a link pointing at the API Key field right below
+                   this. Web build never sets this (handleConnectOpenRouter
+                   full-page-redirects there instead — see that
+                   handler's own doc comment), so this renders nothing
+                   on web regardless of PREVIEW_TIER/disabled state. */}
+                {openRouterOauthHint && (
+                  <div className="space-y-1.5 border border-warn-soft/40 bg-panel2 p-2.5 text-xs leading-[1.7] text-warn-soft">
+                    <div>{openRouterOauthHint}</div>
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://openrouter.ai/keys")}
+                      className="btn-tactile text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      前往 openrouter.ai/keys 创建 Key
+                    </button>
+                  </div>
+                )}
 
                 <button
                   type="button"
@@ -2717,14 +2741,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <div className="space-y-2 border-t border-edge pt-3">
               <div className="flex items-center justify-between">
                 <div className="text-xs text-mut">诊断信息 · 共 {diagEntries.length} 条</div>
-                <a
-                  href="https://github.com/mianaz/jargonslayer/issues"
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
+                  onClick={() => void openExternal("https://github.com/mianaz/jargonslayer/issues")}
                   className="text-xs text-act hover:underline"
                 >
                   提交 Issue ↗
-                </a>
+                </button>
               </div>
 
               <div className="max-h-40 space-y-1 overflow-y-auto border border-edge bg-panel2 p-2 font-mono text-xs">
