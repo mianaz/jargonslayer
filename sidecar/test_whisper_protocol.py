@@ -60,6 +60,8 @@ Covers (protocol v2, see whisper_server.py's own module docstring):
     staying "unavailable" forever; a SUCCEEDED load stays cached
     exactly as before (the loader runs exactly once across repeated
     get() calls)
+  - lag_ms (S10 field-fix #5): both partial and final messages carry
+    the _transcribe call's own wall-time in milliseconds
 """
 
 from __future__ import annotations
@@ -67,6 +69,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -700,6 +703,67 @@ async def test_finalize_queue_preserves_send_order() -> None:
 
 
 # =================================================================
+# lag_ms (S10 field-fix #5): both partial and final messages carry the
+# _transcribe call's own wall-time in ms — wraps the SAME
+# asyncio.to_thread(self._transcribe, ...) call every other test above
+# already exercises, not a separate code path. Stub sleeps a small,
+# deterministic amount (in the to_thread worker thread, so it never
+# blocks the event loop) so lag_ms is asserted against a real lower
+# bound rather than just "some number".
+# =================================================================
+
+
+async def test_partial_carries_lag_ms() -> None:
+    def slow_stub(audio: np.ndarray, language: str) -> str:
+        time.sleep(0.02)
+        return "partial text"
+
+    server = make_server()
+    server._transcribe = slow_stub  # type: ignore[method-assign]
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    state.speech_buf = [speech_frame()]
+
+    server._emit_partial(ws, state)
+    await wait_until(lambda: not state.partial_in_flight)
+
+    check("partial lag_ms: exactly one partial sent", len(ws.sent) == 1)
+    lag_ms = ws.sent[0].get("lag_ms")
+    check("partial lag_ms: present and numeric", isinstance(lag_ms, (int, float)))
+    check(
+        f"partial lag_ms ({lag_ms!r}): reflects the stub's own ~20ms delay",
+        isinstance(lag_ms, (int, float)) and lag_ms >= 15,
+    )
+
+
+async def test_final_carries_lag_ms() -> None:
+    def slow_stub(audio: np.ndarray, language: str) -> str:
+        time.sleep(0.02)
+        return "final text"
+
+    server = make_server()
+    server._transcribe = slow_stub  # type: ignore[method-assign]
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    consumer = await start_consumer(server, ws, state)
+    try:
+        mark_pending_speech(state)
+        await server._finalize_segment(ws, state, force=True)
+        await asyncio.wait_for(state.finalize_queue.join(), timeout=2.0)
+
+        finals = [m for m in ws.sent if m["type"] == "final"]
+        check("final lag_ms: exactly one final sent", len(finals) == 1)
+        lag_ms = finals[0].get("lag_ms")
+        check("final lag_ms: present and numeric", isinstance(lag_ms, (int, float)))
+        check(
+            f"final lag_ms ({lag_ms!r}): reflects the stub's own ~20ms delay",
+            isinstance(lag_ms, (int, float)) and lag_ms >= 15,
+        )
+    finally:
+        await stop_consumer(consumer)
+
+
+# =================================================================
 # diarization_probe (S5 decision C) — import-first ordering, three
 # orthogonal (installed, ready, error) facts. pyannote's presence is
 # faked via sys.modules — NEVER a real pyannote install: this dev
@@ -978,6 +1042,8 @@ ASYNC_TESTS = [
     test_partial_skipped_while_finalize_queue_nonempty,
     test_seg_id_monotonic_with_empty_gap,
     test_finalize_queue_preserves_send_order,
+    test_partial_carries_lag_ms,
+    test_final_carries_lag_ms,
 ]
 
 

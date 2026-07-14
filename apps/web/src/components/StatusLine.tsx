@@ -8,6 +8,7 @@
 
 import { useApp } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { useLatencyStats } from "@/lib/stt/latencyStats";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
 
@@ -16,7 +17,7 @@ const ENGINE_POSTURE: Record<string, "local" | "cloud"> = {
   whisper: "local",
   tabaudio: "local",
   // S9/D7: desktop-only CoreAudio process tap — audio goes only to the
-  // local Whisper sidecar (same 音频未离开本机 chip whisper/tabaudio
+  // local Whisper sidecar (same 音频在本地处理 chip whisper/tabaudio
   // already carry), never leaving this Mac.
   appaudio: "local",
   demo: "local",
@@ -28,7 +29,22 @@ const DETECT_MODE_LABEL: Record<string, string> = {
   off: "检测关闭",
 };
 
-export default function StatusLine() {
+// S10 field-fix #5: engines whose transcription actually flows through
+// wsTransport.ts (the ONE lag_ms producer, via the local Whisper
+// sidecar) — mirrors sidecarDownHint's own identical three-way gate
+// just below, which already established "these are the sidecar-backed
+// engines" for this exact file.
+const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
+
+// Sustained-latency threshold (#5: "延迟 ~Ns" once it stays above this)
+// — matches the blueprint's own >2s example verbatim.
+const LATENCY_CHIP_THRESHOLD_MS = 2000;
+
+export interface StatusLineProps {
+  onOpenTaskCenter: () => void;
+}
+
+export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   const status = useApp((s) => s.status);
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
@@ -40,6 +56,7 @@ export default function StatusLine() {
   const sidecarUp = useApp((s) => s.sidecarUp);
   const updateSettings = useApp((s) => s.updateSettings);
   const setDetectMode = useApp((s) => s.setDetectMode);
+  const lagMs = useLatencyStats((s) => s.lagMs);
 
   const isListening = status === "listening";
   const isPaused = status === "paused";
@@ -82,9 +99,9 @@ export default function StatusLine() {
       ? "local"
       : (ENGINE_POSTURE[engine] ?? "local");
   const privacyLabel =
-    posture === "local" ? "音频未离开本机" : "音频将经过浏览器厂商云端识别";
+    posture === "local" ? "音频在本地处理" : "音频将经过浏览器厂商云端识别";
   const privacyLabelShort =
-    posture === "local" ? "音频未离开本机" : "音频将经厂商云端";
+    posture === "local" ? "音频在本地处理" : "音频将经厂商云端";
   // Sidecar-down hint (owner ask 2026-07-11): the selected engine needs
   // the local sidecar, nothing is currently running (an active meeting
   // already proves the engine works — never override a live/paused
@@ -164,6 +181,23 @@ export default function StatusLine() {
         <span className="hidden sm:inline">{privacyLabel}</span>
         <span className="sm:hidden">{privacyLabelShort}</span>
       </span>
+      {/* S10 field-fix #5: compact caution chip, hidden whenever
+          healthy/null/not-listening/not-local-whisper — see the inline
+          condition's own doc comment above. Wave 2 note: the incoming
+          engine dropdown (extracted from Header.tsx's ENGINE_OPTIONS)
+          slots into this bar too — right here, between the privacy
+          segment and this chip, reads most naturally (STT posture/
+          health cluster together left-to-right); this row's existing
+          `hidden sm:inline` / short-label fallbacks already leave the
+          pattern to add one more compact <sm-collapsing control. */}
+      {isListening && LOCAL_WHISPER_ENGINES.has(engine) && lagMs !== null && lagMs > LATENCY_CHIP_THRESHOLD_MS && (
+        <span
+          data-testid="statusline-latency-chip"
+          className="whitespace-nowrap px-2 text-lab-yellow sm:px-3"
+        >
+          延迟 ~{Math.round(lagMs / 1000)}s
+        </span>
+      )}
       {/* count hidden <sm: it also lives in the cards tab header, and
           Bit outranks it for the remaining phone-width pixels. */}
       <span className="ml-auto hidden whitespace-nowrap px-3 tabular-nums sm:inline">
@@ -174,10 +208,12 @@ export default function StatusLine() {
           for import progress/errors on mobile (the drawer's own inline
           job rows require opening 历史 first), so it stays visible
           below sm too; TaskTray itself keeps its own compact-chip
-          discipline (icon+count, sm:hidden icon) and gives its popover
-          a phone-safe width. */}
+          discipline (icon+count, sm:hidden icon). S10: its own popover
+          is gone — onOpen (threaded from page.tsx) now opens
+          TaskCenterDrawer instead, the same drawer a desktop Header
+          launcher will open in wave 2. */}
       <span className="flex h-full items-center">
-        <TaskTray />
+        <TaskTray onOpen={onOpenTaskCenter} />
       </span>
       <span
         id="mascot-perch"

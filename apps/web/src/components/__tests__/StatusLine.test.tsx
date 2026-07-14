@@ -13,6 +13,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
+import { useLatencyStats } from "../../lib/stt/latencyStats";
 import StatusLine from "../StatusLine";
 
 describe("StatusLine — detect-mode toggle", () => {
@@ -63,7 +64,7 @@ describe("StatusLine — detect-mode toggle", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     const toggle = container!.querySelector('[data-testid="statusline-detect-toggle"]');
@@ -95,7 +96,7 @@ describe("StatusLine — detect-mode toggle", () => {
     useApp.setState({ detectMode: "off" });
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(container!.querySelector('[data-testid="statusline-detect-toggle"]')).toBeNull();
@@ -171,7 +172,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("本地 Whisper sidecar 未连接——见 设置 → 转录引擎");
@@ -185,7 +186,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).not.toBe("");
@@ -199,7 +200,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).not.toBe("");
@@ -213,7 +214,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -227,7 +228,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -241,7 +242,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -255,7 +256,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().title).toBe("");
@@ -265,7 +266,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
 // ---------------------------------------------------------------
 // On-device Web Speech privacy posture (docs/research/
 // stt-live-engines-2026-07.md item #1): the privacy segment shows the
-// same green "音频未离开本机" posture whisper/tabaudio use whenever the
+// same green "音频在本地处理" posture whisper/tabaudio use whenever the
 // ACTIVE webspeech session reported on-device mode
 // (store.sttEngineMode, written by useMeeting.ts's onEngineMode
 // handler) — instead of the default amber cloud warning webspeech
@@ -327,10 +328,10 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频未离开本机");
+    expect(privacySegment().textContent).toContain("音频在本地处理");
     expect(privacySegment().className).toContain("text-lab-green");
     expect(privacySegment().className).not.toContain("text-warn-soft");
   });
@@ -343,7 +344,7 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
@@ -358,7 +359,7 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
@@ -373,13 +374,137 @@ describe("StatusLine — on-device privacy posture", () => {
     }));
     renderStatusLine();
     await act(async () => {
-      root!.render(<StatusLine />);
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
     // Still green (whisper's own posture is local) — but via
     // ENGINE_POSTURE, not the stale on-device flag; the point is this
     // doesn't crash/misbehave for a non-webspeech engine.
-    expect(privacySegment().textContent).toContain("音频未离开本机");
+    expect(privacySegment().textContent).toContain("音频在本地处理");
     expect(privacySegment().className).toContain("text-lab-green");
+  });
+});
+
+// ---------------------------------------------------------------
+// S10 field-fix #5: 延迟 chip — sustained (not momentary) local-Whisper
+// transcribe latency, hidden whenever healthy/null/not-listening/not-
+// local-whisper. lagMs comes from lib/stt/latencyStats.ts (fed by
+// wsTransport.ts's own lag_ms passthrough — untested here, that
+// wiring's own coverage lives in wsTransport.test.ts).
+// ---------------------------------------------------------------
+
+describe("StatusLine — 延迟 (sustained latency) chip", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: { ...s.settings, engine: "demo" },
+    }));
+    useLatencyStats.setState({ lagMs: null });
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function chip(): Element | null {
+    return container!.querySelector('[data-testid="statusline-latency-chip"]');
+  }
+
+  it("shows once lagMs stays above the 2000ms threshold, while listening on whisper", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: 3200 });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).not.toBeNull();
+    expect(chip()!.textContent).toBe("延迟 ~3s");
+  });
+
+  it("hidden when lagMs is null (no sample yet)", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: null });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden at/under the threshold — a healthy reading never shows the chip", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: 2000 });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden while not listening (e.g. paused), even with a high lagMs left over", async () => {
+    useApp.setState((s) => ({ status: "paused", settings: { ...s.settings, engine: "whisper" } }));
+    useLatencyStats.setState({ lagMs: 5000 });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("hidden for engines that never route through the local Whisper sidecar (e.g. webspeech), even with a high lagMs somehow set", async () => {
+    useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine: "webspeech" } }));
+    useLatencyStats.setState({ lagMs: 5000 });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip()).toBeNull();
+  });
+
+  it("shows for tabaudio and appaudio too — every engine that actually flows through wsTransport.ts", async () => {
+    for (const engine of ["tabaudio", "appaudio"] as const) {
+      useApp.setState((s) => ({ status: "listening", settings: { ...s.settings, engine } }));
+      useLatencyStats.setState({ lagMs: 4000 });
+      renderStatusLine();
+      await act(async () => {
+        root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+      });
+      expect(chip()).not.toBeNull();
+      act(() => root!.unmount());
+      container!.remove();
+      container = null;
+      root = null;
+    }
   });
 });

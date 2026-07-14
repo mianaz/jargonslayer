@@ -13,6 +13,7 @@ import CardsPanel from "@/components/CardsPanel";
 import SummaryPanel from "@/components/SummaryPanel";
 import GlossaryPanel from "@/components/GlossaryPanel";
 import HistoryDrawer from "@/components/HistoryDrawer";
+import TaskCenterDrawer from "@/components/TaskCenterDrawer";
 import ImportHub from "@/components/ImportHub";
 import SettingsDialog from "@/components/SettingsDialog";
 import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverlay";
@@ -67,6 +68,11 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // S10 field-fix #6 (Q2 verdict): TaskCenterDrawer's own open state,
+  // same "lifted to page.tsx" posture as historyOpen/settingsOpen above
+  // — StatusLine's TaskTray chip (threaded down as onOpenTaskCenter)
+  // opens it; wave 2 adds a desktop Header launcher for the same state.
+  const [taskCenterOpen, setTaskCenterOpen] = useState(false);
   // #62 item 2: lifted here (not owned by HistoryDrawer) so Header's
   // 导入 pill (desktop peer of the engine pills + mobile icon button)
   // and HistoryDrawer's own 导入 button open the exact same ImportHub
@@ -245,7 +251,7 @@ export default function Home() {
         )}
       </main>
 
-      <StatusLine />
+      <StatusLine onOpenTaskCenter={() => setTaskCenterOpen(true)} />
 
       {focusMode && (
         <button
@@ -263,6 +269,7 @@ export default function Home() {
         onClose={() => setHistoryOpen(false)}
         onOpenImport={() => setImportHubOpen(true)}
       />
+      <TaskCenterDrawer open={taskCenterOpen} onClose={() => setTaskCenterOpen(false)} />
       <ImportHub open={importHubOpen} onClose={() => setImportHubOpen(false)} />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <TutorialOverlay

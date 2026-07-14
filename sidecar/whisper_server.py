@@ -48,10 +48,17 @@ Protocol v2 (per connection):
       no fresh seg_id namespace. See TabAudioEngine.pause()/resume().
     - binary frame: 16kHz mono int16 PCM chunks
   Server -> Client:
-    - text frame: JSON {"type": "partial", "text": "..."}      (optional)
+    - text frame: JSON {"type": "partial", "text": "...",
+                         "lag_ms": <int>}      (optional)
     - text frame: JSON {"type": "final", "text": "...",
                          "start": <seconds>, "end": <seconds>,
-                         "seg_id": <int>}
+                         "seg_id": <int>, "lag_ms": <int>}
+      "lag_ms" on both (S10 field-fix #5): this ONE inference call's own
+      wall-time in milliseconds (time.monotonic() around the
+      asyncio.to_thread(self._transcribe, ...) call — see _run_partial/
+      _consume_finalize_queue below), for the client's sustained-latency
+      indicator. Not a queueing/network delay measurement, just the
+      transcribe call itself.
     - text frame: JSON {"type": "stopped"} — drain-ack for a "stop"
       (see above); never sent for any other reason.
     - text frame: JSON {"type": "speaker_update", "gen": <int>,
@@ -832,13 +839,17 @@ class WhisperServer:
             if audio.shape[0] > tail_samples:
                 audio = audio[-tail_samples:]
             try:
+                t0 = time.monotonic()
                 text = await asyncio.to_thread(self._transcribe, audio, state.language)
+                lag_ms = round((time.monotonic() - t0) * 1000)
             except Exception as exc:  # noqa: BLE001 - a partial preview is best-effort;
                 # never worth tearing down the connection over.
                 print(f"[whisper_server] partial transcription failed: {exc}")
                 return
             if text:
-                await self._safe_send(ws, state, {"type": "partial", "text": text})
+                await self._safe_send(
+                    ws, state, {"type": "partial", "text": text, "lag_ms": lag_ms}
+                )
         finally:
             state.partial_in_flight = False
 
@@ -913,7 +924,9 @@ class WhisperServer:
                 await self._finalize_diar_then_close(ws, state)
                 return
             try:
+                t0 = time.monotonic()
                 text = await asyncio.to_thread(self._transcribe, job.audio, state.language)
+                lag_ms = round((time.monotonic() - t0) * 1000)
             except Exception as exc:  # noqa: BLE001 - one bad segment must never
                 # permanently stop every later final on this connection —
                 # the whole point of decoupling this consumer from the
@@ -937,6 +950,7 @@ class WhisperServer:
                     "start": job.t0,
                     "end": job.t1,
                     "seg_id": job.seg_id,
+                    "lag_ms": lag_ms,
                 },
             )
             self._maybe_trigger_realtime_diar(ws, state)

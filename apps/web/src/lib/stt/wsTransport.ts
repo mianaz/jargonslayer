@@ -12,6 +12,7 @@
 
 import type { STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
+import { pushLagSample } from "./latencyStats";
 
 const RECONNECT_DELAY_MS = 1000;
 
@@ -43,6 +44,10 @@ type DrainReason = "ack" | "timeout" | "closed";
 interface PartialMessage {
   type: "partial";
   text: string;
+  // S10 field-fix #5: per-inference transcribe wall-time in ms, when
+  // the sidecar sends one (additive/optional — absent on an older
+  // server build). See latencyStats.ts's own pushLagSample.
+  lag_ms?: number;
 }
 interface FinalMessage {
   type: "final";
@@ -50,6 +55,7 @@ interface FinalMessage {
   start?: number;
   end?: number;
   seg_id?: number;
+  lag_ms?: number;
 }
 // STT protocol v2: drain ack for a {"type":"stop"} — see stop() below.
 interface StoppedMessage {
@@ -316,7 +322,11 @@ export class WsTransport {
       // fully torn down by this point, so nothing else is meaningful.
       if (this.lingering && msg.type !== "speaker_update") return;
       if (msg.type === "partial") {
-        events.onInterim((msg as PartialMessage).text);
+        const partial = msg as PartialMessage;
+        events.onInterim(partial.text);
+        // S10 field-fix #5: additive passthrough only — absent/non-
+        // finite lag_ms (older sidecar build) is silently ignored.
+        if (Number.isFinite(partial.lag_ms)) pushLagSample(partial.lag_ms as number);
       } else if (msg.type === "final") {
         const final = msg as FinalMessage;
         events.onFinal(final.text, {
@@ -326,6 +336,7 @@ export class WsTransport {
           // with no seg_id at all).
           sttSeg: final.seg_id !== undefined ? this.mapSegId(final.seg_id) : undefined,
         });
+        if (Number.isFinite(final.lag_ms)) pushLagSample(final.lag_ms as number);
       } else if (msg.type === "stopped") {
         // Drain ack for stop()'s wait — see stop() below. Resolving
         // here (rather than closing anything) is exactly why onmessage

@@ -23,7 +23,19 @@ import { useApp } from "../store";
 import { postTaskWebhook } from "../history/autoExport";
 import { diagLog } from "../diag/log";
 
-export type TaskKind = "import-audio" | "import-video" | "import-url" | "import-text";
+// S10 field-fix #6: "model-download"/"diar-install" extend the same
+// registry rather than forking a second one — jobsBridge.ts's
+// trackSwitchModel/trackInstallDiar are these two kinds' only writers
+// (desktop-only; never produced on a web build). Every exhaustive
+// Record<TaskKind,…>/switch over this type repo-wide (grepped at S10
+// time: only TaskTray.tsx's KIND_LABEL) must cover both.
+export type TaskKind =
+  | "import-audio"
+  | "import-video"
+  | "import-url"
+  | "import-text"
+  | "model-download"
+  | "diar-install";
 export type TaskStatus = "running" | "done" | "error";
 
 export interface TaskState {
