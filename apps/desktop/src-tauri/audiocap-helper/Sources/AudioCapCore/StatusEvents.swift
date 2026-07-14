@@ -31,6 +31,19 @@ public enum StatusEvents {
         /// .droppedFrameCount's own doc comment), distinct from
         /// `overflows`' rejected-CALLBACK count.
         let droppedFrames: UInt64
+        /// S9 live-failure investigation — maximum absolute sample
+        /// value (PeakMeter.maxAbsoluteSample) seen since SESSION START
+        /// (Writer's own running `peak`), never reset. Rounded to 3
+        /// decimals (`round3` below) — plenty of precision for "is this
+        /// tap capturing real audio or digital silence", not meant as
+        /// an exact metering value.
+        let peak: Double
+        /// Same scan, but since the LAST stats emission only (Writer's
+        /// own `windowPeak`, reset by the caller right after each
+        /// emission) — lets a log reader see a recent silence window
+        /// even in an otherwise loud session (`peak` alone can't: it
+        /// only ever goes up).
+        let windowPeak: Double
     }
 
     /// Freeform informational status (still `type:"status"`, one
@@ -59,8 +72,30 @@ public enum StatusEvents {
         emit(ErrorRecord(code: error.code, message: error.message))
     }
 
-    public static func emitStats(overflows: UInt64, ringHighWater: UInt64, framesOut: UInt64, droppedFrames: UInt64) {
-        emit(StatsRecord(overflows: overflows, ringHighWater: ringHighWater, framesOut: framesOut, droppedFrames: droppedFrames))
+    public static func emitStats(
+        overflows: UInt64,
+        ringHighWater: UInt64,
+        framesOut: UInt64,
+        droppedFrames: UInt64,
+        peak: Float,
+        windowPeak: Float
+    ) {
+        emit(StatsRecord(
+            overflows: overflows,
+            ringHighWater: ringHighWater,
+            framesOut: framesOut,
+            droppedFrames: droppedFrames,
+            peak: round3(peak),
+            windowPeak: round3(windowPeak)
+        ))
+    }
+
+    /// Rounds to 3 decimal places ("floats rounded to 3 decimals is
+    /// fine" — this is a diagnostic amplitude readout, not a metering
+    /// value) — applied once, right before encoding, so `StatsRecord`
+    /// itself always carries the exact wire-ready value.
+    private static func round3(_ value: Float) -> Double {
+        (Double(value) * 1000).rounded() / 1000
     }
 
     private static func emit(_ record: some Encodable) {
