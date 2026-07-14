@@ -21,9 +21,10 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 
-const { updateSettings, connectOpenRouterDesktop, openExternal } = vi.hoisted(() => ({
+const { updateSettings, connectOpenRouterDesktop, cancelOpenRouterConnect, openExternal } = vi.hoisted(() => ({
   updateSettings: vi.fn(),
   connectOpenRouterDesktop: vi.fn(),
+  cancelOpenRouterConnect: vi.fn(),
   openExternal: vi.fn(),
 }));
 
@@ -31,7 +32,7 @@ vi.mock("@/lib/store", () => ({
   useApp: (selector: (s: { updateSettings: typeof updateSettings }) => unknown) =>
     selector({ updateSettings }),
 }));
-vi.mock("@/lib/oauth/openrouterDesktop", () => ({ connectOpenRouterDesktop }));
+vi.mock("@/lib/oauth/openrouterDesktop", () => ({ connectOpenRouterDesktop, cancelOpenRouterConnect }));
 vi.mock("@/lib/platform/openExternal", () => ({ openExternal }));
 
 import OnboardingByokStep from "../OnboardingByokStep";
@@ -186,5 +187,116 @@ describe("OnboardingByokStep", () => {
       resolveConnect({ ok: true });
     });
     expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  // F4 (HIGH, adversarial review): cancelledRef above only stops THIS
+  // component reacting to a stale OAuth resolution — it does nothing
+  // to stop connectOpenRouterDesktop's own promise from running to
+  // completion (and, pre-F3, writing settings) after the user has
+  // already moved on via paste-save or skip. cancelOpenRouterConnect
+  // (F3's export) must be called at every one of those exit points so
+  // the underlying attempt itself is told to stop.
+  describe("cancelOpenRouterConnect wiring (F4)", () => {
+    it("跳过 calls cancelOpenRouterConnect() before onNext", async () => {
+      const order: string[] = [];
+      cancelOpenRouterConnect.mockImplementation(() => order.push("cancel"));
+      const onNext = vi.fn(() => order.push("onNext"));
+      await mount(onNext);
+
+      await act(async () => {
+        container!.querySelector('[data-testid="btn-onboarding-byok-skip"]')!.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      expect(cancelOpenRouterConnect).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["cancel", "onNext"]);
+    });
+
+    it("保存并继续 calls cancelOpenRouterConnect() before writing settings", async () => {
+      const order: string[] = [];
+      cancelOpenRouterConnect.mockImplementation(() => order.push("cancel"));
+      updateSettings.mockImplementation(() => order.push("updateSettings"));
+      const onNext = vi.fn();
+      await mount(onNext);
+
+      const input = container!.querySelector('[data-testid="input-onboarding-byok-key"]') as HTMLInputElement;
+      await act(async () => {
+        typeInto(input, "sk-or-abc123");
+      });
+      await act(async () => {
+        container!.querySelector('[data-testid="btn-onboarding-save-key"]')!.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      expect(cancelOpenRouterConnect).toHaveBeenCalledTimes(1);
+      expect(order).toEqual(["cancel", "updateSettings"]);
+    });
+
+    it("unmounting calls cancelOpenRouterConnect(), aborting whatever OAuth attempt is still in flight", async () => {
+      connectOpenRouterDesktop.mockReturnValue(new Promise(() => {})); // never resolves in this test
+      const onNext = vi.fn();
+      await mount(onNext);
+
+      await act(async () => {
+        container!.querySelector('[data-testid="btn-onboarding-oauth"]')!.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      await act(async () => {
+        root!.unmount();
+      });
+      root = null;
+
+      expect(cancelOpenRouterConnect).toHaveBeenCalledTimes(1);
+    });
+
+    it("pasting and saving while an OAuth attempt is in flight cancels it — the pasted key is the ONE settings write, never clobbered by the cancelled attempt", async () => {
+      let resolveConnect!: (v: { ok: false; reason: "cancelled" }) => void;
+      connectOpenRouterDesktop.mockReturnValue(
+        new Promise((resolve) => {
+          resolveConnect = resolve;
+        }),
+      );
+      // Mirrors F3's real, independently-tested contract
+      // (openrouterDesktop.test.ts's own "cancelOpenRouterConnect"
+      // describe block): calling cancelOpenRouterConnect() settles the
+      // in-flight attempt's OWN promise as {ok:false,
+      // reason:"cancelled"} — simulated here since connectOpenRouterDesktop
+      // itself is mocked at this component layer.
+      cancelOpenRouterConnect.mockImplementation(() => resolveConnect({ ok: false, reason: "cancelled" }));
+
+      const onNext = vi.fn();
+      await mount(onNext);
+
+      await act(async () => {
+        container!.querySelector('[data-testid="btn-onboarding-oauth"]')!.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      const input = container!.querySelector('[data-testid="input-onboarding-byok-key"]') as HTMLInputElement;
+      await act(async () => {
+        typeInto(input, "sk-or-pasted");
+      });
+      await act(async () => {
+        container!.querySelector('[data-testid="btn-onboarding-save-key"]')!.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+      });
+
+      expect(cancelOpenRouterConnect).toHaveBeenCalledTimes(1);
+      // The pasted key is the only write — never overwritten by the
+      // now-cancelled OAuth attempt settling out from under it.
+      expect(updateSettings).toHaveBeenCalledTimes(1);
+      expect(updateSettings).toHaveBeenCalledWith({
+        provider: "openai-compat",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "sk-or-pasted",
+      });
+      expect(onNext).toHaveBeenCalledTimes(1);
+    });
   });
 });

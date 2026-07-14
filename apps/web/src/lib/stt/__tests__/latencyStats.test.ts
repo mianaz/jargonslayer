@@ -54,3 +54,108 @@ describe("latencyStats — smoothed lag_ms (S10 field-fix #5)", () => {
     expect(useLatencyStats.getState().lagMs).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------
+// S10 field-fix #8 (LOW, adversarial review): `sustained` — a
+// hysteresis-gated ON/OFF signal StatusLine reads directly (stays
+// dumb, no threshold of its own). ON only once the SMOOTHED lagMs has
+// read above 2000ms for 3 CONSECUTIVE pushes; OFF as soon as it dips
+// below 1200ms (one sample, no counting on the way down); holds
+// whatever it last was in between (the dead zone) — this is what stops
+// a value hovering near 2000ms from flipping the chip on every single
+// sample.
+// ---------------------------------------------------------------
+
+describe("latencyStats — sustained (S10 field-fix #8: hysteresis, no per-sample flapping)", () => {
+  beforeEach(() => {
+    resetLagStats();
+  });
+
+  it("starts false (no sample seen yet)", () => {
+    expect(useLatencyStats.getState().sustained).toBe(false);
+  });
+
+  it("stays false below the 2000ms ON threshold, however many samples arrive", () => {
+    for (let i = 0; i < 5; i++) pushLagSample(1500);
+    expect(useLatencyStats.getState().sustained).toBe(false);
+  });
+
+  it("turns true only after 3 consecutive smoothed samples above 2000ms, not sooner", () => {
+    pushLagSample(5000);
+    expect(useLatencyStats.getState().sustained).toBe(false);
+    pushLagSample(5000);
+    expect(useLatencyStats.getState().sustained).toBe(false);
+    pushLagSample(5000);
+    expect(useLatencyStats.getState().sustained).toBe(true);
+  });
+
+  it("a streak interrupted by a below-2000 smoothed reading resets the consecutive count", () => {
+    pushLagSample(5000);
+    pushLagSample(5000); // streak = 2, still not sustained
+    expect(useLatencyStats.getState().sustained).toBe(false);
+
+    // A single sharply-low sample so the SMOOTHED result drops below
+    // 2000 in exactly one step (a gently-decaying sample, e.g. 0,
+    // stays above 2000 for a couple more pushes first under EMA
+    // smoothing, which would confound this specific assertion).
+    pushLagSample(-6000);
+    expect(useLatencyStats.getState().lagMs).toBeLessThan(2000);
+    expect(useLatencyStats.getState().sustained).toBe(false); // dead zone/reset streak — holds false
+
+    pushLagSample(5000);
+    pushLagSample(5000);
+    // Only 2 consecutive-above-2000 samples since the reset — not yet 3.
+    expect(useLatencyStats.getState().sustained).toBe(false);
+  });
+
+  it("holds true through the 1200-2000ms dead zone during a descent, then flips false exactly once it crosses below 1200ms", () => {
+    pushLagSample(5000);
+    pushLagSample(5000);
+    pushLagSample(5000);
+    expect(useLatencyStats.getState().sustained).toBe(true);
+
+    let sawDeadZoneStillSustained = false;
+    for (let i = 0; i < 40; i++) {
+      pushLagSample(0);
+      const s = useLatencyStats.getState();
+      if (s.lagMs === null) continue;
+      if (s.lagMs >= 1200) {
+        // Never flips early, including the whole 1200-2000 dead zone.
+        expect(s.sustained).toBe(true);
+        if (s.lagMs < 2000) sawDeadZoneStillSustained = true;
+      } else {
+        expect(s.sustained).toBe(false);
+        break;
+      }
+    }
+    // Sanity check the loop actually passed through the dead zone
+    // rather than jumping straight past it.
+    expect(sawDeadZoneStillSustained).toBe(true);
+  });
+
+  it("the flap case: 2100/1900 alternating does not toggle sustained on every sample", () => {
+    const samples = [2100, 1900, 2100, 1900, 2100, 1900];
+    const trace: boolean[] = [];
+    for (const sample of samples) {
+      pushLagSample(sample);
+      trace.push(useLatencyStats.getState().sustained);
+    }
+    // The old single-threshold check flipped on every sample (up to 5
+    // flips across 6 pushes) — hysteresis must settle into a stable
+    // on/off state instead.
+    let flips = 0;
+    for (let i = 1; i < trace.length; i++) {
+      if (trace[i] !== trace[i - 1]) flips++;
+    }
+    expect(flips).toBeLessThanOrEqual(1);
+  });
+
+  it("resetLagStats also resets sustained back to false", () => {
+    pushLagSample(5000);
+    pushLagSample(5000);
+    pushLagSample(5000);
+    expect(useLatencyStats.getState().sustained).toBe(true);
+    resetLagStats();
+    expect(useLatencyStats.getState().sustained).toBe(false);
+  });
+});

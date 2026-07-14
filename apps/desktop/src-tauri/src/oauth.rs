@@ -15,12 +15,25 @@
 // own contract (bind address, port, event payload) is unaffected either
 // way.
 //
+// F13 (MEDIUM, adversarial review): the callback's own nonce moved from
+// a `?ns=` query param to a `/oauth/openrouter/{ns}` PATH segment (see
+// parse_callback's own doc comment below) — a provider's redirect
+// construction is free to rewrite/replace a callback_url's QUERY
+// string wholesale when appending its own `?code=`/`?error=`
+// (undocumented behavior either way, same category of open question as
+// the hostname item just above), but never touches the PATH portion of
+// a redirect_uri. This removes that query-retention ASSUMPTION the old
+// `?ns=` shape silently depended on — an independent concern from the
+// still-open hostname item above; this fix neither resolves nor
+// depends on that one either way.
+//
 // Deliberately minimal HTTP: this is a ONE-SHOT single-request receiver,
 // not a real server. Each accepted connection gets exactly one
 // `BufRead::read_line` (the request line only — headers/body are never
 // read, just left for the OS to discard once the socket closes) and one
 // fixed plain-text response; no persistent connections, no routing
-// beyond "does the query string carry a matching `ns`".
+// beyond "does the path carry the expected /oauth/openrouter/{ns}
+// prefix+nonce, and does the query string carry a `code`/`error`".
 //
 // Single-flight via a bare generation counter (mirrors audiocap.rs's own
 // AtomicU64-generation guard — see that file's AudiocapState doc comment
@@ -114,39 +127,90 @@ impl OauthState {
 
 // ---- pure request-line / query parsing (unit-tested directly) ----
 
+/// Every genuine callback target's path must start with this, followed
+/// immediately by the nonce as the next (and last) path segment — see
+/// `parse_callback`'s own doc comment for why the nonce lives in the
+/// PATH rather than a `?ns=` query param.
+const CALLBACK_PATH_PREFIX: &str = "/oauth/openrouter/";
+
 /// Parses an HTTP request line's target (`GET <target> HTTP/1.1`) and
 /// decides whether it's a genuine OpenRouter OAuth callback for THIS
 /// listener's own nonce. Pure — no I/O, no tauri types — the seam
 /// `handle_connection`'s single `read_line` result is fed through.
 ///
-/// `Some(payload)` only when the query string carries an `ns` that
-/// equals `expected_ns` AND at least one of `code`/`error` — anything
-/// else (wrong/missing `ns`, no `code`/`error` at all, a malformed or
-/// empty line) is `None`, which callers must treat as "not a match,
-/// keep listening" — never as an error in its own right.
+/// F13 (MEDIUM, adversarial review): the nonce is a PATH segment
+/// (`/oauth/openrouter/{ns}`), never a `?ns=` query param — the old
+/// query-param shape silently bet on OpenRouter's redirect PRESERVING
+/// an arbitrary query string on the callback_url when appending its
+/// own `?code=`/`?error=` (undocumented either way); a redirect's PATH
+/// is never rewritten that way, so this removes the bet entirely (see
+/// this module's own header comment). The nonce segment must be the
+/// path's LAST segment (an extra trailing slash — or anything else
+/// after it — is rejected, never guessed at: `ns` itself,
+/// generateCodeVerifier's RFC 7636 charset, never contains a `/`) and
+/// is percent-decoded (`percent_encoding`, NOT `url::form_urlencoded` —
+/// a path segment has no query-string `+`-means-space substitution)
+/// before comparing against `expected_ns`. `code`/`error` are still
+/// read from the query string OpenRouter itself appends.
+///
+/// `Some(payload)` only when the path's nonce segment, once decoded,
+/// equals `expected_ns` AND the query string carries at least one of
+/// `code`/`error` — anything else (wrong/missing/malformed nonce
+/// segment, no `code`/`error` at all, a malformed or empty line) is
+/// `None`, which callers must treat as "not a match, keep listening" —
+/// never as an error in its own right.
 fn parse_callback(request_line: &str, expected_ns: &str) -> Option<OauthCallbackPayload> {
     let target = request_line.split_whitespace().nth(1)?;
-    let query = target.split_once('?').map(|(_, q)| q).unwrap_or("");
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
 
-    let mut ns: Option<String> = None;
+    let raw_ns = path.strip_prefix(CALLBACK_PATH_PREFIX)?;
+    if raw_ns.is_empty() || raw_ns.contains('/') {
+        return None;
+    }
+    let ns = percent_encoding::percent_decode_str(raw_ns).decode_utf8_lossy();
+    if ns != expected_ns {
+        return None;
+    }
+
     let mut code: Option<String> = None;
     let mut error: Option<String> = None;
     for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
         match key.as_ref() {
-            "ns" => ns = Some(value.into_owned()),
             "code" => code = Some(value.into_owned()),
             "error" => error = Some(value.into_owned()),
             _ => {}
         }
     }
 
-    if ns.as_deref() != Some(expected_ns) {
-        return None;
-    }
     if code.is_none() && error.is_none() {
         return None;
     }
     Some(OauthCallbackPayload { code, error })
+}
+
+/// S10 field-fix (LOW, adversarial review): hard cap on the request
+/// line — this is a loopback-only, single-shot receiver, but a client
+/// (or a stray port-scanner) that never sends a newline would
+/// otherwise let `BufRead::read_line` grow its buffer unbounded. 8 KiB
+/// comfortably covers the longest real callback (`ns` + a full-length
+/// OAuth `code`) with room to spare.
+const MAX_REQUEST_LINE_BYTES: u64 = 8192;
+
+/// Reads at most one request line off `reader`, capped at
+/// `MAX_REQUEST_LINE_BYTES` (including the trailing `\n`) — generic
+/// over `BufRead` so this is directly unit-testable against a
+/// `Cursor<&[u8]>` below, no real socket required (mirrors
+/// `parse_callback`'s own "pure seam, unit-tested directly" posture).
+/// `None` for anything that isn't a COMPLETE line within the cap:
+/// overlong (capped mid-line, no `\n` found yet) and incomplete (the
+/// reader hit EOF/closed before a `\n` arrived) are rejected
+/// identically — never partially trusted as a request line.
+fn read_capped_line<R: BufRead>(reader: R) -> Option<String> {
+    let mut line = String::new();
+    match reader.take(MAX_REQUEST_LINE_BYTES).read_line(&mut line) {
+        Ok(_) if line.ends_with('\n') => Some(line),
+        _ => None,
+    }
 }
 
 /// Pure HTTP/1.1 response builder — `status` is only ever 200 (a match)
@@ -187,15 +251,12 @@ fn handle_connection(mut stream: TcpStream, expected_ns: &str) -> Option<OauthCa
 
     // A cloned handle for reading only — keeps `stream` itself free for
     // the response write below without fighting BufReader's own
-    // ownership of its inner reader.
+    // ownership of its inner reader. read_capped_line's own cap
+    // rejects an overlong/incomplete line outright (see its own doc
+    // comment) rather than letting a missing/never-arriving newline
+    // grow the buffer unbounded.
     let request_line = match stream.try_clone() {
-        Ok(read_half) => {
-            let mut line = String::new();
-            match BufReader::new(read_half).read_line(&mut line) {
-                Ok(_) => line,
-                Err(_) => String::new(), // treat unreadable as "no match" below
-            }
-        }
+        Ok(read_half) => read_capped_line(BufReader::new(read_half)).unwrap_or_default(),
         Err(_) => String::new(),
     };
 
@@ -268,9 +329,11 @@ fn run_listener(app: tauri::AppHandle, listener: TcpListener, expected_ns: Strin
 /// PINNED CONTRACT (blueprint item 2 + Q1 verdict): binds an ephemeral
 /// `127.0.0.1` port, returns it, and spawns a background thread that
 /// waits for OpenRouter's browser redirect back to
-/// `http://127.0.0.1:{port}/oauth/openrouter?ns={ns}` (or a `localhost`
-/// host — see this module's own header comment; either way the
-/// LISTENER always binds `127.0.0.1`). Single-flight: calling this
+/// `http://127.0.0.1:{port}/oauth/openrouter/{ns}` (F13: ns is a PATH
+/// segment now, not a `?ns=` query param — see parse_callback's own
+/// doc comment) (or a `localhost` host — see this module's own header
+/// comment; either way the LISTENER always binds `127.0.0.1`).
+/// Single-flight: calling this
 /// again — or `oauth_loopback_cancel` — invalidates whatever listener
 /// is already running; it notices on its own next poll tick (within
 /// `ACCEPT_POLL_INTERVAL`) and exits without emitting anything.
@@ -310,11 +373,13 @@ pub fn oauth_loopback_cancel(state: tauri::State<'_, OauthState>) -> Result<(), 
 mod tests {
     use super::*;
 
-    // ---- parse_callback ----
+    // ---- parse_callback (F13: the nonce moved from a `?ns=` query
+    // param to a /oauth/openrouter/{ns} PATH segment — see this
+    // function's own doc comment) ----
 
     #[test]
     fn matches_a_code_callback_with_the_correct_nonce() {
-        let result = parse_callback("GET /oauth/openrouter?ns=abc123&code=auth-code-1 HTTP/1.1\r\n", "abc123");
+        let result = parse_callback("GET /oauth/openrouter/abc123?code=auth-code-1 HTTP/1.1\r\n", "abc123");
         assert_eq!(
             result,
             Some(OauthCallbackPayload {
@@ -326,7 +391,7 @@ mod tests {
 
     #[test]
     fn matches_an_error_callback_with_the_correct_nonce() {
-        let result = parse_callback("GET /oauth/openrouter?ns=abc123&error=access_denied HTTP/1.1\r\n", "abc123");
+        let result = parse_callback("GET /oauth/openrouter/abc123?error=access_denied HTTP/1.1\r\n", "abc123");
         assert_eq!(
             result,
             Some(OauthCallbackPayload {
@@ -337,34 +402,46 @@ mod tests {
     }
 
     #[test]
-    fn param_order_does_not_matter() {
-        let result = parse_callback("GET /oauth/openrouter?code=auth-code-1&ns=abc123 HTTP/1.1\r\n", "abc123");
-        assert_eq!(result.map(|p| p.code), Some(Some("auth-code-1".to_string())));
-    }
-
-    #[test]
     fn nonce_mismatch_is_not_a_match() {
-        let result = parse_callback("GET /oauth/openrouter?ns=WRONG&code=auth-code-1 HTTP/1.1\r\n", "abc123");
+        let result = parse_callback("GET /oauth/openrouter/WRONG?code=auth-code-1 HTTP/1.1\r\n", "abc123");
         assert_eq!(result, None);
     }
 
     #[test]
-    fn missing_nonce_is_not_a_match() {
+    fn missing_nonce_segment_entirely_is_not_a_match() {
+        // The bare prefix path, no /{ns} segment appended at all.
         let result = parse_callback("GET /oauth/openrouter?code=auth-code-1 HTTP/1.1\r\n", "abc123");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn empty_nonce_segment_after_the_trailing_slash_is_not_a_match() {
+        let result = parse_callback("GET /oauth/openrouter/?code=auth-code-1 HTTP/1.1\r\n", "abc123");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn a_trailing_slash_after_an_otherwise_correct_nonce_is_not_a_match() {
+        // The nonce must be the LAST path segment — an extra trailing
+        // slash is rejected outright rather than tolerated (ns's own
+        // RFC 7636 charset — generateCodeVerifier, openrouterPkce.ts —
+        // never contains a `/`, so this can never be a genuine
+        // callback either way).
+        let result = parse_callback("GET /oauth/openrouter/abc123/?code=auth-code-1 HTTP/1.1\r\n", "abc123");
         assert_eq!(result, None);
     }
 
     #[test]
     fn correct_nonce_but_neither_code_nor_error_is_not_a_match() {
         // e.g. a bare favicon request that happens to echo the ns back.
-        let result = parse_callback("GET /oauth/openrouter?ns=abc123 HTTP/1.1\r\n", "abc123");
+        let result = parse_callback("GET /oauth/openrouter/abc123 HTTP/1.1\r\n", "abc123");
         assert_eq!(result, None);
     }
 
     #[test]
-    fn url_encoded_values_are_percent_decoded() {
+    fn url_encoded_query_values_are_percent_decoded() {
         let result = parse_callback(
-            "GET /oauth/openrouter?ns=abc123&error=access%20denied%20%28user%29 HTTP/1.1\r\n",
+            "GET /oauth/openrouter/abc123?error=access%20denied%20%28user%29 HTTP/1.1\r\n",
             "abc123",
         );
         assert_eq!(
@@ -377,17 +454,20 @@ mod tests {
     }
 
     #[test]
-    fn url_encoded_nonce_is_decoded_before_comparison() {
-        // The nonce itself arrives percent-encoded on the wire; the
-        // comparison must be against the DECODED value.
-        let result = parse_callback("GET /oauth/openrouter?ns=abc%2B123&code=x HTTP/1.1\r\n", "abc+123");
+    fn url_encoded_nonce_path_segment_is_decoded_before_comparison() {
+        // The nonce itself arrives percent-encoded on the wire (path
+        // segments are percent-encoded like query values, just WITHOUT
+        // query-string `+`-means-space substitution — percent_encoding::
+        // percent_decode_str, not url::form_urlencoded); the comparison
+        // must be against the DECODED value.
+        let result = parse_callback("GET /oauth/openrouter/abc%2B123?code=x HTTP/1.1\r\n", "abc+123");
         assert!(result.is_some());
     }
 
     #[test]
-    fn unknown_extra_params_are_ignored() {
+    fn unknown_extra_query_params_are_ignored() {
         let result = parse_callback(
-            "GET /oauth/openrouter?ns=abc123&code=auth-code-1&state=unused&foo=bar HTTP/1.1\r\n",
+            "GET /oauth/openrouter/abc123?code=auth-code-1&state=unused&foo=bar HTTP/1.1\r\n",
             "abc123",
         );
         assert_eq!(result.map(|p| p.code), Some(Some("auth-code-1".to_string())));
@@ -409,8 +489,8 @@ mod tests {
     }
 
     #[test]
-    fn a_path_with_no_query_string_at_all_is_not_a_match() {
-        assert_eq!(parse_callback("GET /oauth/openrouter HTTP/1.1\r\n", "abc123"), None);
+    fn a_request_for_an_unrelated_path_is_not_a_match() {
+        assert_eq!(parse_callback("GET /favicon.ico HTTP/1.1\r\n", "abc123"), None);
     }
 
     // ---- build_http_response ----
@@ -435,6 +515,69 @@ mod tests {
         assert!(response.starts_with("HTTP/1.1 204 No Content\r\n"));
         assert!(response.contains("Content-Length: 0\r\n"));
         assert!(response.ends_with("\r\n\r\n"));
+    }
+
+    // ---- read_capped_line (S10 field-fix, LOW: bounded request-line read) ----
+
+    #[test]
+    fn a_short_well_formed_line_is_read_intact() {
+        let input = "GET /oauth/openrouter/abc123?code=x HTTP/1.1\r\n";
+        let result = read_capped_line(std::io::Cursor::new(input.as_bytes()));
+        assert_eq!(result.as_deref(), Some(input));
+    }
+
+    #[test]
+    fn a_line_exactly_at_the_cap_including_its_newline_is_still_accepted() {
+        // MAX_REQUEST_LINE_BYTES total, the final byte being the `\n` —
+        // entirely within the cap, must not be rejected as overlong.
+        let mut input = vec![b'a'; MAX_REQUEST_LINE_BYTES as usize - 1];
+        input.push(b'\n');
+        assert_eq!(input.len(), MAX_REQUEST_LINE_BYTES as usize);
+        let result = read_capped_line(std::io::Cursor::new(input.as_slice()));
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().len(), MAX_REQUEST_LINE_BYTES as usize);
+    }
+
+    #[test]
+    fn an_overlong_line_with_no_newline_within_the_cap_is_rejected() {
+        // No `\n` anywhere — a client that never terminates its line
+        // (or a port-scanner) must not grow the buffer unbounded.
+        let input = vec![b'a'; MAX_REQUEST_LINE_BYTES as usize * 2];
+        let result = read_capped_line(std::io::Cursor::new(input.as_slice()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn a_newline_that_arrives_just_past_the_cap_is_still_rejected_as_overlong() {
+        // The `\n` exists, but one byte beyond what the cap allows
+        // reading — `take` never lets read_line see it.
+        let mut input = vec![b'a'; MAX_REQUEST_LINE_BYTES as usize];
+        input.push(b'\n');
+        let result = read_capped_line(std::io::Cursor::new(input.as_slice()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn an_incomplete_line_that_ends_without_ever_reaching_a_newline_is_rejected() {
+        // Well under the cap, but the "connection" (Cursor) simply ends
+        // (EOF) before a `\n` ever arrives — same rejection as overlong,
+        // never partially trusted.
+        let input = b"GET /oauth/openrouter/abc123?code=x";
+        let result = read_capped_line(std::io::Cursor::new(input.as_slice()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn an_empty_input_is_rejected_not_an_empty_match() {
+        let result = read_capped_line(std::io::Cursor::new(b"".as_slice()));
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn only_the_first_line_is_ever_read_a_second_line_in_the_buffer_is_left_untouched() {
+        let input = "GET /oauth/openrouter/abc123?code=x HTTP/1.1\r\nHost: 127.0.0.1\r\n";
+        let result = read_capped_line(std::io::Cursor::new(input.as_bytes()));
+        assert_eq!(result.as_deref(), Some("GET /oauth/openrouter/abc123?code=x HTTP/1.1\r\n"));
     }
 
     // ---- OauthState single-flight generation guard ----

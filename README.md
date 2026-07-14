@@ -39,7 +39,7 @@ JargonSlayer is the colleague sitting next to you: it never interrupts, it just 
 
 ## Features
 
-- **Real-time transcription** — browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). On Chrome 139+ the browser engine prefers **on-device recognition** — audio stays local and the status line flips to the green 音频未离开本机 chip — falling back to the vendor cloud only when no on-device pack is available. An experimental **Soniox** realtime engine (BYOK) joins the lineup, aimed at live 中英夹杂 zh-en. Every engine is labeled **local / cloud** so the data path is visible at a glance; a zero-dependency demo shows the whole flow without a microphone or key. Browser recognition is supervised by a voice-activity detector: session rotations land in real pauses, recovery never discards buffered speech, and a persistent language mismatch gets a one-time hint instead of silent text loss.
+- **Real-time transcription** — browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). On Chrome 139+ the browser engine prefers **on-device recognition** — audio stays local and the status line flips to the green 音频在本地处理 chip — falling back to the vendor cloud only when no on-device pack is available. An experimental **Soniox** realtime engine (BYOK) joins the lineup, aimed at live 中英夹杂 zh-en. Every engine is labeled **local / cloud** so the data path is visible at a glance; a zero-dependency demo shows the whole flow without a microphone or key. Browser recognition is supervised by a voice-activity detector: session rotations land in real pauses, recovery never discards buffered speech, and a persistent language mismatch gets a one-time hint instead of silent text loss.
 - **Real-time expression detection** — an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether *table this* means shelving a topic or furniture); proper nouns get separate term cards. A built-in dictionary (430+ entries, 11 topic packs from business to academia to pharma/biotech, community packs installable from GitHub) is the always-on instant layer — hits render immediately and the AI upgrades them in place; with AI off it works fully offline. Explanations can be Chinese or English.
 - **Bilingual live transcript** (optional) — turn it on in Settings and every finalized segment gets a Chinese translation line under the English text as the meeting happens, not just in the post-meeting report.
 - **Card experience** — expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup and one-click save to your glossary.
@@ -291,7 +291,7 @@ In the preview, features that need the local sidecar or your own credentials are
 | Transcript text (AI off / dictionary mode) | Local only |
 | History, settings, API key | Local browser only (IndexedDB / localStorage) |
 
-To keep all text on the machine: Settings → turn off 「AI 检测」 (the built-in dictionary keeps detecting instantly, fully offline). The vim-style status line always shows the current audio path (「音频未离开本机」 / 「音频经浏览器厂商云端识别」).
+To keep all text on the machine: Settings → turn off 「AI 检测」 (the built-in dictionary keeps detecting instantly, fully offline). The vim-style status line always shows the current audio path (「音频在本地处理」 / 「音频经浏览器厂商云端识别」).
 
 ## Meet Bit 🐉
 

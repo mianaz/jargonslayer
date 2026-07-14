@@ -571,6 +571,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const installingDiarization = useTasks(
     (s) => diarInstallTaskId !== null && s.tasks[diarInstallTaskId]?.status === "running",
   );
+  // F7 (MEDIUM, adversarial review): trackInstallDiar's own success
+  // handler (jobsBridge.ts) only mirrors sidecarUp into the STORE —
+  // this dialog's OWN diarizationInstalled below comes from a SEPARATE
+  // fetchSidecarHealth probe, which never re-ran on task completion, so
+  // an open dialog kept showing 需先安装 until reopened. Read by the
+  // diarization-probe effect below, which re-runs once this flips true.
+  const diarInstallDone = useTasks(
+    (s) => diarInstallTaskId !== null && s.tasks[diarInstallTaskId]?.status === "done",
+  );
   // 转录引擎 sidecar status line (owner ask 2026-07-11: "I cannot see in
   // the GUI if the local side got set up at all") — a lightweight GET
   // /health readout shown directly under the engine picker whenever the
@@ -883,12 +892,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // already selected, or the user flips 托管模式 into it while the
   // dialog stays open" cadence as the 当前模型 effect just above, not
   // the 本地服务 status row's probe (that one also drives a manual
-  // 重新检测 button this row doesn't have — handleInstallDiarization's
-  // own re-probe-on-success below is this row's only other update
-  // trigger). fetchSidecarHealth returning null (sidecar unreachable)
-  // collapses to the exact same `undefined` -> 未知 render as a legacy
-  // sidecar that never sent the field at all — this effect deliberately
-  // never tries to tell those two apart (risk 5).
+  // 重新检测 button this row doesn't have). fetchSidecarHealth returning
+  // null (sidecar unreachable) collapses to the exact same `undefined`
+  // -> 未知 render as a legacy sidecar that never sent the field at all
+  // — this effect deliberately never tries to tell those two apart
+  // (risk 5).
+  //
+  // F7 (MEDIUM, adversarial review): diarInstallDone in the deps array
+  // is this row's OTHER update trigger — jobsBridge.trackInstallDiar's
+  // own success handler only mirrors sidecarUp into the STORE, never
+  // this dialog's OWN diarizationInstalled, so without this the row
+  // kept showing 需先安装 until the dialog was closed and reopened. Kept
+  // dialog-side (re-running the SAME probe this effect already owns)
+  // rather than duplicating diarization_installed into global state.
   useEffect(() => {
     if (!open || !IS_DESKTOP || draft.sidecarMode !== "managed") return;
     let cancelled = false;
@@ -899,7 +915,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, draft.sidecarMode]);
+  }, [open, draft.sidecarMode, diarInstallDone]);
 
   // 转录引擎 系统/App 音频 macOS-floor gating (S9.4, D6; F9): audiocap_
   // capabilities() is a synchronous OS-version check on the Rust side
@@ -1076,9 +1092,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           // module's own doc comment) — this dialog's own `draft` is a
           // snapshot taken at open time, so it must be resynced here or
           // 保存 would silently clobber the just-connected key with the
-          // stale draft (same hazard handleConfirmRestore's own
-          // post-restore resync guards against, mirrored verbatim).
-          setDraft(coercePreviewModels(useApp.getState().settings));
+          // stale draft. F5 (adversarial review, MEDIUM): unlike
+          // handleConfirmRestore's own post-restore resync just below
+          // (a full backup replace is meant to overwrite everything),
+          // an OAuth connect touches ONLY these three fields — a
+          // wholesale setDraft(liveSettings) here was clobbering any
+          // OTHER unsaved draft edit (a language pick, a model field, …)
+          // made earlier in the SAME dialog session. Functional update,
+          // merging just provider/baseUrl/apiKey into the EXISTING
+          // draft instead.
+          {
+            const live = useApp.getState().settings;
+            setDraft((d) => ({ ...d, provider: live.provider, baseUrl: live.baseUrl, apiKey: live.apiKey }));
+          }
           showToast("已成功连接 OpenRouter");
         } else {
           setOpenRouterOauthHint(describeOAuthFailure(result.reason, result.message));
@@ -1221,10 +1247,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // above already derives from this same task id; jobsBridge.
   // trackInstallDiar's own success handler re-probes the sidecar and
   // mirrors sidecarUp into the store, decision C's "the running server
-  // is the truth" posture). This dialog's own diarizationInstalled/
-  // HF-token UI simply catches up next time this section becomes
-  // relevant again (dialog reopen, or a manual 检测状态/重新检测 click),
-  // same as installedModel's own dialog-reopen-refresh posture above.
+  // is the truth" posture). F7 (adversarial review): that store mirror
+  // alone left THIS dialog's own diarizationInstalled/需先安装 HF-token
+  // gating stale — the probe effect above now also re-runs live once
+  // this task reaches "done" (diarInstallDone), while the dialog stays
+  // open — not just on reopen. installedModel above is unaffected
+  // (still only refreshes on reopen).
   const handleInstallDiarization = async () => {
     const handle = await initDesktop();
     const id = trackInstallDiar(handle);

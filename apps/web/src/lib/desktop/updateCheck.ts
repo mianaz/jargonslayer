@@ -105,7 +105,21 @@ export function compareVersions(a: string, b: string): number {
 interface GithubRelease {
   tag_name: string;
   html_url: string;
+  draft?: boolean;
+  prerelease?: boolean;
 }
+
+// F9 (LOW, adversarial review): /releases/latest is documented to
+// return only the latest non-draft/non-prerelease release, but this
+// check must not blindly TRUST that endpoint semantics never change —
+// a draft/prerelease response is explicitly ignored (see the res.ok
+// branch below), and a tag_name is only ever trusted as latestVersion
+// once it matches this strict vX.Y.Z shape (rejects e.g. "v0.4.2-rc1",
+// "4x.1.0" — deliberately stricter than compareVersions' own tolerant
+// parsing above, which exists for a different purpose: robustly
+// comparing WHATEVER string it's handed, not deciding whether a raw
+// GitHub tag is trustworthy enough to show/cache in the first place).
+const RELEASE_TAG_RE = /^v?\d+\.\d+\.\d+$/;
 
 export interface CheckAppUpdateDeps {
   fetchImpl: typeof fetch;
@@ -134,6 +148,14 @@ export async function checkAppUpdateWith(deps: CheckAppUpdateDeps): Promise<void
       url = cache.url;
     } else if (res.ok) {
       const body = (await res.json()) as GithubRelease;
+      // F9: neither ever reaches "available", nor gets cached — see
+      // RELEASE_TAG_RE's own doc comment above.
+      if (body.draft || body.prerelease) {
+        throw new Error("最新 release 是草稿或预发布版本，本次跳过");
+      }
+      if (!RELEASE_TAG_RE.test(body.tag_name)) {
+        throw new Error(`release tag 格式不合法：${body.tag_name}`);
+      }
       latestVersion = body.tag_name;
       url = body.html_url;
       const etag = res.headers.get("etag");

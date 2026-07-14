@@ -30,7 +30,7 @@ vi.mock("../../stt/sidecarHealth", () => ({
 }));
 
 import { modelForTask, trackInstallDiar, trackSwitchModel } from "../jobsBridge";
-import { useTasks, type TaskState } from "../../tasks/registry";
+import { completeTask, dismissTask, startTask, useTasks, type TaskState } from "../../tasks/registry";
 import type { DesktopBootstrapHandle, SwitchModelProgress } from "../bootstrap";
 import type { DesktopPaths } from "../uvCommands";
 
@@ -111,6 +111,67 @@ describe("trackSwitchModel", () => {
 
   it("modelForTask returns undefined for an id it never tracked", () => {
     expect(modelForTask("never-seen")).toBeUndefined();
+  });
+
+  // F11 (LOW, adversarial review): modelByTaskId is a private side-table
+  // in jobsBridge.ts, NOT registry.ts's own `tasks` map — its doc
+  // comment used to (falsely) claim MAX_TERMINAL_TASKS already bounded
+  // it. It must now prune in lockstep with the task's ACTUAL removal
+  // from the registry (dismiss OR the registry's own FIFO eviction) —
+  // never merely on settle (done/error), since TaskCenterDrawer's 重试
+  // retry action reads modelForTask back for an already-settled
+  // (error) task.
+  describe("modelByTaskId pruning (F11)", () => {
+    it("still resolves for a task that has already settled (done) but not yet dismissed/pruned — the retry flow depends on this surviving completion", async () => {
+      const id = trackSwitchModel(fakeHandle(), "medium");
+      await flush();
+      expect(task(id).status).toBe("done");
+      expect(modelForTask(id)).toBe("medium");
+    });
+
+    it("is pruned once the task is explicitly dismissed from the registry", async () => {
+      const id = trackSwitchModel(fakeHandle(), "medium");
+      await flush();
+      expect(modelForTask(id)).toBe("medium");
+
+      dismissTask(id);
+
+      expect(modelForTask(id)).toBeUndefined();
+    });
+
+    it("is pruned once the registry's own MAX_TERMINAL_TASKS (20) FIFO eviction removes the task, even without an explicit dismiss", async () => {
+      const id = trackSwitchModel(fakeHandle(), "medium");
+      await flush();
+      expect(task(id).status).toBe("done");
+      expect(modelForTask(id)).toBe("medium");
+
+      // pruneTerminalTasks only runs inside startTask itself — 20 more
+      // terminal (done) tasks, then one more startTask to trigger the
+      // prune check that finally evicts the (now oldest) original task.
+      for (let i = 0; i < 20; i++) {
+        const fillerId = `filler-${i}`;
+        startTask(fillerId, "model-download", "filler");
+        completeTask(fillerId);
+      }
+      startTask("trigger-prune", "model-download", "trigger");
+
+      expect(useTasks.getState().tasks[id]).toBeUndefined(); // sanity: the registry itself evicted it
+      expect(modelForTask(id)).toBeUndefined();
+    });
+
+    it("a still-running task's model mapping is never pruned merely by OTHER tasks settling/dismissing", async () => {
+      const id = trackSwitchModel(
+        fakeHandle({ switchModel: async () => new Promise(() => {}) }), // never settles
+        "medium",
+      );
+      expect(task(id).status).toBe("running");
+
+      const otherId = trackSwitchModel(fakeHandle(), "large-v3");
+      await flush();
+      dismissTask(otherId);
+
+      expect(modelForTask(id)).toBe("medium");
+    });
   });
 
   it("subscribes to switchModelProgress$ before calling switchModel — a progress tick fired synchronously from inside the fake switchModel still lands", () => {

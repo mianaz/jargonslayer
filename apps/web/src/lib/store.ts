@@ -185,9 +185,9 @@ interface AppState {
   // the same green "音频在本地处理" posture whisper/tabaudio use instead
   // of the amber cloud warning. null = no active webspeech session has
   // reported a mode yet this meeting — every other engine never calls
-  // onEngineMode, so StatusLine falls back to its existing
-  // ENGINE_POSTURE map. Reset alongside the rest of the live-meeting
-  // slice in beginMeeting/newMeeting.
+  // onEngineMode, so StatusLine falls back to ENGINE_OPTIONS's own
+  // posture field (lib/stt/engineOptions.ts). Reset alongside the rest
+  // of the live-meeting slice in beginMeeting/newMeeting.
   sttEngineMode: OnDeviceMode | null;
   startedAt: number | null;
   // Monotonically increasing generation counter — bumped whenever a

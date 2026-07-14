@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Settings } from "@jargonslayer/core/types";
 import {
+  cancelOpenRouterConnect,
   connectOpenRouterDesktopWith,
   resetConnectOpenRouterLatch,
   type ConnectOpenRouterDesktopDeps,
@@ -158,7 +159,7 @@ describe("connectOpenRouterDesktopWith — happy path", () => {
     await resultPromise;
   });
 
-  it("builds callback_url from the real bound port and the same ns sent to oauth_loopback_start, over 127.0.0.1", async () => {
+  it("builds callback_url from the real bound port and the same ns sent to oauth_loopback_start, over 127.0.0.1 — F13: ns is a PATH segment, not a ?ns= query param", async () => {
     const { deps, invokeCalls, openUrl, emit } = makeDeps();
 
     const resultPromise = connectOpenRouterDesktopWith(deps);
@@ -170,7 +171,13 @@ describe("connectOpenRouterDesktopWith — happy path", () => {
 
     const authUrl = new URL(openUrl.mock.calls[0][0]);
     const callbackUrl = authUrl.searchParams.get("callback_url");
-    expect(callbackUrl).toBe(`http://127.0.0.1:${PORT}/oauth/openrouter?ns=${ns}`);
+    // F13 (MEDIUM, reviewer 3): the old `?ns=${ns}` query-param shape
+    // silently bet on OpenRouter's redirect PRESERVING an arbitrary
+    // query string on callback_url when appending its own `?code=` —
+    // undocumented behavior; a PATH segment carries no such risk (a
+    // redirect never rewrites the callback_url's path).
+    expect(callbackUrl).toBe(`http://127.0.0.1:${PORT}/oauth/openrouter/${ns}`);
+    expect(new URL(callbackUrl!).search).toBe(""); // no query string at all — see oauth.rs's own parse_callback
     expect(authUrl.searchParams.get("code_challenge_method")).toBe("S256");
     expect(authUrl.searchParams.get("code_challenge")).toBeTruthy();
 
@@ -341,5 +348,107 @@ describe("connectOpenRouterDesktopWith — JS-side ~180s timeout", () => {
     expect(result).toEqual({ ok: false, reason: "timeout" });
     expect(unlisten).toHaveBeenCalledTimes(1);
     expect(invokeCalls.map((c) => c.cmd)).toContain("oauth_loopback_cancel");
+  });
+
+  // F3 (HIGH, adversarial review): once the timeout settles the
+  // promise, the detached async continuation must not go on to invoke
+  // a side effect as if the attempt were still alive.
+  it("timeout firing before oauth_loopback_start resolves -> openUrl is never called, even once the stale invoke later resolves", async () => {
+    let resolvePort!: (port: number) => void;
+    const portPromise = new Promise<number>((resolve) => {
+      resolvePort = resolve;
+    });
+    const { invoke, calls: invokeCalls } = makeFakeInvoke({
+      oauth_loopback_start: () => portPromise,
+      oauth_loopback_cancel: () => undefined,
+    });
+    const { listen } = makeFakeListen();
+    const openUrl = vi.fn<OpenExternalFn>().mockResolvedValue(undefined);
+    const deps: ConnectOpenRouterDesktopDeps = {
+      invoke,
+      listen,
+      openUrl,
+      tauriFetch: vi.fn() as unknown as TauriFetchFn,
+      updateSettings: vi.fn(),
+    };
+
+    const resultPromise = connectOpenRouterDesktopWith(deps);
+    await flushUntilFake(() => invokeCalls.some((c) => c.cmd === "oauth_loopback_start"));
+
+    await vi.advanceTimersByTimeAsync(180_000);
+    const result = await resultPromise;
+    expect(result).toEqual({ ok: false, reason: "timeout" });
+
+    // The stale oauth_loopback_start call finally resolves — the
+    // detached continuation must bail out instead of opening a
+    // now-pointless system-browser window.
+    resolvePort(PORT);
+    for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0);
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("timeout firing while the code exchange is still in flight -> settings are never written", async () => {
+    let resolveFetch!: (r: Response) => void;
+    const fetchPromise = new Promise<Response>((resolve) => {
+      resolveFetch = resolve;
+    });
+    const tauriFetch = vi.fn().mockReturnValue(fetchPromise) as unknown as TauriFetchFn;
+    const { deps, emit, openUrl, updateSettings } = makeDeps({ tauriFetch });
+
+    const resultPromise = connectOpenRouterDesktopWith(deps);
+    await flushUntilFake(() => openUrl.mock.calls.length > 0);
+    emit("oauth://openrouter", { code: "auth-code-1" }); // kicks off exchangeCodeForKeyDirect, left pending
+
+    await vi.advanceTimersByTimeAsync(180_000);
+    const result = await resultPromise;
+    expect(result).toEqual({ ok: false, reason: "timeout" });
+
+    // The stale exchange finally "succeeds" — must never reach the
+    // settings write this late.
+    resolveFetch(jsonResponse({ key: "sk-or-v1-should-never-land" }));
+    for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(0);
+    expect(updateSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelOpenRouterConnect (F3/F4 export)", () => {
+  it("settles the in-flight attempt as cancelled, never opens the browser, and fires the Rust cancel", async () => {
+    let resolvePort!: (port: number) => void;
+    const portPromise = new Promise<number>((resolve) => {
+      resolvePort = resolve;
+    });
+    const { invoke, calls: invokeCalls } = makeFakeInvoke({
+      oauth_loopback_start: () => portPromise,
+      oauth_loopback_cancel: () => undefined,
+    });
+    const { listen } = makeFakeListen();
+    const openUrl = vi.fn<OpenExternalFn>().mockResolvedValue(undefined);
+    const deps: ConnectOpenRouterDesktopDeps = {
+      invoke,
+      listen,
+      openUrl,
+      tauriFetch: vi.fn() as unknown as TauriFetchFn,
+      updateSettings: vi.fn(),
+    };
+
+    const resultPromise = connectOpenRouterDesktopWith(deps);
+    await flushUntil(() => invokeCalls.some((c) => c.cmd === "oauth_loopback_start"));
+
+    cancelOpenRouterConnect();
+    const result = await resultPromise;
+
+    expect(result).toEqual({ ok: false, reason: "cancelled" });
+    expect(openUrl).not.toHaveBeenCalled();
+    expect(invokeCalls.map((c) => c.cmd)).toContain("oauth_loopback_cancel");
+
+    // The stale oauth_loopback_start call resolving after the fact
+    // must not resurrect the flow.
+    resolvePort(PORT);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(openUrl).not.toHaveBeenCalled();
+  });
+
+  it("is a harmless no-op when nothing is in flight", () => {
+    expect(() => cancelOpenRouterConnect()).not.toThrow();
   });
 });

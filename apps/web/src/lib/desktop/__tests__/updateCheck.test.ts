@@ -226,6 +226,89 @@ describe("checkAppUpdateWith — pure core", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// F9 (LOW, adversarial review): the GitHub releases API is documented
+// to return only the latest non-draft/non-prerelease release from
+// /releases/latest, but this check must not blindly TRUST that
+// endpoint semantics never change/differ (a private mirror, a future
+// API version, …) — draft/prerelease responses are explicitly ignored,
+// and tag_name is validated against a strict vX.Y.Z shape before ever
+// being trusted as latestVersion. Neither case may ever reach
+// status:"available" — status:"error" (this file's own existing
+// non-ok-status/network-failure cases already land there too, and
+// preserve whatever a PRIOR successful check found).
+// ---------------------------------------------------------------
+
+describe("checkAppUpdateWith — F9: never trusts a draft/prerelease/malformed-tag response", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    resetStore();
+  });
+
+  it("a draft:true release is ignored — lands on status:error, never available", async () => {
+    const fetchImpl = fakeFetchSequence({
+      body: { tag_name: "v0.4.2", html_url: "https://example.com/v0.4.2", draft: true },
+    });
+
+    await checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" });
+
+    expect(useUpdateCheck.getState().status).toBe("error");
+  });
+
+  it("a prerelease:true release is ignored — lands on status:error, never available", async () => {
+    const fetchImpl = fakeFetchSequence({
+      body: { tag_name: "v0.4.2", html_url: "https://example.com/v0.4.2", prerelease: true },
+    });
+
+    await checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" });
+
+    expect(useUpdateCheck.getState().status).toBe("error");
+  });
+
+  it("a draft/prerelease response never overwrites (or caches) a PRIOR successful check's fields", async () => {
+    const first = fakeFetchSequence({
+      etag: 'W/"abc123"',
+      body: { tag_name: "v0.4.2", html_url: "https://example.com/v0.4.2" },
+    });
+    await checkAppUpdateWith({ fetchImpl: first, getVersion: async () => "0.4.1" });
+    expect(useUpdateCheck.getState().status).toBe("available");
+
+    const second = fakeFetchSequence({
+      body: { tag_name: "v0.4.3", html_url: "https://example.com/v0.4.3", prerelease: true },
+    });
+    await checkAppUpdateWith({ fetchImpl: second, getVersion: async () => "0.4.1" });
+
+    const s = useUpdateCheck.getState();
+    expect(s.status).toBe("error");
+    expect(s.latestVersion).toBe("v0.4.2"); // preserved, not overwritten by the ignored prerelease
+    const cached = JSON.parse(window.localStorage.getItem("js-update-etag-cache") as string);
+    expect(cached.version).toBe("v0.4.2"); // never cached either
+  });
+
+  it.each(["v0.4.2-rc1", "4x.1.0"])(
+    "a malformed release tag (%s) is rejected — lands on status:error, never available",
+    async (tag_name) => {
+      const fetchImpl = fakeFetchSequence({
+        body: { tag_name, html_url: "https://example.com/release" },
+      });
+
+      await checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" });
+
+      expect(useUpdateCheck.getState().status).toBe("error");
+    },
+  );
+
+  it("a well-formed bare (no v-prefix) tag still passes — the strict check isn't v-prefix-only", async () => {
+    const fetchImpl = fakeFetchSequence({
+      body: { tag_name: "0.4.2", html_url: "https://example.com/v0.4.2" },
+    });
+
+    await checkAppUpdateWith({ fetchImpl, getVersion: async () => "0.4.1" });
+
+    expect(useUpdateCheck.getState().status).toBe("available");
+  });
+});
+
 describe("checkAppUpdate — IS_DESKTOP-guarded real entry point", () => {
   beforeEach(() => {
     window.localStorage.clear();

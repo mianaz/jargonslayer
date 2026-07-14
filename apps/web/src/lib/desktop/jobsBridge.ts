@@ -11,7 +11,7 @@
 // outlives the dialog closing.
 
 import { newId } from "@jargonslayer/core/types";
-import { completeTask, failTask, startTask, updateTaskProgress } from "../tasks/registry";
+import { completeTask, failTask, startTask, updateTaskProgress, useTasks } from "../tasks/registry";
 import { useApp } from "../store";
 import { probeSidecar } from "../stt/sidecarHealth";
 import { MODEL_CATALOG } from "./modelCatalog";
@@ -24,12 +24,28 @@ import type { DesktopBootstrapHandle } from "./bootstrap";
 // tray UI" precedent). TaskCenterDrawer's per-row 重试 action reads
 // this back via modelForTask() to re-call trackSwitchModel with the
 // SAME model once the task has already gone terminal (error) — at that
-// point nothing else on TaskState says which model it was. Outlives the
-// task itself (never cleared) — the registry's own MAX_TERMINAL_TASKS
-// pruning already bounds how many terminal task ids can pile up, and a
-// model string is a few bytes, so there's no real cost to keeping the
-// mapping for a task's whole (session-scoped, in-memory-only) lifetime.
+// point nothing else on TaskState says which model it was, so this must
+// survive PAST settling (done/error), not just while "running".
 const modelByTaskId = new Map<string, string>();
+
+// F11 (LOW, adversarial review): the doc comment above USED TO claim
+// "the registry's own MAX_TERMINAL_TASKS pruning already bounds how
+// many terminal task ids can pile up" — false: that cap only bounds
+// registry.ts's OWN `tasks` map, a completely separate module-level
+// object this side-table never shared. Pruning it at task SETTLE time
+// (completeTask/failTask) would break the 重试 flow's own read (above)
+// though, so this instead mirrors the task's ACTUAL removal from the
+// registry — subscribed once, for the module's whole (session-scoped)
+// lifetime: whenever a tracked id disappears from `s.tasks` (either
+// dismissTask's explicit removal, or pruneTerminalTasks' own FIFO
+// eviction — this can't tell which, and doesn't need to), its mapping
+// is pruned in lockstep. A still-running task is never affected (its
+// id never leaves `s.tasks` while running).
+useTasks.subscribe((state) => {
+  for (const id of modelByTaskId.keys()) {
+    if (!(id in state.tasks)) modelByTaskId.delete(id);
+  }
+});
 
 /** The model a model-download task (running OR settled) was started
  *  for — undefined for any other task id (never tracked here, or an id

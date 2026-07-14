@@ -24,7 +24,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
-import { connectOpenRouterDesktop } from "@/lib/oauth/openrouterDesktop";
+import { cancelOpenRouterConnect, connectOpenRouterDesktop } from "@/lib/oauth/openrouterDesktop";
 import { openExternal } from "@/lib/platform/openExternal";
 import { buildByokKeyPatch, describeOAuthFailure } from "./onboardingSettings";
 
@@ -48,16 +48,31 @@ export default function OnboardingByokStep({ onNext }: OnboardingByokStepProps) 
   // longer than a user is expected to wait here, so skip/paste must
   // stay available (and effective) the whole time, not gated on it.
   const cancelledRef = useRef(false);
+  // F4 (HIGH, adversarial review): cancelledRef above only stops THIS
+  // component reacting to a stale resolution — it does nothing to stop
+  // connectOpenRouterDesktop's own promise from running to completion
+  // (and writing settings) after the user has already moved on.
+  // cancelOpenRouterConnect (F3's export) tells the underlying attempt
+  // itself to stop, so it settles ok:false/"cancelled" instead —
+  // called on unmount and at the top of every other exit from this
+  // step (paste-save, skip), a harmless no-op if nothing is in flight.
   useEffect(() => {
     return () => {
       cancelledRef.current = true;
+      cancelOpenRouterConnect();
     };
   }, []);
 
   const savePastedKey = () => {
+    cancelOpenRouterConnect();
     const patch = buildByokKeyPatch(key);
     if (!patch) return;
     updateSettings(patch);
+    onNext();
+  };
+
+  const skip = () => {
+    cancelOpenRouterConnect();
     onNext();
   };
 
@@ -139,7 +154,7 @@ export default function OnboardingByokStep({ onNext }: OnboardingByokStepProps) 
         <button
           type="button"
           data-testid="btn-onboarding-byok-skip"
-          onClick={onNext}
+          onClick={skip}
           className="btn-tactile px-3 py-1.5 text-sm text-mut hover:bg-panel3 hover:text-fg"
         >
           跳过

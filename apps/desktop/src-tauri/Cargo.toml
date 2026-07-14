@@ -1,6 +1,6 @@
 [package]
 name = "jargonslayer"
-version = "0.4.1"
+version = "0.4.2"
 description = "JargonSlayer desktop shell"
 authors = ["Miana Zeng"]
 license = "AGPL-3.0-only"
@@ -43,6 +43,15 @@ serde_json = "1"
 # calls it directly, same "already-transitive, made explicit for direct
 # use" precedent as objc2-foundation below.
 url = "2"
+# S10 field-fix, Chunk A (F13 fix round) — oauth.rs's own PATH-segment
+# percent-decoding for the callback's nonce (moved off a `?ns=` query
+# param, see that file's own parse_callback doc comment). url::form_
+# urlencoded above is query-string-shaped (`+` means space) and wrong
+# for a raw path segment; percent-encoding is url's own transitive dep
+# for exactly this (see Cargo.lock) — already resolved at 2.3.2 via
+# url itself, made explicit now for the same "already-transitive, made
+# explicit for direct use" reason url was above.
+percent-encoding = "2"
 # S9.2 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D5) —
 # device-native -> 16kHz mono resampling for the audiocap pipeline.
 # Pinned to the pre-1.0 Vec<Vec<f32>>-style API (FftFixedIn + the

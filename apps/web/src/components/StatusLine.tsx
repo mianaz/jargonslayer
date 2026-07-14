@@ -14,17 +14,6 @@ import { isEngineControlBusy } from "@/components/Header";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
 
-const ENGINE_POSTURE: Record<string, "local" | "cloud"> = {
-  webspeech: "cloud",
-  whisper: "local",
-  tabaudio: "local",
-  // S9/D7: desktop-only CoreAudio process tap — audio goes only to the
-  // local Whisper sidecar (same 音频在本地处理 chip whisper/tabaudio
-  // already carry), never leaving this Mac.
-  appaudio: "local",
-  demo: "local",
-};
-
 const DETECT_MODE_LABEL: Record<string, string> = {
   llm: "词典+AI 检测",
   dictionary: "词典检测",
@@ -37,10 +26,6 @@ const DETECT_MODE_LABEL: Record<string, string> = {
 // just below, which already established "these are the sidecar-backed
 // engines" for this exact file.
 const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
-
-// Sustained-latency threshold (#5: "延迟 ~Ns" once it stays above this)
-// — matches the blueprint's own >2s example verbatim.
-const LATENCY_CHIP_THRESHOLD_MS = 2000;
 
 // S10 field-fix — engine picker as a bottom-bar dropdown (Miana's
 // explicit ask: 与其作为tab，engine不如改成dropdown，且显示在下方状态栏).
@@ -112,6 +97,12 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   const updateSettings = useApp((s) => s.updateSettings);
   const setDetectMode = useApp((s) => s.setDetectMode);
   const lagMs = useLatencyStats((s) => s.lagMs);
+  // S10 field-fix #8 (LOW, adversarial review): the ON/OFF hysteresis
+  // (3 consecutive smoothed samples >2000ms to show, one sample
+  // <1200ms to hide, holds through the dead zone otherwise — see
+  // latencyStats.ts's own sustained doc comment) lives entirely in
+  // latencyStats.ts; this component just reads the derived flag.
+  const latencySustained = useLatencyStats((s) => s.sustained);
 
   const isListening = status === "listening";
   const isPaused = status === "paused";
@@ -149,10 +140,22 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   // (belt-and-suspenders against a stale value briefly surviving an
   // engine switch — sttEngineMode is only ever set by the webspeech
   // engine and reset at the start of every new meeting).
+  // S10 field-fix #2 (HIGH, adversarial review): posture derives from
+  // ENGINE_OPTIONS (the same option metadata the dropdown below and
+  // Header's EnginePostureChip already read — one definition, not a
+  // second map that can drift out of sync, which is exactly how a
+  // CLOUD engine (soniox) used to render the green local sentence via
+  // a stale ?? "local" fallback here). An engine absent from
+  // ENGINE_OPTIONS (import/browser-whisper, or any future value) must
+  // never be assumed local — falls back to "cloud". One deliberate
+  // exception (lead adjudication on the F2 fix's flagged side effect):
+  // "demo" is the scripted preview — no audio exists at all, so the
+  // amber cloud warning would be a false claim in the OTHER direction;
+  // it keeps the local posture the old map always gave it.
   const posture: "local" | "cloud" =
-    engine === "webspeech" && sttEngineMode === "on-device"
+    engine === "demo" || (engine === "webspeech" && sttEngineMode === "on-device")
       ? "local"
-      : (ENGINE_POSTURE[engine] ?? "local");
+      : (ENGINE_OPTIONS.find((o) => o.value === engine)?.posture ?? "cloud");
   const privacyLabel =
     posture === "local" ? "音频在本地处理" : "音频将经过浏览器厂商云端识别";
   const privacyLabelShort =
@@ -242,10 +245,11 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
           left-to-right) — THE picker at every width now (Header.tsx's
           old desktop pills + mobile <select> are both gone). */}
       <EngineDropdown />
-      {/* S10 field-fix #5: compact caution chip, hidden whenever
-          healthy/null/not-listening/not-local-whisper — see the inline
-          condition's own doc comment above. */}
-      {isListening && LOCAL_WHISPER_ENGINES.has(engine) && lagMs !== null && lagMs > LATENCY_CHIP_THRESHOLD_MS && (
+      {/* S10 field-fix #5/#8: compact caution chip, hidden whenever
+          healthy/null/not-listening/not-local-whisper/not-yet-sustained
+          — latencySustained already carries the hysteresis (this
+          component adds no threshold of its own). */}
+      {isListening && LOCAL_WHISPER_ENGINES.has(engine) && lagMs !== null && latencySustained && (
         <span
           data-testid="statusline-latency-chip"
           className="whitespace-nowrap px-2 text-lab-yellow sm:px-3"

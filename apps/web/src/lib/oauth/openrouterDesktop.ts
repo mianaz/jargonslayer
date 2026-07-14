@@ -18,6 +18,14 @@
 // listener keeps BINDING 127.0.0.1 regardless; only the hostname string
 // embedded in the callback_url OpenRouter redirects back to is in
 // question.
+//
+// F13 (MEDIUM, adversarial review): callback_url's own nonce moved from
+// a `?ns=` query param to a `/oauth/openrouter/{ns}` PATH segment (see
+// the callbackUrl construction below + oauth.rs's own parse_callback) —
+// removes a SEPARATE, independent bet the old shape silently made
+// (that OpenRouter's redirect preserves an arbitrary QUERY string on
+// callback_url when appending its own `?code=`, undocumented either
+// way), unrelated to the still-open hostname caveat just above.
 import type { Settings } from "@jargonslayer/core/types";
 
 import {
@@ -82,11 +90,32 @@ function describeError(error: unknown): string {
  *  trigger explicitly. Test-only reset: resetConnectOpenRouterLatch. */
 let inFlight = false;
 
+/** F3 (adversarial review, HIGH): the current in-flight attempt's own
+ *  cancel — assigned synchronously at the top of
+ *  connectOpenRouterDesktopWith's Promise executor (before any
+ *  `await`), so there is never a window where `inFlight` is true but
+ *  an external caller's cancelOpenRouterConnect() would be a no-op.
+ *  Cleared in the same `finally` as `inFlight`. */
+let cancelCurrentAttempt: (() => void) | null = null;
+
 /** Test-only reset — mirrors tauriApi.ts's resetTauriApiCache /
  *  audiocapCaps.ts's resetAudiocapCapsCache convention for module-level
  *  state that must never leak between independent `it()` blocks. */
 export function resetConnectOpenRouterLatch(): void {
   inFlight = false;
+  cancelCurrentAttempt = null;
+}
+
+/** F3/F4 (adversarial review) — lets an external caller (e.g.
+ *  OnboardingByokStep's unmount effect, or its paste-save/skip
+ *  handlers racing a still-open OAuth attempt) abort whatever "Connect
+ *  with OpenRouter" attempt is currently in flight: settles it as
+ *  `{ok:false, reason:"cancelled"}` through the SAME settle() every
+ *  other path uses, so the Rust-side oauth_loopback_cancel best-effort
+ *  call and the event unlisten both still fire. A harmless no-op when
+ *  nothing is in flight. */
+export function cancelOpenRouterConnect(): void {
+  cancelCurrentAttempt?.();
 }
 
 /** The testable core (blueprint: "Dependency-injected internals ...
@@ -122,6 +151,12 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
         resolve(result);
       };
 
+      // F3: exposes THIS attempt's cancel to the module-level export —
+      // assigned synchronously (before the async IIFE below ever
+      // yields), so cancelOpenRouterConnect() is live for the entire
+      // attempt, not just after its first await.
+      cancelCurrentAttempt = () => settle({ ok: false, reason: "cancelled" });
+
       timer = setTimeout(() => settle({ ok: false, reason: "timeout" }), JS_TIMEOUT_MS);
 
       void (async () => {
@@ -130,15 +165,21 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
           // openrouterPkce.ts, same functions the web flow uses.
           const verifier = generateCodeVerifier();
           const challenge = await codeChallengeS256(verifier);
+          // F3: settled/cancelled state re-checked after EVERY await
+          // below, before the next side effect — a timeout/cancel that
+          // raced this digest must stop the flow here rather than go
+          // on to invoke/openUrl/write settings as if still live.
+          if (settled) return;
 
           // (2) a SECOND, independent random token for the loopback
           // listener's own `ns` — reuses generateCodeVerifier() again
           // rather than a new generator: it's already a
           // crypto.getRandomValues-backed, URL-safe (RFC 7636
           // unreserved charset — no percent-encoding needed in the
-          // template literal below), high-entropy random string, and
-          // this `ns` has nothing to do with PKCE itself, just needs
-          // the same "hard to guess" property.
+          // callbackUrl PATH segment below, same as it needed none in
+          // the query-param shape this replaces), high-entropy random
+          // string, and this `ns` has nothing to do with PKCE itself,
+          // just needs the same "hard to guess" property.
           const ns = generateCodeVerifier();
 
           let port: number;
@@ -148,9 +189,16 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
             settle({ ok: false, reason: "port-bind-failed", message: describeError(err) });
             return;
           }
+          // F3: a timeout/cancel while oauth_loopback_start was still
+          // pending must not go on to open the system browser against
+          // a now-abandoned attempt.
+          if (settled) return;
 
-          // (3)(4)
-          const callbackUrl = `http://${CALLBACK_HOST}:${port}/oauth/openrouter?ns=${ns}`;
+          // (3)(4) F13: ns is a PATH segment (oauth.rs's own
+          // parse_callback matches the /oauth/openrouter/ prefix and
+          // extracts everything after it as the nonce), not a `?ns=`
+          // query param — see this module's own header comment.
+          const callbackUrl = `http://${CALLBACK_HOST}:${port}/oauth/openrouter/${ns}`;
           const authUrl = buildAuthUrl({ callbackUrl, codeChallenge: challenge });
 
           // (5) subscribe BEFORE opening the browser — pinned ordering,
@@ -185,6 +233,12 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
                   codeVerifier: verifier,
                   fetchImpl: deps.tauriFetch,
                 });
+                // F3: a timeout/cancel that raced this exchange must
+                // never write a key this late — settle() itself is
+                // idempotent-guarded, but skipping straight past the
+                // settings write is the actual fix (the write, not a
+                // redundant re-settle, was the leak).
+                if (settled) return;
                 // EXACT same settings write as the web callback page
                 // (app/oauth/openrouter/page.tsx's own handleConnect
                 // effect) — see that file's own updateSettings call.
@@ -199,6 +253,14 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
               }
             })();
           });
+          if (settled) {
+            // settle()'s own unlisten?.() already ran before THIS
+            // subscription existed (a timeout/cancel raced deps.listen
+            // itself) — clean up the now-orphaned listener rather than
+            // leaking it, and never reach openUrl below.
+            unlisten?.();
+            return;
+          }
 
           await deps.openUrl(authUrl);
         } catch (err) {
@@ -208,6 +270,7 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
     });
   } finally {
     inFlight = false;
+    cancelCurrentAttempt = null;
   }
 }
 

@@ -78,7 +78,19 @@ export default function DesktopBootstrap() {
   // and this component itself only ever mounts once for the app's
   // whole lifetime (see page.tsx's own `{IS_DESKTOP && <DesktopBootstrap
   // />}`).
+  //
+  // F6 (MEDIUM, adversarial review): a bare STEP -> HEALTHY transition
+  // is NOT unique to a first-run provisioning drive — bootstrap.ts's
+  // own performSwitchModel/landOnSwitchFailure reuse the exact same
+  // "STEP" phase for a LATER model-switch failure, so a returning user
+  // whose switch fails then recovers (HEALTHY -> STEP/ERROR -> HEALTHY)
+  // was getting nagged with first-run onboarding too. provisionBegunRef
+  // is armed ONLY by the consent screen's own begin-provision action
+  // (onBeginProvision below, the one real "a first-run drive is
+  // starting" seam) — the trigger below now requires BOTH refs, not
+  // just the phase transition shape.
   const prevPhaseRef = useRef<DesktopBootstrapState["phase"] | null>(null);
+  const provisionBegunRef = useRef(false);
   const onboardingShownRef = useRef(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
@@ -134,16 +146,24 @@ export default function DesktopBootstrap() {
 
   // S10 field-fix onboarding mount: watches for a STEP -> HEALTHY
   // transition (this launch's own provisioning wizard just finished) —
-  // see prevPhaseRef/onboardingShownRef's own doc comment above for the
-  // full contract. prevPhaseRef starts `null`, so the FIRST snapshot
-  // ever observed (whatever phase it lands on, including an immediate
-  // HEALTHY on a returning user's ordinary launch) can never itself
-  // satisfy `prevPhase === "STEP"` — CHECKING -> HEALTHY is excluded by
-  // construction, not a special case below.
+  // see prevPhaseRef/onboardingShownRef/provisionBegunRef's own doc
+  // comment above for the full contract. prevPhaseRef starts `null`, so
+  // the FIRST snapshot ever observed (whatever phase it lands on,
+  // including an immediate HEALTHY on a returning user's ordinary
+  // launch) can never itself satisfy `prevPhase === "STEP"` — CHECKING
+  // -> HEALTHY is excluded by construction, not a special case below.
+  // provisionBegunRef additionally excludes a LATER STEP/ERROR ->
+  // HEALTHY that never went through a real provisioning begin (F6 — a
+  // model-switch failure recovering reuses the same "STEP" phase).
   useEffect(() => {
     const prevPhase = prevPhaseRef.current;
     prevPhaseRef.current = state?.phase ?? null;
-    if (!onboardingShownRef.current && prevPhase === "STEP" && state?.phase === "HEALTHY") {
+    if (
+      !onboardingShownRef.current &&
+      provisionBegunRef.current &&
+      prevPhase === "STEP" &&
+      state?.phase === "HEALTHY"
+    ) {
       onboardingShownRef.current = true;
       setShowOnboarding(true);
     }
@@ -212,7 +232,13 @@ export default function DesktopBootstrap() {
       paths={handle.paths}
       logLines={logLines}
       downloadProgress={downloadProgress}
-      onBeginProvision={(model) => handle.beginProvision(model)}
+      onBeginProvision={(model) => {
+        // F6: the ONE seam that means "a real first-run provisioning
+        // is actually starting" — see provisionBegunRef's own doc
+        // comment above.
+        provisionBegunRef.current = true;
+        handle.beginProvision(model);
+      }}
       onDismissConsent={() => setConsentDismissed(true)}
       onDismissTerminal={() => setTerminalDismissed(true)}
       onDismissStepError={() => setStepErrorDismissed(true)}
