@@ -610,10 +610,12 @@
     <span class="tl-dot g"></span>
   </div>
   <div class="tl-path">
-    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>v0.3.0+
+    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>web · desktop · extension
   </div>
   <div class="tl-spacer"></div>
   <button class="lang-toggle" id="langToggle" type="button" aria-label="切换语言 / switch language">中 / EN</button>
+  <a class="tl-gh lang-zh" href="docs/zh/">文档 →</a>
+  <a class="tl-gh lang-en" href="docs/">Docs →</a>
   <a class="tl-gh" href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub →</a>
 </div>
 
@@ -705,8 +707,16 @@
       <div class="feat c-green reveal">
         <div class="feat-key">real-time transcription</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>实时转录</b>：浏览器识别 / 本地 Whisper / 标签页音频（后两者音频不出本机），每个引擎带「本地 / 云端」数据去向标识；Chrome 139+ 浏览器识别优先走设备端——音频留在本机，状态栏亮起绿色「音频未离开本机」；另有实验性 Soniox 实时引擎（自备 Key），面向中英夹杂场景。浏览器识别由 VAD 监督器把关——轮换只切真停顿、恢复不丢缓冲、语言不匹配给一次提示而非悄悄丢句。内置演示零依赖看完整流程。</span>
-          <span class="lang-en">Browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled <b>local / cloud</b> so the data path is visible at a glance; on Chrome 139+ browser recognition prefers <b>on-device</b> — audio stays local and the status line shows the green chip — and an experimental <b>Soniox</b> realtime engine (BYOK) targets code-switched zh-en. Browser recognition is guarded by a voice-activity supervisor — rotations land in real pauses, recovery never discards buffered speech, a language mismatch gets one hint instead of silent loss. A zero-dependency demo shows the whole flow.</span>
+          <span class="lang-zh"><b>实时转录</b>：浏览器识别 / 本地 Whisper / 标签页音频（后两者音频不出本机），每个引擎带「本地 / 云端」数据去向标识；Chrome 139+ 浏览器识别优先走设备端——音频留在本机，状态栏亮起绿色「音频在本地处理」；另有实验性 Soniox 实时引擎（自备 Key），面向中英夹杂场景。浏览器识别由 VAD 监督器把关——轮换只切真停顿、恢复不丢缓冲、语言不匹配给一次提示而非悄悄丢句。内置演示零依赖看完整流程。桌面版的转录引擎不同，见下方「系统/App 音频」。</span>
+          <span class="lang-en">Browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled <b>local / cloud</b> so the data path is visible at a glance; on Chrome 139+ browser recognition prefers <b>on-device</b> — audio stays local and the status line shows the green chip — and an experimental <b>Soniox</b> realtime engine (BYOK) targets code-switched zh-en. Browser recognition is guarded by a voice-activity supervisor — rotations land in real pauses, recovery never discards buffered speech, a language mismatch gets one hint instead of silent loss. A zero-dependency demo shows the whole flow. The desktop app has a different engine lineup — see 系统/App 音频 below.</span>
+        </div>
+      </div>
+
+      <div class="feat c-orange reveal">
+        <div class="feat-key">system / app audio (desktop)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>系统/App 音频（桌面版，macOS 14.4+）</b>：开会用 Zoom、Teams、微信这类原生 App 时，桌面版能直接转录对方说的话——不需要虚拟声卡，不需要装 BlackHole。引擎选「系统/App 音频」，macOS 会弹一次「系统音频录制」授权——这是它自己的权限类别，跟麦克风、屏幕录制都无关。它只捕获这台 Mac 正在播放的声音，从不碰麦克风；音频只送到本机的 Whisper 服务，「音频在本地处理」标识照常亮起。低于 14.4 的系统会看到该选项置灰并注明原因。它替换了桌面版旧版那个只能失败的「标签页音频」选项——Web 版的标签页音频不受影响。</span>
+          <span class="lang-en"><b>System/App audio (desktop, macOS 14.4+)</b>: when your meeting runs in a native app — Zoom, Teams, WeChat — the desktop app transcribes the other side directly. No virtual audio device, no BlackHole. Pick 系统/App 音频 in the engine picker; macOS prompts once for "System Audio Recording" permission — its own category, unrelated to the microphone or Screen Recording. It captures only what this Mac is playing, never the microphone, and audio goes only to the local Whisper sidecar (the 音频在本地处理 badge still applies). Below macOS 14.4 the option shows disabled with an explanation. It replaces the desktop's old tab-audio option, which could only fail inside the app shell; the web app's tab audio is unchanged.</span>
         </div>
       </div>
 
@@ -791,10 +801,15 @@
       </div>
 
       <div class="feat c-red reveal">
-        <div class="feat-key">desktop app — v0.4, in development</div>
+        <div class="feat-key">desktop app — macOS, signed &amp; notarized</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>桌面版（开发中）</b>：Tauri 外壳把同一个应用装进原生窗口，本地 Whisper 由应用自己托管——首次启动的向导先征求同意，再把独立 Python 环境和你选的 Whisper 模型（四档，预选 medium）装进应用数据目录，不碰系统 Python，删掉目录就是干净卸载。换模型在现有服务旁边下载、下载完成才切换；说话人分离扩展一键安装。签名安装包随 v0.4.0 发布。</span>
-          <span class="lang-en"><b>Desktop app (in development)</b>: a Tauri shell puts the same app in a native window with a self-managed local Whisper — the first-run wizard asks consent, then installs an isolated Python runtime plus the Whisper model you pick (four sizes, medium pre-selected) under the app's own data directory; it never touches system Python, and deleting the directory is a clean uninstall. Model switching downloads beside the live server and only then swaps; the diarization add-on installs in one click. A signed installer ships with v0.4.0.</span>
+          <span class="lang-zh"><b>桌面版</b>：Tauri 原生应用，macOS（Apple Silicon）签名并公证的安装包，下载即用。首次启动的向导先征求同意，再把独立 Python 环境和你选的 Whisper 模型（四档，预选 medium）装进应用自己的数据目录，不碰系统 Python，删掉目录就是干净卸载；换模型在现有服务旁边下载、下载完成才切换，说话人分离扩展一键安装。向导之后还有两步可跳过的引导：一键 OAuth 连接 OpenRouter（或直接粘贴 Key）、配置说话人分离用的 Hugging Face token——随时能在设置里补上。底部状态栏新增后台任务中心和引擎下拉菜单，本地转录延迟持续偏高时会有提示。</span>
+          <span class="lang-en"><b>Desktop app</b>: a native Tauri app with a signed, notarized installer for macOS (Apple Silicon) — download and go. The first-run wizard asks consent, then installs an isolated Python runtime plus the Whisper model you pick (four sizes, medium pre-selected) under the app's own data directory; it never touches system Python, and deleting the directory is a clean uninstall. Model switching downloads beside the live server and only then swaps; the diarization add-on installs in one click. Two skippable onboarding steps follow the wizard: one-click OAuth into OpenRouter (or paste a key) and a Hugging Face token for speaker diarization — both revisitable from Settings later. The bottom status bar adds a background task center and an engine dropdown, plus a heads-up when local transcription latency stays elevated.</span>
+          <div class="btn-row" style="margin:16px 0 0;">
+            <a class="btn btn-primary" href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">
+              <span class="lang-zh">下载 macOS 安装包</span><span class="lang-en">Download for macOS</span>
+            </a>
+          </div>
         </div>
       </div>
 
@@ -875,10 +890,10 @@
         <tbody>
           <tr>
             <td class="data-col">
-              <span class="lang-zh">音频（本地 Whisper / 标签页音频）</span><span class="lang-en">Audio (local Whisper / tab audio)</span>
+              <span class="lang-zh">音频（本地 Whisper / 标签页音频 / 系统/App 音频）</span><span class="lang-en">Audio (local Whisper / tab audio / system-app audio)</span>
             </td>
             <td class="dest-col"><span class="dot local"></span>
-              <span class="lang-zh">仅本机，websocket 走 127.0.0.1</span><span class="lang-en">Local only, websocket on 127.0.0.1</span>
+              <span class="lang-zh">仅本机——websocket 走 127.0.0.1，桌面版系统/App 音频经本机进程通道送入同一套本地转录</span><span class="lang-en">Local only — websocket on 127.0.0.1, or (desktop system/app audio) a local process channel into the same local transcription pipeline</span>
             </td>
           </tr>
           <tr>
@@ -951,7 +966,7 @@
 
     <div class="priv-motif reveal">
       <span class="rec-blink" aria-hidden="true"></span>
-      <span class="lang-zh">音频未离开本机</span><span class="lang-en">audio never left this machine</span>
+      <span class="lang-zh">音频在本地处理</span><span class="lang-en">audio processed locally</span>
     </div>
 
     <p class="quickstart-note">
@@ -967,6 +982,21 @@
     <span class="eyebrow"><span class="lang-zh">快速开始</span><span class="lang-en">QUICKSTART</span></span>
     <h2 class="section-title lang-zh">快速开始</h2>
     <h2 class="section-title lang-en">Quickstart</h2>
+
+    <p class="quickstart-note" style="margin-top:0;">
+      <span class="lang-zh"><b>macOS 桌面版（推荐）</b>：下载签名并公证的安装包 → 打开 → 首次启动的向导会装好本地语音识别，跟着提示走完就行，不用碰终端。</span>
+      <span class="lang-en"><b>macOS desktop app (recommended)</b>: download the signed, notarized installer → open it → the first-run wizard installs local speech recognition; just follow the prompts, no terminal needed.</span>
+    </p>
+    <div class="btn-row" style="margin-bottom:28px;">
+      <a class="btn btn-primary" href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">
+        <span class="lang-zh">下载 macOS 安装包</span><span class="lang-en">Download for macOS</span>
+      </a>
+    </div>
+
+    <p class="quickstart-note">
+      <span class="lang-zh">不用 macOS，或者想直接跑源码：</span>
+      <span class="lang-en">Not on macOS, or want to run from source:</span>
+    </p>
 
     <div class="code-frame reveal">
       <div class="code-frame-bar">
@@ -986,6 +1016,11 @@
     <p class="quickstart-note">
       <span class="lang-zh">第一次打开会弹出新手引导。<b>先点右上角「演示」</b> —— 不需要麦克风、不需要 API Key，就能看到完整的转录 → 检测 → 卡片 → 会后报告流程（无 Key 时演示走内置词典）。</span>
       <span class="lang-en">On first launch an onboarding tour appears. <b>Open the ≡ menu and click 「演示」 (Demo) first</b> — no microphone, no API key, and you'll see the full transcription → detection → cards → report flow (the demo runs on the built-in dictionary when no key is configured).</span>
+    </p>
+
+    <p class="quickstart-note">
+      <span class="lang-zh">只想划词查词典、不需要转录？<b>Chrome 插件 JargonSlayer Lite</b>：releases 页面下载 zip，chrome://extensions 打开「开发者模式」后「加载已解压的扩展程序」（Chrome 网上应用店上架审核中）。</span>
+      <span class="lang-en">Just want dictionary lookups, no transcription? <b>JargonSlayer Lite</b> (Chrome extension): grab the zip from releases, then load it unpacked via chrome://extensions with Developer mode on (Chrome Web Store submission pending).</span>
     </p>
   </div>
 </section>

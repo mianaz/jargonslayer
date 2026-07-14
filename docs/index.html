@@ -281,7 +281,7 @@
 <body>
 <header class="topbar">
   <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
-  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / v0.3.0+</div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / web · desktop · extension</div>
   <div class="spacer"></div>
   <a href="../">Landing</a>
   <a href="zh/">中文</a>
@@ -298,6 +298,7 @@
     <a href="#workflow">Meeting Workflow</a>
     <a href="#transcription">Transcription Engines</a>
     <a href="#imports">Imports</a>
+    <a href="#desktop-app">Desktop App</a>
 
     <div class="label">Use</div>
     <a href="#ai">AI Modes</a>
@@ -332,6 +333,8 @@
         <span class="pill">Local Whisper</span>
         <span class="pill">IndexedDB history</span>
         <span class="pill">Remote packs</span>
+        <span class="pill">macOS desktop app</span>
+        <span class="pill">Chrome extension</span>
       </div>
       <div class="shot-grid">
         <figure>
@@ -376,9 +379,10 @@
       </div>
       <h3>Full topic list</h3>
       <ul>
-        <li>Mode choice and deployment tier: hosted preview, local web, PWA, future Tauri.</li>
-        <li>Transcription path: browser recognition, local Whisper, tab audio, demo, imported transcript, browser Whisper import.</li>
-        <li>Audio capture for online meetings: microphone, tab audio, virtual devices, loopback.</li>
+        <li>Mode choice and deployment tier: hosted preview, local web, PWA, macOS desktop app, Chrome extension.</li>
+        <li>Transcription path: browser recognition, local Whisper, tab audio, demo, imported transcript, browser Whisper import; desktop's own lineup (麦克风 · 本地 Whisper, 系统/App 音频) is different — see Desktop App.</li>
+        <li>Audio capture for online meetings: microphone, tab audio, virtual devices, loopback, or (desktop) 系统/App 音频.</li>
+        <li>Desktop-specific: 系统/App 音频 permission flow, first-run onboarding (BYOK OAuth/paste, diarization token), the background task center, the update check.</li>
         <li>Detection behavior: dictionary floor, LLM upgrade, confidence threshold, dedupe, custom glossary priority.</li>
         <li>Translation behavior: live bilingual transcript, import-time translation, post-meeting full translation.</li>
         <li>AI provider setup: Anthropic, OpenAI-compatible endpoints, OpenRouter, Poe, Ollama, per-task models.</li>
@@ -393,21 +397,29 @@
 
     <section id="quickstart">
       <h2>Quickstart</h2>
-      <p>The fastest way to understand the product is the built-in demo. It does not need a microphone or an API key.</p>
+      <p>Three ways to run JargonSlayer, all free: the macOS desktop app (easiest, signed installer), the web app (hosted or self-hosted), and a Chrome extension for lightweight dictionary lookups.</p>
+
+      <h3>Desktop app (macOS, Apple Silicon)</h3>
       <ol>
-        <li>Open the hosted app or run the project locally.</li>
-        <li>Open the <code>≡</code> menu and choose <code>演示</code>.</li>
-        <li>Watch the transcript on the left and explanation cards on the right.</li>
-        <li>Click <code>停止</code> when the demo ends.</li>
-        <li>Open <code>纪要与导出</code> and generate the meeting report.</li>
+        <li>Download the signed, notarized DMG from <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>.</li>
+        <li>Open the DMG, drag JargonSlayer into Applications, launch it.</li>
+        <li>A full-screen wizard appears on first launch. Nothing downloads until you click <code>开始安装</code>: it then installs an isolated Python runtime, faster-whisper, and the model you pick (medium pre-selected) entirely under the app's own data directory — never touching system Python.</li>
+        <li>Two optional, skippable onboarding steps follow: connect OpenRouter (for AI detection/explanations) and add a Hugging Face token (for speaker diarization). See <a href="#desktop-app">Desktop App</a> below for details.</li>
       </ol>
-      <h3>Run locally</h3>
+      <div class="callout local"><strong>Apple Silicon only</strong> — there is no Intel build. The app itself installs on older macOS, but the 系统/App 音频 engine specifically needs macOS 14.4+; below that it shows disabled with an explanation.</div>
+
+      <h3>Web app</h3>
+      <p>Try the <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">hosted preview</a> first — zero install. The fastest way to understand the product either way is the built-in demo: open the <code>≡</code> menu → <code>演示</code>, no microphone or API key needed.</p>
+      <p>Or run it yourself:</p>
       <pre><code>git clone https://github.com/mianaz/jargonslayer.git
 cd jargonslayer
 npm install
 npm run dev
 # open http://localhost:3000</code></pre>
       <p>For a production-like local run, use <code>npm run build</code> and <code>npm start</code>.</p>
+
+      <h3>Chrome extension (JargonSlayer Lite)</h3>
+      <p>Download the zip from <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases</a>, unzip it, then <code>chrome://extensions</code> → enable <strong>Developer mode</strong> → <strong>Load unpacked</strong> → select the unzipped folder. Chrome Web Store submission is pending, so load-unpacked is the only install path for now. Lite does live mic capture plus the built-in dictionary and on-device translation in a side panel — no LLM detection, no tab/system audio, no account; see the <a href="#deployment">Deployment</a> table for the full capability split.</p>
     </section>
 
     <section id="workflow">
@@ -435,23 +447,40 @@ npm run dev
 
     <section id="transcription">
       <h2>Transcription Engines</h2>
+      <p>The web app and the desktop app offer <strong>different engine lineups</strong> — desktop drops browser-based recognition entirely (Tauri's webview has no Web Speech API) and adds a CoreAudio-based system/app audio capture that the web app can't do. The engine picker itself also moved: it now lives as a dropdown in the <strong>bottom status bar</strong> on every screen size (it used to be tabs/pills in the header).</p>
+
+      <h3>Web app</h3>
       <table>
         <thead><tr><th>Engine</th><th>Setup</th><th>Audio Destination</th><th>Best For</th></tr></thead>
         <tbody>
           <tr><td><strong>Demo</strong></td><td>None</td><td>None; scripted playback</td><td>Trying the app without a microphone or key</td></tr>
-          <tr><td><strong>Browser recognition</strong></td><td>None, Chrome/Edge recommended</td><td>Browser vendor speech service</td><td>Everyday low-friction meetings</td></tr>
-          <tr><td><strong>Local Whisper</strong></td><td>Python sidecar</td><td>Local machine via <code>127.0.0.1</code></td><td>Sensitive meetings and offline use</td></tr>
-          <tr><td><strong>Tab audio</strong></td><td>Local sidecar</td><td>Local machine</td><td>Capturing the other side of an online meeting</td></tr>
+          <tr><td><strong>Browser recognition</strong></td><td>None, Chrome/Edge recommended</td><td>On-device on Chrome 139+ when a language pack is available (local); otherwise the browser vendor's speech service (cloud)</td><td>Everyday low-friction meetings</td></tr>
+          <tr><td><strong>Local Whisper</strong></td><td>Python sidecar (manual install)</td><td>Local machine via <code>127.0.0.1</code></td><td>Sensitive meetings and offline use</td></tr>
+          <tr><td><strong>Tab audio</strong></td><td>Same local sidecar</td><td>Local machine</td><td>Capturing the other side of an online meeting</td></tr>
+          <tr><td><strong>Soniox (experimental)</strong></td><td>Soniox API key (BYOK)</td><td>Soniox realtime API, direct WSS under your key (cloud)</td><td>Live code-switched zh-en; stays 实验 until it clears the in-house benchmark</td></tr>
         </tbody>
       </table>
       <div class="callout info"><strong>Online meetings:</strong> your microphone only captures you. For Zoom, Teams, or Meet, use tab audio where available, or route system audio through a virtual device such as BlackHole on macOS or VB-Cable on Windows and use local Whisper.</div>
-      <h3>Local Whisper</h3>
+
+      <h3>Desktop app (macOS)</h3>
+      <table>
+        <thead><tr><th>Engine</th><th>Setup</th><th>Audio Destination</th><th>Best For</th></tr></thead>
+        <tbody>
+          <tr><td><strong>麦克风 · 本地 Whisper</strong> (Microphone, local Whisper)</td><td>None — bundled and self-managed by the app</td><td>Local machine</td><td>Default daily-use engine; medium model out of the box</td></tr>
+          <tr><td><strong>麦克风 · Soniox</strong> (Microphone, Soniox, experimental)</td><td>Soniox API key (BYOK)</td><td>Soniox realtime API, direct WSS under your key (cloud)</td><td>Same code-switched-zh-en case as the web build</td></tr>
+          <tr><td><strong>系统/App 音频</strong> (System/App audio)</td><td>None — bundled, same local Whisper sidecar</td><td>Local machine</td><td>Hearing the other side of a meeting running in a native app (Zoom, Teams, WeChat), no virtual sound card</td></tr>
+        </tbody>
+      </table>
+      <p>There is no browser-recognition engine on desktop, and desktop's tab-audio slot is <strong>系统/App 音频</strong> instead — see <a href="#desktop-app">Desktop App</a> below for the permission flow and what it captures.</p>
+
+      <h3>Local Whisper (web app manual setup)</h3>
+      <p>This manual sidecar setup is for the <strong>web app</strong>. The desktop app installs and manages its own copy automatically via the first-run wizard — no terminal commands needed; see <a href="#desktop-app">Desktop App</a>.</p>
       <pre><code>cd sidecar
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python whisper_server.py --model small</code></pre>
-      <p>The sidecar provides live websocket transcription at <code>ws://127.0.0.1:8765</code> and a local HTTP job API for recording imports. Model choices include <code>tiny</code>, <code>base</code>, <code>small</code>, <code>medium</code>, and <code>large-v3</code>; <code>small</code> is the default daily-use target.</p>
+      <p>The sidecar provides live websocket transcription at <code>ws://127.0.0.1:8765</code> and a local HTTP job API for recording imports. Model choices include <code>tiny</code>, <code>base</code>, <code>small</code>, <code>medium</code>, and <code>large-v3</code>; <code>small</code> is the default daily-use target for this manual path (the desktop wizard's own curated list is <code>small</code>/<code>medium</code>/<code>large-v3</code>/<code>large-v3-turbo</code>, with <code>medium</code> pre-selected).</p>
     </section>
 
     <section id="imports">
@@ -482,6 +511,43 @@ python whisper_server.py --model small</code></pre>
       <div class="callout risk"><strong>Use URL import deliberately.</strong> Server-side fetching of third-party video raises platform-terms and legal issues, so the project keeps this path on the user's own machine rather than the hosted demo.</div>
     </section>
 
+    <section id="desktop-app">
+      <h2>Desktop App</h2>
+      <p>The desktop build wraps the same app in a native Tauri shell with a self-managed local Whisper — see <a href="#quickstart">Quickstart</a> for installing it. This section covers what's specific to the desktop build: the system/app audio engine, the two optional onboarding steps, the background task center, the latency indicator, and the update check.</p>
+
+      <h3>System/App Audio</h3>
+      <p>Pick <strong>系统/App 音频</strong> in the engine dropdown to transcribe the other side of a meeting running in a native app — Zoom, Teams, WeChat — with no virtual audio device and no BlackHole/VB-Cable setup. It replaces the desktop's old tab-audio slot, which could only fail inside Tauri's webview (there's no tab-share picker to launch there); the web app's tab audio is unchanged.</p>
+      <ul>
+        <li><strong>What it captures:</strong> everything this Mac is currently playing — the meeting counterpart's voice, but also background music or notification sounds if they happen to be playing. It never captures your microphone.</li>
+        <li><strong>Permission:</strong> macOS prompts for "System Audio Recording" the first time you actually start listening on this engine (not when you merely pick it in the dropdown) — its own TCC category, entirely separate from microphone and Screen Recording permission.</li>
+        <li><strong>Floor:</strong> requires macOS 14.4 or later. Below that, the option shows disabled in the picker with an explanation rather than being hidden.</li>
+        <li><strong>Audio destination:</strong> local only — audio goes to the bundled Whisper sidecar and nowhere else; the same 音频在本地处理 status applies as the mic-based local engines.</li>
+      </ul>
+      <div class="callout risk"><strong>If macOS denies the permission:</strong> the app shows a button to jump straight to 系统设置 → 隐私与安全性 → 屏幕与系统音频录制; if the deep link doesn't land on the right pane, that manual path always works.</div>
+
+      <h3>First-run Onboarding</h3>
+      <p>Right after the provisioning wizard finishes (not on every ordinary launch — a returning user with an already-healthy local service is never nagged), two optional, individually skippable steps appear:</p>
+      <ol>
+        <li><strong>Connect OpenRouter</strong> — paste an existing key, or click 使用 OpenRouter 登录 for one-click OAuth: the app opens your system browser to complete login, then hands control back automatically. If OAuth fails, a fallback link to <code>openrouter.ai/keys</code> lets you create and paste a key instead. This unlocks AI detection, translation, and post-meeting reports.</li>
+        <li><strong>Speaker diarization token</strong> — paste a Hugging Face token, after accepting the usage terms for pyannote's segmentation and speaker-diarization models on Hugging Face (the step links directly to both). Skipping this is the zero-friction default — diarization stays off until you come back to it.</li>
+      </ol>
+      <p>Both steps write to the same Settings the manual paths use, so a value entered here behaves identically to one entered later in Settings → AI 检测 or Settings → 说话人分离. Skipping either one leaves the app fully usable with cloud/BYOK-less features.</p>
+
+      <h3>Background Task Center</h3>
+      <p>A 后台任务 launcher lives in the header (desktop only), with an activity dot when a task is running or an app update is available. Opening it shows two zones:</p>
+      <ul>
+        <li><strong>系统状态</strong> (system status) — a 本地服务 row showing 托管 (app-managed) or 外部 (external sidecar) mode plus 运行中 / 未连接 / <strong>未知</strong> status, with a 重新检测 button to re-probe on demand; and an 应用更新 row (see Update Check below).</li>
+        <li><strong>任务</strong> (tasks) — model downloads and the diarization install, plus any import jobs, each with a progress readout. A failed model download or diarization install shows a 重试 action; a completed import task is clickable and jumps straight to its session.</li>
+      </ul>
+      <div class="callout info"><strong>Troubleshooting:</strong> if a model download fails partway, 重试 re-starts it — since models come from Hugging Face's own download cache, a flaky connection usually doesn't mean starting completely from zero. If 本地服务 shows <strong>未知</strong>, the app hasn't probed it yet (or the last probe didn't return); click 重新检测, or check Settings → 转录引擎 directly.</div>
+
+      <h3>Transcription Latency</h3>
+      <p>While actively listening on a local-Whisper-backed engine (mic Whisper, tab audio, or system/app audio), the status bar shows a <code>延迟 ~Ns</code> chip once decode lag stays above roughly 2 seconds. It's an early-warning signal that the machine/model combination is falling behind realtime, not an error — if it shows up often, switching to a lighter model (<code>small</code>) usually clears it on older hardware.</p>
+
+      <h3>Update Check</h3>
+      <p>The app quietly checks GitHub's latest release once per launch (cached with an ETag, so repeat checks are cheap) and shows current vs. latest version in 后台任务 → 系统状态. Re-check anytime with 重新检查. This is a check, not an auto-installer: when a newer version exists, 打开下载页 takes you to the GitHub release to download and install yourself.</p>
+    </section>
+
     <section id="ai">
       <h2>AI Modes and Provider Setup</h2>
       <h3>Dictionary-only Mode</h3>
@@ -493,10 +559,10 @@ python whisper_server.py --model small</code></pre>
         <li>Open <code>设置</code> and go to <code>AI 检测</code>.</li>
         <li>Choose Anthropic or an OpenAI-compatible endpoint such as DeepSeek, Qwen, OpenRouter, Poe-compatible presets, or Ollama.</li>
         <li>Set the base URL if required.</li>
-        <li>Enter an API key in the UI or use a server environment variable such as <code>ANTHROPIC_API_KEY</code>.</li>
+        <li>Enter an API key in the UI, connect OpenRouter with one-click OAuth, or use a server environment variable such as <code>ANTHROPIC_API_KEY</code>.</li>
         <li>Choose detection and report models, test the connection, and save.</li>
       </ol>
-      <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser and relayed in memory through the app's API routes. It is not persisted server-side. Environment keys keep the key out of the browser entirely.</div>
+      <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser and relayed in memory through the app's API routes. It is not persisted server-side. Environment keys keep the key out of the browser entirely. On the desktop build, OAuth opens your system browser (RFC 8252 loopback) instead of an in-app popup — see <a href="#desktop-app">Desktop App</a> for the first-run version of this same flow.</div>
       <h3>Per-task Models</h3>
       <p>Advanced settings can use different providers or models for detection, translation, and reports. The normal split is fast/cheap for live detection and stronger models for post-meeting reports.</p>
     </section>
@@ -569,8 +635,8 @@ python whisper_server.py --model small</code></pre>
       <table>
         <thead><tr><th>Data</th><th>Destination</th></tr></thead>
         <tbody>
-          <tr><td>Audio, local Whisper / tab audio</td><td>Local machine only, loopback websocket</td></tr>
-          <tr><td>Audio, browser recognition</td><td>Browser vendor speech service</td></tr>
+          <tr><td>Audio, local Whisper / tab audio / system-app audio (desktop)</td><td>Local machine only — loopback websocket, or (system/app audio) a local process channel into the same bundled sidecar</td></tr>
+          <tr><td>Audio, browser recognition</td><td>On-device (local) on Chrome 139+ when a language pack is available; otherwise the browser vendor's speech service</td></tr>
           <tr><td>Audio/video file imports</td><td>Browser-local transcription; files are not uploaded</td></tr>
           <tr><td>Preview AI text</td><td>Project server memory only, then OpenRouter with <code>data_collection=allow</code></td></tr>
           <tr><td>BYOK AI text</td><td>The provider endpoint configured by the user</td></tr>
@@ -594,6 +660,8 @@ python whisper_server.py --model small</code></pre>
       <p>Long meetings are chunked and translated in parallel; one to two minutes is normal for substantial transcripts. Cards can be exported without a report.</p>
       <h3>My project directory moved and the sidecar broke</h3>
       <p>Python virtual environments contain absolute paths. Rebuild the sidecar venv after moving or renaming the repo.</p>
+      <h3>Desktop: 本地服务 shows 未知</h3>
+      <p>The app hasn't probed the local service yet, or the last probe didn't return. Open 后台任务 (desktop, top right) and click 重新检测 next to 本地服务; if it stays down, check Settings → 转录引擎. See <a href="#desktop-app">Desktop App</a> for the full background task center.</p>
     </section>
 
     <section id="deep-specs">
@@ -608,7 +676,7 @@ python whisper_server.py --model small</code></pre>
           <tr><td>Daily low-sensitivity meetings</td><td>Browser recognition + BYOK AI</td><td>Fastest live setup; browser vendor receives audio.</td></tr>
           <tr><td>Privacy-sensitive meetings</td><td>Local Whisper + dictionary-only</td><td>Audio and text stay local, but explanations are limited to dictionary/custom entries.</td></tr>
           <tr><td>Private but context-aware detection</td><td>Local Whisper + Ollama OpenAI-compatible endpoint</td><td>Can stay local, but model quality depends on the local model.</td></tr>
-          <tr><td>Understanding the other side of an online call</td><td>Tab audio or virtual audio device + local Whisper</td><td>More setup, but captures meeting audio instead of only the microphone.</td></tr>
+          <tr><td>Understanding the other side of an online call</td><td>macOS desktop: 系统/App 音频, zero extra setup. Web: tab audio or a virtual audio device + local Whisper.</td><td>Desktop needs only the one-time permission grant; the web path needs a sidecar and, for virtual devices, extra OS-level routing.</td></tr>
           <tr><td>Post-meeting analysis of recordings</td><td>Browser audio/video import for short files; sidecar import for larger/diarized files</td><td>Browser path is easiest; sidecar path handles heavier local jobs.</td></tr>
         </tbody>
       </table>
@@ -627,6 +695,7 @@ python whisper_server.py --model small</code></pre>
         <li><code>bilingualTranscript</code>: live segment-by-segment translation into <code>explainLanguage</code>.</li>
         <li><code>hfToken</code> and <code>realtimeDiarize</code>: local sidecar diarization controls.</li>
         <li><code>themeId</code>, <code>fontSize</code>, <code>transcriptScale</code>, <code>transcriptLeading</code>: display controls persisted independently from theme tokens.</li>
+        <li><code>sidecarMode</code> (desktop build only): <code>managed</code> (default — the app installs/starts/restarts its own sidecar) or <code>external</code> (point at a sidecar you started yourself, same as the web build).</li>
       </ul>
 
       <h3>Detection Spec</h3>
@@ -703,6 +772,7 @@ python whisper_server.py --model small</code></pre>
     <section id="async-delegation">
       <h2>Async Delegation Design</h2>
       <p>The product should feel like one calm foreground process with specialized background workers. The foreground owns listening, transcript editing, user focus, and saved session state. Expensive work runs as asynchronous delegates and reports back when results are ready.</p>
+      <div class="callout info"><strong>Conceptual, not the literal schema:</strong> this section describes the coverage model live detection/translation already follow informally. The shipped, user-visible <a href="#desktop-app">后台任务 / background task center</a> tracks a simpler, coarser set of whole-job tasks (imports, model downloads, diarization install) with its own in-memory registry — it does not implement this per-segment ledger or the <code>translate | detect | search | diarize</code> kinds below.</div>
       <div class="cards">
         <div class="card">
           <h3>Foreground</h3>
@@ -734,10 +804,10 @@ python whisper_server.py --model small</code></pre>
 
     <section id="architecture">
       <h2>Architecture</h2>
-      <p>The app is Next.js 15 with TypeScript, Tailwind, zustand, IndexedDB, and server route proxies for LLM calls. The zustand store is the shared bus for transcript segments, interim text, cards, terms, summary output, settings, and sessions.</p>
-      <pre><code>Browser client
+      <p>The repository is an npm workspace: <code>apps/web</code> (Next.js 15, TypeScript, Tailwind, zustand, IndexedDB, server route proxies for LLM calls) plus <code>packages/core</code> (the pure-TS shared core — dictionary, types), <code>apps/desktop</code> (the Tauri shell), and <code>apps/extension</code> (the Chrome MV3 side panel). The zustand store in <code>apps/web</code> is the shared bus for transcript segments, interim text, cards, terms, summary output, settings, and sessions.</p>
+      <pre><code>apps/web (browser client)
   transcription engines
-    demo | Web Speech | local Whisper | tab audio
+    demo | Web Speech | local Whisper | tab audio | appaudio (desktop)
   zustand store
     segments | cards | terms | summaries | settings | sessions
   detection
@@ -752,16 +822,29 @@ Server routes
   /api/translate
   /api/summarize
 
-Sidecars
+Sidecars (Python)
   whisper_server.py
-  agent_server.py</code></pre>
+  agent_server.py
+
+apps/desktop (Tauri v2, macOS)
+  Rust core: provisions an isolated Python via a pinned uv,
+    manages the sidecar process, CoreAudio process-tap pipeline
+  jargonslayer-audiocap: signed Swift helper (CoreAudio process taps)
+
+apps/extension (Chrome MV3)
+  side panel: Web Speech capture + built-in dictionary + on-device Translator API
+  own IndexedDB database + chrome.storage.local, independent of apps/web's storage
+
+packages/core
+  shared types + built-in dictionary, consumed by web and extension</code></pre>
       <ul>
-        <li><code>src/lib/types.ts</code> owns cross-module contracts.</li>
-        <li><code>src/lib/store.ts</code> is the app bus; STT and detection communicate through it rather than importing each other.</li>
-        <li><code>src/lib/detect/dictionary.ts</code> is the synchronous instant floor.</li>
-        <li><code>src/lib/detect/scheduler.ts</code> batches LLM detection and falls back to dictionary mode.</li>
-        <li><code>src/lib/detect/dedupe.ts</code> merges repeats and upgrades dictionary hits with contextual LLM explanations.</li>
-        <li><code>src/app/api/summarize/route.ts</code> orchestrates summary, chunked translation, and missed-item gap fill.</li>
+        <li><code>apps/web/src/lib/types.ts</code> (re-exporting <code>@jargonslayer/core</code>) owns cross-module contracts.</li>
+        <li><code>apps/web/src/lib/store.ts</code> is the app bus; STT and detection communicate through it rather than importing each other.</li>
+        <li><code>apps/web/src/lib/detect/dictionary.ts</code> is the synchronous instant floor.</li>
+        <li><code>apps/web/src/lib/detect/scheduler.ts</code> batches LLM detection and falls back to dictionary mode.</li>
+        <li><code>apps/web/src/lib/detect/dedupe.ts</code> merges repeats and upgrades dictionary hits with contextual LLM explanations.</li>
+        <li><code>apps/web/src/app/api/summarize/route.ts</code> orchestrates summary, chunked translation, and missed-item gap fill.</li>
+        <li><code>apps/desktop/src-tauri/src/audiocap.rs</code> supervises the Swift capture helper and resamples its output into the existing transcription pipeline.</li>
       </ul>
     </section>
 
@@ -779,6 +862,7 @@ Sidecars
         </tbody>
       </table>
       <p>Schema version 1 covers session JSON, Markdown frontmatter, webhook payloads, full backup, and remote dictionary packs.</p>
+      <div class="callout info"><strong>This table is the web/desktop app.</strong> The Chrome extension (Lite) keeps its own, separate local storage — a dedicated IndexedDB database for session history plus <code>chrome.storage.local</code> for saved lookups — never synced or shared with the web app's storage.</div>
     </section>
 
     <section id="local-dev">
@@ -828,18 +912,32 @@ npm run build</code></pre>
 
     <section id="deployment">
       <h2>Deployment and Packaging</h2>
-      <p>The app currently ships as a web app and PWA. It can be installed from Chrome/Edge as a desktop-like window, added to iOS/iPadOS home screen through Safari, or run locally/LAN-hosted from a Next.js server.</p>
+      <p>The web app ships as a web app and PWA; it can be installed from Chrome/Edge as a desktop-like window, added to iOS/iPadOS home screen through Safari, or run locally/LAN-hosted from a Next.js server. The macOS desktop app and the Chrome extension are separate, independently versioned packages.</p>
       <table>
         <thead><tr><th>Form</th><th>Status</th><th>Notes</th></tr></thead>
         <tbody>
           <tr><td>Hosted preview</td><td>Available</td><td>Preview tier with transparent limits and greyed local-only features</td></tr>
           <tr><td>Local web app</td><td>Available</td><td>Full local-first build</td></tr>
           <tr><td>PWA install</td><td>Available</td><td>Uses existing manifest and icons</td></tr>
-          <tr><td>Tauri desktop app</td><td>In development (v0.4)</td><td>Self-managed local Whisper via a consent-gated wizard; signed installer ships with v0.4.0</td></tr>
+          <tr><td>macOS desktop app (Tauri)</td><td>Available</td><td>Signed, notarized DMG on <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>; Apple Silicon only, no Intel build</td></tr>
+          <tr><td>Chrome extension (Lite)</td><td>Available, load-unpacked</td><td>Zip on releases; Chrome Web Store submission pending</td></tr>
           <tr><td>Native mobile</td><td>Not recommended now</td><td>PWA covers most mobile use cases</td></tr>
         </tbody>
       </table>
       <p>Preview deployments use <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>. The default build is the full local-first build.</p>
+
+      <h3>Capability Matrix</h3>
+      <table>
+        <thead><tr><th>Capability</th><th>Chrome extension (Lite)</th><th>Preview (hosted)</th><th>Local web / Desktop</th></tr></thead>
+        <tbody>
+          <tr><td>Dictionary detection (instant, offline)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Live transcription</td><td>Web Speech (mic only)</td><td>Web Speech</td><td>Web Speech · local Whisper · tab audio · system/app audio (desktop) · Soniox (BYOK, experimental)</td></tr>
+          <tr><td>AI detection / translation / summary</td><td>—</td><td>✓ built-in demo key (rate-limited)</td><td>✓ your own key (BYOK)</td></tr>
+          <tr><td>Import text / audio / video</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Speaker diarization</td><td>—</td><td>shown, needs local sidecar</td><td>✓</td></tr>
+          <tr><td>History</td><td>Local IndexedDB, own database</td><td>IndexedDB</td><td>IndexedDB</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <section id="testing">
@@ -855,22 +953,31 @@ sidecar/.venv/bin/python sidecar/test_agent_server.py
 sidecar/.venv/bin/python sidecar/test_ingest_url.py
 sidecar/.venv/bin/python sidecar/test_realtime_diar.py</code></pre>
       <p>Sidecar tests are plain-assert scripts and assume dependencies from <code>sidecar/requirements.txt</code>. The local Whisper and agent sidecars are independent processes, so test the one you changed.</p>
+      <h3>Desktop (Rust + Swift)</h3>
+      <pre><code>cd apps/desktop/src-tauri && cargo test
+cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
+      <p>The Rust core (process supervision, resampling, the CoreAudio framing protocol) and the signed Swift capture helper each have their own suite; CI has no live CoreAudio session, so the audio-capture tests are designed around fakes/seams rather than a real tap.</p>
+      <h3>Extension</h3>
+      <pre><code>npm test -w apps/extension</code></pre>
     </section>
 
     <section id="roadmap">
       <h2>Roadmap</h2>
-      <p>v0.3.0 shipped its full slate: the learning loop (#48), the unified import hub + task center (#58), simple/advanced settings (#62), and four new themes (#52). Current work is v0.4:</p>
+      <p>v0.3.0 shipped its full slate: the learning loop (#48), the unified import hub + task center (#58), simple/advanced settings (#62), and four new themes (#52). v0.4 has since shipped:</p>
       <ol>
-        <li><strong>Desktop app (Tauri):</strong> self-managed local Whisper — consent-gated wizard, model picker + live model switching, one-click diarization add-on. On main now; the signed installer lands with v0.4.0.</li>
-        <li><strong>On-device browser recognition:</strong> Chrome 139+ prefers local speech recognition, automatic cloud fallback. Shipped.</li>
-        <li><strong>Soniox realtime engine (experimental, BYOK):</strong> aimed at code-switched zh-en; stays experimental until it clears the in-house benchmark. Shipped.</li>
-        <li><strong>Chrome extension (Lite):</strong> MV3 side-panel dictionary lookup scaffold shipped; live-capture port in progress.</li>
+        <li><strong>Desktop app (Tauri, macOS):</strong> self-managed local Whisper — consent-gated wizard, model picker + live model switching, one-click diarization add-on. Signed, notarized DMG on releases.</li>
+        <li><strong>On-device browser recognition:</strong> Chrome 139+ prefers local speech recognition, automatic cloud fallback.</li>
+        <li><strong>Soniox realtime engine (experimental, BYOK):</strong> aimed at code-switched zh-en; stays experimental until it clears the in-house benchmark.</li>
+        <li><strong>System/App audio (desktop, macOS 14.4+):</strong> CoreAudio process-tap capture of what the Mac is playing, replacing desktop's old tab-audio slot — see <a href="#desktop-app">Desktop App</a>.</li>
+        <li><strong>Chrome extension (Lite):</strong> MV3 side panel with live mic capture, the built-in dictionary, and on-device translation.</li>
+        <li><strong>Background task center, engine dropdown, first-run onboarding, update check (desktop):</strong> see <a href="#desktop-app">Desktop App</a> for all four.</li>
       </ol>
+      <p><strong>Pending:</strong> Chrome Web Store submission for the extension (load-unpacked is the only install path until then).</p>
       <p>Parked items include browser-Whisper realtime streaming, a free translation tier, and select-to-web-search.</p>
     </section>
 
     <div class="footer">
-      Sources: README.md, README.zh-CN.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, docs/SCHEMA.md, docs/AGENT-WORKFLOWS.md, docs/PACKAGING.md, docs/PLAN-v0.3.0.md, docs/PLAN-v0.2.3-v0.3.0.md, and implementation files under src/ and sidecar/.
+      Sources: README.md, README.zh-CN.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, docs/SCHEMA.md, docs/AGENT-WORKFLOWS.md, docs/PACKAGING.md, docs/PLAN-v0.4.md, and implementation files under apps/web, apps/desktop, apps/extension, packages/core, and sidecar/.
     </div>
   </main>
 </div>

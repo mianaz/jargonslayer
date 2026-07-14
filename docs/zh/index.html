@@ -255,7 +255,7 @@
 <body>
 <header class="topbar">
   <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
-  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / zh / v0.3.0+</div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / zh / 网页版 · 桌面版 · 插件</div>
   <div class="spacer"></div>
   <a href="../../">首页</a>
   <a href="../">English</a>
@@ -272,6 +272,7 @@
     <a href="#workflow">会议流程</a>
     <a href="#transcription">转录引擎</a>
     <a href="#imports">导入</a>
+    <a href="#desktop-app">桌面版</a>
 
     <div class="label">Use</div>
     <a href="#ai">AI 模式</a>
@@ -306,6 +307,8 @@
         <span class="pill">本地 Whisper</span>
         <span class="pill">IndexedDB 历史</span>
         <span class="pill">社区词典包</span>
+        <span class="pill">macOS 桌面版</span>
+        <span class="pill">Chrome 插件</span>
       </div>
       <div class="shot-grid">
         <figure>
@@ -350,9 +353,10 @@
       </div>
       <h3>完整主题列表</h3>
       <ul>
-        <li>模式选择与部署层级：在线体验、本地 Web、PWA、未来 Tauri。</li>
-        <li>转录路径：浏览器识别、本地 Whisper、标签页音频、演示、文稿导入、浏览器 Whisper 导入。</li>
-        <li>线上会议音频捕获：麦克风、标签页音频、虚拟声卡、loopback。</li>
+        <li>模式选择与部署层级：在线体验、本地 Web、PWA、macOS 桌面版、Chrome 插件。</li>
+        <li>转录路径：浏览器识别、本地 Whisper、标签页音频、演示、文稿导入、浏览器 Whisper 导入；桌面版的引擎清单不一样（麦克风 · 本地 Whisper、系统/App 音频），见「桌面版」。</li>
+        <li>线上会议音频捕获：麦克风、标签页音频、虚拟声卡、loopback，或（桌面版）系统/App 音频。</li>
+        <li>桌面版专属：系统/App 音频权限流程、首次引导（BYOK OAuth/粘贴、说话人分离 token）、后台任务中心、更新检查。</li>
         <li>检测行为：词典底座、LLM 升级、置信度阈值、去重、个人词典优先级。</li>
         <li>翻译行为：实时双语转录、导入时翻译、会后全文翻译。</li>
         <li>AI 提供商配置：Anthropic、OpenAI 兼容端点、OpenRouter、Poe、Ollama、分任务模型。</li>
@@ -367,21 +371,29 @@
 
     <section id="quickstart">
       <h2>快速开始</h2>
-      <p>最快理解产品的方式是运行内置演示。它不需要麦克风，也不需要 API Key。</p>
+      <p>三条路都能跑起来 JargonSlayer，全部免费：macOS 桌面版（最省事，签名安装包）、网页版（在线体验或本地自托管）、Chrome 插件（轻量划词查词）。</p>
+
+      <h3>桌面版（macOS，Apple Silicon）</h3>
       <ol>
-        <li>打开在线体验，或在本地启动项目。</li>
-        <li>打开右上角 <code>≡</code> 菜单，选择 <code>演示</code>。</li>
-        <li>左侧查看转录，右侧查看解释卡片。</li>
-        <li>演示结束后点击 <code>停止</code>。</li>
-        <li>打开 <code>纪要与导出</code>，生成会议报告。</li>
+        <li>在 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a> 下载签名并公证的 DMG。</li>
+        <li>打开 DMG，把 JargonSlayer 拖进「应用程序」，启动它。</li>
+        <li>首次启动会出现一个全屏向导，点击 <code>开始安装</code> 之前不会下载任何东西：随后它会把独立的 Python 运行环境、faster-whisper 和你选的模型（预选 medium）全部装进应用自己的数据目录，不碰系统 Python。</li>
+        <li>向导结束后还有两步可跳过的引导：连接 OpenRouter（用于 AI 检测/解释）、填入 Hugging Face token（用于说话人分离）。详见下方「<a href="#desktop-app">桌面版</a>」。</li>
       </ol>
-      <h3>本地运行</h3>
+      <div class="callout local"><strong>仅支持 Apple Silicon</strong>，没有 Intel 版本。应用本身在较旧的 macOS 上也能装，但「系统/App 音频」这一个引擎需要 macOS 14.4+；低于这个版本会在选项里显示为置灰并注明原因。</div>
+
+      <h3>网页版</h3>
+      <p>先试试 <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">在线体验</a>——零安装。不管走哪条路，最快理解产品的方式都是内置演示：打开 <code>≡</code> 菜单 → <code>演示</code>，不需要麦克风，也不需要 API Key。</p>
+      <p>或者自己跑起来：</p>
       <pre><code>git clone https://github.com/mianaz/jargonslayer.git
 cd jargonslayer
 npm install
 npm run dev
 # 打开 http://localhost:3000</code></pre>
       <p>如果需要更接近生产环境的本地运行方式，使用 <code>npm run build</code> 和 <code>npm start</code>。</p>
+
+      <h3>Chrome 插件（JargonSlayer Lite）</h3>
+      <p>在 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases</a> 下载 zip 并解压，然后打开 <code>chrome://extensions</code> → 开启「开发者模式」→「加载已解压的扩展程序」→ 选中解压后的文件夹。Chrome 网上应用店上架还在审核中，目前只能这样手动加载。Lite 在侧边栏里提供实时麦克风转录 + 内置词典 + 设备端翻译——没有 LLM 检测，没有标签页/系统音频，也没有账号；完整能力对比见下方「<a href="#deployment">部署与打包</a>」。</p>
     </section>
 
     <section id="workflow">
@@ -409,23 +421,40 @@ npm run dev
 
     <section id="transcription">
       <h2>转录引擎</h2>
+      <p>网页版和桌面版的引擎清单<strong>不一样</strong>——桌面版完全没有浏览器识别（Tauri 的 webview 没有 Web Speech API），但多了网页版做不到的、基于 CoreAudio 的系统/App 音频捕获。引擎选择器本身的位置也变了：现在不管什么屏幕宽度，都是<strong>底部状态栏</strong>里的一个下拉菜单（以前是 Header 里的 tab/pill）。</p>
+
+      <h3>网页版</h3>
       <table>
         <thead><tr><th>引擎</th><th>配置成本</th><th>音频去向</th><th>适合场景</th></tr></thead>
         <tbody>
           <tr><td><strong>演示</strong></td><td>无需配置</td><td>无音频；脚本回放</td><td>快速体验完整流程</td></tr>
-          <tr><td><strong>浏览器识别</strong></td><td>无需配置，推荐 Chrome/Edge</td><td>浏览器厂商语音服务</td><td>日常低敏会议</td></tr>
-          <tr><td><strong>本地 Whisper</strong></td><td>Python sidecar</td><td>本机 <code>127.0.0.1</code></td><td>隐私敏感、离线、稳定转录</td></tr>
-          <tr><td><strong>标签页音频</strong></td><td>本地 sidecar</td><td>本机</td><td>捕获线上会议中对方的声音</td></tr>
+          <tr><td><strong>浏览器识别</strong></td><td>无需配置，推荐 Chrome/Edge</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商的语音服务（云端）</td><td>日常低敏会议</td></tr>
+          <tr><td><strong>本地 Whisper</strong></td><td>Python sidecar（手动安装）</td><td>本机 <code>127.0.0.1</code></td><td>隐私敏感、离线、稳定转录</td></tr>
+          <tr><td><strong>标签页音频</strong></td><td>同一个本地 sidecar</td><td>本机</td><td>捕获线上会议中对方的声音</td></tr>
+          <tr><td><strong>Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>中英夹杂实时场景；通过内部基准测试前保持「实验」标记</td></tr>
         </tbody>
       </table>
       <div class="callout info"><strong>线上会议注意：</strong>麦克风通常只听得到你自己。Zoom、Teams、Meet 等场景如果要听到对方声音，可使用标签页音频；或在 macOS 用 BlackHole、Windows 用 VB-Cable 把系统音频路由成输入，再配合本地 Whisper。</div>
-      <h3>本地 Whisper</h3>
+
+      <h3>桌面版（macOS）</h3>
+      <table>
+        <thead><tr><th>引擎</th><th>配置成本</th><th>音频去向</th><th>适合场景</th></tr></thead>
+        <tbody>
+          <tr><td><strong>麦克风 · 本地 Whisper</strong></td><td>无需配置——应用自带自管</td><td>本机</td><td>默认日常引擎，开箱自带 medium 模型</td></tr>
+          <tr><td><strong>麦克风 · Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>和网页版一样，面向中英夹杂场景</td></tr>
+          <tr><td><strong>系统/App 音频</strong></td><td>无需配置——同一个内置本地 Whisper</td><td>本机</td><td>捕获在 Zoom、Teams、微信等原生 App 里开会时对方的声音，不用虚拟声卡</td></tr>
+        </tbody>
+      </table>
+      <p>桌面版没有浏览器识别引擎；网页版的标签页音频，在桌面版对应的位置是<strong>系统/App 音频</strong>。权限流程和捕获范围见下方「<a href="#desktop-app">桌面版</a>」。</p>
+
+      <h3>本地 Whisper（网页版手动安装）</h3>
+      <p>下面这套手动安装的 sidecar 是给<strong>网页版</strong>用的。桌面版通过首次启动向导自己安装、自己管理本地 Whisper，不用碰终端——见「<a href="#desktop-app">桌面版</a>」。</p>
       <pre><code>cd sidecar
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python whisper_server.py --model small</code></pre>
-      <p>sidecar 通过 <code>ws://127.0.0.1:8765</code> 提供实时 websocket 转录，并通过本地 HTTP job API 处理录音导入。模型可选 <code>tiny</code>、<code>base</code>、<code>small</code>、<code>medium</code>、<code>large-v3</code>；日常默认推荐 <code>small</code>。</p>
+      <p>sidecar 通过 <code>ws://127.0.0.1:8765</code> 提供实时 websocket 转录，并通过本地 HTTP job API 处理录音导入。这条手动路径的模型可选 <code>tiny</code>、<code>base</code>、<code>small</code>、<code>medium</code>、<code>large-v3</code>，日常默认推荐 <code>small</code>（桌面版向导的模型清单是精选过的 <code>small</code>/<code>medium</code>/<code>large-v3</code>/<code>large-v3-turbo</code> 四档，预选 <code>medium</code>）。</p>
     </section>
 
     <section id="imports">
@@ -456,6 +485,43 @@ python whisper_server.py --model small</code></pre>
       <div class="callout risk"><strong>谨慎使用 URL 导入。</strong>服务器侧抓取第三方视频涉及平台条款和法律风险，所以项目把这条路径限制在用户自己的机器上。</div>
     </section>
 
+    <section id="desktop-app">
+      <h2>桌面版</h2>
+      <p>桌面版把同一个应用装进原生 Tauri 外壳，本地 Whisper 由应用自己安装和管理——安装步骤见「<a href="#quickstart">快速开始</a>」。这一节只讲桌面版独有的部分：系统/App 音频引擎、两步可选引导、后台任务中心、延迟提示、更新检查。</p>
+
+      <h3>系统/App 音频</h3>
+      <p>在引擎下拉菜单里选<strong>系统/App 音频</strong>，就能转录 Zoom、Teams、微信这类原生 App 里对方说的话——不需要虚拟声卡，不需要装 BlackHole/VB-Cable。它替换了桌面版旧版那个只能失败的「标签页音频」——Tauri 的 webview 里没有标签页分享选择器可以调用；网页版的标签页音频不受影响。</p>
+      <ul>
+        <li><strong>捕获范围：</strong>这台 Mac 当前正在播放的所有声音——会议对方的话，但如果同时在放音乐或弹通知音，也会被录进去。它从不捕获麦克风。</li>
+        <li><strong>权限：</strong>macOS 会在你真正开始用这个引擎监听时（不是选中它的那一刻）弹一次「系统音频录制」授权——这是它自己的 TCC 权限类别，和麦克风、屏幕录制完全分开。</li>
+        <li><strong>系统版本：</strong>需要 macOS 14.4 或更高版本。低于这个版本，选项会在选择器里显示为置灰并注明原因，而不是直接隐藏。</li>
+        <li><strong>音频去向：</strong>仅本机——音频只送到内置的 Whisper sidecar，不会去别处；跟麦克风类引擎一样，状态栏显示「音频在本地处理」。</li>
+      </ul>
+      <div class="callout risk"><strong>如果 macOS 拒绝了授权：</strong>应用会显示一个按钮，直接跳转到 系统设置 → 隐私与安全性 → 屏幕与系统音频录制；如果这个深度链接没跳到正确的面板，手动打开这个路径总是有效的。</div>
+
+      <h3>首次引导</h3>
+      <p>安装向导跑完之后（不是每次启动都出现——已经有健康本地服务的老用户不会被重复打扰），会出现两步各自独立、都能跳过的引导：</p>
+      <ol>
+        <li><strong>连接 OpenRouter</strong>——直接粘贴已有的 Key，或者点「使用 OpenRouter 登录」走一键 OAuth：应用会打开你的系统默认浏览器完成登录，再自动把控制权交还给应用。如果 OAuth 失败，会有一个回退链接指向 <code>openrouter.ai/keys</code>，去创建并粘贴 Key。这一步打通的是 AI 检测、翻译和会后报告。</li>
+        <li><strong>说话人分离 token</strong>——粘贴一个 Hugging Face token，前提是已经在 Hugging Face 上接受了 pyannote 的 segmentation 和 speaker-diarization 两个模型的使用条款（这一步直接给出两个链接）。跳过是零摩擦的默认选项——说话人分离会保持关闭，直到你回来配置。</li>
+      </ol>
+      <p>这两步写入的设置，跟手动在设置里填的完全是同一处：这里填过的值，和之后在 设置 → AI 检测 / 设置 → 说话人分离 里填的效果完全一样。两步都跳过也完全不影响正常使用云端/无需 BYOK 的功能。</p>
+
+      <h3>后台任务中心</h3>
+      <p>Header 里有一个「后台任务」入口（仅桌面版），有任务在跑或者有新版本可用时会亮一个提示点。打开后分两个区：</p>
+      <ul>
+        <li><strong>系统状态</strong>——「本地服务」一行显示 托管（应用自己管）还是 外部（你自己起的 sidecar）模式，加上 运行中 / 未连接 / <strong>未知</strong> 状态，旁边有「重新检测」按钮可以随时手动探测；「应用更新」一行见下方「更新检查」。</li>
+        <li><strong>任务</strong>——模型下载、说话人分离扩展安装，以及各种导入任务，每个都有进度显示。模型下载或分离扩展安装失败会出现「重试」按钮；已完成的导入任务点一下就跳转到对应会话。</li>
+      </ul>
+      <div class="callout info"><strong>排障：</strong>模型下载中途失败，点「重试」会重新发起下载——因为模型来自 Hugging Face 自己的下载缓存，网络抖一下通常不会导致从零开始。如果「本地服务」显示<strong>未知</strong>，说明应用还没探测过（或者上一次探测没有返回），点「重新检测」，或者直接去 设置 → 转录引擎 里查看。</div>
+
+      <h3>转录延迟提示</h3>
+      <p>正在使用本地 Whisper 类引擎监听时（麦克风 Whisper、标签页音频、系统/App 音频），只要解码延迟持续超过约 2 秒，状态栏就会亮起一个 <code>延迟 ~Ns</code> 的提示。这是「机器/模型这个组合快跟不上实时了」的预警，不是错误——如果经常出现，换成更轻的模型（<code>small</code>）通常能在老机器上解决。</p>
+
+      <h3>更新检查</h3>
+      <p>应用每次启动会安静地检查一次 GitHub 上的最新发布（带 ETag 缓存，重复检查很轻量），在 后台任务 → 系统状态 里显示当前版本和最新版本，随时可以点「重新检查」。这只是一次检查，不是自动安装：有新版本时，点「打开下载页」跳转到 GitHub release 页面，自己下载安装。</p>
+    </section>
+
     <section id="ai">
       <h2>AI 模式与模型配置</h2>
       <h3>词典模式</h3>
@@ -467,10 +533,10 @@ python whisper_server.py --model small</code></pre>
         <li>打开 <code>设置</code>，进入 <code>AI 检测</code>。</li>
         <li>选择 Anthropic，或 DeepSeek、Qwen、OpenRouter、Poe 预设、Ollama 等 OpenAI 兼容端点。</li>
         <li>按需填写 base URL。</li>
-        <li>在 UI 中输入 API Key，或使用 <code>ANTHROPIC_API_KEY</code> 等服务端环境变量。</li>
+        <li>在 UI 中输入 API Key、用一键 OAuth 连接 OpenRouter，或使用 <code>ANTHROPIC_API_KEY</code> 等服务端环境变量。</li>
         <li>选择检测模型和报告模型，测试连接并保存。</li>
       </ol>
-      <div class="callout"><strong>Key 处理：</strong>UI 输入的 Key 存在本地浏览器，并经应用 API 路由内存转发；不会在服务器侧持久化。环境变量方式可以让 Key 完全不进入浏览器。</div>
+      <div class="callout"><strong>Key 处理：</strong>UI 输入的 Key 存在本地浏览器，并经应用 API 路由内存转发；不会在服务器侧持久化。环境变量方式可以让 Key 完全不进入浏览器。桌面版的 OAuth 走的是系统默认浏览器（RFC 8252 loopback），不是应用内弹窗——这个流程首次启动时的版本见「<a href="#desktop-app">桌面版</a>」。</div>
       <h3>分任务模型</h3>
       <p>高级设置可以为检测、翻译、报告使用不同提供商或模型。常见策略是实时检测用快而便宜的模型，会后报告用更强的模型。</p>
     </section>
@@ -543,8 +609,8 @@ python whisper_server.py --model small</code></pre>
       <table>
         <thead><tr><th>数据</th><th>去向</th></tr></thead>
         <tbody>
-          <tr><td>本地 Whisper / 标签页音频</td><td>仅本机，loopback websocket</td></tr>
-          <tr><td>浏览器识别音频</td><td>浏览器厂商语音服务</td></tr>
+          <tr><td>本地 Whisper / 标签页音频 / 系统/App 音频（桌面版）</td><td>仅本机——loopback websocket，或（系统/App 音频）本机进程通道进同一个内置 sidecar</td></tr>
+          <tr><td>浏览器识别音频</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商语音服务</td></tr>
           <tr><td>音频/视频文件导入</td><td>浏览器内转录；文件不上传</td></tr>
           <tr><td>在线体验 AI 文本</td><td>项目服务器内存中转，再到 OpenRouter，带 <code>data_collection=allow</code></td></tr>
           <tr><td>BYOK AI 文本</td><td>你配置的模型提供商端点</td></tr>
@@ -568,6 +634,8 @@ python whisper_server.py --model small</code></pre>
       <p>长会议会分块并行翻译；一到两分钟属于正常范围。卡片不需要生成报告也能导出。</p>
       <h3>移动项目目录后 sidecar 坏了</h3>
       <p>Python 虚拟环境包含绝对路径。移动或重命名仓库后，重建 sidecar venv。</p>
+      <h3>桌面版：本地服务显示「未知」</h3>
+      <p>应用还没探测过本地服务，或者上一次探测没有返回。打开「后台任务」（桌面版右上角），点「本地服务」旁边的「重新检测」；如果还是不行，去 设置 → 转录引擎 检查。完整的后台任务中心说明见「<a href="#desktop-app">桌面版</a>」。</p>
     </section>
 
     <section id="deep-specs">
@@ -582,7 +650,7 @@ python whisper_server.py --model small</code></pre>
           <tr><td>日常低敏会议</td><td>浏览器识别 + BYOK AI</td><td>实时配置最简单；音频会进入浏览器厂商语音服务。</td></tr>
           <tr><td>隐私敏感会议</td><td>本地 Whisper + 词典模式</td><td>音频和文本都留在本机，但解释能力限于词典和个人词典。</td></tr>
           <tr><td>既要隐私又要上下文检测</td><td>本地 Whisper + Ollama OpenAI 兼容端点</td><td>可全本地，但质量取决于本地模型。</td></tr>
-          <tr><td>听懂线上会议中对方声音</td><td>标签页音频或虚拟声卡 + 本地 Whisper</td><td>配置更多，但捕获的是会议音频，不只是麦克风。</td></tr>
+          <tr><td>听懂线上会议中对方声音</td><td>macOS 桌面版：系统/App 音频，零额外配置。网页版：标签页音频或虚拟声卡 + 本地 Whisper。</td><td>桌面版只需要一次性授权；网页版需要 sidecar，用虚拟声卡还要额外的系统级路由设置。</td></tr>
           <tr><td>分析会后录音</td><td>短文件用浏览器音视频导入；大文件/说话人分离用 sidecar 导入</td><td>浏览器路径最省事；sidecar 路径适合重任务。</td></tr>
         </tbody>
       </table>
@@ -601,6 +669,7 @@ python whisper_server.py --model small</code></pre>
         <li><code>bilingualTranscript</code>：把每个最终片段实时翻译成 <code>explainLanguage</code>。</li>
         <li><code>hfToken</code> 和 <code>realtimeDiarize</code>：本地 sidecar 说话人分离配置。</li>
         <li><code>themeId</code>、<code>fontSize</code>、<code>transcriptScale</code>、<code>transcriptLeading</code>：显示设置，独立于主题 token 持久化。</li>
+        <li><code>sidecarMode</code>（仅桌面版）：<code>managed</code>（默认——应用自己安装/启动/重启 sidecar）或 <code>external</code>（连接你自己起的 sidecar，跟网页版一样）。</li>
       </ul>
 
       <h3>检测规格</h3>
@@ -677,6 +746,7 @@ python whisper_server.py --model small</code></pre>
     <section id="async-delegation">
       <h2>异步委派设计</h2>
       <p>产品体验应该像一个稳定的前台进程，背后有多个专业后台 worker。前台负责监听、文本编辑、用户焦点和已保存会议状态；昂贵任务交给异步委派者，结果准备好后再自然合并回来。</p>
+      <div class="callout info"><strong>这是概念设计，不是字面 schema：</strong>这一节描述的是实时检测/翻译目前已经在遵循的覆盖率模型，属于概念层面。真正上线、用户看得见的「<a href="#desktop-app">后台任务中心</a>」，跟踪的是更粗粒度的整任务（导入、模型下载、说话人分离扩展安装），用的是它自己的内存 registry——并不是下面这套按片段的账本，也没有 <code>translate | detect | search | diarize</code> 这几种 kind。</div>
       <div class="cards">
         <div class="card">
           <h3>前台</h3>
@@ -708,10 +778,10 @@ python whisper_server.py --model small</code></pre>
 
     <section id="architecture">
       <h2>架构</h2>
-      <p>应用基于 Next.js 15、TypeScript、Tailwind、zustand、IndexedDB 和服务端 LLM route proxy。zustand store 是转录片段、中间结果、卡片、术语、纪要、设置和会议历史的共享总线。</p>
-      <pre><code>Browser client
+      <p>仓库是一个 npm workspace：<code>apps/web</code>（Next.js 15、TypeScript、Tailwind、zustand、IndexedDB、服务端 LLM route proxy）加上 <code>packages/core</code>（纯 TS 共享核心——词典、类型定义）、<code>apps/desktop</code>（Tauri 外壳）、<code>apps/extension</code>（Chrome MV3 侧边栏）。<code>apps/web</code> 里的 zustand store 是转录片段、中间结果、卡片、术语、纪要、设置和会议历史的共享总线。</p>
+      <pre><code>apps/web（浏览器客户端）
   transcription engines
-    demo | Web Speech | local Whisper | tab audio
+    demo | Web Speech | local Whisper | tab audio | appaudio（桌面版）
   zustand store
     segments | cards | terms | summaries | settings | sessions
   detection
@@ -726,16 +796,29 @@ Server routes
   /api/translate
   /api/summarize
 
-Sidecars
+Sidecars（Python）
   whisper_server.py
-  agent_server.py</code></pre>
+  agent_server.py
+
+apps/desktop（Tauri v2，macOS）
+  Rust 核心：用固定版本的 uv 装独立 Python、
+    管理 sidecar 进程、CoreAudio process-tap 管线
+  jargonslayer-audiocap：签名的 Swift 辅助进程（CoreAudio process tap）
+
+apps/extension（Chrome MV3）
+  侧边栏：Web Speech 实时捕获 + 内置词典 + 设备端 Translator API
+  自己的 IndexedDB 数据库 + chrome.storage.local，跟 apps/web 的存储互不相通
+
+packages/core
+  共享类型 + 内置词典，网页版和插件都消费它</code></pre>
       <ul>
-        <li><code>src/lib/types.ts</code> 维护跨模块契约。</li>
-        <li><code>src/lib/store.ts</code> 是应用总线；STT 和检测通过 store 通信，而不是直接互相依赖。</li>
-        <li><code>src/lib/detect/dictionary.ts</code> 是同步即时词典层。</li>
-        <li><code>src/lib/detect/scheduler.ts</code> 负责 LLM 批处理和词典模式 fallback。</li>
-        <li><code>src/lib/detect/dedupe.ts</code> 合并重复命中，并用 LLM 结果原地升级词典卡片。</li>
-        <li><code>src/app/api/summarize/route.ts</code> 编排总结、分块翻译和漏检补扫。</li>
+        <li><code>apps/web/src/lib/types.ts</code>（转出自 <code>@jargonslayer/core</code>）维护跨模块契约。</li>
+        <li><code>apps/web/src/lib/store.ts</code> 是应用总线；STT 和检测通过 store 通信，而不是直接互相依赖。</li>
+        <li><code>apps/web/src/lib/detect/dictionary.ts</code> 是同步即时词典层。</li>
+        <li><code>apps/web/src/lib/detect/scheduler.ts</code> 负责 LLM 批处理和词典模式 fallback。</li>
+        <li><code>apps/web/src/lib/detect/dedupe.ts</code> 合并重复命中，并用 LLM 结果原地升级词典卡片。</li>
+        <li><code>apps/web/src/app/api/summarize/route.ts</code> 编排总结、分块翻译和漏检补扫。</li>
+        <li><code>apps/desktop/src-tauri/src/audiocap.rs</code> 监管 Swift 捕获辅助进程，把它的输出重采样后接入既有转录管线。</li>
       </ul>
     </section>
 
@@ -753,6 +836,7 @@ Sidecars
         </tbody>
       </table>
       <p>Schema version 1 覆盖会议 JSON、Markdown frontmatter、webhook payload、全量备份和远程词典包。</p>
+      <div class="callout info"><strong>这张表说的是网页版/桌面版。</strong>Chrome 插件（Lite）有自己完全独立的本地存储——一个专用的 IndexedDB 数据库存会话历史，<code>chrome.storage.local</code> 存收藏的查词记录——从不和网页版的存储同步或共享。</div>
     </section>
 
     <section id="local-dev">
@@ -802,18 +886,32 @@ npm run build</code></pre>
 
     <section id="deployment">
       <h2>部署与打包</h2>
-      <p>当前形态是 Web App 和 PWA。它可以在 Chrome/Edge 中安装成接近桌面应用的窗口，也可以在 iOS/iPadOS Safari 中添加到主屏幕，或作为本地/LAN Next.js 服务运行。</p>
+      <p>网页版的形态是 Web App 和 PWA：可以在 Chrome/Edge 中安装成接近桌面应用的窗口，也可以在 iOS/iPadOS Safari 中添加到主屏幕，或作为本地/LAN Next.js 服务运行。macOS 桌面版和 Chrome 插件是两个独立打包、独立发版的产物。</p>
       <table>
         <thead><tr><th>形态</th><th>状态</th><th>说明</th></tr></thead>
         <tbody>
           <tr><td>在线体验</td><td>可用</td><td>预览层，明确标出限制，本地功能灰显</td></tr>
           <tr><td>本地 Web App</td><td>可用</td><td>完整本地优先构建</td></tr>
           <tr><td>PWA 安装</td><td>可用</td><td>使用已有 manifest 和图标</td></tr>
-          <tr><td>Tauri 桌面应用</td><td>开发中（v0.4）</td><td>应用自己托管本地 Whisper，安装前先征求同意；签名安装包随 v0.4.0 发布</td></tr>
+          <tr><td>macOS 桌面版（Tauri）</td><td>可用</td><td>签名并公证的 DMG，见 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>；仅 Apple Silicon，无 Intel 版本</td></tr>
+          <tr><td>Chrome 插件（Lite）</td><td>可用，需手动加载</td><td>zip 在 releases 页面；Chrome 网上应用店上架审核中</td></tr>
           <tr><td>原生移动端</td><td>暂不推荐</td><td>PWA 已覆盖主要移动场景</td></tr>
         </tbody>
       </table>
       <p>预览部署使用 <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>。默认构建是完整本地优先构建。</p>
+
+      <h3>能力对照表</h3>
+      <table>
+        <thead><tr><th>能力</th><th>Chrome 插件（Lite）</th><th>在线体验（预览）</th><th>本地 Web / 桌面版</th></tr></thead>
+        <tbody>
+          <tr><td>词典检测（即时、离线）</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          <tr><td>实时转录</td><td>Web Speech（仅麦克风）</td><td>Web Speech</td><td>Web Speech · 本地 Whisper · 标签页音频 · 系统/App 音频（桌面版）· Soniox（BYOK，实验）</td></tr>
+          <tr><td>AI 检测/翻译/纪要</td><td>—</td><td>✓ 内置体验 Key（限流）</td><td>✓ 自备 Key（BYOK）</td></tr>
+          <tr><td>导入文本/音频/视频</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>说话人分离</td><td>—</td><td>展示但需要本地 sidecar</td><td>✓</td></tr>
+          <tr><td>历史记录</td><td>本地 IndexedDB，独立数据库</td><td>IndexedDB</td><td>IndexedDB</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <section id="testing">
@@ -829,22 +927,31 @@ sidecar/.venv/bin/python sidecar/test_agent_server.py
 sidecar/.venv/bin/python sidecar/test_ingest_url.py
 sidecar/.venv/bin/python sidecar/test_realtime_diar.py</code></pre>
       <p>sidecar 测试是 plain-assert 脚本，依赖 <code>sidecar/requirements.txt</code>。本地 Whisper 和 agent sidecar 是独立进程，改哪个测哪个。</p>
+      <h3>桌面版（Rust + Swift）</h3>
+      <pre><code>cd apps/desktop/src-tauri && cargo test
+cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
+      <p>Rust 核心（进程监管、重采样、CoreAudio framing 协议）和签名的 Swift 捕获辅助进程各有自己的测试套件；CI 环境没有真实 CoreAudio session，所以音频捕获相关的测试都是围绕 fake/seam 设计的，不依赖真实 tap。</p>
+      <h3>插件</h3>
+      <pre><code>npm test -w apps/extension</code></pre>
     </section>
 
     <section id="roadmap">
       <h2>路线图</h2>
-      <p>v0.3.0 的全部计划项已上线：学习循环（#48）、统一导入与任务中心（#58）、简单/高级设置（#62）、四套新主题（#52）。当前在做 v0.4：</p>
+      <p>v0.3.0 的全部计划项已上线：学习循环（#48）、统一导入与任务中心（#58）、简单/高级设置（#62）、四套新主题（#52）。v0.4 目前已上线：</p>
       <ol>
-        <li><strong>桌面应用（Tauri）：</strong>应用自己托管本地 Whisper——安装向导先征求同意，模型可选可换，说话人分离扩展一键安装。代码已在 main；签名安装包随 v0.4.0 发布。</li>
-        <li><strong>设备端浏览器识别：</strong>Chrome 139+ 优先本地识别，云端自动兜底。已上线。</li>
-        <li><strong>Soniox 实时引擎（实验，自备 Key）：</strong>面向中英夹杂场景；通过内部基准测试前保持「实验」标记。已上线。</li>
-        <li><strong>Chrome 插件（Lite）：</strong>MV3 侧边栏词典查询骨架已上线；实时捕获移植进行中。</li>
+        <li><strong>桌面应用（Tauri，macOS）：</strong>应用自己托管本地 Whisper——安装向导、模型可选可换、说话人分离扩展一键安装。签名并公证的 DMG 在 releases 页面。</li>
+        <li><strong>设备端浏览器识别：</strong>Chrome 139+ 优先本地识别，云端自动兜底。</li>
+        <li><strong>Soniox 实时引擎（实验，自备 Key）：</strong>面向中英夹杂场景；通过内部基准测试前保持「实验」标记。</li>
+        <li><strong>系统/App 音频（桌面版，macOS 14.4+）：</strong>基于 CoreAudio process tap，捕获这台 Mac 正在播放的声音，替换了桌面版旧版的标签页音频——见「<a href="#desktop-app">桌面版</a>」。</li>
+        <li><strong>Chrome 插件（Lite）：</strong>MV3 侧边栏，含实时麦克风捕获、内置词典、设备端翻译。</li>
+        <li><strong>后台任务中心、引擎下拉菜单、首次引导、更新检查（桌面版）：</strong>四项都在「<a href="#desktop-app">桌面版</a>」里有完整说明。</li>
       </ol>
+      <p><strong>待完成：</strong>Chrome 插件的网上应用店上架审核——完成之前，手动加载是唯一的安装方式。</p>
       <p>暂缓项：浏览器端 Whisper 实时流、免费翻译层、划词联网搜索。</p>
     </section>
 
     <div class="footer">
-      来源：README.md、README.zh-CN.md、docs/PRODUCT.md、docs/ARCHITECTURE.md、docs/SCHEMA.md、docs/AGENT-WORKFLOWS.md、docs/PACKAGING.md、docs/PLAN-v0.3.0.md、docs/PLAN-v0.2.3-v0.3.0.md，以及 src/ 和 sidecar/ 下的实现文件。
+      来源：README.md、README.zh-CN.md、docs/PRODUCT.md、docs/ARCHITECTURE.md、docs/SCHEMA.md、docs/AGENT-WORKFLOWS.md、docs/PACKAGING.md、docs/PLAN-v0.4.md，以及 apps/web、apps/desktop、apps/extension、packages/core、sidecar/ 下的实现文件。
     </div>
   </main>
 </div>
