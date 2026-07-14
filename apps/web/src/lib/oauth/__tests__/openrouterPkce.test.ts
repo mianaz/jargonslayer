@@ -4,7 +4,9 @@ import {
   AUTH_URL,
   buildAuthUrl,
   codeChallengeS256,
+  EXCHANGE_URL,
   exchangeCodeForKey,
+  exchangeCodeForKeyDirect,
   generateCodeVerifier,
 } from "../openrouterPkce";
 
@@ -137,5 +139,72 @@ describe("exchangeCodeForKey", () => {
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
 
     await expect(exchangeCodeForKey({ code: "c", codeVerifier: "v" })).rejects.toThrow(/key/);
+  });
+});
+
+// S10 field-fix, Chunk A — desktop-only sibling. exchangeCodeForKey's
+// own suite above is untouched (byte-identical web flow); these tests
+// exercise ONLY exchangeCodeForKeyDirect via its own injected fetchImpl,
+// never global.fetch.
+describe("exchangeCodeForKeyDirect", () => {
+  it("POSTs code/code_verifier/code_challenge_method DIRECTLY to EXCHANGE_URL (not the proxy route)", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ key: "sk-or-v1-abc" }), { status: 200 }));
+
+    const key = await exchangeCodeForKeyDirect({ code: "auth-code", codeVerifier: "verifier-value", fetchImpl });
+
+    expect(key).toBe("sk-or-v1-abc");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe(EXCHANGE_URL);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({
+      code: "auth-code",
+      code_verifier: "verifier-value",
+      code_challenge_method: "S256",
+    });
+  });
+
+  it("returns the key as a bare string, not a { key } wrapper", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ key: "sk-or-v1-xyz" }), { status: 200 }));
+
+    const result = await exchangeCodeForKeyDirect({ code: "c", codeVerifier: "v", fetchImpl });
+
+    expect(result).toBe("sk-or-v1-xyz");
+    expect(typeof result).toBe("string");
+  });
+
+  it("throws with the upstream error message on a non-2xx response", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "invalid code" }), { status: 400 }));
+
+    await expect(exchangeCodeForKeyDirect({ code: "bad-code", codeVerifier: "v", fetchImpl })).rejects.toThrow(
+      "invalid code",
+    );
+  });
+
+  it("throws a generic zh message on a non-2xx response with no error field", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 502 }));
+
+    await expect(exchangeCodeForKeyDirect({ code: "c", codeVerifier: "v", fetchImpl })).rejects.toThrow(/502/);
+  });
+
+  it("throws when the response is missing the key field", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+
+    await expect(exchangeCodeForKeyDirect({ code: "c", codeVerifier: "v", fetchImpl })).rejects.toThrow(/key/);
+  });
+
+  it("throws when the response body isn't valid JSON", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(new Response("not json", { status: 200 }));
+
+    await expect(exchangeCodeForKeyDirect({ code: "c", codeVerifier: "v", fetchImpl })).rejects.toThrow(/JSON/);
+  });
+
+  it("never touches global.fetch", async () => {
+    const globalFetchSpy = vi.spyOn(global, "fetch");
+    const fetchImpl = vi.fn().mockResolvedValue(new Response(JSON.stringify({ key: "sk-or-v1-abc" }), { status: 200 }));
+
+    await exchangeCodeForKeyDirect({ code: "c", codeVerifier: "v", fetchImpl });
+
+    expect(globalFetchSpy).not.toHaveBeenCalled();
   });
 });

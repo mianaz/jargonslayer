@@ -128,3 +128,67 @@ export async function exchangeCodeForKey({
 
   return { key: (json as { key: string }).key };
 }
+
+export interface ExchangeCodeForKeyDirectOptions {
+  code: string;
+  codeVerifier: string;
+  /** Desktop's own tauri-plugin-http fetch (native, bypasses CORS
+   *  uniformly) — see this function's own doc comment for why desktop
+   *  calls EXCHANGE_URL directly instead of going through
+   *  exchangeCodeForKey's same-origin proxy route. */
+  fetchImpl: typeof fetch;
+}
+
+/** S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
+ *  Chunk A) — desktop-only ADDITIVE sibling of exchangeCodeForKey above,
+ *  which stays byte-identical (this function never touches it, even to
+ *  share parsing logic — the near-identical body below is a deliberate
+ *  duplication, not an oversight). POSTs DIRECTLY to EXCHANGE_URL
+ *  instead of the same-origin `/api/openrouter/exchange` proxy route:
+ *  the Q1 verdict found the proxy's own reason to exist (uncertain CORS
+ *  for a plain browser `fetch` — see this module's header comment) moot
+ *  for desktop, since desktop's Next build is a static export
+ *  (`output: "export"`, no API routes exist to proxy through) and the
+ *  injected `fetchImpl` (tauri-plugin-http's native fetch) bypasses
+ *  CORS uniformly regardless. Body shape and response parsing mirror
+ *  the proxy route's own forwarding (app/api/openrouter/exchange/
+ *  route.ts) exactly, since that route is itself just a thin passthrough
+ *  to this same EXCHANGE_URL. Returns the key STRING directly (unlike
+ *  exchangeCodeForKey's `{ key }` wrapper) — openrouterDesktop.ts's own
+ *  caller has no use for the extra wrapping. */
+export async function exchangeCodeForKeyDirect({
+  code,
+  codeVerifier,
+  fetchImpl,
+}: ExchangeCodeForKeyDirectOptions): Promise<string> {
+  const res = await fetchImpl(EXCHANGE_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      code,
+      code_verifier: codeVerifier,
+      code_challenge_method: "S256",
+    }),
+  });
+
+  let json: unknown;
+  try {
+    json = await res.json();
+  } catch {
+    throw new Error("兑换 API Key 失败：响应不是合法 JSON");
+  }
+
+  if (!res.ok) {
+    const message =
+      json && typeof json === "object" && "error" in json && typeof json.error === "string"
+        ? json.error
+        : `兑换 API Key 失败（${res.status}）`;
+    throw new Error(message);
+  }
+
+  if (!json || typeof json !== "object" || typeof (json as { key?: unknown }).key !== "string") {
+    throw new Error("兑换 API Key 失败：响应缺少 key 字段");
+  }
+
+  return (json as { key: string }).key;
+}

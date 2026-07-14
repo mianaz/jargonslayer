@@ -72,10 +72,18 @@ export interface PcmChannel {
  *  from `@tauri-apps/*`) itself. */
 export type ChannelFactory = (onmessage: (data: ArrayBuffer) => void) => PcmChannel;
 
+/** Matches `@tauri-apps/plugin-opener`'s `openUrl` signature narrowed to
+ *  this app's one call shape (lib/platform/openExternal.ts, S10
+ *  field-fix Chunk A) — no `openWith` override, every desktop external
+ *  link opens via the system's own default handler. */
+export type OpenExternalFn = (url: string) => Promise<void>;
+
 let invokePromise: Promise<InvokeFn> | null = null;
 let listenPromise: Promise<ListenFn> | null = null;
 let tauriFetchPromise: Promise<TauriFetchFn> | null = null;
 let channelFactoryPromise: Promise<ChannelFactory> | null = null;
+let openerPromise: Promise<OpenExternalFn> | null = null;
+let appVersionPromise: Promise<string> | null = null;
 
 /** Lazily imports `@tauri-apps/api/core` and resolves its `invoke`.
  *  Throws SYNCHRONOUSLY (before the import() is ever reached) outside a
@@ -134,6 +142,40 @@ export function getChannelFactory(): Promise<ChannelFactory> {
   return channelFactoryPromise;
 }
 
+/** Lazily imports `@tauri-apps/plugin-opener` and resolves a thin
+ *  `(url) => Promise<void>` wrapper around its `openUrl` — S10
+ *  field-fix Chunk A's `lib/platform/openExternal.ts` is the one
+ *  caller. Scoped by capabilities/default.json's own
+ *  opener:allow-open-url grant (openrouter.ai/github.com/
+ *  huggingface.co — extended only via a future audit finding, never
+ *  widened here). */
+export function getOpener(): Promise<OpenExternalFn> {
+  if (!DESKTOP_BUILD) {
+    throw new Error("tauriApi.getOpener: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")");
+  }
+  if (!openerPromise) {
+    openerPromise = import("@tauri-apps/plugin-opener").then((mod) => (url: string) => mod.openUrl(url));
+  }
+  return openerPromise;
+}
+
+/** Lazily imports `@tauri-apps/api/app`, calls its `getVersion`, and
+ *  resolves the version STRING itself (unlike every getter above, which
+ *  resolves to a reusable function) — the running app's own version
+ *  never changes mid-session, so caching the resolved string is
+ *  strictly more useful to callers than making each one invoke a getter
+ *  function itself. S10 field-fix Chunk A's `lib/desktop/updateCheck.ts`
+ *  (semver compare against the GitHub releases feed) is the one caller. */
+export function getAppVersion(): Promise<string> {
+  if (!DESKTOP_BUILD) {
+    throw new Error("tauriApi.getAppVersion: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")");
+  }
+  if (!appVersionPromise) {
+    appVersionPromise = import("@tauri-apps/api/app").then((mod) => mod.getVersion());
+  }
+  return appVersionPromise;
+}
+
 /** Test-only reset — clears the memoized import promises. Mirrors
  *  llmTransport.ts's resetTransport / client.ts's
  *  resetSubscriptionToastLatch convention for module-level state that
@@ -145,4 +187,6 @@ export function resetTauriApiCache(): void {
   listenPromise = null;
   tauriFetchPromise = null;
   channelFactoryPromise = null;
+  openerPromise = null;
+  appVersionPromise = null;
 }

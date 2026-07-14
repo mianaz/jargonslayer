@@ -6,7 +6,7 @@
 // resolve for this file's own tests to pass.
 import { describe, expect, it } from "vitest";
 
-import { getInvoke, getListen, getTauriFetch } from "../tauriApi";
+import { getAppVersion, getInvoke, getListen, getOpener, getTauriFetch } from "../tauriApi";
 
 describe("tauriApi — outside a desktop build", () => {
   it("getInvoke throws synchronously, never returns a pending promise", () => {
@@ -19,5 +19,14 @@ describe("tauriApi — outside a desktop build", () => {
 
   it("getTauriFetch throws synchronously", () => {
     expect(() => getTauriFetch()).toThrow(/desktop build/);
+  });
+
+  // S10 field-fix, Chunk A
+  it("getOpener throws synchronously", () => {
+    expect(() => getOpener()).toThrow(/desktop build/);
+  });
+
+  it("getAppVersion throws synchronously", () => {
+    expect(() => getAppVersion()).toThrow(/desktop build/);
   });
 });

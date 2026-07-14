@@ -12,6 +12,14 @@
         { "url": "http://localhost:*" },
         { "url": "http://127.0.0.1:*" }
       ]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://openrouter.ai/**" },
+        { "url": "https://github.com/**" },
+        { "url": "https://huggingface.co/**" }
+      ]
     }
   ]
 }
