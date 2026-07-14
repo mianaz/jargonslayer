@@ -384,6 +384,21 @@ interface AppState {
  *  全量备份/恢复, #57) — must not resurrect a picker entry this platform
  *  no longer offers, so it's coerced to this platform's own equivalent
  *  instead of surviving as an orphaned value nothing can select again.
+ *
+ *  S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
+ *  item #1): desktop ALSO coerces a persisted "webspeech" to "whisper"
+ *  (the local sidecar mic engine) — Tauri's WKWebView has no
+ *  SpeechRecognition API at all, so webspeech has never once worked on
+ *  desktop (unlike tabaudio, which at least had a picker-shaped reason
+ *  to exist there before S9). Wave 2 drops webspeech from the desktop
+ *  ENGINE_OPTIONS picker entirely (mirroring this same file's own
+ *  tabaudio precedent) — this coercion lands FIRST so a returning
+ *  desktop user who last quit on webspeech is never stranded on an
+ *  engine the picker no longer even offers. Deliberately NOT appaudio:
+ *  webspeech is a MIC engine (like whisper), appaudio is SYSTEM audio —
+ *  substituting the wrong capture source would be a worse landing than
+ *  the dead engine itself.
+ *
  *  Pure so it's unit-testable without depending on the IS_DESKTOP
  *  build-time env const (tests pass `isDesktop` directly; migrateSettings
  *  below is the only real caller, feeding it the actual IS_DESKTOP) —
@@ -391,6 +406,9 @@ interface AppState {
 export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean): Settings {
   if (isDesktop && settings.engine === "tabaudio") {
     return { ...settings, engine: "appaudio" };
+  }
+  if (isDesktop && settings.engine === "webspeech") {
+    return { ...settings, engine: "whisper" };
   }
   if (!isDesktop && settings.engine === "appaudio") {
     return { ...settings, engine: "tabaudio" };

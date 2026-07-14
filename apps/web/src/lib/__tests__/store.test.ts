@@ -904,8 +904,23 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
     expect(s.engine).toBe("tabaudio");
   });
 
+  // S10 field-fix #1: desktop's WKWebView has no SpeechRecognition API at
+  // all, so a persisted webspeech must not be left selectable — coerced
+  // to whisper (the local mic engine), NOT appaudio (system audio would
+  // be the wrong substitute for a MIC engine).
+  it("desktop coerces a stored webspeech to whisper (WKWebView has no SpeechRecognition API — S10 #1), leaving other fields untouched", () => {
+    const s = applyPlatformEngineDefaults({ ...withEngine("webspeech"), language: "en-GB" }, true);
+    expect(s.engine).toBe("whisper");
+    expect(s.language).toBe("en-GB");
+  });
+
+  it("web leaves a stored webspeech untouched (webspeech works fine in a real browser)", () => {
+    const s = applyPlatformEngineDefaults(withEngine("webspeech"), false);
+    expect(s.engine).toBe("webspeech");
+  });
+
   it("desktop leaves every other engine untouched, including appaudio itself", () => {
-    for (const engine of ["webspeech", "whisper", "appaudio", "soniox", "demo"] as const) {
+    for (const engine of ["whisper", "appaudio", "soniox", "demo"] as const) {
       expect(applyPlatformEngineDefaults(withEngine(engine), true).engine).toBe(engine);
     }
   });

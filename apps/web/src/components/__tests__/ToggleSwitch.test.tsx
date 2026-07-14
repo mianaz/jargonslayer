@@ -131,6 +131,46 @@ describe("ToggleSwitch", () => {
     expect(btn.getAttribute("aria-label")).toBe("示例开关");
   });
 
+  // S10 field-fix (#7 restyle): the visual assertions below use the same
+  // className-substring style as StatusLine.test.tsx's own precedent —
+  // not a full-string snapshot, so future purely-cosmetic tweaks (e.g. a
+  // hover shade) don't force a test rewrite.
+  it("track dimensions (h-5 w-9) stay identical across checked/unchecked — no layout shift", () => {
+    const btnOn = mount(<ToggleSwitch checked={true} onChange={() => {}} />);
+    expect(btnOn.className).toContain("h-5");
+    expect(btnOn.className).toContain("w-9");
+    const btnOff = mount(<ToggleSwitch checked={false} onChange={() => {}} />);
+    expect(btnOff.className).toContain("h-5");
+    expect(btnOff.className).toContain("w-9");
+  });
+
+  it("checked track uses the act (accent) token; unchecked uses panel2/edge2 — both theme-token-driven, no hardcoded color", () => {
+    const btnOn = mount(<ToggleSwitch checked={true} onChange={() => {}} />);
+    expect(btnOn.className).toContain("bg-act");
+    expect(btnOn.className).toContain("border-act");
+
+    const btnOff = mount(<ToggleSwitch checked={false} onChange={() => {}} />);
+    expect(btnOff.className).toContain("bg-panel2");
+    expect(btnOff.className).toContain("border-edge2");
+  });
+
+  it("thumb translates between a checked and unchecked resting position (transform-only motion, no width/left changes)", () => {
+    const btnOn = mount(<ToggleSwitch checked={true} onChange={() => {}} />);
+    const thumbOn = btnOn.querySelector("span")!;
+    expect(thumbOn.className).toContain("translate-x-4");
+
+    const btnOff = mount(<ToggleSwitch checked={false} onChange={() => {}} />);
+    const thumbOff = btnOff.querySelector("span")!;
+    expect(thumbOff.className).toContain("translate-x-0");
+    expect(thumbOff.className).not.toContain("translate-x-4");
+  });
+
+  it("thumb transition is reduced-motion-safe (motion-reduce:transition-none, per DESIGN.md's 'no exceptions')", () => {
+    const btn = mount(<ToggleSwitch checked={false} onChange={() => {}} />);
+    const thumb = btn.querySelector("span")!;
+    expect(thumb.className).toContain("motion-reduce:transition-none");
+  });
+
   it("clicking a <label> wrapping the switch (implicit label association, no id needed) toggles it — button is a labelable element", () => {
     const onChange = vi.fn();
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
