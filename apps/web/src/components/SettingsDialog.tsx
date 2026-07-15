@@ -642,8 +642,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // — preinstallOsSpeech itself also drives an "os-speech-asset" 后台任务
   // row (Worker C's own osspeechCaps.ts), so this is purely this
   // button's OWN visual feedback, not a duplicate of that tracking.
+  // S11 fix-round J5: "done" is keyed by the LANGUAGE it was preinstalled
+  // for (not a bare boolean) — switching draft.language afterward (the
+  // 识别语言 picker below) must not keep showing 已下载 for a language
+  // that was never actually preinstalled; osSpeechPreinstallDone derives
+  // straight off this so every existing read of it below stays untouched.
   const [preinstallingOsSpeech, setPreinstallingOsSpeech] = useState(false);
-  const [osSpeechPreinstallDone, setOsSpeechPreinstallDone] = useState(false);
+  const [osSpeechPreinstallDoneLanguage, setOsSpeechPreinstallDoneLanguage] = useState<string | null>(null);
+  const osSpeechPreinstallDone = osSpeechPreinstallDoneLanguage === draft.language;
   // Soniox API Key masked-input toggle (v0.4 S4 chunk 6) — same
   // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
   // field itself only renders when draft.engine === "soniox".
@@ -1331,12 +1337,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // committed `settings`) — preinstallOsSpeech itself resolves once the
   // model finishes installing (or rejects on failure/a busy single-flight
   // guard), which is exactly this button's own busy -> done/failed
-  // window.
+  // window. S11 fix-round J5: records WHICH language just finished (not
+  // a bare boolean) — see osSpeechPreinstallDone's own derivation above.
   const handlePreinstallOsSpeech = async () => {
     setPreinstallingOsSpeech(true);
     try {
       await preinstallOsSpeech(draft.language);
-      setOsSpeechPreinstallDone(true);
+      setOsSpeechPreinstallDoneLanguage(draft.language);
     } catch (err) {
       showToast(err instanceof Error ? `预下载失败：${err.message}` : "预下载失败");
     } finally {

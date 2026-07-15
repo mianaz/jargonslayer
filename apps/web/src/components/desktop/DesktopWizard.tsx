@@ -31,11 +31,14 @@ import {
 import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
 // S11 osspeech blueprint (§3 Worker D, §A4) — Worker C's caps module,
 // mocked via vi.mock in every test that reaches this file (not stubbed
-// on disk). { supported } snapshot semantics: null/false both read as
-// "not (yet) supported" below — see this file's own EngineChoiceScreen
-// gating comment for why that direction, not the reverse, is the safe
-// default (a transient probe race must never show osspeech's onboarding
-// path on hardware that turns out not to support it).
+// on disk). { supported: false } reads as "not supported" below — see
+// this file's own EngineChoiceScreen gating comment for why that
+// direction, not the reverse, is the safe default (a transient probe
+// race must never show osspeech's onboarding path on hardware that
+// turns out not to support it). null (not yet resolved) is its OWN
+// third state as of S11 fix-round J3 — see OsSpeechProbeScreen below —
+// rather than being folded into "not supported" and falling through to
+// the interactive ConsentScreen.
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
 import type { ProvisionStep } from "@/lib/desktop/provisionMachine";
 import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
@@ -214,6 +217,26 @@ export function WizardFrame({ children }: { children: React.ReactNode }) {
         <div className="w-[560px] max-w-full space-y-5">{children}</div>
       </div>
     </div>
+  );
+}
+
+/** S11 fix-round J3: shown at WIZARD_CONSENT_REQUIRED while
+ *  useOsSpeechCaps() is still null — the probe is a helper process
+ *  spawn (several hundred ms), and the PRE-J3 behavior (falling through
+ *  to the INTERACTIVE ConsentScreen for that window) risked a quick
+ *  开始安装 click kicking off a 1.5GB whisper provision on a machine
+ *  that should have been offered 系统识别 first. Deliberately
+ *  NON-interactive (no buttons) — nothing to mis-click while caps is
+ *  still resolving. Swaps to EngineChoiceScreen/ConsentScreen the
+ *  moment it does, either way. */
+function OsSpeechProbeScreen() {
+  return (
+    <WizardFrame>
+      <div data-testid="desktop-wizard-osspeech-probe" className="flex items-center gap-2 text-sm text-mut">
+        <CircleNotch size={18} className="shrink-0 animate-spin text-lab-cyan" aria-hidden />
+        正在检测系统识别支持…
+      </div>
+    </WizardFrame>
   );
 }
 
@@ -465,13 +488,14 @@ export default function DesktopWizard({
   // S11 osspeech blueprint (§3 Worker D, §A4): called unconditionally,
   // ahead of every early-return branch below (Rules of Hooks) — only
   // ever CONSULTED inside the WIZARD_CONSENT_REQUIRED branch. caps is
-  // null until Worker C's probe resolves; treated as "not supported yet"
-  // (see this file's own useOsSpeechCaps import comment above) — a
-  // mac<26 machine therefore renders ConsentScreen from the FIRST paint
-  // already (byte-identical to pre-S11), and a genuinely mac26+ machine
-  // may show ConsentScreen for a single frame before the probe resolves
-  // true and swaps to EngineChoiceScreen — the safer of the two possible
-  // races (see this worker's own PR report for the full rationale).
+  // null until Worker C's probe resolves (a helper process spawn,
+  // several hundred ms) — S11 fix-round J3: that window renders
+  // OsSpeechProbeScreen (a brief NON-interactive placeholder) rather
+  // than falling through to the interactive ConsentScreen, since a
+  // stray 开始安装 click there could kick off a 1.5GB whisper provision
+  // on a machine that should have been offered 系统识别 first. Once caps
+  // resolves either way: supported -> EngineChoiceScreen, unsupported ->
+  // ConsentScreen (byte-identical to pre-S11 from there).
   const osSpeechCaps = useOsSpeechCaps();
   // Local, UI-only sequencing (mirrors this file's own "the only local
   // state this file owns is its own UI-only toggles" header contract,
@@ -490,7 +514,10 @@ export default function DesktopWizard({
   const [pastEngineChoice, setPastEngineChoice] = useState(false);
 
   if (state.phase === "WIZARD_CONSENT_REQUIRED") {
-    const osspeechSupported = osSpeechCaps?.supported === true;
+    if (osSpeechCaps === null) {
+      return <OsSpeechProbeScreen />;
+    }
+    const osspeechSupported = osSpeechCaps.supported === true;
     if (osspeechSupported && !pastEngineChoice) {
       return (
         <EngineChoiceScreen

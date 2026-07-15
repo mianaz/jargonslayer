@@ -143,9 +143,40 @@ export type OsSpeechAssetKind = "asset-checking" | "asset-downloading" | "asset-
 
 export interface OsSpeechAssetTracker {
   handle(kind: OsSpeechAssetKind, progress?: number, message?: string): void;
+  /** S11 fix-round J2(c): settles a still-RUNNING row with a neutral
+   *  "stopped" message when the flow ends some OTHER way — any terminal
+   *  osspeech://status kind besides asset-installed/asset-failed, both
+   *  of which already settle the row themselves via `handle` above (see
+   *  OsSpeechEngine.handleStatus's own terminal-latch branch, the one
+   *  caller). Looks up the CURRENTLY active row via the registry, not
+   *  this tracker's own local id — §J2(b)'s single-flight means the
+   *  running row may belong to a DIFFERENT tracker instance entirely
+   *  (the preempt-handoff case: a preinstall's row, now being driven by
+   *  this session). No-op if no row is running. */
+  settle(): void;
 }
 
 const OS_SPEECH_ASSET_LABEL = "系统识别模型";
+
+// S11 fix-round J2 (b): the preempt handoff (a session start superseding
+// an in-flight preinstall, per the osspeech://status `source` contract —
+// see osSpeech.ts's own OsSpeechStatusPayload doc) must show exactly ONE
+// "os-speech-asset" row throughout, never a second one the moment the
+// session's OWN asset events start arriving on its OWN, freshly-created
+// tracker (OsSpeechEngine mints "a FRESH tracker every start()" — see
+// this file's own trackOsSpeechAsset doc below). Queried by kind+status
+// alone (TaskState carries no `source` of its own, deliberately — see
+// registry.ts's TaskState shape), so it's single-flighted across EVERY
+// tracker instance, regardless of which side (an engine session or
+// preinstallOsSpeech) created the row in the first place.
+function activeOsSpeechAssetTaskId(): string | null {
+  for (const task of Object.values(useTasks.getState().tasks)) {
+    if (task.kind === "os-speech-asset" && task.status === "running") return task.id;
+  }
+  return null;
+}
+
+const OS_SPEECH_ASSET_STOPPED_MESSAGE = "系统识别已停止，模型下载未完成";
 
 /** Drives an "os-speech-asset" task row off osspeech://status asset
  *  lifecycle events — a PUSH-style driver (unlike trackSwitchModel/
@@ -166,7 +197,11 @@ const OS_SPEECH_ASSET_LABEL = "系统识别模型";
  *  a no-op otherwise. Call ONCE per session/attempt — a fresh tracker
  *  every time, never reused across sessions (a reused tracker would
  *  attach a LATER session's events onto an EARLIER, already-settled
- *  task id). */
+ *  task id) — §J2(b)'s single-flight check (activeOsSpeechAssetTaskId)
+ *  is what lets that be true while STILL sharing one row across the
+ *  preempt handoff: a fresh tracker's own local `id` starts null every
+ *  time, but adopts whatever row is ALREADY running before minting a
+ *  new one. */
 export function trackOsSpeechAsset(label: string = OS_SPEECH_ASSET_LABEL): OsSpeechAssetTracker {
   let id: string | null = null;
   return {
@@ -176,21 +211,36 @@ export function trackOsSpeechAsset(label: string = OS_SPEECH_ASSET_LABEL): OsSpe
           break;
         case "asset-downloading":
           if (!id) {
-            id = newId();
-            startTask(id, "os-speech-asset", label);
+            id = activeOsSpeechAssetTaskId();
+            if (!id) {
+              id = newId();
+              startTask(id, "os-speech-asset", label);
+            }
           }
           updateTaskProgress(id, progress, "下载中");
           break;
-        case "asset-installed":
-          if (id) completeTask(id);
+        case "asset-installed": {
+          const target = id ?? activeOsSpeechAssetTaskId();
+          if (target) completeTask(target);
           break;
-        case "asset-failed":
+        }
+        case "asset-failed": {
           if (!id) {
-            id = newId();
-            startTask(id, "os-speech-asset", label);
+            id = activeOsSpeechAssetTaskId();
+            if (!id) {
+              id = newId();
+              startTask(id, "os-speech-asset", label);
+            }
           }
           failTask(id, message || "系统识别模型下载失败");
           break;
+        }
+      }
+    },
+    settle() {
+      const target = id ?? activeOsSpeechAssetTaskId();
+      if (target && useTasks.getState().tasks[target]?.status === "running") {
+        failTask(target, OS_SPEECH_ASSET_STOPPED_MESSAGE);
       }
     },
   };

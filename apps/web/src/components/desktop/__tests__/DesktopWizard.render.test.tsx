@@ -15,11 +15,12 @@ import { createRoot, type Root } from "react-dom/client";
 // S11 osspeech blueprint (§3 Worker D, §A4) — Worker C's caps module,
 // not on disk when this worker started (mocked, never stubbed — see
 // this suite's own new describe block below). `null` is this mock's
-// default (mirrors the real hook's own "not yet probed" snapshot) and
-// is what every PRE-EXISTING test below implicitly exercises (none of
-// them touch this variable), which is exactly how "macOS <26 (or not
-// yet resolved): EngineChoiceScreen is skipped, byte-identical to
-// today" is covered for free by every test that predates this feature.
+// default (mirrors the real hook's own "not yet probed" snapshot) — S11
+// fix-round J3 gave that its OWN dedicated screen (OsSpeechProbeScreen),
+// so every PRE-EXISTING (pre-osspeech) test below now pins
+// `{ supported: false }` explicitly to keep reaching the plain
+// ConsentScreen it was actually written to exercise, rather than
+// implicitly relying on this default the way it could before J3.
 let mockOsSpeechCaps: { supported: boolean } | null = null;
 vi.mock("@/lib/desktop/osspeechCaps", () => ({
   useOsSpeechCaps: () => mockOsSpeechCaps,
@@ -103,6 +104,7 @@ describe("DesktopWizard — state-driven rendering", () => {
   }
 
   it("WIZARD_CONSENT_REQUIRED: renders the consent screen; 开始安装 calls onBeginProvision(model), 稍后再说 calls onDismissConsent", async () => {
+    mockOsSpeechCaps = { supported: false }; // pre-osspeech baseline — see this suite's own header comment
     const onBeginProvision = vi.fn();
     const onDismissConsent = vi.fn();
     await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision, onDismissConsent });
@@ -124,6 +126,7 @@ describe("DesktopWizard — state-driven rendering", () => {
   });
 
   it("WIZARD_CONSENT_REQUIRED: embeds <ModelPicker>, pre-selected to WIZARD_PRESELECTED_MODEL, and the 开始安装 button text tracks the selection", async () => {
+    mockOsSpeechCaps = { supported: false }; // pre-osspeech baseline — see this suite's own header comment
     const onBeginProvision = vi.fn();
     await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision });
 
@@ -154,8 +157,10 @@ describe("DesktopWizard — state-driven rendering", () => {
   // gating: it becomes the WIZARD_CONSENT_REQUIRED screen (replacing
   // ConsentScreen) IFF osspeech caps report supported; osspeech choice
   // skips whisper provisioning entirely and dismisses; whisper choice
-  // enters the existing ConsentScreen unchanged; caps unsupported (or
-  // not yet resolved — the default) skips the new screen entirely.
+  // enters the existing ConsentScreen unchanged; caps DEFINITIVELY
+  // unsupported skips the new screen entirely. caps not-yet-resolved
+  // (null) is its OWN third case as of S11 fix-round J3 — see the
+  // dedicated test below, not folded into "unsupported" anymore.
 
   it("WIZARD_CONSENT_REQUIRED + osspeech supported: renders EngineChoiceScreen (not ConsentScreen), pre-selected to 系统识别", async () => {
     mockOsSpeechCaps = { supported: true };
@@ -213,17 +218,32 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onBeginProvision).toHaveBeenCalledWith(WIZARD_PRESELECTED_MODEL);
   });
 
-  it("WIZARD_CONSENT_REQUIRED + osspeech NOT supported (or not yet resolved): EngineChoiceScreen is skipped entirely — wizard is byte-identical to pre-S11 (renders ConsentScreen directly)", async () => {
-    for (const caps of [{ supported: false }, null]) {
-      mockOsSpeechCaps = caps;
-      await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" });
-      expect(container!.querySelector('[data-testid="engine-choice-screen"]')).toBeNull();
-      expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).not.toBeNull();
-      act(() => root!.unmount());
-      container!.remove();
-      root = null;
-      container = null;
-    }
+  it("WIZARD_CONSENT_REQUIRED + osspeech DEFINITIVELY not supported: EngineChoiceScreen is skipped entirely — wizard is byte-identical to pre-S11 (renders ConsentScreen directly)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    expect(container!.querySelector('[data-testid="engine-choice-screen"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="desktop-wizard-osspeech-probe"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).not.toBeNull();
+  });
+
+  // S11 fix-round J3 (Opus MEDIUM): caps null (not yet resolved — the
+  // probe is a helper process spawn, several hundred ms) used to fall
+  // through to the SAME branch as "definitively unsupported" above,
+  // rendering the INTERACTIVE ConsentScreen — a quick 开始安装 click
+  // during that window could kick off a 1.5GB whisper provision on a
+  // machine that should have been offered 系统识别 first. It now renders
+  // a brief, non-interactive placeholder instead, until caps resolves
+  // either way.
+  it("WIZARD_CONSENT_REQUIRED + osspeech caps not yet resolved (null): renders a NON-interactive probing placeholder — neither ConsentScreen nor EngineChoiceScreen", async () => {
+    mockOsSpeechCaps = null;
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    expect(container!.querySelector('[data-testid="desktop-wizard-osspeech-probe"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="engine-choice-screen"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).toBeNull();
+    // Non-interactive: nothing to mis-click while caps is still resolving.
+    expect(container!.querySelectorAll("button").length).toBe(0);
   });
 
   it("STEP/RUNNING (CREATE_VENV): earlier rows read done, the current row reads running, later rows read pending — no error/escape-hatch chrome", async () => {

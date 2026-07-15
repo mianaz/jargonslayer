@@ -302,12 +302,15 @@ fn asset_record_kind(state: &str) -> Option<OsSpeechStatusKind> {
 /// emitError with an exit anyway. Covers BOTH the three tap-level
 /// `AudioCapError` codes reused unchanged on this path (permission-denied/
 /// unsupported-os/device-changed, §2.2's own "reused unchanged" list) and
-/// the two new `OsSpeechError` codes that map to a dedicated kind
-/// (unsupported-locale directly; asset-download-failed as a fallback for
+/// three of the new `OsSpeechError` codes that map to a dedicated kind
+/// (unsupported-locale directly; asset-download-failed and
+/// asset-unavailable — R5: the latter covers noModel/cannotAllocate/
+/// …Allocated-style asset codes, i.e. the asset exists but can't actually
+/// be used, as distinct from a network failure — both as a fallback for
 /// the rare case the earlier immediate `asset:"failed"` event was somehow
-/// never seen — see `asset_record_kind`, the normal/immediate path for
-/// that same user-facing signal). `engine-failure`/`audio-format` have no
-/// kind of their own (same "falls through to Crashed at exit" posture
+/// never seen; see `asset_record_kind`, the normal/immediate path for that
+/// same user-facing signal). `engine-failure`/`audio-format` have no kind
+/// of their own (same "falls through to Crashed at exit" posture
 /// audiocap's own unmapped codes get).
 fn error_record_kind(code: &str) -> Option<OsSpeechStatusKind> {
     match code {
@@ -316,6 +319,7 @@ fn error_record_kind(code: &str) -> Option<OsSpeechStatusKind> {
         "device-changed" => Some(OsSpeechStatusKind::DeviceChanged),
         "unsupported-locale" => Some(OsSpeechStatusKind::UnsupportedLocale),
         "asset-download-failed" => Some(OsSpeechStatusKind::AssetFailed),
+        "asset-unavailable" => Some(OsSpeechStatusKind::AssetFailed),
         _ => None,
     }
 }
@@ -367,6 +371,29 @@ fn final_message(kind: OsSpeechStatusKind, code: Option<i32>, last_error: Option
         | OsSpeechStatusKind::AssetDownloading
         | OsSpeechStatusKind::AssetInstalled
         | OsSpeechStatusKind::LocaleResolved => None,
+    }
+}
+
+/// The preinstall lane's OWN terminal-status decision (R7) — narrower
+/// than the session lane's `final_kind`/`exit_status_kind`, which this
+/// deliberately does NOT delegate to: preinstall has no tap, no explicit
+/// stop command, and (crucially) an already-successful `asset:"installed"`
+/// event has already settled the JS task row on its own, so a clean
+/// finish needs NO further signal at all — `None` here means "emit
+/// nothing" (mirrors the preempted case's own suppression, one level
+/// up). Any OTHER outcome is, from the JS preinstall tracker's point of
+/// view, simply "the model failed to install": always `AssetFailed`,
+/// NEVER `Crashed`/`Ended` — an extra "ended" from this lane is exactly
+/// what codex's HIGH false-latch scenario rode on. R2's `source` tag
+/// already protects the SESSION engine from a stray event on this lane,
+/// but the preinstall tracker itself still listens for asset-kind events
+/// from EITHER source (preempt handoff continuity), so this closes the
+/// semantic hole at the source instead of relying on `source` alone.
+fn preinstall_terminal_kind(code: Option<i32>, finished_seen: bool) -> Option<OsSpeechStatusKind> {
+    if finished_seen && code == Some(0) {
+        None
+    } else {
+        Some(OsSpeechStatusKind::AssetFailed)
     }
 }
 
@@ -425,7 +452,12 @@ enum ParsedOsSpeechLine {
     },
     Locale {
         requested: String,
-        resolved: String,
+        /// R6: Swift deliberately OMITS this field when `supported:false`
+        /// (there's no resolved locale to report) — required only
+        /// in-practice when `supported` is `true`, so this must stay
+        /// `Option`, never a bare `String`, or the whole record wrongly
+        /// degrades to `Unrecognized` on the unsupported-locale path.
+        resolved: Option<String>,
         supported: bool,
     },
     Probe {
@@ -483,8 +515,14 @@ fn parse_osspeech_line(line: &str) -> ParsedOsSpeechLine {
             },
             None => ParsedOsSpeechLine::Unrecognized,
         },
-        "locale" => match (raw.requested, raw.resolved, raw.supported) {
-            (Some(requested), Some(resolved), Some(supported)) => ParsedOsSpeechLine::Locale { requested, resolved, supported },
+        // R6: `resolved` is NOT required here (only `requested`/
+        // `supported` are) — Swift omits it when `supported:false`.
+        "locale" => match (raw.requested, raw.supported) {
+            (Some(requested), Some(supported)) => ParsedOsSpeechLine::Locale {
+                requested,
+                resolved: raw.resolved,
+                supported,
+            },
             _ => ParsedOsSpeechLine::Unrecognized,
         },
         "osspeech-probe" => match (raw.supported, raw.locales, raw.installed) {
@@ -538,14 +576,27 @@ pub struct OsSpeechState {
     /// the next one, same as audiocap).
     paused: AtomicBool,
     preinstall: Mutex<Option<PreinstallSlot>>,
-    /// Set by `preempt_preinstall` (a session start taking over an
-    /// in-flight preinstall), consumed exactly once by the preinstall
-    /// task's Terminated arm to suppress its terminal status emission —
-    /// see `preempt_preinstall`'s own doc comment. Reset defensively by
-    /// every `try_begin_preinstall` so a preempt whose spawn never
-    /// produced a task (spawn-failure path) can't leak a stale `true`
-    /// into the NEXT preinstall's terminal handling.
-    preinstall_preempted: AtomicBool,
+    /// R3 (ABA fix): a monotonic counter, mirroring `generation` one layer
+    /// down — every `try_begin_preinstall` claim mints a fresh `attempt`
+    /// id (see `PreinstallSlot`'s own doc comment for why the slot itself
+    /// carries it too).
+    preinstall_attempt: AtomicU64,
+    /// Records WHICH preinstall attempt (if any) was preempted by a
+    /// session start — R3 replaces what used to be a bare
+    /// `AtomicBool` specifically to close an ABA race: a belated
+    /// Terminated from an attempt preempted long ago must never
+    /// mistake itself for "not preempted" just because a LATER attempt
+    /// has since begun (which a shared, un-keyed bool couldn't tell
+    /// apart). Consumed exactly once, attempt-conditionally, by the
+    /// preinstall task's Terminated arm — see `preempt_preinstall`/
+    /// `take_preinstall_preempted`'s own doc comments. Deliberately
+    /// NEVER reset by `try_begin_preinstall` (unlike the old bool, which
+    /// was — see that fn's own doc comment for why that reset is gone):
+    /// a leaked-but-unconsumed record can only ever match its own unique
+    /// attempt id, never a different (in particular, a later) one, so
+    /// there is no correctness reason left to clear it early, and doing
+    /// so would reopen exactly the race this field exists to close.
+    preempted_attempt: Mutex<Option<u64>>,
     probe_memo: Mutex<Option<OsSpeechCapabilities>>,
 }
 
@@ -562,15 +613,28 @@ struct RunningSession {
 /// Single-flight slot for an in-flight `preinstall_os_speech` call —
 /// deliberately its OWN two-phase shape (`Spawning` before the sidecar
 /// spawn resolves, `Attached` once its `CommandChild` is known), mirroring
-/// `RunningSession`'s own Starting/Running split, but with no `generation`/
-/// `cancel_requested` fields: v1 ships no explicit preinstall-cancel
+/// `RunningSession`'s own Starting/Running split, but with no
+/// `cancel_requested` field: v1 ships no explicit preinstall-cancel
 /// command. The one way a preinstall ends early is `preempt_preinstall`
 /// (a session start taking over — the F1-analogous race THAT introduces
 /// is handled by `attach_preinstall_child`'s Err branch plus the
-/// `preinstall_preempted` flag).
+/// `preempted_attempt` record). Each variant carries its own `attempt` id
+/// (R3, ABA fix — mirrors `RunningSession::generation` one layer down):
+/// without it, a delayed `attach_preinstall_child`/`finish_preinstall`
+/// call from attempt N could act on a slot that, by the time it actually
+/// runs, has become attempt N+1's own occupancy — `attempt()` below is
+/// what every attempt-conditional check compares against.
 enum PreinstallSlot {
-    Spawning,
-    Attached(CommandChild),
+    Spawning { attempt: u64 },
+    Attached { attempt: u64, child: CommandChild },
+}
+
+impl PreinstallSlot {
+    fn attempt(&self) -> u64 {
+        match self {
+            Self::Spawning { attempt } | Self::Attached { attempt, .. } => *attempt,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -585,10 +649,13 @@ fn poison_err<T>(_: std::sync::PoisonError<T>) -> String {
 
 /// A running transcribe session and an in-flight preinstall are never
 /// concurrent — both post asset-lifecycle events to the SAME
-/// `osspeech://status` lane (§2.5) with no `source` field to disambiguate,
-/// so a JS listener could otherwise see two independent asset-download
-/// progressions interleaved on one wire. The two directions resolve
-/// differently (lead adjudication on the §A2 wording, 2026-07-14):
+/// `osspeech://status` lane (§2.5). `source` (R2) now tags WHICH lane
+/// emitted a given event, but that's a JS-side disambiguation signal, not
+/// a reason on its own to let two independent helper processes (two
+/// CoreAudio taps / asset-installer sessions) run at once — v1 still
+/// keeps them single-flighted against each other regardless. The two
+/// directions resolve differently (lead adjudication on the §A2 wording,
+/// 2026-07-14):
 /// - preinstall over a running session → REJECTED (this message);
 /// - session start over an in-flight preinstall → the preinstall is
 ///   PREEMPTED (`preempt_preinstall`), because rejecting would break the
@@ -775,8 +842,12 @@ impl OsSpeechState {
     /// preinstall). Holds `running`'s lock across the `preinstall` check-
     /// and-write (not just a read) for the same reason `try_begin` does:
     /// consistent lock ordering (`running` always acquired first) is what
-    /// makes the two functions race-free against each other.
-    fn try_begin_preinstall(&self) -> Result<(), String> {
+    /// makes the two functions race-free against each other. Returns the
+    /// freshly-minted `attempt` id (R3) the caller threads through
+    /// `attach_preinstall_child`/`spawn_preinstall_task` so every later
+    /// attempt-conditional check can tell its own slot/preemption record
+    /// apart from a since-superseded one.
+    fn try_begin_preinstall(&self) -> Result<u64, String> {
         let session_guard = self.running.lock().map_err(poison_err)?;
         if session_guard.is_some() {
             return Err(PREINSTALL_BUSY_MESSAGE.to_string());
@@ -785,67 +856,103 @@ impl OsSpeechState {
         if preinstall_guard.is_some() {
             return Err(PREINSTALL_BUSY_MESSAGE.to_string());
         }
-        *preinstall_guard = Some(PreinstallSlot::Spawning);
-        // Defensive reset — see the field's own doc comment (a preempt
-        // whose spawn failed leaves no task to consume the flag).
-        self.preinstall_preempted.store(false, Ordering::SeqCst);
-        Ok(())
+        let attempt = self.preinstall_attempt.fetch_add(1, Ordering::SeqCst) + 1;
+        *preinstall_guard = Some(PreinstallSlot::Spawning { attempt });
+        Ok(attempt)
     }
 
     /// A session start taking over an in-flight preinstall (see
     /// `PREINSTALL_BUSY_MESSAGE`'s doc comment for the product rationale).
-    /// Clears the slot, marks `preinstall_preempted` so the preinstall
-    /// task's Terminated arm suppresses its terminal status emission —
-    /// that emission is NOT generation-gated, and its `crashed` kind is in
-    /// the JS engine's terminal-latch set, so letting it through would
-    /// terminal-latch the brand-new session at birth. Returns the
+    /// Clears the slot, records the preempted attempt's own id in
+    /// `preempted_attempt` (R3) so the preinstall task's Terminated arm
+    /// suppresses its terminal status emission — that emission is NOT
+    /// generation-gated, and (post-R7) a failure emits `asset-failed`,
+    /// which the JS preinstall tracker accepts from either source, so
+    /// letting a STALE attempt's failure through unsuppressed could
+    /// corrupt a DIFFERENT, still-live attempt's task row. Returns the
     /// preempted `CommandChild` (if the spawn had already attached one)
     /// for the caller to tear down; a still-`Spawning` preinstall needs no
-    /// teardown here because `attach_preinstall_child` finds the slot
-    /// empty and hands the child straight back for dropping.
+    /// teardown here because `attach_preinstall_child` finds the slot's
+    /// attempt mismatched (or altogether missing) and hands the child
+    /// straight back for dropping.
     fn preempt_preinstall(&self) -> Option<CommandChild> {
         let Ok(mut guard) = self.preinstall.lock() else {
             return None;
         };
         match guard.take() {
             None => None,
-            Some(PreinstallSlot::Spawning) => {
-                self.preinstall_preempted.store(true, Ordering::SeqCst);
+            Some(PreinstallSlot::Spawning { attempt }) => {
+                self.record_preempted_attempt(attempt);
                 None
             }
-            Some(PreinstallSlot::Attached(child)) => {
-                self.preinstall_preempted.store(true, Ordering::SeqCst);
+            Some(PreinstallSlot::Attached { attempt, child }) => {
+                self.record_preempted_attempt(attempt);
                 Some(child)
             }
         }
     }
 
-    /// Consumed exactly once, by the preinstall task at Terminated.
-    fn take_preinstall_preempted(&self) -> bool {
-        self.preinstall_preempted.swap(false, Ordering::SeqCst)
+    fn record_preempted_attempt(&self, attempt: u64) {
+        if let Ok(mut guard) = self.preempted_attempt.lock() {
+            *guard = Some(attempt);
+        }
     }
 
-    /// Attaches the just-spawned preinstall `CommandChild`. The
-    /// `Err(child)` branch IS reachable: `preempt_preinstall` (a session
-    /// start racing this spawn window) clears the slot, so this returns
-    /// the child to the caller for immediate teardown — the preempted-
-    /// preinstall analog of audiocap's F1 cancel-during-spawn handling.
-    fn attach_preinstall_child(&self, child: CommandChild) -> Result<(), CommandChild> {
+    /// Attempt-conditional (R3): consumes (and returns `true` for) a
+    /// preempt recorded against EXACTLY this attempt id, leaving a
+    /// differently-scoped record (belonging to some other attempt — in
+    /// particular a LATER one that began in the meantime) untouched. A
+    /// belated call for an attempt that was never actually preempted —
+    /// including one whose own preempt record has since been overwritten
+    /// by a later attempt's own preemption — correctly reports `false`
+    /// rather than accidentally consuming a record that isn't its own.
+    /// Called once, by the preinstall task at Terminated, with its own
+    /// attempt id (captured at spawn time — see `spawn_preinstall_task`).
+    fn take_preinstall_preempted(&self, attempt: u64) -> bool {
+        let Ok(mut guard) = self.preempted_attempt.lock() else {
+            return false;
+        };
+        if *guard == Some(attempt) {
+            *guard = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Attaches the just-spawned preinstall `CommandChild` to ITS OWN
+    /// attempt id's slot. The `Err(child)` branch IS reachable: not only
+    /// when `preempt_preinstall` cleared the slot outright (a session
+    /// start racing this spawn window — the original F1-analogous race
+    /// this guarded from the start), but now (R3) ALSO when the slot has
+    /// since been reclaimed by a DIFFERENT, later preinstall attempt —
+    /// without the attempt check this attach would otherwise splice
+    /// attempt N's child into attempt N+1's `Spawning` slot. Either way
+    /// the caller is expected to tear the returned child down immediately.
+    fn attach_preinstall_child(&self, attempt: u64, child: CommandChild) -> Result<(), CommandChild> {
         let Ok(mut guard) = self.preinstall.lock() else {
             return Err(child);
         };
         match guard.as_ref() {
-            Some(PreinstallSlot::Spawning) => {
-                *guard = Some(PreinstallSlot::Attached(child));
+            Some(PreinstallSlot::Spawning { attempt: slot_attempt }) if *slot_attempt == attempt => {
+                *guard = Some(PreinstallSlot::Attached { attempt, child });
                 Ok(())
             }
             _ => Err(child),
         }
     }
 
-    fn finish_preinstall(&self) {
+    /// Clears the preinstall slot IFF it's still THIS attempt's own
+    /// occupant (R3: attempt-conditional, mirrors `finish_session`'s own
+    /// generation check one layer up) — a belated call from a
+    /// since-preempted attempt can therefore never clear a NEWER attempt's
+    /// own live slot (the "stale-P1-clears-P2" scenario this fix makes
+    /// impossible).
+    fn finish_preinstall(&self, attempt: u64) {
         if let Ok(mut guard) = self.preinstall.lock() {
-            *guard = None;
+            if guard.as_ref().is_some_and(|slot| slot.attempt() == attempt) {
+                *guard = None;
+            }
         }
     }
 }
@@ -966,7 +1073,7 @@ pub fn preinstall_os_speech(app: tauri::AppHandle, state: tauri::State<'_, OsSpe
     if !is_macos_26_or_later(macos_version()) {
         return Err(UNSUPPORTED_REASON.to_string());
     }
-    state.try_begin_preinstall()?;
+    let attempt = state.try_begin_preinstall()?;
 
     let spawn_result = app
         .shell()
@@ -981,17 +1088,33 @@ pub fn preinstall_os_speech(app: tauri::AppHandle, state: tauri::State<'_, OsSpe
 
     match spawn_result {
         Ok((rx, child)) => {
-            if let Err(child) = state.attach_preinstall_child(child) {
-                // Unreachable in v1 (see attach_preinstall_child's own
-                // doc comment) — best-effort teardown if it somehow
-                // fires anyway rather than leak an untracked child.
+            if let Err(child) = state.attach_preinstall_child(attempt, child) {
+                // R4: reachable (see attach_preinstall_child's own doc
+                // comment) — a session start preempted this attempt (or
+                // a later attempt has since reclaimed the slot, R3)
+                // while this spawn was still resolving. Unlike a
+                // transcribe session's child, the preinstall helper has
+                // NO stdin monitor, so dropping the child alone would
+                // NOT make it exit — it would keep downloading as an
+                // untracked orphan, its events still flowing. Same
+                // posture as `start_os_speech`'s own preempt path: a
+                // downloader holds no audio and needs no grace period,
+                // so SIGKILL it immediately rather than leaking it.
+                // Layering note: even if this orphan lingered, its
+                // events now carry source:"preinstall" (R2), so the
+                // session engine (which ignores anything but
+                // source:"session") is protected regardless — this kill
+                // is about not leaking the OS process/download, not
+                // about wire-level safety, which R2 already covers.
+                let pid = child.pid();
                 drop(child);
+                force_kill_pid(pid);
             }
-            spawn_preinstall_task(app, rx);
+            spawn_preinstall_task(app, attempt, rx);
             Ok(())
         }
         Err(e) => {
-            state.finish_preinstall();
+            state.finish_preinstall(attempt);
             Err(e)
         }
     }
@@ -1043,10 +1166,41 @@ struct OsSpeechTranscriptEvent {
     text: String,
 }
 
+/// §2.5 R2 — PINNED CROSS-LANE CONTRACT: every `osspeech://status` payload
+/// carries a `source` provenance tag distinguishing the two independent
+/// Rust tasks that can both emit on this one shared, app-global event lane
+/// (risk register item 8's "app.emit is app-global" concern, one layer up
+/// from the existing generation guard, which only protects the session
+/// lane against ITS OWN stale generations — it says nothing about the
+/// preinstall lane's events also landing on the exact same wire). The JS
+/// `OsSpeechEngine` ignores any event whose `source` isn't `"session"`;
+/// the JS preinstall tracker accepts asset-lifecycle events from EITHER
+/// source, since a session start can preempt an in-flight preinstall
+/// mid-download (`preempt_preinstall`) and then continue driving the SAME
+/// task row under its own `"session"` source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OsSpeechEventSource {
+    Session,
+    Preinstall,
+}
+
+impl OsSpeechEventSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Session => "session",
+            Self::Preinstall => "preinstall",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OsSpeechStatusEvent {
     kind: &'static str,
+    /// Placeholder at construction time — see `tagged`'s own doc comment
+    /// for why that's safe: every event this module ever builds passes
+    /// through it (via `emit_os_speech_status`) before reaching the wire.
+    source: &'static str,
     message: Option<String>,
     progress: Option<f64>,
     resolved_locale: Option<String>,
@@ -1057,6 +1211,7 @@ impl OsSpeechStatusEvent {
     fn kind_only(kind: OsSpeechStatusKind) -> Self {
         Self {
             kind: kind.as_str(),
+            source: OsSpeechEventSource::Session.as_str(), // placeholder — see `tagged`
             message: None,
             progress: None,
             resolved_locale: None,
@@ -1070,20 +1225,34 @@ impl OsSpeechStatusEvent {
             ..Self::kind_only(kind)
         }
     }
+
+    /// The ONLY place `source` is ever set to a value that matters —
+    /// `emit_os_speech_status` calls this immediately before every single
+    /// emission (§2.5 R2), so every event that reaches JS is correctly
+    /// tagged regardless of which of this module's many construction call
+    /// sites built it, with no risk of a call site forgetting to set it.
+    fn tagged(mut self, source: OsSpeechEventSource) -> Self {
+        self.source = source.as_str();
+        self
+    }
 }
 
-fn emit_os_speech_status(app: &tauri::AppHandle, event: OsSpeechStatusEvent) {
-    let _ = app.emit("osspeech://status", event);
+/// The sole choke point this module ever emits `osspeech://status` from —
+/// see `OsSpeechStatusEvent::tagged`'s own doc comment for why that makes
+/// `source` unforgeable-wrong on the actual wire.
+fn emit_os_speech_status(app: &tauri::AppHandle, source: OsSpeechEventSource, event: OsSpeechStatusEvent) {
+    let _ = app.emit("osspeech://status", event.tagged(source));
 }
 
 /// Same generation-guard posture as audiocap's own `emit_status`: a late
 /// event from a superseded session's own task must never reach a newer
-/// session's listeners (risk register item 8).
+/// session's listeners (risk register item 8). Only ever called from the
+/// session task, so `source` is always `Session` here.
 fn emit_status_for_session(app: &tauri::AppHandle, generation: u64, event: OsSpeechStatusEvent) {
     if !app.state::<OsSpeechState>().is_current(generation) {
         return;
     }
-    emit_os_speech_status(app, event);
+    emit_os_speech_status(app, OsSpeechEventSource::Session, event);
 }
 
 fn emit_transcript_for_session(app: &tauri::AppHandle, generation: u64, event: OsSpeechTranscriptEvent) {
@@ -1109,10 +1278,17 @@ fn open_osspeech_log_file(app: &tauri::AppHandle) -> Option<std::fs::File> {
     open_log_file_in_app_log_dir(app, "osspeech.log")
 }
 
-/// `<app_log_dir>/osspeech.log` — every stderr line (parsed or not) gets
-/// appended here (unconditionally — see the session/preinstall tasks
-/// below), alongside the ephemeral `uv://log` mirror every line also
-/// gets. NEVER logs anything beyond the raw NDJSON line itself.
+/// `<app_log_dir>/osspeech.log` — every stderr line gets appended here
+/// (unconditionally — see the session/preinstall tasks below), alongside
+/// the ephemeral `uv://log` mirror every line also gets. For every record
+/// EXCEPT a transcript, that's the raw NDJSON line verbatim. A transcript
+/// record carries live meeting content in its `text` field (§2.2) — this
+/// would otherwise be the first local, durable log in the app to contain
+/// meeting content, violating the app's own no-transcript-in-diagnostics
+/// posture (`diag/log.ts`/`diag/report.ts`/`bootstrap.ts`) — so transcript
+/// lines are logged as a METADATA-ONLY line instead (see `log_line_for`):
+/// the `text` itself is NEVER written to this file or mirrored to
+/// `uv://log`.
 struct OsSpeechSessionLog {
     file: Option<std::fs::File>,
 }
@@ -1138,6 +1314,22 @@ impl OsSpeechSessionLog {
     }
 }
 
+/// Decides what actually gets written to the two log lanes (`uv://log` +
+/// `OsSpeechSessionLog`) for one already-parsed stderr line — the single
+/// choke point both the session task and the preinstall task route
+/// through (R1 fix): a `Transcript` record NEVER contributes its `text`
+/// (live meeting content) to either lane, only a metadata line; every
+/// other record — including `Unrecognized` garbage — is logged verbatim,
+/// unchanged from before this fix.
+fn log_line_for<'a>(raw_line: &'a str, parsed: &ParsedOsSpeechLine) -> std::borrow::Cow<'a, str> {
+    match parsed {
+        ParsedOsSpeechLine::Transcript { final_, seq, start_ms, end_ms, text } => {
+            std::borrow::Cow::Owned(format!("transcript final={final_} seq={seq} startMs={start_ms} endMs={end_ms} len={}", text.len()))
+        }
+        _ => std::borrow::Cow::Borrowed(raw_line),
+    }
+}
+
 // ---- the transcribe session task ----
 
 /// Owns one transcribe session's entire lifetime: reads CommandEvents,
@@ -1159,9 +1351,11 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
             match event {
                 CommandEvent::Stderr(bytes) => {
                     for line in stderr_lines.feed(&bytes) {
-                        emit_uv_log(&app, "stderr", format!("[osspeech] {line}"));
-                        session_log.append(&line);
-                        match parse_osspeech_line(&line) {
+                        let parsed = parse_osspeech_line(&line);
+                        let log_line = log_line_for(&line, &parsed);
+                        emit_uv_log(&app, "stderr", format!("[osspeech] {log_line}"));
+                        session_log.append(&log_line);
+                        match parsed {
                             ParsedOsSpeechLine::Transcript { final_, seq, start_ms, end_ms, text } => {
                                 if app.state::<OsSpeechState>().is_paused() {
                                     // Shouldn't normally happen (the
@@ -1200,8 +1394,13 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                                 // locale` record — no direct emission
                                 // from the locale record itself in that
                                 // case (see error_record_kind's own doc
-                                // comment).
-                                if supported {
+                                // comment). R6: `resolved` is `Option`
+                                // (Swift omits it when `supported:false`),
+                                // so this also defensively requires it to
+                                // actually be present before emitting —
+                                // `supported:true` with no `resolved` is
+                                // malformed and simply logged, not emitted.
+                                if let (true, Some(resolved)) = (supported, resolved) {
                                     let event = OsSpeechStatusEvent {
                                         resolved_locale: Some(resolved),
                                         ..OsSpeechStatusEvent::kind_only(OsSpeechStatusKind::LocaleResolved)
@@ -1255,6 +1454,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                         };
                         emit_os_speech_status(
                             &app,
+                            OsSpeechEventSource::Session,
                             OsSpeechStatusEvent {
                                 message,
                                 supported_locales,
@@ -1284,6 +1484,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
         if outcome.was_current {
             emit_os_speech_status(
                 &app,
+                OsSpeechEventSource::Session,
                 OsSpeechStatusEvent::with_message(OsSpeechStatusKind::Crashed, "helper process ended without a final status"),
             );
         }
@@ -1294,11 +1495,16 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
 
 /// Owns one `preinstall_os_speech` call's entire lifetime — same
 /// stderr-reassembly/log/parse pipeline as the transcribe session task,
-/// but: no generation gating (preinstall is single-flighted with no
-/// possibility of a "stale/superseded" instance the way a transcribe
-/// session can be), no transcript emission, and `finish_preinstall`
-/// instead of `finish_session` at the end.
-fn spawn_preinstall_task(app: tauri::AppHandle, mut rx: tauri::async_runtime::Receiver<CommandEvent>) {
+/// but: no event-lane generation gating (preinstall is single-flighted
+/// with no possibility of a "stale/superseded" instance the way a
+/// transcribe session can be), no transcript emission, and
+/// `finish_preinstall`/`take_preinstall_preempted` instead of
+/// `finish_session` at the end — both attempt-conditional (R3), keyed on
+/// `attempt` (this call's own id, minted by `try_begin_preinstall` and
+/// threaded in here as a plain param — not a generation, since this task
+/// has no event-lane listeners to guard, only its OWN state-bookkeeping
+/// calls to scope against a since-superseded attempt).
+fn spawn_preinstall_task(app: tauri::AppHandle, attempt: u64, mut rx: tauri::async_runtime::Receiver<CommandEvent>) {
     tauri::async_runtime::spawn(async move {
         let mut stderr_lines = LineReassembler::new();
         let mut last_error: Option<(String, String)> = None;
@@ -1310,9 +1516,18 @@ fn spawn_preinstall_task(app: tauri::AppHandle, mut rx: tauri::async_runtime::Re
             match event {
                 CommandEvent::Stderr(bytes) => {
                     for line in stderr_lines.feed(&bytes) {
-                        emit_uv_log(&app, "stderr", format!("[osspeech-preinstall] {line}"));
-                        session_log.append(&line);
-                        match parse_osspeech_line(&line) {
+                        // The preinstall lane shouldn't ever see a
+                        // transcript record (§0: no transcribe happens
+                        // during a preinstall) — routed through the same
+                        // `log_line_for` choke point as the session task
+                        // anyway, defensively, so that invariant isn't
+                        // load-bearing for the no-transcript-in-
+                        // diagnostics posture (R1).
+                        let parsed = parse_osspeech_line(&line);
+                        let log_line = log_line_for(&line, &parsed);
+                        emit_uv_log(&app, "stderr", format!("[osspeech-preinstall] {log_line}"));
+                        session_log.append(&log_line);
+                        match parsed {
                             ParsedOsSpeechLine::Asset { state, progress, message } => {
                                 if let Some(kind) = asset_record_kind(&state) {
                                     let event = match (progress, message) {
@@ -1320,16 +1535,19 @@ fn spawn_preinstall_task(app: tauri::AppHandle, mut rx: tauri::async_runtime::Re
                                         (None, Some(message)) => OsSpeechStatusEvent::with_message(kind, message),
                                         (None, None) => OsSpeechStatusEvent::kind_only(kind),
                                     };
-                                    emit_os_speech_status(&app, event);
+                                    emit_os_speech_status(&app, OsSpeechEventSource::Preinstall, event);
                                 }
                             }
                             ParsedOsSpeechLine::Locale { requested: _, resolved, supported } => {
-                                if supported {
+                                // R6: see the session task's own copy of
+                                // this same guard for why `resolved` needs
+                                // its own `Some(..)` check here too.
+                                if let (true, Some(resolved)) = (supported, resolved) {
                                     let event = OsSpeechStatusEvent {
                                         resolved_locale: Some(resolved),
                                         ..OsSpeechStatusEvent::kind_only(OsSpeechStatusKind::LocaleResolved)
                                     };
-                                    emit_os_speech_status(&app, event);
+                                    emit_os_speech_status(&app, OsSpeechEventSource::Preinstall, event);
                                 }
                             }
                             ParsedOsSpeechLine::Status { state, .. } => {
@@ -1349,8 +1567,16 @@ fn spawn_preinstall_task(app: tauri::AppHandle, mut rx: tauri::async_runtime::Re
                 }
                 CommandEvent::Terminated(payload) => {
                     let state = app.state::<OsSpeechState>();
-                    let preempted = state.take_preinstall_preempted();
-                    state.finish_preinstall();
+                    // Both attempt-conditional (R3): a belated Terminated
+                    // from an attempt preempted long ago can never (a)
+                    // mistake itself for not-preempted just because a
+                    // later attempt has since begun (`take_preinstall_
+                    // preempted` only matches ITS OWN attempt id), nor (b)
+                    // clear that later attempt's own live slot
+                    // (`finish_preinstall` only clears a slot still
+                    // holding this same `attempt`).
+                    let preempted = state.take_preinstall_preempted(attempt);
+                    state.finish_preinstall(attempt);
                     if preempted {
                         // Preempted by a session start: emit NOTHING. This
                         // task's terminal emission is not generation-gated
@@ -1365,18 +1591,24 @@ fn spawn_preinstall_task(app: tauri::AppHandle, mut rx: tauri::async_runtime::Re
                         ));
                         return;
                     }
-                    // No explicit cancel command exists for a preinstall
-                    // in v1 (PreinstallSlot's own doc comment), so
-                    // `stop_was_requested` is always false here.
-                    let kind = final_kind(payload.code, last_error.as_ref().map(|(c, _)| c.as_str()), false, finished_seen);
-                    session_log.append(&format!(
-                        "preinstall end kind={} exit_code={:?} finished_seen={}",
-                        kind.as_str(),
-                        payload.code,
-                        finished_seen
-                    ));
-                    let message = final_message(kind, payload.code, last_error.as_ref());
-                    emit_os_speech_status(&app, OsSpeechStatusEvent { message, ..OsSpeechStatusEvent::kind_only(kind) });
+                    // R7: the preinstall lane's own, narrower terminal
+                    // decision — see `preinstall_terminal_kind`'s own doc
+                    // comment. `None` (a clean finish) emits nothing at
+                    // all; the JS task row was already settled by the
+                    // earlier `asset:"installed"` event.
+                    match preinstall_terminal_kind(payload.code, finished_seen) {
+                        None => {
+                            session_log.append(&format!(
+                                "preinstall end: finished cleanly, exit_code={:?} — no terminal status emitted (asset-installed already settled the task row)",
+                                payload.code
+                            ));
+                        }
+                        Some(kind) => {
+                            session_log.append(&format!("preinstall end kind={} exit_code={:?} finished_seen={}", kind.as_str(), payload.code, finished_seen));
+                            let message = final_message(kind, payload.code, last_error.as_ref());
+                            emit_os_speech_status(&app, OsSpeechEventSource::Preinstall, OsSpeechStatusEvent { message, ..OsSpeechStatusEvent::kind_only(kind) });
+                        }
+                    }
                     return;
                 }
                 _ => {}
@@ -1386,11 +1618,15 @@ fn spawn_preinstall_task(app: tauri::AppHandle, mut rx: tauri::async_runtime::Re
         if let Some(line) = stderr_lines.flush() {
             emit_uv_log(&app, "stderr", format!("[osspeech-preinstall] {line}"));
         }
-        app.state::<OsSpeechState>().finish_preinstall();
+        app.state::<OsSpeechState>().finish_preinstall(attempt);
         session_log.append("preinstall end: rx closed without a final status");
+        // R7: same posture as the Terminated arm above — this lane never
+        // reports crashed/ended, only asset-failed (see
+        // `preinstall_terminal_kind`'s own doc comment).
         emit_os_speech_status(
             &app,
-            OsSpeechStatusEvent::with_message(OsSpeechStatusKind::Crashed, "helper process ended without a final status"),
+            OsSpeechEventSource::Preinstall,
+            OsSpeechStatusEvent::with_message(OsSpeechStatusKind::AssetFailed, "helper process ended without a final status"),
         );
     });
 }
@@ -1412,7 +1648,7 @@ pub fn kill_held_session_on_exit(app: &tauri::AppHandle) {
         }
     }
     if let Ok(mut guard) = state.preinstall.lock() {
-        if let Some(PreinstallSlot::Attached(child)) = guard.take() {
+        if let Some(PreinstallSlot::Attached { child, .. }) = guard.take() {
             force_kill_pid(child.pid());
         }
     }; // semicolon: this is the fn's tail expression otherwise, which
@@ -1547,8 +1783,23 @@ mod tests {
             parse_osspeech_line(line),
             ParsedOsSpeechLine::Locale {
                 requested: "zh-Hans".to_string(),
-                resolved: "zh_CN".to_string(),
+                resolved: Some("zh_CN".to_string()),
                 supported: true,
+            }
+        );
+    }
+
+    #[test]
+    fn parses_an_unsupported_locale_line_with_no_resolved_field_r6() {
+        // R6 golden case: Swift deliberately omits `resolved` when
+        // `supported:false` — this must NOT degrade to `Unrecognized`.
+        let line = r#"{"type":"locale","requested":"xx-YY","supported":false}"#;
+        assert_eq!(
+            parse_osspeech_line(line),
+            ParsedOsSpeechLine::Locale {
+                requested: "xx-YY".to_string(),
+                resolved: None,
+                supported: false,
             }
         );
     }
@@ -1599,7 +1850,16 @@ mod tests {
 
     #[test]
     fn parses_error_lines_for_both_reused_and_new_codes() {
-        for code in ["permission-denied", "device-changed", "unsupported-os", "asset-download-failed", "unsupported-locale", "engine-failure", "audio-format"] {
+        for code in [
+            "permission-denied",
+            "device-changed",
+            "unsupported-os",
+            "asset-download-failed",
+            "unsupported-locale",
+            "engine-failure",
+            "audio-format",
+            "asset-unavailable",
+        ] {
             let line = format!(r#"{{"type":"error","code":"{code}","message":"boom"}}"#);
             assert_eq!(
                 parse_osspeech_line(&line),
@@ -1623,6 +1883,44 @@ mod tests {
         assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Unrecognized);
     }
 
+    // ---- R1: transcript text must never reach either log lane ----
+
+    #[test]
+    fn log_line_for_redacts_a_transcript_lines_text_to_metadata_only() {
+        let raw = r#"{"type":"transcript","final":true,"seq":13,"startMs":0,"endMs":4920,"text":"Jargon slayer is a tool."}"#;
+        let parsed = parse_osspeech_line(raw);
+        let logged = log_line_for(raw, &parsed);
+        assert_eq!(logged, "transcript final=true seq=13 startMs=0 endMs=4920 len=24");
+        assert!(!logged.contains("Jargon"), "the meeting content itself must never appear in a logged line: {logged}");
+        assert!(!logged.contains("text"), "not even the field name should leak: {logged}");
+    }
+
+    #[test]
+    fn log_line_for_redacts_an_interim_transcript_too() {
+        let raw = r#"{"type":"transcript","final":false,"seq":12,"startMs":3200,"endMs":4100,"text":"jargon slayer"}"#;
+        let parsed = parse_osspeech_line(raw);
+        let logged = log_line_for(raw, &parsed);
+        assert_eq!(logged, "transcript final=false seq=12 startMs=3200 endMs=4100 len=13");
+        assert!(!logged.contains("jargon"), "{logged}");
+    }
+
+    #[test]
+    fn log_line_for_passes_every_non_transcript_record_through_verbatim() {
+        for raw in [
+            r#"{"type":"asset","state":"downloading","progress":0.42}"#,
+            r#"{"type":"locale","requested":"zh-Hans","resolved":"zh_CN","supported":true}"#,
+            r#"{"type":"osspeech-probe","supported":true,"locales":["zh_CN"],"installed":[]}"#,
+            r#"{"type":"status","state":"capturing","sampleRate":48000,"channels":2}"#,
+            r#"{"type":"error","code":"engine-failure","message":"boom"}"#,
+            r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#,
+            "not json",
+            "",
+        ] {
+            let parsed = parse_osspeech_line(raw);
+            assert_eq!(log_line_for(raw, &parsed), raw, "non-transcript records must be logged verbatim, unchanged");
+        }
+    }
+
     #[test]
     fn garbage_and_malformed_lines_are_unrecognized_not_a_panic() {
         for line in [
@@ -1630,7 +1928,7 @@ mod tests {
             "not json",
             r#"{"type":"transcript"}"#,          // missing every required field
             r#"{"type":"asset"}"#,               // missing state
-            r#"{"type":"locale","requested":"x"}"#, // missing resolved/supported
+            r#"{"type":"locale","requested":"x"}"#, // missing supported (R6: resolved alone is never required)
             r#"{"type":"osspeech-probe"}"#,      // missing every required field
             r#"{"type":"status"}"#,              // missing state
             r#"{"type":"error","code":"x"}"#,    // missing message
@@ -1665,6 +1963,15 @@ mod tests {
         for code in ["engine-failure", "audio-format"] {
             assert_eq!(error_record_kind(code), None, "{code} has no dedicated kind — falls through to crashed at exit");
         }
+    }
+
+    #[test]
+    fn error_record_kind_maps_asset_unavailable_to_asset_failed() {
+        // R5: previously unmapped -> fell through to Crashed at exit,
+        // so JS showed a generic unexpected-exit message instead of the
+        // retryable asset-failure copy for what's really a
+        // noModel/cannotAllocate/…Allocated-style asset problem.
+        assert_eq!(error_record_kind("asset-unavailable"), Some(OsSpeechStatusKind::AssetFailed));
     }
 
     #[test]
@@ -1725,6 +2032,75 @@ mod tests {
     #[test]
     fn final_message_is_none_for_ended() {
         assert_eq!(final_message(OsSpeechStatusKind::Ended, Some(0), None), None);
+    }
+
+    // ---- R7: the preinstall lane's own (narrower) terminal decision ----
+
+    #[test]
+    fn preinstall_terminal_kind_emits_nothing_on_a_clean_finish() {
+        assert_eq!(preinstall_terminal_kind(Some(0), true), None, "asset-installed already settled the task row");
+    }
+
+    #[test]
+    fn preinstall_terminal_kind_is_asset_failed_for_a_clean_exit_that_never_saw_finished() {
+        assert_eq!(preinstall_terminal_kind(Some(0), false), Some(OsSpeechStatusKind::AssetFailed));
+    }
+
+    #[test]
+    fn preinstall_terminal_kind_is_asset_failed_for_finished_seen_with_a_nonzero_exit() {
+        // finished_seen alone is not enough if the exit code says otherwise.
+        assert_eq!(preinstall_terminal_kind(Some(1), true), Some(OsSpeechStatusKind::AssetFailed));
+    }
+
+    #[test]
+    fn preinstall_terminal_kind_is_asset_failed_for_any_other_nonzero_or_missing_exit() {
+        assert_eq!(preinstall_terminal_kind(Some(1), false), Some(OsSpeechStatusKind::AssetFailed));
+        assert_eq!(preinstall_terminal_kind(Some(137), false), Some(OsSpeechStatusKind::AssetFailed));
+        assert_eq!(preinstall_terminal_kind(None, false), Some(OsSpeechStatusKind::AssetFailed));
+    }
+
+    #[test]
+    fn preinstall_terminal_kind_never_produces_crashed_or_ended() {
+        // R7: an extra "ended"/"crashed" from the preinstall lane is
+        // what codex's HIGH false-latch scenario rode on — this lane
+        // must only ever emit nothing or asset-failed.
+        for (code, finished_seen) in [(Some(0), true), (Some(0), false), (Some(1), true), (Some(1), false), (None, false), (Some(137), false)] {
+            let kind = preinstall_terminal_kind(code, finished_seen);
+            assert!(
+                kind.is_none() || kind == Some(OsSpeechStatusKind::AssetFailed),
+                "code={code:?} finished_seen={finished_seen} produced {kind:?}"
+            );
+        }
+    }
+
+    // ---- R2: source provenance tag on osspeech://status ----
+
+    #[test]
+    fn tagged_sets_source_to_session() {
+        let event = OsSpeechStatusEvent::kind_only(OsSpeechStatusKind::Capturing).tagged(OsSpeechEventSource::Session);
+        assert_eq!(event.source, "session");
+    }
+
+    #[test]
+    fn tagged_sets_source_to_preinstall() {
+        let event = OsSpeechStatusEvent::kind_only(OsSpeechStatusKind::AssetDownloading).tagged(OsSpeechEventSource::Preinstall);
+        assert_eq!(event.source, "preinstall");
+    }
+
+    #[test]
+    fn tagged_overrides_whatever_source_the_constructor_left_in_place() {
+        // kind_only/with_message always leave SOME value in `source` (a
+        // struct-update base must be a complete instance) — `tagged` must
+        // still win regardless of what that placeholder was.
+        let event = OsSpeechStatusEvent::with_message(OsSpeechStatusKind::AssetFailed, "network unreachable").tagged(OsSpeechEventSource::Preinstall);
+        assert_eq!(event.source, "preinstall");
+        assert_eq!(event.message, Some("network unreachable".to_string()));
+    }
+
+    #[test]
+    fn os_speech_event_source_as_str_matches_the_pinned_wire_values() {
+        assert_eq!(OsSpeechEventSource::Session.as_str(), "session");
+        assert_eq!(OsSpeechEventSource::Preinstall.as_str(), "preinstall");
     }
 
     // ---- OsSpeechState: single-flight, generation guard, pause ----
@@ -1843,8 +2219,8 @@ mod tests {
     #[test]
     fn preinstall_succeeds_again_after_the_previous_one_finished() {
         let state = OsSpeechState::default();
-        state.try_begin_preinstall().unwrap();
-        state.finish_preinstall();
+        let attempt = state.try_begin_preinstall().unwrap();
+        state.finish_preinstall(attempt);
         assert!(state.try_begin_preinstall().is_ok());
     }
 
@@ -1861,9 +2237,31 @@ mod tests {
     #[test]
     fn a_transcribe_session_succeeds_once_the_preinstall_finished() {
         let state = OsSpeechState::default();
-        state.try_begin_preinstall().unwrap();
-        state.finish_preinstall();
+        let attempt = state.try_begin_preinstall().unwrap();
+        state.finish_preinstall(attempt);
         assert!(state.try_begin().is_ok());
+    }
+
+    #[test]
+    fn try_begin_preinstall_mints_a_fresh_monotonic_attempt_id_each_time() {
+        // R3: `PreinstallSlot`/`preempted_attempt` are keyed on this id.
+        let state = OsSpeechState::default();
+        let first = state.try_begin_preinstall().unwrap();
+        state.finish_preinstall(first);
+        let second = state.try_begin_preinstall().unwrap();
+        assert_ne!(first, second, "each preinstall attempt must get its own id");
+    }
+
+    #[test]
+    fn preinstall_slot_attempt_reflects_whichever_attempt_currently_holds_it() {
+        let state = OsSpeechState::default();
+        let p1 = state.try_begin_preinstall().unwrap();
+        assert_eq!(state.preinstall.lock().unwrap().as_ref().map(PreinstallSlot::attempt), Some(p1));
+        let _ = state.preempt_preinstall();
+        let p2 = state.try_begin_preinstall().unwrap();
+        let slot_attempt = state.preinstall.lock().unwrap().as_ref().map(PreinstallSlot::attempt);
+        assert_eq!(slot_attempt, Some(p2));
+        assert_ne!(slot_attempt, Some(p1), "the slot must never still read as p1's once p2 occupies it");
     }
 
     // ---- session-start preempts an in-flight preinstall (lead §A2 amendment) ----
@@ -1872,30 +2270,64 @@ mod tests {
     fn preempt_on_an_idle_state_is_a_noop_and_sets_no_flag() {
         let state = OsSpeechState::default();
         assert!(state.preempt_preinstall().is_none());
-        assert!(!state.take_preinstall_preempted());
+        // No attempt was ever claimed — 0 is never a real attempt id
+        // (the counter is 1-indexed), so it must never spuriously match.
+        assert!(!state.take_preinstall_preempted(0));
     }
 
     #[test]
     fn preempt_during_the_spawning_window_clears_the_slot_and_marks_preempted() {
         let state = OsSpeechState::default();
-        state.try_begin_preinstall().unwrap();
+        let attempt = state.try_begin_preinstall().unwrap();
         // Still Spawning (no child attached): nothing to hand back, but
         // the slot must clear and the flag must arm.
         assert!(state.preempt_preinstall().is_none());
         assert!(state.try_begin().is_ok(), "session start must proceed after the preempt");
-        assert!(state.take_preinstall_preempted(), "the preinstall task must see preempted=true at Terminated");
-        assert!(!state.take_preinstall_preempted(), "consumed exactly once");
+        assert!(state.take_preinstall_preempted(attempt), "the preinstall task must see preempted=true at Terminated");
+        assert!(!state.take_preinstall_preempted(attempt), "consumed exactly once");
     }
 
     #[test]
-    fn a_fresh_preinstall_claim_resets_a_stale_preempted_flag() {
+    fn a_stale_preempt_record_never_matches_a_different_later_attempt() {
+        // R3: `try_begin_preinstall` deliberately no longer resets
+        // `preempted_attempt` (see that field's own doc comment) — a
+        // fresh attempt's own id simply never numerically matches an
+        // older, different attempt's still-unconsumed record, so it
+        // reads as "not preempted" with no explicit reset required.
         let state = OsSpeechState::default();
-        state.try_begin_preinstall().unwrap();
-        let _ = state.preempt_preinstall();
-        // Spawn-failure path: no task ever consumed the flag. The next
-        // claim must not inherit it.
-        state.try_begin_preinstall().unwrap();
-        assert!(!state.take_preinstall_preempted());
+        let first = state.try_begin_preinstall().unwrap();
+        let _ = state.preempt_preinstall(); // records `first` as preempted; spawn-failure path never spawns a task to consume it
+        let second = state.try_begin_preinstall().unwrap();
+        assert_ne!(first, second);
+        assert!(!state.take_preinstall_preempted(second), "attempt 2 must never inherit attempt 1's stale preempt record");
+    }
+
+    #[test]
+    fn a_preempted_attempts_late_terminated_neither_clears_nor_confuses_a_newer_attempts_state() {
+        // The exact ABA scenario R3 closes: P1 is preempted, then P2
+        // begins BEFORE P1's own (belated) Terminated has been
+        // processed. P1's late handling must correctly see its own
+        // preemption, and must not clear P2's live slot nor report P2
+        // as preempted.
+        let state = OsSpeechState::default();
+        let p1 = state.try_begin_preinstall().unwrap();
+        assert!(state.preempt_preinstall().is_none(), "P1 still Spawning — nothing to hand back");
+
+        // P2 begins — the slot preempt_preinstall cleared is free again.
+        let p2 = state.try_begin_preinstall().unwrap();
+        assert_ne!(p1, p2);
+
+        // P1's belated Terminated handling runs now, well after P2 has
+        // already claimed the slot.
+        assert!(state.take_preinstall_preempted(p1), "P1 must still correctly see its OWN preemption");
+        state.finish_preinstall(p1); // P1's own attempt-conditional cleanup call
+
+        // None of P1's belated activity above may have touched P2.
+        assert!(!state.take_preinstall_preempted(p2), "P2 was never preempted");
+        assert!(
+            state.preinstall.lock().map(|g| g.is_some()).unwrap_or(false),
+            "P1's belated finish_preinstall must not clear P2's still-live slot"
+        );
     }
 
     #[test]

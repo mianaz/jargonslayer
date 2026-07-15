@@ -432,6 +432,17 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     return card as HTMLButtonElement;
   }
 
+  // S11 fix-round J5: the 识别语言 <select> has no data-testid of its
+  // own — found the same way findOsSpeechCard/findNavButton above locate
+  // their own targets (by rendered text), via its preceding <label>'s
+  // sibling <select>.
+  function findLanguageSelect(): HTMLSelectElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "识别语言");
+    const select = label?.parentElement?.querySelector("select");
+    if (!select) throw new Error("识别语言 select not found");
+    return select as HTMLSelectElement;
+  }
+
   it("系统识别 card: floor-locked with the caps' own reason when osspeech caps report unsupported", async () => {
     mockUseOsSpeechCaps.mockReturnValue({
       supported: false,
@@ -487,6 +498,36 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     });
     expect(btn.textContent).toBe("已下载");
     expect(btn.disabled).toBe(true);
+  });
+
+  // S11 fix-round J5 (Opus LOW): 已下载 used to be a bare boolean,
+  // surviving ANY later draft.language switch — so preinstalling for
+  // zh-CN, then switching to a DIFFERENT language, kept showing 已下载
+  // for a language that was never actually preinstalled.
+  it("预下载模型 button: 已下载 is keyed by the language it was preinstalled for — switching draft.language afterward shows 预下载模型 again, not a stale 已下载", async () => {
+    mockUseOsSpeechCaps.mockReturnValue({ supported: true, reason: null, locales: [], installedLocales: [] });
+    useApp.setState({ settings: { ...engineSeedSettings(), engine: "osspeech", language: "zh-CN" }, hydrated: true });
+    mockPreinstallOsSpeech.mockResolvedValue(undefined);
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    const btn = container!.querySelector('[data-testid="btn-preinstall-osspeech"]') as HTMLButtonElement;
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(mockPreinstallOsSpeech).toHaveBeenCalledWith("zh-CN");
+    expect(btn.textContent).toBe("已下载");
+
+    const languageSelect = findLanguageSelect();
+    await act(async () => {
+      languageSelect.value = "en-GB";
+      languageSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(btn.textContent).toBe("预下载模型");
+    expect(btn.disabled).toBe(false);
   });
 
   it("实时说话人分离 row: shows 该引擎不支持说话人分离 (not 需先配置 HF Token) when draft.engine is osspeech", async () => {

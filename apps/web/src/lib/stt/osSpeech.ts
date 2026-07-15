@@ -59,6 +59,18 @@ export type OsSpeechStatusKind =
 
 export interface OsSpeechStatusPayload {
   kind: OsSpeechStatusKind;
+  // S11 fix-round J1 (cross-lane contract, PINNED — Rust's osspeech.rs
+  // implementing in parallel): every osspeech://status payload now names
+  // the lane it came from — "session" (a running transcribe session, the
+  // ONE source this file's own handleStatus below ever acts on) or
+  // "preinstall" (the preinstall_os_speech background task — wizard/
+  // Settings' own 预下载模型, driven by osspeechCaps.ts's
+  // preinstallOsSpeech). Required (not optional): closes the false-latch
+  // window where a background preinstall finishing/failing between THIS
+  // engine's own listener registration and its own session start would
+  // otherwise be mistaken for this session's own helper terminating —
+  // see handleStatus's own guard, checked before any latch/status logic.
+  source: "session" | "preinstall";
   message?: string;
   progress?: number;
   resolvedLocale?: string;
@@ -313,10 +325,33 @@ export class OsSpeechEngine implements STTEngine {
 
     if (myGeneration !== this.generation) return; // stale session
 
+    // S11 fix-round J1 (cross-lane contract): ignore anything that isn't
+    // THIS session's own lane, before any latch/status logic runs. A
+    // background preinstall (source: "preinstall") finishing/failing in
+    // the race window between this engine's own listener registration
+    // and its own session actually starting must never terminal-latch
+    // (helperTerminated below) a session that hasn't even begun — see
+    // OsSpeechStatusPayload's own doc comment on `source`.
+    if (payload.source !== "session") return;
+
     // F3 (appAudio.ts precedent): latch BEFORE branching on
     // this.stopping — a terminal status is just as meaningful arriving
     // pre-stop (e.g. permission-denied) as mid-stop.
-    if (OSSPEECH_TERMINAL_STATUS_KINDS.has(payload.kind)) this.helperTerminated = true;
+    if (OSSPEECH_TERMINAL_STATUS_KINDS.has(payload.kind)) {
+      this.helperTerminated = true;
+      // S11 fix-round J2(c): the session ending ANY other way (crashed/
+      // permission-denied/device-changed/unsupported(-locale)/a normal
+      // "ended" reached mid-download, incl. the user's own stop() —
+      // latched unconditionally above, same as helperTerminated) must
+      // not leave an asset row stuck "running" forever — e.g. a row this
+      // session ADOPTED from a preempted preinstall (§J2b) never gets
+      // its own asset-installed/asset-failed if the session itself ends
+      // first. "asset-failed" is excluded: its own switch case below
+      // already settles the row with the REAL failure message; calling
+      // settle() here too would just relabel it with a less useful
+      // neutral one right after.
+      if (payload.kind !== "asset-failed") this.assetTracker?.settle();
+    }
 
     // "ended" is the one status meaningful even while stopping — see
     // waitForEndedOrTimeout()/resolveStopEnded(). Every OTHER status
@@ -463,8 +498,19 @@ export class OsSpeechEngine implements STTEngine {
     // Only worth waiting for "ended" if a status listener was ever
     // registered to hear it, and only if the helper isn't ALREADY
     // known-dead (F3) — see appAudio.ts's stop() for the full rationale,
-    // identical here.
-    if (this.unlistenStatus && !this.helperTerminated) {
+    // identical here. S11 fix-round J4: ALSO only if a session actually
+    // started — `this.running` — in the first place. A REJECTED
+    // start_os_speech invoke() (a macOS-26 recheck failing, or a
+    // single-flight busy rejection) routes through this SAME stop() to
+    // unwind (see start()'s own catch block) without `this.running`
+    // ever having gone true; unlistenStatus is already set by then too
+    // (both listeners are registered BEFORE the invoke), so without this
+    // extra check the wait below still ran and burned the full
+    // STOP_ENDED_TIMEOUT_MS for an "ended" that no helper process was
+    // ever going to send. (appAudio.ts's stop() has this SAME latent
+    // gap — left untouched this sprint, byte-identity constraint; worth
+    // a follow-up there too.)
+    if (this.unlistenStatus && !this.helperTerminated && this.running) {
       await this.waitForEndedOrTimeout();
     }
 

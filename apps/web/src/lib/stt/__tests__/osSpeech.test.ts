@@ -37,11 +37,12 @@ vi.mock("../../store", () => ({
 
 interface FakeAssetTracker {
   handle: ReturnType<typeof vi.fn>;
+  settle: ReturnType<typeof vi.fn>;
 }
 let assetTrackers: FakeAssetTracker[] = [];
 vi.mock("../../desktop/jobsBridge", () => ({
   trackOsSpeechAsset: () => {
-    const tracker: FakeAssetTracker = { handle: vi.fn() };
+    const tracker: FakeAssetTracker = { handle: vi.fn(), settle: vi.fn() };
     assetTrackers.push(tracker);
     return tracker;
   },
@@ -106,7 +107,7 @@ function wireFakes(invokeOverrides: Record<string, (args?: Record<string, unknow
 async function stopViaEnded(engine: OsSpeechEngine, emit: (event: string, payload: unknown) => void): Promise<void> {
   const stopP = engine.stop();
   await settle(); // let invoke("stop_os_speech") resolve, reaching waitForEndedOrTimeout()
-  emit("osspeech://status", { kind: "ended" });
+  emit("osspeech://status", { kind: "ended", source: "session" });
   await stopP;
 }
 
@@ -154,7 +155,7 @@ describe("OsSpeechEngine", () => {
     expect(activeCount("osspeech://transcript")).toBe(1);
     expect(activeCount("osspeech://status")).toBe(1);
 
-    emit("osspeech://status", { kind: "capturing" });
+    emit("osspeech://status", { kind: "capturing", source: "session" });
     expect(onStatus).toHaveBeenCalledWith("listening");
 
     emit("osspeech://transcript", { final: false, seq: 1, startMs: 0, endMs: 500, text: "jargon" });
@@ -170,7 +171,7 @@ describe("OsSpeechEngine", () => {
     await flushUntil(() => calls.some((c) => c.cmd === "stop_os_speech"));
     expect(resolved).toBe(false);
 
-    emit("osspeech://status", { kind: "ended" });
+    emit("osspeech://status", { kind: "ended", source: "session" });
     await stopP;
     expect(resolved).toBe(true);
     expect(activeCount("osspeech://transcript")).toBe(0);
@@ -273,7 +274,7 @@ describe("OsSpeechEngine", () => {
       emit("osspeech://transcript", { final: true, seq: 3, startMs: 0, endMs: 100, text: "drain tail" });
       expect(onFinal).toHaveBeenCalledWith("drain tail");
 
-      emit("osspeech://status", { kind: "ended" });
+      emit("osspeech://status", { kind: "ended", source: "session" });
       await stopP;
     });
 
@@ -304,7 +305,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "starting" });
+      emit("osspeech://status", { kind: "starting", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("connecting");
     });
@@ -316,8 +317,8 @@ describe("OsSpeechEngine", () => {
       const onNotice = vi.fn();
       await engine.start({ ...noopEvents(), onStatus, onNotice } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "asset-checking" });
-      emit("osspeech://status", { kind: "asset-checking" }); // second arrival — notice must not repeat
+      emit("osspeech://status", { kind: "asset-checking", source: "session" });
+      emit("osspeech://status", { kind: "asset-checking", source: "session" }); // second arrival — notice must not repeat
 
       expect(onStatus).toHaveBeenCalledWith("connecting");
       expect(onNotice).toHaveBeenCalledTimes(1);
@@ -331,8 +332,8 @@ describe("OsSpeechEngine", () => {
       const onNotice = vi.fn();
       await engine.start({ ...noopEvents(), onStatus, onNotice } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "asset-downloading", progress: 0.2 });
-      emit("osspeech://status", { kind: "asset-downloading", progress: 0.8 });
+      emit("osspeech://status", { kind: "asset-downloading", progress: 0.2, source: "session" });
+      emit("osspeech://status", { kind: "asset-downloading", progress: 0.8, source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("connecting");
       expect(onNotice).toHaveBeenCalledTimes(1);
@@ -346,7 +347,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "asset-installed" });
+      emit("osspeech://status", { kind: "asset-installed", source: "session" });
 
       expect(assetTrackers[0].handle).toHaveBeenCalledWith("asset-installed");
       expect(onStatus).not.toHaveBeenCalled();
@@ -358,7 +359,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "asset-failed", message: "network unreachable" });
+      emit("osspeech://status", { kind: "asset-failed", message: "network unreachable", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("error", "系统识别模型下载失败，请检查网络后重试");
       expect(assetTrackers[0].handle).toHaveBeenCalledWith("asset-failed", undefined, "network unreachable");
@@ -370,7 +371,7 @@ describe("OsSpeechEngine", () => {
       const onNotice = vi.fn();
       await engine.start({ ...noopEvents(), onNotice } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "locale-resolved", resolvedLocale: "zh_CN" });
+      emit("osspeech://status", { kind: "locale-resolved", resolvedLocale: "zh_CN", source: "session" });
 
       expect(onNotice).toHaveBeenCalledWith(expect.stringContaining("zh_CN"));
     });
@@ -381,7 +382,7 @@ describe("OsSpeechEngine", () => {
       const onNotice = vi.fn();
       await engine.start({ ...noopEvents(), onNotice } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "locale-resolved" });
+      emit("osspeech://status", { kind: "locale-resolved", source: "session" });
 
       expect(onNotice).not.toHaveBeenCalled();
     });
@@ -392,7 +393,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "capturing" });
+      emit("osspeech://status", { kind: "capturing", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("listening");
     });
@@ -403,7 +404,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "permission-denied" });
+      emit("osspeech://status", { kind: "permission-denied", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith(
         "error",
@@ -417,7 +418,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "device-changed" });
+      emit("osspeech://status", { kind: "device-changed", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("error", expect.any(String));
     });
@@ -428,7 +429,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "unsupported" });
+      emit("osspeech://status", { kind: "unsupported", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("error", "系统识别需要 macOS 26 或更高版本");
     });
@@ -441,6 +442,7 @@ describe("OsSpeechEngine", () => {
 
       emit("osspeech://status", {
         kind: "unsupported-locale",
+        source: "session",
         message: "zh-Yue",
         supportedLocales: ["zh_CN", "en_US"],
       });
@@ -457,7 +459,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "crashed" });
+      emit("osspeech://status", { kind: "crashed", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("error", "系统识别意外退出，请重试");
     });
@@ -468,7 +470,7 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
       await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "ended" });
+      emit("osspeech://status", { kind: "ended", source: "session" });
 
       expect(onStatus).toHaveBeenCalledWith("idle", "capture_ended");
     });
@@ -484,7 +486,7 @@ describe("OsSpeechEngine", () => {
       const engine = new OsSpeechEngine();
       await engine.start(noopEvents(), OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "permission-denied" });
+      emit("osspeech://status", { kind: "permission-denied", source: "session" });
 
       vi.useFakeTimers();
       let resolved = false;
@@ -502,7 +504,7 @@ describe("OsSpeechEngine", () => {
       const engine = new OsSpeechEngine();
       await engine.start(noopEvents(), OSSPEECH_SETTINGS);
 
-      emit("osspeech://status", { kind: "asset-failed", message: "network unreachable" });
+      emit("osspeech://status", { kind: "asset-failed", message: "network unreachable", source: "session" });
 
       vi.useFakeTimers();
       let resolved = false;
@@ -513,6 +515,123 @@ describe("OsSpeechEngine", () => {
 
       expect(resolved).toBe(true);
       await stopP;
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // S11 fix-round J1 — osspeech://status `source` filtering (cross-lane
+  // contract, PINNED): a background preinstall's own events must never
+  // false-latch a session that never asked for them. Every OTHER test
+  // in this file already exercises the "source: session" happy path
+  // implicitly (every emit above now carries it) — this block covers
+  // the NEGATIVE case, source !== "session".
+  // ---------------------------------------------------------------
+
+  describe("osspeech://status source filtering (J1 cross-lane contract)", () => {
+    it("a preinstall-sourced asset-failed arriving WHILE start_os_speech is still in flight (the true race window) never latches this brand-new session", async () => {
+      const startOsSpeech = deferred<undefined>();
+      const { calls, emit } = wireFakes({
+        start_os_speech: () => startOsSpeech.promise,
+      });
+      const engine = new OsSpeechEngine();
+      const onStatus = vi.fn();
+
+      const startP = engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
+      await flushUntil(() => calls.some((c) => c.cmd === "start_os_speech"));
+
+      // The race: a DIFFERENT, background preinstall attempt's own
+      // terminal event lands on the SAME "osspeech://status" lane before
+      // THIS session's own start_os_speech has even resolved.
+      emit("osspeech://status", {
+        kind: "asset-failed",
+        source: "preinstall",
+        message: "unrelated preinstall failure",
+      });
+
+      startOsSpeech.resolve(undefined);
+      await startP;
+
+      emit("osspeech://status", { kind: "capturing", source: "session" });
+
+      expect(onStatus).toHaveBeenCalledWith("listening");
+      expect(onStatus).not.toHaveBeenCalledWith("error", expect.any(String));
+    });
+
+    it("a preinstall-sourced ended never latches an already-running session — stop() still waits the FULL timeout rather than resolving as if the helper had already terminated", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      const onStatus = vi.fn();
+      await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
+
+      emit("osspeech://status", { kind: "ended", source: "preinstall" });
+
+      // Pre-fix: this WOULD reach the (un-gated) "ended" branch below and
+      // surface onStatus("idle", "capture_ended") despite nobody ever
+      // stopping this session.
+      expect(onStatus).not.toHaveBeenCalledWith("idle", "capture_ended");
+
+      vi.useFakeTimers();
+      let resolved = false;
+      const stopP = engine.stop().then(() => {
+        resolved = true;
+      });
+      await settle();
+      // Pre-fix: the preinstall-sourced "ended" above would have latched
+      // helperTerminated, so stop() would already have resolved here,
+      // WITHOUT needing to advance the timer at all.
+      expect(resolved).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(STOP_ENDED_TIMEOUT_MS);
+      await stopP;
+      expect(resolved).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------
+  // S11 fix-round J2(c) — assetTracker.settle() forwarding: a still-
+  // running "os-speech-asset" row (this session's own, or one ADOPTED
+  // from a preempted preinstall — see jobsBridge.test.ts's own single-
+  // flight coverage) must not be orphaned when the session ends some
+  // way OTHER than asset-installed/asset-failed.
+  // ---------------------------------------------------------------
+
+  describe("assetTracker.settle() forwarding on terminal status (J2c)", () => {
+    it.each([
+      { kind: "device-changed" },
+      { kind: "unsupported" },
+      { kind: "unsupported-locale", message: "zh-Yue" },
+      { kind: "crashed" },
+      { kind: "ended" },
+      { kind: "permission-denied" },
+    ])("$kind calls assetTracker.settle() once", async ({ kind, message }) => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS);
+
+      emit("osspeech://status", { kind, message, source: "session" });
+
+      expect(assetTrackers[0].settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("asset-failed does NOT also call settle() — its own handle('asset-failed', ...) already settles the row with the real message", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS);
+
+      emit("osspeech://status", { kind: "asset-failed", message: "network unreachable", source: "session" });
+
+      expect(assetTrackers[0].handle).toHaveBeenCalledWith("asset-failed", undefined, "network unreachable");
+      expect(assetTrackers[0].settle).not.toHaveBeenCalled();
+    });
+
+    it("a non-terminal status (e.g. capturing) never calls settle()", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS);
+
+      emit("osspeech://status", { kind: "capturing", source: "session" });
+
+      expect(assetTrackers[0].settle).not.toHaveBeenCalled();
     });
   });
 
@@ -550,7 +669,18 @@ describe("OsSpeechEngine", () => {
       expect(calls.filter((c) => c.cmd === "stop_os_speech").length).toBe(1);
     });
 
-    it("a start_os_speech invoke() rejection surfaces a zh error and calls stop() to unwind", async () => {
+    // S11 fix-round J4: a REJECTED start_os_speech invoke() (macOS-26
+    // recheck failing, a single-flight busy rejection, ...) routes
+    // through stop() to unwind (see start()'s own catch block) — but
+    // `this.running` never went true for it, so stop()'s ended-wait must
+    // be skipped entirely rather than burning the full
+    // STOP_ENDED_TIMEOUT_MS waiting for an "ended" no helper process was
+    // ever going to send (there IS no helper process here). Uses
+    // flushUntil (microtask-only, no timer advance at all) rather than
+    // vi.advanceTimersByTimeAsync — pre-fix, this never resolves within
+    // flushUntil's own bounded tick budget (the pending real setTimeout
+    // stays un-advanced forever), which is exactly the red failure mode.
+    it("a start_os_speech invoke() rejection surfaces a zh error and resolves stop()'s unwind PROMPTLY — no unnecessary ended-wait since this.running never went true", async () => {
       const { calls } = wireFakes({
         start_os_speech: () => {
           throw new Error("ipc failure");
@@ -560,12 +690,18 @@ describe("OsSpeechEngine", () => {
       const onStatus = vi.fn();
 
       vi.useFakeTimers();
-      const startP = engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
-      await vi.advanceTimersByTimeAsync(STOP_ENDED_TIMEOUT_MS);
-      await startP;
+      let resolved = false;
+      const startP = engine
+        .start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS)
+        .then(() => {
+          resolved = true;
+        });
+
+      await flushUntil(() => resolved); // deliberately no vi.advanceTimersByTimeAsync
 
       expect(onStatus).toHaveBeenCalledWith("error", expect.any(String));
       expect(calls.some((c) => c.cmd === "stop_os_speech")).toBe(true);
+      await startP;
     });
   });
 
@@ -655,7 +791,7 @@ describe("OsSpeechEngine", () => {
       await startP;
 
       onStatus.mockClear();
-      emit("osspeech://status", { kind: "capturing" });
+      emit("osspeech://status", { kind: "capturing", source: "session" });
       expect(onStatus).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(STOP_ENDED_TIMEOUT_MS);
@@ -740,8 +876,8 @@ describe("OsSpeechEngine", () => {
     expect(getDiagEntries().some((e) => e.tag === "stt-osspeech" && e.message.includes("启动请求"))).toBe(true);
     await startP;
 
-    emit("osspeech://status", { kind: "starting" });
-    emit("osspeech://status", { kind: "capturing" });
+    emit("osspeech://status", { kind: "starting", source: "session" });
+    emit("osspeech://status", { kind: "capturing", source: "session" });
 
     const statusEntries = getDiagEntries().filter(
       (e) => e.tag === "stt-osspeech" && e.message.includes("osspeech://status"),

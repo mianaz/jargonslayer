@@ -346,4 +346,39 @@ describe("preinstallOsSpeech — §A2 6th Rust command, single-flighted", () => 
     emit("osspeech://status", { kind: "asset-installed" });
     await p;
   });
+
+  // S11 fix-round J2(a): the preempt handoff — a session start
+  // superseding this in-flight preinstall, per osSpeech.ts's own
+  // osspeech://status `source` contract — hands the SAME download off
+  // to the session, which continues emitting asset events tagged
+  // source: "session" rather than "preinstall". This attempt's own
+  // tracker forwarding AND its resolve/reject settling must keep
+  // reacting regardless — this listener never gates on `source` at all
+  // (unlike osSpeech.ts's own engine-side handleStatus, which ignores
+  // anything besides "session" — a DIFFERENT lane's own concern, not
+  // this one's).
+  it("asset events tagged source: 'session' (the preempt handoff) still drive the tracker AND resolve this preinstall attempt (J2a: accepts EITHER source)", async () => {
+    const { invoke, calls } = makeFakeInvoke({ preinstall_os_speech: () => undefined });
+    currentInvoke = invoke;
+    const { listen, emit, activeCount } = makeFakeListen();
+    currentListen = listen;
+
+    const p = preinstallOsSpeech("zh-CN");
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toEqual([{ cmd: "preinstall_os_speech", args: { locale: "zh-CN" } }]);
+
+    // A session preempted this attempt — its OWN asset events continue
+    // the SAME download, tagged source: "session" from here on.
+    emit("osspeech://status", { kind: "asset-downloading", progress: 0.7, source: "session" });
+    emit("osspeech://status", { kind: "asset-installed", source: "session" });
+
+    await p;
+
+    expect(assetTrackers[0].handle).toHaveBeenCalledWith("asset-downloading", 0.7, undefined);
+    expect(assetTrackers[0].handle).toHaveBeenCalledWith("asset-installed", undefined, undefined);
+    expect(activeCount("osspeech://status")).toBe(0);
+  });
 });
