@@ -35,6 +35,12 @@ import {
   probeAudiocapCaps,
   type AudiocapCapabilities,
 } from "@/lib/desktop/audiocapCaps";
+import {
+  isOsSpeechFloorLocked,
+  osSpeechLockReason,
+  preinstallOsSpeech,
+  useOsSpeechCaps,
+} from "@/lib/desktop/osspeechCaps";
 import type {
   EnglishLevel,
   ExplainLanguage,
@@ -154,6 +160,26 @@ const ALL_ENGINE_CARDS: {
         disabled: true,
         sidecarOnly: true,
       },
+  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
+  // Zero-Install 系统识别 (SpeechAnalyzer): desktop-only, NOT sidecarOnly
+  // (needs no local Whisper sidecar at all — that's the whole point),
+  // so it's structurally unaffected by the #61 preview-tier lock. Label
+  // matches lib/stt/engineOptions.ts's own ENGINE_OPTIONS entry verbatim
+  // (Miana-veto #2) — the two surfaces must never say this engine's name
+  // differently. Floor-gated below like appaudio's own macOS-14.4 floor
+  // (isOsSpeechFloorLocked/osSpeechLockReason, macOS 26 via
+  // os_speech_capabilities) — shown-but-disabled below the floor, never
+  // hidden.
+  ...(IS_DESKTOP
+    ? [
+        {
+          value: "osspeech" as const,
+          label: "系统识别 · 开箱即用",
+          hint: "无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 macOS 26 或更高版本",
+          posture: "local" as const,
+        },
+      ]
+    : []),
   {
     value: "soniox",
     label: "Soniox 云端识别",
@@ -603,6 +629,21 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // an optimistic default here is only ever a brief cosmetic gap, never
   // a real safety hole).
   const [audiocapCaps, setAudiocapCaps] = useState<AudiocapCapabilities | null>(null);
+  // S11 osspeech blueprint (§3 Worker D) — 系统识别's own macOS-26 floor
+  // gate, same "shown-but-disabled below floor" policy as 系统/App 音频
+  // just above, just via Worker C's own hook (osspeechCaps.ts owns its
+  // probe/subscribe lifecycle internally, unlike audiocapCaps above
+  // which this file still hand-rolls its own useState/useEffect for —
+  // no need to duplicate that here).
+  const osSpeechCaps = useOsSpeechCaps();
+  // 预下载模型 button (blueprint §Q5): a simple local busy/done pair, the
+  // same "immediate action, local busy state" shape
+  // handleCheckDiarizationStatus/checkingDiarization above already uses
+  // — preinstallOsSpeech itself also drives an "os-speech-asset" 后台任务
+  // row (Worker C's own osspeechCaps.ts), so this is purely this
+  // button's OWN visual feedback, not a duplicate of that tracking.
+  const [preinstallingOsSpeech, setPreinstallingOsSpeech] = useState(false);
+  const [osSpeechPreinstallDone, setOsSpeechPreinstallDone] = useState(false);
   // Soniox API Key masked-input toggle (v0.4 S4 chunk 6) — same
   // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
   // field itself only renders when draft.engine === "soniox".
@@ -1282,6 +1323,27 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
+  // S11 osspeech blueprint (§3 Worker D, §Q5) — 系统识别 卡片's own 预下载
+  // 模型 button: an immediate action (like handleCheckDiarizationStatus
+  // above), calling Worker C's preinstallOsSpeech(locale) directly.
+  // draft.language is this dialog's own in-progress pick (mirrors every
+  // other 转录引擎-scoped read in this section reading `draft`, not the
+  // committed `settings`) — preinstallOsSpeech itself resolves once the
+  // model finishes installing (or rejects on failure/a busy single-flight
+  // guard), which is exactly this button's own busy -> done/failed
+  // window.
+  const handlePreinstallOsSpeech = async () => {
+    setPreinstallingOsSpeech(true);
+    try {
+      await preinstallOsSpeech(draft.language);
+      setOsSpeechPreinstallDone(true);
+    } catch (err) {
+      showToast(err instanceof Error ? `预下载失败：${err.message}` : "预下载失败");
+    } finally {
+      setPreinstallingOsSpeech(false);
+    }
+  };
+
   // 订阅直连（实验性）: probes GET /agent/health, mirroring
   // handleCheckDiarizationStatus's "no toast on open, explicit button
   // for a manual re-check" UX — but ALSO run once automatically when
@@ -1518,8 +1580,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // null (not probed yet this open, or this isn't even the
                 // appaudio card) never locks — only an EXPLICIT
                 // appAudioSupported:false does (see that module's own
-                // POLICY doc).
-                const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
+                // POLICY doc). S11 osspeech blueprint (§3 Worker D): joins
+                // the SAME "shown-but-disabled below floor" gate via
+                // isOsSpeechFloorLocked/osSpeechLockReason — a structural
+                // no-op for every card besides osspeech, same as
+                // isAppAudioFloorLocked is for every card besides appaudio,
+                // so the two OR together safely.
+                const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
+                const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osSpeechCaps);
+                const floorLocked = appAudioLocked || osSpeechLocked;
                 return (
                   <button
                     key={opt.value}
@@ -1529,9 +1598,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     title={
                       previewLocked
                         ? "本地版功能：体验版暂未开放"
-                        : floorLocked
+                        : appAudioLocked
                           ? appAudioLockReason(audiocapCaps)
-                          : undefined
+                          : osSpeechLocked
+                            ? osSpeechLockReason(osSpeechCaps)
+                            : undefined
                     }
                     className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                       draft.engine === opt.value
@@ -1572,6 +1643,33 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 );
               })}
             </div>
+
+            {/* S11 osspeech blueprint (§3 Worker D, §Q5): 预下载模型 —
+               background-preinstalls the SpeechAnalyzer asset for
+               draft.language so it's warm before the first real meeting,
+               same rationale as EngineChoiceScreen's own background
+               preinstall on the osspeech wizard choice. Engine-conditional
+               like 系统/App 音频's permission CTA below (only meaningful
+               once 系统识别 is the drafted engine) — disabled while
+               floor-locked (macOS <26): preinstalling something this
+               machine can't run makes no sense. */}
+            {draft.engine === "osspeech" && (
+              <div className="space-y-2 border border-edge bg-panel2 p-3">
+                <div className="text-sm text-fg">系统识别模型</div>
+                <div className="text-xs leading-[1.7] text-mut2">
+                  首次开始监听时会自动下载识别所需的系统模型；也可以提前在这里预下载，避免第一次会议时等待。
+                </div>
+                <button
+                  type="button"
+                  data-testid="btn-preinstall-osspeech"
+                  disabled={preinstallingOsSpeech || osSpeechPreinstallDone || isOsSpeechFloorLocked("osspeech", osSpeechCaps)}
+                  onClick={() => void handlePreinstallOsSpeech()}
+                  className="btn-tactile shrink-0 border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {preinstallingOsSpeech ? "下载中…" : osSpeechPreinstallDone ? "已下载" : "预下载模型"}
+                </button>
+              </div>
+            )}
 
             {/* 本地服务 status line (owner ask 2026-07-11): only for the
                sidecar-backed engines (whisper/tabaudio, and appaudio —
@@ -2067,7 +2165,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     ? "需要本地版 + 本地 sidecar"
                     : realtimeDiarizeAvailable
                       ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
-                      : "需先配置 HF Token"}
+                      : draft.engine === "osspeech"
+                        ? "该引擎不支持说话人分离"
+                        : "需先配置 HF Token"}
                 </div>
               </div>
               <ToggleSwitch

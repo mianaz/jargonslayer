@@ -93,6 +93,16 @@ import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
 // (pollJobUntilDone exists there but is module-private, and lib/stt/
 // is off this chunk's touch list either way).
 import { httpBaseFromWs, pollJob } from "../stt/upload";
+// S11 osspeech blueprint (docs/design-explorations/s11-osspeech-
+// blueprint.md, §3 Worker D, §A4): a plain top-level import — mirrors
+// this file's own probeSidecar/httpBaseFromWs imports above (a stateless
+// utility module), NOT the store.ts/llmTransport.ts injected-dependency
+// shape, since osspeechCaps.ts carries no mutable "current instance"
+// global the way those two do (see BootstrapDeps.setTransport's own doc
+// comment on why THAT split exists). Worker C's module — mocked via
+// vi.mock in every test that reaches this file (bootstrap.test.ts +
+// every DesktopWizard.tsx-importing suite), never stubbed on disk.
+import { preinstallOsSpeech } from "./osspeechCaps";
 import { getInvoke, getListen, getTauriFetch, type InvokeFn, type ListenFn, type TauriFetchFn } from "./tauriApi";
 import {
   getAppPaths,
@@ -301,12 +311,25 @@ async function withUvLog<T>(deps: BootstrapDeps, onLog: OnLog, run: () => Promis
  *  ALL (no provisioning is this app's to do), surfacing EXTERNAL_
  *  UNMANAGED once a one-shot health probe comes back down (HEALTHY
  *  covers the up case — a real MachineState phase already, no widening
- *  needed there). */
+ *  needed there).
+ *
+ *  S11 osspeech blueprint (§A4): OSSPEECH_ACTIVE is the THIRD synthetic
+ *  phase this file alone produces — a fresh NEEDS_PROVISION decision
+ *  whose persisted `settings.engine` already reads "osspeech" (the
+ *  user's own past EngineChoiceScreen pick, or a direct Settings pick)
+ *  is dormant BY DESIGN: this phase never auto-drives into installing
+ *  the whisper sidecar (see isFreshProvisionEntry's own call site
+ *  below), and DesktopBootstrap.tsx's existing `visible` computation
+ *  (untouched by this worker — see this worker's own PR report) already
+ *  renders nothing for any phase it doesn't explicitly recognize, the
+ *  same way it already does for HEALTHY/CHECKING/NOT_DESKTOP — so this
+ *  new phase needs no companion edit there. */
 export type DesktopBootstrapState =
   | MachineState
   | { phase: "NOT_DESKTOP" }
   | { phase: "WIZARD_CONSENT_REQUIRED" }
-  | { phase: "EXTERNAL_UNMANAGED" };
+  | { phase: "EXTERNAL_UNMANAGED" }
+  | { phase: "OSSPEECH_ACTIVE" };
 
 /** Minimal subscription surface (blueprint chunk 5: "a tiny listener
  *  set, not a new dependency; NOT zustand — this predates store
@@ -645,6 +668,19 @@ export interface BootstrapDeps {
    *  DEFAULT_DESKTOP_MODEL exactly as before this chunk — see
    *  bootstrapWithRealDeps below for the one real implementation. */
   getDesktopModel?: () => Promise<string>;
+  /** S11 osspeech blueprint (§A4): the user's persisted `settings.engine`
+   *  string, read the same "await BEFORE any provisioning decision"
+   *  way as getSidecarMode/getDesktopModel above — the ONE input the
+   *  new ENGINE_CHOICE pre-consent branch needs (see
+   *  isFreshProvisionEntry's own call site below). Deliberately typed
+   *  as a plain `string`, not `STTEngineKind` (mirrors getDesktopModel's
+   *  own "plain string, ALLOWED_MARKER_MODELS clamps it" posture) — the
+   *  only comparison this file ever makes against it is `=== "osspeech"`,
+   *  which needs no narrower type. Absent (every pre-S11 test, and any
+   *  caller that hasn't wired it) never equals "osspeech", so the new
+   *  branch is a no-op and every existing behavior is unchanged — see
+   *  bootstrapWithRealDeps below for the one real implementation. */
+  getDesktopEngine?: () => Promise<string>;
   /** S4 chunk 3 (blueprint decision C's wiring bullet): persists a
    *  beginProvision(model) pick to `settings.whisperModel` — "ride the
    *  store's normal persistence" means going through the exact same
@@ -723,6 +759,11 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     persistedModel !== undefined && ALLOWED_MARKER_MODELS.includes(persistedModel)
       ? persistedModel
       : DEFAULT_DESKTOP_MODEL;
+  // S11 osspeech blueprint (§A4): gathered the SAME "up front, before
+  // any provisioning decision" way as sidecarMode/persistedModel above —
+  // isFreshProvisionEntry's own call site below is the ONE place this
+  // is read.
+  const persistedEngine = await deps.getDesktopEngine?.();
   // ctx becomes reassignable (S4 chunk 3): beginProvision(model) below
   // re-seeds it with the wizard's own <ModelPicker> pick, the same
   // "explicitly rebuild the pinned config" shape every other piece of
@@ -805,6 +846,24 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
   // EXTERNALLY-visible state (externalState() below) and whether the
   // drive loop keeps looping are affected.
   let awaitingConsent = false;
+  // S11 osspeech blueprint (§A4): true the instant a fresh NEEDS_
+  // PROVISION decision lands with persistedEngine already "osspeech" —
+  // see isFreshProvisionEntry's own call site below. Mutually exclusive
+  // with awaitingConsent (the SAME branch sets exactly one of the two,
+  // never both) — a dormant osspeech session never shows ANY wizard
+  // screen and never auto-drives into installing the whisper sidecar.
+  let osspeechDormant = false;
+  // Lead integration fix (S11): one-shot override consumed by the next
+  // fresh NEEDS_PROVISION decision. reprovision() is the user explicitly
+  // asking for the setup wizard — with engine === "osspeech" persisted,
+  // the dormant gate below would otherwise re-park silently and the
+  // Settings「重新运行安装向导」button would visibly do nothing. Set only
+  // by reprovision(); cleared the moment the branch consumes it. The
+  // consent path it forces re-renders EngineChoiceScreen first (Worker
+  // D's DesktopWizard sequencer), so "re-run wizard" becomes a genuine
+  // re-choice: the user can pick whisper and provision, or re-confirm
+  // 系统识别 and land dormant again.
+  let forceEngineSetupOnce = false;
   // Finding 2b: true once external mode's own one-shot probe comes
   // back down — see externalState() below. Never true at the same
   // time as awaitingConsent (external mode never touches the managed
@@ -865,6 +924,12 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
 
   function externalState(): DesktopBootstrapState {
     if (externalUnmanaged) return { phase: "EXTERNAL_UNMANAGED" };
+    // S11 osspeech blueprint (§A4): checked ahead of awaitingConsent —
+    // the two are mutually exclusive by construction (see
+    // osspeechDormant's own doc comment above), so ordering between
+    // them never actually matters, but this mirrors externalUnmanaged's
+    // own "checked first" placement for a consistent read order.
+    if (osspeechDormant) return { phase: "OSSPEECH_ACTIVE" };
     return awaitingConsent ? { phase: "WIZARD_CONSENT_REQUIRED" } : current.state;
   }
 
@@ -914,6 +979,33 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         if (event.step === "DOWNLOAD_MODEL") resetDownloadProgress();
       }
       if (event.type === "CHECK_RESULT" && isFreshProvisionEntry(current.state)) {
+        // S11 osspeech blueprint (§A4): a fresh NEEDS_PROVISION decision
+        // whose persisted engine already reads "osspeech" (the user's
+        // own past EngineChoiceScreen pick, or a direct Settings pick)
+        // must NOT pause on WIZARD_CONSENT_REQUIRED — that would silently
+        // re-show the wizard on every relaunch even though the user
+        // already told us not to use the local whisper sidecar at all.
+        // Parking here INSTEAD of setting awaitingConsent (both branches
+        // `return` without ever calling runEffects for this STEP) is
+        // what keeps the drive loop from EVER auto-installing Python for
+        // an osspeech user — the exact silent-download the LEAD
+        // AMENDMENT above already forbids, just for a second condition.
+        // A LATER relaunch with the engine switched away from "osspeech"
+        // (e.g. back to whisper, still unprovisioned) reads a fresh
+        // persistedEngine and falls through to the unchanged
+        // awaitingConsent branch below — "still show provisioning if the
+        // user later switches to whisper without a provisioned model"
+        // (blueprint §3 Worker D), achieved for free by re-deriving this
+        // check from scratch on every bootstrapDesktop() call rather
+        // than caching the decision anywhere durable.
+        if (persistedEngine === "osspeech" && !forceEngineSetupOnce) {
+          osspeechDormant = true;
+          notify();
+          return;
+        }
+        // Consumed exactly once — see forceEngineSetupOnce's own doc
+        // comment (reprovision()'s explicit re-choice).
+        forceEngineSetupOnce = false;
         awaitingConsent = true;
         notify();
         return;
@@ -1316,6 +1408,20 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         diagLog("info", "desktop-provision", "重新运行安装向导");
         restartState = initialRestartState();
         awaitingConsent = false;
+        // S11 osspeech blueprint (§A4): same "a stale parking flag must
+        // not survive a reset" rationale as externalUnmanaged just
+        // below — reprovision() is a deliberate "redo setup" action, so
+        // the fresh drive it kicks off must re-decide osspeechDormant
+        // from scratch (it will, immediately: persistedEngine was
+        // captured once at bootstrap start and is still consulted at
+        // the very next CHECK_RESULT), not keep parking on a stale
+        // value.
+        osspeechDormant = false;
+        // Lead integration fix (S11): the user explicitly asked for the
+        // wizard — the next fresh NEEDS_PROVISION decision must show the
+        // engine re-choice instead of silently re-parking dormant (see
+        // forceEngineSetupOnce's own doc comment).
+        forceEngineSetupOnce = true;
         // A stale EXTERNAL_UNMANAGED parking must not survive a reset
         // back into the (managed) drive loop below — externalState()
         // checks this flag FIRST, ahead of current.state, so leaving it
@@ -1494,6 +1600,75 @@ async function persistDesktopModelToStore(model: string): Promise<void> {
   useApp.getState().updateSettings({ whisperModel: model });
 }
 
+/** S11 osspeech blueprint (§A4) — mirrors getPersistedDesktopModel above
+ *  exactly (same dynamic-import + hydration-gate shape, same
+ *  rationale), just reading `settings.engine` instead of
+ *  `settings.whisperModel`. Wired as BootstrapDeps.getDesktopEngine
+ *  below — the ONE input the new ENGINE_CHOICE pre-consent branch needs
+ *  (see that dep's own doc comment on BootstrapDeps). */
+async function getPersistedEngine(): Promise<string> {
+  const { useApp } = await import("../store");
+  if (!useApp.getState().hydrated) {
+    await new Promise<void>((resolve) => {
+      const unsubscribe = useApp.subscribe((state) => {
+        if (state.hydrated) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+  return useApp.getState().settings.engine;
+}
+
+/** S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen's own
+ *  "选系统识别" action, wired directly by DesktopWizard.tsx rather than
+ *  threaded onto DesktopBootstrapHandle: unlike beginProvision/
+ *  reprovision/etc. this action needs NOTHING from a specific
+ *  bootstrapDesktop() closure instance (not the current MachineState,
+ *  not `ctx`, not `generation`), so a plain standalone function —
+ *  callable straight from a presentational component, the same way
+ *  OnboardingByokStep.tsx already calls useApp().updateSettings
+ *  directly (see that file's own header comment: "there is no
+ *  bootstrap-handle concern here at all") — is the right shape; a
+ *  handle method here would need DesktopBootstrap.tsx to thread a new
+ *  prop through (off this worker's file list) for zero behavioral gain.
+ *  Persists `engine:"osspeech"` via the SAME updateSettings action
+ *  persistDesktopModelToStore above already uses (store's normal
+ *  setter, own un-awaited storage.saveSettings), then fire-and-forgets
+ *  preinstallOsSpeech(settings.language) so the model is warm by the
+ *  user's first real meeting (blueprint §Q5) — NOT awaited: a slow or
+ *  offline download must never block the wizard from dismissing
+ *  (DesktopWizard.tsx calls onDismissConsent immediately after firing
+ *  this, without awaiting it either). The `.catch()` below is
+ *  deliberately silent, not a swallowed bug: osspeechCaps.ts's own
+ *  preinstallOsSpeech already drives an "os-speech-asset" 后台任务 row
+ *  for this attempt's whole duration (its own doc comment), which is
+ *  this failure's real user-facing surface (blueprint §Q9's designed
+ *  asset-download-failed path) — this call site only needs to stop an
+ *  unhandled-rejection warning from a promise nothing else awaits.
+ *  Durably prevents the wizard from re-showing on a LATER relaunch
+ *  purely as a side effect of the persisted write above —
+ *  bootstrapDesktop's own isFreshProvisionEntry branch re-reads this
+ *  same persisted value fresh on every launch (see that branch's own
+ *  doc comment), so no separate "wizard seen" marker is needed. */
+export async function chooseOsSpeechEngine(): Promise<void> {
+  const { useApp } = await import("../store");
+  if (!useApp.getState().hydrated) {
+    await new Promise<void>((resolve) => {
+      const unsubscribe = useApp.subscribe((state) => {
+        if (state.hydrated) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+  const { settings, updateSettings } = useApp.getState();
+  updateSettings({ engine: "osspeech" });
+  void preinstallOsSpeech(settings.language).catch(() => {});
+}
+
 /** S4 review pair Finding 2 — the real BootstrapDeps.isMeetingActive
  *  implementation. Unlike getPersistedSidecarMode/getPersistedDesktopModel/
  *  persistDesktopModelToStore above (each awaited ONCE, up front,
@@ -1541,6 +1716,7 @@ async function bootstrapWithRealDeps(): Promise<DesktopBootstrapHandle> {
     setTransport,
     getSidecarMode: getPersistedSidecarMode,
     getDesktopModel: getPersistedDesktopModel,
+    getDesktopEngine: getPersistedEngine,
     persistDesktopModel: persistDesktopModelToStore,
     isMeetingActive,
   });

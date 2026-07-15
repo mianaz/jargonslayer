@@ -11,6 +11,29 @@
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
+
+// S11 osspeech blueprint (§3 Worker D, §A4) — Worker C's caps module,
+// not on disk when this worker started (mocked, never stubbed — see
+// this suite's own new describe block below). `null` is this mock's
+// default (mirrors the real hook's own "not yet probed" snapshot) and
+// is what every PRE-EXISTING test below implicitly exercises (none of
+// them touch this variable), which is exactly how "macOS <26 (or not
+// yet resolved): EngineChoiceScreen is skipped, byte-identical to
+// today" is covered for free by every test that predates this feature.
+let mockOsSpeechCaps: { supported: boolean } | null = null;
+vi.mock("@/lib/desktop/osspeechCaps", () => ({
+  useOsSpeechCaps: () => mockOsSpeechCaps,
+}));
+
+const mockChooseOsSpeechEngine = vi.fn(async () => undefined);
+vi.mock("@/lib/desktop/bootstrap", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/desktop/bootstrap")>();
+  return {
+    ...actual,
+    chooseOsSpeechEngine: () => mockChooseOsSpeechEngine(),
+  };
+});
+
 import DesktopWizard from "../DesktopWizard";
 import type { DesktopBootstrapState, DesktopLogLine } from "@/lib/desktop/bootstrap";
 import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
@@ -46,6 +69,11 @@ describe("DesktopWizard — state-driven rendering", () => {
       container.remove();
       container = null;
     }
+    // S11 osspeech blueprint (§3 Worker D) — reset between tests so an
+    // osspeech-specific test never bleeds its caps value into a LATER,
+    // unrelated test (every pre-S11 test relies on the null default).
+    mockOsSpeechCaps = null;
+    mockChooseOsSpeechEngine.mockClear();
   });
 
   async function renderWizard(state: DesktopBootstrapState, logLines: DesktopLogLine[] = [], overrides: Partial<Parameters<typeof DesktopWizard>[0]> = {}) {
@@ -120,6 +148,82 @@ describe("DesktopWizard — state-driven rendering", () => {
       beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onBeginProvision).toHaveBeenCalledWith("large-v3");
+  });
+
+  // S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen
+  // gating: it becomes the WIZARD_CONSENT_REQUIRED screen (replacing
+  // ConsentScreen) IFF osspeech caps report supported; osspeech choice
+  // skips whisper provisioning entirely and dismisses; whisper choice
+  // enters the existing ConsentScreen unchanged; caps unsupported (or
+  // not yet resolved — the default) skips the new screen entirely.
+
+  it("WIZARD_CONSENT_REQUIRED + osspeech supported: renders EngineChoiceScreen (not ConsentScreen), pre-selected to 系统识别", async () => {
+    mockOsSpeechCaps = { supported: true };
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    expect(container!.querySelector('[data-testid="engine-choice-screen"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).toBeNull();
+  });
+
+  it("WIZARD_CONSENT_REQUIRED + osspeech supported: choosing 系统识别 -> 继续 fires chooseOsSpeechEngine() and dismisses via onDismissConsent — provisioning is skipped entirely", async () => {
+    mockOsSpeechCaps = { supported: true };
+    const onBeginProvision = vi.fn();
+    const onDismissConsent = vi.fn();
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision, onDismissConsent });
+
+    await act(async () => {
+      container!.querySelector('[data-testid="btn-engine-choice-continue"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    expect(mockChooseOsSpeechEngine).toHaveBeenCalledTimes(1);
+    expect(onDismissConsent).toHaveBeenCalledTimes(1);
+    expect(onBeginProvision).not.toHaveBeenCalled();
+    // never advances into the provisioning ConsentScreen/StepRowsScreen.
+    expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="desktop-wizard-steps"]')).toBeNull();
+  });
+
+  it("WIZARD_CONSENT_REQUIRED + osspeech supported: choosing Whisper -> 继续 enters the existing ConsentScreen unchanged (开始安装/稍后再说 behave exactly as pre-S11)", async () => {
+    mockOsSpeechCaps = { supported: true };
+    const onBeginProvision = vi.fn();
+    const onDismissConsent = vi.fn();
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision, onDismissConsent });
+
+    await act(async () => {
+      container!.querySelector('[data-testid="engine-choice-card-whisper"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await act(async () => {
+      container!.querySelector('[data-testid="btn-engine-choice-continue"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    expect(mockChooseOsSpeechEngine).not.toHaveBeenCalled();
+    expect(container!.querySelector('[data-testid="engine-choice-screen"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).not.toBeNull();
+
+    await act(async () => {
+      container!.querySelector('[data-testid="btn-begin-provision"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBeginProvision).toHaveBeenCalledTimes(1);
+    expect(onBeginProvision).toHaveBeenCalledWith(WIZARD_PRESELECTED_MODEL);
+  });
+
+  it("WIZARD_CONSENT_REQUIRED + osspeech NOT supported (or not yet resolved): EngineChoiceScreen is skipped entirely — wizard is byte-identical to pre-S11 (renders ConsentScreen directly)", async () => {
+    for (const caps of [{ supported: false }, null]) {
+      mockOsSpeechCaps = caps;
+      await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" });
+      expect(container!.querySelector('[data-testid="engine-choice-screen"]')).toBeNull();
+      expect(container!.querySelector('[data-testid="desktop-wizard-consent"]')).not.toBeNull();
+      act(() => root!.unmount());
+      container!.remove();
+      root = null;
+      container = null;
+    }
   });
 
   it("STEP/RUNNING (CREATE_VENV): earlier rows read done, the current row reads running, later rows read pending — no error/escape-hatch chrome", async () => {
