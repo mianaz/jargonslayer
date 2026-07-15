@@ -2,6 +2,7 @@ import AudioCapCore
 import AudioToolbox
 import CoreAudio
 import Foundation
+import Speech
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -38,22 +39,50 @@ struct CLIArguments {
     let durationSeconds: Double?
 }
 
+/// S11 (§2.1) — `--transcribe`'s own argument bundle: `--exclude-pid` is
+/// required here too (§A5: "same self-exclusion semantics... as
+/// capture"), plus the BCP-47 `--locale`; `--duration`/`--contextual-json`
+/// are optional (the former mirrors capture's own optional `--duration`,
+/// same meaning: self-stop after N seconds, used for testing).
+struct TranscribeArguments {
+    let excludePID: pid_t
+    let locale: String
+    let durationSeconds: Double?
+    let contextualJSON: String?
+}
+
 // S9.2 — the CLI's two mutually-exclusive modes: live capture (the
 // original S9.1 shape, requires --exclude-pid) and --sweep-orphans (the
 // startup best-effort aggregate-device cleanup, OrphanSweep.swift —
 // takes no other arguments at all, needs no pid).
+// S11 (§2.1) adds three more, all macOS-26-gated independently at the
+// entry-point dispatch below (see this file's own comment there):
+// `--transcribe` (the new SpeechAnalyzer lane), `--probe-osspeech`
+// (one-shot capability probe, no other arguments — same "whole argv"
+// shape as --sweep-orphans), and `--preinstall-osspeech` (background
+// asset warm-up, `--locale` only).
 enum CLIMode {
     case capture(CLIArguments)
     case sweepOrphans
+    case transcribe(TranscribeArguments)
+    case probeOsSpeech
+    case preinstallOsSpeech(locale: String)
 }
 
 func parseArguments(_ arguments: [String]) -> CLIMode? {
     if arguments.count == 2, arguments[1] == "--sweep-orphans" {
         return .sweepOrphans
     }
+    if arguments.count == 2, arguments[1] == "--probe-osspeech" {
+        return .probeOsSpeech
+    }
 
     var excludePID: pid_t?
     var durationSeconds: Double?
+    var locale: String?
+    var contextualJSON: String?
+    var wantsTranscribe = false
+    var wantsPreinstall = false
     var index = 1
     while index < arguments.count {
         switch arguments[index] {
@@ -65,16 +94,46 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
             guard index + 1 < arguments.count, let value = Double(arguments[index + 1]), value > 0 else { return nil }
             durationSeconds = value
             index += 2
+        case "--transcribe":
+            wantsTranscribe = true
+            index += 1
+        case "--preinstall-osspeech":
+            wantsPreinstall = true
+            index += 1
+        case "--locale":
+            guard index + 1 < arguments.count else { return nil }
+            locale = arguments[index + 1]
+            index += 2
+        case "--contextual-json":
+            guard index + 1 < arguments.count else { return nil }
+            contextualJSON = arguments[index + 1]
+            index += 2
         default:
             return nil
         }
     }
-    guard let excludePID else { return nil }
+
+    if wantsTranscribe {
+        // §A5: --exclude-pid required in transcribe mode too.
+        guard !wantsPreinstall, let excludePID, let locale else { return nil }
+        return .transcribe(TranscribeArguments(excludePID: excludePID, locale: locale, durationSeconds: durationSeconds, contextualJSON: contextualJSON))
+    }
+    if wantsPreinstall {
+        guard let locale, excludePID == nil, durationSeconds == nil, contextualJSON == nil else { return nil }
+        return .preinstallOsSpeech(locale: locale)
+    }
+    guard let excludePID, locale == nil, contextualJSON == nil else { return nil }
     return .capture(CLIArguments(excludePID: excludePID, durationSeconds: durationSeconds))
 }
 
 func printUsageAndExit() -> Never {
-    let usage = "usage: jargonslayer-audiocap --exclude-pid <pid> [--duration <seconds>] | jargonslayer-audiocap --sweep-orphans\n"
+    let usage = """
+    usage: jargonslayer-audiocap --exclude-pid <pid> [--duration <seconds>] \
+    | jargonslayer-audiocap --sweep-orphans \
+    | jargonslayer-audiocap --transcribe --exclude-pid <pid> --locale <bcp47> [--duration <seconds>] [--contextual-json <jsonArray>] \
+    | jargonslayer-audiocap --probe-osspeech \
+    | jargonslayer-audiocap --preinstall-osspeech --locale <bcp47>\n
+    """
     // F12 follow-up (lead): throwing write, same NSException class as
     // Writer/StatusEvents — a closed stderr must not crash even here.
     try? FileHandle.standardError.write(contentsOf: Data(usage.utf8))
@@ -250,6 +309,185 @@ func runCapture(excludePID: pid_t, durationSeconds: Double?) -> Never {
     }
 }
 
+// S11 (§2.1/§Q4) — `--probe-osspeech`: one shot, no CoreAudio, no tap.
+// `SpeechTranscriber.isAvailable` is a plain sync Bool (spike-verified);
+// `supportedLocales`/`installedLocales` are async, only queried when
+// available at all — the same "top-level Task + DispatchSemaphore to
+// park the process" bridge runTranscribe uses below, just for a single
+// quick async readout rather than a whole session.
+@available(macOS 26.0, *)
+func runProbe() -> Never {
+    let semaphore = DispatchSemaphore(value: 0)
+    var supported = false
+    var locales: [String] = []
+    var installed: [String] = []
+    Task {
+        supported = SpeechTranscriber.isAvailable
+        if supported {
+            locales = await SpeechTranscriber.supportedLocales.map(\.identifier)
+            installed = await SpeechTranscriber.installedLocales.map(\.identifier)
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    TranscriptEvents.emitProbe(supported: supported, locales: locales, installed: installed)
+    exit(0)
+}
+
+// S11 (§A2/§2.1) — `--preinstall-osspeech`: locale resolve + asset
+// ensure only, via the SAME AnalyzerSeam `run`/`preinstall` a real
+// transcribe session uses for its own asset step (SpeechAnalyzerSession
+// .swift) — no tap, no ring, no analyzer.
+@available(macOS 26.0, *)
+func runPreinstall(locale: String) -> Never {
+    let semaphore = DispatchSemaphore(value: 0)
+    var outcome = SpeechSessionOutcome.failure
+    Task {
+        outcome = await SpeechAnalyzerSession().preinstall(locale: locale)
+        semaphore.signal()
+    }
+    semaphore.wait()
+    exit(outcome == .success ? 0 : 1)
+}
+
+// S11 (§0/§Q1) — `--transcribe`: reuses the EXACT same CoreAudio setup
+// as runCapture above (translate/create tap/create aggregate/create
+// IOProc — byte-identical calls into AudioCapCore, see each step's own
+// comment in runCapture for the full rationale, not repeated here) up
+// through the ring/ioBlock, then hands off to `AnalyzerSeam` for
+// everything Speech-related (locale/asset/analyzer/results/finalize).
+// Two deliberate deltas from runCapture: (1) no stdout Framing stream
+// header/chunks/EOS at all — blueprint §0: "no PCM ever leaves the
+// process, and no stdout wire is used"; (2) `ShutdownSignal
+// .startStdinEOFMonitor()` is NOT called — §A1: `StdinCommandMonitor`
+// is the ONLY stdin reader in transcribe mode (two threads reading the
+// same stdin would race and split lines unpredictably); EOF handling
+// lives in StdinCommandMonitor's own `onEOF` callback instead, wired to
+// the SAME shared shutdown flag via `requestShutdownFromWriteFailure`
+// (reused purely for its mechanical effect — see that method's own doc
+// comment on why a write failure and a stdin EOF are the same
+// "the parent is gone" signal, just observed from opposite directions).
+@available(macOS 26.0, *)
+func runTranscribe(excludePID: pid_t, locale: String, durationSeconds: Double?, contextualJSON: String?) -> Never {
+    let shutdown = ShutdownSignal()
+    shutdown.installSignalHandlers()
+    let stdinMonitor = StdinCommandMonitor(onEOF: shutdown.requestShutdownFromWriteFailure)
+    stdinMonitor.start()
+
+    var tapID: AudioObjectID?
+    var aggregateDeviceID: AudioObjectID?
+    var ioProcID: AudioDeviceIOProcID?
+
+    func teardownAndExit(code: Int32) -> Never {
+        ProcessTapCapture.teardown(tapID: tapID, aggregateDeviceID: aggregateDeviceID, ioProcID: ioProcID)
+        exit(code)
+    }
+
+    do {
+        // Same self-exclusion precheck as capture (§A5): a nonexistent
+        // pid is a caller bug (hard typed error); alive-but-not-ours
+        // (EPERM) is fine — see runCapture's own comment on this exact
+        // check for the full rationale.
+        guard kill(excludePID, 0) == 0 || errno == EPERM else {
+            throw AudioCapError.pidTranslateFailed("pid \(excludePID) does not exist (kill(pid, 0) -> ESRCH)")
+        }
+
+        let processObjectID = try ProcessTapCapture.translateExcludePID(excludePID)
+        if processObjectID == nil {
+            // §A5/D3 amendment: HAL-absent exclude PID -> empty exclusion
+            // + note, identical semantics to runCapture's own handling.
+            StatusEvents.emitNote(
+                state: "exclude-pid-inactive",
+                message: "pid \(excludePID) has no CoreAudio process object (never audio-active) — nothing to exclude; proceeding with a global tap and an empty exclusion list"
+            )
+        }
+
+        let created = try ProcessTapCapture.createProcessTap(excluding: processObjectID, name: "JargonSlayer System Audio Tap (Transcribe)")
+        tapID = created.tapID
+        let format = created.format
+
+        guard TapFormatDescription.isFloat32(format) else {
+            throw AudioCapError.tapCreateFailed(
+                "tap format is not Float32 (formatID \(format.mFormatID), flags \(format.mFormatFlags), bitsPerChannel \(format.mBitsPerChannel)) — jargonslayer-audiocap only knows how to forward Float32 tap output"
+            )
+        }
+        let isNonInterleaved = TapFormatDescription.isNonInterleaved(format)
+        let channels = UInt16(TapFormatDescription.channelCount(format))
+        let sampleRate = UInt32(format.mSampleRate)
+
+        let aggregateUID = "com.bioinfospace.jargonslayer.audiocap.osspeech." + UUID().uuidString
+        let resolvedAggregateDeviceID = try ProcessTapCapture.createAggregateDevice(
+            uid: aggregateUID,
+            name: "JargonSlayer System Audio Transcribe",
+            tapUID: created.tapUID
+        )
+        aggregateDeviceID = resolvedAggregateDeviceID
+
+        let ring = SPSCByteRing(capacity: ringCapacityBytes)
+        let ioBlock: AudioDeviceIOBlock = { _, inInputData, _, _, _ in
+            // REALTIME THREAD — identical contract to runCapture's own
+            // ioBlock (never touches Speech/AVFoundation, just
+            // ring.tryPush — see that closure's own comment).
+            let bufferList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
+            var frameCount: UInt32 = 0
+            if let first = bufferList.first, first.mDataByteSize > 0 {
+                let bytesPerChannelFrame = isNonInterleaved ? 4 : Int(channels) * 4
+                frameCount = bytesPerChannelFrame > 0 ? UInt32(Int(first.mDataByteSize) / bytesPerChannelFrame) : 0
+            }
+            ring.tryPush(frameCount: frameCount, buffers: bufferList)
+        }
+        let resolvedIOProcID = try ProcessTapCapture.createIOProc(aggregateDeviceID: resolvedAggregateDeviceID, block: ioBlock)
+        ioProcID = resolvedIOProcID
+
+        // No stdout stream header (unlike runCapture) — transcribe mode
+        // never opens the Framing/stdout wire at all (blueprint §0).
+        // "starting" is still emitted, reused unchanged (§2.2), as soon
+        // as the tap's real format is known — same placement/semantics
+        // as runCapture's own "starting" emission.
+        StatusEvents.emitStatus(state: "starting", sampleRate: sampleRate, channels: channels)
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var outcome = SpeechSessionOutcome.failure
+        Task {
+            outcome = await SpeechAnalyzerSession().run(
+                locale: locale,
+                contextualJSON: contextualJSON,
+                durationSeconds: durationSeconds,
+                ring: ring,
+                channels: channels,
+                isNonInterleaved: isNonInterleaved,
+                sampleRate: sampleRate,
+                shutdown: shutdown,
+                isPaused: stdinMonitor.isPaused,
+                startTap: {
+                    try ProcessTapCapture.start(aggregateDeviceID: resolvedAggregateDeviceID, ioProcID: resolvedIOProcID)
+                },
+                stopTap: {
+                    ProcessTapCapture.stopDevice(aggregateDeviceID: resolvedAggregateDeviceID, ioProcID: resolvedIOProcID)
+                }
+            )
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        // AnalyzerSeam.run already called `stopTap` (== stopDevice) at
+        // the correct point in its own teardown sequence (see that
+        // protocol requirement's own doc comment) — this final
+        // `teardown` call's own redundant stopDevice is the same
+        // harmless no-op ProcessTapCapture.teardown's doc comment
+        // already documents, unconditionally regardless of how far the
+        // session got (mirrors runCapture's own catch-all teardown).
+        ProcessTapCapture.teardown(tapID: tapID, aggregateDeviceID: aggregateDeviceID, ioProcID: ioProcID)
+        exit(outcome == .success ? 0 : 1)
+    } catch let error as AudioCapError {
+        StatusEvents.emitError(error)
+        teardownAndExit(code: 1)
+    } catch {
+        StatusEvents.emitError(.deviceStartFailed("unexpected error: \(error)"))
+        teardownAndExit(code: 1)
+    }
+}
+
 // ---- entry point (everything above is declarations only) ----
 
 // Ignore SIGPIPE up front: if the parent (Rust) side closes its end of
@@ -264,30 +502,73 @@ guard let cliMode = parseArguments(CommandLine.arguments) else {
     printUsageAndExit()
 }
 
-// D1's technical floor. Reached before ANY CoreAudio call — this file
-// never spawns a tap-related object below this guard. See
-// AudioCapError.unsupportedOS's own doc comment for why S9.2's Rust
-// side (capabilities() gating) is the primary defense and this is
-// belt-and-suspenders for direct/manual invocation. Applies uniformly
-// to BOTH CLI modes (capture and --sweep-orphans) even though
-// OrphanSweep's own CoreAudio calls don't strictly need 14.2+ — see
-// that file's own doc comment for why the gate is kept anyway.
+// D1's technical floor (capture/sweep) / S11's own higher floor
+// (transcribe/probe/preinstall — SpeechAnalyzer needs macOS 26, strictly
+// above 14.2). Reached before ANY CoreAudio OR Speech call — this file
+// never spawns a tap-related object, nor touches Speech.framework,
+// below the relevant guard. See AudioCapError.unsupportedOS's own doc
+// comment for why S9.2's Rust side (capabilities() gating) is the
+// primary defense and this is belt-and-suspenders for direct/manual
+// invocation.
+//
+// Each CLIMode case gets its OWN independent `if #available` (§2.1:
+// "the three new modes each wrap their body in if #available(macOS
+// 26.0,*)") rather than one shared outer gate: capture/sweepOrphans'
+// OWN behavior on an unsupported OS is completely unchanged from before
+// this slice (same message, same exit(1)) — the two are simply no
+// longer expressed as one shared `if/else` now that CLIMode has grown
+// three more cases with a DIFFERENT floor. Critically, `--probe-osspeech`
+// must NOT be caught by the 14.2 message at all (§2.1: "on <26,
+// supported:false without spawning Speech" — that has to work even on
+// an OS below 14.2, reporting the PROBE's own unsupported shape, not a
+// CoreAudio-flavored error it never asked about).
 //
 // `if #available ... else` (not `guard #available ... else { exit }`):
 // verified empirically that top-level code in a script-mode file like
 // this one does NOT carry a `guard`'s availability narrowing forward to
 // later top-level statements the way it would inside a function body —
 // the compiler still flagged the runCapture call below as unguarded
-// with the `guard` form. Wrapping the call itself in `if #available`
+// with the `guard` form. Wrapping each call itself in `if #available`
 // sidesteps that quirk entirely.
-if #available(macOS 14.2, *) {
-    switch cliMode {
-    case .capture(let cliArguments):
+switch cliMode {
+case .capture(let cliArguments):
+    if #available(macOS 14.2, *) {
         runCapture(excludePID: cliArguments.excludePID, durationSeconds: cliArguments.durationSeconds)
-    case .sweepOrphans:
-        runSweepOrphans()
+    } else {
+        StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap requires macOS 14.2+ (CoreAudio process taps: AudioHardwareCreateProcessTap / CATapDescription's tap-creation entry points)"))
+        exit(1)
     }
-} else {
-    StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap requires macOS 14.2+ (CoreAudio process taps: AudioHardwareCreateProcessTap / CATapDescription's tap-creation entry points)"))
-    exit(1)
+case .sweepOrphans:
+    if #available(macOS 14.2, *) {
+        runSweepOrphans()
+    } else {
+        StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap requires macOS 14.2+ (CoreAudio process taps: AudioHardwareCreateProcessTap / CATapDescription's tap-creation entry points)"))
+        exit(1)
+    }
+case .transcribe(let transcribeArguments):
+    if #available(macOS 26.0, *) {
+        runTranscribe(
+            excludePID: transcribeArguments.excludePID,
+            locale: transcribeArguments.locale,
+            durationSeconds: transcribeArguments.durationSeconds,
+            contextualJSON: transcribeArguments.contextualJSON
+        )
+    } else {
+        StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap --transcribe requires macOS 26.0+ (Speech framework SpeechAnalyzer)"))
+        exit(1)
+    }
+case .probeOsSpeech:
+    if #available(macOS 26.0, *) {
+        runProbe()
+    } else {
+        TranscriptEvents.emitProbe(supported: false, locales: [], installed: [])
+        exit(0)
+    }
+case .preinstallOsSpeech(let locale):
+    if #available(macOS 26.0, *) {
+        runPreinstall(locale: locale)
+    } else {
+        StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap --preinstall-osspeech requires macOS 26.0+ (Speech framework SpeechAnalyzer)"))
+        exit(1)
+    }
 }
