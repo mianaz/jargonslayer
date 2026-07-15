@@ -10,6 +10,7 @@ import { useApp } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
 import { ENGINE_OPTIONS, engineOptionGate, useAudiocapCaps } from "@/lib/stt/engineOptions";
+import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
 import { isEngineControlBusy } from "@/components/Header";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
@@ -47,8 +48,13 @@ function EngineDropdown() {
   const updateSettings = useApp((s) => s.updateSettings);
   const disabled = isEngineControlBusy(status);
   const audiocapCaps = useAudiocapCaps();
+  // Lead integration fix (S11): without the caps arg the osspeech option
+  // would render enabled on macOS <26 and only fail at start_os_speech's
+  // runtime recheck — pass it so the option locks with a reason, same
+  // posture as the appaudio floor gate.
+  const osspeechCaps = useOsSpeechCaps();
   const selectedOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
-  const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps) : undefined;
+  const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps, osspeechCaps) : undefined;
 
   return (
     <select
@@ -69,7 +75,7 @@ function EngineDropdown() {
         </option>
       )}
       {ENGINE_OPTIONS.map((opt) => {
-        const gate = engineOptionGate(opt, audiocapCaps);
+        const gate = engineOptionGate(opt, audiocapCaps, osspeechCaps);
         return (
           <option key={opt.value} value={opt.value} disabled={gate.disabled} title={gate.title}>
             {opt.label}

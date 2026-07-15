@@ -28,6 +28,7 @@ describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
 describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
   const whisper: EngineOption = { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true };
   const appaudio: EngineOption = { value: "appaudio", label: "系统/App 音频", posture: "local", sidecarOnly: true };
+  const osspeech: EngineOption = { value: "osspeech", label: "系统识别 · 开箱即用", posture: "local" };
   const webspeech: EngineOption = { value: "webspeech", label: "浏览器识别", posture: "cloud" };
 
   it("full tier (PREVIEW_TIER false here), caps not yet resolved: never locked", () => {
@@ -51,5 +52,35 @@ describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
 
   it("PREVIEW_LOCKED_TITLE stays reason-agnostic (covers both sidecarOnly and byokOnly)", () => {
     expect(PREVIEW_LOCKED_TITLE).toBe("本地版功能：体验版暂未开放");
+  });
+
+  // S11 (v0.4.3): osspeech's own macOS-26 floor, gated via the SAME
+  // function's optional 3rd (osspeechCaps) argument — additive, so
+  // every call site above that only ever passes 2 args keeps compiling
+  // AND keeps working (osspeech simply never floor-locks for them).
+  describe("osspeech macOS-26 floor (3rd, optional argument)", () => {
+    it("osspeech below the floor (caps.supported:false): disabled, title = caps.reason", () => {
+      const osspeechCaps = { supported: false, reason: "需要 macOS 26 或更高版本", locales: [], installedLocales: [] };
+      expect(engineOptionGate(osspeech, null, osspeechCaps)).toEqual({ disabled: true, title: osspeechCaps.reason });
+    });
+
+    it("osspeech at/above the floor (caps.supported:true): not locked", () => {
+      const osspeechCaps = { supported: true, reason: null, locales: ["en_US"], installedLocales: ["en_US"] };
+      expect(engineOptionGate(osspeech, null, osspeechCaps)).toEqual({ disabled: false, title: undefined });
+    });
+
+    it("omitting the 3rd argument entirely (a caller not yet updated for S11) never locks osspeech — additive/backward-compatible", () => {
+      expect(engineOptionGate(osspeech, null)).toEqual({ disabled: false, title: undefined });
+    });
+
+    it("a null osspeechCaps (not-yet-resolved) never locks — fail-open", () => {
+      expect(engineOptionGate(osspeech, null, null)).toEqual({ disabled: false, title: undefined });
+    });
+
+    it("the osspeech floor gate is a structural no-op for every OTHER engine value, including appaudio's own floor staying independent", () => {
+      const osspeechCaps = { supported: false, reason: "需要 macOS 26 或更高版本", locales: [], installedLocales: [] };
+      const appaudioCaps = { appAudioSupported: true, reason: null };
+      expect(engineOptionGate(appaudio, appaudioCaps, osspeechCaps)).toEqual({ disabled: false, title: undefined });
+    });
   });
 });

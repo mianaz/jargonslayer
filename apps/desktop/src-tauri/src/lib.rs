@@ -14,6 +14,7 @@ mod audiocap_framing;
 mod audiocap_pipeline;
 mod audiocap_resample;
 mod oauth;
+mod osspeech;
 mod paths;
 mod provision;
 mod server;
@@ -59,6 +60,10 @@ pub fn run() {
         // RFC 8252 loopback OAuth listener (see oauth::OauthState's own
         // doc comment).
         .manage(oauth::OauthState::default())
+        // v0.4.3 S11 — single-flight + generation-guard state for the
+        // osspeech transcribe session (and its own preinstall slot), see
+        // osspeech::OsSpeechState's own doc comment.
+        .manage(osspeech::OsSpeechState::default())
         // App-owned commands (not plugin commands) need no capability/
         // permission entry: Tauri's ACL only gates a command when it's a
         // plugin command, the app declares its OWN acl manifest under
@@ -86,6 +91,12 @@ pub fn run() {
             audiocap::open_privacy_settings,
             oauth::oauth_loopback_start,
             oauth::oauth_loopback_cancel,
+            osspeech::os_speech_capabilities,
+            osspeech::start_os_speech,
+            osspeech::stop_os_speech,
+            osspeech::pause_os_speech,
+            osspeech::resume_os_speech,
+            osspeech::preinstall_os_speech,
         ])
         // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
         // — the audiocap TCC-attribution spike rig: inert unless
@@ -122,6 +133,11 @@ pub fn run() {
             // cleanup above, see audiocap::kill_held_session_on_exit's own
             // doc comment.
             audiocap::kill_held_session_on_exit(app_handle);
+            // v0.4.3 S11 — same best-effort posture, covering the osspeech
+            // transcribe session's child and/or an in-flight preinstall's
+            // own child; see osspeech::kill_held_session_on_exit's own
+            // doc comment.
+            osspeech::kill_held_session_on_exit(app_handle);
         }
     });
 }

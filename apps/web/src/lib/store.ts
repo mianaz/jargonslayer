@@ -402,7 +402,15 @@ interface AppState {
  *  Pure so it's unit-testable without depending on the IS_DESKTOP
  *  build-time env const (tests pass `isDesktop` directly; migrateSettings
  *  below is the only real caller, feeding it the actual IS_DESKTOP) —
- *  mirrors applyTierDefaults' own shape immediately below. */
+ *  mirrors applyTierDefaults' own shape immediately below.
+ *
+ *  S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md):
+ *  web also coerces a stored "osspeech" to "tabaudio" — osspeech is
+ *  Tauri-only (desktop's macOS SpeechAnalyzer helper has no web
+ *  equivalent), the identical D6 rationale appaudio's own web-side
+ *  coercion already documents above. No OS-version coercion here either
+ *  (Q8): the macOS-26 floor is an engineOptions.ts option-gate + a
+ *  start_os_speech runtime re-check, not a platform swap. */
 export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean): Settings {
   if (isDesktop && settings.engine === "tabaudio") {
     return { ...settings, engine: "appaudio" };
@@ -411,6 +419,9 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
     return { ...settings, engine: "whisper" };
   }
   if (!isDesktop && settings.engine === "appaudio") {
+    return { ...settings, engine: "tabaudio" };
+  }
+  if (!isDesktop && settings.engine === "osspeech") {
     return { ...settings, engine: "tabaudio" };
   }
   return settings;
@@ -436,7 +447,11 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *      build (migrateSettings runs both, platform first) — same
  *      "extend the engine-legality function even though this exact
  *      build can't reach it" posture soniox's own listing here already
- *      set as precedent.
+ *      set as precedent. "osspeech" (S11, v0.4.3) joins for the
+ *      IDENTICAL structural-only reason — also desktop/Tauri-only, so
+ *      applyPlatformEngineDefaults would already have coerced any
+ *      stored "osspeech" away to "tabaudio" on a real (web) preview
+ *      build before this function ever sees it.
  *   2. True first run only — `hadSavedEngine` is false — is coerced
  *      from the default "demo" to "webspeech" so the start button does
  *      real transcription out of the box, without a trip to Settings.
@@ -455,6 +470,7 @@ export function applyTierDefaults(
     settings.engine === "whisper" ||
     settings.engine === "tabaudio" ||
     settings.engine === "appaudio" ||
+    settings.engine === "osspeech" ||
     settings.engine === "soniox"
   ) {
     return { ...settings, engine: "webspeech" };

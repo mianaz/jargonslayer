@@ -46,6 +46,11 @@ import {
   subscribeAudiocapCaps,
   type AudiocapCapabilities,
 } from "@/lib/desktop/audiocapCaps";
+import {
+  isOsSpeechFloorLocked,
+  osSpeechLockReason,
+  type OsSpeechCapabilities,
+} from "@/lib/desktop/osspeechCaps";
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine, so it has exactly one affordance: the ≡ menu's 演示 item.
@@ -71,6 +76,15 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   IS_DESKTOP
     ? { value: "appaudio", label: "系统/App 音频", posture: "local", sidecarOnly: true }
     : { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
+  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
+  // Zero-Install 系统识别: desktop-only (macOS 26+ gated via
+  // engineOptionGate below, not here — mirrors appaudio's own
+  // macOS-14.4 floor gate). NOT sidecarOnly (it needs no local Whisper
+  // sidecar at all — the whole point is zero-install), so it is
+  // structurally unaffected by the #61 preview-tier lock.
+  ...(IS_DESKTOP
+    ? [{ value: "osspeech" as const, label: "系统识别 · 开箱即用", posture: "local" as const }]
+    : []),
   { value: "soniox", label: "Soniox 云端识别", posture: "cloud", byokOnly: true },
 ];
 
@@ -98,9 +112,14 @@ export interface EngineOptionGate {
   title: string | undefined;
 }
 
-/** Per-option preview-tier (#61) + macOS-floor (S9.4/D6, finding F9)
- *  gate — the identical computation EnginePillGroup/MobileEngineSelect
- *  each used to hand-roll separately pre-S10. Deliberately does NOT
+/** Per-option preview-tier (#61) + macOS-floor (S9.4/D6, finding F9;
+ *  S11 adds the osspeech macOS-26 floor identically) gate — the
+ *  identical computation EnginePillGroup/MobileEngineSelect each used to
+ *  hand-roll separately pre-S10. `osspeechCaps` is OPTIONAL and
+ *  additive (S11) so every existing 2-arg call site keeps compiling
+ *  untouched — a caller not yet updated to pass it simply never
+ *  floor-locks the osspeech option (same fail-open posture a
+ *  not-yet-resolved caps snapshot already has). Deliberately does NOT
  *  fold in `isEngineControlBusy` — a caller combines that itself at
  *  whichever granularity its own control needs (one <select disabled>
  *  for the whole picker vs a per-<option> gate), same split the pre-S10
@@ -108,16 +127,20 @@ export interface EngineOptionGate {
 export function engineOptionGate(
   opt: EngineOption,
   audiocapCaps: AudiocapCapabilities | null,
+  osspeechCaps?: OsSpeechCapabilities | null,
 ): EngineOptionGate {
   const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
-  const floorLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
+  const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
+  const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osspeechCaps ?? null);
   return {
-    disabled: !!previewLocked || floorLocked,
+    disabled: !!previewLocked || appAudioLocked || osSpeechLocked,
     title: previewLocked
       ? PREVIEW_LOCKED_TITLE
-      : floorLocked
+      : appAudioLocked
         ? appAudioLockReason(audiocapCaps)
-        : undefined,
+        : osSpeechLocked
+          ? osSpeechLockReason(osspeechCaps ?? null)
+          : undefined,
   };
 }
 

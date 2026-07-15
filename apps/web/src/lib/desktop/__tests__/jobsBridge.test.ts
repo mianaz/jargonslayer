@@ -29,7 +29,7 @@ vi.mock("../../stt/sidecarHealth", () => ({
   probeSidecar: (settings: unknown) => mockProbeSidecar(settings),
 }));
 
-import { modelForTask, trackInstallDiar, trackSwitchModel } from "../jobsBridge";
+import { modelForTask, trackInstallDiar, trackOsSpeechAsset, trackSwitchModel } from "../jobsBridge";
 import { completeTask, dismissTask, startTask, useTasks, type TaskState } from "../../tasks/registry";
 import type { DesktopBootstrapHandle, SwitchModelProgress } from "../bootstrap";
 import type { DesktopPaths } from "../uvCommands";
@@ -336,5 +336,240 @@ describe("trackInstallDiar", () => {
 
     expect(task(id).status).toBe("error");
     expect(task(id).error).toBe("plain string failure");
+  });
+});
+
+// S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) — a
+// PUSH-style driver rather than a subscribe-a-Promise-returning-action
+// one (unlike trackSwitchModel/trackInstallDiar above): both
+// OsSpeechEngine's own osspeech://status listener and osspeechCaps.ts's
+// preinstallOsSpeech feed events into the tracker returned here from
+// THEIR OWN listen() call — this module owns no listener of its own, so
+// these tests just call `.handle(...)` directly.
+describe("trackOsSpeechAsset", () => {
+  beforeEach(() => {
+    useTasks.setState({ tasks: {} });
+    mockSettings = { ...DEFAULT_SETTINGS };
+    mockPostTaskWebhook.mockClear();
+  });
+
+  it("asset-checking alone never starts a task row (§2.6: only asset-downloading does)", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-checking");
+    expect(useTasks.getState().tasks).toEqual({});
+  });
+
+  it("asset-downloading lazily starts a running task row, labeled 系统识别模型 by default", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.3);
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      kind: "os-speech-asset",
+      label: "系统识别模型",
+      stage: "下载中",
+      progress: 0.3,
+      status: "running",
+    });
+  });
+
+  it("accepts a custom label (e.g. preinstallOsSpeech's own attempt)", () => {
+    const tracker = trackOsSpeechAsset("系统识别模型（预下载）");
+    tracker.handle("asset-downloading", 0.1);
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks[0].label).toBe("系统识别模型（预下载）");
+  });
+
+  it("repeated asset-downloading events update the SAME row's progress rather than starting a new one", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.2);
+    const idAfterFirst = Object.keys(useTasks.getState().tasks)[0];
+
+    tracker.handle("asset-downloading", 0.9);
+
+    const tasks = useTasks.getState().tasks;
+    expect(Object.keys(tasks)).toEqual([idAfterFirst]);
+    expect(tasks[idAfterFirst].progress).toBe(0.9);
+  });
+
+  it("asset-installed completes the row that asset-downloading started", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.5);
+    tracker.handle("asset-installed");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks[0].status).toBe("done");
+  });
+
+  it("asset-installed with NO prior downloading is a no-op (model was already installed — no row to complete)", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-installed");
+
+    expect(useTasks.getState().tasks).toEqual({});
+  });
+
+  it("asset-failed after a downloading row fails that SAME row with the given message", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.4);
+    tracker.handle("asset-failed", undefined, "network unreachable");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ status: "error", error: "network unreachable" });
+  });
+
+  it("asset-failed with NO prior downloading (e.g. a checking-phase failure) still surfaces a NEW failed row, defensively", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-failed", undefined, "disk read error");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ status: "error", error: "disk read error" });
+  });
+
+  it("asset-failed with no message falls back to a generic zh failure string", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-failed");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks[0].error).toBe("系统识别模型下载失败");
+  });
+
+  it("a FRESH tracker per call never reuses a PRIOR tracker's already-settled task id", () => {
+    const first = trackOsSpeechAsset();
+    first.handle("asset-downloading", 1);
+    first.handle("asset-installed");
+    const firstId = Object.keys(useTasks.getState().tasks)[0];
+
+    const second = trackOsSpeechAsset();
+    second.handle("asset-downloading", 0.1);
+
+    const tasks = useTasks.getState().tasks;
+    expect(Object.keys(tasks)).toHaveLength(2);
+    expect(tasks[firstId].status).toBe("done"); // untouched by the second tracker
+  });
+
+  // S11 fix-round J2(b) — single-flight across DIFFERENT tracker
+  // instances: the preempt handoff (a session start superseding an
+  // in-flight preinstall, per osSpeech.ts's own osspeech://status
+  // `source` contract) must show exactly ONE "os-speech-asset" row
+  // throughout — the session's OWN, freshly-minted tracker (a "FRESH
+  // tracker every start()", per this file's own trackOsSpeechAsset doc)
+  // must ADOPT whichever row is already running rather than starting a
+  // second one the moment ITS OWN asset events start arriving.
+  describe("single-flight across trackers (J2b preempt handoff)", () => {
+    it("a SECOND tracker's asset-downloading ADOPTS the first tracker's still-running row rather than starting a new one", () => {
+      const first = trackOsSpeechAsset("系统识别模型（预下载）");
+      first.handle("asset-downloading", 0.3);
+      const firstId = Object.keys(useTasks.getState().tasks)[0];
+
+      const second = trackOsSpeechAsset(); // e.g. the session's own fresh per-start() tracker
+      second.handle("asset-downloading", 0.6);
+
+      const tasks = useTasks.getState().tasks;
+      expect(Object.keys(tasks)).toEqual([firstId]); // still exactly ONE row
+      expect(tasks[firstId].progress).toBe(0.6); // driven by the second tracker now
+      expect(tasks[firstId].label).toBe("系统识别模型（预下载）"); // adopted row keeps its ORIGINAL label
+    });
+
+    it("a SECOND tracker's asset-installed completes the FIRST tracker's row, even though the second tracker never itself saw asset-downloading", () => {
+      const first = trackOsSpeechAsset();
+      first.handle("asset-downloading", 0.9);
+      const firstId = Object.keys(useTasks.getState().tasks)[0];
+
+      const second = trackOsSpeechAsset();
+      second.handle("asset-installed");
+
+      expect(useTasks.getState().tasks[firstId].status).toBe("done");
+    });
+
+    it("a SECOND tracker's asset-failed fails the FIRST tracker's row (adopted, not a second one)", () => {
+      const first = trackOsSpeechAsset();
+      first.handle("asset-downloading", 0.5);
+      const firstId = Object.keys(useTasks.getState().tasks)[0];
+
+      const second = trackOsSpeechAsset();
+      second.handle("asset-failed", undefined, "network unreachable");
+
+      const tasks = useTasks.getState().tasks;
+      expect(Object.keys(tasks)).toEqual([firstId]);
+      expect(tasks[firstId]).toMatchObject({ status: "error", error: "network unreachable" });
+    });
+
+    it("does NOT adopt an already-SETTLED (done) row — a genuinely new attempt after a prior one finished still starts its own fresh row", () => {
+      const first = trackOsSpeechAsset();
+      first.handle("asset-downloading", 1);
+      first.handle("asset-installed");
+      const firstId = Object.keys(useTasks.getState().tasks)[0];
+
+      const second = trackOsSpeechAsset();
+      second.handle("asset-downloading", 0.1);
+
+      const tasks = useTasks.getState().tasks;
+      expect(Object.keys(tasks)).toHaveLength(2);
+      expect(tasks[firstId].status).toBe("done"); // untouched
+    });
+  });
+
+  // S11 fix-round J2(c) — settle(): neutral-fails a still-RUNNING row
+  // when the flow ends some OTHER way (any osspeech://status terminal
+  // kind besides asset-installed/asset-failed, both already handled via
+  // `handle` — see osSpeech.ts's own handleStatus terminal-latch branch,
+  // the real caller). Looks up the CURRENTLY active row via the
+  // registry, not just this tracker's own local id, so it settles the
+  // right row even in the preempt-handoff case (a DIFFERENT tracker
+  // started it).
+  describe("settle() (J2c)", () => {
+    it("fails a row this SAME tracker started, if still running", () => {
+      const tracker = trackOsSpeechAsset();
+      tracker.handle("asset-downloading", 0.4);
+
+      tracker.settle();
+
+      const tasks = Object.values(useTasks.getState().tasks);
+      expect(tasks[0]).toMatchObject({ status: "error", error: "系统识别已停止，模型下载未完成" });
+    });
+
+    it("fails a row a DIFFERENT tracker started (preempt-handoff case) — looks up the registry, not just its own local id", () => {
+      const preinstallTracker = trackOsSpeechAsset("系统识别模型（预下载）");
+      preinstallTracker.handle("asset-downloading", 0.2);
+      const rowId = Object.keys(useTasks.getState().tasks)[0];
+
+      const sessionTracker = trackOsSpeechAsset(); // never itself saw asset-downloading
+      sessionTracker.settle();
+
+      expect(useTasks.getState().tasks[rowId].status).toBe("error");
+    });
+
+    it("is a no-op when no row was ever started", () => {
+      const tracker = trackOsSpeechAsset();
+
+      expect(() => tracker.settle()).not.toThrow();
+      expect(useTasks.getState().tasks).toEqual({});
+    });
+
+    it("is a no-op once the row already reached 'done' — never re-fails an already-succeeded install", () => {
+      const tracker = trackOsSpeechAsset();
+      tracker.handle("asset-downloading", 1);
+      tracker.handle("asset-installed");
+      const id = Object.keys(useTasks.getState().tasks)[0];
+
+      tracker.settle();
+
+      expect(useTasks.getState().tasks[id].status).toBe("done");
+    });
+
+    it("is a no-op once the row already reached 'error' — never overwrites asset-failed's own real message with the generic 已停止 one", () => {
+      const tracker = trackOsSpeechAsset();
+      tracker.handle("asset-downloading", 1);
+      tracker.handle("asset-failed", undefined, "network unreachable");
+      const id = Object.keys(useTasks.getState().tasks)[0];
+
+      tracker.settle();
+
+      expect(useTasks.getState().tasks[id].error).toBe("network unreachable");
+    });
   });
 });

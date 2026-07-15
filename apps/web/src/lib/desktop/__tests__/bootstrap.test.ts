@@ -6,8 +6,22 @@
 // state, so it never needs to touch a real `@tauri-apps/*` package.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// S11 osspeech blueprint (§A4) — bootstrap.ts's own top-level
+// `import { preinstallOsSpeech } from "./osspeechCaps"` means every test
+// in this file (which imports bootstrap.ts) needs this module to
+// resolve, mocked rather than real (Worker C's file — not on disk yet
+// when this worker started, and this suite otherwise takes fully
+// injected fakes for everything else, same "keep the testable core free
+// of side-effecting-global-state imports" posture the rest of this file
+// already relies on).
+const mockPreinstallOsSpeech = vi.fn(async (_locale: string) => undefined);
+vi.mock("../osspeechCaps", () => ({
+  preinstallOsSpeech: (locale: string) => mockPreinstallOsSpeech(locale),
+}));
+
 import {
   bootstrapDesktop,
+  chooseOsSpeechEngine,
   initDesktop,
   redactHomePath,
   resetDesktopBootstrap,
@@ -22,6 +36,13 @@ import type { PrewarmProgressEvent } from "../provisionRunner";
 import type { InvokeFn, ListenFn, TauriEvent, TauriFetchFn } from "../tauriApi";
 import { pipInstallDiar, type DesktopPaths } from "../uvCommands";
 import { clearDiag, getDiagEntries } from "../../diag/log";
+// S11 osspeech blueprint (§A4) — chooseOsSpeechEngine() reads/writes the
+// REAL store (dynamic-imported by bootstrap.ts itself), so this suite
+// seeds/reads it directly rather than mocking zustand's own shape —
+// mirrors SettingsDialog.desktop.test.tsx's own "import the real useApp,
+// useApp.setState() to seed" convention for the identical module.
+import { useApp } from "../../store";
+import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 
 const paths: DesktopPaths = {
   appData: "/fake/AppData",
@@ -100,13 +121,18 @@ function jsonResponse(body: unknown, status = 200): Response {
  *  AMENDMENT's own WIZARD_CONSENT_REQUIRED pause — the exact pattern a
  *  real subscriber (chunk 6's wizard) would use, since bootstrapDesktop
  *  itself resolves before the drive loop finishes (see that file's own
- *  header comment on why). */
+ *  header comment on why). S11 osspeech blueprint (§A4): OSSPEECH_ACTIVE
+ *  joins the set — the drive loop `return`s for it the exact same way
+ *  it does for WIZARD_CONSENT_REQUIRED, so it's every bit as much a
+ *  stopping point; existing tests never produce this phase, so this
+ *  addition is a no-op for all of them. */
 function waitForStable(handle: DesktopBootstrapHandle): Promise<DesktopBootstrapState> {
   const isStable = (s: DesktopBootstrapState) =>
     s.phase === "HEALTHY" ||
     s.phase === "TERMINAL_ERROR" ||
     s.phase === "WIZARD_CONSENT_REQUIRED" ||
     s.phase === "EXTERNAL_UNMANAGED" ||
+    s.phase === "OSSPEECH_ACTIVE" ||
     (s.phase === "STEP" && s.status === "ERROR");
   const initialState = handle.currentState();
   if (isStable(initialState)) return Promise.resolve(initialState);
@@ -389,6 +415,98 @@ describe("bootstrapDesktop — fresh-provision consent gate (LEAD AMENDMENT)", (
     const before = handle.currentState();
     handle.beginProvision();
     expect(handle.currentState()).toEqual(before);
+  });
+});
+
+describe("bootstrapDesktop — osspeech ENGINE_CHOICE pre-consent branch (S11 blueprint §A4)", () => {
+  it("a fresh NEEDS_PROVISION with persistedEngine already 'osspeech' never pauses for consent — lands on OSSPEECH_ACTIVE and never calls run_uv (does not re-show on relaunch)", async () => {
+    let runUvCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        run_uv: () => {
+          runUvCalls += 1;
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }), // dead -> would normally enter NEEDS_PROVISION
+      getDesktopEngine: async () => "osspeech",
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "OSSPEECH_ACTIVE" });
+    expect(runUvCalls).toBe(0);
+  });
+
+  it("a fresh NEEDS_PROVISION with persistedEngine 'whisper' (switched away from osspeech, still unprovisioned) still pauses at WIZARD_CONSENT_REQUIRED — provisioning stays reachable", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+      getDesktopEngine: async () => "whisper",
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+  });
+
+  it("getDesktopEngine absent (every pre-S11 caller/test) behaves exactly as before — pauses at WIZARD_CONSENT_REQUIRED", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({ app_paths: () => paths, read_provision_marker: () => null }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+  });
+
+  it("reprovision() with engine='osspeech' forces the engine re-choice ONCE instead of silently re-parking dormant (lead integration fix: the Settings 重新运行安装向导 button must visibly do something)", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => undefined,
+        write_provision_marker: () => undefined,
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+      getDesktopEngine: async () => "osspeech",
+    };
+    const handle = await bootstrapDesktop(deps);
+    expect(await waitForStable(handle)).toEqual({ phase: "OSSPEECH_ACTIVE" });
+
+    // The user explicitly asks for the wizard: the one-shot override must
+    // surface the consent/choice phase (DesktopWizard then renders the
+    // EngineChoiceScreen for it) rather than re-deriving straight back to
+    // OSSPEECH_ACTIVE from the still-"osspeech" persisted engine.
+    await handle.reprovision();
+    expect(await waitForStable(handle)).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+  });
+});
+
+describe("chooseOsSpeechEngine() (S11 blueprint §3 Worker D, §A4)", () => {
+  afterEach(() => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
+    mockPreinstallOsSpeech.mockClear();
+  });
+
+  it("persists settings.engine='osspeech' and fire-and-forgets preinstallOsSpeech(settings.language)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, language: "zh-CN" }, hydrated: true });
+
+    await chooseOsSpeechEngine();
+
+    expect(useApp.getState().settings.engine).toBe("osspeech");
+    expect(mockPreinstallOsSpeech).toHaveBeenCalledWith("zh-CN");
   });
 });
 

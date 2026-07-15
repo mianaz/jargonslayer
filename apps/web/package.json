@@ -1,6 +1,6 @@
 {
   "name": "@jargonslayer/web",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "Real-time English-meeting comprehension assistant for non-native speakers — transparent by default, fully local when you choose (英文会议实时理解助手)",
   "license": "AGPL-3.0-only",

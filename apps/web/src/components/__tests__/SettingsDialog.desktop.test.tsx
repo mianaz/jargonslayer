@@ -36,6 +36,27 @@ vi.mock("@/lib/desktop/audiocapCaps", () => ({
   appAudioLockReason: () => "",
 }));
 
+// S11 osspeech blueprint (§3 Worker D) — only useOsSpeechCaps/
+// preinstallOsSpeech are mocked (both would otherwise reach
+// tauriApi.ts's getInvoke(), which throws synchronously outside a real
+// desktop build, same reason audiocapCaps is mocked above);
+// isOsSpeechFloorLocked/osSpeechLockReason are pure functions of their
+// own arguments with no Tauri dependency, so they're left REAL via
+// importOriginal — this suite's own osspeech gating tests exercise the
+// genuine gating logic, not a stand-in.
+const mockUseOsSpeechCaps = vi.fn(
+  () => null as { supported: boolean; reason: string | null; locales: string[]; installedLocales: string[] } | null,
+);
+const mockPreinstallOsSpeech = vi.fn(async (_locale: string) => undefined);
+vi.mock("@/lib/desktop/osspeechCaps", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/desktop/osspeechCaps")>();
+  return {
+    ...actual,
+    useOsSpeechCaps: () => mockUseOsSpeechCaps(),
+    preinstallOsSpeech: (locale: string) => mockPreinstallOsSpeech(locale),
+  };
+});
+
 const mockConnectOpenRouterDesktop = vi.fn();
 vi.mock("@/lib/oauth/openrouterDesktop", () => ({
   connectOpenRouterDesktop: () => mockConnectOpenRouterDesktop(),
@@ -358,5 +379,166 @@ describe("SettingsDialog (desktop) — F7: a completed diar-install task refresh
     await flushUntil(() => container!.textContent?.includes("已安装") ?? false);
     expect(mockFetchSidecarHealth).toHaveBeenCalledTimes(2);
     expect(container!.textContent).not.toContain("需先安装说话人分离扩展");
+  });
+});
+
+describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下载模型 + diarize hint (§3 Worker D)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  // sidecarMode "external" (mirrors F5's own openRouterSeedSettings) —
+  // none of this describe block's own assertions touch the managed-mode
+  // sidecar probe/install machinery F7 above exercises; uiMode
+  // "advanced" (mirrors F5's own seed too) keeps every #62
+  // progressive-disclosure section visible regardless of level.
+  function engineSeedSettings(): Settings {
+    return { ...DEFAULT_SETTINGS, uiMode: "advanced", sidecarMode: "external" };
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: engineSeedSettings(), hydrated: true });
+    mockUseOsSpeechCaps.mockReset().mockReturnValue(null);
+    mockPreinstallOsSpeech.mockReset().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllGlobals();
+  });
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  function findOsSpeechCard(): HTMLButtonElement {
+    const card = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("系统识别 · 开箱即用"),
+    );
+    if (!card) throw new Error('"系统识别 · 开箱即用" card not found');
+    return card as HTMLButtonElement;
+  }
+
+  // S11 fix-round J5: the 识别语言 <select> has no data-testid of its
+  // own — found the same way findOsSpeechCard/findNavButton above locate
+  // their own targets (by rendered text), via its preceding <label>'s
+  // sibling <select>.
+  function findLanguageSelect(): HTMLSelectElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "识别语言");
+    const select = label?.parentElement?.querySelector("select");
+    if (!select) throw new Error("识别语言 select not found");
+    return select as HTMLSelectElement;
+  }
+
+  it("系统识别 card: floor-locked with the caps' own reason when osspeech caps report unsupported", async () => {
+    mockUseOsSpeechCaps.mockReturnValue({
+      supported: false,
+      reason: "需要 macOS 26 或更高版本",
+      locales: [],
+      installedLocales: [],
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    const card = findOsSpeechCard();
+    expect(card.disabled).toBe(true);
+    expect(card.title).toBe("需要 macOS 26 或更高版本");
+  });
+
+  it("系统识别 card: selectable (not locked) once osspeech caps report supported", async () => {
+    mockUseOsSpeechCaps.mockReturnValue({ supported: true, reason: null, locales: ["zh_CN"], installedLocales: [] });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    const card = findOsSpeechCard();
+    expect(card.disabled).toBe(false);
+    expect(card.title).toBeFalsy();
+  });
+
+  it("预下载模型 button: busy while preinstallOsSpeech(draft.language) is in flight, done once it resolves", async () => {
+    mockUseOsSpeechCaps.mockReturnValue({ supported: true, reason: null, locales: [], installedLocales: [] });
+    useApp.setState({ settings: { ...engineSeedSettings(), engine: "osspeech", language: "zh-CN" }, hydrated: true });
+    let resolvePreinstall!: () => void;
+    mockPreinstallOsSpeech.mockReturnValue(
+      new Promise<undefined>((resolve) => {
+        resolvePreinstall = () => resolve(undefined);
+      }),
+    );
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    const btn = container!.querySelector('[data-testid="btn-preinstall-osspeech"]') as HTMLButtonElement;
+    expect(btn.textContent).toBe("预下载模型");
+
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(mockPreinstallOsSpeech).toHaveBeenCalledWith("zh-CN");
+    expect(btn.textContent).toBe("下载中…");
+    expect(btn.disabled).toBe(true);
+
+    await act(async () => {
+      resolvePreinstall();
+      await Promise.resolve();
+    });
+    expect(btn.textContent).toBe("已下载");
+    expect(btn.disabled).toBe(true);
+  });
+
+  // S11 fix-round J5 (Opus LOW): 已下载 used to be a bare boolean,
+  // surviving ANY later draft.language switch — so preinstalling for
+  // zh-CN, then switching to a DIFFERENT language, kept showing 已下载
+  // for a language that was never actually preinstalled.
+  it("预下载模型 button: 已下载 is keyed by the language it was preinstalled for — switching draft.language afterward shows 预下载模型 again, not a stale 已下载", async () => {
+    mockUseOsSpeechCaps.mockReturnValue({ supported: true, reason: null, locales: [], installedLocales: [] });
+    useApp.setState({ settings: { ...engineSeedSettings(), engine: "osspeech", language: "zh-CN" }, hydrated: true });
+    mockPreinstallOsSpeech.mockResolvedValue(undefined);
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    const btn = container!.querySelector('[data-testid="btn-preinstall-osspeech"]') as HTMLButtonElement;
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(mockPreinstallOsSpeech).toHaveBeenCalledWith("zh-CN");
+    expect(btn.textContent).toBe("已下载");
+
+    const languageSelect = findLanguageSelect();
+    await act(async () => {
+      languageSelect.value = "en-GB";
+      languageSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(btn.textContent).toBe("预下载模型");
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("实时说话人分离 row: shows 该引擎不支持说话人分离 (not 需先配置 HF Token) when draft.engine is osspeech", async () => {
+    useApp.setState({ settings: { ...engineSeedSettings(), engine: "osspeech" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await act(async () => {
+      findNavButton("说话人分离").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.textContent).toContain("该引擎不支持说话人分离");
+    expect(container!.textContent).not.toContain("需先配置 HF Token");
   });
 });

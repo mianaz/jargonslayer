@@ -5,6 +5,7 @@ import { WebSpeechEngine } from "./webSpeech";
 import { WhisperSocketEngine } from "./whisperSocket";
 import { TabAudioEngine } from "./tabAudio";
 import { AppAudioEngine } from "./appAudio";
+import { OsSpeechEngine } from "./osSpeech";
 import { DemoEngine } from "./demo";
 import { SonioxEngine } from "./soniox";
 
@@ -21,6 +22,12 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // desktop-only native app/system audio capture. Still unreachable
       // from the UI until S9.4 adds the engine card/gating (D6/D7).
       return new AppAudioEngine();
+    case "osspeech":
+      // S11 (docs/design-explorations/s11-osspeech-blueprint.md) —
+      // desktop-only, macOS 26+ Zero-Install 系统识别. Still unreachable
+      // from the UI until engineOptions.ts's gate + the caps probe
+      // resolve it supported (see osspeechCaps.ts).
+      return new OsSpeechEngine();
     case "demo":
       return new DemoEngine();
     case "soniox":
