@@ -377,10 +377,10 @@
       <ol>
         <li>在 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a> 下载签名并公证的 DMG。</li>
         <li>打开 DMG，把 JargonSlayer 拖进「应用程序」，启动它。</li>
-        <li>首次启动会出现一个全屏向导，点击 <code>开始安装</code> 之前不会下载任何东西：随后它会把独立的 Python 运行环境、faster-whisper 和你选的模型（预选 medium）全部装进应用自己的数据目录，不碰系统 Python。</li>
+        <li>首次启动会出现一个全屏向导。macOS 26+ 上第一步是选引擎：<strong>系统识别（开箱即用）</strong>——选它就跳过整个安装流程，直接可用；或 <strong>Whisper（更高质量）</strong>——继续原有安装。选 Whisper 后，点击 <code>开始安装</code> 之前不会下载任何东西：随后它会把独立的 Python 运行环境、faster-whisper 和你选的模型（预选 medium）全部装进应用自己的数据目录，不碰系统 Python。</li>
         <li>向导结束后还有两步可跳过的引导：连接 OpenRouter（用于 AI 检测/解释）、填入 Hugging Face token（用于说话人分离）。详见下方「<a href="#desktop-app">桌面版</a>」。</li>
       </ol>
-      <div class="callout local"><strong>仅支持 Apple Silicon</strong>，没有 Intel 版本。应用本身在较旧的 macOS 上也能装，但「系统/App 音频」这一个引擎需要 macOS 14.4+；低于这个版本会在选项里显示为置灰并注明原因。</div>
+      <div class="callout local"><strong>仅支持 Apple Silicon</strong>，没有 Intel 版本。应用本身在较旧的 macOS 上也能装，但「系统/App 音频」这一个引擎需要 macOS 14.4+，「系统识别」需要 macOS 26+；低于对应版本会在选项里显示为置灰并注明原因。</div>
 
       <h3>网页版</h3>
       <p>先试试 <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">在线体验</a>——零安装。不管走哪条路，最快理解产品的方式都是内置演示：打开 <code>≡</code> 菜单 → <code>演示</code>，不需要麦克风，也不需要 API Key。</p>
@@ -443,6 +443,7 @@ npm run dev
           <tr><td><strong>麦克风 · 本地 Whisper</strong></td><td>无需配置——应用自带自管</td><td>本机</td><td>默认日常引擎，开箱自带 medium 模型</td></tr>
           <tr><td><strong>麦克风 · Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>和网页版一样，面向中英夹杂场景</td></tr>
           <tr><td><strong>系统/App 音频</strong></td><td>无需配置——同一个内置本地 Whisper</td><td>本机</td><td>捕获在 Zoom、Teams、微信等原生 App 里开会时对方的声音，不用虚拟声卡</td></tr>
+          <tr><td><strong>系统识别 · 开箱即用</strong>（v0.4.3）</td><td>无需配置——macOS 原生识别，不下载模型、不装 Python</td><td>本机，且音频不出捕获进程</td><td>macOS 26+ 上免安装的第一场会；约 30 种语言，术语表参与识别偏置；不支持说话人分离，中文可能不带标点</td></tr>
         </tbody>
       </table>
       <p>桌面版没有浏览器识别引擎；网页版的标签页音频，在桌面版对应的位置是<strong>系统/App 音频</strong>。权限流程和捕获范围见下方「<a href="#desktop-app">桌面版</a>」。</p>
@@ -610,6 +611,7 @@ python whisper_server.py --model small</code></pre>
         <thead><tr><th>数据</th><th>去向</th></tr></thead>
         <tbody>
           <tr><td>本地 Whisper / 标签页音频 / 系统/App 音频（桌面版）</td><td>仅本机——loopback websocket，或（系统/App 音频）本机进程通道进同一个内置 sidecar</td></tr>
+          <tr><td>系统识别（桌面版，macOS 26+）</td><td>仅本机——音频在捕获它的进程内直接转成文字，不经过任何本机通道</td></tr>
           <tr><td>浏览器识别音频</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商语音服务</td></tr>
           <tr><td>音频/视频文件导入</td><td>浏览器内转录；文件不上传</td></tr>
           <tr><td>在线体验 AI 文本</td><td>项目服务器内存中转，再到 OpenRouter，带 <code>data_collection=allow</code></td></tr>
@@ -939,10 +941,11 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
       <h2>路线图</h2>
       <p>v0.3.0 的全部计划项已上线：学习循环（#48）、统一导入与任务中心（#58）、简单/高级设置（#62）、四套新主题（#52）。v0.4 目前已上线：</p>
       <ol>
-        <li><strong>桌面应用（Tauri，macOS）：</strong>应用自己托管本地 Whisper——安装向导、模型可选可换、说话人分离扩展一键安装。签名并公证的 DMG 在 releases 页面。</li>
+        <li><strong>桌面应用（Tauri，macOS）：</strong>应用自己托管本地 Whisper——安装向导、模型可选可换、说话人分离扩展一键安装；macOS 26+ 另有零安装的「系统识别」引擎（v0.4.3）。签名并公证的 DMG 在 releases 页面。</li>
         <li><strong>设备端浏览器识别：</strong>Chrome 139+ 优先本地识别，云端自动兜底。</li>
         <li><strong>Soniox 实时引擎（实验，自备 Key）：</strong>面向中英夹杂场景；通过内部基准测试前保持「实验」标记。</li>
         <li><strong>系统/App 音频（桌面版，macOS 14.4+）：</strong>基于 CoreAudio process tap，捕获这台 Mac 正在播放的声音，替换了桌面版旧版的标签页音频——见「<a href="#desktop-app">桌面版</a>」。</li>
+        <li><strong>系统识别（桌面版，macOS 26+，v0.4.3）：</strong>基于 macOS 原生 SpeechAnalyzer 的零安装引擎——不下载模型、不装 Python，音频不出捕获进程。</li>
         <li><strong>Chrome 插件（Lite）：</strong>MV3 侧边栏，含实时麦克风捕获、内置词典、设备端翻译。</li>
         <li><strong>后台任务中心、引擎下拉菜单、首次引导、更新检查（桌面版）：</strong>四项都在「<a href="#desktop-app">桌面版</a>」里有完整说明。</li>
       </ol>
