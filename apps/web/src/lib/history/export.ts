@@ -18,6 +18,11 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   whisper: "本地 Whisper",
   tabaudio: "标签页音频",
   appaudio: "系统/App 音频",
+  // S11 (v0.4.3): terse noun form for the export label, matching every
+  // other entry here — engineOptions.ts's own picker label carries the
+  // fuller "· 开箱即用" tagline, which doesn't fit this file's plain
+  // identifier convention.
+  osspeech: "系统识别",
   soniox: "Soniox 云端识别",
   import: "导入",
   "browser-whisper": "浏览器 Whisper",

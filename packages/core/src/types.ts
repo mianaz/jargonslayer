@@ -45,6 +45,13 @@ export type STTEngineKind =
   // components-layer surfaces — ENGINE_CARDS/Header/SettingsDialog/
   // TutorialOverlay/history export labels/tier gating).
   | "appaudio"
+  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
+  // Zero-Install 系统识别: desktop-only, macOS 26+ on-device transcription
+  // via Apple's SpeechAnalyzer, riding the SAME CoreAudio process tap
+  // appaudio already taps (no local Whisper sidecar, no PCM ever leaving
+  // the process). Every exhaustive Record/label map keyed by this type
+  // must add "osspeech" — see lib/stt/osSpeech.ts for the wire contract.
+  | "osspeech"
   | "import"
   | "browser-whisper";
 

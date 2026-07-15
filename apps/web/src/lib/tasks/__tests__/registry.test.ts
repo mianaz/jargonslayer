@@ -68,6 +68,14 @@ describe("task registry lifecycle (#58)", () => {
     expect(diar.kind).toBe("diar-install");
   });
 
+  // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md):
+  // "os-speech-asset" joins the same list — jobsBridge.ts's
+  // trackOsSpeechAsset is its only writer (desktop-only).
+  it("startTask accepts the S11 os-speech-asset kind exactly like any other kind", () => {
+    const asset = startTask("t-osspeech-asset", "os-speech-asset", "系统识别模型");
+    expect(asset.kind).toBe("os-speech-asset");
+  });
+
   it("updateTaskProgress patches stage/progress and bumps updatedAt without touching status", async () => {
     startTask("t1", "import-audio", "meeting.wav");
     const before = useTasks.getState().tasks.t1.updatedAt;

@@ -129,3 +129,69 @@ export function trackInstallDiar(handle: DesktopBootstrapHandle): string {
 
   return id;
 }
+
+// --- os-speech-asset (S11, docs/design-explorations/
+// s11-osspeech-blueprint.md, Worker C) ---
+
+// The four osspeech://status kinds (lib/stt/osSpeech.ts's own
+// OsSpeechStatusKind) this tracker ever reacts to — kept as its own
+// narrow local union rather than importing OsSpeechStatusKind's full
+// 13-kind closed set, since this module only ever cares about these
+// four regardless of which lane call site is feeding them in (see
+// trackOsSpeechAsset's own doc comment).
+export type OsSpeechAssetKind = "asset-checking" | "asset-downloading" | "asset-installed" | "asset-failed";
+
+export interface OsSpeechAssetTracker {
+  handle(kind: OsSpeechAssetKind, progress?: number, message?: string): void;
+}
+
+const OS_SPEECH_ASSET_LABEL = "系统识别模型";
+
+/** Drives an "os-speech-asset" task row off osspeech://status asset
+ *  lifecycle events — a PUSH-style driver (unlike trackSwitchModel/
+ *  trackInstallDiar above, which each subscribe a Promise-returning
+ *  DesktopBootstrapHandle action themselves): both OsSpeechEngine's own
+ *  osspeech://status listener (mid-session auto-download, §2.6) and
+ *  osspeechCaps.ts's preinstallOsSpeech (its own, separate listener)
+ *  feed this from whichever asset events THEY observe on their own
+ *  lane — this function owns no listener of its own.
+ *
+ *  Per §2.6, the task row itself only ever starts at "asset-downloading"
+ *  (or defensively at "asset-failed", so a checking-phase failure still
+ *  surfaces a visible failed row rather than only a status toast) —
+ *  "asset-checking" alone never creates a row (a model that's already
+ *  installed only ever sees checking -> installed, with no download
+ *  phase in between, and must never show an empty task row for that).
+ *  "asset-installed" completes the row only if one was ever started —
+ *  a no-op otherwise. Call ONCE per session/attempt — a fresh tracker
+ *  every time, never reused across sessions (a reused tracker would
+ *  attach a LATER session's events onto an EARLIER, already-settled
+ *  task id). */
+export function trackOsSpeechAsset(label: string = OS_SPEECH_ASSET_LABEL): OsSpeechAssetTracker {
+  let id: string | null = null;
+  return {
+    handle(kind, progress, message) {
+      switch (kind) {
+        case "asset-checking":
+          break;
+        case "asset-downloading":
+          if (!id) {
+            id = newId();
+            startTask(id, "os-speech-asset", label);
+          }
+          updateTaskProgress(id, progress, "下载中");
+          break;
+        case "asset-installed":
+          if (id) completeTask(id);
+          break;
+        case "asset-failed":
+          if (!id) {
+            id = newId();
+            startTask(id, "os-speech-asset", label);
+          }
+          failTask(id, message || "系统识别模型下载失败");
+          break;
+      }
+    },
+  };
+}

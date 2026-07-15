@@ -823,6 +823,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(applyTierDefaults(withEngine("whisper"), false, true).engine).toBe("whisper");
     expect(applyTierDefaults(withEngine("tabaudio"), false, true).engine).toBe("tabaudio");
     expect(applyTierDefaults(withEngine("appaudio"), false, true).engine).toBe("appaudio");
+    expect(applyTierDefaults(withEngine("osspeech"), false, true).engine).toBe("osspeech");
     expect(applyTierDefaults(withEngine("soniox"), false, true).engine).toBe("soniox");
     expect(applyTierDefaults(withEngine("demo"), false, false).engine).toBe("demo");
   });
@@ -844,6 +845,11 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
 
   it("preview tier coerces a saved BYOK cloud engine (soniox) to webspeech — v0.4 S4 blueprint decision E / risk 4, same lock as whisper/tabaudio/appaudio", () => {
     const s = applyTierDefaults(withEngine("soniox"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier coerces a saved osspeech to webspeech — S11: structural coverage only, since applyPlatformEngineDefaults would already have coerced a stored osspeech away to tabaudio on a real (web) preview build before this function ever sees it", () => {
+    const s = applyTierDefaults(withEngine("osspeech"), true, true);
     expect(s.engine).toBe("webspeech");
   });
 
@@ -904,6 +910,11 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
     expect(s.engine).toBe("tabaudio");
   });
 
+  it("web coerces a stored osspeech to tabaudio (S11: osspeech is Tauri-only, identical D6 rationale)", () => {
+    const s = applyPlatformEngineDefaults(withEngine("osspeech"), false);
+    expect(s.engine).toBe("tabaudio");
+  });
+
   // S10 field-fix #1: desktop's WKWebView has no SpeechRecognition API at
   // all, so a persisted webspeech must not be left selectable — coerced
   // to whisper (the local mic engine), NOT appaudio (system audio would
@@ -919,8 +930,8 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
     expect(s.engine).toBe("webspeech");
   });
 
-  it("desktop leaves every other engine untouched, including appaudio itself", () => {
-    for (const engine of ["whisper", "appaudio", "soniox", "demo"] as const) {
+  it("desktop leaves every other engine untouched, including appaudio and osspeech themselves", () => {
+    for (const engine of ["whisper", "appaudio", "osspeech", "soniox", "demo"] as const) {
       expect(applyPlatformEngineDefaults(withEngine(engine), true).engine).toBe(engine);
     }
   });

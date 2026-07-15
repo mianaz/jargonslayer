@@ -29,13 +29,19 @@ import { diagLog } from "../diag/log";
 // (desktop-only; never produced on a web build). Every exhaustive
 // Record<TaskKind,…>/switch over this type repo-wide (grepped at S10
 // time: only TaskTray.tsx's KIND_LABEL) must cover both.
+//
+// S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md):
+// "os-speech-asset" joins the same list — jobsBridge.ts's
+// trackOsSpeechAsset is its only writer (also desktop-only; the
+// osspeech engine/its preinstall button never exist on a web build).
 export type TaskKind =
   | "import-audio"
   | "import-video"
   | "import-url"
   | "import-text"
   | "model-download"
-  | "diar-install";
+  | "diar-install"
+  | "os-speech-asset";
 export type TaskStatus = "running" | "done" | "error";
 
 export interface TaskState {

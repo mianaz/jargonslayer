@@ -29,7 +29,7 @@ vi.mock("../../stt/sidecarHealth", () => ({
   probeSidecar: (settings: unknown) => mockProbeSidecar(settings),
 }));
 
-import { modelForTask, trackInstallDiar, trackSwitchModel } from "../jobsBridge";
+import { modelForTask, trackInstallDiar, trackOsSpeechAsset, trackSwitchModel } from "../jobsBridge";
 import { completeTask, dismissTask, startTask, useTasks, type TaskState } from "../../tasks/registry";
 import type { DesktopBootstrapHandle, SwitchModelProgress } from "../bootstrap";
 import type { DesktopPaths } from "../uvCommands";
@@ -336,5 +336,118 @@ describe("trackInstallDiar", () => {
 
     expect(task(id).status).toBe("error");
     expect(task(id).error).toBe("plain string failure");
+  });
+});
+
+// S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) — a
+// PUSH-style driver rather than a subscribe-a-Promise-returning-action
+// one (unlike trackSwitchModel/trackInstallDiar above): both
+// OsSpeechEngine's own osspeech://status listener and osspeechCaps.ts's
+// preinstallOsSpeech feed events into the tracker returned here from
+// THEIR OWN listen() call — this module owns no listener of its own, so
+// these tests just call `.handle(...)` directly.
+describe("trackOsSpeechAsset", () => {
+  beforeEach(() => {
+    useTasks.setState({ tasks: {} });
+    mockSettings = { ...DEFAULT_SETTINGS };
+    mockPostTaskWebhook.mockClear();
+  });
+
+  it("asset-checking alone never starts a task row (§2.6: only asset-downloading does)", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-checking");
+    expect(useTasks.getState().tasks).toEqual({});
+  });
+
+  it("asset-downloading lazily starts a running task row, labeled 系统识别模型 by default", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.3);
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({
+      kind: "os-speech-asset",
+      label: "系统识别模型",
+      stage: "下载中",
+      progress: 0.3,
+      status: "running",
+    });
+  });
+
+  it("accepts a custom label (e.g. preinstallOsSpeech's own attempt)", () => {
+    const tracker = trackOsSpeechAsset("系统识别模型（预下载）");
+    tracker.handle("asset-downloading", 0.1);
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks[0].label).toBe("系统识别模型（预下载）");
+  });
+
+  it("repeated asset-downloading events update the SAME row's progress rather than starting a new one", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.2);
+    const idAfterFirst = Object.keys(useTasks.getState().tasks)[0];
+
+    tracker.handle("asset-downloading", 0.9);
+
+    const tasks = useTasks.getState().tasks;
+    expect(Object.keys(tasks)).toEqual([idAfterFirst]);
+    expect(tasks[idAfterFirst].progress).toBe(0.9);
+  });
+
+  it("asset-installed completes the row that asset-downloading started", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.5);
+    tracker.handle("asset-installed");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks[0].status).toBe("done");
+  });
+
+  it("asset-installed with NO prior downloading is a no-op (model was already installed — no row to complete)", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-installed");
+
+    expect(useTasks.getState().tasks).toEqual({});
+  });
+
+  it("asset-failed after a downloading row fails that SAME row with the given message", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-downloading", 0.4);
+    tracker.handle("asset-failed", undefined, "network unreachable");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ status: "error", error: "network unreachable" });
+  });
+
+  it("asset-failed with NO prior downloading (e.g. a checking-phase failure) still surfaces a NEW failed row, defensively", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-failed", undefined, "disk read error");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ status: "error", error: "disk read error" });
+  });
+
+  it("asset-failed with no message falls back to a generic zh failure string", () => {
+    const tracker = trackOsSpeechAsset();
+    tracker.handle("asset-failed");
+
+    const tasks = Object.values(useTasks.getState().tasks);
+    expect(tasks[0].error).toBe("系统识别模型下载失败");
+  });
+
+  it("a FRESH tracker per call never reuses a PRIOR tracker's already-settled task id", () => {
+    const first = trackOsSpeechAsset();
+    first.handle("asset-downloading", 1);
+    first.handle("asset-installed");
+    const firstId = Object.keys(useTasks.getState().tasks)[0];
+
+    const second = trackOsSpeechAsset();
+    second.handle("asset-downloading", 0.1);
+
+    const tasks = useTasks.getState().tasks;
+    expect(Object.keys(tasks)).toHaveLength(2);
+    expect(tasks[firstId].status).toBe("done"); // untouched by the second tracker
   });
 });
