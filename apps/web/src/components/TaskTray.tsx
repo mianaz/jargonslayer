@@ -23,6 +23,7 @@ export const KIND_LABEL: Record<TaskState["kind"], string> = {
   "import-text": "文稿导入",
   "model-download": "下载模型",
   "diar-install": "安装说话人分离",
+  "os-speech-asset": "下载系统识别模型",
 };
 
 export interface TaskTrayProps {

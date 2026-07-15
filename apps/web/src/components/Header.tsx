@@ -93,7 +93,9 @@ export function canPause(
   // `engineRef.current?.pause`/`?.resume` — not this hardcoded
   // matrix), so soniox already falls back to teardown-pause there.
   if (engine === "soniox") return false;
-  return engine === "webspeech" || engine === "tabaudio" || engine === "appaudio";
+  // osspeech (S11): pause/resume ride the helper's stdin command channel
+  // (gate-at-input, no teardown) — a true soft pause, so it belongs here.
+  return engine === "webspeech" || engine === "tabaudio" || engine === "appaudio" || engine === "osspeech";
 }
 
 function formatElapsed(ms: number): string {
