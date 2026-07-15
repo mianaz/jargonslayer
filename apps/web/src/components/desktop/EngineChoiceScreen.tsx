@@ -47,7 +47,7 @@ const CARDS: { value: EngineChoice; title: string; points: string[] }[] = [
   {
     value: "osspeech",
     title: "系统识别 · 开箱即用",
-    points: ["立即可用", "无需下载", "macOS 原生识别", "音频不离开本机"],
+    points: ["无需配置", "无需下载", "macOS 原生识别", "音频不离开本机"],
   },
   {
     value: "whisper",
@@ -66,7 +66,7 @@ export default function EngineChoiceScreen({ onChooseOsSpeech, onChooseWhisper }
       <div data-testid="engine-choice-screen" className="space-y-4">
         <div className="text-base font-medium text-fg">选择转录引擎</div>
         <p className="text-sm leading-[1.8] text-mut">
-          两种方式都在本机处理，音频不会离开这台电脑；之后随时能在 设置 → 转录引擎 里切换。
+          两种方式都在本机处理，音频不会离开本机；之后随时能在 设置 → 转录引擎 里切换。
         </p>
 
         <div className="grid grid-cols-2 gap-2">

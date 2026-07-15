@@ -49,7 +49,7 @@ describe("EngineChoiceScreen", () => {
 
     // both cards' own copy renders (pinned per the blueprint's §3 Worker D copy).
     expect(osspeechCard.textContent).toContain("系统识别 · 开箱即用");
-    expect(osspeechCard.textContent).toContain("立即可用");
+    expect(osspeechCard.textContent).toContain("无需配置");
     expect(osspeechCard.textContent).toContain("无需下载");
     expect(osspeechCard.textContent).toContain("macOS 原生识别");
     expect(osspeechCard.textContent).toContain("音频不离开本机");

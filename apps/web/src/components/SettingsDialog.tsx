@@ -1664,7 +1664,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <div className="space-y-2 border border-edge bg-panel2 p-3">
                 <div className="text-sm text-fg">系统识别模型</div>
                 <div className="text-xs leading-[1.7] text-mut2">
-                  首次开始监听时会自动下载识别所需的系统模型；也可以提前在这里预下载，避免第一次会议时等待。
+                  首次监听时会自动下载所需的系统模型；也可以提前在这里预下载，避免第一次会议时等待。
                 </div>
                 <button
                   type="button"
