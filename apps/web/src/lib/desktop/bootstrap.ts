@@ -103,6 +103,18 @@ import { httpBaseFromWs, pollJob } from "../stt/upload";
 // vi.mock in every test that reaches this file (bootstrap.test.ts +
 // every DesktopWizard.tsx-importing suite), never stubbed on disk.
 import { preinstallOsSpeech } from "./osspeechCaps";
+// S12a (v0.4.4, §C Provision) — probeMlxCapabilitiesWith (NOT the
+// getInvoke()-owning probeMlxCaps() singleton, which is IS_DESKTOP-
+// gated and bypasses this file's own injected `deps.invoke` entirely —
+// bootstrapDesktop's whole testable-core contract is "zero
+// @tauri-apps/tauriApi coupling of its own", see this file's header
+// comment) reused verbatim for ensureMlxExtras' own leading hardware
+// gate, fed `deps.invoke` exactly like provisionRunner.ts's own
+// probeMlxUsable does — this ALSO warms mlxCaps.ts's shared
+// module-level cache as a side effect, so a later UI read of
+// getMlxCapsSnapshot() in the SAME session skips a redundant round
+// trip.
+import { probeMlxCapabilitiesWith } from "./mlxCaps";
 import { getInvoke, getListen, getTauriFetch, type InvokeFn, type ListenFn, type TauriFetchFn } from "./tauriApi";
 import {
   getAppPaths,
@@ -110,13 +122,21 @@ import {
   runEffects,
   stopServer,
   type LogStream,
+  type MlxImportPreflightResult,
   type OnLog,
   type PrewarmProgressEvent,
   type ProcessResult,
   type StartServerResult,
   type UvLogEvent,
 } from "./provisionRunner";
-import { PINNED_PYTHON_MINOR, pipInstallDiar, type DesktopPaths } from "./uvCommands";
+import {
+  PINNED_PYTHON_MINOR,
+  pipInstallDiar,
+  pipCheckMlx,
+  pipInstallMlxLock,
+  venvCreateMlx,
+  type DesktopPaths,
+} from "./uvCommands";
 import {
   decideRestart,
   initial,
@@ -126,7 +146,9 @@ import {
   ALLOWED_MARKER_MODELS,
   MARKER_SCHEMA_VERSION,
   MAX_RESTARTS_PER_WINDOW,
+  MLX_ONLY_MARKER_MODELS,
   POLLING_HEALTH_ATTEMPT_CAP,
+  QUARANTINE_FALLBACK_MODEL,
   RESTART_WINDOW_MS,
   type MachineState,
   type ProvisionContext,
@@ -157,12 +179,29 @@ export interface DesktopLogLine {
  *  the blueprint specifies — this is how SettingsDialog's 下载并切换
  *  confirm button gets a live readout DURING that awaited call, the
  *  same way the wizard's 下载模型 row gets one from
- *  downloadProgress$ during beginProvision(). */
+ *  downloadProgress$ during beginProvision(). S12a (v0.4.4, §C
+ *  Provision/Task 7) — the phase union widens with three mlx-install
+ *  sub-phases (`"mlx-venv"|"mlx-pip"|"mlx-preflight"`), emitted by
+ *  ensureMlxExtras BEFORE the pre-existing "downloading"/"restarting"
+ *  phases whenever performSwitchModel's target is an
+ *  MLX_ONLY_MARKER_MODELS member — see ensureMlxExtras' own doc comment
+ *  below for why this reuses the ONE existing progress stream rather
+ *  than a second, parallel one: jobsBridge.ts's trackSwitchModel reads
+ *  the transition INTO "downloading" as the mlx phase's own success
+ *  signal (extras validated -> model download starts), so a single
+ *  ordered stream tells the whole story with no separate correlation
+ *  needed. A plain whisper-family switchModel() call never emits any of
+ *  the three mlx phases (ensureMlxExtras is gated on
+ *  MLX_ONLY_MARKER_MODELS.includes(model) — see performSwitchModel
+ *  below), so that path's own progress sequence stays byte-identical to
+ *  before this sprint. */
 export interface SwitchModelProgress {
-  phase: "downloading" | "restarting";
+  phase: "mlx-venv" | "mlx-pip" | "mlx-preflight" | "downloading" | "restarting";
   /** whisper_server.py JobStatus.progress verbatim (0..1) — only
-   *  present while phase is "downloading"; omitted once phase moves to
-   *  "restarting" (the job is done, there's no fraction left to show). */
+   *  present while phase is "downloading"; omitted for every other
+   *  phase (the mlx sub-phases are indeterminate, same as
+   *  installDiarization's own progress-less shape; "restarting" has no
+   *  fraction left once the download job is done). */
   progress?: number;
 }
 
@@ -179,6 +218,26 @@ export const PROVISION_STEP_LABELS: Record<ProvisionStep, string> = {
   DOWNLOAD_MODEL: "下载模型",
   STARTING: "启动本地服务",
   POLLING_HEALTH: "启动本地服务",
+  // S12a (v0.4.4, §C Provision) — provisionMachine.ts's Record<
+  // ProvisionStep,string> completeness forces this entry the moment
+  // INSTALL_MLX joins ProvisionStep; unused by THIS sprint's actual
+  // drive (ensureMlxExtras below never lands `current.state` on this
+  // step — see provisionMachine.ts's own INSTALL_MLX doc comment), kept
+  // ready for a future S12b wizard-path integration that DOES drive it
+  // through the machine.
+  INSTALL_MLX: "安装 MLX 运行环境",
+};
+
+/** S12a (v0.4.4, §C Provision/Task 7) — Chinese labels for
+ *  SwitchModelProgress's three mlx sub-phases, shared by ensureMlxExtras
+ *  (which emits them) and jobsBridge.ts's trackSwitchModel (which reads
+ *  them for the "mlx-install" task row's own `stage` text) — single
+ *  source of truth, mirrors PROVISION_STEP_LABELS' own rationale just
+ *  above. */
+export const MLX_INSTALL_STAGE_LABELS: Record<"mlx-venv" | "mlx-pip" | "mlx-preflight", string> = {
+  "mlx-venv": "创建虚拟环境",
+  "mlx-pip": "安装依赖",
+  "mlx-preflight": "检查依赖",
 };
 
 /** The 5 rows chunk 6's wizard actually shows (blueprint §Chunk 6:
@@ -966,6 +1025,48 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       const event = await runEffects(current.state, current.effects, runnerDeps);
       if (generation !== myGeneration) return; // superseded — apply nothing further.
       current = transition(ctx, current.state, event);
+      if (event.type === "CHECK_RESULT") {
+        // S12a (§C Provision, F14 / Store coercion) — mirrors
+        // provisionMachine.ts's OWN quarantine condition
+        // (handleCheckResult) from this file's separate vantage point:
+        // see QUARANTINE_FALLBACK_MODEL's own doc comment
+        // (provisionMachine.ts) for why `ctx.model` needs this explicit
+        // reseed here, distinct from the resulting MachineState the
+        // isFreshProvisionEntry check just below already handles
+        // identically to an ordinary first-time install. Also
+        // durably corrects the PERSISTED settings.whisperModel (fire-
+        // and-forget, mirroring beginProvision()'s own un-awaited
+        // persistDesktopModel call below) — the task brief's own "Store
+        // coercion" framing of F14: the clamp can't live in store.ts's
+        // synchronous migration (caps are async), so it's implemented
+        // HERE instead, as the live quarantine path writing the
+        // correction back through the store the moment it's actually
+        // known. Without this, a stale persisted "parakeet-tdt-0.6b-v3"
+        // preference would keep seeding ctx.model back to the
+        // already-quarantined value on every FUTURE app relaunch's
+        // fresh-provision path too (getDesktopModel/seededModel, this
+        // file's own top-of-function clamp) — never wrong (marker
+        // presence still drives the FIRST decision each launch, and
+        // this file's own ALLOWED_MARKER_MODELS clamp there is
+        // unconditional either way), but silently misleading anywhere
+        // that reads settings.whisperModel as "the user's actual
+        // target" (e.g. a future SettingsDialog 当前选择 row) before the
+        // user ever explicitly re-confirms via beginProvision().
+        const checkedMarker = parseMarker(event.markerRaw);
+        if (
+          checkedMarker &&
+          MLX_ONLY_MARKER_MODELS.includes(checkedMarker.model) &&
+          event.mlxUsable !== true
+        ) {
+          diagLog(
+            "warn",
+            "desktop-provision",
+            `${checkedMarker.model} 标记不可用（Apple 芯片/MLX 环境校验未通过），已回退到默认模型`,
+          );
+          ctx = { ...ctx, model: QUARANTINE_FALLBACK_MODEL };
+          void deps.persistDesktopModel?.(QUARANTINE_FALLBACK_MODEL);
+        }
+      }
       if (event.type === "STEP_OK") {
         diagLog("info", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 完成`);
         if (event.step === "DOWNLOAD_MODEL") resetDownloadProgress();
@@ -1128,6 +1229,112 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     notify();
   }
 
+  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+   *  R1/Provision, F16) — Phase 1 of an mlx-family switch (§C Q5's
+   *  two-phase provision): builds+validates the separate, hash-locked
+   *  MLX venv AHEAD of performSwitchModel's own existing bucket 1
+   *  (model download) below — the "extras validated (atomic mark) ->
+   *  model downloaded -> ..." pinned order. Called from EXACTLY one
+   *  place today (performSwitchModel, gated on
+   *  MLX_ONLY_MARKER_MODELS.includes(model) — see that function's own
+   *  new leading branch): "one ensure-mlx service" per §C, structured
+   *  so a FUTURE wizard-path caller (S12b, once parakeet's
+   *  `available:false` catalog flip lands) can reuse it identically —
+   *  it reads no switchModel-specific state (no `model`/`ctx`
+   *  parameter at all) and never touches `current`/the provision
+   *  marker itself, so nothing here is switchModel-shaped.
+   *
+   *  A direct, bootstrap-only imperative sequence — same posture as
+   *  performSwitchModel/performInstallDiarization (neither of which
+   *  drives provisionMachine.ts's transition()/runEffects either;
+   *  provisionMachine.ts's own INSTALL_MLX doc comment explains why
+   *  this stays OUT of that pure machine's auto-advance vocabulary this
+   *  sprint) — chosen specifically because THIS caller (jobsBridge.ts's
+   *  "mlx-install" task row, §Task 7) needs live, per-substep progress
+   *  (venv create / pip install / preflight+check) that a single opaque
+   *  provisionMachine Effect would hide; each notifySwitchModelProgress
+   *  call below fires BEFORE its own sub-step starts.
+   *
+   *  Transactional per §C Provision, step (1)-(3): a fresh attempt
+   *  tries WITHOUT `--clear` first, short-circuiting entirely via a
+   *  cheap mlx_import_preflight probe if an earlier install already
+   *  left a working venv (S5 installDiarization's own "skip if already
+   *  present" precedent — here realized via a live re-import check
+   *  rather than a dedicated marker file/Rust command, since none was
+   *  cross-lane-pinned this sprint; see this task's own PR report for
+   *  the full rationale, mirrored in provisionRunner.ts's identical
+   *  probeMlxUsable). ANY failure of that first attempt self-heals with
+   *  exactly ONE retry using `--clear` (discharges the uv-venv
+   *  retry-poisoning debt, V040-VERIFICATION-RUNPLAN.md:35) before
+   *  finally rethrowing the retry attempt's own error. Step (4)'s
+   *  "atomic valid-mark" is likewise realized implicitly: a
+   *  successfully-completed attempt (venv created, lock installed,
+   *  import+pip-check both clean) IS the valid mark — nothing further
+   *  is persisted, and the very same mlx_import_preflight re-import is
+   *  what a LATER quarantine check (provisionRunner.ts's
+   *  probeMlxUsable, feeding provisionMachine.ts's own F14 branch)
+   *  re-verifies from scratch rather than trusting a possibly-stale
+   *  file.
+   *
+   *  Never touches `current`/ctx/the provision marker — a caller
+   *  failing here (performSwitchModel's new leading bucket) leaves the
+   *  OLD server/marker/preference completely untouched, matching bucket
+   *  1's own pre-existing "old server never touched" contract (this
+   *  function runs BEFORE that bucket's own try, so a failure here
+   *  never even reaches it). */
+  async function ensureMlxExtras(): Promise<void> {
+    const caps = await probeMlxCapabilitiesWith(deps.invoke);
+    if (!caps.mlxSupported) {
+      throw new Error(caps.reason || "当前设备不支持 Apple 芯片 MLX 加速");
+    }
+
+    const attempt = async (clear: boolean): Promise<void> => {
+      if (!clear) {
+        const already = await deps
+          .invoke<MlxImportPreflightResult>("mlx_import_preflight")
+          .catch(() => null);
+        if (already?.ok) return; // already installed+valid — nothing to do
+      }
+
+      notifySwitchModelProgress({ phase: "mlx-venv" });
+      const createCmd = venvCreateMlx(paths, { clear });
+      const createResult = await withUvLog(deps, notifyLog, () =>
+        deps.invoke<ProcessResult>("run_uv", { args: createCmd.args, env: createCmd.env }),
+      );
+      if (createResult.code !== 0) {
+        throw new Error(`创建 MLX 虚拟环境失败（退出码 ${createResult.code === null ? "null" : createResult.code}）`);
+      }
+
+      notifySwitchModelProgress({ phase: "mlx-pip" });
+      const installCmd = pipInstallMlxLock(paths);
+      const installResult = await withUvLog(deps, notifyLog, () =>
+        deps.invoke<ProcessResult>("run_uv", { args: installCmd.args, env: installCmd.env }),
+      );
+      if (installResult.code !== 0) {
+        throw new Error(`安装 MLX 依赖失败（退出码 ${installResult.code === null ? "null" : installResult.code}）`);
+      }
+
+      notifySwitchModelProgress({ phase: "mlx-preflight" });
+      const preflight = await deps.invoke<MlxImportPreflightResult>("mlx_import_preflight");
+      if (!preflight.ok) {
+        throw new Error(preflight.stderr || "MLX 依赖导入检查失败");
+      }
+      const checkCmd = pipCheckMlx(paths);
+      const checkResult = await withUvLog(deps, notifyLog, () =>
+        deps.invoke<ProcessResult>("run_uv", { args: checkCmd.args, env: checkCmd.env }),
+      );
+      if (checkResult.code !== 0) {
+        throw new Error(`MLX 依赖兼容性检查失败（退出码 ${checkResult.code === null ? "null" : checkResult.code}）`);
+      }
+    };
+
+    try {
+      await attempt(false);
+    } catch {
+      await attempt(true); // self-heal once with --clear; a second failure propagates as-is
+    }
+  }
+
   /** The real work behind the `switchModel` handle action (split out
    *  as its own nested function, mirroring drive()/driveGuarded()'s own
    *  split, so the returned handle method itself stays a thin validate
@@ -1149,6 +1356,17 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     // somehow bypassed.
     const myGeneration = generation;
     try {
+      // S12a (§C Provision, Q5's two-phase flow): Phase 1, only for an
+      // mlx-family target — a plain whisper-family switchModel() call
+      // never enters this branch, so its own bucket 1 (below) stays
+      // byte-identical to pre-S12a. A failure here throws BEFORE bucket
+      // 1's own try/notify even starts — old server/marker/preference
+      // completely untouched, same as a bucket-1 (download) failure.
+      if (MLX_ONLY_MARKER_MODELS.includes(model)) {
+        await ensureMlxExtras();
+        if (generation !== myGeneration) return;
+      }
+
       // ---- bucket 1: download (old server untouched throughout — a
       // failure here rethrows as-is, current.state is never touched) ----
       notifySwitchModelProgress({ phase: "downloading", progress: 0 });

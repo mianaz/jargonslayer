@@ -36,9 +36,18 @@
 
 import type { Settings } from "@jargonslayer/core/types";
 import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
+import { probeMlxCapabilitiesWith } from "./mlxCaps";
 import type { InvokeFn, ListenFn } from "./tauriApi";
 import type { DesktopPaths } from "./uvCommands";
-import type { Effect, MachineEvent, MachineState, ProvisionMarker, ProvisionStep } from "./provisionMachine";
+import {
+  MLX_ONLY_MARKER_MODELS,
+  parseMarker,
+  type Effect,
+  type MachineEvent,
+  type MachineState,
+  type ProvisionMarker,
+  type ProvisionStep,
+} from "./provisionMachine";
 
 export type LogStream = "stdout" | "stderr";
 export type OnLog = (stream: LogStream, line: string) => void;
@@ -71,6 +80,21 @@ export interface PrewarmProgressEvent {
 }
 
 export type OnDownloadProgress = (progress: PrewarmProgressEvent) => void;
+
+/** S12a (v0.4.4, §C Provision) — mirrors the pinned cross-lane contract
+ *  for the new Rust `mlx_import_preflight` command (task spec: "an
+ *  invoke `mlx_import_preflight` → {ok: boolean, stderr: string}
+ *  (hardcoded import list Rust-side)"): a real `<mlxVenvPython> -c
+ *  "import parakeet_mlx, websockets, numpy, huggingface_hub"` attempt,
+ *  camelCase per this app's own Tauri-command-result convention.
+ *  Exported so bootstrap.ts's ensureMlxExtras (§Provision's
+ *  transactional venv build) reuses this ONE type rather than a second,
+ *  hand-duplicated copy — same "shared Rust-command-result shape lives
+ *  in this file" precedent as ProcessResult/StartServerResult above. */
+export interface MlxImportPreflightResult {
+  ok: boolean;
+  stderr: string;
+}
 
 export interface RunnerDeps {
   invoke: InvokeFn;
@@ -140,6 +164,36 @@ async function readMarkerEffect(deps: RunnerDeps): Promise<string | null> {
     // convention (probeSidecar/agentHealth/isRemotelyKilled).
     void describeError(error);
     return null;
+  }
+}
+
+/** S12a (v0.4.4, §C Provision, F14) — CHECKING's own mlx-usability
+ *  probe, ONLY ever run when the just-parsed marker claims an
+ *  mlx-family model (see runEffects' CHECKING branch below) — every
+ *  ordinary whisper-family marker never pays this extra round trip.
+ *  Folds BOTH quarantine conditions §C names ("mlx unsupported OR
+ *  mlx-venv invalid") into the ONE fail-closed boolean
+ *  provisionMachine.ts's handleCheckResult consumes: hardware first
+ *  (mlxCaps.ts's own probeMlxCapabilitiesWith, reused verbatim rather
+ *  than re-implemented — this ALSO warms mlxCaps.ts's own module-level
+ *  cache, so a later UI read of getMlxCapsSnapshot() during this same
+ *  session skips a redundant round trip), then — only if the hardware
+ *  itself is fine — a real mlx_import_preflight re-import as the
+ *  venv-validity check (no separate persisted "mlx-venv-valid" marker
+ *  file/Rust command exists this sprint; a live re-import is at least
+ *  as trustworthy and self-corrects if the venv was deleted/corrupted
+ *  between runs — see this task's own PR report for the full
+ *  rationale). Never throws — an invoke() rejection on EITHER probe
+ *  resolves `false`, the same conservative direction as every other
+ *  fail-closed mlx check in this file's own module (mlxCaps.ts). */
+async function probeMlxUsable(deps: RunnerDeps): Promise<boolean> {
+  const caps = await probeMlxCapabilitiesWith(deps.invoke);
+  if (!caps.mlxSupported) return false;
+  try {
+    const preflight = await deps.invoke<MlxImportPreflightResult>("mlx_import_preflight");
+    return preflight.ok === true;
+  } catch {
+    return false;
   }
 }
 
@@ -297,7 +351,16 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
         }
       }),
     );
-    return { type: "CHECK_RESULT", probeHealthy, markerRaw };
+    // S12a (§C Provision, F14) — only probed when the marker itself
+    // claims an mlx-family model (see probeMlxUsable's own doc comment
+    // above for the full rationale); every other marker leaves
+    // `mlxUsable` undefined, matching provisionMachine.ts's own
+    // CHECK_RESULT.mlxUsable doc comment ("every pre-S12a CHECK_RESULT
+    // event literal keeps working unchanged").
+    const marker = parseMarker(markerRaw);
+    const mlxUsable =
+      marker && MLX_ONLY_MARKER_MODELS.includes(marker.model) ? await probeMlxUsable(deps) : undefined;
+    return { type: "CHECK_RESULT", probeHealthy, markerRaw, mlxUsable };
   }
 
   if (state.phase === "STEP" && state.step === "POLLING_HEALTH" && state.status === "POLLING") {

@@ -29,13 +29,27 @@ import { PINNED_PYTHON_MINOR, pipInstall, pythonInstall, venvCreate } from "./uv
 
 // ---- steps ----
 
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Provision) — "INSTALL_MLX" joins the step vocabulary as a real
+// ProvisionStep identity (type/label completeness + a future S12b
+// wizard-path entry point), DELIBERATELY left OUT of STEP_ORDER below
+// and out of stepEffect's/startStep's auto-advance support (see
+// startStep's own INSTALL_MLX guard further down for the full
+// rationale) — bootstrap.ts's ensureMlxExtras drives the real
+// venv-create/pip-install/preflight sequence directly, a bootstrap-only
+// detour (same posture as switchModel()/installDiarization(), neither
+// of which runs through this file's transition()/effects either),
+// chosen specifically because that caller needs live, per-substep
+// progress (§Task 7's three task-row stages) a single opaque Effect
+// would hide.
 export type ProvisionStep =
   | "INSTALL_PYTHON"
   | "CREATE_VENV"
   | "INSTALL_DEPS"
   | "DOWNLOAD_MODEL"
   | "STARTING"
-  | "POLLING_HEALTH";
+  | "POLLING_HEALTH"
+  | "INSTALL_MLX";
 
 const STEP_ORDER: ProvisionStep[] = [
   "INSTALL_PYTHON",
@@ -110,7 +124,49 @@ export const ALLOWED_MARKER_MODELS: readonly string[] = [
   "medium",
   "large-v3",
   "large-v3-turbo",
+  // S12a (v0.4.4, §C L1/Task 6) — parakeet joins the marker allowlist
+  // now that this file owns its own quarantine handling (see
+  // handleCheckResult's mlx-usability branch below); modelCatalog.
+  // test.ts's own catalog⊆allowlist invariant carve-out is removed in
+  // lockstep (§C L1's prelude comment addressed to this worker).
+  "parakeet-tdt-0.6b-v3",
 ];
+
+/** S12a (v0.4.4, §C R1/Provision) — the subset of ALLOWED_MARKER_MODELS
+ *  that needs the separate, hash-locked MLX venv (uvCommands.ts's
+ *  DesktopPaths mlx fields) rather than the shared base whisper venv —
+ *  bootstrap.ts's performSwitchModel/ensureMlxExtras and
+ *  handleCheckResult's own quarantine branch below both gate on this
+ *  ONE list rather than a hand-duplicated `model.startsWith("parakeet")`
+ *  check or a second copy of modelCatalog.ts's `mlxOnly` flag (worker
+ *  A3's file, off this worker's touch list, and catalog membership is a
+ *  UI-offering concern — `available:false` — orthogonal to "does this
+ *  marker id need the mlx venv"). A second, deliberately SEPARATE list
+ *  from ALLOWED_MARKER_MODELS above (every mlx-only model is ALSO a
+ *  member of that one, but not vice versa) — kept here, not
+ *  modelCatalog.ts, so it stays a plain provisioning-machinery fact
+ *  bootstrap.ts can import without pulling in catalog UI copy. */
+export const MLX_ONLY_MARKER_MODELS: readonly string[] = ["parakeet-tdt-0.6b-v3"];
+
+/** S12a (v0.4.4, §C Provision, F14) — handleCheckResult's own quarantine
+ *  fallback: "select `small`" verbatim, per §C's own wording. A
+ *  deliberately independent constant from bootstrap.ts's
+ *  DEFAULT_DESKTOP_MODEL (same value, "small", but that constant is
+ *  private to bootstrap.ts — this module stays the single source of
+ *  truth for a QUARANTINE outcome specifically). Never
+ *  ALLOWED_MARKER_MODELS[0] or similar derived indexing — an explicit,
+ *  named literal is what keeps a future reordering of that list from
+ *  silently changing the quarantine fallback too. Exported so
+ *  bootstrap.ts's drive() can reseed its OWN separate `ctx` closure
+ *  variable the moment it detects the identical quarantine condition
+ *  from its own vantage point — transition()'s returned MachineState
+ *  is, BY DESIGN, indistinguishable from an ordinary first-time fresh
+ *  install (see handleCheckResult's own quarantine doc comment above),
+ *  so bootstrap.ts's `ctx.model` needs its own explicit reseed or a
+ *  later no-arg beginProvision() (which defaults to ctx.model) would
+ *  silently re-drive the SAME quarantined model straight back through
+ *  the ordinary whisper pipeline. */
+export const QUARANTINE_FALLBACK_MODEL = "small";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -160,7 +216,25 @@ export type MachineEvent =
    *  of CHECKING's two initial effects (probeHealth + readMarker) and
    *  report them together in one event, since the decision genuinely
    *  needs both. */
-  | { type: "CHECK_RESULT"; probeHealthy: boolean; markerRaw: string | null }
+  | {
+      type: "CHECK_RESULT";
+      probeHealthy: boolean;
+      markerRaw: string | null;
+      /** S12a (§C Provision, F14) — ONLY ever meaningful (and ONLY ever
+       *  supplied by provisionRunner.ts's runEffects) when the parsed
+       *  marker's model is a member of MLX_ONLY_MARKER_MODELS above —
+       *  every ordinary whisper-family marker (the overwhelming common
+       *  case) leaves this `undefined`, so every pre-S12a CHECK_RESULT
+       *  event literal (this file's own tests included) keeps working
+       *  unchanged. Fail-CLOSED like mlxCaps.ts's own probe:
+       *  handleCheckResult below quarantines on anything OTHER than the
+       *  literal `true` (an explicit, successfully-confirmed "usable"),
+       *  never just on an explicit `false` — an interpreter that
+       *  couldn't determine usability is treated exactly like one that
+       *  confirmed it's NOT usable, the same conservative posture as an
+       *  actual mlx_capabilities probe error. */
+      mlxUsable?: boolean;
+    }
   | { type: "STEP_OK"; step: ProvisionStep }
   | { type: "STEP_ERROR"; step: ProvisionStep; error: string; retriable: boolean }
   /** Re-enters whichever step is currently parked in STEP/ERROR. */
@@ -198,7 +272,7 @@ export function initial(): TransitionResult {
   return { state: { phase: "CHECKING" }, effects: [{ kind: "probeHealth" }, { kind: "readMarker" }] };
 }
 
-function stepEffect(ctx: ProvisionContext, step: Exclude<ProvisionStep, "POLLING_HEALTH">): Effect {
+function stepEffect(ctx: ProvisionContext, step: Exclude<ProvisionStep, "POLLING_HEALTH" | "INSTALL_MLX">): Effect {
   switch (step) {
     case "INSTALL_PYTHON":
       return { kind: "runUv", command: pythonInstall(ctx.paths) };
@@ -219,6 +293,17 @@ function startStep(ctx: ProvisionContext, step: ProvisionStep): TransitionResult
   if (step === "POLLING_HEALTH") {
     return { state: { phase: "STEP", step, status: "POLLING", attempts: 1 }, effects: [{ kind: "probeHealth" }] };
   }
+  if (step === "INSTALL_MLX") {
+    // See ProvisionStep's own doc comment above: INSTALL_MLX is a real
+    // step identity but has no driven-effect implementation in THIS
+    // file this sprint — bootstrap.ts's ensureMlxExtras drives it
+    // directly. Reaching here would mean some caller tried to
+    // auto-advance into/through it via transition() (e.g. a future
+    // STEP_ORDER change that forgot this file's own INSTALL_MLX
+    // exclusion) — failing loudly beats silently mis-sequencing a
+    // multi-GB install.
+    throw new Error("provisionMachine: INSTALL_MLX has no driven-effect implementation (see bootstrap.ts's ensureMlxExtras)");
+  }
   return { state: { phase: "STEP", step, status: "RUNNING" }, effects: [stepEffect(ctx, step)] };
 }
 
@@ -235,6 +320,25 @@ function handleCheckResult(
 
   const marker = parseMarker(event.markerRaw);
   if (marker) {
+    // S12a (§C Provision, F14 — Sol finding #14, "Persisted-parakeet-
+    // marker clamping doesn't work"): a parakeet-family marker must be
+    // capability-checked BEFORE ever reaching STARTING — spawning a
+    // parakeet sidecar process this app already knows can't import mlx
+    // (wrong hardware, OR the mlx venv itself is missing/broken —
+    // event.mlxUsable folds BOTH conditions into one fail-closed
+    // signal, see that field's own doc comment above) would only ever
+    // health-timeout-loop (POLLING_HEALTH_ATTEMPT_CAP, ~60s) before
+    // finally giving up — never the honest, immediate re-choice this
+    // amendment demands. QUARANTINE: ignore the marker's own model
+    // entirely and fall back to QUARANTINE_FALLBACK_MODEL via a FRESH
+    // INSTALL_PYTHON entry — the exact same shape a brand-new install
+    // produces, which bootstrap.ts's isFreshProvisionEntry already
+    // recognizes and pauses on (WIZARD_CONSENT_REQUIRED) rather than
+    // silently auto-driving — "route to consent/re-choice" for free,
+    // no bootstrap.ts-side special-casing needed.
+    if (MLX_ONLY_MARKER_MODELS.includes(marker.model) && event.mlxUsable !== true) {
+      return startStep({ ...ctx, model: QUARANTINE_FALLBACK_MODEL }, "INSTALL_PYTHON");
+    }
     // provisioned-dead: fully set up before, just re-launch with
     // whatever model that earlier successful provision recorded (not
     // necessarily ctx.model — S3 has no picker yet so these always

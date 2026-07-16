@@ -15,7 +15,7 @@ import { completeTask, failTask, startTask, updateTaskProgress, useTasks } from 
 import { useApp } from "../store";
 import { probeSidecar } from "../stt/sidecarHealth";
 import { MODEL_CATALOG } from "./modelCatalog";
-import type { DesktopBootstrapHandle } from "./bootstrap";
+import { MLX_INSTALL_STAGE_LABELS, type DesktopBootstrapHandle, type SwitchModelProgress } from "./bootstrap";
 
 // Side-table: which model a given model-download task was FOR — never
 // folded into TaskState itself (its shape stays exactly what #58
@@ -62,6 +62,18 @@ function modelLabel(model: string): string {
   return MODEL_CATALOG.find((entry) => entry.id === model)?.label ?? model;
 }
 
+/** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+ *  Provision/Task 7) — true for SwitchModelProgress's three mlx-install
+ *  sub-phases (bootstrap.ts's ensureMlxExtras), false for the
+ *  pre-existing "downloading"/"restarting" ones. A type guard (not a
+ *  bare `in`/key check) so trackSwitchModel's own branch below narrows
+ *  `progress.phase` to MLX_INSTALL_STAGE_LABELS' exact key type. */
+function isMlxInstallPhase(
+  phase: SwitchModelProgress["phase"],
+): phase is keyof typeof MLX_INSTALL_STAGE_LABELS {
+  return phase === "mlx-venv" || phase === "mlx-pip" || phase === "mlx-preflight";
+}
+
 /** SettingsDialog's 转录引擎 「更换模型」 confirm button (wave 2 call
  *  site): tracks an in-flight handle.switchModel(model) call as a
  *  "model-download" task. Subscribes switchModelProgress$ BEFORE
@@ -74,14 +86,49 @@ function modelLabel(model: string): string {
  *  registry.ts's own established "no trustworthy ratio" contract (see
  *  updateTaskProgress's doc comment). Unsubscribes on settle either
  *  way. Returns the new task's id (rarely needed by the caller — the
- *  registry is the source of truth from here on). */
+ *  registry is the source of truth from here on).
+ *
+ *  S12a (§C Provision/Task 7): an mlx-family switch's leading extras
+ *  phase gets its OWN, separate "mlx-install" task row (lazily started
+ *  the moment the FIRST mlx-* phase update arrives — never for a plain
+ *  whisper-family switch, which emits none) — mirrors trackOsSpeechAsset's
+ *  own "lazy row start" shape, just driven by switchModelProgress$
+ *  instead of a raw event listener. The transition INTO "downloading"
+ *  (bucket 1 of performSwitchModel, always emitted right after
+ *  ensureMlxExtras succeeds) IS this row's own success signal —
+ *  completeTask() fires there, before the pre-existing "model-download"
+ *  row handling below even runs for that same tick. If the OUTER
+ *  switchModel() call instead rejects while the mlx row is STILL open
+ *  (never saw "downloading" — the extras phase itself is what failed),
+ *  that row is failed too, with the SAME rejection message the
+ *  "model-download" row already gets. */
 export function trackSwitchModel(handle: DesktopBootstrapHandle, model: string): string {
   const id = newId();
   startTask(id, "model-download", modelLabel(model));
   modelByTaskId.set(id, model);
 
+  let mlxTaskId: string | null = null;
+
   const unsubscribe = handle.switchModelProgress$((progress) => {
     if (!progress) return; // null = no active phase (reset at both ends by bootstrap.ts) — settle below handles the terminal state itself
+
+    if (isMlxInstallPhase(progress.phase)) {
+      if (!mlxTaskId) {
+        mlxTaskId = newId();
+        startTask(mlxTaskId, "mlx-install", "MLX 运行环境");
+      }
+      updateTaskProgress(mlxTaskId, undefined, MLX_INSTALL_STAGE_LABELS[progress.phase]);
+      return;
+    }
+    if (mlxTaskId) {
+      // Reaching a non-mlx phase (only ever "downloading" in practice —
+      // performSwitchModel's own pinned order runs the extras phase to
+      // completion before bucket 1 starts) proves the mlx row finished
+      // successfully.
+      completeTask(mlxTaskId);
+      mlxTaskId = null;
+    }
+
     if (progress.phase === "restarting") {
       updateTaskProgress(id, undefined, "启动中");
     } else {
@@ -92,7 +139,11 @@ export function trackSwitchModel(handle: DesktopBootstrapHandle, model: string):
   handle
     .switchModel(model)
     .then(() => completeTask(id))
-    .catch((err: unknown) => failTask(id, err instanceof Error ? err.message : String(err)))
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      if (mlxTaskId) failTask(mlxTaskId, message); // the extras phase never reached "downloading" — it's what failed
+      failTask(id, message);
+    })
     .finally(() => unsubscribe());
 
   return id;

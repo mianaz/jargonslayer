@@ -230,6 +230,129 @@ describe("trackSwitchModel", () => {
     expect(task(id).stage).toBe(""); // untouched — startTask's own initial stage
   });
 
+  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+  // Provision/Task 7) — an mlx-family switch's leading extras phase
+  // gets its OWN "mlx-install" task row, separate from the
+  // "model-download" row trackSwitchModel already starts immediately.
+  describe("mlx-install task row (§C Provision/Task 7)", () => {
+    it("a plain whisper-family switch (no mlx-* phase ever fires) never creates a second task row", () => {
+      let listener: ((p: SwitchModelProgress | null) => void) | null = null;
+      const handle = fakeHandle({
+        switchModelProgress$: (l) => {
+          listener = l;
+          return () => {};
+        },
+      });
+      trackSwitchModel(handle, "medium");
+
+      listener!({ phase: "downloading", progress: 0.3 });
+      listener!({ phase: "restarting" });
+
+      const tasks = Object.values(useTasks.getState().tasks);
+      expect(tasks).toHaveLength(1); // only the "model-download" row
+      expect(tasks[0].kind).toBe("model-download");
+    });
+
+    it("the FIRST mlx-* phase update lazily starts a running 'mlx-install' row, labeled MLX 运行环境, stage from MLX_INSTALL_STAGE_LABELS", () => {
+      let listener: ((p: SwitchModelProgress | null) => void) | null = null;
+      const handle = fakeHandle({
+        switchModelProgress$: (l) => {
+          listener = l;
+          return () => {};
+        },
+      });
+      trackSwitchModel(handle, "parakeet-tdt-0.6b-v3");
+
+      listener!({ phase: "mlx-venv" });
+
+      const mlxTask = Object.values(useTasks.getState().tasks).find((t) => t.kind === "mlx-install");
+      expect(mlxTask).toMatchObject({ kind: "mlx-install", label: "MLX 运行环境", stage: "创建虚拟环境", status: "running" });
+    });
+
+    it("subsequent mlx-* phases update the SAME row's stage, never starting a second one", () => {
+      let listener: ((p: SwitchModelProgress | null) => void) | null = null;
+      const handle = fakeHandle({
+        switchModelProgress$: (l) => {
+          listener = l;
+          return () => {};
+        },
+      });
+      trackSwitchModel(handle, "parakeet-tdt-0.6b-v3");
+
+      listener!({ phase: "mlx-venv" });
+      const mlxTaskId = Object.values(useTasks.getState().tasks).find((t) => t.kind === "mlx-install")!.id;
+      listener!({ phase: "mlx-pip" });
+      listener!({ phase: "mlx-preflight" });
+
+      const mlxTasks = Object.values(useTasks.getState().tasks).filter((t) => t.kind === "mlx-install");
+      expect(mlxTasks).toHaveLength(1);
+      expect(mlxTasks[0].id).toBe(mlxTaskId);
+      expect(mlxTasks[0].stage).toBe("检查依赖");
+    });
+
+    it("transitioning to 'downloading' completes the mlx-install row (its own success signal) and proceeds with the ordinary model-download row handling", () => {
+      let listener: ((p: SwitchModelProgress | null) => void) | null = null;
+      const handle = fakeHandle({
+        switchModelProgress$: (l) => {
+          listener = l;
+          return () => {};
+        },
+      });
+      const modelDownloadId = trackSwitchModel(handle, "parakeet-tdt-0.6b-v3");
+
+      listener!({ phase: "mlx-venv" });
+      const mlxTaskId = Object.values(useTasks.getState().tasks).find((t) => t.kind === "mlx-install")!.id;
+      listener!({ phase: "mlx-preflight" });
+      listener!({ phase: "downloading", progress: 0.1 });
+
+      expect(task(mlxTaskId).status).toBe("done");
+      expect(task(modelDownloadId).stage).toBe("下载中");
+      expect(task(modelDownloadId).progress).toBe(0.1);
+    });
+
+    it("if switchModel() rejects while the mlx row is STILL open (extras never reached downloading), that row is ALSO failed, with the same rejection message", async () => {
+      let listener: ((p: SwitchModelProgress | null) => void) | null = null;
+      const handle = fakeHandle({
+        switchModelProgress$: (l) => {
+          listener = l;
+          return () => {};
+        },
+        switchModel: async () => {
+          listener!({ phase: "mlx-venv" });
+          throw new Error("当前设备不支持 Apple 芯片 MLX 加速");
+        },
+      });
+      const modelDownloadId = trackSwitchModel(handle, "parakeet-tdt-0.6b-v3");
+      await flush();
+
+      const mlxTask = Object.values(useTasks.getState().tasks).find((t) => t.kind === "mlx-install")!;
+      expect(mlxTask.status).toBe("error");
+      expect(mlxTask.error).toBe("当前设备不支持 Apple 芯片 MLX 加速");
+      expect(task(modelDownloadId).status).toBe("error");
+      expect(task(modelDownloadId).error).toBe("当前设备不支持 Apple 芯片 MLX 加速");
+    });
+
+    it("if switchModel() SUCCEEDS after the mlx row already completed (transitioned to downloading), the mlx row is NOT touched again on settle", async () => {
+      let listener: ((p: SwitchModelProgress | null) => void) | null = null;
+      const handle = fakeHandle({
+        switchModelProgress$: (l) => {
+          listener = l;
+          return () => {};
+        },
+        switchModel: async () => {
+          listener!({ phase: "mlx-venv" });
+          listener!({ phase: "downloading", progress: 1 });
+          listener!({ phase: "restarting" });
+        },
+      });
+      trackSwitchModel(handle, "parakeet-tdt-0.6b-v3");
+      await flush();
+
+      const mlxTask = Object.values(useTasks.getState().tasks).find((t) => t.kind === "mlx-install")!;
+      expect(mlxTask.status).toBe("done"); // completed at the "downloading" transition, untouched since
+    });
+  });
+
   it("on success: marks the task done and unsubscribes from progress", async () => {
     const unsubscribe = vi.fn();
     const handle = fakeHandle({

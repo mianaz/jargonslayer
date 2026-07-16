@@ -4,13 +4,14 @@
 // contract) — every test drives `runEffects` directly with a
 // (state, effects) pair exactly as `initial()`/`transition()`
 // (provisionMachine.test.ts) already prove those functions return.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
-import type { Effect, MachineState, ProvisionMarker } from "../provisionMachine";
+import { MARKER_SCHEMA_VERSION, type Effect, type MachineState, type ProvisionMarker } from "../provisionMachine";
 import { getAppPaths, runEffects, stopServer, type RunnerDeps } from "../provisionRunner";
 import type { InvokeFn, ListenFn, TauriEvent } from "../tauriApi";
 import { pythonInstall, venvCreate, type DesktopPaths } from "../uvCommands";
+import { resetMlxCapsCache } from "../mlxCaps";
 
 const paths: DesktopPaths = {
   appData: "/fake/AppData",
@@ -129,6 +130,117 @@ describe("runEffects — CHECKING (probeHealth + readMarker -> CHECK_RESULT)", (
       deps,
     );
     expect(event).toEqual({ type: "CHECK_RESULT", probeHealthy: false, markerRaw: null });
+  });
+});
+
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Provision, F14) — CHECKING's own conditional mlx-usability probe:
+// ONLY reached when the just-read marker parses to an
+// MLX_ONLY_MARKER_MODELS member. mlxCaps.ts's own module-level cache is
+// reset around every test here (probeMlxCapabilitiesWith, reused
+// verbatim by provisionRunner.ts's probeMlxUsable, writes into that
+// SAME shared cache) so these tests stay isolated from each other and
+// from mlxCaps.test.ts's own suite.
+describe("runEffects — CHECKING's conditional mlx-usability probe (F14)", () => {
+  beforeEach(() => resetMlxCapsCache());
+  afterEach(() => resetMlxCapsCache());
+
+  const parakeetMarkerJson = JSON.stringify({
+    schema: MARKER_SCHEMA_VERSION,
+    model: "parakeet-tdt-0.6b-v3",
+    py: "3.12",
+    deps: "x",
+    ts: "t",
+  } satisfies ProvisionMarker);
+
+  it("a WHISPER-family marker never triggers mlx_capabilities/mlx_import_preflight at all", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      read_provision_marker: () => "the-marker-json", // unparseable -> null marker either way
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = {
+      invoke,
+      listen,
+      settings: DEFAULT_SETTINGS,
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toEqual({ type: "CHECK_RESULT", probeHealthy: false, markerRaw: "the-marker-json" });
+    expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker"]); // never mlx_capabilities/mlx_import_preflight
+  });
+
+  it("a parakeet marker + mlx_capabilities{mlxSupported:true} + a clean mlx_import_preflight -> mlxUsable:true", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: true }),
+      mlx_import_preflight: () => ({ ok: true, stderr: "" }),
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = {
+      invoke,
+      listen,
+      settings: DEFAULT_SETTINGS,
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toEqual({
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsable: true,
+    });
+    expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities", "mlx_import_preflight"]);
+  });
+
+  it("mlx_capabilities{mlxSupported:false} -> mlxUsable:false, and mlx_import_preflight is never even called (hardware fails fast)", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: false, reason: "需要 Apple 芯片（M 系列）" }),
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toMatchObject({ mlxUsable: false });
+    expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities"]);
+  });
+
+  it("mlx_capabilities OK but mlx_import_preflight{ok:false} (venv invalid) -> mlxUsable:false", async () => {
+    const { invoke } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: true }),
+      mlx_import_preflight: () => ({ ok: false, stderr: "ModuleNotFoundError: parakeet_mlx" }),
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toMatchObject({ mlxUsable: false });
+  });
+
+  it("a mlx_import_preflight invoke() REJECTION (e.g. the venv/python itself no longer exists) fails CLOSED to mlxUsable:false, never throws", async () => {
+    const { invoke } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: true }),
+      mlx_import_preflight: () => {
+        throw new Error("ENOENT");
+      },
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toMatchObject({ mlxUsable: false });
+  });
+
+  it("a mlx_capabilities invoke() REJECTION also fails CLOSED to mlxUsable:false (probeMlxCapabilitiesWith's own contract)", async () => {
+    const { invoke } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => {
+        throw new Error("ipc failure");
+      },
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toMatchObject({ mlxUsable: false });
   });
 });
 

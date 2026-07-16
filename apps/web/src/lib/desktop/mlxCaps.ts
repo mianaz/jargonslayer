@@ -41,6 +41,23 @@ import { IS_DESKTOP } from "../platform/desktop";
 
 // {mlxSupported, reason} camelCase — §3.4's mlx_capabilities() wire
 // shape (native arm64 + macOS >= 14.0 + mlx pinned, §C Gating).
+//
+// NOTE (worker A2, cross-lane observation, deliberately NOT fixed
+// here): the now-landed Rust struct (apps/desktop/src-tauri/src/
+// mlxcaps.rs) is `MlxCapabilities { mlx_supported: bool, reason:
+// Option<String> }` — serde's default Option<T> encoding always emits
+// the KEY with an explicit JSON `null`, never omits it, so the more
+// accurate TS type is `reason: string | null` (matching audiocapCaps.
+// ts's/osspeechCaps.ts's own identical convention for the SAME Option<
+// String> shape) rather than this prelude-authored `reason?: string`.
+// Tried tightening it locally; reverted — worker A3's own ModelPicker.
+// render.test.tsx already constructs several `MlxCapabilities` literals
+// typed `{mlxSupported: true}` (no `reason` key at all), which only
+// type-checks under the CURRENT optional shape. Every real call site in
+// EITHER worker's code already reads `caps.reason || fallback`, so this
+// is purely a type-precision gap (not a runtime bug) — flagged for the
+// lead to reconcile across worker A2/A3's touch lists rather than
+// fixed unilaterally here.
 export interface MlxCapabilities {
   mlxSupported: boolean;
   reason?: string;
@@ -139,4 +156,34 @@ export function resetMlxCapsCache(): void {
   cached = null;
   inFlight = null;
   listeners.clear();
+}
+
+/** Worker A2's resolution of the header NOTE's sharp edge above: the
+ *  REAL "重试" affordance a caller wires per §C Gating ("a user-visible
+ *  retry" on a fail-closed probe error) — distinct from
+ *  resetMlxCapsCache() in exactly the one way that matters for a live
+ *  retry button: it does NOT clear `listeners`, so a caller's own
+ *  subscription (registered once, e.g. via subscribeMlxCaps in a
+ *  useEffect) stays intact and fires when THIS re-probe resolves,
+ *  instead of silently going dead the way it would after
+ *  resetMlxCapsCache()'s test-only full reset. Always performs a FRESH
+ *  round-trip — ignores (but does not itself clear) any current
+ *  `cached` value, unlike probeMlxCaps()'s short-circuit — and shares
+ *  its result as the new `inFlight` promise, so a concurrent
+ *  probeMlxCaps() call made while a refresh is in progress joins THIS
+ *  SAME re-probe rather than firing a second one. Same IS_DESKTOP guard
+ *  and FAIL_CLOSED-on-error policy as probeMlxCaps()/
+ *  probeMlxCapabilitiesWith() above (a successful resolution — true OR
+ *  false — is cached and notified; an error is deliberately left
+ *  uncached, so the very next call gets to try again). */
+export function refreshMlxCaps(): Promise<MlxCapabilities> {
+  if (!IS_DESKTOP) return Promise.resolve(FAIL_CLOSED);
+  const probe: Promise<MlxCapabilities> = getInvoke()
+    .then((invoke) => probeMlxCapabilitiesWith(invoke))
+    .catch(() => FAIL_CLOSED) // getInvoke() itself failing — same fail-closed policy as probeMlxCaps()
+    .finally(() => {
+      if (inFlight === probe) inFlight = null;
+    });
+  inFlight = probe;
+  return probe;
 }

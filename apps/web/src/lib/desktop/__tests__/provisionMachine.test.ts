@@ -8,8 +8,10 @@ import { describe, expect, it } from "vitest";
 import type { DesktopPaths } from "../uvCommands";
 import { pipInstall, pythonInstall, venvCreate } from "../uvCommands";
 import {
+  ALLOWED_MARKER_MODELS,
   MARKER_SCHEMA_VERSION,
   MAX_RESTARTS_PER_WINDOW,
+  MLX_ONLY_MARKER_MODELS,
   POLLING_HEALTH_ATTEMPT_CAP,
   RESTART_WINDOW_MS,
   decideRestart,
@@ -168,6 +170,124 @@ describe("transition — CHECK_RESULT", () => {
     expect(transition(ctx, healthy, { type: "CHECK_RESULT", probeHealthy: false, markerRaw: null })).toEqual({
       state: healthy,
       effects: [],
+    });
+  });
+});
+
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Provision, F14) — marker capability-check + quarantine: a
+// parakeet-family marker must be capability-checked BEFORE ever
+// reaching STARTING (Sol finding #14's fix), never a health-timeout
+// restart loop.
+describe("transition — CHECK_RESULT quarantine (F14, mlx-family marker)", () => {
+  const checking: MachineState = { phase: "CHECKING" };
+  const parakeetMarkerJson = JSON.stringify({
+    schema: MARKER_SCHEMA_VERSION,
+    model: "parakeet-tdt-0.6b-v3",
+    py: "3.12",
+    deps: "x",
+    ts: "t",
+  });
+
+  it("ALLOWED_MARKER_MODELS/MLX_ONLY_MARKER_MODELS both include parakeet-tdt-0.6b-v3", () => {
+    expect(ALLOWED_MARKER_MODELS).toContain("parakeet-tdt-0.6b-v3");
+    expect(MLX_ONLY_MARKER_MODELS).toEqual(["parakeet-tdt-0.6b-v3"]);
+  });
+
+  it("mlxUsable:true (confirmed usable) -> ordinary provisioned-dead STARTING, same as any other marker model", () => {
+    expect(
+      transition(ctx, checking, {
+        type: "CHECK_RESULT",
+        probeHealthy: false,
+        markerRaw: parakeetMarkerJson,
+        mlxUsable: true,
+      }),
+    ).toEqual({
+      state: { phase: "STEP", step: "STARTING", status: "RUNNING" },
+      effects: [{ kind: "startServer", model: "parakeet-tdt-0.6b-v3" }],
+    });
+  });
+
+  it("mlxUsable:false (hardware unsupported OR mlx-venv invalid) -> QUARANTINE: a FRESH INSTALL_PYTHON entry for 'small', ignoring the marker's own model entirely", () => {
+    const result = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsable: false,
+    });
+    expect(result).toEqual({
+      state: { phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" },
+      effects: [{ kind: "runUv", command: pythonInstall(paths) }],
+    });
+  });
+
+  it("mlxUsable OMITTED (undefined) for a parakeet marker ALSO quarantines — fail-CLOSED: unknown usability is treated exactly like confirmed-unusable, never like confirmed-usable", () => {
+    const result = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      // mlxUsable deliberately omitted
+    });
+    expect(result.state).toEqual({ phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" });
+  });
+
+  it("the quarantine shape is IDENTICAL to a brand-new install's own fresh-provision entry — bootstrap.ts's isFreshProvisionEntry recognizes it for free, no special-casing needed", () => {
+    const fresh = transition(ctx, checking, { type: "CHECK_RESULT", probeHealthy: false, markerRaw: null });
+    const quarantined = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsable: false,
+    });
+    expect(quarantined.state).toEqual(fresh.state);
+  });
+
+  it("a WHISPER-family marker's own CHECK_RESULT is completely unaffected by mlxUsable (even a stray true/false on a non-mlx marker changes nothing)", () => {
+    const withTrue = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: validMarkerJson,
+      mlxUsable: true,
+    });
+    const withFalse = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: validMarkerJson,
+      mlxUsable: false,
+    });
+    const withoutField = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: validMarkerJson,
+    });
+    expect(withTrue).toEqual(withFalse);
+    expect(withTrue).toEqual(withoutField);
+    expect(withTrue.state).toEqual({ phase: "STEP", step: "STARTING", status: "RUNNING" });
+  });
+});
+
+describe("ProvisionStep — INSTALL_MLX is a real step identity, deliberately NOT auto-advanced (§C Provision)", () => {
+  it("STEP_OK for a live INSTALL_MLX/RUNNING state is a harmless no-op (no successor defined in STEP_ORDER)", () => {
+    const state: MachineState = { phase: "STEP", step: "INSTALL_MLX", status: "RUNNING" };
+    expect(transition(ctx, state, { type: "STEP_OK", step: "INSTALL_MLX" })).toEqual({ state, effects: [] });
+  });
+
+  it("STEP_ERROR for INSTALL_MLX parks it in ERROR like any other step", () => {
+    const state: MachineState = { phase: "STEP", step: "INSTALL_MLX", status: "RUNNING" };
+    expect(
+      transition(ctx, state, { type: "STEP_ERROR", step: "INSTALL_MLX", error: "pip failed", retriable: true }),
+    ).toEqual({
+      state: { phase: "STEP", step: "INSTALL_MLX", status: "ERROR", error: "pip failed", retriable: true },
+      effects: [],
+    });
+  });
+
+  it("CRASH_RESTART never lands on INSTALL_MLX — it always re-enters STARTING regardless of the model", () => {
+    const healthy: MachineState = { phase: "HEALTHY" };
+    expect(transition(ctx, healthy, { type: "CRASH_RESTART" }).state).toEqual({
+      phase: "STEP",
+      step: "STARTING",
+      status: "RUNNING",
     });
   });
 });

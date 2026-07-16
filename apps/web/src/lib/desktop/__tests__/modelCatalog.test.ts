@@ -8,15 +8,16 @@ import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "../modelCatalog";
 import { ALLOWED_MARKER_MODELS } from "../provisionMachine";
 
 describe("MODEL_CATALOG", () => {
-  it("every SELECTABLE (available !== false) catalog id is a member of provisionMachine.ts's ALLOWED_MARKER_MODELS (the Rust/marker allowlist) — catalog ⊆ allowlist", () => {
-    // S12a prelude carve-out: the parakeet-tdt-0.6b-v3 stub (available:
-    // false, see modelCatalog.ts's own doc) is deliberately NOT yet in
-    // ALLOWED_MARKER_MODELS — that list is worker A2's own
-    // provisionMachine.ts edit (§C L1), landing alongside the rest of
-    // the parakeet install/marker lane. This invariant only ever
-    // meant "an offered model", so it's scoped to offered entries.
+  it("every catalog id (including the not-yet-offered parakeet stub) is a member of provisionMachine.ts's ALLOWED_MARKER_MODELS (the Rust/marker allowlist) — catalog ⊆ allowlist", () => {
+    // S12a (§C L1 prelude's carve-out, now removed): worker A2's own
+    // provisionMachine.ts edit adds parakeet-tdt-0.6b-v3 to
+    // ALLOWED_MARKER_MODELS alongside the rest of the parakeet install/
+    // marker/quarantine lane, so the invariant is exact again —
+    // `available:false` gates UI OFFERING (ModelPicker.tsx, worker A3),
+    // not marker/Rust validity, and a parakeet marker is now a fully
+    // real, quarantine-checked possibility (handleCheckResult's own
+    // mlx-usability branch) even before the catalog flips it selectable.
     for (const entry of MODEL_CATALOG) {
-      if (entry.available === false) continue;
       expect(ALLOWED_MARKER_MODELS).toContain(entry.id);
     }
   });
