@@ -42,6 +42,22 @@ export interface ModelCatalogEntry {
   /** true for exactly ONE entry (medium) — the honest zh-en default
    *  (blueprint decision A) — drives the picker's own 推荐 chip. */
   recommended: boolean;
+  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+   *  R1) — true only for the parakeet entry: requires the separate,
+   *  hash-locked MLX venv (uvCommands.ts's DesktopPaths mlx fields) and
+   *  gates on mlxCaps.ts's mlx_capabilities() probe, unlike every other
+   *  (whisper-family) entry here, which shares the one base venv and
+   *  has no capability gate at all. Undefined/omitted reads as false —
+   *  every existing entry below is left unannotated on purpose. */
+  mlxOnly?: boolean;
+  /** S12a prelude stub flag (§C L1): false while an entry exists in
+   *  this catalog only to pin its shape but must NOT be selectable/
+   *  offered yet. Worker B2 flips this true once the parakeet install +
+   *  backend lane is verified end-to-end (§C, merge gates). Undefined/
+   *  omitted reads as available — every existing (already-shippable)
+   *  entry below is left unannotated on purpose; ModelPicker.tsx's own
+   *  gating (worker A3) is what actually enforces this. */
+  available?: boolean;
 }
 
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
@@ -76,6 +92,24 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     macSpeedHint: "比 large-v3 快约 4 倍，Mac 本机流畅",
     qualityHint: "英文场景精度高，中文稍弱于 large-v3",
     recommended: false,
+  },
+  // S12a (v0.4.4) stub — §C L1's prelude commit, §C Product/L3's opt-in
+  // copy verbatim ("英文加速 · Apple 芯片 · 约 2.5 GB", NO 推荐 chip; zh
+  // strings get a later 4.6 pass, not polished here). `available: false`
+  // keeps this UNSELECTABLE/unoffered until worker B2 flips it once the
+  // parakeet install + backend lane is verified end-to-end — see this
+  // module's own ModelCatalogEntry doc above. Live repo size is 2.51 GB
+  // (§C R1 F12) — displayed rounded, matching this catalog's own
+  // one-decimal-GB convention elsewhere.
+  {
+    id: "parakeet-tdt-0.6b-v3",
+    label: "英文加速 · Apple 芯片 · 约 2.5 GB",
+    size: "~2.5GB",
+    macSpeedHint: "仅 Apple 芯片（M 系列）可用，MLX 本机加速",
+    qualityHint: "英文识别更快；中英混说效果待验证（M1 探针）",
+    recommended: false,
+    mlxOnly: true,
+    available: false,
   },
 ] as const;
 

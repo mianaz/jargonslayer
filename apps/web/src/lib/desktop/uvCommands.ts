@@ -37,6 +37,27 @@ export interface DesktopPaths {
   diarRequirementsPath: string;
   logPath: string;
   markerPath: string;
+  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+   *  R1) — the separate, hash-locked MLX venv beside the base `venvDir`
+   *  above (parakeet's own isolated venv: airtight isolation from the
+   *  base whisper venv per §C R1's numba-conflict note). Optional
+   *  because paths.rs's `AppPaths` doesn't grow the matching
+   *  `mlx_venv_dir` field until worker A1 lands it — a real
+   *  `app_paths()` round-trip omits this key entirely until then, so
+   *  marking it required here would lie about what's actually on the
+   *  wire today. */
+  mlxVenvDir?: string;
+  /** mlxVenvDir's own venv/bin/python (mac) equivalent — see
+   *  mlxVenvDir's doc above for why this stays optional pending worker
+   *  A1's paths.rs `mlx_venv_python` field. */
+  mlxVenvPython?: string;
+  /** The bundled, hash-pinned `requirements-mlx.lock` resource path
+   *  (§C R1's lock strategy — `uv pip compile --generate-hashes`, the
+   *  lockfile IS the SBOM) — same "bundled Tauri resource" shape as
+   *  `requirementsPath`/`diarRequirementsPath` above. Optional pending
+   *  worker A1's paths.rs `mlx_requirements_lock_path` field; see
+   *  mlxVenvDir's doc above for the same rationale. */
+  mlxRequirementsLockPath?: string;
 }
 
 /** {args,env} — exactly what S3 chunk 3's `run_uv(args, env)` command

@@ -34,6 +34,13 @@ import { diagLog } from "../diag/log";
 // "os-speech-asset" joins the same list — jobsBridge.ts's
 // trackOsSpeechAsset is its only writer (also desktop-only; the
 // osspeech engine/its preinstall button never exist on a web build).
+//
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C L1
+// prelude) — "mlx-install" joins the same list for the parakeet/MLX
+// venv provisioning lane (§Provision state machine's INSTALL_MLX
+// ProvisionStep). This prelude only reserves the kind (no writer yet);
+// worker A2's provisionMachine.ts/bootstrap.ts wiring is what actually
+// starts a task of this kind — also desktop-only.
 export type TaskKind =
   | "import-audio"
   | "import-video"
@@ -41,7 +48,8 @@ export type TaskKind =
   | "import-text"
   | "model-download"
   | "diar-install"
-  | "os-speech-asset";
+  | "os-speech-asset"
+  | "mlx-install";
 export type TaskStatus = "running" | "done" | "error";
 
 export interface TaskState {
