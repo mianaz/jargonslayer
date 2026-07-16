@@ -16,13 +16,16 @@
 //     include an `available: true` mlxOnly row (the real catalog's own
 //     parakeet stub stays `available: false` until worker B2 flips it —
 //     see modelCatalog.ts's own doc comment on that field).
-//   - mlxCaps.ts: a hand-rolled fake reproducing its own DOCUMENTED
-//     cache contract (a definitive resolution IS cached; a probe error
-//     is deliberately NOT) closely enough for ModelPicker's own
-//     mlxGateFor/useMlxCaps to exercise all three real states
-//     (supported / definitively unsupported / errored-fail-closed)
-//     end-to-end, including the errored-only 重试 affordance calling
-//     mlxCaps.ts's own (still A2-owned) refreshMlxCaps.
+//   - mlxCaps.ts: a hand-rolled fake matching A2's PINNED contract (§D
+//     F7 fix round): probeMlxCaps()/refreshMlxCaps() resolve an
+//     EXPLICIT `{status: "ok" | "error", caps: MlxCapabilities}`
+//     envelope (superseding the earlier cache-identity heuristic both
+//     reviewers flagged as race-sensitive), and `MlxCapabilities.reason`
+//     is `string | null` (not optional) — every literal below carries it
+//     explicitly. Exercises all three real states (supported /
+//     definitively unsupported / errored-fail-closed) end-to-end,
+//     including the errored-only 重试 affordance calling mlxCaps.ts's
+//     own (still A2-owned) refreshMlxCaps.
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
@@ -92,30 +95,45 @@ const { MOCK_CATALOG } = vi.hoisted(() => {
 vi.mock("@/lib/desktop/modelCatalog", () => ({ MODEL_CATALOG: MOCK_CATALOG }));
 
 // mlxCaps.ts fake — see this suite's own header doc for why this
-// reproduces the real module's cache contract instead of stubbing a
+// matches A2's pinned `{status, caps}` contract (§D F7) instead of a
 // trivial constant. Built via vi.hoisted for the SAME reason MOCK_CATALOG
 // is above (the vi.mock factory below is hoisted above plain top-level
-// declarations). `mlxState.cached` mirrors that module's own module-level
-// `cached` variable; `mlxState.probeImpl`/`mlxState.refreshImpl` are
-// reassigned per-test (mutating the SAME hoisted object, not rebinding a
-// module-level `let`) to drive the three real probe outcomes.
+// declarations). `mlxState.cached` mirrors mlxCaps.ts's own module-level
+// `cached` variable (still read by getMlxCapsSnapshot, and used by
+// ModelPicker's initial-render/loading-state path); `mlxState.probeImpl`/
+// `mlxState.refreshImpl` are reassigned per-test (mutating the SAME
+// hoisted object, not rebinding a module-level `let`) to drive the three
+// real probe outcomes via their own EXPLICIT `status`.
+type MlxProbeResult = { status: "ok" | "error"; caps: MlxCapabilities };
+
 const mlxState = vi.hoisted(() => {
   const state: {
     cached: MlxCapabilities | null;
-    probeImpl: () => Promise<MlxCapabilities>;
-    refreshImpl: () => Promise<MlxCapabilities>;
+    probeImpl: () => Promise<{ status: "ok" | "error"; caps: MlxCapabilities }>;
+    refreshImpl: () => Promise<{ status: "ok" | "error"; caps: MlxCapabilities }>;
   } = {
     cached: null,
     probeImpl: async () => {
-      const result: MlxCapabilities = { mlxSupported: true };
-      state.cached = result;
-      return result;
+      const caps: MlxCapabilities = { mlxSupported: true, reason: null };
+      state.cached = caps;
+      return { status: "ok", caps };
     },
     refreshImpl: () => state.probeImpl(),
   };
   return state;
 });
 const refreshMlxCapsSpy = vi.hoisted(() => vi.fn());
+
+/** ok()/errorResult() build a {status, caps} envelope AND (ok only)
+ *  write mlxState.cached — mirrors mlxCaps.ts's own pinned contract:
+ *  a successful resolution is cached, an error deliberately is not. */
+function ok(caps: MlxCapabilities): MlxProbeResult {
+  mlxState.cached = caps;
+  return { status: "ok", caps };
+}
+function errorResult(caps: MlxCapabilities): MlxProbeResult {
+  return { status: "error", caps };
+}
 
 vi.mock("@/lib/desktop/mlxCaps", () => ({
   getMlxCapsSnapshot: () => mlxState.cached,
@@ -137,16 +155,13 @@ describe("ModelPicker", () => {
   let root: Root | null = null;
 
   beforeEach(() => {
-    // Default: parakeet reads mlxSupported — every base (non-gating)
-    // test below therefore treats it as an ordinary selectable row,
-    // same as every other entry, unless a test explicitly overrides
-    // mlxState.probeImpl/mlxState.cached for its own gating scenario.
+    // Default: parakeet reads mlxSupported (status "ok") — every base
+    // (non-gating) test below therefore treats it as an ordinary
+    // selectable row, same as every other entry, unless a test
+    // explicitly overrides mlxState.probeImpl/mlxState.cached for its
+    // own gating scenario.
     mlxState.cached = null;
-    mlxState.probeImpl = async () => {
-      const result: MlxCapabilities = { mlxSupported: true };
-      mlxState.cached = result;
-      return result;
-    };
+    mlxState.probeImpl = async () => ok({ mlxSupported: true, reason: null });
     mlxState.refreshImpl = () => mlxState.probeImpl();
     refreshMlxCapsSpy.mockClear();
   });
@@ -273,8 +288,7 @@ describe("ModelPicker", () => {
   // --- S12a mlxOnly gating (§C Gating F13) ---
 
   it("mlxOnly row is selectable (not disabled, no reason) when caps report mlxSupported", async () => {
-    mlxState.cached = { mlxSupported: true };
-    mlxState.probeImpl = async () => (mlxState.cached = { mlxSupported: true });
+    mlxState.probeImpl = async () => ok({ mlxSupported: true, reason: null });
     const onChange = vi.fn();
     await mount("small", onChange);
 
@@ -291,8 +305,7 @@ describe("ModelPicker", () => {
 
   it("mlxOnly row renders DISABLED with real disabled + aria-disabled + caps' own reason when caps definitively report unsupported — no retry affordance (retrying can't change the answer)", async () => {
     const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
-    mlxState.cached = { mlxSupported: false, reason };
-    mlxState.probeImpl = async () => (mlxState.cached = { mlxSupported: false, reason });
+    mlxState.probeImpl = async () => ok({ mlxSupported: false, reason });
     const onChange = vi.fn();
     await mount("small", onChange);
 
@@ -308,9 +321,8 @@ describe("ModelPicker", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("mlxOnly row falls back to the fixed fallback reason copy when a definitively-unsupported result carries no reason of its own", async () => {
-    mlxState.cached = { mlxSupported: false };
-    mlxState.probeImpl = async () => (mlxState.cached = { mlxSupported: false });
+  it("mlxOnly row falls back to the fixed fallback reason copy when a definitively-unsupported result carries no reason of its own (reason: null)", async () => {
+    mlxState.probeImpl = async () => ok({ mlxSupported: false, reason: null });
     await mount("small", () => {});
 
     const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')!;
@@ -318,7 +330,7 @@ describe("ModelPicker", () => {
   });
 
   it("mlxOnly row is DISABLED (fail-closed) while the caps probe is still in flight (not yet resolved)", async () => {
-    let resolveProbe!: (caps: MlxCapabilities) => void;
+    let resolveProbe!: (result: MlxProbeResult) => void;
     mlxState.probeImpl = () =>
       new Promise((resolve) => {
         resolveProbe = resolve;
@@ -336,17 +348,16 @@ describe("ModelPicker", () => {
     expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3-retry"]')).toBeNull();
 
     await act(async () => {
-      resolveProbe((mlxState.cached = { mlxSupported: true }));
+      resolveProbe(ok({ mlxSupported: true, reason: null }));
     });
     expect((container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement).disabled).toBe(
       false,
     );
   });
 
-  it("mlxOnly row DISABLED + a user-visible 重试 affordance when the caps probe ERRORS (fail-closed, never cached) — clicking 重试 calls the caps refresh, and a successful refresh re-enables the row", async () => {
+  it("mlxOnly row DISABLED + a user-visible 重试 affordance when the caps probe returns status:\"error\" (fail-closed) — clicking 重试 calls the caps refresh, and a status:\"ok\" refresh re-enables the row", async () => {
     const FAIL_CLOSED: MlxCapabilities = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
-    mlxState.cached = null;
-    mlxState.probeImpl = async () => FAIL_CLOSED; // deliberately does NOT write `cached` — mirrors mlxCaps.ts's own error-path contract
+    mlxState.probeImpl = async () => errorResult(FAIL_CLOSED);
     const onChange = vi.fn();
     await mount("small", onChange);
 
@@ -359,10 +370,9 @@ describe("ModelPicker", () => {
     ) as HTMLButtonElement;
     expect(retryBtn).not.toBeNull();
 
-    // A successful refresh (mirrors refreshMlxCaps() writing into the
-    // shared cache on success, per mlxCaps.ts's own documented contract)
-    // re-enables the row and drops the retry affordance.
-    mlxState.refreshImpl = async () => (mlxState.cached = { mlxSupported: true });
+    // A status:"ok" refresh re-enables the row and drops the retry
+    // affordance — driven purely by the explicit status, per §D F7.
+    mlxState.refreshImpl = async () => ok({ mlxSupported: true, reason: null });
     await act(async () => {
       retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -378,16 +388,39 @@ describe("ModelPicker", () => {
     expect(onChange).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
   });
 
-  it("a still-erroring retry (refresh also fails, fail-closed) leaves the row disabled with the retry affordance intact", async () => {
+  // §D F7 regression: under the OLD reference-identity heuristic, a
+  // status:"ok" resolution that (for whatever timing reason) did NOT
+  // land in mlxState.cached before this component read it back would
+  // have been misclassified as "errored" — the exact race both
+  // reviewers flagged. The explicit `status` field makes that
+  // impossible: `ok()` below deliberately does NOT write mlxState.cached
+  // (unlike every other "ok" case above), yet the row must still read
+  // as genuinely selectable, not errored/retry-able.
+  it("a status:\"ok\" resolution reads as selectable even when it doesn't land in the shared cache (the exact identity-race F7 fixed)", async () => {
+    mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
+    const onChange = vi.fn();
+    await mount("small", onChange);
+
+    const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+    expect(row.disabled).toBe(false);
+    expect(row.getAttribute("aria-disabled")).toBeNull();
+    expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3-retry"]')).toBeNull();
+
+    act(() => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
+  });
+
+  it("a still-erroring retry (refresh also returns status:\"error\") leaves the row disabled with the retry affordance intact", async () => {
     const FAIL_CLOSED: MlxCapabilities = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
-    mlxState.cached = null;
-    mlxState.probeImpl = async () => FAIL_CLOSED;
+    mlxState.probeImpl = async () => errorResult(FAIL_CLOSED);
     await mount("small", () => {});
 
     const retryBtn = container!.querySelector(
       '[data-testid="model-option-parakeet-tdt-0.6b-v3-retry"]',
     ) as HTMLButtonElement;
-    mlxState.refreshImpl = async () => FAIL_CLOSED; // still errors, still uncached
+    mlxState.refreshImpl = async () => errorResult(FAIL_CLOSED); // still errors, still uncached
     await act(async () => {
       retryBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -399,8 +432,7 @@ describe("ModelPicker", () => {
   });
 
   it("non-mlxOnly rows are never gated by caps state, even while parakeet is disabled/errored", async () => {
-    mlxState.cached = null;
-    mlxState.probeImpl = async () => ({ mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" });
+    mlxState.probeImpl = async () => errorResult({ mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" });
     await mount("small", () => {});
     for (const entry of VISIBLE) {
       if (entry.mlxOnly) continue;

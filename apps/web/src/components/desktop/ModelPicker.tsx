@@ -42,6 +42,18 @@
 //      SHIPPED entry today) is entirely unaffected — mlxGateFor is a
 //      structural no-op for it, same "no-op for every other value"
 //      shape as osspeechCaps.ts's own isOsSpeechFloorLocked.
+//
+// S12a fix round (§D F7, LOW, both reviewers) — errored-vs-unsupported
+// used to be INFERRED from mlxCaps.ts's cache-identity contract
+// (comparing a settled probe against getMlxCapsSnapshot() by
+// reference), which both reviewers flagged as race-sensitive under a
+// refresh/probe overlap (fail-closed direction still held — it could
+// only ever misclassify a SUCCESS as an error, never the reverse, but
+// that's still a real UX bug: a spuriously-shown 重试 button on a
+// genuinely-resolved answer). Fixed at the SOURCE instead: A2's pinned
+// contract (§D F7) has probeMlxCaps()/refreshMlxCaps() return an
+// EXPLICIT `{status: "ok" | "error", caps}` envelope — mlxGateFor/
+// useMlxCaps below consume that status directly, no inference left.
 import { useEffect, useState } from "react";
 import { ArrowClockwise, WarningCircle } from "@phosphor-icons/react";
 import { handleButtonKeyDown } from "@/lib/a11y";
@@ -61,7 +73,7 @@ export interface ModelPickerProps {
 
 // §C Gating F13's own fallback copy, verbatim — used whenever a
 // definitively-unsupported probe result carries no `reason` of its own
-// (mlxCaps.ts's wire shape has `reason` as optional).
+// (mlxCaps.ts's pinned wire shape, §D F7: `reason: string | null`).
 const MLX_UNSUPPORTED_REASON_FALLBACK = "需要 Apple 芯片（M 系列），macOS 14 或更高";
 
 interface MlxGate {
@@ -71,8 +83,8 @@ interface MlxGate {
   reason: string | null;
   /** Only true on a genuine probe ERROR (fail-closed) — never on a
    *  DEFINITIVE unsupported result, where retrying can't change the
-   *  answer. See mlxGateFor's own doc comment for how the two are told
-   *  apart without mlxCaps.ts exposing an explicit errored flag. */
+   *  answer. Sourced directly from A2's pinned `status` field (§D F7) —
+   *  see mlxGateFor's own doc comment. */
   showRetry: boolean;
 }
 
@@ -85,16 +97,12 @@ const MLX_NOT_GATED: MlxGate = { disabled: false, reason: null, showRetry: false
  *  disabled) for every non-mlxOnly entry — every catalog entry shipped
  *  today.
  *
- *  Distinguishing "errored" from "definitively unsupported" (spec'd
- *  separately: only the former grows a 重试 affordance) leans on
- *  mlxCaps.ts's own DOCUMENTED cache contract (its header comment: "A
- *  definitive... response... IS cached and trusted either way — only an
- *  actual probe ERROR is deliberately left uncached") rather than on any
- *  private constant of that module: `resolved` is whatever this
- *  specific probe/refresh call settled to; if it's the SAME object
- *  `getMlxCapsSnapshot()` now returns, this resolution was cached, i.e.
- *  a genuine (successful) answer — anything else means it hit the
- *  fail-closed, never-cached error path. */
+ *  §D F7 fix round: "errored" is now the EXPLICIT `status === "error"`
+ *  A2's pinned probeMlxCaps()/refreshMlxCaps() contract hands back
+ *  (`Promise<{status: "ok" | "error", caps: MlxCapabilities}>`) — no
+ *  more inferring it from whether a resolution happened to get cached
+ *  (the prior reference-identity heuristic both reviewers flagged as
+ *  race-sensitive under a refresh/probe overlap). */
 function mlxGateFor(entry: ModelCatalogEntry, resolved: MlxCapabilities | null, errored: boolean): MlxGate {
   if (!entry.mlxOnly) return MLX_NOT_GATED;
   if (errored) {
@@ -112,9 +120,9 @@ function mlxGateFor(entry: ModelCatalogEntry, resolved: MlxCapabilities | null, 
  *  state — that module deliberately owns no hook of its own (see its own
  *  header doc), mirroring how every OTHER caps module in this codebase
  *  (osspeechCaps.ts's useOsSpeechCaps) resolves-on-mount +
- *  subscribes-for-later-resolutions. `errored` is derived alongside
- *  `resolved` on every settle (probe AND retry) — see mlxGateFor's own
- *  doc comment for exactly how. */
+ *  subscribes-for-later-resolutions. `errored` is set straight from
+ *  A2's pinned `{status, caps}` envelope on every settle (probe AND
+ *  retry, §D F7) — see mlxGateFor's own doc comment. */
 function useMlxCaps(): { resolved: MlxCapabilities | null; errored: boolean; retry: () => void } {
   const [resolved, setResolved] = useState<MlxCapabilities | null>(() => getMlxCapsSnapshot());
   const [errored, setErrored] = useState(false);
@@ -129,10 +137,10 @@ function useMlxCaps(): { resolved: MlxCapabilities | null; errored: boolean; ret
         setErrored(false);
       }
     });
-    void probeMlxCaps().then((result) => {
+    void probeMlxCaps().then(({ status, caps }) => {
       if (cancelled) return;
-      setResolved(result);
-      setErrored(getMlxCapsSnapshot() !== result);
+      setResolved(caps);
+      setErrored(status === "error");
     });
     return () => {
       cancelled = true;
@@ -141,9 +149,9 @@ function useMlxCaps(): { resolved: MlxCapabilities | null; errored: boolean; ret
   }, []);
 
   const retry = () => {
-    void refreshMlxCaps().then((result: MlxCapabilities) => {
-      setResolved(result);
-      setErrored(getMlxCapsSnapshot() !== result);
+    void refreshMlxCaps().then(({ status, caps }) => {
+      setResolved(caps);
+      setErrored(status === "error");
     });
   };
 
