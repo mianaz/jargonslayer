@@ -406,7 +406,7 @@
         <li>A full-screen wizard appears on first launch. On macOS 26+ its first screen is an engine choice: <strong>系统识别 (System Speech, zero install)</strong> — picking it skips provisioning entirely and the app is ready immediately — or <strong>Whisper (higher quality)</strong>, which continues the original flow. On the Whisper path nothing downloads until you click <code>开始安装</code>: it then installs an isolated Python runtime, faster-whisper, and the model you pick (medium pre-selected) entirely under the app's own data directory — never touching system Python.</li>
         <li>Two optional, skippable onboarding steps follow: connect OpenRouter (for AI detection/explanations) and add a Hugging Face token (for speaker diarization). See <a href="#desktop-app">Desktop App</a> below for details.</li>
       </ol>
-      <div class="callout local"><strong>Apple Silicon only</strong> — there is no Intel build. The app itself installs on older macOS, but the 系统/App 音频 engine specifically needs macOS 14.4+ and 系统识别 (System Speech) needs macOS 26+; below those versions each option shows disabled with an explanation.</div>
+      <div class="callout local"><strong>Apple Silicon only</strong> — there is no Intel build. The app itself installs on older macOS, but the 系统/App 音频 engine specifically needs macOS 14.4+, 系统识别 (System Speech) needs macOS 26+, and the 英文加速 (Parakeet) model needs macOS 14+; below those versions each option shows disabled with an explanation.</div>
 
       <h3>Web app</h3>
       <p>Try the <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">hosted preview</a> first — zero install. The fastest way to understand the product either way is the built-in demo: open the <code>≡</code> menu → <code>演示</code>, no microphone or API key needed.</p>
@@ -470,6 +470,7 @@ npm run dev
           <tr><td><strong>麦克风 · Soniox</strong> (Microphone, Soniox, experimental)</td><td>Soniox API key (BYOK)</td><td>Soniox realtime API, direct WSS under your key (cloud)</td><td>Same code-switched-zh-en case as the web build</td></tr>
           <tr><td><strong>系统/App 音频</strong> (System/App audio)</td><td>None — bundled, same local Whisper sidecar</td><td>Local machine</td><td>Hearing the other side of a meeting running in a native app (Zoom, Teams, WeChat), no virtual sound card</td></tr>
           <tr><td><strong>系统识别</strong> (System Speech, v0.4.3)</td><td>None — macOS native recognition, no model download, no Python</td><td>Local machine; audio never leaves the capturing process</td><td>First meeting right after install on macOS 26+; ~30 locales, glossary terms bias recognition; no speaker diarization, Chinese output may lack punctuation</td></tr>
+          <tr><td><strong>英文加速</strong> (Parakeet, v0.4.4)</td><td>Opt-in in the model picker (not default) — Apple Silicon (M-series) + macOS 14+ required, ~2.5GB download (~1GB MLX runtime included)</td><td>Local machine; audio never leaves the device</td><td>English-priority meetings; far faster than Whisper (~100x realtime in batch inference); no realtime speaker diarization yet</td></tr>
         </tbody>
       </table>
       <p>There is no browser-recognition engine on desktop, and desktop's tab-audio slot is <strong>系统/App 音频</strong> instead — see <a href="#desktop-app">Desktop App</a> below for the permission flow and what it captures.</p>
@@ -638,6 +639,7 @@ python whisper_server.py --model small</code></pre>
         <tbody>
           <tr><td>Audio, local Whisper / tab audio / system-app audio (desktop)</td><td>Local machine only — loopback websocket, or (system/app audio) a local process channel into the same bundled sidecar</td></tr>
           <tr><td>Audio, 系统识别 System Speech (desktop, macOS 26+)</td><td>Local machine only — transcribed inside the very process that captures it; audio crosses no channel, not even a local one</td></tr>
+          <tr><td>Audio, 英文加速 Parakeet (desktop, Apple Silicon)</td><td>Local machine only — same fully-local posture as local Whisper; the model itself is downloaded once from Hugging Face on first use</td></tr>
           <tr><td>Audio, browser recognition</td><td>On-device (local) on Chrome 139+ when a language pack is available; otherwise the browser vendor's speech service</td></tr>
           <tr><td>Audio/video file imports</td><td>Browser-local transcription; files are not uploaded</td></tr>
           <tr><td>Preview AI text</td><td>Project server memory only, then OpenRouter with <code>data_collection=allow</code></td></tr>
@@ -972,6 +974,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Soniox realtime engine (experimental, BYOK):</strong> aimed at code-switched zh-en; stays experimental until it clears the in-house benchmark.</li>
         <li><strong>System/App audio (desktop, macOS 14.4+):</strong> CoreAudio process-tap capture of what the Mac is playing, replacing desktop's old tab-audio slot — see <a href="#desktop-app">Desktop App</a>.</li>
         <li><strong>系统识别 System Speech (desktop, macOS 26+, v0.4.3):</strong> zero-install engine on macOS's native SpeechAnalyzer — no model download, no Python; audio never leaves the capturing process.</li>
+        <li><strong>英文加速 Parakeet (desktop, Apple Silicon, v0.4.4):</strong> opt-in, MLX-accelerated English engine in the model picker — far faster than Whisper (~100x realtime in batch), no realtime speaker diarization yet.</li>
         <li><strong>Chrome extension (Lite):</strong> MV3 side panel with live mic capture, the built-in dictionary, and on-device translation.</li>
         <li><strong>Background task center, engine dropdown, first-run onboarding, update check (desktop):</strong> see <a href="#desktop-app">Desktop App</a> for all four.</li>
       </ol>

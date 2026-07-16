@@ -729,6 +729,14 @@
       </div>
 
       <div class="feat c-cyan reveal">
+        <div class="feat-key">english acceleration — opt-in (desktop, v0.4.4)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>英文加速（桌面版，Apple 芯片，可选引擎）</b>：模型选择器里新增一个可选引擎「英文加速」，不是默认项。它跑在 Apple 芯片（M 系列）本机的 MLX 加速上，专攻英文，比 Whisper 快得多——批量转录约百倍实时。首次选用下载约 2.5GB（含约 1GB MLX 运行环境），音频照样不出这台机器。需要 macOS 14 及以上。注意：暂不支持实时说话人分离。</span>
+          <span class="lang-en"><b>English acceleration (desktop, Apple Silicon, opt-in)</b>: the model picker now offers an optional engine, 英文加速 — not the default. It runs on-device via MLX on Apple Silicon (M-series), is tuned for English, and is far faster than Whisper — roughly 100x realtime in batch transcription. First pick downloads about 2.5GB (including ~1GB MLX runtime); audio still never leaves this machine. Requires macOS 14+. Caveat: no realtime speaker diarization yet.</span>
+        </div>
+      </div>
+
+      <div class="feat c-cyan reveal">
         <div class="feat-key">bilingual transcript</div>
         <div class="feat-body">
           <span class="lang-zh"><b>双语字幕</b>：开启后英文每出一句，中文译文即刻跟在下方——会议还在开，你已经读完了；不用等会后报告再回头猜刚才讲了什么。</span>
