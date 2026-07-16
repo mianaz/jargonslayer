@@ -93,19 +93,30 @@ fn venv_for_model<'a>(paths: &'a AppPaths, model: &str) -> &'a Path {
 /// spawn gets, on top of whatever else that spawn already sets: HF_HOME
 /// stays EXACTLY as today (the caller still sets it separately — this fn
 /// deliberately does NOT touch it, so it can never introduce a second,
-/// conflicting cache root); HF_TOKEN only when a non-empty token is
-/// configured (Settings.hfToken, threaded the same way diarization's
-/// token already flows to the sidecar's own `--hf-token`/`$HF_TOKEN`
-/// fallback, `whisper_server.py:2519-2520` — Q6); HF_HUB_DISABLE_
-/// TELEMETRY=1 always (the "no new telemetry" invariant, blueprint §1
-/// non-goal e). Shared by prewarm_model (the first-run/download spawn)
-/// and start_server (the long-lived sidecar spawn) so the two spawns can
-/// never disagree on how a configured token reaches HF's resolver.
+/// conflicting cache root); HF_TOKEN only when a non-EMPTY-AFTER-TRIM
+/// token is configured (Settings.hfToken, threaded the same way
+/// diarization's token already flows to the sidecar's own `--hf-token`/
+/// `$HF_TOKEN` fallback, `whisper_server.py:2519-2520` — Q6);
+/// HF_HUB_DISABLE_TELEMETRY=1 always (the "no new telemetry" invariant,
+/// blueprint §1 non-goal e). Shared by prewarm_model (the first-run/
+/// download spawn) and start_server (the long-lived sidecar spawn) so
+/// the two spawns can never disagree on how a configured token reaches
+/// HF's resolver.
+///
+/// F8 (S12a fix round, §D): trims the token and treats a whitespace-
+/// only value as absent — the pre-fix `!token.is_empty()` check let
+/// "   " through, setting `HF_TOKEN="   "`, which Python's own
+/// `bool("   ")` reads as truthy (diar falsely armed even with no real
+/// token configured). Trimming BEFORE setting the env var (not just
+/// before the emptiness check) also keeps this Rust-side value in sync
+/// with A4's own Python-side normalization for any direct/stale caller
+/// that bypasses Rust entirely.
 fn hf_extra_env(hf_token: &Option<String>) -> Vec<(String, String)> {
     let mut env = vec![("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())];
     if let Some(token) = hf_token {
-        if !token.is_empty() {
-            env.push(("HF_TOKEN".to_string(), token.clone()));
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            env.push(("HF_TOKEN".to_string(), trimmed.to_string()));
         }
     }
     env
@@ -235,6 +246,14 @@ pub async fn prewarm_model(
     hf_token: Option<String>,
 ) -> Result<ProcessResult, String> {
     validate_model(&model)?;
+    // F5b (S12a fix round, §D): the same INSTALL-time capability belt
+    // start_server already has (F13/F14) — reuse check_mlx_capable_if_
+    // parakeet verbatim so a compromised/buggy caller can't kick off a
+    // multi-GB parakeet download on an unsupported platform just because
+    // it called prewarm_model instead of start_server. A no-op for every
+    // non-parakeet model (see that fn's own doc comment + its existing
+    // tests for the pass-through/rejection coverage this reuse rides on).
+    check_mlx_capable_if_parakeet(&model)?;
     let paths = resolve_app_paths(&app)?;
 
     std::fs::create_dir_all(&paths.models_dir)
@@ -693,6 +712,25 @@ mod tests {
         assert!(env.contains(&("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())));
         assert!(env.contains(&("HF_TOKEN".to_string(), "secret-token".to_string())));
         assert_eq!(env.len(), 2);
+    }
+
+    #[test]
+    fn hf_extra_env_omits_hf_token_when_the_configured_token_is_whitespace_only() {
+        // F8 (S12a fix round, §D) — red on the pre-fix code: a plain
+        // `!token.is_empty()` check treats "   " as non-empty and sets
+        // HF_TOKEN="   ", which Python's own `bool("   ")` truthiness
+        // reads as configured (diar falsely armed) even though there is
+        // no real token — the exact JS/Rust semantics divergence F8
+        // names.
+        let env = hf_extra_env(&Some("   ".to_string()));
+        assert_eq!(env, vec![("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn hf_extra_env_trims_surrounding_whitespace_off_a_configured_token() {
+        let env = hf_extra_env(&Some("  secret-token  ".to_string()));
+        assert!(env.contains(&("HF_TOKEN".to_string(), "secret-token".to_string())));
+        assert!(!env.iter().any(|(_, v)| v.contains(' ')));
     }
 
     #[test]

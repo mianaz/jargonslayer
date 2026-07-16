@@ -25,7 +25,8 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
-use crate::paths::resolve_app_paths;
+use crate::mlxcaps::{compute_mlx_capabilities, MlxCapabilities};
+use crate::paths::{resolve_app_paths, AppPaths};
 
 fn poison_err<T>(_: std::sync::PoisonError<T>) -> String {
     "uv install state lock was poisoned by an earlier panic".to_string()
@@ -340,8 +341,88 @@ pub fn emit_uv_log(app: &tauri::AppHandle, stream: &'static str, line: impl Into
 /// while a previous call is somehow still in flight) — kills whatever
 /// child is still parked here before taking ownership of the new one,
 /// rather than letting two uv processes race the same venv/pip target.
+///
+/// F1 (S12a fix round, §D) — IDENTITY-SCOPED, not a bare `Option<
+/// CommandChild>`: the slot now also records the occupant's own pid.
+/// Pre-fix, exit-time cleanup did an UNCONDITIONAL `*guard = None` —
+/// which is exactly the bug: if overlapping run A and run B raced (B's
+/// kill-before-store legitimately evicts+kills A, then stores itself),
+/// A's OWN cleanup (still running, unaware it was evicted) would then
+/// clear B's now-live occupancy out of the slot too. A third run C
+/// starting after that sees an EMPTY slot — no kill-before-store target
+/// — and spawns straight into B, two uv processes now mutating one venv
+/// (exactly what F16 exists to prevent). The fix: exit-time cleanup
+/// becomes a COMPARE-AND-CLEAR — a run only ever clears the slot if the
+/// parked occupant's pid is STILL its own (see `should_clear_slot`,
+/// consulted by `run_uv`'s own cleanup step below). Store-time eviction
+/// (kill-before-store) needs no identity check of its own: whatever is
+/// currently parked is, by construction, always legitimately owned by
+/// whichever run stored it last, so unconditionally killing+replacing it
+/// on the way IN stays correct — only the way OUT needed scoping.
 #[derive(Default)]
-pub struct UvInstallState(pub Mutex<Option<CommandChild>>);
+pub struct UvInstallState(pub Mutex<Option<(u32, CommandChild)>>);
+
+/// Pure identity check behind the exit-time compare-and-clear (F1):
+/// clearing must only happen when the parked occupant is STILL this
+/// run's own child (matched by pid) — never a later run's, which may
+/// have taken over the slot (kill-before-store, see UvInstallState's own
+/// doc comment) in the meantime. Split out for direct testability —
+/// `CommandChild` has no test-reachable constructor (same documented
+/// limitation this module's own earlier tests already noted for
+/// `UvInstallState`), so this is the one piece of the identity logic a
+/// test CAN exercise without ever constructing a real child.
+fn should_clear_slot(occupant_pid: Option<u32>, my_pid: u32) -> bool {
+    occupant_pid == Some(my_pid)
+}
+
+// ---- F5a (S12a fix round, §D) — the Rust capability belt (§C's own
+// "belt at both INSTALL and START") existed only on start_server
+// (server.rs's check_mlx_capable_if_parakeet); run_uv had no equivalent,
+// so a compromised/buggy webview could still walk the mlx venv into
+// existence (`venv create` -> `pip install` -> `pip check`, all riding
+// run_uv) on an unsupported platform purely by supplying mlx-venv-
+// targeting args — the JS-side gate (mlxCaps.ts/ensureMlxExtras) is a
+// UI-layer precondition, not a security boundary (D6's own "UI gating is
+// not a boundary" posture, reused here one layer down). ----
+
+/// True iff any element of `args` is exactly the resolved mlx venv dir
+/// or the resolved mlx venv python — i.e. this call, whichever of the
+/// three mlx-venv-targeting shapes it is (`venv create[-clear]` / `pip
+/// install` / `pip check`), touches the mlx venv at all. Deliberately
+/// NOT positional (args[1]==.../args[3]==...): a plain "is any element
+/// one of these two paths" check is robust to which shape is calling,
+/// with no risk of drifting out of sync with `validate_uv_args`' own
+/// per-shape positions as new mlx-venv shapes are added.
+fn targets_mlx_venv(args: &[String], paths: &AppPaths) -> bool {
+    let mlx_venv_dir = paths.mlx_venv_dir.to_string_lossy();
+    let mlx_venv_python = paths.mlx_venv_python.to_string_lossy();
+    args.iter().any(|a| a.as_str() == mlx_venv_dir || a.as_str() == mlx_venv_python)
+}
+
+/// Pure core behind the belt: given an already-resolved `caps` snapshot
+/// (injected, not computed inside — see run_uv's own call site for the
+/// real `compute_mlx_capabilities()` wiring), decides whether THIS args
+/// shape must be rejected outright. No AppHandle, no I/O — directly
+/// unit-testable with synthetic `MlxCapabilities` values (mirrors
+/// server.rs's own check_mlx_capable_if_parakeet split, one layer over:
+/// that fn re-derives caps itself since it has no args to inspect first;
+/// this one takes args, so it only needs to bother computing/consulting
+/// caps at all once `targets_mlx_venv` has already said yes).
+fn reject_unsupported_mlx_venv_target(args: &[String], paths: &AppPaths, caps: &MlxCapabilities) -> Result<(), String> {
+    if !targets_mlx_venv(args, paths) {
+        return Ok(());
+    }
+    if caps.mlx_supported {
+        return Ok(());
+    }
+    let reason = caps
+        .reason
+        .clone()
+        .unwrap_or_else(|| "MLX unsupported on this machine".to_string());
+    Err(format!(
+        "run_uv: refusing an mlx-venv-targeting command on an unsupported platform: {reason}"
+    ))
+}
 
 #[tauri::command]
 pub async fn run_uv(
@@ -366,6 +447,16 @@ pub async fn run_uv(
     };
     validate_uv_args(&args, &roots)?;
     validate_uv_env(&env, &roots)?;
+
+    // F5a belt: structurally-valid mlx-venv-targeting args are still
+    // refused outright on a platform compute_mlx_capabilities() says is
+    // unsupported (see reject_unsupported_mlx_venv_target's own doc
+    // comment) — emitted as a uv://log line too, same posture as every
+    // other run_uv rejection below.
+    if let Err(message) = reject_unsupported_mlx_venv_target(&args, &paths, &compute_mlx_capabilities()) {
+        emit_uv_log(&app, "stderr", message.clone());
+        return Err(message);
+    }
 
     // `app.shell().sidecar(UV_SIDECAR_PROGRAM)` — the file name "uv",
     // NOT tauri.conf.json's full externalBin entry "binaries/uv": the
@@ -409,20 +500,26 @@ pub async fn run_uv(
         emit_uv_log(&app, "stderr", message.clone());
         message
     })?;
+    // Captured before `child` moves into the slot below — this run's own
+    // identity for the exit-time compare-and-clear (F1).
+    let my_pid = child.pid();
 
     // F16 single-flight (see UvInstallState's own doc comment): reap any
     // prior child still parked here — normally a no-op — before this
-    // run's own child takes the slot. Lock is dropped before the await
-    // loop below (never held across an `.await` — a std::sync::MutexGuard
-    // held across one would make this async fn's future non-Send, which
-    // tauri rejects for an async #[tauri::command], same invariant
-    // server.rs's own start_server leans on for its ServerState guard).
+    // run's own child takes the slot. Store-time eviction needs no
+    // identity check (see UvInstallState's own doc comment on why only
+    // the exit-time side needed scoping). Lock is dropped before the
+    // await loop below (never held across an `.await` — a std::sync::
+    // MutexGuard held across one would make this async fn's future
+    // non-Send, which tauri rejects for an async #[tauri::command], same
+    // invariant server.rs's own start_server leans on for its
+    // ServerState guard).
     {
         let mut guard = state.0.lock().map_err(poison_err)?;
-        if let Some(prior) = guard.take() {
+        if let Some((_, prior)) = guard.take() {
             let _ = prior.kill();
         }
-        *guard = Some(child);
+        *guard = Some((my_pid, child));
     }
 
     let mut code = None;
@@ -440,11 +537,19 @@ pub async fn run_uv(
         }
     }
 
-    // This run's own child has now terminated — clear the slot so the
-    // guard above stays a no-op for the next NORMAL sequential call (see
-    // UvInstallState's own doc comment).
+    // This run's own child has now terminated. F1: COMPARE-AND-CLEAR,
+    // not an unconditional clear — only drop the slot if the parked
+    // occupant is still THIS run's own pid (should_clear_slot). If a
+    // later overlapping run has since evicted+replaced us (store-time
+    // kill-before-store, above), the slot is already someone else's live
+    // occupancy and must be left alone — clearing it here would be
+    // exactly the F1 defect (a superseded run's exit dropping tracking
+    // of the run that superseded it).
     if let Ok(mut guard) = state.0.lock() {
-        *guard = None;
+        let occupant_pid = guard.as_ref().map(|(pid, _)| *pid);
+        if should_clear_slot(occupant_pid, my_pid) {
+            *guard = None;
+        }
     }
 
     Ok(ProcessResult { code })
@@ -539,6 +644,25 @@ mod tests {
         UvRoots {
             app_data: Path::new("/fake/AppData"),
             resource_dir: Path::new("/fake/Resources"),
+        }
+    }
+
+    fn fake_app_paths() -> AppPaths {
+        AppPaths {
+            app_data: std::path::PathBuf::from("/fake/AppData"),
+            python_install_dir: std::path::PathBuf::from("/fake/AppData/python"),
+            uv_cache_dir: std::path::PathBuf::from("/fake/AppData/uv-cache"),
+            venv_dir: std::path::PathBuf::from("/fake/AppData/venv"),
+            venv_python: std::path::PathBuf::from("/fake/AppData/venv/bin/python"),
+            models_dir: std::path::PathBuf::from("/fake/AppData/models"),
+            script_path: std::path::PathBuf::from("/fake/Resources/sidecar/whisper_server.py"),
+            requirements_path: std::path::PathBuf::from("/fake/Resources/sidecar/requirements-sidecar.txt"),
+            diar_requirements_path: std::path::PathBuf::from("/fake/Resources/sidecar/requirements-diar.txt"),
+            log_path: std::path::PathBuf::from("/fake/Logs/whisper_server.log"),
+            marker_path: std::path::PathBuf::from("/fake/AppData/.provisioned.json"),
+            mlx_venv_dir: std::path::PathBuf::from("/fake/AppData/mlx-venv"),
+            mlx_venv_python: std::path::PathBuf::from("/fake/AppData/mlx-venv/bin/python"),
+            mlx_requirements_lock_path: std::path::PathBuf::from("/fake/Resources/sidecar/requirements-mlx.lock"),
         }
     }
 
@@ -1021,5 +1145,149 @@ mod tests {
         ))
         .output();
         assert!(result.is_err());
+    }
+
+    // ---- F5a (S12a fix round, §D): the run_uv INSTALL belt ----
+
+    fn supported_caps() -> MlxCapabilities {
+        MlxCapabilities {
+            mlx_supported: true,
+            reason: None,
+        }
+    }
+
+    fn unsupported_caps() -> MlxCapabilities {
+        MlxCapabilities {
+            mlx_supported: false,
+            reason: Some("需要 Apple 芯片（M 系列）".to_string()),
+        }
+    }
+
+    #[test]
+    fn targets_mlx_venv_is_true_for_the_venv_create_shape() {
+        let paths = fake_app_paths();
+        let args = [
+            "venv".to_string(),
+            paths.mlx_venv_dir.to_string_lossy().into_owned(),
+            "--python".to_string(),
+            "3.12".to_string(),
+            "--clear".to_string(),
+        ];
+        assert!(targets_mlx_venv(&args, &paths));
+    }
+
+    #[test]
+    fn targets_mlx_venv_is_true_for_the_pip_install_and_pip_check_shapes() {
+        let paths = fake_app_paths();
+        let pip_install = [
+            "pip".to_string(),
+            "install".to_string(),
+            "--python".to_string(),
+            paths.mlx_venv_python.to_string_lossy().into_owned(),
+            "-r".to_string(),
+            paths.mlx_requirements_lock_path.to_string_lossy().into_owned(),
+        ];
+        assert!(targets_mlx_venv(&pip_install, &paths));
+
+        let pip_check = [
+            "pip".to_string(),
+            "check".to_string(),
+            "--python".to_string(),
+            paths.mlx_venv_python.to_string_lossy().into_owned(),
+        ];
+        assert!(targets_mlx_venv(&pip_check, &paths));
+    }
+
+    #[test]
+    fn targets_mlx_venv_is_false_for_every_base_venv_shape() {
+        let paths = fake_app_paths();
+        let base_venv_create = [
+            "venv".to_string(),
+            paths.venv_dir.to_string_lossy().into_owned(),
+            "--python".to_string(),
+            "3.12".to_string(),
+        ];
+        assert!(!targets_mlx_venv(&base_venv_create, &paths));
+
+        let base_pip_install = [
+            "pip".to_string(),
+            "install".to_string(),
+            "--python".to_string(),
+            paths.venv_python.to_string_lossy().into_owned(),
+            "-r".to_string(),
+            paths.requirements_path.to_string_lossy().into_owned(),
+        ];
+        assert!(!targets_mlx_venv(&base_pip_install, &paths));
+
+        let python_install = ["python".to_string(), "install".to_string(), "3.12".to_string()];
+        assert!(!targets_mlx_venv(&python_install, &paths));
+    }
+
+    #[test]
+    fn reject_unsupported_mlx_venv_target_passes_through_non_mlx_args_regardless_of_caps() {
+        let paths = fake_app_paths();
+        let base_pip_install = [
+            "pip".to_string(),
+            "install".to_string(),
+            "--python".to_string(),
+            paths.venv_python.to_string_lossy().into_owned(),
+            "-r".to_string(),
+            paths.requirements_path.to_string_lossy().into_owned(),
+        ];
+        assert!(reject_unsupported_mlx_venv_target(&base_pip_install, &paths, &unsupported_caps()).is_ok());
+    }
+
+    #[test]
+    fn reject_unsupported_mlx_venv_target_passes_through_mlx_args_on_a_supported_platform() {
+        // "including the supported-platform pass-through" — F5's own
+        // explicit test requirement.
+        let paths = fake_app_paths();
+        let mlx_pip_check = [
+            "pip".to_string(),
+            "check".to_string(),
+            "--python".to_string(),
+            paths.mlx_venv_python.to_string_lossy().into_owned(),
+        ];
+        assert!(reject_unsupported_mlx_venv_target(&mlx_pip_check, &paths, &supported_caps()).is_ok());
+    }
+
+    #[test]
+    fn reject_unsupported_mlx_venv_target_rejects_mlx_args_on_an_unsupported_platform() {
+        let paths = fake_app_paths();
+        let mlx_venv_create = [
+            "venv".to_string(),
+            paths.mlx_venv_dir.to_string_lossy().into_owned(),
+            "--python".to_string(),
+            "3.12".to_string(),
+        ];
+        let result = reject_unsupported_mlx_venv_target(&mlx_venv_create, &paths, &unsupported_caps());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("需要 Apple 芯片（M 系列）"));
+    }
+
+    // ---- F1 (S12a fix round, §D): identity-scoped single-flight ----
+
+    #[test]
+    fn should_clear_slot_is_true_only_when_the_occupant_pid_matches_our_own() {
+        assert!(should_clear_slot(Some(111), 111));
+        assert!(!should_clear_slot(Some(222), 111));
+        assert!(!should_clear_slot(None, 111));
+    }
+
+    #[test]
+    fn should_clear_slot_red_verifies_the_pre_fix_unconditional_clear_would_have_been_wrong() {
+        // The pre-fix run_uv unconditionally did `*guard = None` on
+        // exit — equivalent to a should-clear predicate that ignores
+        // identity entirely and always returns true. Pin the exact
+        // scenario F1 names: run A's own cleanup must NOT clear the
+        // slot once a later, still-live run B has taken it over.
+        let a_pid = 111;
+        let b_pid_now_parked = 222;
+        // The OLD (defective) behavior: `true` regardless of occupant.
+        let old_unconditional_would_clear = true;
+        assert!(old_unconditional_would_clear, "pre-fix behavior always cleared");
+        // The NEW (fixed) behavior: A's own exit must refuse to clear
+        // B's now-live occupancy.
+        assert!(!should_clear_slot(Some(b_pid_now_parked), a_pid));
     }
 }

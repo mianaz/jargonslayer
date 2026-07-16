@@ -13,6 +13,7 @@ mod audiocap_batch;
 mod audiocap_framing;
 mod audiocap_pipeline;
 mod audiocap_resample;
+mod diskspace;
 mod mlxcaps;
 mod oauth;
 mod osspeech;
@@ -106,6 +107,7 @@ pub fn run() {
             osspeech::preinstall_os_speech,
             mlxcaps::mlx_capabilities,
             uv::mlx_import_preflight,
+            diskspace::app_data_disk_free,
         ])
         // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
         // — the audiocap TCC-attribution spike rig: inert unless
