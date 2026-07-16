@@ -79,12 +79,24 @@ interface DiarStatusMessage {
   state: "unavailable" | "error" | "ready";
   detail?: string;
 }
+// FB6 (S12b fix round B, Sol6=Opus2, MED): the parakeet backend's
+// single-active-stream rejection (whisper_server.py's
+// ParakeetMlxServer.handle, `try_acquire_stream()` failing) — sent once,
+// immediately followed by the server closing the connection itself
+// (`await ws.close()`, no further messages). `detail` is the server's
+// own bilingual zh/en copy, shown verbatim (see onmessage's own new
+// branch below) — never re-worded here.
+interface ParakeetBusyMessage {
+  type: "parakeet-busy";
+  detail: string;
+}
 type ServerMessage =
   | PartialMessage
   | FinalMessage
   | StoppedMessage
   | SpeakerUpdateMessage
   | DiarStatusMessage
+  | ParakeetBusyMessage
   | { type: string };
 
 export interface WsTransportCallbacks {
@@ -111,6 +123,19 @@ export class WsTransport {
   private userStopped = false;
   private reconnectAttempted = false;
   private stopping = false;
+
+  // FB6 (S12b fix round B): mirrors userStopped/stopping's own idiom —
+  // a boolean handleDisconnect()/handleConnectionFailure() both check
+  // before ever attempting a reconnect — for a SERVER-initiated terminal
+  // condition rather than a user- or stop()-initiated one. Set the
+  // instant a typed parakeet-busy event arrives (onmessage below): the
+  // server closes the connection right after sending it, and reconnecting
+  // into the SAME single-active-stream rejection would just repeat
+  // forever for no reason — the user already got the real zh reason via
+  // onStatus("error", ...) and must act on it (stop, or wait for the
+  // other session to end), not watch a pointless reconnect cycle land on
+  // a generic "无法连接" a few seconds later.
+  private terminalFailure = false;
 
   // Soft pause (STT protocol v2, tabaudio/appaudio only — see pauseFeed/
   // resumeFeed below): gates pushPcm()'s forwarding (both the worklet's
@@ -357,6 +382,18 @@ export class WsTransport {
       } else if (msg.type === "diar_status") {
         const status = msg as DiarStatusMessage;
         events.onDiarStatus?.(status.state, status.detail);
+      } else if (msg.type === "parakeet-busy") {
+        // FB6: the server sends this ONCE then closes the connection
+        // itself (whisper_server.py's ParakeetMlxServer.handle) — surface
+        // its own zh/en detail verbatim (never invent/re-word copy here)
+        // and mark this failure terminal BEFORE that close's onclose ever
+        // runs, so handleDisconnect() skips the automatic reconnect (see
+        // terminalFailure's own doc comment) instead of cycling once more
+        // into the exact same rejection and only THEN surfacing a
+        // generic "无法连接" a second or two later.
+        const busy = msg as ParakeetBusyMessage;
+        this.terminalFailure = true;
+        events.onStatus("error", busy.detail);
       }
     };
 
@@ -390,17 +427,19 @@ export class WsTransport {
   }
 
   private handleDisconnect(): void {
-    if (this.userStopped || this.stopping) return;
+    // FB6: terminalFailure joins userStopped/stopping in this SAME guard
+    // idiom — see that field's own doc comment.
+    if (this.userStopped || this.stopping || this.terminalFailure) return;
     this.handleConnectionFailure();
   }
 
   private handleConnectionFailure(): void {
-    if (this.userStopped || this.stopping) return;
+    if (this.userStopped || this.stopping || this.terminalFailure) return;
 
     if (!this.reconnectAttempted) {
       this.reconnectAttempted = true;
       setTimeout(() => {
-        if (this.userStopped || this.stopping) return;
+        if (this.userStopped || this.stopping || this.terminalFailure) return;
         this.connect();
       }, RECONNECT_DELAY_MS);
       return;

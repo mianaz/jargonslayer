@@ -587,6 +587,19 @@ pub struct AudiocapState {
 
 struct RunningSession {
     generation: u64,
+    /// FB3 (S12b fix round B, Sol3, HIGH — replaces F4(b)'s Option<u64>
+    /// design): a CLIENT-GENERATED attempt token, minted by appAudio.ts
+    /// BEFORE it ever calls `start_app_audio` (unlike `generation`,
+    /// which Rust only decides — and could only tell JS about — AFTER
+    /// `try_begin` has already run). `take_child_for_stop` scopes every
+    /// stop to an EXACT match against this token; there is no unscoped
+    /// path left on the wire (see that function's own doc comment for
+    /// why the Rust-returned generation alone couldn't close this hole:
+    /// a REJECTED start never learns one, so its own unwind had nothing
+    /// to scope its stop to and fell back to unscoped — the client
+    /// token has no such gap, since it exists before the invoke is even
+    /// sent).
+    token: String,
     /// `Some` from `attach_child` (right after a successful spawn)
     /// until `take_child_for_stop` removes it — its presence/absence is
     /// also how `finish` tells a requested stop apart from a
@@ -627,14 +640,19 @@ impl AudiocapState {
     /// Single-flight claim: `Err` if a session is already running,
     /// otherwise bumps the generation counter and reserves the running
     /// slot (with no child attached yet — see `attach_child`), returning
-    /// the new generation.
-    fn try_begin(&self) -> Result<u64, String> {
+    /// the new generation. `token` (FB3) is the CALLER's own client-
+    /// generated attempt token, stored verbatim on the reserved session
+    /// — `take_child_for_stop` is the only thing that ever reads it back
+    /// (`generation` stays the internal id every OTHER method here keys
+    /// on: `is_current`/`still_running`/`attach_child`/hot-path checks —
+    /// unchanged, never round-tripped to JS at all).
+    fn try_begin(&self, token: String) -> Result<u64, String> {
         let mut guard = self.running.lock().map_err(poison_err)?;
         if guard.is_some() {
             return Err("app audio capture is already running".to_string());
         }
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        *guard = Some(RunningSession { generation, child: None, cancel_requested: false });
+        *guard = Some(RunningSession { generation, token, child: None, cancel_requested: false });
         // F4: a fresh session always starts unpaused, regardless of
         // whatever the previous (now fully finished) session's own
         // pause state was left at.
@@ -732,45 +750,42 @@ impl AudiocapState {
         self.generation.load(Ordering::SeqCst) == generation
     }
 
-    /// Idempotent stop-request: `None` when nothing is running, a stop
-    /// was already requested for the current session (its child slot is
-    /// already empty), F1's own "session is still in its `Starting`
-    /// window" case (spawn in flight, no `CommandChild` attached yet —
-    /// all three record `cancel_requested = true` before returning, so a
-    /// LATER `attach_child` call, see that function's own doc comment,
-    /// knows to refuse the attach rather than silently starting a
-    /// session the caller already believes it stopped), OR — F4(b) (S12b
-    /// fix round) — `generation` names a SPECIFIC session and it no
-    /// longer matches the slot's CURRENT occupant. `stop_app_audio` maps
-    /// every `None` case to `Ok(())`.
-    ///
-    /// `generation`: `Some(g)` scopes the stop to session `g` ONLY — a
-    /// mismatch (the slot is empty, or now occupied by a DIFFERENT
-    /// generation) is a clean no-op that touches NOTHING, not even
-    /// `cancel_requested` (a stale caller must never able to fake-cancel
-    /// a session it doesn't own). `None` is unscoped — acts on whatever
-    /// currently occupies the slot, matching this function's own
-    /// pre-F4(b) behavior — reserved for a caller that genuinely hasn't
-    /// yet learned a specific generation (see `stop_app_audio`'s own doc
-    /// comment for the one legitimate JS-side case).
+    /// Idempotent, TOKEN-SCOPED stop-request (FB3, S12b fix round B —
+    /// replaces F4(b)'s `Option<u64>` design; see `RunningSession
+    /// .token`'s own doc comment for why). `Ok(None)` — a clean no-op,
+    /// never an error — whenever: nothing is running; a stop was already
+    /// requested for the current session (its child slot is already
+    /// empty); F1's own "session is still in its `Starting` window" case
+    /// (spawn in flight, no `CommandChild` attached yet — all three
+    /// record `cancel_requested = true` before returning, so a LATER
+    /// `attach_child` call, see that function's own doc comment, knows
+    /// to refuse the attach rather than silently starting a session the
+    /// caller already believes it stopped); OR `token` does not
+    /// EXACTLY match the slot's current occupant — a stale/superseded
+    /// caller's own token no longer matching whoever's actually running
+    /// leaves that live session COMPLETELY untouched, not even
+    /// `cancel_requested` (a stale caller must never be able to
+    /// fake-cancel a session it doesn't own). There is no unscoped path
+    /// left — every caller, including the F1 pre-resolve-cancellation
+    /// case, names an exact token (see `stop_app_audio`'s own doc
+    /// comment).
     ///
     /// `Some((child, pid, generation))` on an actual take, after taking
     /// the child (the caller is now responsible for dropping it to close
     /// its stdin — see stop_app_audio's own comment). The returned
-    /// `generation` is always the SESSION's own (== the input
-    /// `generation` when `Some`, since anything else is filtered above).
-    fn take_child_for_stop(&self, generation: Option<u64>) -> Result<Option<(CommandChild, u32, u64)>, String> {
+    /// `generation` is always the matched session's own internal id
+    /// (never the caller's own token — that's Rust-internal, see
+    /// `RunningSession.generation`'s own doc comment).
+    fn take_child_for_stop(&self, token: &str) -> Result<Option<(CommandChild, u32, u64)>, String> {
         let mut guard = self.running.lock().map_err(poison_err)?;
         let Some(session) = guard.as_mut() else {
             return Ok(None);
         };
-        if let Some(expected) = generation {
-            if session.generation != expected {
-                // F4(b): a stale/superseded caller's own generation no
-                // longer matches whoever's actually running — leave that
-                // live session completely untouched.
-                return Ok(None);
-            }
+        if session.token != token {
+            // FB3: a stale/superseded caller's own token no longer
+            // matches whoever's actually running — leave that live
+            // session completely untouched.
+            return Ok(None);
         }
         Ok(match session.child.take() {
             Some(child) => {
@@ -836,25 +851,13 @@ impl AudiocapState {
 
 // ---- start_app_audio / stop_app_audio ----
 
-/// F4(b) (S12b fix round): `start_app_audio`'s own success payload —
-/// surfaces `try_begin`'s internally-tracked generation to JS, so a
-/// LATER `stop_app_audio` call can name exactly the session it means to
-/// stop (see that command's own doc comment). Single-field, but
-/// `camelCase` kept for consistency with `AudiocapCapabilities`'s own
-/// struct-level convention (and future-proofing if a field is ever
-/// added).
-#[derive(Debug, Clone, Copy, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct StartAppAudioResult {
-    pub generation: u64,
-}
-
 #[tauri::command]
 pub fn start_app_audio(
     app: tauri::AppHandle,
     state: tauri::State<'_, AudiocapState>,
     channel: tauri::ipc::Channel<tauri::ipc::InvokeResponseBody>,
-) -> Result<StartAppAudioResult, String> {
+    token: String,
+) -> Result<(), String> {
     // Runtime re-check (D6: "UI gating is not a boundary") — even if
     // the card was somehow shown/enabled below the floor, the spawn
     // itself is refused here too.
@@ -862,7 +865,14 @@ pub fn start_app_audio(
         return Err(UNSUPPORTED_REASON.to_string());
     }
 
-    let generation = state.try_begin()?;
+    // FB3 (S12b fix round B): `token` — PINNED CONTRACT, camelCase over
+    // the wire — is minted by appAudio.ts BEFORE this invoke is ever
+    // sent (see RunningSession.token's own doc comment for why that
+    // ordering is exactly what closes Sol's finding: a REJECTED start
+    // still has ITS OWN token in hand for its own unwind stop, unlike
+    // the old Rust-returned generation, which a rejected call never
+    // received at all).
+    let generation = state.try_begin(token)?;
     let own_pid = std::process::id().to_string();
 
     let spawn_result = app
@@ -898,7 +908,7 @@ pub fn start_app_audio(
                 spawn_stop_watchdog(app.clone(), generation, pid);
             }
             spawn_session_task(app, channel, generation, pid, rx);
-            Ok(StartAppAudioResult { generation })
+            Ok(())
         }
         Err(e) => {
             // Release the slot we optimistically claimed in try_begin —
@@ -911,30 +921,35 @@ pub fn start_app_audio(
     }
 }
 
-/// F4(b) (S12b fix round, from the S12a investigation queued at
-/// e5ece57): `generation` — PINNED CONTRACT, camelCase over the wire —
-/// scopes the stop to exactly the session `start_app_audio`'s own
-/// `StartAppAudioResult` named. A stale/superseded caller's own
-/// generation no longer matching the slot's CURRENT occupant is a clean
-/// no-op `Ok(())`, never an error and never touching the live session
-/// (see `AudiocapState::take_child_for_stop`'s own doc comment) — before
-/// this fix, EVERY stop_app_audio call was fully unscoped: an abandoned
-/// JS generation's own best-effort stop (appAudio.ts's abandonStart())
-/// could reach across and kill a NEWER generation's live session once
-/// the OLD one's Rust-side session had already finished and the slot was
-/// reclaimed. `None` stays legitimate/unscoped ONLY for a caller that
-/// genuinely has not yet learned a specific generation — appAudio.ts's
-/// own `stop()` sends `None` in the one narrow window where `stop()` can
-/// land before that SAME call's own `start_app_audio` invoke has
-/// resolved (the F1 "Starting window" race — see that finding's own
-/// comments on `take_child_for_stop`/`attach_child`); every OTHER
-/// JS-side call (the common "live session, user stops it" path, and
-/// EVERY abandonStart() call, which only ever fires once a generation is
-/// already known) sends `Some(generation)`.
+/// FB3 (S12b fix round B, Sol3, HIGH — replaces F4(b)'s `Option<u64>`
+/// design): `token` — PINNED CONTRACT, camelCase over the wire, REQUIRED
+/// (not optional) — must be the EXACT client-generated attempt token
+/// `start_app_audio` was called with (see RunningSession.token's own doc
+/// comment). A mismatch (the slot is empty, or now occupied by a
+/// DIFFERENT attempt's token) is a clean no-op `Ok(())`, never an error
+/// and never touching the live session (see `AudiocapState
+/// .take_child_for_stop`'s own doc comment).
+///
+/// This closes the hole F4(b)'s `Option<u64>` design left open: that
+/// design's `None` (unscoped — "act on whatever's running") was meant
+/// only for the one caller that hadn't yet learned a generation, but a
+/// REJECTED start_app_audio invoke NEVER learns one EITHER — so its own
+/// catch-block unwind (appAudio.ts's stop()) had no way to distinguish
+/// "I don't know my own generation because I was superseded" from "I
+/// don't know my own generation because I was flatly rejected while a
+/// DIFFERENT session (B) legitimately owns the slot" — both fell back to
+/// the SAME unscoped `None`, and in the second case that reached in and
+/// killed B's completely unrelated, live session. The client-generated
+/// token has no such gap: appAudio.ts mints it BEFORE the invoke is even
+/// sent, so EVERY caller — the live "user stops it" path, abandonStart()'s
+/// best-effort stop, AND a stop landing before this SAME attempt's own
+/// start_app_audio invoke has resolved (F1's "Starting window"
+/// pre-resolve-cancellation race) — always has its OWN exact token in
+/// hand and sends it. There is no unscoped path left on the wire.
 #[tauri::command]
-pub fn stop_app_audio(app: tauri::AppHandle, state: tauri::State<'_, AudiocapState>, generation: Option<u64>) -> Result<(), String> {
-    let Some((child, pid, generation)) = state.take_child_for_stop(generation)? else {
-        return Ok(()); // idempotent: nothing running, a stop is already in flight, or (F4(b)) a stale/mismatched generation
+pub fn stop_app_audio(app: tauri::AppHandle, state: tauri::State<'_, AudiocapState>, token: String) -> Result<(), String> {
+    let Some((child, pid, generation)) = state.take_child_for_stop(&token)? else {
+        return Ok(()); // idempotent: nothing running, a stop is already in flight, or (FB3) a mismatched token
     };
 
     // Closes stdin — the ONLY way to reach it from here. CommandChild
@@ -1698,16 +1713,6 @@ mod tests {
         assert_eq!(caps.reason, Some(UNSUPPORTED_REASON.to_string()));
     }
 
-    #[test]
-    fn start_app_audio_result_serializes_generation_as_a_camel_case_json_number() {
-        // F4(b) — PINNED CONTRACT: `{generation: number}` — appAudio.ts's
-        // own start() captures exactly this shape (mirrors diskspace.rs's
-        // own DiskFreeResult round-trip idiom for the SAME §D discipline).
-        let result = StartAppAudioResult { generation: 7 };
-        let json = serde_json::to_value(result).expect("StartAppAudioResult serializes");
-        assert_eq!(json, serde_json::json!({ "generation": 7u64 }));
-    }
-
     // ---- open_privacy_settings URL constants (S9.4, D6) — pure logic
     // only; try_open()/open_privacy_settings() themselves shell out to
     // the real `open` binary and are intentionally left untested here
@@ -1972,18 +1977,25 @@ mod tests {
     }
 
     // ---- AudiocapState: single-flight, idempotent stop, generation guard ----
+    //
+    // FB3 (S12b fix round B): every `try_begin`/`take_child_for_stop`
+    // call below now threads a CLIENT-GENERATED attempt token — plain
+    // `String`s picked per test to make "same attempt" vs "different
+    // attempt" obvious at a glance (see `RunningSession.token`'s own doc
+    // comment for why this replaced F4(b)'s `Option<u64>` generation
+    // design).
 
     #[test]
     fn try_begin_succeeds_when_nothing_is_running() {
         let state = AudiocapState::default();
-        assert!(state.try_begin().is_ok());
+        assert!(state.try_begin("a".to_string()).is_ok());
     }
 
     #[test]
     fn try_begin_rejects_a_second_call_while_a_session_is_active() {
         let state = AudiocapState::default();
-        let first = state.try_begin().unwrap();
-        assert!(state.try_begin().is_err());
+        let first = state.try_begin("a".to_string()).unwrap();
+        assert!(state.try_begin("b".to_string()).is_err());
         // the rejected attempt must not have disturbed the first session
         assert!(state.is_current(first));
     }
@@ -1991,20 +2003,20 @@ mod tests {
     #[test]
     fn try_begin_after_finish_succeeds_and_bumps_the_generation() {
         let state = AudiocapState::default();
-        let first = state.try_begin().unwrap();
+        let first = state.try_begin("a".to_string()).unwrap();
         state.finish(first);
-        let second = state.try_begin().unwrap();
+        let second = state.try_begin("b".to_string()).unwrap();
         assert_ne!(first, second);
-        assert!(state.try_begin().is_err(), "the second session is now occupying the slot");
+        assert!(state.try_begin("c".to_string()).is_err(), "the second session is now occupying the slot");
     }
 
     #[test]
     fn is_current_becomes_false_once_a_newer_session_has_begun() {
         let state = AudiocapState::default();
-        let first = state.try_begin().unwrap();
+        let first = state.try_begin("a".to_string()).unwrap();
         assert!(state.is_current(first));
         state.finish(first);
-        let second = state.try_begin().unwrap();
+        let second = state.try_begin("b".to_string()).unwrap();
         assert!(!state.is_current(first), "a superseded generation must never read as current again");
         assert!(state.is_current(second));
     }
@@ -2012,8 +2024,8 @@ mod tests {
     #[test]
     fn stop_is_idempotent_when_nothing_is_running() {
         let state = AudiocapState::default();
-        assert!(state.take_child_for_stop(None).unwrap().is_none());
-        assert!(state.take_child_for_stop(None).unwrap().is_none());
+        assert!(state.take_child_for_stop("anything").unwrap().is_none());
+        assert!(state.take_child_for_stop("anything").unwrap().is_none());
     }
 
     #[test]
@@ -2022,28 +2034,28 @@ mod tests {
         // called twice in a row" — neither has a real CommandChild to
         // hand back, and neither should error.
         let state = AudiocapState::default();
-        state.try_begin().unwrap();
-        assert!(state.take_child_for_stop(None).unwrap().is_none());
+        state.try_begin("a".to_string()).unwrap();
+        assert!(state.take_child_for_stop("a").unwrap().is_none());
     }
 
     #[test]
     fn finish_clears_the_slot_and_treats_an_empty_child_slot_as_a_requested_stop() {
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
+        let generation = state.try_begin("a".to_string()).unwrap();
         // No attach_child call — mirrors exactly what take_child_for_stop
         // leaves behind after a real stop (child: None).
         let outcome = state.finish(generation);
         assert!(outcome.was_current);
         assert!(outcome.stop_was_requested);
-        assert!(state.try_begin().is_ok(), "the slot must be free again");
+        assert!(state.try_begin("b".to_string()).is_ok(), "the slot must be free again");
     }
 
     #[test]
     fn finish_reports_not_current_for_a_superseded_generation() {
         let state = AudiocapState::default();
-        let first = state.try_begin().unwrap();
+        let first = state.try_begin("a".to_string()).unwrap();
         state.finish(first);
-        state.try_begin().unwrap(); // a second session now occupies the slot
+        state.try_begin("b".to_string()).unwrap(); // a second session now occupies the slot
 
         let stale_outcome = state.finish(first);
         assert!(!stale_outcome.was_current, "finishing an already-cleared/superseded generation must be a no-op");
@@ -2052,7 +2064,7 @@ mod tests {
     #[test]
     fn still_running_reflects_the_current_occupant_only() {
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
+        let generation = state.try_begin("a".to_string()).unwrap();
         assert!(state.still_running(generation));
         state.finish(generation);
         assert!(!state.still_running(generation));
@@ -2074,14 +2086,14 @@ mod tests {
         // about the window BEFORE a child (and its aggregate device)
         // ever attaches.
         let state = AudiocapState::default();
-        state.try_begin().unwrap();
+        state.try_begin("a".to_string()).unwrap();
         assert!(state.any_session_active());
     }
 
     #[test]
     fn any_session_active_is_false_again_after_finish() {
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
+        let generation = state.try_begin("a".to_string()).unwrap();
         state.finish(generation);
         assert!(!state.any_session_active());
     }
@@ -2095,7 +2107,7 @@ mod tests {
     #[test]
     fn should_attach_child_is_true_when_no_stop_was_requested_during_starting() {
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
+        let generation = state.try_begin("a".to_string()).unwrap();
         assert!(state.should_attach_child(generation));
     }
 
@@ -2108,9 +2120,9 @@ mod tests {
     #[test]
     fn should_attach_child_is_false_for_a_generation_that_is_no_longer_the_occupant() {
         let state = AudiocapState::default();
-        let first = state.try_begin().unwrap();
+        let first = state.try_begin("a".to_string()).unwrap();
         state.finish(first);
-        state.try_begin().unwrap(); // a second session now occupies the slot
+        state.try_begin("b".to_string()).unwrap(); // a second session now occupies the slot
         assert!(!state.should_attach_child(first));
     }
 
@@ -2126,11 +2138,13 @@ mod tests {
         // `generation` (mirrors the pre-fix `attach_child`, which
         // attached unconditionally once the generation matched).
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
-        // Scoped (Some(generation)) — the representative production
-        // shape once JS knows the generation it's stopping (F4(b)).
+        let generation = state.try_begin("a".to_string()).unwrap();
+        // Matching own token — the representative production shape: a
+        // stop lands before start_app_audio's OWN invoke has resolved,
+        // but the token was minted before that invoke was ever sent
+        // (FB3), so it's already known here.
         assert!(
-            state.take_child_for_stop(Some(generation)).unwrap().is_none(),
+            state.take_child_for_stop("a").unwrap().is_none(),
             "stop reports idempotent success even though nothing has actually stopped yet"
         );
         assert!(
@@ -2141,16 +2155,20 @@ mod tests {
     }
 
     #[test]
-    fn f1_stop_during_the_starting_window_also_blocks_a_later_attach_when_unscoped() {
-        // Same race as the test above, but via the `None` (unscoped)
-        // path — appAudio.ts's stop() sends `None` in the one legitimate
-        // window where it hasn't yet learned a generation (F4(b)'s own
-        // doc comment on stop_app_audio) — F1's protection must still
-        // hold for that caller too.
+    fn f1_stop_during_the_starting_window_with_a_mismatched_token_does_not_block_the_real_attach() {
+        // FB3: the Starting-window race F1 fixes must ALSO stay
+        // token-scoped — a stray stop naming a DIFFERENT (unrelated)
+        // attempt's token during another attempt's own Starting window
+        // must be a clean no-op, never cancelling the real attempt's own
+        // in-flight spawn. (There is no more "unscoped" shape to test
+        // here — replaces F4(b)'s own `None`-during-Starting test.)
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
-        assert!(state.take_child_for_stop(None).unwrap().is_none());
-        assert!(!state.should_attach_child(generation));
+        let generation = state.try_begin("real".to_string()).unwrap();
+        assert!(state.take_child_for_stop("someone-elses-token").unwrap().is_none());
+        assert!(
+            state.should_attach_child(generation),
+            "FB3: a mismatched-token stop during the Starting window must not cancel a DIFFERENT attempt's own spawn"
+        );
     }
 
     #[test]
@@ -2162,8 +2180,8 @@ mod tests {
         // eventually reports Terminated — never "crashed", and never a
         // session AudiocapState still thinks is running.
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
-        assert!(state.take_child_for_stop(Some(generation)).unwrap().is_none());
+        let generation = state.try_begin("a".to_string()).unwrap();
+        assert!(state.take_child_for_stop("a").unwrap().is_none());
         assert!(!state.should_attach_child(generation));
 
         let outcome = state.finish(generation);
@@ -2183,64 +2201,103 @@ mod tests {
         );
     }
 
-    // ---- F4(b) (S12b fix round): generation-scoped stop — the exact
-    // finding queued from e5ece57's investigation. Before this fix,
-    // `take_child_for_stop` (and therefore `stop_app_audio`) had no
-    // generation parameter at all: an abandoned OLD generation's own
-    // best-effort stop_app_audio call (appAudio.ts's abandonStart()) —
-    // firing AFTER that generation's OWN session had already finished
-    // and a NEWER generation had since claimed the slot — would reach in
-    // and kill the newer, live session. These tests pin the fix at the
-    // pure-state-machine level (the Tauri command itself needs a real
-    // spawned CommandChild, so it's exercised here the same way F1's own
-    // sibling tests above are). ----
+    // ---- FB3 (S12b fix round B, Sol3, HIGH): TOKEN-scoped stop —
+    // replaces F4(b)'s `Option<u64>` generation design. F4(b) already
+    // closed the "abandoned OLD generation's belated stop kills a NEWER,
+    // already-claimed generation" hole, but its `None` (unscoped)
+    // fallback — reserved for "I haven't learned a generation yet" —
+    // could NOT be told apart from "I was flatly REJECTED while a
+    // DIFFERENT session (B) legitimately owns the slot": a rejected
+    // start_app_audio invoke never learns a generation EITHER, so its
+    // own catch-block unwind also fell back to `None`, unscoped, and
+    // could reach in and kill B's completely unrelated, live session
+    // (RED-VERIFIED against the Option<u64> design in this worker's own
+    // report — B's session did not survive). A client-generated attempt
+    // token, minted BEFORE the invoke is ever sent, has no such gap:
+    // every caller always has ITS OWN exact token in hand, so there is
+    // no unscoped path left on the wire at all. ----
 
     #[test]
-    fn take_child_for_stop_with_a_stale_generation_is_a_no_op_and_leaves_the_live_session_running() {
-        // The exact F4(b) shape: generation A's own session already
-        // finished; generation B has since claimed the (same, reused)
-        // slot; A's own belated, generation-scoped stop must not touch
-        // B at all.
+    fn take_child_for_stop_with_a_stale_token_is_a_no_op_and_leaves_the_live_session_running() {
+        // The exact F4(b)-era shape, re-proven under tokens: attempt A's
+        // own session already finished; attempt B has since claimed the
+        // (same, reused) slot; A's own belated, token-scoped stop must
+        // not touch B at all.
         let state = AudiocapState::default();
-        let stale = state.try_begin().unwrap();
-        state.finish(stale);
-        let live = state.try_begin().unwrap();
-        assert_ne!(stale, live);
+        let stale_generation = state.try_begin("attempt-a".to_string()).unwrap();
+        state.finish(stale_generation);
+        let live_generation = state.try_begin("attempt-b".to_string()).unwrap();
+        assert_ne!(stale_generation, live_generation);
 
         assert!(
-            state.take_child_for_stop(Some(stale)).unwrap().is_none(),
-            "a stale generation's stop must report the same idempotent Ok(None) as \"nothing running\" — never an error"
+            state.take_child_for_stop("attempt-a").unwrap().is_none(),
+            "a stale token's stop must report the same idempotent Ok(None) as \"nothing running\" — never an error"
         );
-        // `live` must be completely untouched: still the slot's own
-        // occupant, still attachable (cancel_requested was never set on
-        // it), and a second try_begin() still correctly rejects (the
-        // slot is still occupied by `live`, not freed by the stale call).
-        assert!(state.is_current(live));
+        // `live_generation` (attempt B) must be completely untouched:
+        // still the slot's own occupant, still attachable
+        // (cancel_requested was never set on it), and a second
+        // try_begin() still correctly rejects (the slot is still
+        // occupied by B, not freed by the stale call).
+        assert!(state.is_current(live_generation));
         assert!(
-            state.should_attach_child(live),
-            "F4(b): a stale caller's stop must never set cancel_requested on a DIFFERENT, live generation"
+            state.should_attach_child(live_generation),
+            "FB3: a stale caller's stop must never set cancel_requested on a DIFFERENT, live session"
         );
-        assert!(state.try_begin().is_err(), "the live session's slot must still be occupied");
+        assert!(state.try_begin("attempt-c".to_string()).is_err(), "the live session's slot must still be occupied");
     }
 
     #[test]
-    fn take_child_for_stop_with_the_matching_generation_succeeds_exactly_like_unscoped() {
+    fn take_child_for_stop_with_the_matching_token_succeeds() {
         let state = AudiocapState::default();
-        let generation = state.try_begin().unwrap();
+        let generation = state.try_begin("attempt".to_string()).unwrap();
         // No CommandChild attached (mirrors the other idempotent-stop
-        // tests above) — child slot is empty either way, so `Some` vs
-        // `None` should behave identically for a MATCHING generation.
-        assert!(state.take_child_for_stop(Some(generation)).unwrap().is_none());
+        // tests above) — child slot is empty either way.
+        assert!(state.take_child_for_stop("attempt").unwrap().is_none());
         assert!(
             !state.should_attach_child(generation),
-            "a matching-generation stop must still record cancel_requested exactly like the unscoped path"
+            "a matching-token stop must still record cancel_requested"
         );
     }
 
     #[test]
-    fn take_child_for_stop_with_a_stale_generation_when_nothing_is_running_is_still_a_clean_no_op() {
+    fn take_child_for_stop_with_a_mismatched_token_when_nothing_is_running_is_still_a_clean_no_op() {
         let state = AudiocapState::default();
-        assert!(state.take_child_for_stop(Some(999)).unwrap().is_none());
+        assert!(state.take_child_for_stop("nonexistent-attempt").unwrap().is_none());
+    }
+
+    // The GREEN counterpart to this worker's own red-verification: this
+    // EXACT scenario (B owns the slot; A's start is rejected via
+    // single-flight; A's own unwind stop must not touch B), asserted
+    // against TODAY's token-scoped design. Failed under the Option<u64>
+    // design (captured pre-fix in this worker's own report); passes here.
+    #[test]
+    fn fb3_a_rejected_starts_own_token_stop_cannot_kill_a_live_unrelated_session() {
+        let state = AudiocapState::default();
+        // B legitimately claims the slot with ITS OWN token — mirrors a
+        // real "B is mid-meeting" session.
+        let b_generation = state.try_begin("b-token".to_string()).unwrap();
+
+        // A's OWN start_app_audio invoke is REJECTED: Rust's
+        // single-flight try_begin() refuses a second claim while B is
+        // running — this IS the "rejected as already-running" scenario
+        // Sol names. A never gets a generation of its own — but (FB3's
+        // entire point) A minted ITS OWN token BEFORE ever calling
+        // try_begin, so its own catch-block unwind still has something
+        // meaningful (and CORRECT) to send.
+        let a_token = "a-token".to_string();
+        assert!(state.try_begin(a_token.clone()).is_err(), "single-flight: A's own claim is rejected while B is live");
+
+        // A's own unwind sends its OWN token — never B's, and there is
+        // no unscoped fallback left for it to fall back to.
+        assert!(state.take_child_for_stop(&a_token).unwrap().is_none());
+
+        // B's own, completely unrelated, live session survives
+        // untouched.
+        assert!(state.is_current(b_generation));
+        assert!(
+            state.should_attach_child(b_generation),
+            "FB3 (fixed): B's own live session must survive A's own-token stop, since A's token never matches B's"
+        );
     }
 
     // ---- S9 live-failure investigation: always-on session log — pure

@@ -475,6 +475,76 @@ describe("WsTransport — protocol v2", () => {
   });
 
   // ---------------------------------------------------------------
+  // FB6 (S12b fix round B, Sol6=Opus2, MED): parakeet-busy — the
+  // parakeet backend's single-active-stream rejection
+  // (whisper_server.py's ParakeetMlxServer.handle, try_acquire_stream()
+  // failing). Pre-fix, this typed event had NO onmessage branch at all:
+  // it fell through silently, and the server's own immediate close right
+  // after sending it triggered the NORMAL reconnect path, which (after
+  // RECONNECT_DELAY_MS, landing right back in the same rejection) only
+  // THEN surfaced a generic "无法连接" a full cycle late.
+  // ---------------------------------------------------------------
+
+  it("parakeet-busy: surfaces the server's own detail verbatim via onStatus(error, detail)", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    const detail =
+      "本机同一时间仅支持一个 Apple 芯片本地转录会话 / only one local Apple-Silicon transcription session is supported at a time on this machine";
+    ws.simulateMessage({ type: "parakeet-busy", detail });
+
+    // Verbatim — never re-worded/wrapped here (see onmessage's own doc
+    // comment: the server's copy is shown exactly as sent).
+    expect(onStatus).toHaveBeenCalledWith("error", detail);
+  });
+
+  it("parakeet-busy: marks the failure terminal — the server's own close (its protocol: message, THEN close) never triggers a reconnect, and never lands on a second, generic connectFailureMessage", async () => {
+    vi.useFakeTimers();
+    const transport = makeTransport();
+    await transport.attachStream(fakeMediaStream());
+    const ws = wsInstances[0];
+    ws.simulateOpen();
+
+    ws.simulateMessage({ type: "parakeet-busy", detail: "busy" });
+    ws.simulateServerClose(); // mirrors the server's own `await ws.close()` right after the message
+
+    // Deliberately advance well past RECONNECT_DELAY_MS (and the
+    // SECOND-attempt give-up path) — pre-fix, this would have opened a
+    // second connection straight back into the exact same rejection.
+    await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS * 2);
+    expect(wsInstances.length).toBe(1);
+
+    // Exactly one "error" status — the real parakeet-busy detail, never
+    // a SECOND, generic "failed: <url>" connectFailureMessage from a
+    // reconnect cycle that (pre-fix) would eventually give up on its own.
+    const errorCalls = onStatus.mock.calls.filter((call) => call[0] === "error");
+    expect(errorCalls).toEqual([["error", "busy"]]);
+  });
+
+  it("parakeet-busy arriving mid-session (not just on the initial connect) is equally terminal — no reconnect", async () => {
+    // Mirrors the "reconnect while soft-paused" test's own shape above,
+    // but proves the OPPOSITE outcome for this one event: a transport
+    // that's already been streaming for a while can still receive
+    // parakeet-busy (e.g. the OTHER client won the single-active-stream
+    // race after this one had already connected) and must equally never
+    // reconnect into it.
+    vi.useFakeTimers();
+    const transport = makeTransport();
+    await transport.attachStream(fakeMediaStream());
+    const ws = wsInstances[0];
+    ws.simulateOpen();
+
+    ws.simulateMessage({ type: "final", text: "already streaming", seg_id: 0 });
+    expect(onFinal).toHaveBeenCalledTimes(1);
+
+    ws.simulateMessage({ type: "parakeet-busy", detail: "busy" });
+    ws.simulateServerClose();
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS * 2);
+    expect(wsInstances.length).toBe(1);
+  });
+
+  // ---------------------------------------------------------------
   // attachPcmFeed() / pushPcm() — D5 seam (S9.3, docs/design-
   // explorations/s9-app-audio-tap-blueprint.md): appAudio.ts's
   // AppAudioEngine feeds already-downsampled PCM in from a Tauri
