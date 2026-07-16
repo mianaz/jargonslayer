@@ -627,10 +627,10 @@ describe("AppAudioEngine", () => {
     // this proves the generation-scoped field is immune: A's late
     // resolution must abandon WITHOUT ever touching
     // helperStartedGeneration once B has already claimed it.
-    it("overlapping starts: OLD generation A's late-resolving start_app_audio must not corrupt NEWER generation B's own helperStartedGeneration — B's stop() still waits for its own 'ended'", async () => {
+    it("overlapping starts: OLD generation A's late-resolving start_app_audio must not corrupt NEWER generation B's own state — B remains capturing, B's own listener is torn down exactly once (at B's own stop()), and B's stop() still waits for its own 'ended'", async () => {
       const startA = deferred<undefined>();
       let startAppAudioCalls = 0;
-      const { calls, emit } = wireFakes({
+      const { emit, channels, activeCount } = wireFakes({
         start_app_audio: () => {
           startAppAudioCalls++;
           // Call 1 (A) — held open until resolved explicitly below.
@@ -639,30 +639,66 @@ describe("AppAudioEngine", () => {
           return startAppAudioCalls === 1 ? startA.promise : undefined;
         },
       });
+
+      // Wrap listen() so each generation's OWN unlisten() call is
+      // individually spied/countable — real registration/dispatch
+      // (activeCount/emit) stays intact underneath, mirrors the F2
+      // "leaked listener" tests above.
+      const realListen = currentListen;
+      const unlistenSpies: ReturnType<typeof vi.fn>[] = [];
+      currentListen = (async (event, handler) => {
+        const real = await realListen(event, handler);
+        const spy = vi.fn(real);
+        unlistenSpies.push(spy);
+        return spy as UnlistenFn;
+      }) as ListenFn;
+
       const engine = new AppAudioEngine();
       const events = noopEvents();
 
-      // Start A — blocks on its OWN start_app_audio invoke.
+      // Start A — blocks on its OWN start_app_audio invoke (its own
+      // listen() has already resolved by this point).
       const startAP = engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
-      await flushUntil(() => calls.some((c) => c.cmd === "start_app_audio"));
+      await flushUntil(() => unlistenSpies.length === 1);
 
       // Start B — supersedes A (bumps this.generation) and completes for
-      // real, legitimately claiming helperStartedGeneration for its OWN
-      // generation.
+      // real, legitimately claiming this.transport/this.unlistenStatus/
+      // helperStartedGeneration for its OWN generation.
       await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
 
       // NOW resolve A's stale invoke — A's own success path must see
-      // itself superseded and abandon (best-effort stop_app_audio for
-      // its own dead session) WITHOUT ever assigning
-      // helperStartedGeneration = A's generation.
+      // itself superseded and abandon (its own local listener torn down,
+      // best-effort stop_app_audio fired for its own dead session)
+      // WITHOUT ever touching B's own live this.transport/
+      // this.unlistenStatus/helperStartedGeneration.
       startA.resolve(undefined);
       await startAP;
 
-      // Prove B's own state is intact: stop() (targeting the CURRENT —
-      // B's — generation) must still wait for "ended" rather than
-      // resolving immediately, which is exactly what a corrupted
-      // (wrong-generation) helperStartedGeneration would cause.
-      vi.useFakeTimers();
+      // Exactly ONE listener active — B's own; A's own was torn down by
+      // its own abandonStart(), exactly once, and B's own was NEVER
+      // touched by A's late resolution.
+      expect(activeCount("audiocap://status")).toBe(1);
+      expect(unlistenSpies).toHaveLength(2);
+      expect(unlistenSpies[0]).toHaveBeenCalledTimes(1); // A's own
+      expect(unlistenSpies[1]).not.toHaveBeenCalled(); // B's own — still live
+
+      // B REMAINS capturing: "capturing" still correctly attaches B's
+      // OWN transport (proves this.transport was never corrupted by A's
+      // stale write) and PCM still flows.
+      emit("audiocap://status", { kind: "capturing", message: "" });
+      const ws = wsInstances[wsInstances.length - 1];
+      expect(ws).toBeTruthy();
+      ws.simulateOpen();
+      ws.sent = [];
+      const chunk = new ArrayBuffer(8);
+      channels[channels.length - 1].onmessage(chunk);
+      expect(ws.sent).toEqual([chunk]);
+
+      // Prove B's own helperStartedGeneration is intact too: stop()
+      // (targeting the CURRENT — B's — generation) must still wait for
+      // "ended" rather than resolving immediately, which is exactly what
+      // a corrupted (wrong-generation) helperStartedGeneration would
+      // cause (Sol finding 17).
       let resolved = false;
       const stopP = engine.stop().then(() => {
         resolved = true;
@@ -671,14 +707,99 @@ describe("AppAudioEngine", () => {
       expect(resolved).toBe(false);
 
       emit("audiocap://status", { kind: "ended", message: "" });
+      await flushUntil(() => ws.sent.some((m) => typeof m === "string" && JSON.parse(m).type === "stop"));
+      expect(resolved).toBe(false); // still draining the ws — stopped ack not sent yet
+
+      ws.simulateMessage({ type: "stopped" });
       await stopP;
       expect(resolved).toBe(true);
 
-      // A's own abandon path did fire its best-effort stop_app_audio (so
-      // this test actually exercised A's late-resolution branch, not
-      // just skipped it) — at least A's own call, possibly also B's own
-      // real stop() call.
-      expect(calls.filter((c) => c.cmd === "stop_app_audio").length).toBeGreaterThanOrEqual(1);
+      // B's own listener torn down EXACTLY once, here — not before, not
+      // twice.
+      expect(activeCount("audiocap://status")).toBe(0);
+      expect(unlistenSpies[1]).toHaveBeenCalledTimes(1);
+    });
+
+    // F4(a) (S12a fix round, adversarial pair 2026-07-16, GPT-5.6-Sol
+    // finding 4): the ACTUAL vulnerable window — OLD generation A's own
+    // listen() call (not its start_app_audio invoke, which is a LATER
+    // await point A never even reaches here) resolves late, AFTER newer
+    // generation B has already legitimately published its own
+    // this.transport/this.unlistenStatus. Pre-fix, A's belated listen()
+    // resolution wrote this.unlistenStatus = A's own listener (and
+    // this.transport = A's own transport, published earlier at
+    // acquisition time) BEFORE ever checking superseded() — overwriting
+    // B's own live references. abandonStart() then only ever unregisters
+    // A's OWN local listener, leaving B's real listener orphaned (nothing
+    // left to ever call ITS unlisten()) and B's transport reference
+    // clobbered.
+    it("F4(a): OLD generation A's late-resolving listen() must not overwrite NEWER generation B's own transport/unlistenStatus — B remains capturing and its own listener is torn down exactly once, at B's own stop()", async () => {
+      const { emit, channels, activeCount } = wireFakes();
+
+      const realListen = currentListen;
+      const listenGate = deferred<void>();
+      let listenCalls = 0;
+      const unlistenSpies: ReturnType<typeof vi.fn>[] = [];
+      currentListen = (async (event, handler) => {
+        listenCalls++;
+        if (listenCalls === 1) await listenGate.promise; // A's own — held open
+        const real = await realListen(event, handler);
+        const spy = vi.fn(real);
+        unlistenSpies.push(spy);
+        return spy as UnlistenFn;
+      }) as ListenFn;
+
+      const engine = new AppAudioEngine();
+      const events = noopEvents();
+
+      // Start A — stalls INSIDE its own listen() call, before it has
+      // published anything to this.transport/this.unlistenStatus.
+      const startAP = engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+      await flushUntil(() => listenCalls === 1);
+
+      // Start B — supersedes A (bumps this.generation) and completes for
+      // real: its OWN listen() resolves normally (the gate only blocks
+      // the FIRST call), legitimately publishing this.transport/
+      // this.unlistenStatus for its own generation.
+      await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+      expect(activeCount("audiocap://status")).toBe(1); // B's own, only
+
+      // NOW release A's stale listen() — A's own success path must see
+      // itself superseded and abandon WITHOUT ever publishing to
+      // this.transport/this.unlistenStatus (A never even reached
+      // start_app_audio, so abandonStart()'s stop_app_audio branch is
+      // skipped too — this test isolates F4(a) alone, not F4(b)).
+      listenGate.resolve();
+      await startAP;
+
+      // B's own listener is STILL the only one active — A's late
+      // registration+abandon nets to zero extra listeners; B's own was
+      // never touched. Registration order in `unlistenSpies` follows
+      // when each call's OWN listen() actually RESOLVES, not call order —
+      // B's listen() resolves first (A's was gated/stalled), so index 0
+      // is B's own spy and index 1 is A's own (registered only once the
+      // gate is released below).
+      expect(activeCount("audiocap://status")).toBe(1);
+      expect(unlistenSpies).toHaveLength(2);
+      expect(unlistenSpies[0]).not.toHaveBeenCalled(); // B's own — still live
+      expect(unlistenSpies[1]).toHaveBeenCalledTimes(1); // A's own, torn down
+
+      // B remains capturing: this.transport still legitimately
+      // references B's own transport, never overwritten by A's stale,
+      // late write.
+      emit("audiocap://status", { kind: "capturing", message: "" });
+      const ws = wsInstances[wsInstances.length - 1];
+      expect(ws).toBeTruthy();
+      ws.simulateOpen();
+      ws.sent = [];
+      const chunk = new ArrayBuffer(8);
+      channels[channels.length - 1].onmessage(chunk);
+      expect(ws.sent).toEqual([chunk]);
+
+      // B's own stop() — its own listener torn down EXACTLY once, here.
+      await stopViaEnded(engine, emit, ws);
+      expect(activeCount("audiocap://status")).toBe(0);
+      expect(unlistenSpies[0]).toHaveBeenCalledTimes(1);
     });
 
     it("the live user-stop path still waits for and resolves early on its own generation's 'ended' status", async () => {

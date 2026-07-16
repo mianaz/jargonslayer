@@ -263,16 +263,32 @@ export class AppAudioEngine implements STTEngine {
       connectFailureMessage: (url) =>
         `系统音频捕获需要本地 Whisper sidecar（见 README），无法连接 ${url}`,
     });
-    this.transport = transport;
 
     unlisten = await listen<AudiocapStatusPayload>("audiocap://status", (event) => {
       this.handleStatus(myGeneration, event.payload);
     });
-    this.unlistenStatus = unlisten;
     if (superseded()) {
       await abandonStart();
       return;
     }
+    // F4(a) (S12a fix round, adversarial pair 2026-07-16, GPT-5.6-Sol
+    // finding 4): publish BOTH acquisitions to instance state only now,
+    // past this SAME post-acquisition superseded() check — the same
+    // discipline helperStartedGeneration's own assignment follows below.
+    // The pre-fix ordering (this.transport/this.unlistenStatus written
+    // IMMEDIATELY on acquisition, before ever checking superseded()) let
+    // an OLD generation's belated listen() resolution overwrite a NEWER,
+    // already-live generation's own this.unlistenStatus/this.transport
+    // with its own soon-to-be-abandoned values: abandonStart() below only
+    // ever unregisters THIS call's own LOCAL listener/transport (see that
+    // routine's own doc comment), leaving the newer generation's real
+    // listener orphaned — nothing left ever calls its own unlisten(), a
+    // leak — and/or its transport reference lost. No status event can
+    // reach handleStatus() before listen() above has actually resolved,
+    // so deferring this publish to right here (rather than the instant
+    // each value is acquired) costs nothing observable.
+    this.transport = transport;
+    this.unlistenStatus = unlisten;
 
     const channel = createChannel((data) => {
       this.handleChannelMessage(myGeneration, data);
