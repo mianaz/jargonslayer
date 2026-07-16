@@ -13,6 +13,7 @@ mod audiocap_batch;
 mod audiocap_framing;
 mod audiocap_pipeline;
 mod audiocap_resample;
+mod mlxcaps;
 mod oauth;
 mod osspeech;
 mod paths;
@@ -64,6 +65,12 @@ pub fn run() {
         // osspeech transcribe session (and its own preinstall slot), see
         // osspeech::OsSpeechState's own doc comment.
         .manage(osspeech::OsSpeechState::default())
+        // S12a §C F16 — a bounded single-flight guard against an
+        // overlapping `run_uv` invocation racing the same venv/pip
+        // target (the "stale processes keep mutating the venv"
+        // retry-poisoning gap); see uv::UvInstallState's own doc
+        // comment.
+        .manage(uv::UvInstallState::default())
         // App-owned commands (not plugin commands) need no capability/
         // permission entry: Tauri's ACL only gates a command when it's a
         // plugin command, the app declares its OWN acl manifest under
@@ -97,6 +104,8 @@ pub fn run() {
             osspeech::pause_os_speech,
             osspeech::resume_os_speech,
             osspeech::preinstall_os_speech,
+            mlxcaps::mlx_capabilities,
+            uv::mlx_import_preflight,
         ])
         // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
         // — the audiocap TCC-attribution spike rig: inert unless
