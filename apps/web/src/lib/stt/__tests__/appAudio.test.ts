@@ -88,19 +88,22 @@ async function settle(n = 5): Promise<void> {
 
 const SUPPORTED_CAPS = { appAudioSupported: true, reason: null as string | null };
 
-/** Wires the default fakes (capabilities: supported; start/stop_app_audio/
- *  pause_app_audio/resume_app_audio: succeed) into the mocked tauriApi
- *  module, with per-command overrides for tests that need a specific
- *  command to fail/defer. */
+/** Wires the default fakes (capabilities: supported; start_app_audio:
+ *  succeeds with a fresh, auto-incrementing `{generation}` per call —
+ *  mirrors Rust's own AudiocapState.generation counter, F4(b); stop/
+ *  pause/resume_app_audio: succeed) into the mocked tauriApi module,
+ *  with per-command overrides for tests that need a specific command to
+ *  fail/defer/return a specific generation. */
 function wireFakes(invokeOverrides: Record<string, (args?: Record<string, unknown>) => unknown> = {}): {
   calls: FakeInvokeCall[];
   emit: (event: string, payload: unknown) => void;
   activeCount: (event: string) => number;
   channels: PcmChannel[];
 } {
+  let nextGeneration = 1;
   const { invoke, calls } = makeFakeInvoke({
     audiocap_capabilities: () => SUPPORTED_CAPS,
-    start_app_audio: () => undefined,
+    start_app_audio: () => ({ generation: nextGeneration++ }),
     stop_app_audio: () => undefined,
     // F4-js: pinned contract, Rust worker adds these as idempotent,
     // no-arg commands — see AppAudioEngine.pause()/resume()'s own doc.
@@ -388,7 +391,7 @@ describe("AppAudioEngine", () => {
   // ---------------------------------------------------------------
 
   it("stop() landing while start_app_audio is still in flight tears down cleanly — a later capturing never attaches the feed", async () => {
-    const startAppAudio = deferred<undefined>();
+    const startAppAudio = deferred<{ generation: number }>();
     const { calls, emit } = wireFakes({
       start_app_audio: () => startAppAudio.promise,
     });
@@ -403,7 +406,13 @@ describe("AppAudioEngine", () => {
     const stopP = engine.stop();
     await flushUntil(() => calls.some((c) => c.cmd === "stop_app_audio"));
 
-    startAppAudio.resolve(undefined);
+    // F4(b): stop()'s OWN call above fired BEFORE start_app_audio ever
+    // resolved — rustGeneration wasn't known yet, so it's the one
+    // legitimate unscoped (generation: null) call. Pin that payload.
+    const firstStopCall = calls.find((c) => c.cmd === "stop_app_audio");
+    expect(firstStopCall?.args).toEqual({ generation: null });
+
+    startAppAudio.resolve({ generation: 1 });
     await startP;
 
     // "capturing" arriving after stop() must never attach the feed.
@@ -419,8 +428,15 @@ describe("AppAudioEngine", () => {
 
     // stop_app_audio idempotent per the wire contract — called at least
     // once (stop()'s own call; possibly a second time from start()'s
-    // own post-acquire re-check, which is fine).
-    expect(calls.filter((c) => c.cmd === "stop_app_audio").length).toBeGreaterThanOrEqual(1);
+    // own post-acquire re-check via abandonStart(), which is fine —
+    // THAT second call, if it fires, is properly scoped to generation 1
+    // since abandonStart() only runs once start_app_audio's own invoke
+    // resolved with a known generation).
+    const stopCalls = calls.filter((c) => c.cmd === "stop_app_audio");
+    expect(stopCalls.length).toBeGreaterThanOrEqual(1);
+    if (stopCalls.length > 1) {
+      expect(stopCalls[1]?.args).toEqual({ generation: 1 });
+    }
   });
 
   // F2 (adversarial review, HIGH): stop() can land WHILE listen() itself
@@ -627,16 +643,23 @@ describe("AppAudioEngine", () => {
     // this proves the generation-scoped field is immune: A's late
     // resolution must abandon WITHOUT ever touching
     // helperStartedGeneration once B has already claimed it.
-    it("overlapping starts: OLD generation A's late-resolving start_app_audio must not corrupt NEWER generation B's own state — B remains capturing, B's own listener is torn down exactly once (at B's own stop()), and B's stop() still waits for its own 'ended'", async () => {
-      const startA = deferred<undefined>();
+    it("overlapping starts: OLD generation A's late-resolving start_app_audio must not corrupt NEWER generation B's own state — B remains capturing, B's own listener is torn down exactly once (at B's own stop()), B's stop() still waits for its own 'ended', and the RUST-CONTRACT-level stop_app_audio payloads prove A's stale stop named the OLD generation while B's own stop later named its OWN (F4(b))", async () => {
+      // Distinct, known Rust-side generations (F4(b)) — mirrors what
+      // start_app_audio's own Ok response would actually return for two
+      // sequential try_begin() claims; deliberately non-sequential-
+      // looking constants so a test bug swapping them can't hide behind
+      // "looks plausible either way".
+      const A_RUST_GENERATION = 100;
+      const B_RUST_GENERATION = 200;
+      const startA = deferred<{ generation: number }>();
       let startAppAudioCalls = 0;
-      const { emit, channels, activeCount } = wireFakes({
+      const { calls, emit, channels, activeCount } = wireFakes({
         start_app_audio: () => {
           startAppAudioCalls++;
           // Call 1 (A) — held open until resolved explicitly below.
           // Call 2+ (B) — succeeds immediately, like every other test's
-          // default fake.
-          return startAppAudioCalls === 1 ? startA.promise : undefined;
+          // default fake, with its OWN distinct generation.
+          return startAppAudioCalls === 1 ? startA.promise : { generation: B_RUST_GENERATION };
         },
       });
 
@@ -671,7 +694,7 @@ describe("AppAudioEngine", () => {
       // best-effort stop_app_audio fired for its own dead session)
       // WITHOUT ever touching B's own live this.transport/
       // this.unlistenStatus/helperStartedGeneration.
-      startA.resolve(undefined);
+      startA.resolve({ generation: A_RUST_GENERATION });
       await startAP;
 
       // Exactly ONE listener active — B's own; A's own was torn down by
@@ -681,6 +704,14 @@ describe("AppAudioEngine", () => {
       expect(unlistenSpies).toHaveLength(2);
       expect(unlistenSpies[0]).toHaveBeenCalledTimes(1); // A's own
       expect(unlistenSpies[1]).not.toHaveBeenCalled(); // B's own — still live
+
+      // F4(b), the RUST-CONTRACT-level assertion: A's own abandonStart()
+      // fired stop_app_audio carrying EXACTLY its own (now stale)
+      // generation — never B's, and never unscoped (null) — proving the
+      // wire-level payload itself is what keeps this a no-op on Rust's
+      // side rather than merely "B happens to still work in this fake".
+      const abandonStopCall = calls.find((c) => c.cmd === "stop_app_audio");
+      expect(abandonStopCall?.args).toEqual({ generation: A_RUST_GENERATION });
 
       // B REMAINS capturing: "capturing" still correctly attaches B's
       // OWN transport (proves this.transport was never corrupted by A's
@@ -705,6 +736,11 @@ describe("AppAudioEngine", () => {
       });
       await settle();
       expect(resolved).toBe(false);
+
+      // F4(b), the RUST-CONTRACT-level assertion for B's OWN stop:
+      // carries B's OWN generation — never A's stale one, never unscoped.
+      const bStopCall = calls.filter((c) => c.cmd === "stop_app_audio")[1];
+      expect(bStopCall?.args).toEqual({ generation: B_RUST_GENERATION });
 
       emit("audiocap://status", { kind: "ended", message: "" });
       await flushUntil(() => ws.sent.some((m) => typeof m === "string" && JSON.parse(m).type === "stop"));
