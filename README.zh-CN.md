@@ -13,7 +13,7 @@
 
 [![Release](https://img.shields.io/github/v/release/mianaz/jargonslayer?style=flat-square&color=4ADE80&labelColor=121212)](https://github.com/mianaz/jargonslayer/releases)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-22D3EE?style=flat-square&labelColor=121212)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-2029%20passing-4ADE80?style=flat-square&labelColor=121212)](apps/web/src/lib/__tests__)
+[![Tests](https://img.shields.io/badge/tests-2347%20passing-4ADE80?style=flat-square&labelColor=121212)](apps/web/src/lib/__tests__)
 [![Data paths](https://img.shields.io/badge/data-transparent%20paths-FFAA44?style=flat-square&labelColor=121212)](#隐私)
 
 **简体中文** · [English](README.md) · [**在线体验**](https://apps.bioinfospace.com/jargonslayer) · [**官网与文档**](https://mianaz.github.io/jargonslayer/)

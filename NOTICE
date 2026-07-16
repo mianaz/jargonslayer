@@ -1,0 +1,75 @@
+JargonSlayer
+Copyright (C) 2026 Miana Zeng
+
+This product is licensed under the GNU Affero General Public License v3.0
+(see LICENSE). It incorporates the following third-party components,
+listed here per their respective license terms.
+
+================================================================================
+Local MLX transcription lane (parakeet-mlx) — Apple Silicon, opt-in
+================================================================================
+
+This lane is installed on-demand, at the user's own machine, into a
+dedicated local Python virtual environment (`<app-data>/mlx-venv`). None of
+the packages or model weights below are bundled or redistributed inside the
+JargonSlayer DMG/app bundle; they are downloaded directly by the user's
+machine from PyPI and Hugging Face at install/first-run time.
+
+--- parakeet-mlx ---
+License: Apache License 2.0
+Source: https://github.com/senstella/parakeet-mlx
+Copyright (c) senstella and contributors.
+
+--- mlx / mlx-metal ---
+License: MIT License
+Source: https://github.com/ml-explore/mlx
+Copyright (c) 2023-2024 Apple Inc.
+
+--- tqdm ---
+License: Mozilla Public License 2.0 AND MIT License (dual-licensed)
+Source: https://github.com/tqdm/tqdm
+
+--- LGPL components (pulled in transitively via librosa/soundfile) ---
+
+The following components are LGPL-licensed. They are pip-installed at the
+user's own machine into the local `mlx-venv`, dynamically loaded at runtime,
+and are NOT statically linked into, nor redistributed as part of, the
+JargonSlayer application binary or DMG. Per LGPL-2.1 §6, dynamic linking of
+an LGPL library by an otherwise-independent work does not place the calling
+work under the LGPL; JargonSlayer's own source remains AGPL-3.0-only. Users
+may replace these libraries in their local venv with modified versions of
+the same LGPL components (e.g. via `pip install`).
+
+  - soxr (bundles libsoxr)
+    License: LGPL-2.1-or-later
+    Source: https://github.com/dofuuz/python-soxr / https://github.com/chirlu/soxr
+
+  - soundfile (its macOS wheel bundles libsndfile)
+    License: soundfile itself is BSD-3-Clause; the bundled libsndfile is LGPL-2.1
+    Source: https://github.com/bastibe/python-soundfile / https://github.com/libsndfile/libsndfile
+    libsndfile's macOS wheel additionally bundles libmp3lame (LGPL-2.0-or-later)
+    and libmpg123 (LGPL-2.1-only) for MP3 codec support.
+
+Full license texts for the above are available from each project's
+respective source repository.
+
+================================================================================
+Model weights — Parakeet-v3 (opt-in download, not redistributed)
+================================================================================
+
+--- mlx-community/parakeet-tdt-0.6b-v3 ---
+License: CC-BY-4.0 (a content/attribution license — not a code license; does
+not affect JargonSlayer's own AGPL-3.0 licensing)
+Source: https://huggingface.co/mlx-community/parakeet-tdt-0.6b-v3
+Converted from: nvidia/parakeet-tdt-0.6b-v3
+  https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+
+These weights are downloaded directly by the user's machine from Hugging
+Face at first use of the Parakeet-v3 model; they are not bundled in the
+JargonSlayer DMG/app bundle.
+
+================================================================================
+
+For the full set of npm/Rust/Python dependencies and their licenses, see the
+respective lockfiles (package-lock.json, apps/desktop/src-tauri/Cargo.lock,
+sidecar/requirements-*.lock) and each package's own LICENSE.
