@@ -90,6 +90,18 @@ interface ParakeetBusyMessage {
   type: "parakeet-busy";
   detail: string;
 }
+// FB-follow-up (v0.4.4 release-prep sweep): FB5's own server-side typed
+// terminal error (whisper_server.py's
+// ParakeetMlxConnectionHandler._terminate_on_model_error) — a contained
+// model-call exception (context open/add_audio/batch_final/close). Sent
+// ONCE, immediately followed by the server closing the socket itself
+// (`await ws.close()`, no further messages) — exactly parallel to
+// ParakeetBusyMessage's own shape/lifecycle, just a different trigger
+// (an internal failure vs. the single-active-stream slot already held).
+interface ParakeetErrorMessage {
+  type: "parakeet-error";
+  detail: string;
+}
 type ServerMessage =
   | PartialMessage
   | FinalMessage
@@ -97,6 +109,7 @@ type ServerMessage =
   | SpeakerUpdateMessage
   | DiarStatusMessage
   | ParakeetBusyMessage
+  | ParakeetErrorMessage
   | { type: string };
 
 export interface WsTransportCallbacks {
@@ -394,6 +407,21 @@ export class WsTransport {
         const busy = msg as ParakeetBusyMessage;
         this.terminalFailure = true;
         events.onStatus("error", busy.detail);
+      } else if (msg.type === "parakeet-error") {
+        // FB-follow-up (v0.4.4 release-prep sweep): exactly parallel to
+        // parakeet-busy above — the server sends this ONCE then closes
+        // the connection itself (whisper_server.py's
+        // _terminate_on_model_error, a CONTAINED model-call failure, not
+        // the slot-already-held rejection parakeet-busy reports) —
+        // surface its own zh/en detail verbatim and mark this failure
+        // terminal BEFORE that close's onclose ever runs, so
+        // handleDisconnect() skips the automatic reconnect instead of
+        // cycling once more against a slot the server's own finally has
+        // (by then) already freed, only THEN surfacing a generic
+        // "无法连接" a second or two late.
+        const parakeetError = msg as ParakeetErrorMessage;
+        this.terminalFailure = true;
+        events.onStatus("error", parakeetError.detail);
       }
     };
 

@@ -545,6 +545,71 @@ describe("WsTransport — protocol v2", () => {
   });
 
   // ---------------------------------------------------------------
+  // FB-follow-up (v0.4.4 release-prep sweep): parakeet-error — FB5's own
+  // server-side typed terminal event (whisper_server.py's
+  // ParakeetMlxConnectionHandler._terminate_on_model_error), sent once on
+  // a CONTAINED model-call failure, then the server closes the socket
+  // itself. Exactly parallel to parakeet-busy above; mirrors that same
+  // three-test shape. Pre-fix, this event had no onmessage branch either:
+  // it fell through, and the server's own close right after it triggered
+  // the normal (pointless) reconnect path against a slot the server's own
+  // finally had, by then, already freed.
+  // ---------------------------------------------------------------
+
+  it("parakeet-error: surfaces the server's own detail verbatim via onStatus(error, detail)", async () => {
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    const detail =
+      "本地转录出现内部错误，连接已关闭，请重新开始 / a local transcription error occurred; the connection has been closed — please start again";
+    ws.simulateMessage({ type: "parakeet-error", detail });
+
+    // Verbatim — never re-worded/wrapped here (see onmessage's own doc
+    // comment: the server's copy is shown exactly as sent).
+    expect(onStatus).toHaveBeenCalledWith("error", detail);
+  });
+
+  it("parakeet-error: marks the failure terminal — the server's own close (its protocol: message, THEN close) never triggers a reconnect, and never lands on a second, generic connectFailureMessage", async () => {
+    vi.useFakeTimers();
+    const transport = makeTransport();
+    await transport.attachStream(fakeMediaStream());
+    const ws = wsInstances[0];
+    ws.simulateOpen();
+
+    ws.simulateMessage({ type: "parakeet-error", detail: "internal error" });
+    ws.simulateServerClose(); // mirrors the server's own `await ws.close()` right after the message
+
+    // Deliberately advance well past RECONNECT_DELAY_MS (and the
+    // SECOND-attempt give-up path) — pre-fix, this would have opened a
+    // second connection straight back against a now-freed slot.
+    await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS * 2);
+    expect(wsInstances.length).toBe(1);
+
+    // Exactly one "error" status — the real parakeet-error detail, never
+    // a SECOND, generic "failed: <url>" connectFailureMessage from a
+    // reconnect cycle that (pre-fix) would eventually give up on its own.
+    const errorCalls = onStatus.mock.calls.filter((call) => call[0] === "error");
+    expect(errorCalls).toEqual([["error", "internal error"]]);
+  });
+
+  it("parakeet-error arriving mid-session (not just on the initial connect) is equally terminal — no reconnect", async () => {
+    vi.useFakeTimers();
+    const transport = makeTransport();
+    await transport.attachStream(fakeMediaStream());
+    const ws = wsInstances[0];
+    ws.simulateOpen();
+
+    ws.simulateMessage({ type: "final", text: "already streaming", seg_id: 0 });
+    expect(onFinal).toHaveBeenCalledTimes(1);
+
+    ws.simulateMessage({ type: "parakeet-error", detail: "internal error" });
+    ws.simulateServerClose();
+
+    await vi.advanceTimersByTimeAsync(RECONNECT_DELAY_MS * 2);
+    expect(wsInstances.length).toBe(1);
+  });
+
+  // ---------------------------------------------------------------
   // attachPcmFeed() / pushPcm() — D5 seam (S9.3, docs/design-
   // explorations/s9-app-audio-tap-blueprint.md): appAudio.ts's
   // AppAudioEngine feeds already-downsampled PCM in from a Tauri
