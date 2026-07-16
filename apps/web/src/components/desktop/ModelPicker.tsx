@@ -24,22 +24,22 @@
 // (CardsPanel/HistoryDrawer/TaskTray/ToggleSwitch), not a new
 // implementation.
 //
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Gating F13 + worker A3) — two additive layers, both INERT in
-// production today because modelCatalog.ts's parakeet stub is still
-// `available: false` (worker B2 flips that later, §C L1):
+// S12 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Gating F13 + worker A3, flipped live by worker B2 §C L1/§E) — two
+// additive gating layers:
 //   1. `available === false` entries are HIDDEN from the picker
-//      entirely (never rendered as a row at all) — this is the ONLY
-//      reason the row-count/each-row tests below now filter
-//      MODEL_CATALOG first, instead of iterating it raw.
-//   2. Any `mlxOnly` entry that DOES render (an `available: true` one —
-//      today only ever a test-catalog fixture, via vi.mock, per this
-//      file's own test suite) is gated a SECOND way, against
-//      mlxCaps.ts's fail-CLOSED probe: unsupported/errored → real
-//      `disabled` + `aria-disabled` + a visible reason line; a probe
-//      ERROR additionally grows a 重试 affordance (mlxGateFor below is
-//      the one place both layers combine). Every non-mlxOnly row (every
-//      SHIPPED entry today) is entirely unaffected — mlxGateFor is a
+//      entirely (never rendered as a row at all) — no catalog entry
+//      reads that way today (worker B2's flip), but the layer stays
+//      live for any future stub/prelude entry; this is the ONLY reason
+//      the row-count/each-row tests below filter MODEL_CATALOG first,
+//      instead of iterating it raw.
+//   2. Any `mlxOnly` entry (parakeet-tdt-0.6b-v3, live in production
+//      since B2's flip) is gated a SECOND way, against mlxCaps.ts's
+//      fail-CLOSED probe: unsupported/errored → real `disabled` +
+//      `aria-disabled` + a visible reason line; a probe ERROR
+//      additionally grows a 重试 affordance (mlxGateFor below is the
+//      one place both layers combine). Every non-mlxOnly row (every
+//      OTHER shipped entry) is entirely unaffected — mlxGateFor is a
 //      structural no-op for it, same "no-op for every other value"
 //      shape as osspeechCaps.ts's own isOsSpeechFloorLocked.
 //

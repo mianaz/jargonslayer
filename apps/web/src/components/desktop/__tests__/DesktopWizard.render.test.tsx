@@ -35,6 +35,44 @@ vi.mock("@/lib/desktop/bootstrap", async (importOriginal) => {
   };
 });
 
+// S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
+// §C L1) — the embedded <ModelPicker>'s own mlxOnly gating (worker A3,
+// ModelPicker.tsx) reads mlxCaps.ts's probeMlxCaps()/refreshMlxCaps()
+// directly, not through this file's own `paths`/callback props — this
+// suite doesn't otherwise touch mlxCaps.ts at all, so left UNMOCKED
+// every pre-existing (pre-B2) test below would still pass today: with
+// IS_DESKTOP genuinely false in this jsdom test env (no
+// `@/lib/platform/desktop` mock in this file), mlxCaps.ts's own
+// probeMlxCaps() short-circuits to `{status:"error", caps: FAIL_CLOSED}`
+// WITHOUT ever reaching tauriApi.ts's getInvoke() (see that module's own
+// IS_DESKTOP guard) — i.e. every pre-existing test's parakeet row (now
+// rendered, since modelCatalog.ts's own stub flips `available: true`
+// this sprint) reads disabled-fail-closed by default, harmlessly, same
+// as an unmocked ModelPicker.render.test.tsx row would. Mocked here only
+// so the TWO new gating tests below (§C Gating F13's "supported" vs
+// "unsupported" states) can drive an explicit result without fighting
+// tauriApi's own dynamic `@tauri-apps/*` import — mirrors ModelPicker.
+// render.test.tsx's own hoisted `mlxState` pattern (probeImpl/refreshImpl
+// reassigned per-test), default here is the SAME fail-closed shape the
+// real, unmocked module already produces in this jsdom env, so every
+// OTHER (non-mlx) test in this file is byte-unaffected by this mock's
+// mere presence.
+const mlxState = vi.hoisted(() => {
+  const FAIL_CLOSED = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
+  const state: {
+    probeImpl: () => Promise<{ status: "ok" | "error"; caps: { mlxSupported: boolean; reason: string | null } }>;
+  } = {
+    probeImpl: async () => ({ status: "error", caps: FAIL_CLOSED }),
+  };
+  return state;
+});
+vi.mock("@/lib/desktop/mlxCaps", () => ({
+  getMlxCapsSnapshot: () => null,
+  subscribeMlxCaps: () => () => {},
+  probeMlxCaps: () => mlxState.probeImpl(),
+  refreshMlxCaps: () => mlxState.probeImpl(),
+}));
+
 import DesktopWizard from "../DesktopWizard";
 import type { DesktopBootstrapState, DesktopLogLine } from "@/lib/desktop/bootstrap";
 import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
@@ -78,6 +116,13 @@ describe("DesktopWizard — state-driven rendering", () => {
     // unrelated test (every pre-S11 test relies on the null default).
     mockOsSpeechCaps = null;
     mockChooseOsSpeechEngine.mockClear();
+    // S12b worker B2 — same reset discipline, for the mlxCaps mock added
+    // above: a gating test that overrides mlxState.probeImpl must never
+    // bleed its result into a LATER, unrelated test.
+    mlxState.probeImpl = async () => ({
+      status: "error",
+      caps: { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" },
+    });
   });
 
   async function renderWizard(state: DesktopBootstrapState, logLines: DesktopLogLine[] = [], overrides: Partial<Parameters<typeof DesktopWizard>[0]> = {}) {
@@ -156,25 +201,79 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onBeginProvision).toHaveBeenCalledWith("large-v3");
   });
 
-  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C Q8,
-  // worker A3) — the wizard's own model-picker step "accommodates" the
-  // parakeet stub simply by never rendering it: this is an INTEGRATION
-  // check (real MODEL_CATALOG, real embedded <ModelPicker>, not
-  // ModelPicker's own mocked-catalog unit tests) that the wizard step
-  // never leaks the still-`available:false` row through, and can never
-  // land it as the eventual onBeginProvision(model) argument either.
-  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker> never renders the still-unavailable parakeet-tdt-0.6b-v3 stub (§C L1 — worker B2 flips it later)", async () => {
+  // S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
+  // §C L1) — modelCatalog.ts's own parakeet stub is now `available:
+  // true` (B2's flip), so the wizard step's own <ModelPicker> DOES
+  // render its row unconditionally — the previous "never renders the
+  // still-unavailable stub" contract this suite pinned pre-flip is
+  // superseded by two real gating states instead: an INTEGRATION check
+  // (real MODEL_CATALOG, real embedded <ModelPicker>, not ModelPicker's
+  // own mocked-catalog unit tests) that the row shows up, is selectable,
+  // and reaches onBeginProvision(model) on a supported-caps mock; and
+  // that it still renders (available:true means it's never HIDDEN
+  // anymore) but stays disabled/unselectable with a visible reason on an
+  // unsupported-caps result — mlxOnly gating disables, it doesn't hide;
+  // only `available:false` (ModelPicker.tsx's own OTHER, independent
+  // gating layer, unaffected by this file's mlxCaps mock) hides a row
+  // entirely, and no catalog entry is `available:false` today. "Web" is
+  // a THIRD, structurally separate gate (page.tsx:297 mounts
+  // <DesktopBootstrap>/this wizard only under IS_DESKTOP at all — S12a
+  // §D F15, confirmed, not owned by this worker) — out of scope for a
+  // DesktopWizard-level render test, which by construction only ever
+  // renders on the "desktop" side of that gate.
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker> renders the parakeet-tdt-0.6b-v3 row, selectable, when mlxCaps reports supported (§C Gating F13, §C L1 B2 flip)", async () => {
     mockOsSpeechCaps = { supported: false };
+    mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
     const onBeginProvision = vi.fn();
     await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision });
+    await act(async () => {
+      await Promise.resolve(); // let useMlxCaps' own mount-effect probe settle
+    });
 
     const parakeet = MODEL_CATALOG.find((m) => m.id === "parakeet-tdt-0.6b-v3");
-    expect(parakeet?.available).toBe(false); // sanity: the stub really is still gated
-    expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')).toBeNull();
+    expect(parakeet?.available).toBe(true); // sanity: B2's flip landed
 
-    const visibleCount = MODEL_CATALOG.filter((m) => m.available !== false).length;
-    expect(container!.querySelectorAll('[role="radio"]').length).toBe(visibleCount);
-    expect(container!.querySelectorAll('[role="radio"]').length).toBeLessThan(MODEL_CATALOG.length);
+    const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+    expect(row).not.toBeNull();
+    expect(row.disabled).toBe(false);
+    expect(container!.querySelectorAll('[role="radio"]').length).toBe(MODEL_CATALOG.length); // every entry visible today
+
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
+    await act(async () => {
+      beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBeginProvision).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
+  });
+
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row still RENDERS but stays disabled with a reason, and can never reach onBeginProvision, when mlxCaps reports unsupported", async () => {
+    mockOsSpeechCaps = { supported: false };
+    const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
+    mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: false, reason } });
+    const onBeginProvision = vi.fn();
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+    expect(row).not.toBeNull(); // visible, not hidden — mlxOnly gating disables, it never hides a row
+    expect(row.disabled).toBe(true);
+    expect(row.textContent).toContain(reason);
+
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    // The disabled row can't become the wizard's own selection at all —
+    // WIZARD_PRESELECTED_MODEL (medium) is still what 开始安装 carries.
+    const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
+    await act(async () => {
+      beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBeginProvision).toHaveBeenCalledWith(WIZARD_PRESELECTED_MODEL);
+    expect(onBeginProvision).not.toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
   });
 
   // S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen

@@ -8,15 +8,15 @@ import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "../modelCatalog";
 import { ALLOWED_MARKER_MODELS } from "../provisionMachine";
 
 describe("MODEL_CATALOG", () => {
-  it("every catalog id (including the not-yet-offered parakeet stub) is a member of provisionMachine.ts's ALLOWED_MARKER_MODELS (the Rust/marker allowlist) — catalog ⊆ allowlist", () => {
+  it("every catalog id (the now fully-offered parakeet entry included) is a member of provisionMachine.ts's ALLOWED_MARKER_MODELS (the Rust/marker allowlist) — catalog ⊆ allowlist", () => {
     // S12a (§C L1 prelude's carve-out, now removed): worker A2's own
     // provisionMachine.ts edit adds parakeet-tdt-0.6b-v3 to
     // ALLOWED_MARKER_MODELS alongside the rest of the parakeet install/
-    // marker/quarantine lane, so the invariant is exact again —
-    // `available:false` gates UI OFFERING (ModelPicker.tsx, worker A3),
-    // not marker/Rust validity, and a parakeet marker is now a fully
-    // real, quarantine-checked possibility (handleCheckResult's own
-    // mlx-usability branch) even before the catalog flips it selectable.
+    // marker/quarantine lane, so the invariant is exact — every entry
+    // this catalog offers (worker B2's flip, §C L1/§E) was already a
+    // valid marker/Rust model id, and a parakeet marker has been a
+    // fully real, quarantine-checked possibility (handleCheckResult's
+    // own mlx-usability branch) since S12a landed.
     for (const entry of MODEL_CATALOG) {
       expect(ALLOWED_MARKER_MODELS).toContain(entry.id);
     }
@@ -77,16 +77,22 @@ describe("MODEL_CATALOG", () => {
     expect(WIZARD_PRESELECTED_MODEL).toBe("medium");
   });
 
-  it("the parakeet-tdt-0.6b-v3 stub is mlxOnly and NOT yet available (§C L1 prelude)", () => {
+  it("the parakeet-tdt-0.6b-v3 entry is mlxOnly and available (§C L1/§E — worker B2's flip, once the install+backend lane cleared its live merge gates)", () => {
     const parakeet = MODEL_CATALOG.find((e) => e.id === "parakeet-tdt-0.6b-v3");
     expect(parakeet?.mlxOnly).toBe(true);
-    expect(parakeet?.available).toBe(false);
+    expect(parakeet?.available).not.toBe(false);
   });
 
   it("every OTHER entry is not mlxOnly and not explicitly unavailable", () => {
     for (const entry of MODEL_CATALOG) {
       if (entry.id === "parakeet-tdt-0.6b-v3") continue;
       expect(entry.mlxOnly).toBeFalsy();
+      expect(entry.available).not.toBe(false);
+    }
+  });
+
+  it("every catalog entry is offered today — none reads available:false (§C L1's prelude gate is fully retired post-B2-flip)", () => {
+    for (const entry of MODEL_CATALOG) {
       expect(entry.available).not.toBe(false);
     }
   });

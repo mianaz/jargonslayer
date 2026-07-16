@@ -6,16 +6,22 @@
 // test.tsx's Enter/Space keyboard-activation pattern (same shared
 // lib/a11y.ts helper under the hood).
 //
-// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// S12 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
 // Gating F13 + worker A3) — this suite mocks BOTH modelCatalog.ts and
 // mlxCaps.ts rather than exercising the REAL MODEL_CATALOG:
 //   - modelCatalog.ts: worker A2 owns modelCatalog.test.ts's own
 //     invariants on the SHIPPED catalog (order/labels/sizes/etc) —
 //     "catalog-driven UI assertions" belong here instead, per this
 //     worker's own task spec, against a LOCAL fixture that can freely
-//     include an `available: true` mlxOnly row (the real catalog's own
-//     parakeet stub stays `available: false` until worker B2 flips it —
-//     see modelCatalog.ts's own doc comment on that field).
+//     include an `available: true` mlxOnly row. (Since worker B2's flip,
+//     §C L1/§E, the real catalog's own parakeet entry ALSO reads
+//     `available: true` — the sibling file ModelPicker.realCatalog.
+//     render.test.tsx exercises that real entry, unmocked, against the
+//     same three mlxCaps states this file's own fixture-based gating
+//     tests below cover; this file stays fixture-based on purpose, so
+//     modelCatalog.ts's own future stubs/prelude entries keep an
+//     independent coverage path that never depends on what's currently
+//     shipped.)
 //   - mlxCaps.ts: a hand-rolled fake matching A2's PINNED contract (§D
 //     F7 fix round): probeMlxCaps()/refreshMlxCaps() resolve an
 //     EXPLICIT `{status: "ok" | "error", caps: MlxCapabilities}`
@@ -62,10 +68,11 @@ const { MOCK_CATALOG } = vi.hoisted(() => {
       qualityHint: "英文场景精度高，中文稍弱于 large-v3",
       recommended: false,
     },
-    // TEST-ONLY: the real catalog's parakeet stub is `available: false`
-    // (worker B2 flips it later) — this fixture-only `available: true`
-    // twin is what actually exercises ModelPicker's mlxOnly gating layer
-    // ahead of that flip, per this worker's own task spec.
+    // TEST-ONLY fixture twin of the real catalog's parakeet entry (also
+    // `available: true` since worker B2's flip, §C L1/§E) — kept here so
+    // this file's own mlxOnly gating tests below stay independent of
+    // whatever modelCatalog.ts currently ships (see this file's own
+    // header comment for the real-catalog counterpart).
     {
       id: "parakeet-tdt-0.6b-v3",
       label: "英文加速 · Apple 芯片 · 约 2.5 GB",

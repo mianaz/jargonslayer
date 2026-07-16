@@ -52,11 +52,16 @@ export interface ModelCatalogEntry {
   mlxOnly?: boolean;
   /** S12a prelude stub flag (§C L1): false while an entry exists in
    *  this catalog only to pin its shape but must NOT be selectable/
-   *  offered yet. Worker B2 flips this true once the parakeet install +
-   *  backend lane is verified end-to-end (§C, merge gates). Undefined/
-   *  omitted reads as available — every existing (already-shippable)
-   *  entry below is left unannotated on purpose; ModelPicker.tsx's own
-   *  gating (worker A3) is what actually enforces this. */
+   *  offered yet. S12b worker B2 (§C L1's own flip point, §E "B2 is
+   *  genuinely just the availability flip plus integration") flipped
+   *  this true for the parakeet entry once the parakeet install +
+   *  backend lane (S12a's provisioning state machine + S12b B1's backend
+   *  seam) was verified end-to-end (§C/§E merge gates, all landed).
+   *  Undefined/omitted reads as available — every existing (already-
+   *  shippable) entry below is left unannotated on purpose; ModelPicker.
+   *  tsx's own gating (worker A3, unchanged by this flip) is what
+   *  actually enforces the SEPARATE mlxOnly/mlxCaps gate a caps-
+   *  unsupported machine still sees. */
   available?: boolean;
 }
 
@@ -93,14 +98,19 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     qualityHint: "英文场景精度高，中文稍弱于 large-v3",
     recommended: false,
   },
-  // S12a (v0.4.4) stub — §C L1's prelude commit, §C Product/L3's opt-in
-  // copy verbatim ("英文加速 · Apple 芯片 · 约 2.5 GB", NO 推荐 chip; zh
-  // strings get a later 4.6 pass, not polished here). `available: false`
-  // keeps this UNSELECTABLE/unoffered until worker B2 flips it once the
-  // parakeet install + backend lane is verified end-to-end — see this
-  // module's own ModelCatalogEntry doc above. Live repo size is 2.51 GB
-  // (§C R1 F12) — displayed rounded, matching this catalog's own
-  // one-decimal-GB convention elsewhere.
+  // S12 (v0.4.4) parakeet-v3 — §C L1's prelude commit + §C Product/L3's
+  // opt-in copy verbatim ("英文加速 · Apple 芯片 · 约 2.5 GB", NO 推荐
+  // chip; zh strings get a later 4.6 pass, not polished here). S12b
+  // worker B2 flip (§C L1/§E): `available: true` — the parakeet install
+  // + backend lane (S12a's provisioning state machine, S12b B1's backend
+  // seam) is verified end-to-end (§E's live gates), so this row is now
+  // offered same as every other catalog entry above; ModelPicker.tsx's
+  // own SEPARATE mlxOnly/mlxCaps gate (worker A3, unaffected by this
+  // flip) still disables it with a visible reason on non-Apple-Silicon/
+  // pre-macOS-14 hardware or a caps-probe error — see that component's
+  // own doc comment. Live repo size is 2.51 GB (§C R1 F12) — displayed
+  // rounded, matching this catalog's own one-decimal-GB convention
+  // elsewhere.
   {
     id: "parakeet-tdt-0.6b-v3",
     label: "英文加速 · Apple 芯片 · 约 2.5 GB",
@@ -109,7 +119,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     qualityHint: "英文识别更快；中英混说效果待验证（M1 探针）",
     recommended: false,
     mlxOnly: true,
-    available: false,
+    available: true,
   },
 ] as const;
 
