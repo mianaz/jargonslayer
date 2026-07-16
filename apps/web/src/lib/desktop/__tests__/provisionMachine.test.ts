@@ -8,8 +8,10 @@ import { describe, expect, it } from "vitest";
 import type { DesktopPaths } from "../uvCommands";
 import { pipInstall, pythonInstall, venvCreate } from "../uvCommands";
 import {
+  ALLOWED_MARKER_MODELS,
   MARKER_SCHEMA_VERSION,
   MAX_RESTARTS_PER_WINDOW,
+  MLX_ONLY_MARKER_MODELS,
   POLLING_HEALTH_ATTEMPT_CAP,
   RESTART_WINDOW_MS,
   decideRestart,
@@ -33,6 +35,9 @@ const paths: DesktopPaths = {
   diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
+  mlxVenvDir: "/fake/AppData/mlx-venv",
+  mlxVenvPython: "/fake/AppData/mlx-venv/bin/python",
+  mlxRequirementsLockPath: "/fake/Resources/sidecar/requirements-mlx.lock",
 };
 
 const ctx: ProvisionContext = { paths, model: "small" };
@@ -166,6 +171,222 @@ describe("transition — CHECK_RESULT", () => {
       state: healthy,
       effects: [],
     });
+  });
+});
+
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Provision, F14) — marker capability-check + quarantine: a
+// parakeet-family marker must be capability-checked BEFORE ever
+// reaching STARTING (Sol finding #14's fix), never a health-timeout
+// restart loop.
+// S12a fix round (§D F2, HIGH) — redesigned from a bare boolean to the
+// full 4-state MlxUsability matrix (usable | unsupported | invalid-venv
+// | probe-error), lead-adjudicated: (a) unsupported and (b) invalid-venv
+// BOTH land on the identical quarantine (fresh INSTALL_PYTHON) shape —
+// distinguishing durable-persist-vs-not is bootstrap.ts's own job, this
+// pure reducer only owns the MachineState shape; (c) probe-error does
+// NOT quarantine at all — it parks directly on a NEW, distinct shape
+// (INSTALL_MLX/ERROR), never touching ctx/the marker's own model.
+describe("transition — CHECK_RESULT mlx-usability (F14, redesigned §D F2, mlx-family marker)", () => {
+  const checking: MachineState = { phase: "CHECKING" };
+  const parakeetMarkerJson = JSON.stringify({
+    schema: MARKER_SCHEMA_VERSION,
+    model: "parakeet-tdt-0.6b-v3",
+    py: "3.12",
+    deps: "x",
+    ts: "t",
+  });
+
+  it("ALLOWED_MARKER_MODELS/MLX_ONLY_MARKER_MODELS both include parakeet-tdt-0.6b-v3", () => {
+    expect(ALLOWED_MARKER_MODELS).toContain("parakeet-tdt-0.6b-v3");
+    expect(MLX_ONLY_MARKER_MODELS).toEqual(["parakeet-tdt-0.6b-v3"]);
+  });
+
+  it("{status:'usable'} -> ordinary provisioned-dead STARTING, same as any other marker model", () => {
+    expect(
+      transition(ctx, checking, {
+        type: "CHECK_RESULT",
+        probeHealthy: false,
+        markerRaw: parakeetMarkerJson,
+        mlxUsability: { status: "usable" },
+      }),
+    ).toEqual({
+      state: { phase: "STEP", step: "STARTING", status: "RUNNING" },
+      effects: [{ kind: "startServer", model: "parakeet-tdt-0.6b-v3" }],
+    });
+  });
+
+  it("§D F2 case (a) {status:'unsupported'} -> QUARANTINE: a FRESH INSTALL_PYTHON entry for 'small', ignoring the marker's own model entirely", () => {
+    const result = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsability: { status: "unsupported", reason: "需要 Apple 芯片（M 系列）" },
+    });
+    expect(result).toEqual({
+      state: { phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" },
+      effects: [{ kind: "runUv", command: pythonInstall(paths) }],
+    });
+  });
+
+  it("§D F2 case (b) {status:'invalid-venv'} -> the IDENTICAL quarantine MachineState shape as case (a) — the durable-persist-vs-not distinction is bootstrap.ts's own job, not this reducer's", () => {
+    const result = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsability: { status: "invalid-venv" },
+    });
+    expect(result).toEqual({
+      state: { phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" },
+      effects: [{ kind: "runUv", command: pythonInstall(paths) }],
+    });
+  });
+
+  it("§D F2 case (c) {status:'probe-error'} -> does NOT quarantine — parks directly on INSTALL_MLX/ERROR with the probe's own message, ZERO writes (no startStep, ctx never touched, no effects)", () => {
+    const result = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsability: { status: "probe-error", message: "无法检测 Apple 芯片支持状态，请重试" },
+    });
+    expect(result).toEqual({
+      state: {
+        phase: "STEP",
+        step: "INSTALL_MLX",
+        status: "ERROR",
+        error: "无法检测 Apple 芯片支持状态，请重试",
+        retriable: true,
+      },
+      effects: [],
+    });
+  });
+
+  it("mlxUsability OMITTED (undefined) for a parakeet marker is treated identically to probe-error (defense-in-depth fallback message, zero writes) — fail-CLOSED, but distinctly from a durable quarantine", () => {
+    const result = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      // mlxUsability deliberately omitted
+    });
+    expect(result).toEqual({
+      state: {
+        phase: "STEP",
+        step: "INSTALL_MLX",
+        status: "ERROR",
+        error: "无法检测 Apple 芯片 / MLX 运行环境状态，请重试",
+        retriable: true,
+      },
+      effects: [],
+    });
+  });
+
+  it("the case (a)/(b) quarantine shape is IDENTICAL to a brand-new install's own fresh-provision entry — bootstrap.ts's isFreshProvisionEntry recognizes it for free, no special-casing needed", () => {
+    const fresh = transition(ctx, checking, { type: "CHECK_RESULT", probeHealthy: false, markerRaw: null });
+    const unsupported = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsability: { status: "unsupported", reason: "x" },
+    });
+    const invalidVenv = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsability: { status: "invalid-venv" },
+    });
+    expect(unsupported.state).toEqual(fresh.state);
+    expect(invalidVenv.state).toEqual(fresh.state);
+  });
+
+  it("the case (c) probe-error shape is DIFFERENT from the fresh-provision-entry shape — never silently pauses for consent the same way, always visibly a distinct retriable error", () => {
+    const fresh = transition(ctx, checking, { type: "CHECK_RESULT", probeHealthy: false, markerRaw: null });
+    const probeError = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: parakeetMarkerJson,
+      mlxUsability: { status: "probe-error", message: "x" },
+    });
+    expect(probeError.state).not.toEqual(fresh.state);
+  });
+
+  it("a WHISPER-family marker's own CHECK_RESULT is completely unaffected by mlxUsability (even a stray value on a non-mlx marker changes nothing)", () => {
+    const withUsable = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: validMarkerJson,
+      mlxUsability: { status: "usable" },
+    });
+    const withUnsupported = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: validMarkerJson,
+      mlxUsability: { status: "unsupported", reason: "x" },
+    });
+    const withProbeError = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: validMarkerJson,
+      mlxUsability: { status: "probe-error", message: "x" },
+    });
+    const withoutField = transition(ctx, checking, {
+      type: "CHECK_RESULT",
+      probeHealthy: false,
+      markerRaw: validMarkerJson,
+    });
+    expect(withUsable).toEqual(withUnsupported);
+    expect(withUsable).toEqual(withProbeError);
+    expect(withUsable).toEqual(withoutField);
+    expect(withUsable.state).toEqual({ phase: "STEP", step: "STARTING", status: "RUNNING" });
+  });
+});
+
+describe("ProvisionStep — INSTALL_MLX is a real step identity, deliberately NOT auto-advanced (§C Provision)", () => {
+  it("STEP_OK for a live INSTALL_MLX/RUNNING state is a harmless no-op (no successor defined in STEP_ORDER)", () => {
+    const state: MachineState = { phase: "STEP", step: "INSTALL_MLX", status: "RUNNING" };
+    expect(transition(ctx, state, { type: "STEP_OK", step: "INSTALL_MLX" })).toEqual({ state, effects: [] });
+  });
+
+  it("STEP_ERROR for INSTALL_MLX parks it in ERROR like any other step", () => {
+    const state: MachineState = { phase: "STEP", step: "INSTALL_MLX", status: "RUNNING" };
+    expect(
+      transition(ctx, state, { type: "STEP_ERROR", step: "INSTALL_MLX", error: "pip failed", retriable: true }),
+    ).toEqual({
+      state: { phase: "STEP", step: "INSTALL_MLX", status: "ERROR", error: "pip failed", retriable: true },
+      effects: [],
+    });
+  });
+
+  it("CRASH_RESTART never lands on INSTALL_MLX — it always re-enters STARTING regardless of the model", () => {
+    const healthy: MachineState = { phase: "HEALTHY" };
+    expect(transition(ctx, healthy, { type: "CRASH_RESTART" }).state).toEqual({
+      phase: "STEP",
+      step: "STARTING",
+      status: "RUNNING",
+    });
+  });
+
+  // S12a fix round (§D F2, case c) — RETRY on an INSTALL_MLX/ERROR
+  // (only ever reached via the probe-error branch above) means "try
+  // the whole capability check again", not "resume a held child/venv
+  // build" (nothing was ever started) — re-enters CHECKING from
+  // scratch, exactly matching initial()'s own effects, so the wizard's
+  // EXISTING generic retryStep()/driveGuarded() machinery re-runs
+  // BOTH the health probe and the marker+mlx-usability check fresh
+  // with no bootstrap.ts-side special-casing needed.
+  it("RETRY on INSTALL_MLX/ERROR re-enters CHECKING from scratch — identical to initial()'s own shape", () => {
+    const state: MachineState = {
+      phase: "STEP",
+      step: "INSTALL_MLX",
+      status: "ERROR",
+      error: "无法检测 Apple 芯片支持状态，请重试",
+      retriable: true,
+    };
+    expect(transition(ctx, state, { type: "RETRY" })).toEqual(initial());
+  });
+
+  it("RETRY on INSTALL_MLX/ERROR never throws (startStep's own INSTALL_MLX guard is provably unreachable via this path)", () => {
+    const state: MachineState = { phase: "STEP", step: "INSTALL_MLX", status: "ERROR", error: "x", retriable: true };
+    expect(() => transition(ctx, state, { type: "RETRY" })).not.toThrow();
   });
 });
 

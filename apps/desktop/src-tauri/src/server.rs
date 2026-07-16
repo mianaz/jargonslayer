@@ -26,6 +26,7 @@
 // non-zero/null exit still falls back to when no such line was ever seen.
 use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
 use std::process::{Child, Command as StdCommand, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -34,13 +35,24 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tauri::{Emitter, Manager};
 
-use crate::paths::resolve_app_paths;
+use crate::mlxcaps;
+use crate::paths::{resolve_app_paths, AppPaths};
 use crate::uv::{emit_uv_log, ProcessResult};
 
 /// Whisper model sizes sidecar/whisper_server.py's own `--model` argparse
-/// choices accept (parse_args' `choices=[...]`) — kept in lock-step with
-/// that list, not the full faster-whisper model zoo.
-const ALLOWED_MODELS: [&str; 6] = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"];
+/// choices accept (parse_args' `choices=[...]`), plus S12a §C's own
+/// Parakeet-v3 model id (`parakeet-tdt-0.6b-v3` — Q1: "a MODEL under
+/// `whisper`, not a new engine kind") — kept in lock-step with that
+/// list, not the full faster-whisper/parakeet-mlx model zoo.
+const ALLOWED_MODELS: [&str; 7] = [
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
+    "parakeet-tdt-0.6b-v3",
+];
 
 pub fn validate_model(model: &str) -> Result<(), String> {
     if ALLOWED_MODELS.contains(&model) {
@@ -50,6 +62,88 @@ pub fn validate_model(model: &str) -> Result<(), String> {
             "'{model}' is not a supported Whisper model (must be one of {ALLOWED_MODELS:?})"
         ))
     }
+}
+
+/// S12a §C R1 — `parakeet-*` model ids run under the separate, hash-
+/// locked MLX venv; everything else (the faster-whisper family) runs
+/// under the base venv. A simple prefix match rather than an exact
+/// `ALLOWED_MODELS` lookup: there is currently exactly one parakeet
+/// model id, but the prefix is what §C's own wire contract keys off
+/// (`backend_for_model`, sidecar-side) — kept in the same shape here so
+/// a future second parakeet size needs no Rust change.
+fn is_parakeet_model(model: &str) -> bool {
+    model.starts_with("parakeet-")
+}
+
+/// §C R1 — "`venv_for_model(model)` — base venv python for whisper-
+/// family models, mlx venv python for `parakeet-*` — driving BOTH the
+/// model-download/prewarm spawn and the server spawn." The one place
+/// that decides which venv's python executes a given model; both
+/// prewarm_model and start_server call this instead of hardcoding
+/// `paths.venv_python`.
+fn venv_for_model<'a>(paths: &'a AppPaths, model: &str) -> &'a Path {
+    if is_parakeet_model(model) {
+        &paths.mlx_venv_python
+    } else {
+        &paths.venv_python
+    }
+}
+
+/// S12a §C Q6/§3.5 — the exact env additions every model-download/server
+/// spawn gets, on top of whatever else that spawn already sets: HF_HOME
+/// stays EXACTLY as today (the caller still sets it separately — this fn
+/// deliberately does NOT touch it, so it can never introduce a second,
+/// conflicting cache root); HF_TOKEN only when a non-EMPTY-AFTER-TRIM
+/// token is configured (Settings.hfToken, threaded the same way
+/// diarization's token already flows to the sidecar's own `--hf-token`/
+/// `$HF_TOKEN` fallback, `whisper_server.py:2519-2520` — Q6);
+/// HF_HUB_DISABLE_TELEMETRY=1 always (the "no new telemetry" invariant,
+/// blueprint §1 non-goal e). Shared by prewarm_model (the first-run/
+/// download spawn) and start_server (the long-lived sidecar spawn) so
+/// the two spawns can never disagree on how a configured token reaches
+/// HF's resolver.
+///
+/// F8 (S12a fix round, §D): trims the token and treats a whitespace-
+/// only value as absent — the pre-fix `!token.is_empty()` check let
+/// "   " through, setting `HF_TOKEN="   "`, which Python's own
+/// `bool("   ")` reads as truthy (diar falsely armed even with no real
+/// token configured). Trimming BEFORE setting the env var (not just
+/// before the emptiness check) also keeps this Rust-side value in sync
+/// with A4's own Python-side normalization for any direct/stale caller
+/// that bypasses Rust entirely.
+fn hf_extra_env(hf_token: &Option<String>) -> Vec<(String, String)> {
+    let mut env = vec![("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())];
+    if let Some(token) = hf_token {
+        let trimmed = token.trim();
+        if !trimmed.is_empty() {
+            env.push(("HF_TOKEN".to_string(), trimmed.to_string()));
+        }
+    }
+    env
+}
+
+/// §C F13/F14's "belt" — Rust `start_server` re-checks `mlx_capabilities`
+/// before spawning a parakeet model (JS's own `provisionMachine`
+/// marker-capability-check is the primary guard; this is defense in
+/// depth against a stale/cross-machine-restored marker or preference
+/// reaching `start_server` directly). Returns a distinctly-prefixed
+/// error (never a bare `Err(reason)`) so a caller CAN pattern-match on
+/// `MLX_UNSUPPORTED_ERROR_PREFIX` if it ever wants to, without this
+/// command's error channel otherwise changing shape (still a plain
+/// `Result<_, String>`, same as every other error this command already
+/// returns).
+const MLX_UNSUPPORTED_ERROR_PREFIX: &str = "mlx-unsupported: ";
+
+fn check_mlx_capable_if_parakeet(model: &str) -> Result<(), String> {
+    if !is_parakeet_model(model) {
+        return Ok(());
+    }
+    let caps = mlxcaps::compute_mlx_capabilities();
+    if caps.mlx_supported {
+        return Ok(());
+    }
+    let reason = caps.reason.unwrap_or_else(|| "MLX unsupported on this machine".to_string());
+    Err(format!("{MLX_UNSUPPORTED_ERROR_PREFIX}{reason}"))
 }
 
 /// Holds the spawned whisper_server.py child, if any is currently running
@@ -146,8 +240,20 @@ fn classify_download_line(line: &str) -> DownloadLine {
 }
 
 #[tauri::command]
-pub async fn prewarm_model(app: tauri::AppHandle, model: String) -> Result<ProcessResult, String> {
+pub async fn prewarm_model(
+    app: tauri::AppHandle,
+    model: String,
+    hf_token: Option<String>,
+) -> Result<ProcessResult, String> {
     validate_model(&model)?;
+    // F5b (S12a fix round, §D): the same INSTALL-time capability belt
+    // start_server already has (F13/F14) — reuse check_mlx_capable_if_
+    // parakeet verbatim so a compromised/buggy caller can't kick off a
+    // multi-GB parakeet download on an unsupported platform just because
+    // it called prewarm_model instead of start_server. A no-op for every
+    // non-parakeet model (see that fn's own doc comment + its existing
+    // tests for the pass-through/rejection coverage this reuse rides on).
+    check_mlx_capable_if_parakeet(&model)?;
     let paths = resolve_app_paths(&app)?;
 
     std::fs::create_dir_all(&paths.models_dir)
@@ -163,14 +269,21 @@ pub async fn prewarm_model(app: tauri::AppHandle, model: String) -> Result<Proce
     // — "one shared helper, only invocation + progress transport
     // differ." Bonus (per the blueprint): no longer instantiates+
     // discards a CT2 model, pure download.
+    // §C R1 — resolved BEFORE `model` moves into `args` below: the base
+    // venv for whisper-family models, the separate mlx venv for
+    // `parakeet-*` (see venv_for_model's own doc comment).
+    let venv_python = venv_for_model(&paths, &model).to_path_buf();
     let args = vec![
         path_to_string(&paths.script_path),
         "--model".to_string(),
         model,
         "--download-only".to_string(),
     ];
-    let extra_env = vec![("HF_HOME".to_string(), path_to_string(&paths.models_dir))];
-    let venv_python = paths.venv_python.clone();
+    // HF_HOME unchanged (existing) + Q6's HF_TOKEN-when-configured/
+    // HF_HUB_DISABLE_TELEMETRY=1-always additions (hf_extra_env's own
+    // doc comment).
+    let mut extra_env = vec![("HF_HOME".to_string(), path_to_string(&paths.models_dir))];
+    extra_env.extend(hf_extra_env(&hf_token));
     let app_for_blocking = app.clone();
 
     // Captures the download_error line's message (if any) seen on
@@ -283,8 +396,13 @@ pub async fn start_server(
     app: tauri::AppHandle,
     state: tauri::State<'_, ServerState>,
     model: String,
+    hf_token: Option<String>,
 ) -> Result<StartServerResult, String> {
     validate_model(&model)?;
+    // §C F13/F14 belt: re-check mlx capabilities before ever spawning a
+    // parakeet model (see check_mlx_capable_if_parakeet's own doc
+    // comment) — a no-op for every non-parakeet model.
+    check_mlx_capable_if_parakeet(&model)?;
 
     // Hold ONE lock across the entire check-spawn-store sequence below —
     // this is the fix for a double-spawn race the earlier "check, drop,
@@ -329,7 +447,11 @@ pub async fn start_server(
         .map_err(|e| format!("failed to open {}: {e}", paths.log_path.display()))?;
     let log_file = Arc::new(Mutex::new(log_file));
 
-    let mut cmd = StdCommand::new(&paths.venv_python);
+    // §C R1 — resolved BEFORE `model` moves into `cmd.args` below: the
+    // base venv for whisper-family models, the separate mlx venv for
+    // `parakeet-*` (see venv_for_model's own doc comment).
+    let venv_python = venv_for_model(&paths, &model).to_path_buf();
+    let mut cmd = StdCommand::new(&venv_python);
     cmd.args([
         path_to_string(&paths.script_path),
         "--model".to_string(),
@@ -341,7 +463,11 @@ pub async fn start_server(
         "--host".to_string(),
         "127.0.0.1".to_string(),
     ])
-    .env("HF_HOME", &paths.models_dir);
+    .env("HF_HOME", &paths.models_dir)
+    // Q6/§3.5 — HF_TOKEN-when-configured + HF_HUB_DISABLE_TELEMETRY=1-
+    // always, same additions prewarm_model's own spawn gets (hf_extra_env's
+    // own doc comment).
+    .envs(hf_extra_env(&hf_token));
 
     let log_out = log_file.clone();
     let log_err = log_file.clone();
@@ -503,6 +629,26 @@ fn append_log_line(file: &Arc<Mutex<std::fs::File>>, stream: &str, line: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn fake_paths() -> AppPaths {
+        AppPaths {
+            app_data: PathBuf::from("/fake/AppData"),
+            python_install_dir: PathBuf::from("/fake/AppData/python"),
+            uv_cache_dir: PathBuf::from("/fake/AppData/uv-cache"),
+            venv_dir: PathBuf::from("/fake/AppData/venv"),
+            venv_python: PathBuf::from("/fake/AppData/venv/bin/python"),
+            models_dir: PathBuf::from("/fake/AppData/models"),
+            script_path: PathBuf::from("/fake/Resources/sidecar/whisper_server.py"),
+            requirements_path: PathBuf::from("/fake/Resources/sidecar/requirements-sidecar.txt"),
+            diar_requirements_path: PathBuf::from("/fake/Resources/sidecar/requirements-diar.txt"),
+            log_path: PathBuf::from("/fake/Logs/whisper_server.log"),
+            marker_path: PathBuf::from("/fake/AppData/.provisioned.json"),
+            mlx_venv_dir: PathBuf::from("/fake/AppData/mlx-venv"),
+            mlx_venv_python: PathBuf::from("/fake/AppData/mlx-venv/bin/python"),
+            mlx_requirements_lock_path: PathBuf::from("/fake/Resources/sidecar/requirements-mlx.lock"),
+        }
+    }
 
     #[test]
     fn accepts_every_whisper_server_model_choice() {
@@ -515,6 +661,107 @@ mod tests {
     fn rejects_an_unsupported_model() {
         for model in ["large-v2", "large", "turbo", "gpt-4", ""] {
             assert!(validate_model(model).is_err(), "{model} should be rejected");
+        }
+    }
+
+    // ---- S12a §C R1: is_parakeet_model / venv_for_model ----
+
+    #[test]
+    fn is_parakeet_model_matches_only_the_parakeet_prefix() {
+        assert!(is_parakeet_model("parakeet-tdt-0.6b-v3"));
+        assert!(is_parakeet_model("parakeet-some-future-size"));
+        for model in ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo", ""] {
+            assert!(!is_parakeet_model(model), "{model} should not be treated as parakeet");
+        }
+    }
+
+    #[test]
+    fn venv_for_model_uses_the_base_venv_for_every_whisper_family_model() {
+        let paths = fake_paths();
+        for model in ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"] {
+            assert_eq!(venv_for_model(&paths, model), paths.venv_python.as_path());
+        }
+    }
+
+    #[test]
+    fn venv_for_model_uses_the_separate_mlx_venv_for_the_parakeet_model() {
+        let paths = fake_paths();
+        assert_eq!(
+            venv_for_model(&paths, "parakeet-tdt-0.6b-v3"),
+            paths.mlx_venv_python.as_path()
+        );
+    }
+
+    // ---- S12a §C Q6/§3.5: hf_extra_env ----
+
+    #[test]
+    fn hf_extra_env_always_disables_telemetry_and_omits_hf_token_when_unset() {
+        let env = hf_extra_env(&None);
+        assert_eq!(env, vec![("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn hf_extra_env_omits_hf_token_when_the_configured_token_is_empty() {
+        let env = hf_extra_env(&Some(String::new()));
+        assert_eq!(env, vec![("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn hf_extra_env_adds_hf_token_when_a_non_empty_token_is_configured() {
+        let env = hf_extra_env(&Some("secret-token".to_string()));
+        assert!(env.contains(&("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())));
+        assert!(env.contains(&("HF_TOKEN".to_string(), "secret-token".to_string())));
+        assert_eq!(env.len(), 2);
+    }
+
+    #[test]
+    fn hf_extra_env_omits_hf_token_when_the_configured_token_is_whitespace_only() {
+        // F8 (S12a fix round, §D) — red on the pre-fix code: a plain
+        // `!token.is_empty()` check treats "   " as non-empty and sets
+        // HF_TOKEN="   ", which Python's own `bool("   ")` truthiness
+        // reads as configured (diar falsely armed) even though there is
+        // no real token — the exact JS/Rust semantics divergence F8
+        // names.
+        let env = hf_extra_env(&Some("   ".to_string()));
+        assert_eq!(env, vec![("HF_HUB_DISABLE_TELEMETRY".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn hf_extra_env_trims_surrounding_whitespace_off_a_configured_token() {
+        let env = hf_extra_env(&Some("  secret-token  ".to_string()));
+        assert!(env.contains(&("HF_TOKEN".to_string(), "secret-token".to_string())));
+        assert!(!env.iter().any(|(_, v)| v.contains(' ')));
+    }
+
+    #[test]
+    fn hf_extra_env_never_sets_hf_home_itself() {
+        // Q6's own scope trim ("keep HF_HOME exactly as today ... do NOT
+        // introduce a second conflicting cache root"): this fn must never
+        // emit its own HF_HOME entry — callers set that separately.
+        let env = hf_extra_env(&Some("tok".to_string()));
+        assert!(!env.iter().any(|(k, _)| k == "HF_HOME"));
+    }
+
+    // ---- S12a §C F13/F14: check_mlx_capable_if_parakeet ----
+
+    #[test]
+    fn check_mlx_capable_if_parakeet_is_a_noop_for_every_non_parakeet_model() {
+        for model in ALLOWED_MODELS.iter().filter(|m| !is_parakeet_model(m)) {
+            assert!(check_mlx_capable_if_parakeet(model).is_ok());
+        }
+    }
+
+    #[test]
+    fn check_mlx_capable_if_parakeet_matches_live_mlx_capabilities_for_the_parakeet_model() {
+        // Environment-independent by construction: asserts consistency
+        // with mlxcaps::compute_mlx_capabilities()'s own live result on
+        // whatever machine runs this test, rather than assuming this
+        // machine's own arch/OS.
+        let caps = mlxcaps::compute_mlx_capabilities();
+        let result = check_mlx_capable_if_parakeet("parakeet-tdt-0.6b-v3");
+        assert_eq!(result.is_ok(), caps.mlx_supported);
+        if let Err(message) = result {
+            assert!(message.starts_with(MLX_UNSUPPORTED_ERROR_PREFIX));
         }
     }
 

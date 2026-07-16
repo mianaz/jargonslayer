@@ -35,7 +35,8 @@
     "resources": {
       "../../../sidecar/whisper_server.py": "sidecar/whisper_server.py",
       "../../../sidecar/requirements-sidecar.txt": "sidecar/requirements-sidecar.txt",
-      "../../../sidecar/requirements-diar.txt": "sidecar/requirements-diar.txt"
+      "../../../sidecar/requirements-diar.txt": "sidecar/requirements-diar.txt",
+      "../../../sidecar/requirements-mlx.lock": "sidecar/requirements-mlx.lock"
     },
     "macOS": {
       "entitlements": "./entitlements.plist"

@@ -88,10 +88,13 @@ async function settle(n = 5): Promise<void> {
 
 const SUPPORTED_CAPS = { appAudioSupported: true, reason: null as string | null };
 
-/** Wires the default fakes (capabilities: supported; start/stop_app_audio/
- *  pause_app_audio/resume_app_audio: succeed) into the mocked tauriApi
- *  module, with per-command overrides for tests that need a specific
- *  command to fail/defer. */
+/** Wires the default fakes (capabilities: supported; start_app_audio/
+ *  stop_app_audio/pause_app_audio/resume_app_audio: succeed — Rust's own
+ *  start_app_audio returns nothing meaningful since FB3: the CLIENT
+ *  mints its own attempt token and passes it IN, rather than reading a
+ *  Rust-returned generation back out) into the mocked tauriApi module,
+ *  with per-command overrides for tests that need a specific command to
+ *  fail/defer. */
 function wireFakes(invokeOverrides: Record<string, (args?: Record<string, unknown>) => unknown> = {}): {
   calls: FakeInvokeCall[];
   emit: (event: string, payload: unknown) => void;
@@ -114,6 +117,16 @@ function wireFakes(invokeOverrides: Record<string, (args?: Record<string, unknow
   const { createChannel, channels } = makeFakeChannelFactory();
   currentCreateChannel = createChannel;
   return { calls, emit, activeCount, channels };
+}
+
+/** FB3 test helper: pulls the client-generated attempt token off a
+ *  recorded start_app_audio call's own invoke args — the token is
+ *  minted by appAudio.ts itself (newId()), so tests read it back here
+ *  rather than asserting a hardcoded value. */
+function tokenFromStartCall(call: FakeInvokeCall | undefined): string {
+  const token = (call?.args as { token?: unknown } | undefined)?.token;
+  expect(typeof token).toBe("string");
+  return token as string;
 }
 
 /** Drives an engine through start() -> "capturing" -> an OPEN ws, the
@@ -399,9 +412,23 @@ describe("AppAudioEngine", () => {
     // start_app_audio is now in flight, blocked on the deferred promise.
     await flushUntil(() => calls.some((c) => c.cmd === "start_app_audio"));
 
+    // FB3: the attempt token was minted and passed IN on start_app_audio's
+    // own invoke args BEFORE that invoke ever resolved — extract it so
+    // stop()'s own call (below) can be asserted against the SAME value.
+    const myToken = tokenFromStartCall(calls.find((c) => c.cmd === "start_app_audio"));
+
     vi.useFakeTimers();
     const stopP = engine.stop();
     await flushUntil(() => calls.some((c) => c.cmd === "stop_app_audio"));
+
+    // FB3: stop()'s OWN call above fires BEFORE start_app_audio's own
+    // invoke has resolved, yet it is ALREADY correctly scoped — the
+    // token was published synchronously at the very top of start(), long
+    // before that invoke was ever sent (unlike the OLD Rust-returned-
+    // generation design, which had nothing to offer here and fell back
+    // to an unscoped `generation: null`).
+    const firstStopCall = calls.find((c) => c.cmd === "stop_app_audio");
+    expect(firstStopCall?.args).toEqual({ token: myToken });
 
     startAppAudio.resolve(undefined);
     await startP;
@@ -418,9 +445,14 @@ describe("AppAudioEngine", () => {
     await stopP;
 
     // stop_app_audio idempotent per the wire contract — called at least
-    // once (stop()'s own call; possibly a second time from start()'s
-    // own post-acquire re-check, which is fine).
-    expect(calls.filter((c) => c.cmd === "stop_app_audio").length).toBeGreaterThanOrEqual(1);
+    // once (stop()'s own call; possibly a second time from start()'s own
+    // post-acquire re-check via abandonStart(), which is fine — EVERY
+    // call, however many, carries the SAME correct token.
+    const stopCalls = calls.filter((c) => c.cmd === "stop_app_audio");
+    expect(stopCalls.length).toBeGreaterThanOrEqual(1);
+    for (const call of stopCalls) {
+      expect(call.args).toEqual({ token: myToken });
+    }
   });
 
   // F2 (adversarial review, HIGH): stop() can land WHILE listen() itself
@@ -580,6 +612,285 @@ describe("AppAudioEngine", () => {
     ws.sent = [];
     channels[channels.length - 1].onmessage(new ArrayBuffer(8));
     expect(ws.sent).toEqual([]);
+  });
+
+  // ---------------------------------------------------------------
+  // F17 (S12 blueprint §2.6′, generation-safe appAudio stop-wait parity
+  // — the S11 J4 fix, ported generation-safe): a rejected
+  // start_app_audio invoke() routes through stop() (see start()'s own
+  // catch block) with unlistenStatus already registered — pre-fix, that
+  // burns the full STOP_ENDED_TIMEOUT_MS waiting for an "ended" no
+  // helper will ever send, since no helper process ever started.
+  // ---------------------------------------------------------------
+
+  describe("F17 generation-safe stop-wait parity", () => {
+    it("a rejected start_app_audio invoke() surfaces a zh error and resolves stop()'s unwind PROMPTLY — no unnecessary ended-wait since helperStartedGeneration never got set for this generation", async () => {
+      const { calls } = wireFakes({
+        start_app_audio: () => {
+          throw new Error("ipc failure");
+        },
+      });
+      const engine = new AppAudioEngine();
+      const onStatus = vi.fn();
+
+      vi.useFakeTimers();
+      let resolved = false;
+      const startP = engine
+        .start({ ...noopEvents(), onStatus } as unknown as STTEvents, { ...DEFAULT_SETTINGS, engine: "appaudio" })
+        .then(() => {
+          resolved = true;
+        });
+
+      // Deliberately no vi.advanceTimersByTimeAsync() call at all — fails
+      // loudly (never resolves within flushUntil's bounded tick budget)
+      // on pre-fix code instead of passing by accident.
+      await flushUntil(() => resolved);
+
+      expect(onStatus).toHaveBeenCalledWith("error", expect.any(String));
+      expect(calls.some((c) => c.cmd === "stop_app_audio")).toBe(true);
+
+      // FB3 (S12b fix round B, Sol3 — the exact scenario this finding
+      // names): a REJECTED start_app_audio invoke() NEVER learns a
+      // Rust-returned generation at all — under the OLD design, this
+      // unwind's own stop() call had nothing to scope to and fell back
+      // to an UNSCOPED `generation: null`, which (per audiocap.rs's own
+      // pre-fix contract) could reach in and kill a completely
+      // unrelated, live session if one happened to occupy the slot at
+      // that moment (RED-VERIFIED at the Rust state-machine level in
+      // this worker's own report). The client-generated token was
+      // minted BEFORE this invoke was ever sent, so this unwind's own
+      // stop() call is ALREADY correctly, exactly scoped — never
+      // unscoped, never null.
+      const stopCall = calls.find((c) => c.cmd === "stop_app_audio");
+      const token = tokenFromStartCall(calls.find((c) => c.cmd === "start_app_audio"));
+      expect(stopCall?.args).toEqual({ token });
+      await startP;
+    });
+
+    // Sol finding 17 (S12 blueprint §B): the naive shared-boolean port
+    // (a single `helperStarted` flag, unconditionally set true right
+    // alongside the LOCAL flag at the successful invoke, BEFORE checking
+    // superseded()) would let an OLDER generation's late-resolving
+    // start_app_audio invoke() stomp a NEWER generation's own claim —
+    // this proves the generation-scoped field is immune: A's late
+    // resolution must abandon WITHOUT ever touching
+    // helperStartedGeneration once B has already claimed it.
+    it("overlapping starts: OLD generation A's late-resolving start_app_audio must not corrupt NEWER generation B's own state — B remains capturing, B's own listener is torn down exactly once (at B's own stop()), B's stop() still waits for its own 'ended', and the RUST-CONTRACT-level stop_app_audio payloads prove A's stale stop named A's OWN token while B's own stop later named its OWN (FB3)", async () => {
+      const startA = deferred<undefined>();
+      let startAppAudioCalls = 0;
+      const { calls, emit, channels, activeCount } = wireFakes({
+        start_app_audio: () => {
+          startAppAudioCalls++;
+          // Call 1 (A) — held open until resolved explicitly below.
+          // Call 2+ (B) — succeeds immediately, like every other test's
+          // default fake.
+          return startAppAudioCalls === 1 ? startA.promise : undefined;
+        },
+      });
+
+      // Wrap listen() so each generation's OWN unlisten() call is
+      // individually spied/countable — real registration/dispatch
+      // (activeCount/emit) stays intact underneath, mirrors the F2
+      // "leaked listener" tests above.
+      const realListen = currentListen;
+      const unlistenSpies: ReturnType<typeof vi.fn>[] = [];
+      currentListen = (async (event, handler) => {
+        const real = await realListen(event, handler);
+        const spy = vi.fn(real);
+        unlistenSpies.push(spy);
+        return spy as UnlistenFn;
+      }) as ListenFn;
+
+      const engine = new AppAudioEngine();
+      const events = noopEvents();
+
+      // Start A — blocks on its OWN start_app_audio invoke (its own
+      // listen() has already resolved by this point).
+      const startAP = engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+      await flushUntil(() => unlistenSpies.length === 1);
+
+      // Start B — supersedes A (bumps this.generation) and completes for
+      // real, legitimately claiming this.transport/this.unlistenStatus/
+      // helperStartedGeneration for its OWN generation.
+      await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+
+      // FB3: each attempt's OWN client-generated token, read back off its
+      // OWN start_app_audio invoke args (minted before either invoke was
+      // ever sent — see this.attemptToken's own doc comment).
+      const startCalls = calls.filter((c) => c.cmd === "start_app_audio");
+      const aToken = tokenFromStartCall(startCalls[0]);
+      const bToken = tokenFromStartCall(startCalls[1]);
+      expect(aToken).not.toBe(bToken);
+
+      // NOW resolve A's stale invoke — A's own success path must see
+      // itself superseded and abandon (its own local listener torn down,
+      // best-effort stop_app_audio fired for its own dead session)
+      // WITHOUT ever touching B's own live this.transport/
+      // this.unlistenStatus/helperStartedGeneration.
+      startA.resolve(undefined);
+      await startAP;
+
+      // Exactly ONE listener active — B's own; A's own was torn down by
+      // its own abandonStart(), exactly once, and B's own was NEVER
+      // touched by A's late resolution.
+      expect(activeCount("audiocap://status")).toBe(1);
+      expect(unlistenSpies).toHaveLength(2);
+      expect(unlistenSpies[0]).toHaveBeenCalledTimes(1); // A's own
+      expect(unlistenSpies[1]).not.toHaveBeenCalled(); // B's own — still live
+
+      // FB3, the RUST-CONTRACT-level assertion: A's own abandonStart()
+      // fired stop_app_audio carrying EXACTLY its own (now stale)
+      // token — never B's — proving the wire-level payload itself is
+      // what keeps this a no-op on Rust's side rather than merely "B
+      // happens to still work in this fake".
+      const abandonStopCall = calls.find((c) => c.cmd === "stop_app_audio");
+      expect(abandonStopCall?.args).toEqual({ token: aToken });
+
+      // B REMAINS capturing: "capturing" still correctly attaches B's
+      // OWN transport (proves this.transport was never corrupted by A's
+      // stale write) and PCM still flows.
+      emit("audiocap://status", { kind: "capturing", message: "" });
+      const ws = wsInstances[wsInstances.length - 1];
+      expect(ws).toBeTruthy();
+      ws.simulateOpen();
+      ws.sent = [];
+      const chunk = new ArrayBuffer(8);
+      channels[channels.length - 1].onmessage(chunk);
+      expect(ws.sent).toEqual([chunk]);
+
+      // Prove B's own helperStartedGeneration is intact too: stop()
+      // (targeting the CURRENT — B's — generation) must still wait for
+      // "ended" rather than resolving immediately, which is exactly what
+      // a corrupted (wrong-generation) helperStartedGeneration would
+      // cause (Sol finding 17).
+      let resolved = false;
+      const stopP = engine.stop().then(() => {
+        resolved = true;
+      });
+      await settle();
+      expect(resolved).toBe(false);
+
+      // FB3, the RUST-CONTRACT-level assertion for B's OWN stop: carries
+      // B's OWN token — never A's stale one.
+      const bStopCall = calls.filter((c) => c.cmd === "stop_app_audio")[1];
+      expect(bStopCall?.args).toEqual({ token: bToken });
+
+      emit("audiocap://status", { kind: "ended", message: "" });
+      await flushUntil(() => ws.sent.some((m) => typeof m === "string" && JSON.parse(m).type === "stop"));
+      expect(resolved).toBe(false); // still draining the ws — stopped ack not sent yet
+
+      ws.simulateMessage({ type: "stopped" });
+      await stopP;
+      expect(resolved).toBe(true);
+
+      // B's own listener torn down EXACTLY once, here — not before, not
+      // twice.
+      expect(activeCount("audiocap://status")).toBe(0);
+      expect(unlistenSpies[1]).toHaveBeenCalledTimes(1);
+    });
+
+    // F4(a) (S12a fix round, adversarial pair 2026-07-16, GPT-5.6-Sol
+    // finding 4): the ACTUAL vulnerable window — OLD generation A's own
+    // listen() call (not its start_app_audio invoke, which is a LATER
+    // await point A never even reaches here) resolves late, AFTER newer
+    // generation B has already legitimately published its own
+    // this.transport/this.unlistenStatus. Pre-fix, A's belated listen()
+    // resolution wrote this.unlistenStatus = A's own listener (and
+    // this.transport = A's own transport, published earlier at
+    // acquisition time) BEFORE ever checking superseded() — overwriting
+    // B's own live references. abandonStart() then only ever unregisters
+    // A's OWN local listener, leaving B's real listener orphaned (nothing
+    // left to ever call ITS unlisten()) and B's transport reference
+    // clobbered.
+    it("F4(a): OLD generation A's late-resolving listen() must not overwrite NEWER generation B's own transport/unlistenStatus — B remains capturing and its own listener is torn down exactly once, at B's own stop()", async () => {
+      const { emit, channels, activeCount } = wireFakes();
+
+      const realListen = currentListen;
+      const listenGate = deferred<void>();
+      let listenCalls = 0;
+      const unlistenSpies: ReturnType<typeof vi.fn>[] = [];
+      currentListen = (async (event, handler) => {
+        listenCalls++;
+        if (listenCalls === 1) await listenGate.promise; // A's own — held open
+        const real = await realListen(event, handler);
+        const spy = vi.fn(real);
+        unlistenSpies.push(spy);
+        return spy as UnlistenFn;
+      }) as ListenFn;
+
+      const engine = new AppAudioEngine();
+      const events = noopEvents();
+
+      // Start A — stalls INSIDE its own listen() call, before it has
+      // published anything to this.transport/this.unlistenStatus.
+      const startAP = engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+      await flushUntil(() => listenCalls === 1);
+
+      // Start B — supersedes A (bumps this.generation) and completes for
+      // real: its OWN listen() resolves normally (the gate only blocks
+      // the FIRST call), legitimately publishing this.transport/
+      // this.unlistenStatus for its own generation.
+      await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+      expect(activeCount("audiocap://status")).toBe(1); // B's own, only
+
+      // NOW release A's stale listen() — A's own success path must see
+      // itself superseded and abandon WITHOUT ever publishing to
+      // this.transport/this.unlistenStatus (A never even reached
+      // start_app_audio, so abandonStart()'s stop_app_audio branch is
+      // skipped too — this test isolates F4(a) alone, not F4(b)).
+      listenGate.resolve();
+      await startAP;
+
+      // B's own listener is STILL the only one active — A's late
+      // registration+abandon nets to zero extra listeners; B's own was
+      // never touched. Registration order in `unlistenSpies` follows
+      // when each call's OWN listen() actually RESOLVES, not call order —
+      // B's listen() resolves first (A's was gated/stalled), so index 0
+      // is B's own spy and index 1 is A's own (registered only once the
+      // gate is released below).
+      expect(activeCount("audiocap://status")).toBe(1);
+      expect(unlistenSpies).toHaveLength(2);
+      expect(unlistenSpies[0]).not.toHaveBeenCalled(); // B's own — still live
+      expect(unlistenSpies[1]).toHaveBeenCalledTimes(1); // A's own, torn down
+
+      // B remains capturing: this.transport still legitimately
+      // references B's own transport, never overwritten by A's stale,
+      // late write.
+      emit("audiocap://status", { kind: "capturing", message: "" });
+      const ws = wsInstances[wsInstances.length - 1];
+      expect(ws).toBeTruthy();
+      ws.simulateOpen();
+      ws.sent = [];
+      const chunk = new ArrayBuffer(8);
+      channels[channels.length - 1].onmessage(chunk);
+      expect(ws.sent).toEqual([chunk]);
+
+      // B's own stop() — its own listener torn down EXACTLY once, here.
+      await stopViaEnded(engine, emit, ws);
+      expect(activeCount("audiocap://status")).toBe(0);
+      expect(unlistenSpies[0]).toHaveBeenCalledTimes(1);
+    });
+
+    it("the live user-stop path still waits for and resolves early on its own generation's 'ended' status", async () => {
+      const { emit } = wireFakes();
+      const engine = new AppAudioEngine();
+      const events = noopEvents();
+      await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+
+      vi.useFakeTimers();
+      let resolved = false;
+      const stopP = engine.stop().then(() => {
+        resolved = true;
+      });
+      await settle();
+      // Still waiting — helperStartedGeneration matches this stop()
+      // call's own captured generation, so the F17 gate holds open.
+      expect(resolved).toBe(false);
+
+      emit("audiocap://status", { kind: "ended", message: "" });
+      await stopP;
+      expect(resolved).toBe(true);
+    });
   });
 
   // ---------------------------------------------------------------

@@ -37,6 +37,33 @@ export interface DesktopPaths {
   diarRequirementsPath: string;
   logPath: string;
   markerPath: string;
+  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+   *  R1) — the separate, hash-locked MLX venv beside the base `venvDir`
+   *  above (parakeet's own isolated venv: airtight isolation from the
+   *  base whisper venv per §C R1's numba-conflict note). Worker A2
+   *  tightened this from optional to required (§C L1 prelude's own
+   *  fields were optional only because paths.rs's `AppPaths` hadn't
+   *  grown the matching `mlx_venv_dir` field yet) — every DesktopPaths
+   *  fixture across this repo (uvCommands/provisionMachine/
+   *  provisionRunner/bootstrap/jobsBridge test files, DesktopWizard's
+   *  own render/bootstrap tests, and NOT_DESKTOP_PATHS) already carries
+   *  a real value for all three mlx fields as of the S12a prelude's
+   *  forward-consistency commit, so tightening compiles clean
+   *  repo-wide; worker A1's paths.rs is expected to land the matching
+   *  required `mlx_venv_dir`/`mlx_venv_python`/
+   *  `mlx_requirements_lock_path` fields before release (this is a
+   *  TS-side type only — it doesn't itself change what a real
+   *  `app_paths()` IPC round-trip returns). */
+  mlxVenvDir: string;
+  /** mlxVenvDir's own venv/bin/python (mac) equivalent — see
+   *  mlxVenvDir's doc above. */
+  mlxVenvPython: string;
+  /** The bundled, hash-pinned `requirements-mlx.lock` resource path
+   *  (§C R1's lock strategy — `uv pip compile --generate-hashes`, the
+   *  lockfile IS the SBOM) — same "bundled Tauri resource" shape as
+   *  `requirementsPath`/`diarRequirementsPath` above. See mlxVenvDir's
+   *  doc above. */
+  mlxRequirementsLockPath: string;
 }
 
 /** {args,env} — exactly what S3 chunk 3's `run_uv(args, env)` command
@@ -102,4 +129,66 @@ export function pipInstallDiar(paths: DesktopPaths): UvCommand {
     args: ["pip", "install", "--python", paths.venvPython, "-r", paths.diarRequirementsPath],
     env: uvEnv(paths),
   };
+}
+
+// ---------------------------------------------------------------------
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C R1 +
+// Provision) — the separate, hash-locked MLX venv's own builders.
+// Unlike pipInstallDiar above (which installs INTO the already-
+// provisioned BASE venv), these three target `paths.mlxVenvDir`/
+// `mlxVenvPython` — a wholly separate venv (§C F8's redesign: airtight
+// isolation from the base whisper venv, no shared numpy/numba pins to
+// conflict over). CROSS-LANE CONTRACT pinned for worker A1 (Rust,
+// uv.rs's validate_uv_args): venvCreateMlx's optional trailing
+// `--clear` arg and pipCheckMlx's new `pip check` subcommand shape are
+// BOTH new call shapes run_uv's validator doesn't accept yet — this
+// file only builds {args,env}; A1's uv.rs is what actually has to grow
+// matching match arms before either of these can spawn for real. `uv
+// venv --help`/`uv pip check --help` verified live against the same
+// pinned 0.11.28 uv this repo's other builders were verified against
+// (see this file's own header comment): `-c, --clear` is a bare flag
+// (no value) on `uv venv`; `uv pip check` takes `-p/--python <PYTHON>`,
+// no positional operand.
+// ---------------------------------------------------------------------
+
+/** `uv venv <mlxVenvDir> --python 3.12 [--clear]` — §C Provision's
+ *  transactional venv build step (1): `clear:true` is the RETRY arm
+ *  (`--clear` wipes and recreates the target directory instead of
+ *  erroring on an already-populated one), used only when a PRIOR
+ *  attempt already failed — see bootstrap.ts's own ensureMlxExtras,
+ *  which discharges the uv-venv retry-poisoning debt
+ *  (V040-VERIFICATION-RUNPLAN.md:35) by trying once WITHOUT --clear,
+ *  then once WITH it. `clear` defaults to false (a fresh install never
+ *  needs it — the target directory doesn't exist yet). */
+export function venvCreateMlx(paths: DesktopPaths, opts: { clear?: boolean } = {}): UvCommand {
+  const args = ["venv", paths.mlxVenvDir, "--python", PINNED_PYTHON_MINOR];
+  if (opts.clear) args.push("--clear");
+  return { args, env: uvEnv(paths) };
+}
+
+/** `pip install --python <mlxVenvPython> -r <mlxRequirementsLockPath>`
+ *  — §C Provision's transactional venv build step (2): installs the
+ *  hash-pinned `requirements-mlx.lock` (§C R1's `uv pip compile
+ *  --generate-hashes` lockfile, the SBOM) into the mlx venv just
+ *  created by venvCreateMlx above. Named "…Lock" (not a bare
+ *  "…Mlx", mirroring pipInstall/pipInstallDiar's own naming) to make
+ *  the hash-pinned-lockfile-not-a-loose-.txt distinction explicit at
+ *  every call site. */
+export function pipInstallMlxLock(paths: DesktopPaths): UvCommand {
+  return {
+    args: ["pip", "install", "--python", paths.mlxVenvPython, "-r", paths.mlxRequirementsLockPath],
+    env: uvEnv(paths),
+  };
+}
+
+/** `uv pip check --python <mlxVenvPython>` — §C Provision's
+ *  transactional venv build step (3)'s second half (alongside the
+ *  separate `mlx_import_preflight` Rust command's own real-import
+ *  check — see bootstrap.ts's ensureMlxExtras): verifies the mlx
+ *  venv's installed packages have no unmet/conflicting dependency
+ *  requirements (belt-and-suspenders on top of the lockfile's own
+ *  hash-pinned resolution — catches a corrupted/partial install
+ *  `pip install`'s own exit code alone might miss). */
+export function pipCheckMlx(paths: DesktopPaths): UvCommand {
+  return { args: ["pip", "check", "--python", paths.mlxVenvPython], env: uvEnv(paths) };
 }

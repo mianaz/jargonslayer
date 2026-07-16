@@ -62,6 +62,24 @@ vi.mock("@/lib/oauth/openrouterDesktop", () => ({
   connectOpenRouterDesktop: () => mockConnectOpenRouterDesktop(),
 }));
 
+// S12b fix round FB8-refresh (§F) — the ONE describe block below that
+// actually opens the embedded <ModelPicker> (every pre-existing block in
+// this file only checks 更换模型's own `disabled` attribute, never
+// clicks it) needs mlxCaps.ts's real probe short-circuited: with
+// IS_DESKTOP mocked true above but tauriApi.ts left REAL, mlxCaps.ts's
+// own probeMlxCaps() would reach tauriApi.ts's getInvoke(), which
+// throws SYNCHRONOUSLY outside an actual NEXT_PUBLIC_DESKTOP=1 build —
+// same landmine class audiocapCaps/osspeechCaps are mocked above to
+// avoid. Always resolves "supported" — harmless/inert for every
+// PRE-EXISTING test in this file (none of them ever reach ModelPicker
+// at all).
+vi.mock("@/lib/desktop/mlxCaps", () => ({
+  getMlxCapsSnapshot: () => ({ mlxSupported: true, reason: null }),
+  subscribeMlxCaps: () => () => {},
+  probeMlxCaps: async () => ({ status: "ok" as const, caps: { mlxSupported: true, reason: null } }),
+  refreshMlxCaps: async () => ({ status: "ok" as const, caps: { mlxSupported: true, reason: null } }),
+}));
+
 // F7 only — F5's own describe block never reaches any of these three
 // (sidecarMode:"external" skips the managed-gated effects/handlers
 // that would call them).
@@ -246,14 +264,28 @@ const FAKE_PATHS = {
   diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
+  mlxVenvDir: "/fake/AppData/mlx-venv",
+  mlxVenvPython: "/fake/AppData/mlx-venv/bin/python",
+  mlxRequirementsLockPath: "/fake/Resources/sidecar/requirements-mlx.lock",
 };
 
 /** A scriptable stand-in for the real bootstrapDesktop() handle — only
  *  installDiarization() is exercised by this suite (handleInstallDiarization
  *  -> jobsBridge.trackInstallDiar); every other field is present (full
  *  DesktopBootstrapHandle compliance) but inert, mirroring bootstrap.ts's
- *  own NOT_DESKTOP_HANDLE constant's exact shape/posture. */
-function makeFakeHandle(): { handle: DesktopBootstrapHandle; resolveInstall: () => void } {
+ *  own NOT_DESKTOP_HANDLE constant's exact shape/posture.
+ *
+ *  `overrides` (S12b fix round FB7/FB8, §F): an optional partial spread
+ *  onto the base shape above — added so the FB7-settings/FB8-refresh
+ *  describe block below can drive `installedModel` to a specific value
+ *  (e.g. "parakeet-tdt-0.6b-v3") without depending on bootstrap.ts's
+ *  REAL switchModel/marker internals (that coupling belongs to
+ *  SettingsDialog.parakeetSwitch.integration.test.tsx alone, which
+ *  exercises the real module) — every PRE-EXISTING call site omits it
+ *  and is byte-unaffected (`undefined` spreads to nothing). */
+function makeFakeHandle(
+  overrides: Partial<DesktopBootstrapHandle> = {},
+): { handle: DesktopBootstrapHandle; resolveInstall: () => void } {
   let resolveInstall!: () => void;
   const installPromise = new Promise<void>((resolve) => {
     resolveInstall = resolve;
@@ -275,6 +307,7 @@ function makeFakeHandle(): { handle: DesktopBootstrapHandle; resolveInstall: () 
     currentSwitchModelProgress: () => null,
     installDiarization: () => installPromise,
     readSidecarLog: async () => "",
+    ...overrides,
   };
   return { handle, resolveInstall };
 }
@@ -540,5 +573,371 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     });
     expect(container!.textContent).toContain("该引擎不支持说话人分离");
     expect(container!.textContent).not.toContain("需先配置 HF Token");
+  });
+});
+
+// ---------------------------------------------------------------
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Provision state machine, worker A3) — mlx-install task progress is
+// DISPLAY-ONLY wiring here (see installingMlx's own doc comment in
+// SettingsDialog.tsx): worker A2's provisionMachine.ts/bootstrap.ts own
+// the actual "mlx-install" task emission (as part of a parakeet-family
+// model's two-phase provision), so this suite drives the registry
+// DIRECTLY via useTasks.setState — mirroring the F7 describe block
+// above's own "managed" seed + initDesktop/fetchSidecarHealth mocking,
+// reusing its makeFakeHandle()/FAKE_PATHS/diarSeedSettings.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog (desktop) — S12a mlx-install task progress + gating (§C Provision state machine, worker A3)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: diarSeedSettings(), hydrated: true });
+    mockInitDesktop.mockReset();
+    mockFetchSidecarHealth.mockReset().mockResolvedValue({
+      ok: true,
+      diarization_installed: true,
+      diarization_ready: true,
+      diarization_error: null,
+    });
+    mockProbeSidecar.mockReset().mockResolvedValue({ up: true });
+    mockProbeAudiocapCaps.mockClear();
+    const { handle } = makeFakeHandle();
+    mockInitDesktop.mockResolvedValue(handle);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useTasks.setState({ tasks: {} });
+    vi.unstubAllGlobals();
+  });
+
+  async function flushUntil(check: () => boolean, maxTicks = 50): Promise<void> {
+    for (let i = 0; i < maxTicks; i++) {
+      if (check()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    if (!check()) throw new Error("flushUntil: condition never became true");
+  }
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function seedRunningMlxInstall() {
+    useTasks.setState({
+      tasks: {
+        t1: {
+          id: "t1",
+          kind: "mlx-install",
+          label: "安装 MLX 运行环境",
+          stage: "",
+          status: "running",
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      },
+    });
+  }
+
+  it("no running mlx-install task: no MLX hint renders, and 更换模型/重新运行安装向导 are unaffected by it", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    expect(container!.textContent).not.toContain("正在安装 MLX 运行环境");
+    expect(findButtonContaining("更换模型").disabled).toBe(false);
+    expect(findButtonContaining("重新运行安装向导").disabled).toBe(false);
+  });
+
+  it("a running mlx-install task shows the 后台任务 hint and disables 更换模型/重新运行安装向导 (same mutual-exclusion set as switchingModel/installingDiarization, S4 review Finding 1c)", async () => {
+    seedRunningMlxInstall();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    expect(container!.textContent).toContain("正在安装 MLX 运行环境，进度见右下角「后台任务」");
+    expect(findButtonContaining("更换模型").disabled).toBe(true);
+    expect(findButtonContaining("重新运行安装向导").disabled).toBe(true);
+  });
+
+  it("a running mlx-install task also disables 说话人分离's own 安装扩展 button (joins the SAME mutual-exclusion set)", async () => {
+    mockFetchSidecarHealth.mockResolvedValue({
+      ok: true,
+      diarization_installed: false,
+      diarization_ready: false,
+      diarization_error: null,
+    });
+    seedRunningMlxInstall();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await act(async () => {
+      findNavButton("说话人分离").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushUntil(() => container!.textContent?.includes("未安装") ?? false);
+
+    expect(findButtonContaining("安装扩展").disabled).toBe(true);
+  });
+
+  it("the mlx-install hint clears and 更换模型/重新运行安装向导 re-enable once the task leaves the running state", async () => {
+    seedRunningMlxInstall();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    expect(container!.textContent).toContain("正在安装 MLX 运行环境");
+
+    await act(async () => {
+      useTasks.setState((s) => ({ tasks: { ...s.tasks, t1: { ...s.tasks.t1, status: "done" } } }));
+    });
+
+    expect(container!.textContent).not.toContain("正在安装 MLX 运行环境");
+    expect(findButtonContaining("更换模型").disabled).toBe(false);
+    expect(findButtonContaining("重新运行安装向导").disabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------
+// S12b fix round FB7-settings + FB8-refresh (§F) — both driven off
+// makeFakeHandle()'s own scriptable installedModel/switchModel (never
+// bootstrap.ts's REAL switchModel internals, which are actively being
+// developed by a concurrent lane in this same worktree as this suite
+// was written — that coupling belongs to SettingsDialog.
+// parakeetSwitch.integration.test.tsx alone, which exercises the real
+// module on purpose). FB7 needs only `installedModel`/draft state (no
+// picker interaction); FB8 additionally drives the REAL 更换模型 ->
+// pick -> 下载并切换 click path so a REAL "model-download" task lands in
+// the REAL task registry (jobsBridge.trackSwitchModel, unmocked) and
+// genuinely settles "done" — the same registry-subscription shape the
+// S12a mlx-install describe block above already established for
+// mlx-install task progress, reused here for switchModelDone.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog (desktop) — S12b fix round FB7-settings + FB8-refresh (§F)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function fb7SeedSettings(overrides: Partial<Settings> = {}): Settings {
+    return {
+      ...DEFAULT_SETTINGS,
+      uiMode: "advanced",
+      sidecarMode: "managed",
+      engine: "whisper",
+      whisperModel: "medium",
+      hfToken: "hf_test_token_123",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: fb7SeedSettings(), hydrated: true });
+    mockInitDesktop.mockReset();
+    mockFetchSidecarHealth.mockReset().mockResolvedValue({
+      ok: true,
+      diarization_installed: true,
+      diarization_ready: true,
+      diarization_error: null,
+    });
+    mockProbeSidecar.mockReset().mockResolvedValue({ up: true });
+    mockProbeAudiocapCaps.mockClear();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useTasks.setState({ tasks: {} });
+    vi.unstubAllGlobals();
+  });
+
+  async function flushUntil(check: () => boolean, maxTicks = 50): Promise<void> {
+    for (let i = 0; i < maxTicks; i++) {
+      if (check()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    if (!check()) throw new Error("flushUntil: condition never became true");
+  }
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent?.includes(text));
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  /** 说话人分离's own section only mounts once that nav category is
+   *  active (activeCategory === "diarization", SettingsDialog.tsx) —
+   *  every test below that needs the toggle/安装扩展 box navigates there
+   *  first, same as this file's own pre-existing S12a "说话人分离's own
+   *  安装扩展" test does. */
+  async function openDiarizationSection(): Promise<void> {
+    await act(async () => {
+      findNavButton("说话人分离").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  /** 实时说话人分离's own <ToggleSwitch> — a real <button role="switch">
+   *  nested inside the <label> carrying the row's own visible text
+   *  (ToggleSwitch.tsx's own doc comment), not a standalone testid. */
+  function findRealtimeDiarizeToggle(): HTMLButtonElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) =>
+      l.textContent?.includes("实时说话人分离"),
+    );
+    if (!label) throw new Error("实时说话人分离 label not found");
+    const toggle = label.querySelector('[role="switch"]');
+    if (!toggle) throw new Error("实时说话人分离 toggle not found");
+    return toggle as HTMLButtonElement;
+  }
+
+  it("FB7-settings: realtime toggle disabled + parakeet-specific reason when installedModel is parakeet (draft.whisperModel stays a whisper model)", async () => {
+    const { handle } = makeFakeHandle({ installedModel: async () => "parakeet-tdt-0.6b-v3" });
+    mockInitDesktop.mockResolvedValue(handle);
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    // 当前模型 line lives under the engine (default) category — waited
+    // for THERE (installedModel's own async resolution) before
+    // navigating away to 说话人分离, whose own section unmounts it.
+    await flushUntil(() => container!.textContent?.includes("当前模型：parakeet-tdt-0.6b-v3") ?? false);
+    await openDiarizationSection();
+
+    expect(findRealtimeDiarizeToggle().disabled).toBe(true);
+    expect(container!.textContent).toContain("parakeet 本地转录暂不支持实时说话人分离");
+  });
+
+  it("FB7-settings: realtime toggle disabled + parakeet-specific reason when draft.whisperModel (the SELECTED preference) is parakeet, even while installedModel is still a whisper model", async () => {
+    useApp.setState({ settings: fb7SeedSettings({ whisperModel: "parakeet-tdt-0.6b-v3" }), hydrated: true });
+    const { handle } = makeFakeHandle({ installedModel: async () => "medium" });
+    mockInitDesktop.mockResolvedValue(handle);
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flushUntil(() => container!.textContent?.includes("当前模型：medium") ?? false);
+    await openDiarizationSection();
+
+    expect(findRealtimeDiarizeToggle().disabled).toBe(true);
+    expect(container!.textContent).toContain("parakeet 本地转录暂不支持实时说话人分离");
+  });
+
+  it("FB7-settings: 安装扩展 gets an informational parakeet hint but stays ENABLED (communicates, doesn't block — installing ahead of a later whisper switch is still useful)", async () => {
+    mockFetchSidecarHealth.mockResolvedValue({
+      ok: true,
+      diarization_installed: false,
+      diarization_ready: false,
+      diarization_error: null,
+    });
+    const { handle } = makeFakeHandle({ installedModel: async () => "parakeet-tdt-0.6b-v3" });
+    mockInitDesktop.mockResolvedValue(handle);
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flushUntil(() => container!.textContent?.includes("当前模型：parakeet-tdt-0.6b-v3") ?? false);
+    await openDiarizationSection();
+    await flushUntil(() => container!.textContent?.includes("未安装") ?? false);
+
+    expect(container!.textContent).toContain("parakeet 本地转录暂不支持实时说话人分离，安装扩展不会让当前会话生效");
+    expect(findButtonContaining("安装扩展").disabled).toBe(false);
+  });
+
+  it("FB7-settings: unaffected for an ordinary whisper model — toggle available (token configured), no parakeet copy anywhere", async () => {
+    const { handle } = makeFakeHandle({ installedModel: async () => "medium" });
+    mockInitDesktop.mockResolvedValue(handle);
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flushUntil(() => container!.textContent?.includes("当前模型：medium") ?? false);
+    await openDiarizationSection();
+
+    expect(findRealtimeDiarizeToggle().disabled).toBe(false);
+    expect(container!.textContent).not.toContain("parakeet 本地转录暂不支持实时说话人分离");
+  });
+
+  it("FB8-refresh: switch completes -> 当前模型 (and, downstream, FB7's own parakeet gate) reflects the NEW installed model WITHOUT closing/reopening the dialog", async () => {
+    let installed = "small";
+    const { handle } = makeFakeHandle({
+      installedModel: async () => installed,
+      switchModel: async (model: string) => {
+        installed = model; // mirrors a real switchModel() actually landing the new marker
+      },
+    });
+    mockInitDesktop.mockResolvedValue(handle);
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flushUntil(() => container!.textContent?.includes("当前模型：small") ?? false);
+    await openDiarizationSection();
+    expect(findRealtimeDiarizeToggle().disabled).toBe(false); // small is an ordinary whisper model — armed pre-switch
+
+    // Back to 转录引擎 (更换模型 lives there) — activeCategory persists
+    // across nav clicks within the same open dialog.
+    await act(async () => {
+      findNavButton("转录引擎").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonContaining("更换模型").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushUntil(() => container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') !== null);
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonContaining("下载并切换").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await flushUntil(() =>
+      Object.values(useTasks.getState().tasks).some((t) => t.kind === "model-download" && t.status === "done"),
+    );
+
+    // The product contract FB8 exists for: 当前模型 updates in place, and
+    // FB7's own parakeet gate (downstream of the SAME installedModel
+    // state) reacts too — neither needed the dialog closed/reopened.
+    await flushUntil(() => container!.textContent?.includes("当前模型：parakeet-tdt-0.6b-v3") ?? false);
+    await openDiarizationSection();
+    expect(findRealtimeDiarizeToggle().disabled).toBe(true);
+    expect(container!.textContent).toContain("parakeet 本地转录暂不支持实时说话人分离");
   });
 });

@@ -19,11 +19,14 @@
 //   readMarker   -> invoke("read_provision_marker")            -> string | null
 //   writeMarker  -> invoke("write_provision_marker", { json }) -> void
 //   runUv        -> invoke("run_uv", { args, env })             -> ProcessResult, uv://log-streamed
-//   prewarmModel -> invoke("prewarm_model", { model })          -> ProcessResult, uv://log-
+//   prewarmModel -> invoke("prewarm_model", { model, hfToken? }) -> ProcessResult, uv://log-
 //                   AND prewarm://progress-streamed (S4 chunk 2's
 //                   --download-only progress line -> {downloaded,total}
-//                   events; see withDownloadProgress)
-//   startServer  -> invoke("start_server", { model })           -> StartServerResult
+//                   events; see withDownloadProgress). `hfToken` (S12a
+//                   Q6) rides along only when RunnerDeps.readHfToken
+//                   resolves a non-empty token — see hfTokenArg.
+//   startServer  -> invoke("start_server", { model, hfToken? }) -> StartServerResult.
+//                   Same S12a Q6 `hfToken` passthrough as prewarmModel.
 //   stopServer   -> invoke("stop_server")                       -> void (Finding 7: the
 //                   LEADING effect on a STARTING/POLLING_HEALTH retry
 //                   — see provisionMachine.ts's handleRetry)
@@ -36,9 +39,19 @@
 
 import type { Settings } from "@jargonslayer/core/types";
 import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
+import { probeMlxCapabilitiesWith, type MlxCapsResult } from "./mlxCaps";
 import type { InvokeFn, ListenFn } from "./tauriApi";
 import type { DesktopPaths } from "./uvCommands";
-import type { Effect, MachineEvent, MachineState, ProvisionMarker, ProvisionStep } from "./provisionMachine";
+import {
+  MLX_ONLY_MARKER_MODELS,
+  parseMarker,
+  type Effect,
+  type MachineEvent,
+  type MachineState,
+  type MlxUsability,
+  type ProvisionMarker,
+  type ProvisionStep,
+} from "./provisionMachine";
 
 export type LogStream = "stdout" | "stderr";
 export type OnLog = (stream: LogStream, line: string) => void;
@@ -71,6 +84,21 @@ export interface PrewarmProgressEvent {
 }
 
 export type OnDownloadProgress = (progress: PrewarmProgressEvent) => void;
+
+/** S12a (v0.4.4, §C Provision) — mirrors the pinned cross-lane contract
+ *  for the new Rust `mlx_import_preflight` command (task spec: "an
+ *  invoke `mlx_import_preflight` → {ok: boolean, stderr: string}
+ *  (hardcoded import list Rust-side)"): a real `<mlxVenvPython> -c
+ *  "import parakeet_mlx, websockets, numpy, huggingface_hub"` attempt,
+ *  camelCase per this app's own Tauri-command-result convention.
+ *  Exported so bootstrap.ts's ensureMlxExtras (§Provision's
+ *  transactional venv build) reuses this ONE type rather than a second,
+ *  hand-duplicated copy — same "shared Rust-command-result shape lives
+ *  in this file" precedent as ProcessResult/StartServerResult above. */
+export interface MlxImportPreflightResult {
+  ok: boolean;
+  stderr: string;
+}
 
 export interface RunnerDeps {
   invoke: InvokeFn;
@@ -112,6 +140,43 @@ export interface RunnerDeps {
    *  hermetic, instant unit tests (a recorded fake never actually
    *  waits). */
   sleep?: (ms: number) => Promise<void>;
+  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+   *  Q6/§3.5 HF-token) — a LIVE read of the user's configured
+   *  Settings.hfToken, threaded into the prewarmModel/startServer
+   *  effects' own invoke payloads below (see runStepEffect) so Rust's
+   *  `prewarm_model`/`start_server` can set `HF_TOKEN` in the download/
+   *  server spawn env (server.rs's `hf_extra_env`) — de-risking the
+   *  ~2.5GB parakeet first-run download against anonymous-HF
+   *  throttling (Q6). Deliberately a plain SYNCHRONOUS getter (this
+   *  file's own RunnerDeps.settings is pinned to DEFAULT_SETTINGS —
+   *  see that field's own doc comment — so the token can never be read
+   *  from `deps.settings` itself), injected rather than imported so
+   *  this file stays store-agnostic (zero @tauri-apps/zustand imports
+   *  of its own, this file's header comment) — bootstrap.ts's
+   *  runnerDeps wires the real implementation, mirroring
+   *  resolveIsMeetingActive's own "resolve store hydration once, hand
+   *  back a synchronous closure" shape (bootstrap.ts). Absent (every
+   *  pre-S12a test, and any caller that hasn't wired it) means "no
+   *  token" — both invoke payloads simply omit the `hfToken` key
+   *  (Rust's `Option<String>` param treats a missing key as `None`,
+   *  same as an empty/whitespace-only token — see hfTokenArg below),
+   *  so every existing test's exact-payload assertions stay
+   *  byte-identical. */
+  readHfToken?: () => string;
+}
+
+/** Builds the `{hfToken}` fragment to spread into the prewarm_model/
+ *  start_server invoke payloads below — `{}` (nothing to spread) when
+ *  `deps.readHfToken` is absent OR returns an empty/whitespace-only
+ *  string, `{hfToken: <trimmed>}` otherwise. A local, unexported
+ *  helper — mirrors this file's own defaultNow/defaultSleep precedent
+ *  (small, swappable-dependency-shaped logic kept as a private copy
+ *  per file rather than cross-imported; bootstrap.ts's performSwitchModel
+ *  carries an identical, independently-defined copy for its own direct
+ *  start_server call, which isn't a provisionMachine Effect at all). */
+function hfTokenArg(deps: RunnerDeps): { hfToken: string } | Record<string, never> {
+  const token = deps.readHfToken?.().trim();
+  return token ? { hfToken: token } : {};
 }
 
 const noopLog: OnLog = () => {};
@@ -141,6 +206,91 @@ async function readMarkerEffect(deps: RunnerDeps): Promise<string | null> {
     void describeError(error);
     return null;
   }
+}
+
+/** S12a fix round (§D F2, HIGH) — one capabilities probe attempt, with
+ *  ONE automatic retry when the FIRST attempt itself errored (an
+ *  invoke() rejection/spawn failure — mlxCaps.ts's own
+ *  probeMlxCapabilitiesWith never throws, it resolves the §D F7
+ *  `{status,caps}` envelope either way, so "errored" here means
+ *  `status === "error"`, not a caught exception). A RESOLVED answer —
+ *  even a resolved `mlxSupported:false` — is trusted immediately, no
+ *  retry: only the round trip itself failing is "maybe transient,
+ *  worth one more try". Reuses probeMlxCapabilitiesWith verbatim
+ *  (mlxCaps.ts) rather than re-implementing the round trip — this ALSO
+ *  warms mlxCaps.ts's own module-level cache on a real answer, so a
+ *  later UI read of getMlxCapsSnapshot() during this same session
+ *  skips a redundant round trip. */
+async function probeMlxCapabilitiesRetried(deps: RunnerDeps): Promise<MlxCapsResult> {
+  const first = await probeMlxCapabilitiesWith(deps.invoke);
+  if (first.status === "ok") return first;
+  return probeMlxCapabilitiesWith(deps.invoke); // one retry — whatever it resolves is final either way
+}
+
+/** S12a fix round (§D F2) — mirrors probeMlxCapabilitiesRetried's own
+ *  "one retry on a genuine invoke() rejection only" contract for
+ *  mlx_import_preflight, which (unlike mlx_capabilities) has no
+ *  mlxCaps.ts-side wrapper of its own to reuse — this file owns the
+ *  raw invoke() + retry directly. Resolves `null` only once BOTH
+ *  attempts reject (the "probe-error" case); a RESOLVED
+ *  MlxImportPreflightResult — even `{ok:false}` — is trusted
+ *  immediately, no retry, same "a resolved answer is a resolved
+ *  answer" posture as probeMlxCapabilitiesRetried. */
+async function invokeImportPreflightRetried(deps: RunnerDeps): Promise<MlxImportPreflightResult | null> {
+  try {
+    return await deps.invoke<MlxImportPreflightResult>("mlx_import_preflight");
+  } catch {
+    try {
+      return await deps.invoke<MlxImportPreflightResult>("mlx_import_preflight");
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** §D F2's own "无法检测" wording (mlx_capabilities half) — deliberately
+ *  distinct from the `unsupported` status's "不支持"/"需要 Apple 芯片"
+ *  copy (see MlxUsability's own doc comment, provisionMachine.ts) so a
+ *  user-facing STEP/ERROR message never conflates "we don't know" with
+ *  "we know, and the answer is no". */
+const MLX_CAPABILITIES_PROBE_ERROR_MESSAGE = "无法检测 Apple 芯片支持状态，请重试";
+
+/** Same "无法检测" family, naming the OTHER probe (mlx_import_preflight
+ *  half) — see MLX_CAPABILITIES_PROBE_ERROR_MESSAGE's own doc comment. */
+const MLX_PREFLIGHT_PROBE_ERROR_MESSAGE = "无法检测 MLX 运行环境状态，请重试";
+
+/** S12a (v0.4.4, §C Provision, F14; redesigned §D F2, HIGH) —
+ *  CHECKING's own mlx-usability probe, ONLY ever run when the
+ *  just-parsed marker claims an mlx-family model (see runEffects'
+ *  CHECKING branch below) — every ordinary whisper-family marker never
+ *  pays this extra round trip. Resolves the FULL 4-state
+ *  provisionMachine.ts#MlxUsability result (see that type's own doc
+ *  comment for the complete matrix this implements) rather than the
+ *  old collapsed boolean — §D F2's own fix: a transient probe error
+ *  used to be indistinguishable from a definitive "unsupported"
+ *  (both collapsed to `false`), which durably persisted the fallback
+ *  model over a merely-flaky probe and diverged ctx from the
+ *  surviving parakeet marker. Hardware first (probeMlxCapabilitiesRetried
+ *  above); only if hardware is DEFINITIVELY fine does this proceed to
+ *  mlx_import_preflight (invokeImportPreflightRetried above) as the
+ *  venv-validity check (no separate persisted "mlx-venv-valid" marker
+ *  file/Rust command exists this sprint; a live re-import is at least
+ *  as trustworthy and self-corrects if the venv was deleted/corrupted
+ *  between runs — see this task's own PR report for the full
+ *  rationale). Never throws. */
+async function probeMlxUsable(deps: RunnerDeps): Promise<MlxUsability> {
+  const capsResult = await probeMlxCapabilitiesRetried(deps);
+  if (capsResult.status === "error") {
+    return { status: "probe-error", message: MLX_CAPABILITIES_PROBE_ERROR_MESSAGE };
+  }
+  if (!capsResult.caps.mlxSupported) {
+    return { status: "unsupported", reason: capsResult.caps.reason || "需要 Apple 芯片（M 系列），macOS 14 或更高" };
+  }
+  const preflight = await invokeImportPreflightRetried(deps);
+  if (preflight === null) {
+    return { status: "probe-error", message: MLX_PREFLIGHT_PROBE_ERROR_MESSAGE };
+  }
+  return preflight.ok ? { status: "usable" } : { status: "invalid-venv" };
 }
 
 /** write_provision_marker — like stopServer/getAppPaths below, ALSO
@@ -239,10 +389,13 @@ async function runStepEffect(
         // caught by this function's own try/catch below exactly like
         // any other invoke failure; no special-casing needed on this
         // side, it already carries the specific message through
-        // verbatim as STEP_ERROR.error.
+        // verbatim as STEP_ERROR.error. S12a Q6: `hfToken` rides
+        // alongside `model` (see hfTokenArg's own doc comment) — Rust's
+        // prewarm_model sets HF_TOKEN in the download spawn env only
+        // when this key is present and non-empty.
         const result = await withUvLog(deps, onLog, () =>
           withDownloadProgress(deps, onDownloadProgress, () =>
-            deps.invoke<ProcessResult>("prewarm_model", { model: effect.model }),
+            deps.invoke<ProcessResult>("prewarm_model", { model: effect.model, ...hfTokenArg(deps) }),
           ),
         );
         return processResultToEvent(step, result);
@@ -252,8 +405,12 @@ async function runStepEffect(
         // stdout/stderr go to whisper_server.log (server.rs's
         // start_server), not the uv://log event; StartServerResult
         // carries no exit code to interpret (the server is meant to
-        // keep running) — resolving at all IS success.
-        await deps.invoke<StartServerResult>("start_server", { model: effect.model });
+        // keep running) — resolving at all IS success. S12a Q6:
+        // `hfToken` rides alongside `model` (see hfTokenArg's own doc
+        // comment) — Rust's start_server sets HF_TOKEN in the
+        // long-lived sidecar spawn env only when this key is present
+        // and non-empty.
+        await deps.invoke<StartServerResult>("start_server", { model: effect.model, ...hfTokenArg(deps) });
         return { type: "STEP_OK", step };
       }
     }
@@ -297,7 +454,17 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
         }
       }),
     );
-    return { type: "CHECK_RESULT", probeHealthy, markerRaw };
+    // S12a (§C Provision, F14; redesigned §D F2) — only probed when the
+    // marker itself claims an mlx-family model (see probeMlxUsable's
+    // own doc comment above for the full rationale); every other
+    // marker leaves `mlxUsability` undefined, matching
+    // provisionMachine.ts's own CHECK_RESULT.mlxUsability doc comment
+    // ("every pre-S12a CHECK_RESULT event literal keeps working
+    // unchanged").
+    const marker = parseMarker(markerRaw);
+    const mlxUsability: MlxUsability | undefined =
+      marker && MLX_ONLY_MARKER_MODELS.includes(marker.model) ? await probeMlxUsable(deps) : undefined;
+    return { type: "CHECK_RESULT", probeHealthy, markerRaw, mlxUsability };
   }
 
   if (state.phase === "STEP" && state.step === "POLLING_HEALTH" && state.status === "POLLING") {

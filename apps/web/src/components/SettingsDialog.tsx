@@ -71,6 +71,7 @@ import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
 import ModelPicker from "@/components/desktop/ModelPicker";
+import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 import CredentialFields, {
   presetIdFor,
   type ProviderPreset,
@@ -405,6 +406,22 @@ function coercePreviewModels(draft: Settings): Settings {
   return Object.keys(patch).length > 0 ? { ...draft, ...patch } : draft;
 }
 
+// S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
+// lives only in the shared BASE venv; parakeet rides a fully separate,
+// airtight-isolated MLX venv (§C R1) that never has pyannote installed,
+// so 实时说话人分离/说话人分离扩展 are structurally dead for it, not just
+// unconfigured. Reuses modelCatalog.ts's own `mlxOnly` discriminator
+// (the same one ModelPicker.tsx/DesktopWizard.tsx already gate on)
+// rather than a hardcoded id string, so a future second mlx-family model
+// is covered automatically. `null`/an id absent from the catalog (a
+// manually-dropped-in model, provisionMachine.ts's own escape hatch)
+// reads as NOT mlx-only — never false-positively blocks diarization for
+// a model this function doesn't recognize.
+function isMlxOnlyModel(model: string | null): boolean {
+  if (!model) return false;
+  return MODEL_CATALOG.find((entry) => entry.id === model)?.mlxOnly === true;
+}
+
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-xs uppercase tracking-wide text-mut">{children}</div>
@@ -717,6 +734,33 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const switchingModel = useTasks(
     (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "running",
   );
+  // S12b fix round FB8-refresh (§F): mirrors diarInstallDone's own
+  // "read a specific dispatched task id's own terminal status" shape
+  // exactly (see that field's own doc comment a few lines up) —
+  // installedModel below is a ONE-SHOT snapshot read at effect-mount
+  // time, so a switch that completes while this dialog stays open
+  // otherwise leaves 当前模型/实时说话人分离's own gating stale until the
+  // dialog is closed and reopened. Read by the 当前模型 effect below,
+  // which re-runs once this flips true.
+  const switchModelDone = useTasks(
+    (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "done",
+  );
+  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+  // Provision state machine, worker A3) — display-only wiring for the
+  // "mlx-install" task kind (A2's provisionMachine.ts/bootstrap.ts own
+  // its actual emission, as part of picking a parakeet-family model's
+  // two-phase provision; see modelCatalog.ts's own mlxOnly doc). Unlike
+  // switchingModel/installingDiarization above, this dialog never
+  // dispatches an mlx-install task itself (there is no local
+  // "mlxInstallTaskId" to key off, and no call site to attach one to —
+  // handleSwitchModel just calls trackSwitchModel and moves on, same
+  // "TaskCenterDrawer/TaskTray own progress from here on" posture that
+  // function's own doc comment already states), so this reads the
+  // registry by KIND instead of a specific id — true whenever ANY
+  // mlx-install task is running, regardless of which call site started
+  // it. A primitive-returning selector (registry.ts's own INVARIANT
+  // doc), so no useShallow wrapping is needed here.
+  const installingMlx = useTasks((s) => Object.values(s.tasks).some((t) => t.kind === "mlx-install" && t.status === "running"));
 
   // Settings redesign: which nav-rail category the content pane shows.
   // Local-only (NOT the zustand store, not part of draft) — pure
@@ -919,6 +963,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // the dialog stays open) — mirrors the 本地服务 status effect just
   // above. IS_DESKTOP is a build-time const (see platform/desktop.ts),
   // so this is inert on a web build.
+  //
+  // S12b fix round FB8-refresh (§F): `switchModelDone` in the deps array
+  // — mirrors F7's own diarInstallDone fix for the exact same class of
+  // staleness (see that field's own doc comment): jobsBridge.
+  // trackSwitchModel's own success handler settles the TASK registry
+  // entry, never this dialog's own `installedModel` state, so without
+  // this the 当前模型 line (and, since S12b FB7, 实时说话人分离's own
+  // isParakeetSelectedOrInstalled gate) kept showing the PRE-switch
+  // model until the dialog was closed and reopened.
   useEffect(() => {
     if (!open || !IS_DESKTOP || draft.sidecarMode !== "managed") return;
     let cancelled = false;
@@ -931,7 +984,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, draft.sidecarMode]);
+  }, [open, draft.sidecarMode, switchModelDone]);
 
   // 说话人分离 安装扩展 install-state row (v0.4 S5 chunk 3): probes GET
   // /health via fetchSidecarHealth (decision C's diarization_installed)
@@ -1472,9 +1525,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // engine surviving into a preview build (e.g. an imported full-tier
   // settings export) from evaluating true and enabling the checkbox
   // despite the section's greyed-out fields.
+  //
+  // S12b fix round FB7-settings (§F): parakeet rides the SAME `whisper`
+  // STTEngineKind (blueprint Q1 — it's a MODEL under `whisper`, not a
+  // new engine), so `draft.engine === "whisper"` alone can't tell
+  // parakeet apart from faster-whisper here — isMlxOnlyModel does. Both
+  // the SELECTED preference (draft.whisperModel — what 保存 would make
+  // live) and the truthful INSTALLED model (installedModel — what's
+  // actually running right now) gate this: either one being parakeet
+  // means diarization can't actually run (pyannote isn't in the mlx
+  // venv at all), so the toggle must not arm on the strength of the
+  // other alone.
+  const isParakeetSelectedOrInstalled = isMlxOnlyModel(draft.whisperModel) || isMlxOnlyModel(installedModel);
   const realtimeDiarizeAvailable =
     !PREVIEW_TIER &&
     (draft.engine === "whisper" || draft.engine === "tabaudio" || draft.engine === "appaudio") &&
+    !isParakeetSelectedOrInstalled &&
     !!draft.hfToken;
   // 双语转录 (#42): the translation target IS explainLanguage — "en"
   // would mean translating English into English, so the toggle is
@@ -1906,13 +1972,30 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <button
                         type="button"
                         onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : handleOpenModelPicker())}
-                        disabled={meetingActive || switchingModel || reprovisioningDesktop || installingDiarization}
+                        disabled={meetingActive || switchingModel || reprovisioningDesktop || installingDiarization || installingMlx}
                         title={meetingActive ? "会议进行中，结束后可切换模型" : undefined}
                         className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         更换模型
                       </button>
                     </div>
+
+                    {/* S12a (§C Provision state machine) — mlx-install's
+                       own progress lives in TaskCenterDrawer/TaskTray
+                       exactly like model-download/diar-install's does
+                       (see installingMlx's own doc comment above); this
+                       is only the same "安装中，进度见右下角「后台任务」"
+                       pointer 安装扩展 already shows below, so a parakeet
+                       pick's Phase 1 (MLX venv) isn't silently invisible
+                       right here while it blocks 更换模型/下载并切换/
+                       重新运行安装向导/安装扩展 above via the SAME mutual-
+                       exclusion set (S4 review pair Finding 1c). zh copy
+                       new to this sprint — 4.6 pass, not polished here
+                       (see modelCatalog.ts's own doc on the same
+                       convention). */}
+                    {installingMlx && (
+                      <div className="text-xs leading-[1.7] text-mut2">正在安装 MLX 运行环境，进度见右下角「后台任务」</div>
+                    )}
 
                     {modelPickerOpen && (
                       <div className="space-y-2 border border-edge bg-panel2 p-3">
@@ -1921,7 +2004,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           <button
                             type="button"
                             onClick={() => void handleSwitchModel()}
-                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive || installingDiarization}
+                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive || installingDiarization || installingMlx}
                             className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {switchingModel ? "处理中…" : "下载并切换"}
@@ -1941,7 +2024,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <button
                       type="button"
                       onClick={() => void handleReprovisionDesktop()}
-                      disabled={reprovisioningDesktop || switchingModel || meetingActive || installingDiarization}
+                      disabled={reprovisioningDesktop || switchingModel || meetingActive || installingDiarization || installingMlx}
                       title={meetingActive ? "会议进行中，结束后可重新运行安装向导" : undefined}
                       className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -2052,13 +2135,29 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   )}
                 </div>
 
+                {/* S12b fix round FB7-settings (§F) — "the 安装扩展
+                   action for diarization should communicate the same"
+                   (parakeet incompatibility): informational only, NOT a
+                   disable — installing the extension into the shared
+                   base venv is still a legitimate, useful action (e.g.
+                   prepping ahead of switching back to a faster-whisper
+                   model), it just won't help THIS SESSION while parakeet
+                   is the selected/installed model. Same idiom as the
+                   sibling 需先安装说话人分离扩展 line below the toggle.
+                   NEW string — 4.6 pass. */}
+                {isParakeetSelectedOrInstalled && (
+                  <div className="text-xs leading-[1.7] text-mut2">
+                    parakeet 本地转录暂不支持实时说话人分离，安装扩展不会让当前会话生效
+                  </div>
+                )}
+
                 {diarizationInstalled === false && (
                   <>
                     <button
                       type="button"
                       onClick={() => void handleInstallDiarization()}
                       disabled={
-                        installingDiarization || reprovisioningDesktop || switchingModel || meetingActive
+                        installingDiarization || reprovisioningDesktop || switchingModel || meetingActive || installingMlx
                       }
                       title={meetingActive ? "会议进行中，结束后可安装说话人分离扩展" : undefined}
                       className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
@@ -2174,7 +2273,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
                       : draft.engine === "osspeech"
                         ? "该引擎不支持说话人分离"
-                        : "需先配置 HF Token"}
+                        : // S12b fix round FB7-settings (§F) — NEW string,
+                          // 4.6 pass (house convention, not polished here):
+                          // parakeet's own MLX venv never has pyannote, a
+                          // structural limitation, not a missing-token one
+                          // — checked ahead of the generic fallback so it
+                          // always wins when both would otherwise apply.
+                          isParakeetSelectedOrInstalled
+                          ? "parakeet 本地转录暂不支持实时说话人分离"
+                          : "需先配置 HF Token"}
                 </div>
               </div>
               <ToggleSwitch

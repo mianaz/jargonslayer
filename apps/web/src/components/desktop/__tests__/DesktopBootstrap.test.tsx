@@ -69,6 +69,9 @@ const FAKE_PATHS: DesktopPaths = {
   diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
+  mlxVenvDir: "/fake/AppData/mlx-venv",
+  mlxVenvPython: "/fake/AppData/mlx-venv/bin/python",
+  mlxRequirementsLockPath: "/fake/Resources/sidecar/requirements-mlx.lock",
 };
 
 /** A small scriptable stand-in for the real bootstrapDesktop() handle —

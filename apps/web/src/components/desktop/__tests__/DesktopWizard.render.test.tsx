@@ -35,6 +35,44 @@ vi.mock("@/lib/desktop/bootstrap", async (importOriginal) => {
   };
 });
 
+// S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
+// §C L1) — the embedded <ModelPicker>'s own mlxOnly gating (worker A3,
+// ModelPicker.tsx) reads mlxCaps.ts's probeMlxCaps()/refreshMlxCaps()
+// directly, not through this file's own `paths`/callback props — this
+// suite doesn't otherwise touch mlxCaps.ts at all, so left UNMOCKED
+// every pre-existing (pre-B2) test below would still pass today: with
+// IS_DESKTOP genuinely false in this jsdom test env (no
+// `@/lib/platform/desktop` mock in this file), mlxCaps.ts's own
+// probeMlxCaps() short-circuits to `{status:"error", caps: FAIL_CLOSED}`
+// WITHOUT ever reaching tauriApi.ts's getInvoke() (see that module's own
+// IS_DESKTOP guard) — i.e. every pre-existing test's parakeet row (now
+// rendered, since modelCatalog.ts's own stub flips `available: true`
+// this sprint) reads disabled-fail-closed by default, harmlessly, same
+// as an unmocked ModelPicker.render.test.tsx row would. Mocked here only
+// so the TWO new gating tests below (§C Gating F13's "supported" vs
+// "unsupported" states) can drive an explicit result without fighting
+// tauriApi's own dynamic `@tauri-apps/*` import — mirrors ModelPicker.
+// render.test.tsx's own hoisted `mlxState` pattern (probeImpl/refreshImpl
+// reassigned per-test), default here is the SAME fail-closed shape the
+// real, unmocked module already produces in this jsdom env, so every
+// OTHER (non-mlx) test in this file is byte-unaffected by this mock's
+// mere presence.
+const mlxState = vi.hoisted(() => {
+  const FAIL_CLOSED = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
+  const state: {
+    probeImpl: () => Promise<{ status: "ok" | "error"; caps: { mlxSupported: boolean; reason: string | null } }>;
+  } = {
+    probeImpl: async () => ({ status: "error", caps: FAIL_CLOSED }),
+  };
+  return state;
+});
+vi.mock("@/lib/desktop/mlxCaps", () => ({
+  getMlxCapsSnapshot: () => null,
+  subscribeMlxCaps: () => () => {},
+  probeMlxCaps: () => mlxState.probeImpl(),
+  refreshMlxCaps: () => mlxState.probeImpl(),
+}));
+
 import DesktopWizard from "../DesktopWizard";
 import type { DesktopBootstrapState, DesktopLogLine } from "@/lib/desktop/bootstrap";
 import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
@@ -52,6 +90,9 @@ const paths: DesktopPaths = {
   diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
+  mlxVenvDir: "/fake/AppData/mlx-venv",
+  mlxVenvPython: "/fake/AppData/mlx-venv/bin/python",
+  mlxRequirementsLockPath: "/fake/Resources/sidecar/requirements-mlx.lock",
 };
 
 function noop() {}
@@ -75,6 +116,13 @@ describe("DesktopWizard — state-driven rendering", () => {
     // unrelated test (every pre-S11 test relies on the null default).
     mockOsSpeechCaps = null;
     mockChooseOsSpeechEngine.mockClear();
+    // S12b worker B2 — same reset discipline, for the mlxCaps mock added
+    // above: a gating test that overrides mlxState.probeImpl must never
+    // bleed its result into a LATER, unrelated test.
+    mlxState.probeImpl = async () => ({
+      status: "error",
+      caps: { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" },
+    });
   });
 
   async function renderWizard(state: DesktopBootstrapState, logLines: DesktopLogLine[] = [], overrides: Partial<Parameters<typeof DesktopWizard>[0]> = {}) {
@@ -125,6 +173,55 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onDismissConsent).toHaveBeenCalledTimes(1);
   });
 
+  // S12b fix round FB1-copy (§F) — the consent screen's own summary
+  // paragraph must be honest PER SELECTION, not a static whisper-family
+  // description regardless of what's actually picked.
+  it("WIZARD_CONSENT_REQUIRED: the summary copy is the pre-existing whisper-family text (byte-identical) while a whisper model is selected — no faster-whisper/size claim leaks under a parakeet pick that hasn't happened yet", async () => {
+    mockOsSpeechCaps = { supported: false };
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], {});
+
+    const consent = container!.querySelector('[data-testid="desktop-wizard-consent"]')!;
+    expect(consent.textContent).toContain("语音识别引擎（faster-whisper）");
+    expect(consent.textContent).toContain("预计下载体积约 0.5–1.5 GB");
+    expect(consent.textContent).toContain("Whisper 每约 30 秒判定一种语言"); // whisper-only guidance still shows
+    // Narrower than a bare "MLX" substring check — parakeet's own
+    // (always-rendered) catalog ROW text legitimately contains "MLX 本机
+    //加速" regardless of what's currently selected; what must NOT leak
+    // is the SUMMARY paragraph's own parakeet-branch sentence.
+    expect(consent.textContent).not.toContain("MLX 运行环境（Apple 芯片加速）");
+    expect(consent.textContent).not.toContain("仅支持 Apple 芯片（M 系列）。");
+  });
+
+  it("WIZARD_CONSENT_REQUIRED: selecting parakeet swaps the summary copy to the honest MLX/2.5GB framing, and hides the whisper-only guidance block (§F FB1-copy)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], {});
+    await act(async () => {
+      await Promise.resolve(); // let useMlxCaps' own mount-effect probe settle
+    });
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const consent = container!.querySelector('[data-testid="desktop-wizard-consent"]')!;
+    expect(consent.textContent).toContain("MLX");
+    expect(consent.textContent).toContain("仅支持 Apple 芯片（M 系列）");
+    expect(consent.textContent).toContain("预计下载体积约 2.5GB（含约 1GB MLX 运行环境，首次安装）");
+    // The old whisper-family claims must NOT leak under a parakeet pick.
+    expect(consent.textContent).not.toContain("faster-whisper");
+    expect(consent.textContent).not.toContain("预计下载体积约 0.5–1.5 GB");
+    // Whisper-only guidance (language-detection cadence + model-choice
+    // matrix) is meaningless for parakeet — hidden, not reworded.
+    expect(consent.textContent).not.toContain("Whisper 每约 30 秒判定一种语言");
+    expect(consent.textContent).not.toContain("Apple Silicon 实时→medium");
+
+    const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
+    expect(beginBtn.textContent).toBe("开始安装（parakeet-tdt-0.6b-v3 · ~2.5GB）");
+  });
+
   it("WIZARD_CONSENT_REQUIRED: embeds <ModelPicker>, pre-selected to WIZARD_PRESELECTED_MODEL, and the 开始安装 button text tracks the selection", async () => {
     mockOsSpeechCaps = { supported: false }; // pre-osspeech baseline — see this suite's own header comment
     const onBeginProvision = vi.fn();
@@ -151,6 +248,103 @@ describe("DesktopWizard — state-driven rendering", () => {
       beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onBeginProvision).toHaveBeenCalledWith("large-v3");
+  });
+
+  // S12b worker B2 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
+  // §C L1) — modelCatalog.ts's own parakeet stub is now `available:
+  // true` (B2's flip), so the wizard step's own <ModelPicker> DOES
+  // render its row unconditionally — the previous "never renders the
+  // still-unavailable stub" contract this suite pinned pre-flip is
+  // superseded by two real gating states instead: an INTEGRATION check
+  // (real MODEL_CATALOG, real embedded <ModelPicker>, not ModelPicker's
+  // own mocked-catalog unit tests) that the row shows up, is selectable,
+  // and reaches onBeginProvision(model) on a supported-caps mock; and
+  // that it still renders (available:true means it's never HIDDEN
+  // anymore) but stays disabled/unselectable with a visible reason on an
+  // unsupported-caps result — mlxOnly gating disables, it doesn't hide;
+  // only `available:false` (ModelPicker.tsx's own OTHER, independent
+  // gating layer, unaffected by this file's mlxCaps mock) hides a row
+  // entirely, and no catalog entry is `available:false` today. "Web" is
+  // a THIRD, structurally separate gate (page.tsx:297 mounts
+  // <DesktopBootstrap>/this wizard only under IS_DESKTOP at all — S12a
+  // §D F15, confirmed, not owned by this worker) — out of scope for a
+  // DesktopWizard-level render test, which by construction only ever
+  // renders on the "desktop" side of that gate.
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker> renders the parakeet-tdt-0.6b-v3 row, selectable, when mlxCaps reports supported (§C Gating F13, §C L1 B2 flip)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
+    const onBeginProvision = vi.fn();
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision });
+    await act(async () => {
+      await Promise.resolve(); // let useMlxCaps' own mount-effect probe settle
+    });
+
+    const parakeet = MODEL_CATALOG.find((m) => m.id === "parakeet-tdt-0.6b-v3");
+    expect(parakeet?.available).toBe(true); // sanity: B2's flip landed
+
+    const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+    expect(row).not.toBeNull();
+    expect(row.disabled).toBe(false);
+    expect(container!.querySelectorAll('[role="radio"]').length).toBe(MODEL_CATALOG.length); // every entry visible today
+
+    await act(async () => {
+      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
+    await act(async () => {
+      beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBeginProvision).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
+  });
+
+  // S12b fix round FB10 (§F; product default, ON THE VETO LIST §7.7) —
+  // supersedes this suite's own PRE-FB10 "still renders disabled" test:
+  // the wizard now passes ModelPicker's own hideDefinitivelyUnsupported
+  // prop, so a DEFINITIVELY-unsupported mlxOnly row is hidden entirely
+  // here (Settings' own picker keeps the pre-FB10 disabled-with-reason
+  // behavior instead — see ModelPicker.realCatalog.render.test.tsx's own
+  // "hideDefinitivelyUnsupported" describe block for that side).
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row is HIDDEN entirely (not just disabled) when mlxCaps DEFINITIVELY reports unsupported (§F FB10)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
+    mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: false, reason } });
+    const onBeginProvision = vi.fn();
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')).toBeNull();
+    expect(container!.textContent).not.toContain(reason);
+    expect(container!.querySelectorAll('[role="radio"]').length).toBe(MODEL_CATALOG.length - 1);
+
+    // WIZARD_PRESELECTED_MODEL (medium) is still what 开始安装 carries —
+    // a hidden row was never reachable as a selection in the first place.
+    const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
+    await act(async () => {
+      beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBeginProvision).toHaveBeenCalledWith(WIZARD_PRESELECTED_MODEL);
+    expect(onBeginProvision).not.toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
+  });
+
+  // §F FB10's own explicit carve-out: a transient probe ERROR is NEVER
+  // hidden, on EITHER surface — the wizard still shows disabled+重试
+  // here, same as pre-FB10 (retrying CAN change this answer, unlike a
+  // definitive result).
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row still RENDERS disabled with a 重试 affordance (never hidden) on a transient mlxCaps probe ERROR (§F FB10's carve-out)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    const FAIL_CLOSED = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
+    mlxState.probeImpl = async () => ({ status: "error", caps: FAIL_CLOSED });
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], {});
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+    expect(row).not.toBeNull();
+    expect(row.disabled).toBe(true);
+    expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3-retry"]')).not.toBeNull();
   });
 
   // S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen

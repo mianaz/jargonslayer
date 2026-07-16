@@ -23,8 +23,21 @@
 // Wire contract (PINNED — S9.2's Rust side builds against this exact
 // shape):
 //   invoke("audiocap_capabilities") -> { appAudioSupported, reason }
-//   invoke("start_app_audio", { channel })  — channel: Channel<ArrayBuffer>
-//   invoke("stop_app_audio")                — idempotent
+//   invoke("start_app_audio", { channel, token })
+//     channel: Channel<ArrayBuffer>; token: string — FB3 (S12b fix round
+//     B, replaces F4(b)'s Rust-returned-generation design): a CLIENT-
+//     GENERATED attempt token (newId(), @jargonslayer/core/types),
+//     minted BEFORE this invoke is ever sent. Rust stores it verbatim on
+//     the session it reserves.
+//   invoke("stop_app_audio", { token })  — idempotent; token: string,
+//     REQUIRED — must be the exact token the matching start_app_audio
+//     call used. A mismatch (nothing running, or a DIFFERENT attempt's
+//     token) is a clean no-op — there is no unscoped fallback on the
+//     wire at all (see stop()'s own doc comment for why the CLIENT-
+//     generated token, known before the invoke, closes the hole the old
+//     Rust-returned generation left open: a REJECTED start never
+//     receives one, so its own unwind had nothing to scope to and fell
+//     back to unscoped, which could kill an unrelated live session).
 //   event "audiocap://status" -> { kind, message }, kind one of:
 //     "starting" | "capturing" | "exclude-pid-inactive" |
 //     "permission-denied" | "unsupported" | "device-changed" |
@@ -36,7 +49,7 @@
 // start() has superseded it — a late chunk/status from a dying session
 // can never cross into a later one on the SAME engine instance.
 
-import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
+import { newId, type STTEngine, type STTEngineKind, type STTEvents, type Settings } from "@jargonslayer/core/types";
 import { WsTransport } from "./wsTransport";
 import { getChannelFactory, getInvoke, getListen, type UnlistenFn } from "../desktop/tauriApi";
 import { diagLog } from "../diag/log";
@@ -123,6 +136,47 @@ export class AppAudioEngine implements STTEngine {
   // it early.
   private helperTerminated = false;
 
+  // F17 (S12 blueprint §2.6′, generation-safe appAudio stop-wait parity —
+  // Sol adversarial finding 17): mirrors osSpeech.ts's `running` flag for
+  // stop()'s own gate below, but GENERATION-SCOPED rather than a shared
+  // boolean — this file's own generation-isolation invariant (see the
+  // LOCAL `helperStarted` in start()) means a plain shared boolean would
+  // let an OLDER, late-resolving start_app_audio invoke() set it back
+  // AFTER a newer start()'s own reset, corrupting stop()'s gate for
+  // whichever generation is actually live (wrong-generation 4s waits, or
+  // teardown clearing the live generation's own flag). Set in start()
+  // (see that method's own comment) only once THIS call's generation is
+  // confirmed NOT superseded — an abandoned old call never touches this.
+  // stop() captures its own current generation and both waits and clears
+  // only on a match (see stop() below).
+  private helperStartedGeneration: number | null = null;
+
+  // FB3 (S12b fix round B, Sol3, HIGH — replaces F4(b)'s rustGeneration
+  // design): a CLIENT-GENERATED attempt token (newId()), published
+  // SYNCHRONOUSLY and UNCONDITIONALLY at the top of every start() call,
+  // alongside `this.generation`'s own bump (see that field's own doc
+  // comment) — deliberately NOT gated behind a "confirmed not
+  // superseded" check the way helperStartedGeneration is. This mirrors
+  // this.generation's own publish discipline for the same reason: JS is
+  // single-threaded, so no OTHER start() call's synchronous prefix can
+  // ever interleave with THIS one's — the LATEST call to reach this line
+  // is always the authoritative one, exactly like this.generation itself
+  // — and unlike the OLD Rust-returned generation (which only existed
+  // AFTER a successful start_app_audio invoke), this token is known
+  // BEFORE that invoke is ever sent, so it is ALWAYS available to scope
+  // every stop_app_audio call: the live "user stops it" path, the F1
+  // pre-resolve-cancellation race (stop() landing before THIS SAME
+  // attempt's own start_app_audio has resolved), AND a REJECTED start's
+  // own catch-block unwind (which, under the old rustGeneration design,
+  // had nothing to scope to and fell back to an unscoped null — Sol's
+  // finding: that unscoped stop could kill a DIFFERENT, unrelated live
+  // session). `null` only when start() has never been called on this
+  // engine instance at all. Threaded into every stop_app_audio invoke
+  // (both stop()'s own call and abandonStart()'s best-effort one) — see
+  // stop_app_audio's own doc comment in audiocap.rs for the full
+  // contract.
+  private attemptToken: string | null = null;
+
   // stop()'s wait for the helper's "ended" status — see
   // STOP_ENDED_TIMEOUT_MS's own doc comment above.
   private stopEndedResolve: (() => void) | null = null;
@@ -155,6 +209,13 @@ export class AppAudioEngine implements STTEngine {
     this.channelMessageCount = 0;
     this.channelByteTotal = 0;
     const myGeneration = ++this.generation;
+    // FB3: minted and published RIGHT HERE, synchronously and
+    // unconditionally — see this.attemptToken's own doc comment for why
+    // this (not the "only once confirmed live" discipline
+    // helperStartedGeneration follows) is the correct, safe publish
+    // point for this specific field.
+    const myToken = newId();
+    this.attemptToken = myToken;
 
     // S9 adversarial review, finding F2: stop() can land at ANY await
     // point below, not just the two spot-checks this file used to carry
@@ -174,10 +235,19 @@ export class AppAudioEngine implements STTEngine {
     let unlisten: UnlistenFn | null = null;
     let transport: WsTransport | null = null;
     // Whether start_app_audio has actually been told to run — abandoning
-    // BEFORE that point has nothing server-side to stop, and (if this
-    // call was superseded by a NEWER start() rather than a stop())
-    // firing stop_app_audio anyway could reach across and stop that
-    // newer session's own helper instead of this dead one's.
+    // BEFORE that point has nothing server-side to stop, so this still
+    // guards abandonStart()'s own stop_app_audio call purely as an
+    // efficiency skip (a call before this point is a GUARANTEED no-op:
+    // either the macOS-version-gate rejected before Rust's own try_begin
+    // ever ran, or try_begin succeeded but the spawn itself failed,
+    // which releases the slot server-side before the invoke even
+    // rejects here) — NOT a safety gate anymore. FB3 (S12b fix round B):
+    // safety now comes from `myToken` (this.attemptToken's own local
+    // capture, below) being ALWAYS correctly scoped to THIS attempt,
+    // known before start_app_audio is even called — a stale/superseded
+    // OR flatly-rejected attempt's own stop can no longer reach across
+    // and stop a different session's helper (see stop_app_audio's own
+    // doc comment in audiocap.rs).
     let helperStarted = false;
 
     // Superseded either by a stop() for this SAME generation, or by a
@@ -199,7 +269,9 @@ export class AppAudioEngine implements STTEngine {
       }
       if (helperStarted) {
         const invokeFn = await getInvoke();
-        invokeFn("stop_app_audio").catch(() => {});
+        // FB3: ALWAYS this attempt's OWN local myToken — never
+        // this.attemptToken (which may since belong to a NEWER attempt).
+        invokeFn("stop_app_audio", { token: myToken }).catch(() => {});
       }
     };
 
@@ -248,39 +320,74 @@ export class AppAudioEngine implements STTEngine {
       connectFailureMessage: (url) =>
         `系统音频捕获需要本地 Whisper sidecar（见 README），无法连接 ${url}`,
     });
-    this.transport = transport;
 
     unlisten = await listen<AudiocapStatusPayload>("audiocap://status", (event) => {
       this.handleStatus(myGeneration, event.payload);
     });
-    this.unlistenStatus = unlisten;
     if (superseded()) {
       await abandonStart();
       return;
     }
+    // F4(a) (S12a fix round, adversarial pair 2026-07-16, GPT-5.6-Sol
+    // finding 4): publish BOTH acquisitions to instance state only now,
+    // past this SAME post-acquisition superseded() check — the same
+    // discipline helperStartedGeneration's own assignment follows below.
+    // The pre-fix ordering (this.transport/this.unlistenStatus written
+    // IMMEDIATELY on acquisition, before ever checking superseded()) let
+    // an OLD generation's belated listen() resolution overwrite a NEWER,
+    // already-live generation's own this.unlistenStatus/this.transport
+    // with its own soon-to-be-abandoned values: abandonStart() below only
+    // ever unregisters THIS call's own LOCAL listener/transport (see that
+    // routine's own doc comment), leaving the newer generation's real
+    // listener orphaned — nothing left ever calls its own unlisten(), a
+    // leak — and/or its transport reference lost. No status event can
+    // reach handleStatus() before listen() above has actually resolved,
+    // so deferring this publish to right here (rather than the instant
+    // each value is acquired) costs nothing observable.
+    this.transport = transport;
+    this.unlistenStatus = unlisten;
 
     const channel = createChannel((data) => {
       this.handleChannelMessage(myGeneration, data);
     });
 
     try {
-      await invoke("start_app_audio", { channel });
+      await invoke("start_app_audio", { channel, token: myToken });
       helperStarted = true;
     } catch {
       if (superseded()) {
         await abandonStart();
         return;
       }
+      // FB3: even on a REJECTED invoke, this.attemptToken (== myToken)
+      // was ALREADY published at the top of this call, before the
+      // invoke was ever sent — so the stop() below (unlike the OLD
+      // rustGeneration design, which had nothing to scope to here) is
+      // always correctly scoped to THIS attempt's own token, never
+      // falling back to an unscoped stop that could reach a different,
+      // unrelated live session (Sol's finding).
       events.onStatus("error", "无法启动系统音频捕获，请重试");
       await this.stop();
       return;
     }
 
     // Mirrors every check above, one last time, for the just-requested
-    // capture itself.
+    // capture itself. F17: this is also the ONLY place
+    // helperStartedGeneration is ever assigned — deliberately AFTER this
+    // superseded() check, not alongside the local `helperStarted = true`
+    // above, so an abandoned OLD call (superseded by a newer start())
+    // touches NO instance state at all; only a call that reaches here
+    // live claims helperStartedGeneration for its own generation (see
+    // that field's own doc comment, and stop()'s matching gen check
+    // below). this.attemptToken needs no equivalent assignment here — it
+    // was already published, unconditionally, at the top of this call
+    // (see that field's own doc comment for why that's the correct,
+    // safe publish point).
     if (superseded()) {
       await abandonStart();
+      return;
     }
+    this.helperStartedGeneration = myGeneration;
   }
 
   private handleStatus(myGeneration: number, payload: AudiocapStatusPayload): void {
@@ -522,13 +629,39 @@ export class AppAudioEngine implements STTEngine {
   async stop(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
+    // F17: captured synchronously, atomically with `this.stopping = true`
+    // above (no await between them, so no concurrent start() can
+    // interleave) — `gen` is exactly the generation THIS stop() call is
+    // being asked to stop. A concurrent start() may still bump
+    // this.generation further after this point, but that call's own
+    // superseded() check (`|| this.stopping`) makes it abandon itself
+    // before ever assigning helperStartedGeneration for its own newer
+    // generation — so only `gen` itself could ever have set that field,
+    // and the match check below stays sound.
+    const gen = this.generation;
+    // FB3 (S12b fix round B): this.attemptToken is ALWAYS current for
+    // `gen` — published synchronously and unconditionally at the top of
+    // EVERY start() call (see that field's own doc comment for why,
+    // unlike helperStartedGeneration, it needs no "matches gen" gate
+    // here at all: nothing can interleave between two start() calls' own
+    // synchronous prefixes, so whichever token is currently published is
+    // always the one belonging to the CURRENT generation). `null` only
+    // when start() has never been called on this engine instance at all
+    // — in that one case there is nothing valid to send (stop_app_audio's
+    // own `token` parameter is REQUIRED, not optional — no unscoped path
+    // exists anymore), and nothing could be running on this engine's own
+    // account anyway, so the invoke is skipped outright rather than sent
+    // with a bogus value.
+    const token = this.attemptToken;
 
-    const invoke = await getInvoke();
-    try {
-      await invoke("stop_app_audio");
-    } catch {
-      // best-effort — tear down our own side regardless of whether the
-      // helper actually heard us.
+    if (token !== null) {
+      const invoke = await getInvoke();
+      try {
+        await invoke("stop_app_audio", { token });
+      } catch {
+        // best-effort — tear down our own side regardless of whether the
+        // helper actually heard us.
+      }
     }
     // Only worth waiting for "ended" if a listener was ever registered
     // to hear it — otherwise (stop() landing before start() got that
@@ -544,8 +677,20 @@ export class AppAudioEngine implements STTEngine {
     // live user-stop drain path (helper alive -> stop() -> "ended"
     // arrives DURING the wait, caught by handleStatus's `if
     // (this.stopping)` branch above) is untouched: helperTerminated is
-    // still false at the moment this check runs in that case.
-    if (this.unlistenStatus && !this.helperTerminated) {
+    // still false at the moment this check runs in that case. F17 (S12
+    // blueprint §2.6′): ALSO only if a session for THIS generation
+    // actually started — `this.helperStartedGeneration === gen` — in the
+    // first place. A REJECTED start_app_audio invoke() (see start()'s own
+    // catch block) routes through this SAME stop() to unwind without
+    // helperStartedGeneration ever having been set for its generation;
+    // unlistenStatus is already registered by then too (both acquired
+    // BEFORE the invoke), so without this extra check the wait below
+    // still ran and burned the full STOP_ENDED_TIMEOUT_MS for an "ended"
+    // no helper process was ever going to send. Generation-scoped (not a
+    // shared boolean, see that field's own doc comment) so an OLDER,
+    // late-resolving start_app_audio invoke() from an already-abandoned
+    // call can never satisfy or corrupt a NEWER generation's own gate.
+    if (this.unlistenStatus && !this.helperTerminated && this.helperStartedGeneration === gen) {
       await this.waitForEndedOrTimeout();
     }
 
@@ -570,6 +715,20 @@ export class AppAudioEngine implements STTEngine {
     const unlisten = this.unlistenStatus;
     this.unlistenStatus = null;
     unlisten?.();
+
+    // F17: clear only the MATCHING generation's flag — a newer start()
+    // may already have claimed helperStartedGeneration for its own live
+    // generation by the time this (older) stop() call finally reaches
+    // teardown; clearing unconditionally here would corrupt that newer
+    // generation's own stop() gate out from under it. this.attemptToken
+    // needs no equivalent clear (FB3) — it is unconditionally
+    // OVERWRITTEN by the very next start() call regardless of whatever
+    // stale value is left here (mirrors this.generation's own "never
+    // cleared, only ever advanced" discipline — see that field's own doc
+    // comment).
+    if (this.helperStartedGeneration === gen) {
+      this.helperStartedGeneration = null;
+    }
 
     this.events = null;
   }
