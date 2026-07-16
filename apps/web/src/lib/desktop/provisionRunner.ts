@@ -39,7 +39,7 @@
 
 import type { Settings } from "@jargonslayer/core/types";
 import { probeSidecar, type SidecarProbeResult } from "../stt/sidecarHealth";
-import { probeMlxCapabilitiesWith } from "./mlxCaps";
+import { probeMlxCapabilitiesWith, type MlxCapsResult } from "./mlxCaps";
 import type { InvokeFn, ListenFn } from "./tauriApi";
 import type { DesktopPaths } from "./uvCommands";
 import {
@@ -48,6 +48,7 @@ import {
   type Effect,
   type MachineEvent,
   type MachineState,
+  type MlxUsability,
   type ProvisionMarker,
   type ProvisionStep,
 } from "./provisionMachine";
@@ -207,34 +208,89 @@ async function readMarkerEffect(deps: RunnerDeps): Promise<string | null> {
   }
 }
 
-/** S12a (v0.4.4, §C Provision, F14) — CHECKING's own mlx-usability
- *  probe, ONLY ever run when the just-parsed marker claims an
- *  mlx-family model (see runEffects' CHECKING branch below) — every
- *  ordinary whisper-family marker never pays this extra round trip.
- *  Folds BOTH quarantine conditions §C names ("mlx unsupported OR
- *  mlx-venv invalid") into the ONE fail-closed boolean
- *  provisionMachine.ts's handleCheckResult consumes: hardware first
- *  (mlxCaps.ts's own probeMlxCapabilitiesWith, reused verbatim rather
- *  than re-implemented — this ALSO warms mlxCaps.ts's own module-level
- *  cache, so a later UI read of getMlxCapsSnapshot() during this same
- *  session skips a redundant round trip), then — only if the hardware
- *  itself is fine — a real mlx_import_preflight re-import as the
+/** S12a fix round (§D F2, HIGH) — one capabilities probe attempt, with
+ *  ONE automatic retry when the FIRST attempt itself errored (an
+ *  invoke() rejection/spawn failure — mlxCaps.ts's own
+ *  probeMlxCapabilitiesWith never throws, it resolves the §D F7
+ *  `{status,caps}` envelope either way, so "errored" here means
+ *  `status === "error"`, not a caught exception). A RESOLVED answer —
+ *  even a resolved `mlxSupported:false` — is trusted immediately, no
+ *  retry: only the round trip itself failing is "maybe transient,
+ *  worth one more try". Reuses probeMlxCapabilitiesWith verbatim
+ *  (mlxCaps.ts) rather than re-implementing the round trip — this ALSO
+ *  warms mlxCaps.ts's own module-level cache on a real answer, so a
+ *  later UI read of getMlxCapsSnapshot() during this same session
+ *  skips a redundant round trip. */
+async function probeMlxCapabilitiesRetried(deps: RunnerDeps): Promise<MlxCapsResult> {
+  const first = await probeMlxCapabilitiesWith(deps.invoke);
+  if (first.status === "ok") return first;
+  return probeMlxCapabilitiesWith(deps.invoke); // one retry — whatever it resolves is final either way
+}
+
+/** S12a fix round (§D F2) — mirrors probeMlxCapabilitiesRetried's own
+ *  "one retry on a genuine invoke() rejection only" contract for
+ *  mlx_import_preflight, which (unlike mlx_capabilities) has no
+ *  mlxCaps.ts-side wrapper of its own to reuse — this file owns the
+ *  raw invoke() + retry directly. Resolves `null` only once BOTH
+ *  attempts reject (the "probe-error" case); a RESOLVED
+ *  MlxImportPreflightResult — even `{ok:false}` — is trusted
+ *  immediately, no retry, same "a resolved answer is a resolved
+ *  answer" posture as probeMlxCapabilitiesRetried. */
+async function invokeImportPreflightRetried(deps: RunnerDeps): Promise<MlxImportPreflightResult | null> {
+  try {
+    return await deps.invoke<MlxImportPreflightResult>("mlx_import_preflight");
+  } catch {
+    try {
+      return await deps.invoke<MlxImportPreflightResult>("mlx_import_preflight");
+    } catch {
+      return null;
+    }
+  }
+}
+
+/** §D F2's own "无法检测" wording (mlx_capabilities half) — deliberately
+ *  distinct from the `unsupported` status's "不支持"/"需要 Apple 芯片"
+ *  copy (see MlxUsability's own doc comment, provisionMachine.ts) so a
+ *  user-facing STEP/ERROR message never conflates "we don't know" with
+ *  "we know, and the answer is no". */
+const MLX_CAPABILITIES_PROBE_ERROR_MESSAGE = "无法检测 Apple 芯片支持状态，请重试";
+
+/** Same "无法检测" family, naming the OTHER probe (mlx_import_preflight
+ *  half) — see MLX_CAPABILITIES_PROBE_ERROR_MESSAGE's own doc comment. */
+const MLX_PREFLIGHT_PROBE_ERROR_MESSAGE = "无法检测 MLX 运行环境状态，请重试";
+
+/** S12a (v0.4.4, §C Provision, F14; redesigned §D F2, HIGH) —
+ *  CHECKING's own mlx-usability probe, ONLY ever run when the
+ *  just-parsed marker claims an mlx-family model (see runEffects'
+ *  CHECKING branch below) — every ordinary whisper-family marker never
+ *  pays this extra round trip. Resolves the FULL 4-state
+ *  provisionMachine.ts#MlxUsability result (see that type's own doc
+ *  comment for the complete matrix this implements) rather than the
+ *  old collapsed boolean — §D F2's own fix: a transient probe error
+ *  used to be indistinguishable from a definitive "unsupported"
+ *  (both collapsed to `false`), which durably persisted the fallback
+ *  model over a merely-flaky probe and diverged ctx from the
+ *  surviving parakeet marker. Hardware first (probeMlxCapabilitiesRetried
+ *  above); only if hardware is DEFINITIVELY fine does this proceed to
+ *  mlx_import_preflight (invokeImportPreflightRetried above) as the
  *  venv-validity check (no separate persisted "mlx-venv-valid" marker
  *  file/Rust command exists this sprint; a live re-import is at least
  *  as trustworthy and self-corrects if the venv was deleted/corrupted
  *  between runs — see this task's own PR report for the full
- *  rationale). Never throws — an invoke() rejection on EITHER probe
- *  resolves `false`, the same conservative direction as every other
- *  fail-closed mlx check in this file's own module (mlxCaps.ts). */
-async function probeMlxUsable(deps: RunnerDeps): Promise<boolean> {
-  const caps = await probeMlxCapabilitiesWith(deps.invoke);
-  if (!caps.mlxSupported) return false;
-  try {
-    const preflight = await deps.invoke<MlxImportPreflightResult>("mlx_import_preflight");
-    return preflight.ok === true;
-  } catch {
-    return false;
+ *  rationale). Never throws. */
+async function probeMlxUsable(deps: RunnerDeps): Promise<MlxUsability> {
+  const capsResult = await probeMlxCapabilitiesRetried(deps);
+  if (capsResult.status === "error") {
+    return { status: "probe-error", message: MLX_CAPABILITIES_PROBE_ERROR_MESSAGE };
   }
+  if (!capsResult.caps.mlxSupported) {
+    return { status: "unsupported", reason: capsResult.caps.reason || "需要 Apple 芯片（M 系列），macOS 14 或更高" };
+  }
+  const preflight = await invokeImportPreflightRetried(deps);
+  if (preflight === null) {
+    return { status: "probe-error", message: MLX_PREFLIGHT_PROBE_ERROR_MESSAGE };
+  }
+  return preflight.ok ? { status: "usable" } : { status: "invalid-venv" };
 }
 
 /** write_provision_marker — like stopServer/getAppPaths below, ALSO
@@ -398,16 +454,17 @@ export async function runEffects(state: MachineState, effects: Effect[], deps: R
         }
       }),
     );
-    // S12a (§C Provision, F14) — only probed when the marker itself
-    // claims an mlx-family model (see probeMlxUsable's own doc comment
-    // above for the full rationale); every other marker leaves
-    // `mlxUsable` undefined, matching provisionMachine.ts's own
-    // CHECK_RESULT.mlxUsable doc comment ("every pre-S12a CHECK_RESULT
-    // event literal keeps working unchanged").
+    // S12a (§C Provision, F14; redesigned §D F2) — only probed when the
+    // marker itself claims an mlx-family model (see probeMlxUsable's
+    // own doc comment above for the full rationale); every other
+    // marker leaves `mlxUsability` undefined, matching
+    // provisionMachine.ts's own CHECK_RESULT.mlxUsability doc comment
+    // ("every pre-S12a CHECK_RESULT event literal keeps working
+    // unchanged").
     const marker = parseMarker(markerRaw);
-    const mlxUsable =
+    const mlxUsability: MlxUsability | undefined =
       marker && MLX_ONLY_MARKER_MODELS.includes(marker.model) ? await probeMlxUsable(deps) : undefined;
-    return { type: "CHECK_RESULT", probeHealthy, markerRaw, mlxUsable };
+    return { type: "CHECK_RESULT", probeHealthy, markerRaw, mlxUsability };
   }
 
   if (state.phase === "STEP" && state.step === "POLLING_HEALTH" && state.status === "POLLING") {

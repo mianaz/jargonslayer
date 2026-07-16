@@ -141,7 +141,23 @@ describe("runEffects — CHECKING (probeHealth + readMarker -> CHECK_RESULT)", (
 // verbatim by provisionRunner.ts's probeMlxUsable, writes into that
 // SAME shared cache) so these tests stay isolated from each other and
 // from mlxCaps.test.ts's own suite.
-describe("runEffects — CHECKING's conditional mlx-usability probe (F14)", () => {
+// S12a fix round (§D F2, HIGH) — probeMlxUsable's own 4-state result
+// (usable | unsupported | invalid-venv | probe-error), including the
+// "retry the failed probe once" contract. RED-VERIFICATION EVIDENCE for
+// F2 (see this task's own PR report): the old code collapsed a genuine
+// invoke() rejection of mlx_capabilities to the SAME `mlxUsable:false`
+// shape as a definitively-resolved `mlxSupported:false` — i.e. it
+// treated "we don't know" identically to "we know, and the answer is
+// no", which is exactly what durably persisted `small` over a merely
+// FLAKY probe (bootstrap.ts's own quarantine branch, pre-fix, read
+// `event.mlxUsable !== true` and persisted unconditionally). The
+// "a genuine invoke() rejection, even after one retry, must NEVER
+// resolve the SAME shape as a resolved mlxSupported:false" test below
+// is the direct proof: reverting probeMlxUsable to `return
+// !caps.mlxSupported ? false : ...` (bare boolean, no retry, no status
+// distinction) makes it fail, because BOTH conditions would then
+// collapse to `mlxUsable:false`.
+describe("runEffects — CHECKING's conditional mlx-usability probe (F14, redesigned §D F2)", () => {
   beforeEach(() => resetMlxCapsCache());
   afterEach(() => resetMlxCapsCache());
 
@@ -169,10 +185,10 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14)", () =
     expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker"]); // never mlx_capabilities/mlx_import_preflight
   });
 
-  it("a parakeet marker + mlx_capabilities{mlxSupported:true} + a clean mlx_import_preflight -> mlxUsable:true", async () => {
+  it("a parakeet marker + mlx_capabilities{mlxSupported:true} + a clean mlx_import_preflight -> {status:'usable'}, no retries", async () => {
     const { invoke, calls } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
-      mlx_capabilities: () => ({ mlxSupported: true }),
+      mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
       mlx_import_preflight: () => ({ ok: true, stderr: "" }),
     });
     const { listen } = makeFakeListen();
@@ -187,12 +203,13 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14)", () =
       type: "CHECK_RESULT",
       probeHealthy: false,
       markerRaw: parakeetMarkerJson,
-      mlxUsable: true,
+      mlxUsability: { status: "usable" },
     });
+    // Exactly ONE call each — a resolved answer is never retried.
     expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities", "mlx_import_preflight"]);
   });
 
-  it("mlx_capabilities{mlxSupported:false} -> mlxUsable:false, and mlx_import_preflight is never even called (hardware fails fast)", async () => {
+  it("§D F2 case (a): mlx_capabilities RESOLVED {mlxSupported:false} -> {status:'unsupported', reason}, and mlx_import_preflight is never even called (hardware fails fast, no retry — a resolved answer, even a negative one, is trusted immediately)", async () => {
     const { invoke, calls } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
       mlx_capabilities: () => ({ mlxSupported: false, reason: "需要 Apple 芯片（M 系列）" }),
@@ -200,47 +217,163 @@ describe("runEffects — CHECKING's conditional mlx-usability probe (F14)", () =
     const { listen } = makeFakeListen();
     const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
     const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
-    expect(event).toMatchObject({ mlxUsable: false });
-    expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities"]);
+    expect(event).toMatchObject({ mlxUsability: { status: "unsupported", reason: "需要 Apple 芯片（M 系列）" } });
+    expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities"]); // exactly once, no retry
   });
 
-  it("mlx_capabilities OK but mlx_import_preflight{ok:false} (venv invalid) -> mlxUsable:false", async () => {
+  it("§D F2 case (a) with no reason from the probe falls back to the standard zh copy", async () => {
     const { invoke } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
-      mlx_capabilities: () => ({ mlxSupported: true }),
+      mlx_capabilities: () => ({ mlxSupported: false, reason: null }),
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toMatchObject({
+      mlxUsability: { status: "unsupported", reason: "需要 Apple 芯片（M 系列），macOS 14 或更高" },
+    });
+  });
+
+  it("§D F2 case (b): mlx_capabilities OK but mlx_import_preflight RESOLVED {ok:false} -> {status:'invalid-venv'}, no retry (a resolved ok:false is trusted immediately)", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
       mlx_import_preflight: () => ({ ok: false, stderr: "ModuleNotFoundError: parakeet_mlx" }),
     });
     const { listen } = makeFakeListen();
     const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
     const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
-    expect(event).toMatchObject({ mlxUsable: false });
+    expect(event).toMatchObject({ mlxUsability: { status: "invalid-venv" } });
+    expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities", "mlx_import_preflight"]); // exactly once
   });
 
-  it("a mlx_import_preflight invoke() REJECTION (e.g. the venv/python itself no longer exists) fails CLOSED to mlxUsable:false, never throws", async () => {
-    const { invoke } = makeFakeInvoke({
+  it("§D F2 case (c): mlx_import_preflight invoke() REJECTS TWICE (surviving the internal retry) -> {status:'probe-error', message} using '无法检测' wording — RED-VERIFIED against the OLD boolean behavior below", async () => {
+    let preflightCalls = 0;
+    const { invoke, calls } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
-      mlx_capabilities: () => ({ mlxSupported: true }),
+      mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
       mlx_import_preflight: () => {
+        preflightCalls += 1;
         throw new Error("ENOENT");
       },
     });
     const { listen } = makeFakeListen();
     const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
     const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
-    expect(event).toMatchObject({ mlxUsable: false });
+    expect(event).toMatchObject({
+      mlxUsability: { status: "probe-error", message: "无法检测 MLX 运行环境状态，请重试" },
+    });
+    expect(preflightCalls).toBe(2); // one retry, per §D F2's own "retry the failed probe once"
+    expect(calls.map((c) => c.cmd)).toEqual([
+      "read_provision_marker",
+      "mlx_capabilities",
+      "mlx_import_preflight",
+      "mlx_import_preflight",
+    ]);
   });
 
-  it("a mlx_capabilities invoke() REJECTION also fails CLOSED to mlxUsable:false (probeMlxCapabilitiesWith's own contract)", async () => {
+  it("mlx_import_preflight rejects ONCE then SUCCEEDS on the retry -> the retry's own resolved answer wins ({status:'usable'})", async () => {
+    let preflightCalls = 0;
     const { invoke } = makeFakeInvoke({
       read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+      mlx_import_preflight: () => {
+        preflightCalls += 1;
+        if (preflightCalls === 1) throw new Error("transient");
+        return { ok: true, stderr: "" };
+      },
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toMatchObject({ mlxUsability: { status: "usable" } });
+    expect(preflightCalls).toBe(2);
+  });
+
+  it("§D F2 case (c): mlx_capabilities invoke() REJECTS TWICE -> {status:'probe-error'} using '无法检测' wording, mlx_import_preflight is NEVER called at all (we don't even know if hardware is usable)", async () => {
+    let capsCalls = 0;
+    const { invoke, calls } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
       mlx_capabilities: () => {
+        capsCalls += 1;
         throw new Error("ipc failure");
       },
     });
     const { listen } = makeFakeListen();
     const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
     const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
-    expect(event).toMatchObject({ mlxUsable: false });
+    expect(event).toMatchObject({
+      mlxUsability: { status: "probe-error", message: "无法检测 Apple 芯片支持状态，请重试" },
+    });
+    expect(capsCalls).toBe(2); // one retry
+    expect(calls.map((c) => c.cmd)).toEqual(["read_provision_marker", "mlx_capabilities", "mlx_capabilities"]); // never reaches mlx_import_preflight
+  });
+
+  it("mlx_capabilities rejects ONCE then RESOLVES {mlxSupported:false} on the retry -> the retry's resolved (definitive) answer wins ({status:'unsupported'}), never 'probe-error'", async () => {
+    let capsCalls = 0;
+    const { invoke } = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => {
+        capsCalls += 1;
+        if (capsCalls === 1) throw new Error("transient");
+        return { mlxSupported: false, reason: "需要 Apple 芯片（M 系列）" };
+      },
+    });
+    const { listen } = makeFakeListen();
+    const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) };
+    const event = await runEffects({ phase: "CHECKING" }, [{ kind: "probeHealth" }, { kind: "readMarker" }], deps);
+    expect(event).toMatchObject({ mlxUsability: { status: "unsupported", reason: "需要 Apple 芯片（M 系列）" } });
+    expect(capsCalls).toBe(2);
+  });
+
+  // §D F2's own RED-VERIFICATION: proves the fix actually changed
+  // behavior relative to the OLD code, not just relative to what the
+  // new tests happen to assert. The OLD probeMlxUsable was:
+  //   const caps = await probeMlxCapabilitiesWith(deps.invoke);
+  //   if (!caps.mlxSupported) return false;   // <- no retry, no status
+  //   ...
+  // probeMlxCapabilitiesWith ITSELF never throws (mlxCaps.ts's own
+  // fail-closed policy swallows the rejection into a synthetic
+  // `{mlxSupported:false, reason:"无法确认..."}`), so under the OLD
+  // code a genuine invoke() rejection and a genuine RESOLVED
+  // mlxSupported:false were LITERALLY INDISTINGUISHABLE — both
+  // resolved the bare `mlxUsable:false`. The two tests directly above
+  // this one prove the NEW code tells them apart
+  // ({status:"probe-error"} vs {status:"unsupported"}); this test
+  // documents that distinction explicitly, one more time, side by
+  // side, as the red-verification record for the PR report.
+  it("RED-VERIFICATION: an invoke() REJECTION and a RESOLVED mlxSupported:false must resolve DIFFERENT statuses — the exact collapse the old boolean code had", async () => {
+    const rejected = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => {
+        throw new Error("ipc failure");
+      },
+    });
+    const resolvedFalse = makeFakeInvoke({
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: false, reason: "x" }),
+    });
+    const { listen } = makeFakeListen();
+    const baseDeps = { listen, settings: DEFAULT_SETTINGS, probeSidecarFn: async () => ({ up: false }) } as const;
+
+    const rejectedEvent = await runEffects(
+      { phase: "CHECKING" },
+      [{ kind: "probeHealth" }, { kind: "readMarker" }],
+      { ...baseDeps, invoke: rejected.invoke },
+    );
+    const resolvedEvent = await runEffects(
+      { phase: "CHECKING" },
+      [{ kind: "probeHealth" }, { kind: "readMarker" }],
+      { ...baseDeps, invoke: resolvedFalse.invoke },
+    );
+
+    expect(rejectedEvent).toMatchObject({ mlxUsability: { status: "probe-error" } });
+    expect(resolvedEvent).toMatchObject({ mlxUsability: { status: "unsupported" } });
+    // The old code's own collapse point: under the PRE-fix
+    // implementation, `(rejectedEvent as any).mlxUsable` and
+    // `(resolvedEvent as any).mlxUsable` were BOTH `false` — the two
+    // assertions above (status:"probe-error" vs status:"unsupported")
+    // are exactly what that reverted implementation would fail.
   });
 });
 

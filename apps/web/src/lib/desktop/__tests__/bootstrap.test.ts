@@ -421,26 +421,203 @@ describe("bootstrapDesktop — F14 quarantine (persisted parakeet marker, mlx un
     expect(runUvModels).toEqual(["small"]);
   });
 
-  it("mlx_capabilities{mlxSupported:true} but mlx_import_preflight{ok:false} (mlx-venv invalid) ALSO quarantines", async () => {
+  it("§D F2 case (b): mlx_capabilities{mlxSupported:true} but mlx_import_preflight RESOLVED {ok:false} (mlx-venv invalid) ALSO routes to the re-choice pause, but WITHOUT any durable persist — settings.whisperModel/the marker stay untouched", async () => {
+    const persisted: string[] = [];
     const deps: BootstrapDeps = {
       invoke: makeFakeInvoke({
         app_paths: () => paths,
         read_provision_marker: () => parakeetMarkerJson,
-        mlx_capabilities: () => ({ mlxSupported: true }),
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
         mlx_import_preflight: () => ({ ok: false, stderr: "ModuleNotFoundError: parakeet_mlx" }),
       }),
       listen: makeFakeListen(),
       tauriFetch: fakeTauriFetch,
       setTransport: () => {},
       probeSidecarFn: async () => ({ up: false }),
+      persistDesktopModel: async (model) => {
+        persisted.push(model);
+      },
     };
 
     const handle = await bootstrapDesktop(deps);
     const gated = await waitForStable(handle);
     expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    // §D F2's own case-(b) distinction from case (a): NO durable
+    // write — settings.whisperModel keeps whatever the user actually
+    // saved ("parakeet-tdt-0.6b-v3"), only THIS session's in-memory
+    // ctx falls back (proven by the no-arg beginProvision() test
+    // right below, which shows the SESSION does run the fallback).
+    expect(persisted).toEqual([]);
   });
 
-  it("mlxUsable:true (hardware fine + mlx venv imports cleanly) does NOT quarantine — the parakeet marker is adopted straight into STARTING, no consent pause", async () => {
+  it("§D F2 case (b) continued: the session STILL runs the fallback model this session (a no-arg beginProvision() provisions 'small'), even though nothing was durably persisted", async () => {
+    const runUvModels: string[] = [];
+    let probeCalls = 0;
+    const persisted: string[] = [];
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => parakeetMarkerJson,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => ({ ok: false, stderr: "x" }),
+        run_uv: () => ({ code: 0 }),
+        prewarm_model: () => ({ code: 0 }),
+        write_provision_marker: () => undefined,
+        start_server: (args) => {
+          runUvModels.push(String(args?.model));
+          return { alreadyRunning: false };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+      persistDesktopModel: async (model) => {
+        persisted.push(model);
+      },
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+
+    handle.beginProvision(); // no-arg — defaults to the reseeded (session-only) fallback
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(runUvModels).toEqual(["small"]);
+    // beginProvision()'s OWN existing persistDesktopModel call (an
+    // EXPLICIT user consent action, re-confirming "small") is the
+    // FIRST and ONLY persist here — proves case (b) itself contributed
+    // none.
+    expect(persisted).toEqual(["small"]);
+  });
+
+  // S12a fix round (§D F2, case c, HIGH) — RED-VERIFICATION: the OLD
+  // code's own bug, reproduced at the bootstrap.ts level. Pre-fix,
+  // bootstrap.ts's own mirrored quarantine check read
+  // `event.mlxUsable !== true` and persisted UNCONDITIONALLY whenever
+  // that held — including for a bare invoke() REJECTION (mlxCaps.ts's
+  // own probeMlxCapabilitiesWith already swallowed it into a
+  // synthetic `{mlxSupported:false,...}`, so `mlxUsable` was `false`,
+  // same as a genuinely resolved answer). The assertion
+  // `expect(persisted).toEqual([])` directly below is what a revert to
+  // that old unconditional-persist logic would FAIL — the old code
+  // would have pushed "small" here.
+  it("§D F2 case (c): mlx_capabilities invoke() REJECTS TWICE (surviving the internal retry) -> parks on a retriable STEP/ERROR, ZERO durable persist, ctx never reseeded either", async () => {
+    const persisted: string[] = [];
+    let capsCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => parakeetMarkerJson,
+        mlx_capabilities: () => {
+          capsCalls += 1;
+          throw new Error("ipc failure");
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+      persistDesktopModel: async (model) => {
+        persisted.push(model);
+      },
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({
+      phase: "STEP",
+      step: "INSTALL_MLX",
+      status: "ERROR",
+      error: "无法检测 Apple 芯片支持状态，请重试",
+      retriable: true,
+    });
+    expect(capsCalls).toBe(2); // one internal retry, then gives up
+    // RED-VERIFICATION: this is the exact assertion the pre-fix
+    // unconditional-persist bug would fail.
+    expect(persisted).toEqual([]);
+  });
+
+  it("§D F2 case (c): mlx_import_preflight invoke() REJECTS TWICE -> ALSO parks on retriable STEP/ERROR with the OTHER '无法检测' message, zero persist", async () => {
+    const persisted: string[] = [];
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => parakeetMarkerJson,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => {
+          throw new Error("ENOENT");
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+      persistDesktopModel: async (model) => {
+        persisted.push(model);
+      },
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    const finalState = await waitForStable(handle);
+    expect(finalState).toMatchObject({
+      phase: "STEP",
+      step: "INSTALL_MLX",
+      status: "ERROR",
+      error: "无法检测 MLX 运行环境状态，请重试",
+    });
+    expect(persisted).toEqual([]);
+  });
+
+  it("§D F2 case (c): retryStep() on the probe-error landing re-runs CHECKING from scratch — a transient hiccup that clears on retry recovers all the way to HEALTHY, still with zero persist along the way", async () => {
+    const persisted: string[] = [];
+    let capsCalls = 0;
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => parakeetMarkerJson,
+        mlx_capabilities: () => {
+          capsCalls += 1;
+          // Fails BOTH attempts on the first CHECKING pass (1,2), then
+          // succeeds on every call after (the retryStep()-triggered
+          // second CHECKING pass).
+          if (capsCalls <= 2) throw new Error("transient");
+          return { mlxSupported: true, reason: null };
+        },
+        mlx_import_preflight: () => ({ ok: true, stderr: "" }),
+        start_server: (args) => {
+          expect(args?.model).toBe("parakeet-tdt-0.6b-v3"); // usable -> the marker's OWN model, never the fallback
+          return { alreadyRunning: false };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 2 }; // dead for both CHECKING passes' own health probe, healthy once POLLING_HEALTH starts
+      },
+      persistDesktopModel: async (model) => {
+        persisted.push(model);
+      },
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    const errored = await waitForStable(handle);
+    expect(errored).toMatchObject({ phase: "STEP", step: "INSTALL_MLX", status: "ERROR" });
+
+    handle.retryStep();
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(capsCalls).toBe(3); // 2 (first CHECKING, both fail) + 1 (retry CHECKING, succeeds)
+    expect(persisted).toEqual([]); // usable the whole way through — never a quarantine, never a persist
+  });
+
+  it("mlxUsability:{status:'usable'} (hardware fine + mlx venv imports cleanly) does NOT quarantine — the parakeet marker is adopted straight into STARTING, no consent pause", async () => {
     const startServerModels: string[] = [];
     let probeCalls = 0;
     const deps: BootstrapDeps = {
@@ -2276,6 +2453,184 @@ describe("bootstrapDesktop — switchModel() to an mlx-family model (§C Provisi
     });
     vi.stubGlobal("fetch", fetchMock);
   }
+
+  // S12a fix round (§D F6, MEDIUM) — ensureMlxExtras' own combined
+  // pre-Phase-1 disk-space precheck, BEFORE the first venv mutation
+  // (venvCreateMlx's own run_uv call). Cross-lane pinned contract (A1):
+  // invoke("app_data_disk_free") -> {freeBytes: number}.
+  describe("combined pre-Phase-1 disk-space precheck (§D F6)", () => {
+    it("pass: plenty of free space -> app_data_disk_free is called BEFORE the first run_uv (venv create), install proceeds normally", async () => {
+      stubParakeetDownload();
+      const order: string[] = [];
+      let preflightCalls = 0;
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => {
+          preflightCalls += 1;
+          // 1st call = the leading skip-check ("not yet installed",
+          // fall through); 2nd call = the real post-install
+          // verification, once pip install has actually succeeded.
+          return preflightCalls === 1 ? { ok: false, stderr: "" } : { ok: true, stderr: "" };
+        },
+        app_data_disk_free: () => {
+          order.push("app_data_disk_free");
+          return { freeBytes: 20 * 1024 ** 3 }; // 20GB free — comfortably above the ~5GB reserve
+        },
+        run_uv: (args) => {
+          const a = args?.args as string[];
+          order.push(`run_uv:${a[0]}`);
+          return { code: 0 };
+        },
+        stop_server: () => undefined,
+        start_server: () => ({ alreadyRunning: false }),
+        write_provision_marker: () => undefined,
+      });
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+      order.length = 0;
+
+      await handle.switchModel("parakeet-tdt-0.6b-v3");
+
+      expect(order[0]).toBe("app_data_disk_free"); // checked before the first venv mutation
+      expect(order[1]).toBe("run_uv:venv");
+      expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    });
+
+    it("fail: insufficient free space -> switchModel() rejects with a message naming the shortfall (both sides in GB), NO run_uv/venv mutation ever happens, old server untouched", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+      let runUvCalls = 0;
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => ({ ok: false, stderr: "" }), // skip-check says "not yet installed"
+        app_data_disk_free: () => ({ freeBytes: 1 * 1024 ** 3 }), // 1GB free — well short of the ~5GB reserve
+        run_uv: () => {
+          runUvCalls += 1;
+          return { code: 0 };
+        },
+        stop_server: () => undefined,
+      });
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await expect(handle.switchModel("parakeet-tdt-0.6b-v3")).rejects.toThrow("磁盘空间不足：可用 1.0GB，需要至少 5.0GB");
+      expect(runUvCalls).toBe(0); // never reaches the first venv mutation
+      expect(handle.currentState()).toEqual({ phase: "HEALTHY" }); // old server untouched — same bucket-1-style contract
+    });
+
+    it("fail: the exact shortfall message names BOTH the available and required amounts, one decimal GB each", async () => {
+      vi.stubGlobal("fetch", vi.fn());
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        app_data_disk_free: () => ({ freeBytes: 2.3 * 1024 ** 3 }),
+      });
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await expect(handle.switchModel("parakeet-tdt-0.6b-v3")).rejects.toThrow("磁盘空间不足：可用 2.3GB，需要至少 5.0GB");
+    });
+
+    it("best-effort: an app_data_disk_free invoke() REJECTION (older packaged build / spawn hiccup) does NOT hard-block the install — logs and proceeds as if the check passed", async () => {
+      stubParakeetDownload();
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => ({ ok: true, stderr: "" }),
+        app_data_disk_free: () => {
+          throw new Error("command not found: app_data_disk_free");
+        },
+        run_uv: () => ({ code: 0 }),
+        stop_server: () => undefined,
+        start_server: () => ({ alreadyRunning: false }),
+        write_provision_marker: () => undefined,
+      });
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await handle.switchModel("parakeet-tdt-0.6b-v3"); // must NOT reject
+      expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    });
+
+    it("the --clear retry attempt ALSO re-checks disk space (checked fresh per attempt, not just once)", async () => {
+      stubParakeetDownload();
+      let diskCheckCalls = 0;
+      let pipInstallCalls = 0;
+      let preflightCalls = 0;
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => {
+          preflightCalls += 1;
+          // 1st call = attempt(false)'s own leading skip-check ("not
+          // yet installed"); attempt(false) then throws INSIDE
+          // pip-install before ever reaching its OWN post-install
+          // preflight, so the 2nd call here is attempt(true)'s own
+          // post-install verification, once pip install has actually
+          // succeeded on the retry.
+          return preflightCalls === 1 ? { ok: false, stderr: "" } : { ok: true, stderr: "" };
+        },
+        app_data_disk_free: () => {
+          diskCheckCalls += 1;
+          return { freeBytes: 20 * 1024 ** 3 };
+        },
+        run_uv: (args) => {
+          const a = args?.args as string[];
+          if (a[0] === "pip" && a[1] === "install") {
+            pipInstallCalls += 1;
+            return { code: pipInstallCalls === 1 ? 1 : 0 }; // fails attempt 1, succeeds attempt 2 (post --clear)
+          }
+          return { code: 0 };
+        },
+        stop_server: () => undefined,
+        start_server: () => ({ alreadyRunning: false }),
+        write_provision_marker: () => undefined,
+      });
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await handle.switchModel("parakeet-tdt-0.6b-v3");
+
+      expect(diskCheckCalls).toBe(2); // once per attempt() call
+      expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+    });
+
+    it("skip-if-already-valid path never even reaches the disk check (nothing to mutate)", async () => {
+      stubParakeetDownload();
+      const calledCmds: string[] = [];
+      const invoke = makeFakeInvoke(
+        {
+          app_paths: () => paths,
+          read_provision_marker: () => existingMarkerJson,
+          mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+          mlx_import_preflight: () => ({ ok: true, stderr: "" }),
+          stop_server: () => undefined,
+          start_server: () => ({ alreadyRunning: false }),
+          write_provision_marker: () => undefined,
+        },
+        (cmd) => calledCmds.push(cmd),
+      );
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await handle.switchModel("parakeet-tdt-0.6b-v3");
+
+      expect(calledCmds).not.toContain("app_data_disk_free");
+      expect(calledCmds).not.toContain("run_uv");
+    });
+  });
 
   it("happy path: hardware ok, no pre-existing venv (preflight-skip check itself fails) -> venv create, pip install, preflight, pip check all run IN ORDER, mlx-venv/mlx-pip/mlx-preflight progress fires before downloading/restarting, then the ordinary download/marker/stop/start/health buckets proceed unchanged", async () => {
     stubParakeetDownload();

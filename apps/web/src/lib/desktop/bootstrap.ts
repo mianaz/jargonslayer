@@ -297,6 +297,31 @@ const SIDECAR_LIFECYCLE_BUSY_MESSAGE = "另一项本地服务操作正在进行"
  *  similar wordings" rationale as SIDECAR_LIFECYCLE_BUSY_MESSAGE above. */
 const EXTERNAL_SIDECAR_MODE_MESSAGE = "当前为外部管理模式，此操作仅适用于内置本地服务";
 
+/** S12a fix round (§D F6, MEDIUM) — ensureMlxExtras' own combined
+ *  pre-Phase-1 disk-space reserve, named honestly (each summand is what
+ *  it actually is, not a bare round "5GB") so a future re-tuning has
+ *  something real to adjust against:
+ *  - the separate mlx venv itself (parakeet-mlx + mlx/numpy/librosa/
+ *    huggingface_hub's own on-disk footprint once installed);
+ *  - uv's own package cache for that same resolve (shared across venvs,
+ *    but a FRESH mlx extras resolve still has to populate it the first
+ *    time);
+ *  - the parakeet model download that follows immediately after this
+ *    phase succeeds (§C R1 F12's own live-verified 2.51GB —
+ *    config.json + model.safetensors, exactly);
+ *  - headroom for uv's own temp/partial-write overhead during
+ *    extraction/linking, so this reserve isn't a razor's-edge minimum.
+ *  Totals ≈5.0GB — the blueprint's own "~5GB reserve" figure. */
+const MLX_VENV_DISK_RESERVE_BYTES = 1 * 1024 ** 3; // ~1GB: the mlx venv's own installed footprint
+const MLX_UV_CACHE_DISK_RESERVE_BYTES = 0.5 * 1024 ** 3; // ~0.5GB: uv's package cache for a fresh mlx resolve
+const MLX_MODEL_DISK_RESERVE_BYTES = 2.51 * 1024 ** 3; // 2.51GB: the parakeet model itself (§C R1 F12, live-verified)
+const MLX_INSTALL_DISK_HEADROOM_BYTES = 1 * 1024 ** 3; // ~1GB: safety margin (temp files, partial writes)
+const MLX_INSTALL_DISK_RESERVE_BYTES =
+  MLX_VENV_DISK_RESERVE_BYTES +
+  MLX_UV_CACHE_DISK_RESERVE_BYTES +
+  MLX_MODEL_DISK_RESERVE_BYTES +
+  MLX_INSTALL_DISK_HEADROOM_BYTES;
+
 /** Mirrors provisionRunner.ts's own (module-private, unexported)
  *  defaultNow/defaultSleep — this file needs its own copies for
  *  switchModel()'s marker write (invokeWriteMarker's own `now` param)
@@ -1080,47 +1105,84 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       const event = await runEffects(current.state, current.effects, runnerDeps);
       if (generation !== myGeneration) return; // superseded — apply nothing further.
       current = transition(ctx, current.state, event);
-      if (event.type === "CHECK_RESULT") {
-        // S12a (§C Provision, F14 / Store coercion) — mirrors
-        // provisionMachine.ts's OWN quarantine condition
+      if (event.type === "CHECK_RESULT" && event.mlxUsability) {
+        // S12a (§C Provision, F14 / Store coercion; redesigned §D F2,
+        // HIGH) — mirrors provisionMachine.ts's OWN per-status handling
         // (handleCheckResult) from this file's separate vantage point:
         // see QUARANTINE_FALLBACK_MODEL's own doc comment
-        // (provisionMachine.ts) for why `ctx.model` needs this explicit
-        // reseed here, distinct from the resulting MachineState the
-        // isFreshProvisionEntry check just below already handles
-        // identically to an ordinary first-time install. Also
-        // durably corrects the PERSISTED settings.whisperModel (fire-
-        // and-forget, mirroring beginProvision()'s own un-awaited
-        // persistDesktopModel call below) — the task brief's own "Store
-        // coercion" framing of F14: the clamp can't live in store.ts's
-        // synchronous migration (caps are async), so it's implemented
-        // HERE instead, as the live quarantine path writing the
-        // correction back through the store the moment it's actually
-        // known. Without this, a stale persisted "parakeet-tdt-0.6b-v3"
-        // preference would keep seeding ctx.model back to the
-        // already-quarantined value on every FUTURE app relaunch's
-        // fresh-provision path too (getDesktopModel/seededModel, this
-        // file's own top-of-function clamp) — never wrong (marker
-        // presence still drives the FIRST decision each launch, and
-        // this file's own ALLOWED_MARKER_MODELS clamp there is
-        // unconditional either way), but silently misleading anywhere
-        // that reads settings.whisperModel as "the user's actual
-        // target" (e.g. a future SettingsDialog 当前选择 row) before the
-        // user ever explicitly re-confirms via beginProvision().
+        // (provisionMachine.ts) for why `ctx.model` needs an explicit
+        // reseed here at all, distinct from the resulting MachineState
+        // the isFreshProvisionEntry check just below already handles
+        // identically to an ordinary first-time install — a pure
+        // reducer has nowhere to persist anything, so THIS file is the
+        // one place that can act on the durable-vs-session-only
+        // distinction §D F2's lead-adjudicated matrix draws between
+        // `unsupported` and `invalid-venv` (see MlxUsability's own doc
+        // comment, provisionMachine.ts, for the full rationale of each
+        // branch below — this block only re-derives it from its own
+        // vantage point, the underlying policy is decided there).
         const checkedMarker = parseMarker(event.markerRaw);
-        if (
-          checkedMarker &&
-          MLX_ONLY_MARKER_MODELS.includes(checkedMarker.model) &&
-          event.mlxUsable !== true
-        ) {
+        const markerLabel = checkedMarker?.model ?? "parakeet";
+        if (event.mlxUsability.status === "unsupported") {
+          // §D F2 case (a): a DEFINITIVE hardware/OS verdict — durable
+          // quarantine, exactly as before this fix round. Also durably
+          // corrects the PERSISTED settings.whisperModel (fire-and-
+          // forget, mirroring beginProvision()'s own un-awaited
+          // persistDesktopModel call below) — the task brief's own
+          // "Store coercion" framing of F14: the clamp can't live in
+          // store.ts's synchronous migration (caps are async), so it's
+          // implemented HERE instead, as the live quarantine path
+          // writing the correction back through the store the moment
+          // it's actually known. Without this, a stale persisted
+          // "parakeet-tdt-0.6b-v3" preference would keep seeding
+          // ctx.model back to the already-quarantined value on every
+          // FUTURE app relaunch's fresh-provision path too
+          // (getDesktopModel/seededModel, this file's own top-of-
+          // function clamp). A marker divergence surviving this point
+          // (the on-disk marker itself is never rewritten here) is
+          // INERT: server.rs's start_server belt
+          // (check_mlx_capable_if_parakeet) re-checks mlx_capabilities
+          // and refuses to spawn parakeet on hardware this already
+          // knows can't run it, so even a later same-session
+          // crash-restart reading ctx.model (already reseeded, never
+          // the marker) — or a FUTURE relaunch re-reading the
+          // untouched marker and re-deriving the SAME `unsupported`
+          // verdict fresh — can never actually launch the wrong model.
           diagLog(
             "warn",
             "desktop-provision",
-            `${checkedMarker.model} 标记不可用（Apple 芯片/MLX 环境校验未通过），已回退到默认模型`,
+            `${markerLabel} 不支持（${event.mlxUsability.reason}），已回退到默认模型`,
           );
           ctx = { ...ctx, model: QUARANTINE_FALLBACK_MODEL };
           void deps.persistDesktopModel?.(QUARANTINE_FALLBACK_MODEL);
+        } else if (event.mlxUsability.status === "invalid-venv") {
+          // §D F2 case (b): a DEFINITIVE but FIXABLE verdict (a broken/
+          // missing mlx venv, not a hardware limit) — re-choice pause
+          // WITHOUT any durable persist: settings.whisperModel and the
+          // on-disk marker both stay "parakeet-tdt-0.6b-v3" (no
+          // persistDesktopModel call here, deliberately) — only THIS
+          // session's in-memory ctx falls back, so the user can keep
+          // running the fallback model this session while re-choosing
+          // parakeet (via Settings' switchModel, once reachable) later
+          // re-enters ensureMlxExtras' own repair sequence fresh — its
+          // skip-check will see the SAME broken venv and fall through
+          // to a real (re)install, self-healing via its own existing
+          // `--clear` retry-on-failure arm.
+          diagLog(
+            "warn",
+            "desktop-provision",
+            `${markerLabel} 的 MLX 运行环境无效，本次会话回退到默认模型（未更改已保存的偏好）`,
+          );
+          ctx = { ...ctx, model: QUARANTINE_FALLBACK_MODEL };
         }
+        // "usable": no action — falls through to the ordinary
+        // provisioned-dead STARTING path the machine itself already
+        // produced. "probe-error": ALSO no action here — the machine
+        // never produced a fresh-INSTALL_PYTHON-shaped state for this
+        // case at all (it parks directly on INSTALL_MLX/ERROR, §D F2
+        // case c), so there is nothing for ctx to get out of sync
+        // with; zero writes to marker/preference/ctx is satisfied by
+        // this branch simply not existing.
       }
       if (event.type === "STEP_OK") {
         diagLog("info", "desktop-provision", `${PROVISION_STEP_LABELS[event.step]} 完成`);
@@ -1284,6 +1346,45 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     notify();
   }
 
+  /** S12a fix round (§D F6, MEDIUM) — ensureMlxExtras' own combined
+   *  pre-Phase-1 disk-space precheck, invoking the cross-lane-pinned
+   *  Rust command `app_data_disk_free` (worker A1, landing alongside
+   *  this fix) → `{freeBytes: number}`. Throws a STEP_ERROR-style
+   *  message naming the exact shortfall (both sides in GB, one
+   *  decimal) when free space is below MLX_INSTALL_DISK_RESERVE_BYTES
+   *  — propagates through ensureMlxExtras' own existing try/self-heal-
+   *  once-with-`--clear` wrapper exactly like any other attempt()
+   *  failure, no special-casing needed there.
+   *
+   *  Best-effort on the PROBE's own availability (deliberate choice,
+   *  §D F6): an invoke() rejection (a spawn/IPC failure, OR simply an
+   *  older packaged build that predates this command entirely) does
+   *  NOT hard-block the install — this diagLogs and returns as if the
+   *  check had passed, rather than throwing. The precheck is a
+   *  best-effort courtesy (an honest "you're about to run out of
+   *  space" warning ahead of a ~1.2GB+ install) layered ON TOP of
+   *  every download/pip-install step's own EXISTING real failure
+   *  surfacing (a genuinely-out-of-space uv/pip/download call still
+   *  fails on its own, later, with its own OS-level error) — it is not
+   *  the only thing standing between the user and a failed install, so
+   *  its own unavailability must never be treated as equivalent to
+   *  "definitely not enough space". */
+  async function checkMlxInstallDiskSpace(): Promise<void> {
+    let freeBytes: number;
+    try {
+      const result = await deps.invoke<{ freeBytes: number }>("app_data_disk_free");
+      freeBytes = result.freeBytes;
+    } catch {
+      diagLog("warn", "desktop-provision", "磁盘空间预检查不可用，已跳过（继续安装）");
+      return;
+    }
+    if (freeBytes < MLX_INSTALL_DISK_RESERVE_BYTES) {
+      const freeGb = (freeBytes / 1024 ** 3).toFixed(1);
+      const neededGb = (MLX_INSTALL_DISK_RESERVE_BYTES / 1024 ** 3).toFixed(1);
+      throw new Error(`磁盘空间不足：可用 ${freeGb}GB，需要至少 ${neededGb}GB`);
+    }
+  }
+
   /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
    *  R1/Provision, F16) — Phase 1 of an mlx-family switch (§C Q5's
    *  two-phase provision): builds+validates the separate, hash-locked
@@ -1338,9 +1439,9 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
    *  function runs BEFORE that bucket's own try, so a failure here
    *  never even reaches it). */
   async function ensureMlxExtras(): Promise<void> {
-    const caps = await probeMlxCapabilitiesWith(deps.invoke);
-    if (!caps.mlxSupported) {
-      throw new Error(caps.reason || "当前设备不支持 Apple 芯片 MLX 加速");
+    const capsResult = await probeMlxCapabilitiesWith(deps.invoke);
+    if (capsResult.status === "error" || !capsResult.caps.mlxSupported) {
+      throw new Error(capsResult.caps.reason || "当前设备不支持 Apple 芯片 MLX 加速");
     }
 
     const attempt = async (clear: boolean): Promise<void> => {
@@ -1350,6 +1451,14 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
           .catch(() => null);
         if (already?.ok) return; // already installed+valid — nothing to do
       }
+
+      // S12a fix round (§D F6, MEDIUM) — the combined pre-Phase-1 disk
+      // check, BEFORE this attempt's own first venv mutation (the
+      // venvCreateMlx run_uv call right below) — see
+      // checkMlxInstallDiskSpace's own doc comment for the reserve's
+      // derivation and this probe's own best-effort-availability
+      // posture.
+      await checkMlxInstallDiskSpace();
 
       notifySwitchModelProgress({ phase: "mlx-venv" });
       const createCmd = venvCreateMlx(paths, { clear });
