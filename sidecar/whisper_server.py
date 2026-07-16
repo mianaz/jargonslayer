@@ -145,6 +145,7 @@ priority scheduler is future work.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import fnmatch
 import importlib
 import json
@@ -1193,6 +1194,636 @@ class WhisperServer:
 
 
 # =================================================================
+# S12b: parakeet-mlx backend (docs/design-explorations/s12-mlx-
+# blueprint.md §C R2/R3/R4 + §E L5 — L5's live-probe outcome (M1)
+# SUPERSEDES §C R2's stream-commit-primary design; this implements the
+# L5 batch-final + streaming-partials HYBRID, not the R2 original).
+# Active only when backend_for_model(model) == "parakeet-mlx" (see
+# that pure function, defined alongside PARAKEET_MODEL further down
+# this file, in the model-registry section) — main() picks ONE backend
+# at process startup (a sidecar process loads exactly one model for
+# its whole lifetime) and constructs either (WhisperServer, JobManager
+# (raw faster-whisper model)) — byte-unchanged, see above — or
+# (ParakeetMlxServer, JobManager(ParakeetMlxBackend)) below. Wire
+# shapes (partial/final/stopped/lag_ms) are BYTE-UNCHANGED from
+# WhisperServer's own; `parakeet-busy` is the one new event type (see
+# ParakeetMlxServer.handle).
+#
+# `parakeet_mlx`/`mlx.core` are lazily imported inside every method
+# that actually needs them — this file's OWN top-level imports must
+# stay satisfiable under EITHER venv (the shared base venv OR the
+# separate, hash-locked mlx venv, §C R1): neither faster_whisper NOR
+# parakeet_mlx/mlx may ever be imported at module scope.
+# =================================================================
+
+PARAKEET_CONTEXT_SIZE = (256, 256)  # §C R2 pinned (upstream-validated defaults)
+PARAKEET_DEPTH = 1
+
+
+class ParakeetMlxBackend:
+    """Owns the loaded parakeet-mlx model + every actual call into it
+    (API usage verified live against a real parakeet-mlx==0.5.2
+    install + real audio — see jargonslayer-worktrees/s12b-spike-
+    assets/P1-P6_*.py and their .out.txt evidence). L5 hybrid: the
+    streaming context (open_streaming_context/add_audio) exists ONLY
+    to produce live partials; every wire final instead comes from ONE
+    batch inference per boundary (batch_final) over the scheduler's
+    own exact, non-overlapping PCM range — so finals are batch-quality
+    by construction and the MAX_SEGMENT overlap-dedup machinery §C R2
+    specced is out of scope (deleted, L5).
+
+    `_stream_busy` (L2/F4, evidence: P5b_two_contexts_long — a shared-
+    model attention-mode corruption that is SILENT, no exception):
+    exactly one active parakeet ws SESSION process-wide — a plain
+    bool, not a lock, because it is held for a WHOLE connection's
+    lifetime (see ParakeetMlxServer.handle) and every touch happens on
+    the one asyncio event-loop thread (mirrors ConnectionState.
+    diar_in_flight's own documented plain-bool safety argument).
+
+    `_executor` (G1 LIVE-GATE FINDING, not surfaced by P1-P6's single-
+    threaded probing): a persistent, single-worker (max_workers=1)
+    ThreadPoolExecutor that BOTH loads the model AND runs every later
+    call into it (add_audio/generate/transcribe). Reproduced live
+    2026-07-16: an mlx-0.32.0 model's weight arrays are bound to the
+    stream registry of whichever OS thread constructed them via
+    from_pretrained() — invoking add_audio/generate from ANY other
+    thread (including a plain asyncio.to_thread call, whose default
+    pool executor does not guarantee the SAME thread runs a later
+    call) raises `RuntimeError: There is no Stream(cpu, N) in current
+    thread` on the very first cross-thread call, deterministically.
+    Root-caused via jargonslayer-worktrees/s12b-spike-assets/gates/
+    (see G1's own run log): loading AND calling the model on the exact
+    same persistent thread fixes it completely; a plain threading.Lock
+    (the original design here) does NOT — it serializes calls but
+    does nothing about which thread runs them. Every ws-worker call
+    below is therefore async and routes through loop.run_in_executor
+    (self._executor, ...); JobManager's transcribe_file (its OWN plain
+    background thread, no event loop) blocks on executor.submit(...).
+    result() instead — same pattern as load(). This ALSO subsumes the
+    "serialize concurrent model access" role a separate lock would
+    otherwise need to play: max_workers=1 already guarantees at most
+    one call runs at a time, in FIFO submission order, on one thread.
+
+    FLAGGED, not solved here: the executor's serialization does NOT
+    prevent a batch call from running while a live ws session's
+    streaming context is open with the encoder switched to local
+    attention (StreamingParakeet.__enter__/__exit__ mutate model.
+    encoder directly) — a concurrent live-meeting-stream + file-
+    upload-job would now safely avoid the thread-affinity crash (both
+    routed through the SAME executor thread, so they simply queue
+    behind each other) but a batch call interleaved between two
+    add_audio calls of the SAME still-open context would still run
+    with the encoder in local-attention mode, degrading that ONE batch
+    call's quality (wrong attention mode, no crash). Unprobed by
+    P1-P6, not covered by S12b's four live merge gates, never specced
+    by the blueprint (JobManager's file path is documented as
+    decoupled from the live server only for DISK/port concerns, not
+    inference concurrency) — surfaced for the lead to adjudicate
+    rather than guessed at.
+    """
+
+    kind = "parakeet-mlx"
+
+    def __init__(self, model_name: str) -> None:
+        self.model_name = model_name
+        self.model: Any = None
+        self._stream_busy = False
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="parakeet-mlx"
+        )
+
+    def load(self) -> float:
+        """Loads the model ON the dedicated executor thread (see class
+        docstring's `_executor` note — loading anywhere else binds the
+        model's weights to the WRONG thread for every later call) via
+        from_pretrained(repo, cache_dir=None) — NEVER pass cache_dir
+        explicitly (§C R1/F10; see test_model_registry.py's cache-
+        root-invariant section): HF_HOME (set by the Rust launcher,
+        S12a) already anchors both a predownload and this load to the
+        same derived HF_HUB_CACHE root — an explicit cache_dir here
+        would diverge from that and re-trigger a full download. Blocks
+        the caller (main(), before the server starts accepting
+        connections) until loaded; returns the load wall-time in
+        seconds (mirrors this file's own load_model(), used for the
+        faster-whisper path)."""
+        return self._executor.submit(self._load_sync).result()
+
+    def _load_sync(self) -> float:
+        from parakeet_mlx import from_pretrained
+
+        start = time.monotonic()
+        self.model = from_pretrained(PARAKEET_REPO_ID)
+        return time.monotonic() - start
+
+    def try_acquire_stream(self) -> bool:
+        """L2/F4: True iff no other parakeet ws session is currently
+        active (and this call claims the slot); False otherwise — the
+        caller (ParakeetMlxServer.handle) must reject the connection
+        with a typed `parakeet-busy` event and a clean close WITHOUT
+        ever touching VAD state or starting a worker task."""
+        if self._stream_busy:
+            return False
+        self._stream_busy = True
+        return True
+
+    def release_stream(self) -> None:
+        self._stream_busy = False
+
+    async def open_streaming_context(self):
+        """Opens (and __enter__s) one streaming context on the
+        dedicated executor thread — L5: fresh context per utterance,
+        reset at every boundary (see close_streaming_context) — no
+        overlap re-seed; naive MAX_SEGMENT reset+re-seed was probed
+        (P3) to duplicate words at the seam, mooted entirely by L5's
+        batch-final-per-boundary invariant, which never reads the
+        streaming context for final text at all."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, self._open_streaming_context_sync)
+
+    def _open_streaming_context_sync(self):
+        ctx = self.model.transcribe_stream(
+            context_size=PARAKEET_CONTEXT_SIZE, depth=PARAKEET_DEPTH
+        )
+        ctx.__enter__()
+        return ctx
+
+    async def close_streaming_context(self, ctx) -> None:
+        """__exit__s a context opened by open_streaming_context — same
+        thread-affinity requirement (class docstring), so this too
+        routes through the dedicated executor rather than calling
+        ctx.__exit__ directly on the caller's own thread."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._executor, self._close_streaming_context_sync, ctx)
+
+    @staticmethod
+    def _close_streaming_context_sync(ctx) -> None:
+        ctx.__exit__(None, None, None)
+
+    async def add_audio(self, ctx, chunk: np.ndarray) -> None:
+        """Feed one chunk (float32 mono 16k) into `ctx`, on the
+        dedicated executor thread (class docstring's `_executor`
+        note) — P1-verified add_audio is itself a plain synchronous/
+        blocking call (the MLX forward pass runs on the calling
+        thread, no internal thread handoff)."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._executor, self._add_audio_sync, ctx, chunk)
+
+    @staticmethod
+    def _add_audio_sync(ctx, chunk: np.ndarray) -> None:
+        from mlx.core import array as mx_array
+
+        ctx.add_audio(mx_array(chunk))
+
+    async def batch_final(self, pcm: np.ndarray) -> str:
+        """ONE batch inference over `pcm` (float32 mono 16k), on the
+        dedicated executor thread, via the verified ffmpeg-free array
+        bypass (P4_batch_array_input.py, s12b-spike-assets/):
+        get_logmel(mx.array(pcm), preprocessor_config) + model.
+        generate(mel)[0] — byte-identical text to the file path
+        (model.transcribe(path)) in that probe, no temp file, no
+        ffmpeg shell-out."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, self._batch_final_sync, pcm)
+
+    def _batch_final_sync(self, pcm: np.ndarray) -> str:
+        from mlx.core import array as mx_array
+        from parakeet_mlx.audio import get_logmel
+
+        mel = get_logmel(mx_array(pcm), self.model.preprocessor_config)
+        result = self.model.generate(mel)[0]
+        return result.text.strip()
+
+    def transcribe_file(self, file_path: str, language: str) -> tuple[list[dict], float]:
+        """JobManager's normalized file-job path (§C R4). Synchronous
+        — called from JobManager's OWN plain background thread
+        (threading.Thread, no event loop; see _run_job/_run_url_job),
+        so this blocks that thread on the dedicated executor via
+        .result(), same pattern as load() (class docstring's
+        `_executor` note — the model must run on the thread that
+        loaded it). Parakeet's OWN batch API (model.transcribe(path))
+        is path-only and shells out to system ffmpeg
+        (P4_batch_array_input.py, verified live) — the SAME ffmpeg
+        precondition faster-whisper's upload path already implicitly
+        relies on for its own audio decoding, just never explicitly
+        preflighted there; this reuses the EXACT "未检测到 ffmpeg"
+        error copy/check idiom this file already established for the
+        yt-dlp/ingest-url path (see JobManager._download_via_ytdlp)
+        rather than inventing new copy for a new risk category.
+        `language` is accepted for interface parity with the faster-
+        whisper file-job shape but UNUSED — parakeet-tdt-0.6b-v3's
+        transcribe() takes no language kwarg (P4-verified signature);
+        it is multilingual and auto-detects. Maps AlignedSentence{
+        text,start,end} -> the existing job segment shape {"start",
+        "end","text"} (identical to faster-whisper's own segment
+        dicts, see JobManager._transcribe_job), so downstream
+        diarization (_diarize_job/_speaker_for_segment) works
+        unchanged regardless of which backend produced them."""
+        if shutil.which("ffmpeg") is None:
+            raise RuntimeError("未检测到 ffmpeg，请先安装（brew install ffmpeg）")
+        return self._executor.submit(self._transcribe_file_sync, file_path).result()
+
+    def _transcribe_file_sync(self, file_path: str) -> tuple[list[dict], float]:
+        result = self.model.transcribe(file_path)
+        segments = [
+            {"start": s.start, "end": s.end, "text": s.text.strip()}
+            for s in result.sentences
+        ]
+        duration = result.sentences[-1].end if result.sentences else 0.0
+        return segments, duration
+
+
+@dataclass
+class _ParakeetAudio:
+    """One command: feed `frame` (float32 mono 16k, the concatenated
+    speech samples accumulated during one _handle_binary call) into the
+    connection's currently-open streaming context — for LIVE PARTIALS
+    ONLY (L5); never used to produce a final."""
+
+    frame: np.ndarray
+
+
+@dataclass
+class _ParakeetBoundary:
+    """One command: a closed utterance's full buffered PCM (float32
+    mono 16k, `state.speech_buf` concatenated) plus the scheduler's own
+    VAD t0/t1/seg_id — committed via ONE batch inference (L5's batch-
+    final invariant), emitted as exactly one wire `final`, after which
+    the streaming context is reset (ParakeetMlxServer._worker)."""
+
+    audio: np.ndarray
+    t0: float
+    t1: float
+    seg_id: int
+    # time.monotonic() at PUT time (§C R3/F6): lag_ms for parakeet is
+    # boundary-enqueue -> final-send wall time, NOT the batch call's
+    # own time alone (contrast WhisperServer's faster-whisper lag_ms,
+    # deliberately left unredefined — see that class's own docstring).
+    enqueued_at: float
+
+
+class _ParakeetStopSentinel:
+    """Drain sentinel for ParakeetMlxServer's command queue — mirrors
+    the FinalizeJob queue's `None` sentinel (see WhisperServer._
+    consume_finalize_queue). A dedicated (empty) class rather than
+    reusing `None` itself, since this queue's other two members are
+    already typed dataclasses and a bare `None` would read ambiguously
+    next to them."""
+
+
+_PARAKEET_STOP = _ParakeetStopSentinel()
+
+
+class ParakeetMlxServer:
+    """S12b L5 hybrid: the parakeet-mlx analog of WhisperServer, active
+    only when backend_for_model(model) == "parakeet-mlx" (main() picks
+    one or the other per process — never both). Reuses ConnectionState
+    for VAD/buffering (§C R3: "VAD/buffering stays where it is") but
+    owns a wholly different per-connection scheduling mechanism: a
+    serialized asyncio.Queue of ordered Audio/Boundary/Stop commands
+    (Flush collapses into Boundary — see _handle_text's "flush" branch
+    for why), drained by ONE dedicated worker task that owns the
+    streaming context and every actual model call (§C R3, the
+    adversarial-review amendment this design implements).
+
+    Deliberately NOT a WhisperServer subclass: the two backends'
+    partial/final production strategies diverge enough (re-transcribe-
+    a-tail-window vs streaming-context-for-partials-only + batch-
+    final-per-boundary) that sharing WhisperServer's _handle_binary/
+    _finalize_segment/_consume_finalize_queue via inheritance would
+    mean overriding nearly every one of them anyway — this file's OWN
+    byte-equivalence requirement for the faster-whisper path (test_
+    whisper_protocol.py, asserted unedited) makes a from-scratch VAD
+    loop here the lower-risk choice over refactoring WhisperServer's
+    tested methods into a shared base. The VAD algorithm/constants
+    below are intentionally identical to WhisperServer._handle_binary's
+    (same MIN_THRESHOLD/NOISE_FLOOR_MULTIPLIER/SILENCE_HANG_MS/
+    MIN_SPEECH_MS/MAX_SEGMENT_MS) — segmentation cadence is backend-
+    agnostic; only what happens AT a boundary differs."""
+
+    def __init__(
+        self,
+        backend: ParakeetMlxBackend,
+        default_language: str,
+        emit_partials: bool,
+        save_audio_path: Optional[str],
+    ) -> None:
+        self.backend = backend
+        self.default_language = default_language
+        self.emit_partials = emit_partials
+        self.save_audio_path = save_audio_path
+
+    async def handle(self, ws: WebSocketServerProtocol) -> None:
+        # L2/F4 (P5b-evidence-backed): exactly one active parakeet
+        # session process-wide — checked FIRST, before any VAD state or
+        # worker task exists, so a rejected 2nd client never risks a
+        # second streaming context (the corruption P5b found is
+        # SILENT; never rely on an exception to catch it).
+        if not self.backend.try_acquire_stream():
+            try:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "type": "parakeet-busy",
+                            "detail": (
+                                "本机同一时间仅支持一个 Apple 芯片本地转录会话 / "
+                                "only one local Apple-Silicon transcription "
+                                "session is supported at a time on this machine"
+                            ),
+                        }
+                    )
+                )
+            except ConnectionClosed:
+                pass
+            await ws.close()
+            return
+
+        state = ConnectionState(language=self.default_language)
+        if self.save_audio_path:
+            state.wav_writer = open_wav_writer(self.save_audio_path)
+        cmd_queue: "asyncio.Queue[Any]" = asyncio.Queue()
+
+        worker_task = asyncio.create_task(self._worker(ws, state, cmd_queue))
+        try:
+            async for message in ws:
+                if isinstance(message, (bytes, bytearray)):
+                    await self._handle_binary(ws, state, cmd_queue, bytes(message))
+                else:
+                    await self._handle_text(ws, state, cmd_queue, message)
+        except ConnectionClosed:
+            pass
+        finally:
+            # Mirrors WhisperServer.handle's own finally (module
+            # docstring): a connection that closes WITHOUT ever sending
+            # "stop" (crashed tab) gets no ack — just a clean drain of
+            # whatever's pending, then the worker is cancelled.
+            await self._finalize_boundary(state, cmd_queue, force=True)
+            worker_task.cancel()
+            try:
+                await worker_task
+            except asyncio.CancelledError:
+                pass
+            if state.wav_writer is not None:
+                state.wav_writer.close()
+            self.backend.release_stream()
+
+    def _partials_enabled(self, state: ConnectionState) -> bool:
+        """Same contract as WhisperServer._partials_enabled (kept as an
+        independent copy rather than a shared call — see class
+        docstring's "deliberately NOT a subclass" note)."""
+        return self.emit_partials if state.partials_override is None else state.partials_override
+
+    async def _handle_text(
+        self,
+        ws: WebSocketServerProtocol,
+        state: ConnectionState,
+        cmd_queue: "asyncio.Queue[Any]",
+        raw: str,
+    ) -> None:
+        if state.stop_accepted:
+            return
+        try:
+            msg = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return
+
+        msg_type = msg.get("type")
+        if msg_type == "config":
+            language = msg.get("language")
+            if isinstance(language, str) and language:
+                state.language = language
+            partials = msg.get("partials")
+            if isinstance(partials, bool):
+                state.partials_override = partials
+            # Realtime speaker diarization is NOT implemented for the
+            # parakeet backend in S12b (never specced for this backend
+            # by the blueprint) — a diarize:true config is silently
+            # accepted-and-ignored, matching this file's general
+            # "unknown/unsupported fields are ignored, not errored"
+            # convention elsewhere.
+        elif msg_type == "stop":
+            state.stop_accepted = True
+            await self._finalize_boundary(state, cmd_queue, force=True)
+            await cmd_queue.put(_PARAKEET_STOP)
+        elif msg_type == "flush":
+            # Flush collapses into Boundary: today's protocol already
+            # routes "flush" through the identical force-finalize call
+            # ("stop"/MAX_SEGMENT/silence-hang all do), and under L5
+            # every boundary already resets the streaming context — a
+            # flush has no additional effect to express as its own
+            # queue-command variant. No ack either way (unchanged wire
+            # contract: flush never acks on the faster-whisper path
+            # either).
+            await self._finalize_boundary(state, cmd_queue, force=True)
+
+    async def _handle_binary(
+        self,
+        ws: WebSocketServerProtocol,
+        state: ConnectionState,
+        cmd_queue: "asyncio.Queue[Any]",
+        data: bytes,
+    ) -> None:
+        """VAD/buffering (§C R3: "stays where it is") — same energy-VAD
+        algorithm/constants as WhisperServer._handle_binary. The
+        receive loop ONLY enqueues here too: Audio commands (the speech
+        samples accumulated during THIS call, for live partials) and
+        Boundary commands (via _finalize_boundary) — never awaits
+        inference."""
+        if state.stop_accepted:
+            return
+        if state.wav_writer is not None:
+            state.wav_writer.writeframes(data)
+
+        buf = state.leftover + data
+        usable_len = (len(buf) // (FRAME_SAMPLES * BYTES_PER_SAMPLE)) * (
+            FRAME_SAMPLES * BYTES_PER_SAMPLE
+        )
+        state.leftover = buf[usable_len:]
+        if usable_len == 0:
+            return
+
+        pcm16 = np.frombuffer(buf[:usable_len], dtype=np.int16)
+        samples = pcm16.astype(np.float32) / 32768.0
+        frames = samples.reshape(-1, FRAME_SAMPLES)
+        frame_ms = (FRAME_SAMPLES / SAMPLE_RATE) * 1000.0
+
+        partials_on = self._partials_enabled(state)
+        speech_chunk: list[np.ndarray] = []
+
+        async def flush_chunk() -> None:
+            nonlocal speech_chunk
+            if speech_chunk:
+                await cmd_queue.put(_ParakeetAudio(frame=np.concatenate(speech_chunk)))
+                speech_chunk = []
+
+        for frame in frames:
+            level = rms(frame)
+            threshold = max(MIN_THRESHOLD, NOISE_FLOOR_MULTIPLIER * state.noise_floor)
+            is_speech_frame = level > threshold
+
+            if is_speech_frame:
+                if not state.in_speech:
+                    state.in_speech = True
+                    state.speech_started_at = state.elapsed()
+                    state.speech_buf = []
+                    state.speech_ms = 0.0
+                state.speech_buf.append(frame)
+                state.speech_ms += frame_ms
+                state.silence_ms = 0.0
+                if partials_on:
+                    speech_chunk.append(frame)
+
+                if state.speech_ms >= MAX_SEGMENT_MS:
+                    await flush_chunk()
+                    await self._finalize_boundary(state, cmd_queue, force=True)
+            else:
+                state.noise_floor = (
+                    NOISE_EMA_ALPHA * level + (1 - NOISE_EMA_ALPHA) * state.noise_floor
+                )
+                if state.in_speech:
+                    state.silence_ms += frame_ms
+                    state.speech_buf.append(frame)
+                    state.speech_ms += frame_ms
+                    if partials_on:
+                        speech_chunk.append(frame)
+                    if state.silence_ms >= SILENCE_HANG_MS:
+                        await flush_chunk()
+                        await self._finalize_boundary(state, cmd_queue, force=False)
+
+        await flush_chunk()
+
+    async def _finalize_boundary(
+        self, state: ConnectionState, cmd_queue: "asyncio.Queue[Any]", force: bool
+    ) -> None:
+        """Enqueue-only (mirrors WhisperServer._finalize_segment
+        exactly, retargeted at cmd_queue's Boundary command instead of
+        finalize_queue's FinalizeJob) — never calls the model itself,
+        safe to call from the receive loop without stalling it."""
+        if not state.in_speech or not state.speech_buf:
+            if force:
+                state.in_speech = False
+                state.speech_buf = []
+                state.silence_ms = 0.0
+                state.speech_ms = 0.0
+            return
+
+        t0 = state.speech_started_at if state.speech_started_at is not None else state.elapsed()
+        t1 = state.elapsed()
+        speech_ms = state.speech_ms
+        audio = np.concatenate(state.speech_buf)
+
+        state.in_speech = False
+        state.speech_buf = []
+        state.silence_ms = 0.0
+        state.speech_ms = 0.0
+        state.speech_started_at = None
+
+        if speech_ms < MIN_SPEECH_MS:
+            return  # too short — likely a blip, discard; no seg_id consumed
+
+        seg_id = state.next_seg_id
+        state.next_seg_id += 1
+        await cmd_queue.put(
+            _ParakeetBoundary(
+                audio=audio, t0=t0, t1=t1, seg_id=seg_id, enqueued_at=time.monotonic()
+            )
+        )
+
+    async def _worker(
+        self,
+        ws: WebSocketServerProtocol,
+        state: ConnectionState,
+        cmd_queue: "asyncio.Queue[Any]",
+    ) -> None:
+        """The ONE task per connection that owns the streaming context
+        and ALL model access (§C R3) — drains Audio/Boundary/Stop in
+        strict FIFO order, so `stopped` is always sent strictly after
+        every final ahead of it in the queue has already gone out (§C
+        R3/F6's stop-drain fix). Audio -> feed the (lazily-opened, per-
+        utterance) streaming context, emit a throttled partial with the
+        L5 regression guard (P1_api_shape.py: draft_tokens/result.text
+        observed regressing non-empty -> empty -> recovered mid-
+        utterance — once a non-empty partial has gone out for the
+        current utterance, further EMPTY-text partials are suppressed
+        rather than flickering the client's interim text back to
+        blank). Boundary -> ONE batch inference (L5) over the
+        boundary's own exact PCM, one wire final (skipped if the batch
+        call returns empty text — parity with WhisperServer's own
+        empty-final-skip/seg_id-gap semantics), context reset (fresh
+        per utterance — no overlap re-seed, L5 deletes that machinery
+        from scope). Stop -> {"type":"stopped"}, then returns."""
+        ctx = None
+        saw_nonempty = False
+        last_partial_emit = float("-inf")
+        try:
+            while True:
+                cmd = await cmd_queue.get()
+                try:
+                    if cmd is _PARAKEET_STOP:
+                        await self._safe_send(ws, state, {"type": "stopped"})
+                        return
+                    if isinstance(cmd, _ParakeetAudio):
+                        if ctx is None:
+                            ctx = await self.backend.open_streaming_context()
+                            saw_nonempty = False
+                        t0 = time.monotonic()
+                        await self.backend.add_audio(ctx, cmd.frame)
+                        lag_ms = round((time.monotonic() - t0) * 1000)
+                        text = ctx.result.text
+                        suppress = (not text) and saw_nonempty
+                        if text:
+                            saw_nonempty = True
+                        now = state.elapsed()
+                        if (
+                            not suppress
+                            and self._partials_enabled(state)
+                            and now - last_partial_emit >= PARTIAL_INTERVAL_S
+                        ):
+                            await self._safe_send(
+                                ws, state, {"type": "partial", "text": text, "lag_ms": lag_ms}
+                            )
+                            last_partial_emit = now
+                    elif isinstance(cmd, _ParakeetBoundary):
+                        final_text = await self.backend.batch_final(cmd.audio)
+                        if ctx is not None:
+                            await self.backend.close_streaming_context(ctx)
+                            ctx = None
+                        saw_nonempty = False
+                        if final_text:
+                            lag_ms = round((time.monotonic() - cmd.enqueued_at) * 1000)
+                            await self._safe_send(
+                                ws,
+                                state,
+                                {
+                                    "type": "final",
+                                    "text": final_text,
+                                    "start": cmd.t0,
+                                    "end": cmd.t1,
+                                    "seg_id": cmd.seg_id,
+                                    "lag_ms": lag_ms,
+                                },
+                            )
+                finally:
+                    cmd_queue.task_done()
+        finally:
+            if ctx is not None:
+                await self.backend.close_streaming_context(ctx)
+
+    @staticmethod
+    async def _safe_send(
+        ws: WebSocketServerProtocol, state: ConnectionState, payload: dict
+    ) -> None:
+        """Byte-identical contract to WhisperServer._safe_send (see its
+        own docstring's "Concurrent sends" rationale) — duplicated, not
+        shared, per this class's own "deliberately not a subclass"
+        note."""
+        try:
+            async with state.send_lock:
+                await ws.send(json.dumps(payload))
+        except ConnectionClosed:
+            pass
+
+
+# =================================================================
 # Upload-a-recording HTTP job API (stdlib only: http.server, run in
 # a daemon thread alongside the asyncio websocket server above).
 # Jobs are tracked in-memory only — a sidecar restart loses all job
@@ -1701,7 +2332,20 @@ class JobManager:
         overwritten — transcription then maps into
         [floor, floor + (1 - floor) * DIARIZE_HOLD_PROGRESS], still
         reserving its own tail for the diarization-hold phase exactly
-        as the plain floor=0.0 case does."""
+        as the plain floor=0.0 case does.
+
+        S12b (§C R4): when this JobManager's model is a
+        ParakeetMlxBackend (main() decides which at process startup —
+        see backend_for_model), delegates to the normalized
+        Backend.transcribe_file() below instead — its batch API
+        returns one AlignedResult (not faster-whisper's incremental
+        segment generator + info), so there is no per-segment progress
+        to stream; the faster-whisper branch below is otherwise BYTE-
+        UNCHANGED from before this backend seam existed."""
+        if isinstance(self.model, ParakeetMlxBackend):
+            self._transcribe_job_parakeet(job_id, file_path, progress_floor)
+            return
+
         segments_gen, info = self.model.transcribe(
             file_path,
             language=language,
@@ -1727,6 +2371,29 @@ class JobManager:
                     job["progress"] = progress_floor + progress * DIARIZE_HOLD_PROGRESS * (
                         1 - progress_floor
                     )
+
+    def _transcribe_job_parakeet(
+        self, job_id: str, file_path: str, progress_floor: float
+    ) -> None:
+        """S12b (§C R4): the ParakeetMlxBackend arm of _transcribe_job.
+        Backend.transcribe_file() already maps AlignedSentence -> the
+        {"start","end","text"} job segment shape and raises the exact
+        "未检测到 ffmpeg" RuntimeError faster-whisper's file-job path
+        never explicitly checked for (see that method's own docstring)
+        — propagates straight up to _run_job/_run_url_job's own
+        `except Exception` -> job.error handling, unchanged. Batch
+        transcription is already complete (127.9x realtime warm,
+        P6_throughput.py) by the time transcribe_file() returns, so
+        there is no incremental per-segment progress to stream — one
+        jump straight to this phase's own ceiling, matching what the
+        faster-whisper branch's progress formula converges to at its
+        own progress=1.0."""
+        segments, _duration = self.model.transcribe_file(file_path, self.default_language)
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is not None:
+                job["segments"] = segments
+                job["progress"] = progress_floor + DIARIZE_HOLD_PROGRESS * (1 - progress_floor)
 
     def _load_diarize_pipeline(self, hf_token: Optional[str] = None) -> tuple[Any, Optional[str]]:
         """Returns (pipeline, error_message); error_message is None on
@@ -2259,6 +2926,19 @@ PARAKEET_REPO_ID = "mlx-community/parakeet-tdt-0.6b-v3"
 PARAKEET_ALLOW_PATTERNS = ["config.json", "model.safetensors"]
 
 
+def backend_for_model(model: str) -> str:
+    """Pure map: model id -> which Backend serves it ("faster-whisper"
+    or "parakeet-mlx") — §C 3.1's `backend_for_model`, the one
+    genuinely new seam Q1 calls for. A sidecar process loads exactly
+    one model for its whole lifetime (see parse_args's --model), so
+    main() calls this once at startup to choose between (WhisperServer,
+    JobManager(raw faster-whisper model)) — byte-unchanged — and
+    (ParakeetMlxServer, JobManager(ParakeetMlxBackend)), see the
+    "S12b: parakeet-mlx backend" section above WhisperServer's own job-
+    API section."""
+    return "parakeet-mlx" if model == PARAKEET_MODEL else "faster-whisper"
+
+
 def validate_download_model(model: Any) -> Optional[str]:
     """Returns a zh error message if `model` isn't a MODEL_CHOICES
     entry, else None. Mirrors validate_ingest_url's pattern; do_POST
@@ -2739,31 +3419,61 @@ async def main() -> None:
         ok = run_download_only(args.model, hf_token=args.hf_token)
         sys.exit(0 if ok else 1)
 
-    model, load_seconds = load_model(args.model, args.device, args.compute)
-    print_banner(
-        args.model,
-        args.device,
-        load_seconds,
-        args.host,
-        args.port,
-        args.http_port,
-        diarize_enabled=bool(args.hf_token),
-    )
+    # S12b: backend_for_model decides ONCE, at startup, which of the
+    # two backends this whole process runs (a sidecar process loads
+    # exactly one model for its lifetime) — see the "S12b: parakeet-mlx
+    # backend" section above WhisperServer's own job-API section.
+    if backend_for_model(args.model) == "parakeet-mlx":
+        backend = ParakeetMlxBackend(args.model)
+        load_seconds = backend.load()
+        print_banner(
+            args.model,
+            "mlx (Metal)",
+            load_seconds,
+            args.host,
+            args.port,
+            args.http_port,
+            diarize_enabled=False,  # not implemented for parakeet, S12b
+        )
 
-    server = WhisperServer(
-        model=model,
-        default_language=args.language,
-        emit_partials=args.partials,
-        save_audio_path=args.save_audio,
-        default_hf_token=args.hf_token,
-    )
+        server: Any = ParakeetMlxServer(
+            backend=backend,
+            default_language=args.language,
+            emit_partials=args.partials,
+            save_audio_path=args.save_audio,
+        )
+        job_manager = JobManager(
+            model=backend,
+            model_name=args.model,
+            default_language=args.language,
+            hf_token=args.hf_token,
+        )
+    else:
+        model, load_seconds = load_model(args.model, args.device, args.compute)
+        print_banner(
+            args.model,
+            args.device,
+            load_seconds,
+            args.host,
+            args.port,
+            args.http_port,
+            diarize_enabled=bool(args.hf_token),
+        )
 
-    job_manager = JobManager(
-        model=model,
-        model_name=args.model,
-        default_language=args.language,
-        hf_token=args.hf_token,
-    )
+        server = WhisperServer(
+            model=model,
+            default_language=args.language,
+            emit_partials=args.partials,
+            save_audio_path=args.save_audio,
+            default_hf_token=args.hf_token,
+        )
+
+        job_manager = JobManager(
+            model=model,
+            model_name=args.model,
+            default_language=args.language,
+            hf_token=args.hf_token,
+        )
     # Job API runs on its own daemon thread — http.server is blocking/
     # synchronous, so it can't share the asyncio event loop below.
     httpd = run_http_server(args.host, args.http_port, job_manager, args.language)
