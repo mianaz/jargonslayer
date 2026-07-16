@@ -214,12 +214,21 @@ function stubSidecarHttp(order: string[]): ReturnType<typeof vi.fn> {
  *  a full, no-pre-existing-venv parakeet switch to completion (mirrors
  *  bootstrap.test.ts's own "happy path" mlx-family switchModel() test's
  *  handler shape) — shared by both tests below, `overrides` lets the
- *  disk-shortfall test swap in a failing app_data_disk_free. */
+ *  disk-shortfall test swap in a failing app_data_disk_free.
+ *
+ *  `read_provision_marker`/`write_provision_marker` are STATEFUL (a
+ *  mutable `currentMarker` closed over below, seeded to the pre-switch
+ *  `existingMarkerJson`) rather than each independently hardcoded —
+ *  §F FB8-refresh's own test needs a write to actually change what a
+ *  LATER read returns, the same way a real marker file would, to prove
+ *  the dialog's own re-fetch (not just an extra invoke call) picks up
+ *  the genuinely NEW installed model. */
 function mlxHandlers(overrides: Record<string, (args?: Record<string, unknown>) => unknown> = {}) {
   let preflightCalls = 0;
+  let currentMarker = existingMarkerJson;
   return {
     app_paths: () => FAKE_PATHS,
-    read_provision_marker: () => existingMarkerJson,
+    read_provision_marker: () => currentMarker,
     mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
     mlx_import_preflight: () => {
       preflightCalls += 1;
@@ -230,7 +239,10 @@ function mlxHandlers(overrides: Record<string, (args?: Record<string, unknown>) 
     },
     app_data_disk_free: () => ({ freeBytes: 20 * 1024 ** 3 }), // 20GB — comfortably above the ~5GB reserve
     run_uv: () => ({ code: 0 }),
-    write_provision_marker: () => undefined,
+    write_provision_marker: (args?: Record<string, unknown>) => {
+      currentMarker = String(args?.json);
+      return undefined;
+    },
     stop_server: () => undefined,
     start_server: (args?: Record<string, unknown>) => {
       expect(args?.model).toBe("parakeet-tdt-0.6b-v3");
@@ -328,7 +340,26 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
     await flushUntil(() => modelDownloadTask()?.status === "done" || modelDownloadTask()?.status === "error");
     expect(modelDownloadTask()?.status).toBe("done"); // fails loudly (task.error) if the flow actually errored
 
+    // §F FB8-refresh: switchModelDone (keyed off this SAME task settling
+    // "done") re-runs the 当前模型 effect — a TRAILING read_provision_
+    // marker, past start_server, is that refresh actually firing. Waited
+    // for explicitly (order's own length is otherwise racy against the
+    // task-settle flushUntil above) before asserting the full sequence.
+    await flushUntil(() => order[order.length - 1] === "read_provision_marker" && order.length > 14);
+
+    // CROSS-LANE NOTE: the LEADING "read_provision_marker" below is
+    // §F FB8's OWN A2-lane half (isAlreadyInstalledAndValid's
+    // same-target no-op check, bootstrap.ts — landed concurrently with
+    // this B2 lane's own work, in the SAME shared worktree, while this
+    // test was being written; this file uses bootstrap.ts's REAL,
+    // unmocked switchModel via importOriginal, so it observes A2's
+    // landed behavior directly, not a snapshot). It resolves false here
+    // (target "parakeet-tdt-0.6b-v3" != the seeded marker's "small"), so
+    // exactly one extra invoke leads the sequence, then the flow
+    // proceeds exactly as before. If A2's own lane changes this check's
+    // shape again, this assertion is the one to update — not a B2 bug.
     expect(order).toEqual([
+      "read_provision_marker", // A2's FB8 same-target no-op check (isAlreadyInstalledAndValid) — resolves false, falls through
       "mlx_capabilities",
       "mlx_import_preflight",
       "app_data_disk_free",
@@ -342,7 +373,15 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
       "write_provision_marker",
       "stop_server",
       "start_server",
+      "read_provision_marker", // §F FB8-refresh's own re-fetch, triggered by switchModelDone (this B2 lane's own half of FB8)
     ]);
+
+    // §F FB8-refresh's own product contract: the picker's 当前模型 line
+    // reflects the NEW installed model WITHOUT closing/reopening the
+    // dialog — this is what actually proves the refresh (not just an
+    // extra invoke call): mlxHandlers' own stateful marker now returns
+    // the just-written parakeet marker on this trailing read.
+    await flushUntil(() => container!.textContent?.includes("当前模型：parakeet-tdt-0.6b-v3") ?? false);
 
     // hfToken threads through the switch's own start_server call —
     // Q6/§3.5's pinned contract (postDownloadModel's own accepted
@@ -397,8 +436,11 @@ describe("SettingsDialog (desktop) — parakeet switch, end to end through the R
     // mlx_import_preflight short-circuit (clear:true never short-
     // circuits) but re-runs checkMlxInstallDiskSpace fresh, so the
     // shortfall fires (and is recorded) TWICE before the retry's own
-    // error propagates as-is.
+    // error propagates as-is. Leading "read_provision_marker" is A2's
+    // FB8 same-target no-op check (isAlreadyInstalledAndValid) — see the
+    // happy-path test's own CROSS-LANE NOTE above for the full context.
     expect(order).toEqual([
+      "read_provision_marker",
       "mlx_capabilities",
       "mlx_import_preflight",
       "app_data_disk_free",

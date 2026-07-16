@@ -71,6 +71,7 @@ import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
 import ModelPicker from "@/components/desktop/ModelPicker";
+import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 import CredentialFields, {
   presetIdFor,
   type ProviderPreset,
@@ -405,6 +406,22 @@ function coercePreviewModels(draft: Settings): Settings {
   return Object.keys(patch).length > 0 ? { ...draft, ...patch } : draft;
 }
 
+// S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
+// lives only in the shared BASE venv; parakeet rides a fully separate,
+// airtight-isolated MLX venv (§C R1) that never has pyannote installed,
+// so 实时说话人分离/说话人分离扩展 are structurally dead for it, not just
+// unconfigured. Reuses modelCatalog.ts's own `mlxOnly` discriminator
+// (the same one ModelPicker.tsx/DesktopWizard.tsx already gate on)
+// rather than a hardcoded id string, so a future second mlx-family model
+// is covered automatically. `null`/an id absent from the catalog (a
+// manually-dropped-in model, provisionMachine.ts's own escape hatch)
+// reads as NOT mlx-only — never false-positively blocks diarization for
+// a model this function doesn't recognize.
+function isMlxOnlyModel(model: string | null): boolean {
+  if (!model) return false;
+  return MODEL_CATALOG.find((entry) => entry.id === model)?.mlxOnly === true;
+}
+
 function SectionHeading({ children }: { children: React.ReactNode }) {
   return (
     <div className="text-xs uppercase tracking-wide text-mut">{children}</div>
@@ -717,6 +734,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const switchingModel = useTasks(
     (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "running",
   );
+  // S12b fix round FB8-refresh (§F): mirrors diarInstallDone's own
+  // "read a specific dispatched task id's own terminal status" shape
+  // exactly (see that field's own doc comment a few lines up) —
+  // installedModel below is a ONE-SHOT snapshot read at effect-mount
+  // time, so a switch that completes while this dialog stays open
+  // otherwise leaves 当前模型/实时说话人分离's own gating stale until the
+  // dialog is closed and reopened. Read by the 当前模型 effect below,
+  // which re-runs once this flips true.
+  const switchModelDone = useTasks(
+    (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "done",
+  );
   // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
   // Provision state machine, worker A3) — display-only wiring for the
   // "mlx-install" task kind (A2's provisionMachine.ts/bootstrap.ts own
@@ -935,6 +963,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // the dialog stays open) — mirrors the 本地服务 status effect just
   // above. IS_DESKTOP is a build-time const (see platform/desktop.ts),
   // so this is inert on a web build.
+  //
+  // S12b fix round FB8-refresh (§F): `switchModelDone` in the deps array
+  // — mirrors F7's own diarInstallDone fix for the exact same class of
+  // staleness (see that field's own doc comment): jobsBridge.
+  // trackSwitchModel's own success handler settles the TASK registry
+  // entry, never this dialog's own `installedModel` state, so without
+  // this the 当前模型 line (and, since S12b FB7, 实时说话人分离's own
+  // isParakeetSelectedOrInstalled gate) kept showing the PRE-switch
+  // model until the dialog was closed and reopened.
   useEffect(() => {
     if (!open || !IS_DESKTOP || draft.sidecarMode !== "managed") return;
     let cancelled = false;
@@ -947,7 +984,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, draft.sidecarMode]);
+  }, [open, draft.sidecarMode, switchModelDone]);
 
   // 说话人分离 安装扩展 install-state row (v0.4 S5 chunk 3): probes GET
   // /health via fetchSidecarHealth (decision C's diarization_installed)
@@ -1488,9 +1525,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // engine surviving into a preview build (e.g. an imported full-tier
   // settings export) from evaluating true and enabling the checkbox
   // despite the section's greyed-out fields.
+  //
+  // S12b fix round FB7-settings (§F): parakeet rides the SAME `whisper`
+  // STTEngineKind (blueprint Q1 — it's a MODEL under `whisper`, not a
+  // new engine), so `draft.engine === "whisper"` alone can't tell
+  // parakeet apart from faster-whisper here — isMlxOnlyModel does. Both
+  // the SELECTED preference (draft.whisperModel — what 保存 would make
+  // live) and the truthful INSTALLED model (installedModel — what's
+  // actually running right now) gate this: either one being parakeet
+  // means diarization can't actually run (pyannote isn't in the mlx
+  // venv at all), so the toggle must not arm on the strength of the
+  // other alone.
+  const isParakeetSelectedOrInstalled = isMlxOnlyModel(draft.whisperModel) || isMlxOnlyModel(installedModel);
   const realtimeDiarizeAvailable =
     !PREVIEW_TIER &&
     (draft.engine === "whisper" || draft.engine === "tabaudio" || draft.engine === "appaudio") &&
+    !isParakeetSelectedOrInstalled &&
     !!draft.hfToken;
   // 双语转录 (#42): the translation target IS explainLanguage — "en"
   // would mean translating English into English, so the toggle is
@@ -2085,6 +2135,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   )}
                 </div>
 
+                {/* S12b fix round FB7-settings (§F) — "the 安装扩展
+                   action for diarization should communicate the same"
+                   (parakeet incompatibility): informational only, NOT a
+                   disable — installing the extension into the shared
+                   base venv is still a legitimate, useful action (e.g.
+                   prepping ahead of switching back to a faster-whisper
+                   model), it just won't help THIS SESSION while parakeet
+                   is the selected/installed model. Same idiom as the
+                   sibling 需先安装说话人分离扩展 line below the toggle.
+                   NEW string — 4.6 pass. */}
+                {isParakeetSelectedOrInstalled && (
+                  <div className="text-xs leading-[1.7] text-mut2">
+                    parakeet 本地转录暂不支持实时说话人分离，安装扩展不会让当前会话生效
+                  </div>
+                )}
+
                 {diarizationInstalled === false && (
                   <>
                     <button
@@ -2207,7 +2273,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
                       : draft.engine === "osspeech"
                         ? "该引擎不支持说话人分离"
-                        : "需先配置 HF Token"}
+                        : // S12b fix round FB7-settings (§F) — NEW string,
+                          // 4.6 pass (house convention, not polished here):
+                          // parakeet's own MLX venv never has pyannote, a
+                          // structural limitation, not a missing-token one
+                          // — checked ahead of the generic fallback so it
+                          // always wins when both would otherwise apply.
+                          isParakeetSelectedOrInstalled
+                          ? "parakeet 本地转录暂不支持实时说话人分离"
+                          : "需先配置 HF Token"}
                 </div>
               </div>
               <ToggleSwitch

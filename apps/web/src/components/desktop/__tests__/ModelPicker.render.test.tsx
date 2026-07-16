@@ -189,13 +189,19 @@ describe("ModelPicker", () => {
   // renderWizard helper establishes the same `await act(async () => {…})`
   // idiom for exactly this "component mounts, an effect awaits a
   // promise-returning caps probe" shape.
-  async function mount(value: string, onChange: (model: string) => void) {
+  async function mount(
+    value: string,
+    onChange: (model: string) => void,
+    hideDefinitivelyUnsupported?: boolean,
+  ) {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     await act(async () => {
-      root!.render(<ModelPicker value={value} onChange={onChange} />);
+      root!.render(
+        <ModelPicker value={value} onChange={onChange} hideDefinitivelyUnsupported={hideDefinitivelyUnsupported} />,
+      );
     });
     return container;
   }
@@ -451,5 +457,66 @@ describe("ModelPicker", () => {
 
   it("MODEL_CATALOG import used by this suite is the mocked fixture, not the real catalog (sanity check on the vi.mock wiring above)", () => {
     expect(MODEL_CATALOG).toBe(MOCK_CATALOG);
+  });
+
+  // --- S12b fix round FB10 (§F; product default, ON THE VETO LIST §7.7) ---
+  // Core hideDefinitivelyUnsupported contract against this file's own
+  // fixture — the full 2-surface × 3-caps-state matrix against the REAL
+  // catalog already lives in ModelPicker.realCatalog.render.test.tsx's
+  // own "hideDefinitivelyUnsupported (§F FB10)" describe block; this is
+  // the fixture-based counterpart so the prop's own contract stays
+  // pinned independent of whatever modelCatalog.ts currently ships.
+  describe("hideDefinitivelyUnsupported (§F FB10)", () => {
+    it("prop omitted (default/Settings' posture): a DEFINITIVELY-unsupported mlxOnly row stays VISIBLE, disabled, with its reason", async () => {
+      const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
+      mlxState.probeImpl = async () => ok({ mlxSupported: false, reason });
+      await mount("small", () => {}); // hideDefinitivelyUnsupported omitted
+      const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+      expect(row).not.toBeNull();
+      expect(row.disabled).toBe(true);
+      expect(container!.querySelectorAll('[role="radio"]').length).toBe(VISIBLE.length);
+    });
+
+    it("prop true (Wizard's posture): a DEFINITIVELY-unsupported mlxOnly row is HIDDEN entirely — the radio count drops by exactly one", async () => {
+      const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
+      mlxState.probeImpl = async () => ok({ mlxSupported: false, reason });
+      await mount("small", () => {}, true);
+      expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')).toBeNull();
+      expect(container!.textContent).not.toContain(reason);
+      expect(container!.querySelectorAll('[role="radio"]').length).toBe(VISIBLE.length - 1);
+    });
+
+    it("prop true (Wizard's posture): a transient probe ERROR NEVER hides the row — stays visible, disabled, with 重试 (FB10's own carve-out)", async () => {
+      const FAIL_CLOSED: MlxCapabilities = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
+      mlxState.probeImpl = async () => errorResult(FAIL_CLOSED);
+      await mount("small", () => {}, true);
+      const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+      expect(row).not.toBeNull();
+      expect(row.disabled).toBe(true);
+      expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3-retry"]')).not.toBeNull();
+      expect(container!.querySelectorAll('[role="radio"]').length).toBe(VISIBLE.length);
+    });
+
+    it("prop true (Wizard's posture): a mlxSupported:true row is unaffected — still visible + selectable", async () => {
+      mlxState.probeImpl = async () => ok({ mlxSupported: true, reason: null });
+      const onChange = vi.fn();
+      await mount("small", onChange, true);
+      const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+      expect(row).not.toBeNull();
+      expect(row.disabled).toBe(false);
+      act(() => {
+        row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onChange).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
+    });
+
+    it("prop true (Wizard's posture): non-mlxOnly rows are never hidden by this policy either", async () => {
+      mlxState.probeImpl = async () => ok({ mlxSupported: false, reason: "需要 Apple 芯片（M 系列），macOS 14 或更高" });
+      await mount("small", () => {}, true);
+      for (const entry of VISIBLE) {
+        if (entry.mlxOnly) continue;
+        expect(container!.querySelector(`[data-testid="model-option-${entry.id}"]`)).not.toBeNull();
+      }
+    });
   });
 });

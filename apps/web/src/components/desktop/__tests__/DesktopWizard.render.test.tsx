@@ -173,6 +173,55 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onDismissConsent).toHaveBeenCalledTimes(1);
   });
 
+  // S12b fix round FB1-copy (§F) — the consent screen's own summary
+  // paragraph must be honest PER SELECTION, not a static whisper-family
+  // description regardless of what's actually picked.
+  it("WIZARD_CONSENT_REQUIRED: the summary copy is the pre-existing whisper-family text (byte-identical) while a whisper model is selected — no faster-whisper/size claim leaks under a parakeet pick that hasn't happened yet", async () => {
+    mockOsSpeechCaps = { supported: false };
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], {});
+
+    const consent = container!.querySelector('[data-testid="desktop-wizard-consent"]')!;
+    expect(consent.textContent).toContain("语音识别引擎（faster-whisper）");
+    expect(consent.textContent).toContain("预计下载体积约 0.5–1.5 GB");
+    expect(consent.textContent).toContain("Whisper 每约 30 秒判定一种语言"); // whisper-only guidance still shows
+    // Narrower than a bare "MLX" substring check — parakeet's own
+    // (always-rendered) catalog ROW text legitimately contains "MLX 本机
+    //加速" regardless of what's currently selected; what must NOT leak
+    // is the SUMMARY paragraph's own parakeet-branch sentence.
+    expect(consent.textContent).not.toContain("Apple 芯片本地加速环境（MLX 运行环境）");
+    expect(consent.textContent).not.toContain("仅支持 Apple 芯片（M 系列）。");
+  });
+
+  it("WIZARD_CONSENT_REQUIRED: selecting parakeet swaps the summary copy to the honest MLX/2.5GB framing, and hides the whisper-only guidance block (§F FB1-copy)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: true, reason: null } });
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], {});
+    await act(async () => {
+      await Promise.resolve(); // let useMlxCaps' own mount-effect probe settle
+    });
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const consent = container!.querySelector('[data-testid="desktop-wizard-consent"]')!;
+    expect(consent.textContent).toContain("MLX");
+    expect(consent.textContent).toContain("仅支持 Apple 芯片（M 系列）");
+    expect(consent.textContent).toContain("预计下载体积约 2.5GB（含约 1GB MLX 运行环境，首次安装）");
+    // The old whisper-family claims must NOT leak under a parakeet pick.
+    expect(consent.textContent).not.toContain("faster-whisper");
+    expect(consent.textContent).not.toContain("预计下载体积约 0.5–1.5 GB");
+    // Whisper-only guidance (language-detection cadence + model-choice
+    // matrix) is meaningless for parakeet — hidden, not reworded.
+    expect(consent.textContent).not.toContain("Whisper 每约 30 秒判定一种语言");
+    expect(consent.textContent).not.toContain("Apple Silicon 实时→medium");
+
+    const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
+    expect(beginBtn.textContent).toBe("开始安装（parakeet-tdt-0.6b-v3 · ~2.5GB）");
+  });
+
   it("WIZARD_CONSENT_REQUIRED: embeds <ModelPicker>, pre-selected to WIZARD_PRESELECTED_MODEL, and the 开始安装 button text tracks the selection", async () => {
     mockOsSpeechCaps = { supported: false }; // pre-osspeech baseline — see this suite's own header comment
     const onBeginProvision = vi.fn();
@@ -248,7 +297,14 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onBeginProvision).toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
   });
 
-  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row still RENDERS but stays disabled with a reason, and can never reach onBeginProvision, when mlxCaps reports unsupported", async () => {
+  // S12b fix round FB10 (§F; product default, ON THE VETO LIST §7.7) —
+  // supersedes this suite's own PRE-FB10 "still renders disabled" test:
+  // the wizard now passes ModelPicker's own hideDefinitivelyUnsupported
+  // prop, so a DEFINITIVELY-unsupported mlxOnly row is hidden entirely
+  // here (Settings' own picker keeps the pre-FB10 disabled-with-reason
+  // behavior instead — see ModelPicker.realCatalog.render.test.tsx's own
+  // "hideDefinitivelyUnsupported" describe block for that side).
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row is HIDDEN entirely (not just disabled) when mlxCaps DEFINITIVELY reports unsupported (§F FB10)", async () => {
     mockOsSpeechCaps = { supported: false };
     const reason = "需要 Apple 芯片（M 系列），macOS 14 或更高";
     mlxState.probeImpl = async () => ({ status: "ok", caps: { mlxSupported: false, reason } });
@@ -258,22 +314,37 @@ describe("DesktopWizard — state-driven rendering", () => {
       await Promise.resolve();
     });
 
-    const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
-    expect(row).not.toBeNull(); // visible, not hidden — mlxOnly gating disables, it never hides a row
-    expect(row.disabled).toBe(true);
-    expect(row.textContent).toContain(reason);
+    expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')).toBeNull();
+    expect(container!.textContent).not.toContain(reason);
+    expect(container!.querySelectorAll('[role="radio"]').length).toBe(MODEL_CATALOG.length - 1);
 
-    await act(async () => {
-      row.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    // The disabled row can't become the wizard's own selection at all —
-    // WIZARD_PRESELECTED_MODEL (medium) is still what 开始安装 carries.
+    // WIZARD_PRESELECTED_MODEL (medium) is still what 开始安装 carries —
+    // a hidden row was never reachable as a selection in the first place.
     const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
     await act(async () => {
       beginBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onBeginProvision).toHaveBeenCalledWith(WIZARD_PRESELECTED_MODEL);
     expect(onBeginProvision).not.toHaveBeenCalledWith("parakeet-tdt-0.6b-v3");
+  });
+
+  // §F FB10's own explicit carve-out: a transient probe ERROR is NEVER
+  // hidden, on EITHER surface — the wizard still shows disabled+重试
+  // here, same as pre-FB10 (retrying CAN change this answer, unlike a
+  // definitive result).
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker>'s parakeet-tdt-0.6b-v3 row still RENDERS disabled with a 重试 affordance (never hidden) on a transient mlxCaps probe ERROR (§F FB10's carve-out)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    const FAIL_CLOSED = { mlxSupported: false, reason: "无法确认 Apple 芯片支持，请重试" };
+    mlxState.probeImpl = async () => ({ status: "error", caps: FAIL_CLOSED });
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], {});
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const row = container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]') as HTMLButtonElement;
+    expect(row).not.toBeNull();
+    expect(row.disabled).toBe(true);
+    expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3-retry"]')).not.toBeNull();
   });
 
   // S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen

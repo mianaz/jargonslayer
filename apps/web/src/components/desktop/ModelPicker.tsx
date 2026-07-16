@@ -25,7 +25,7 @@
 // implementation.
 //
 // S12 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
-// Gating F13 + worker A3, flipped live by worker B2 §C L1/§E) — two
+// Gating F13 + worker A3, flipped live by worker B2 §C L1/§E) — three
 // additive gating layers:
 //   1. `available === false` entries are HIDDEN from the picker
 //      entirely (never rendered as a row at all) — no catalog entry
@@ -42,6 +42,16 @@
 //      OTHER shipped entry) is entirely unaffected — mlxGateFor is a
 //      structural no-op for it, same "no-op for every other value"
 //      shape as osspeechCaps.ts's own isOsSpeechFloorLocked.
+//   3. S12b fix round FB10 (§F, product default — ON THE VETO LIST
+//      §7.7) — the caller-opt-in `hideDefinitivelyUnsupported` prop: an
+//      `mlxOnly` entry whose caps probe has DEFINITIVELY resolved
+//      unsupported (never on "still loading" or a transient probe
+//      ERROR — isDefinitivelyUnsupported below) is hidden the SAME way
+//      layer 1 hides an `available:false` entry, when the caller passes
+//      the prop (DesktopWizard.tsx does; SettingsDialog.tsx doesn't —
+//      see ModelPickerProps' own doc comment for the discoverability
+//      rationale). A structural no-op when the prop is omitted —
+//      every pre-FB10 test/caller is byte-unaffected.
 //
 // S12a fix round (§D F7, LOW, both reviewers) — errored-vs-unsupported
 // used to be INFERRED from mlxCaps.ts's cache-identity contract
@@ -69,6 +79,21 @@ import {
 export interface ModelPickerProps {
   value: string;
   onChange: (model: string) => void;
+  /** S12b fix round FB10 (§F; product default — ON THE VETO LIST §7.7,
+   *  kept cleanly reversible via this one prop rather than baked into
+   *  the gating logic): when true, an `mlxOnly` entry whose caps probe
+   *  has DEFINITIVELY resolved unsupported is hidden entirely (never
+   *  rendered as a row), instead of shown disabled-with-reason. The
+   *  first-run wizard (DesktopWizard.tsx) passes this — a brand-new
+   *  user on hardware that can never run parakeet gets a clean catalog,
+   *  not a dead row. Settings' own managed 更换模型 picker (SettingsDialog.
+   *  tsx) omits it (defaults to the pre-FB10 behavior) — discoverability
+   *  matters more there (a user troubleshooting, or who just upgraded
+   *  hardware, should still see the row and why it's disabled). Never
+   *  hides a row on a transient probe ERROR in EITHER surface — see
+   *  isDefinitivelyUnsupported's own doc comment; that state always
+   *  stays disabled + 重试, identically on both surfaces. */
+  hideDefinitivelyUnsupported?: boolean;
 }
 
 // §C Gating F13's own fallback copy, verbatim — used whenever a
@@ -115,6 +140,25 @@ function mlxGateFor(entry: ModelCatalogEntry, resolved: MlxCapabilities | null, 
   return MLX_SUPPORTED_GATE;
 }
 
+/** True only when an `mlxOnly` entry's caps probe has DEFINITIVELY
+ *  resolved unsupported — a real, settled answer, never "still loading"
+ *  (`resolved === null`) and never a transient probe ERROR (`errored`)
+ *  — mirrors mlxGateFor's own three-way split above exactly (this is
+ *  precisely its third branch's own condition), kept as an independent
+ *  function rather than read back off a computed `MlxGate` because
+ *  MLX_LOADING_GATE and the definitively-unsupported gate share the
+ *  same `{disabled:true, showRetry:false}` shape — only `reason`
+ *  differs, too fragile a discriminator to reverse-engineer from.
+ *  §F FB10's own hideDefinitivelyUnsupported policy (ModelPickerProps)
+ *  is the one caller. */
+function isDefinitivelyUnsupported(
+  entry: ModelCatalogEntry,
+  resolved: MlxCapabilities | null,
+  errored: boolean,
+): boolean {
+  return entry.mlxOnly === true && !errored && resolved !== null && !resolved.mlxSupported;
+}
+
 /** Wires mlxCaps.ts's framework-agnostic probe/cache (getMlxCapsSnapshot/
  *  subscribeMlxCaps/probeMlxCaps/refreshMlxCaps) into local component
  *  state — that module deliberately owns no hook of its own (see its own
@@ -158,13 +202,20 @@ function useMlxCaps(): { resolved: MlxCapabilities | null; errored: boolean; ret
   return { resolved, errored, retry };
 }
 
-export default function ModelPicker({ value, onChange }: ModelPickerProps) {
+export default function ModelPicker({ value, onChange, hideDefinitivelyUnsupported }: ModelPickerProps) {
   const { resolved: mlxCaps, errored: mlxErrored, retry: retryMlxCaps } = useMlxCaps();
   // S12a (§C L1): worker B2's own flip point — an entry stays entirely
   // OFF the picker until its own `available` reads true (undefined reads
   // as available, matching modelCatalog.ts's own doc on every
-  // pre-existing entry being left unannotated).
-  const visibleEntries = MODEL_CATALOG.filter((entry) => entry.available !== false);
+  // pre-existing entry being left unannotated). §F FB10: the caller's
+  // own hideDefinitivelyUnsupported policy is a SECOND, independent
+  // reason a row can be filtered out here — see ModelPickerProps' own
+  // doc comment and isDefinitivelyUnsupported above.
+  const visibleEntries = MODEL_CATALOG.filter((entry) => {
+    if (entry.available === false) return false;
+    if (hideDefinitivelyUnsupported && isDefinitivelyUnsupported(entry, mlxCaps, mlxErrored)) return false;
+    return true;
+  });
 
   return (
     <div

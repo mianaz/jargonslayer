@@ -255,41 +255,72 @@ function ConsentScreen({
   // see modelCatalog.ts's own doc comment on that constant).
   const [model, setModel] = useState<string>(WIZARD_PRESELECTED_MODEL);
   const chosen = MODEL_CATALOG.find((m) => m.id === model) ?? MODEL_CATALOG[0];
+  // S12b fix round FB1-copy (§F, blueprint's own "the wizard's consent/
+  // summary copy promises faster-whisper and 0.5–1.5 GB regardless of a
+  // parakeet selection" finding) — the summary paragraph above
+  // <ModelPicker> must be honest PER SELECTION, not a static whisper-
+  // family description. `chosen.mlxOnly` is modelCatalog.ts's own
+  // existing discriminator (today only the parakeet entry), so this
+  // reads correctly for any future mlx-family addition too, not just
+  // parakeet by id. Whisper-family branch is BYTE-IDENTICAL to the
+  // pre-fix copy — see the sibling `else` branch below.
+  const chosenIsMlx = chosen.mlxOnly === true;
   return (
     <WizardFrame>
       <div data-testid="desktop-wizard-consent" className="space-y-4">
         <div className="text-base font-medium text-fg">首次使用需要安装本地语音识别</div>
         <div className="space-y-2 text-sm leading-[1.8] text-mut">
-          <p>
-            JargonSlayer 会在本机装一份独立的 Python 运行环境、语音识别引擎（faster-whisper）和一个较小的识别模型，全部安装在应用自己的数据目录下——不碰系统
-            Python，卸载应用时随手就能删干净。
-          </p>
-          <p className="text-mut2">预计下载体积约 0.5–1.5 GB，视网络情况需要几分钟到十几分钟。</p>
+          {chosenIsMlx ? (
+            // NEW strings (S12b FB1-copy) — 4.6 pass, not polished here,
+            // same convention as modelCatalog.ts's own parakeet copy.
+            // Sizing matches bootstrap.ts's own reserve constants
+            // verbatim: MLX_VENV_DISK_RESERVE_BYTES ~1GB (labeled "MLX
+            // 运行环境", same wording as PROVISION_STEP_LABELS.
+            // INSTALL_MLX there) + the catalog entry's own ~2.5GB model
+            // size — never re-derived/guessed here.
+            <>
+              <p>
+                JargonSlayer 会在本机装一份独立的 Apple 芯片本地加速环境（MLX 运行环境）和一个英文识别模型（parakeet），全部安装在应用自己的数据目录下——不碰系统
+                Python，卸载应用时随手就能删干净。仅支持 Apple 芯片（M 系列）。
+              </p>
+              <p className="text-mut2">预计下载体积约 2.5GB（含约 1GB MLX 运行环境，首次安装），视网络情况需要几分钟到十几分钟。</p>
+            </>
+          ) : (
+            <>
+              <p>
+                JargonSlayer 会在本机装一份独立的 Python 运行环境、语音识别引擎（faster-whisper）和一个较小的识别模型，全部安装在应用自己的数据目录下——不碰系统
+                Python，卸载应用时随手就能删干净。
+              </p>
+              <p className="text-mut2">预计下载体积约 0.5–1.5 GB，视网络情况需要几分钟到十几分钟。</p>
+            </>
+          )}
         </div>
 
         {/* S12 (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
-           §C Q8/L1, worker A3 + B2) — no branching needed here for
-           parakeet: this step "accommodates" the row simply by
-           construction, on EITHER side of B2's own availability flip.
-           Pre-flip, ModelPicker.tsx's own `available === false` gating
-           hid the row entirely — `chosen`/`model` above could never
-           resolve to a click target this picker never rendered. Post-
-           flip (worker B2, §E — the parakeet install + backend lane
-           cleared its live merge gates), modelCatalog.ts's own entry
-           reads `available: true`, so the SAME ModelPicker renders the
-           row, still independently gated on mlxOnly/mlxCaps (worker A3,
-           unchanged by the flip) — selectable on supported Apple
-           Silicon, disabled-with-reason otherwise. Zero further change
-           to this file either way. */}
-        <ModelPicker value={model} onChange={setModel} />
+           §C Q8/L1, worker A3 + B2) — ModelPicker.tsx itself needs no
+           branching for parakeet: it's gated independently on mlxOnly/
+           mlxCaps (worker A3) — selectable on supported Apple Silicon,
+           disabled-with-reason otherwise; §F FB10 additionally hides any
+           DEFINITIVELY-unsupported mlx row here specifically (product
+           default, veto-listed §7.7 — see hideDefinitivelyUnsupported's
+           own doc comment on ModelPicker.tsx), so a first-run user on
+           non-Apple-Silicon never sees an unreachable row at all. */}
+        <ModelPicker value={model} onChange={setModel} hideDefinitivelyUnsupported />
 
         {/* zh-en guidance (blueprint decision A, verbatim) — honest,
            no overselling: Whisper's own ~30s-per-window language
-           detection is stated plainly, right where the pick is made. */}
-        <div className="space-y-1.5 text-xs leading-[1.7] text-mut2">
-          <p>Whisper 每约 30 秒判定一种语言，句内中英混说无法做到完美；模型只负责转录，术语识别与中文注释是上层能力。</p>
-          <p>Apple Silicon 实时→medium；上传录音→large-v3；Win+NVIDIA→large-v3；无独显→small/turbo；英文为主偶尔中文→turbo；中英混说重→large-v3（turbo 在 CJK 上更弱）.</p>
-        </div>
+           detection is stated plainly, right where the pick is made.
+           S12b FB1-copy: this guidance is whisper-model-specific
+           (language-detection cadence + a whisper-only model-choice
+           matrix) — meaningless, and actively misleading, under a
+           parakeet selection, so it's hidden rather than reworded (no
+           NEW copy needed for the mlx branch — honest by omission). */}
+        {!chosenIsMlx && (
+          <div className="space-y-1.5 text-xs leading-[1.7] text-mut2">
+            <p>Whisper 每约 30 秒判定一种语言，句内中英混说无法做到完美；模型只负责转录，术语识别与中文注释是上层能力。</p>
+            <p>Apple Silicon 实时→medium；上传录音→large-v3；Win+NVIDIA→large-v3；无独显→small/turbo；英文为主偶尔中文→turbo；中英混说重→large-v3（turbo 在 CJK 上更弱）.</p>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2 pt-1">
           <button
