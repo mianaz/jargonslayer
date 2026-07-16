@@ -188,7 +188,7 @@ describe("DesktopWizard — state-driven rendering", () => {
     // (always-rendered) catalog ROW text legitimately contains "MLX 本机
     //加速" regardless of what's currently selected; what must NOT leak
     // is the SUMMARY paragraph's own parakeet-branch sentence.
-    expect(consent.textContent).not.toContain("Apple 芯片本地加速环境（MLX 运行环境）");
+    expect(consent.textContent).not.toContain("MLX 运行环境（Apple 芯片加速）");
     expect(consent.textContent).not.toContain("仅支持 Apple 芯片（M 系列）。");
   });
 

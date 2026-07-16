@@ -280,7 +280,7 @@ function ConsentScreen({
             // size — never re-derived/guessed here.
             <>
               <p>
-                JargonSlayer 会在本机装一份独立的 Apple 芯片本地加速环境（MLX 运行环境）和一个英文识别模型（parakeet），全部安装在应用自己的数据目录下——不碰系统
+                JargonSlayer 会在本机装一份独立的 MLX 运行环境（Apple 芯片加速）和一个英文识别模型（parakeet），全部安装在应用自己的数据目录下——不碰系统
                 Python，卸载应用时随手就能删干净。仅支持 Apple 芯片（M 系列）。
               </p>
               <p className="text-mut2">预计下载体积约 2.5GB（含约 1GB MLX 运行环境，首次安装），视网络情况需要几分钟到十几分钟。</p>

@@ -655,7 +655,7 @@ describe("SettingsDialog (desktop) — S12a mlx-install task progress + gating (
         t1: {
           id: "t1",
           kind: "mlx-install",
-          label: "安装 MLX 环境",
+          label: "安装 MLX 运行环境",
           stage: "",
           status: "running",
           createdAt: 0,

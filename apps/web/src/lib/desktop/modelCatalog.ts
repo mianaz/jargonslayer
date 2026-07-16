@@ -116,7 +116,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     label: "英文加速 · Apple 芯片 · 约 2.5 GB",
     size: "~2.5GB",
     macSpeedHint: "仅 Apple 芯片（M 系列）可用，MLX 本机加速",
-    qualityHint: "英文识别更快；中英混说效果待验证（M1 探针）",
+    qualityHint: "英文识别更快；中英混说效果待验证",
     recommended: false,
     mlxOnly: true,
     available: true,

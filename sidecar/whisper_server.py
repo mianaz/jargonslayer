@@ -1664,7 +1664,7 @@ class ParakeetMlxServer:
                         "type": "diar_status",
                         "state": "unavailable",
                         "detail": (
-                            "Apple 芯片本地转录暂不支持说话人分离 / speaker "
+                            "Apple 芯片本地转录暂不支持实时说话人分离 / speaker "
                             "diarization is not yet supported for the "
                             "Apple-Silicon local backend"
                         ),

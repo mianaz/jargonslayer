@@ -24,7 +24,7 @@ export const KIND_LABEL: Record<TaskState["kind"], string> = {
   "model-download": "下载模型",
   "diar-install": "安装说话人分离",
   "os-speech-asset": "下载系统识别模型",
-  "mlx-install": "安装 MLX 环境",
+  "mlx-install": "安装 MLX 运行环境",
 };
 
 export interface TaskTrayProps {
