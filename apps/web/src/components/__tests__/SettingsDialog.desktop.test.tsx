@@ -545,3 +545,148 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     expect(container!.textContent).not.toContain("需先配置 HF Token");
   });
 });
+
+// ---------------------------------------------------------------
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Provision state machine, worker A3) — mlx-install task progress is
+// DISPLAY-ONLY wiring here (see installingMlx's own doc comment in
+// SettingsDialog.tsx): worker A2's provisionMachine.ts/bootstrap.ts own
+// the actual "mlx-install" task emission (as part of a parakeet-family
+// model's two-phase provision), so this suite drives the registry
+// DIRECTLY via useTasks.setState — mirroring the F7 describe block
+// above's own "managed" seed + initDesktop/fetchSidecarHealth mocking,
+// reusing its makeFakeHandle()/FAKE_PATHS/diarSeedSettings.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog (desktop) — S12a mlx-install task progress + gating (§C Provision state machine, worker A3)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: diarSeedSettings(), hydrated: true });
+    mockInitDesktop.mockReset();
+    mockFetchSidecarHealth.mockReset().mockResolvedValue({
+      ok: true,
+      diarization_installed: true,
+      diarization_ready: true,
+      diarization_error: null,
+    });
+    mockProbeSidecar.mockReset().mockResolvedValue({ up: true });
+    mockProbeAudiocapCaps.mockClear();
+    const { handle } = makeFakeHandle();
+    mockInitDesktop.mockResolvedValue(handle);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useTasks.setState({ tasks: {} });
+    vi.unstubAllGlobals();
+  });
+
+  async function flushUntil(check: () => boolean, maxTicks = 50): Promise<void> {
+    for (let i = 0; i < maxTicks; i++) {
+      if (check()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    if (!check()) throw new Error("flushUntil: condition never became true");
+  }
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function seedRunningMlxInstall() {
+    useTasks.setState({
+      tasks: {
+        t1: {
+          id: "t1",
+          kind: "mlx-install",
+          label: "安装 MLX 环境",
+          stage: "",
+          status: "running",
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      },
+    });
+  }
+
+  it("no running mlx-install task: no MLX hint renders, and 更换模型/重新运行安装向导 are unaffected by it", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    expect(container!.textContent).not.toContain("正在安装 MLX 运行环境");
+    expect(findButtonContaining("更换模型").disabled).toBe(false);
+    expect(findButtonContaining("重新运行安装向导").disabled).toBe(false);
+  });
+
+  it("a running mlx-install task shows the 后台任务 hint and disables 更换模型/重新运行安装向导 (same mutual-exclusion set as switchingModel/installingDiarization, S4 review Finding 1c)", async () => {
+    seedRunningMlxInstall();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    expect(container!.textContent).toContain("正在安装 MLX 运行环境，进度见右下角「后台任务」");
+    expect(findButtonContaining("更换模型").disabled).toBe(true);
+    expect(findButtonContaining("重新运行安装向导").disabled).toBe(true);
+  });
+
+  it("a running mlx-install task also disables 说话人分离's own 安装扩展 button (joins the SAME mutual-exclusion set)", async () => {
+    mockFetchSidecarHealth.mockResolvedValue({
+      ok: true,
+      diarization_installed: false,
+      diarization_ready: false,
+      diarization_error: null,
+    });
+    seedRunningMlxInstall();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await act(async () => {
+      findNavButton("说话人分离").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushUntil(() => container!.textContent?.includes("未安装") ?? false);
+
+    expect(findButtonContaining("安装扩展").disabled).toBe(true);
+  });
+
+  it("the mlx-install hint clears and 更换模型/重新运行安装向导 re-enable once the task leaves the running state", async () => {
+    seedRunningMlxInstall();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    expect(container!.textContent).toContain("正在安装 MLX 运行环境");
+
+    await act(async () => {
+      useTasks.setState((s) => ({ tasks: { ...s.tasks, t1: { ...s.tasks.t1, status: "done" } } }));
+    });
+
+    expect(container!.textContent).not.toContain("正在安装 MLX 运行环境");
+    expect(findButtonContaining("更换模型").disabled).toBe(false);
+    expect(findButtonContaining("重新运行安装向导").disabled).toBe(false);
+  });
+});

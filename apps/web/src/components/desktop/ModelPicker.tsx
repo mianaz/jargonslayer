@@ -23,16 +23,141 @@
 // lib/a11y.ts helper every other custom control in this codebase uses
 // (CardsPanel/HistoryDrawer/TaskTray/ToggleSwitch), not a new
 // implementation.
-
+//
+// S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+// Gating F13 + worker A3) — two additive layers, both INERT in
+// production today because modelCatalog.ts's parakeet stub is still
+// `available: false` (worker B2 flips that later, §C L1):
+//   1. `available === false` entries are HIDDEN from the picker
+//      entirely (never rendered as a row at all) — this is the ONLY
+//      reason the row-count/each-row tests below now filter
+//      MODEL_CATALOG first, instead of iterating it raw.
+//   2. Any `mlxOnly` entry that DOES render (an `available: true` one —
+//      today only ever a test-catalog fixture, via vi.mock, per this
+//      file's own test suite) is gated a SECOND way, against
+//      mlxCaps.ts's fail-CLOSED probe: unsupported/errored → real
+//      `disabled` + `aria-disabled` + a visible reason line; a probe
+//      ERROR additionally grows a 重试 affordance (mlxGateFor below is
+//      the one place both layers combine). Every non-mlxOnly row (every
+//      SHIPPED entry today) is entirely unaffected — mlxGateFor is a
+//      structural no-op for it, same "no-op for every other value"
+//      shape as osspeechCaps.ts's own isOsSpeechFloorLocked.
+import { useEffect, useState } from "react";
+import { ArrowClockwise, WarningCircle } from "@phosphor-icons/react";
 import { handleButtonKeyDown } from "@/lib/a11y";
-import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
+import { MODEL_CATALOG, type ModelCatalogEntry } from "@/lib/desktop/modelCatalog";
+import {
+  getMlxCapsSnapshot,
+  probeMlxCaps,
+  refreshMlxCaps,
+  subscribeMlxCaps,
+  type MlxCapabilities,
+} from "@/lib/desktop/mlxCaps";
 
 export interface ModelPickerProps {
   value: string;
   onChange: (model: string) => void;
 }
 
+// §C Gating F13's own fallback copy, verbatim — used whenever a
+// definitively-unsupported probe result carries no `reason` of its own
+// (mlxCaps.ts's wire shape has `reason` as optional).
+const MLX_UNSUPPORTED_REASON_FALLBACK = "需要 Apple 芯片（M 系列），macOS 14 或更高";
+
+interface MlxGate {
+  disabled: boolean;
+  /** Visible reason line — null renders no reason chrome at all (the
+   *  not-yet-resolved/non-mlxOnly cases). */
+  reason: string | null;
+  /** Only true on a genuine probe ERROR (fail-closed) — never on a
+   *  DEFINITIVE unsupported result, where retrying can't change the
+   *  answer. See mlxGateFor's own doc comment for how the two are told
+   *  apart without mlxCaps.ts exposing an explicit errored flag. */
+  showRetry: boolean;
+}
+
+const MLX_SUPPORTED_GATE: MlxGate = { disabled: false, reason: null, showRetry: false };
+const MLX_LOADING_GATE: MlxGate = { disabled: true, reason: null, showRetry: false };
+const MLX_NOT_GATED: MlxGate = { disabled: false, reason: null, showRetry: false };
+
+/** Combines an entry's own `mlxOnly` flag with the caller's current
+ *  mlxCaps probe state into this row's gate. Structural no-op (never
+ *  disabled) for every non-mlxOnly entry — every catalog entry shipped
+ *  today.
+ *
+ *  Distinguishing "errored" from "definitively unsupported" (spec'd
+ *  separately: only the former grows a 重试 affordance) leans on
+ *  mlxCaps.ts's own DOCUMENTED cache contract (its header comment: "A
+ *  definitive... response... IS cached and trusted either way — only an
+ *  actual probe ERROR is deliberately left uncached") rather than on any
+ *  private constant of that module: `resolved` is whatever this
+ *  specific probe/refresh call settled to; if it's the SAME object
+ *  `getMlxCapsSnapshot()` now returns, this resolution was cached, i.e.
+ *  a genuine (successful) answer — anything else means it hit the
+ *  fail-closed, never-cached error path. */
+function mlxGateFor(entry: ModelCatalogEntry, resolved: MlxCapabilities | null, errored: boolean): MlxGate {
+  if (!entry.mlxOnly) return MLX_NOT_GATED;
+  if (errored) {
+    return { disabled: true, reason: resolved?.reason || MLX_UNSUPPORTED_REASON_FALLBACK, showRetry: true };
+  }
+  if (resolved === null) return MLX_LOADING_GATE; // probe still in flight — fail-closed default
+  if (!resolved.mlxSupported) {
+    return { disabled: true, reason: resolved.reason || MLX_UNSUPPORTED_REASON_FALLBACK, showRetry: false };
+  }
+  return MLX_SUPPORTED_GATE;
+}
+
+/** Wires mlxCaps.ts's framework-agnostic probe/cache (getMlxCapsSnapshot/
+ *  subscribeMlxCaps/probeMlxCaps/refreshMlxCaps) into local component
+ *  state — that module deliberately owns no hook of its own (see its own
+ *  header doc), mirroring how every OTHER caps module in this codebase
+ *  (osspeechCaps.ts's useOsSpeechCaps) resolves-on-mount +
+ *  subscribes-for-later-resolutions. `errored` is derived alongside
+ *  `resolved` on every settle (probe AND retry) — see mlxGateFor's own
+ *  doc comment for exactly how. */
+function useMlxCaps(): { resolved: MlxCapabilities | null; errored: boolean; retry: () => void } {
+  const [resolved, setResolved] = useState<MlxCapabilities | null>(() => getMlxCapsSnapshot());
+  const [errored, setErrored] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const unsubscribe = subscribeMlxCaps(() => {
+      if (cancelled) return;
+      const snapshot = getMlxCapsSnapshot();
+      if (snapshot) {
+        setResolved(snapshot);
+        setErrored(false);
+      }
+    });
+    void probeMlxCaps().then((result) => {
+      if (cancelled) return;
+      setResolved(result);
+      setErrored(getMlxCapsSnapshot() !== result);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+
+  const retry = () => {
+    void refreshMlxCaps().then((result: MlxCapabilities) => {
+      setResolved(result);
+      setErrored(getMlxCapsSnapshot() !== result);
+    });
+  };
+
+  return { resolved, errored, retry };
+}
+
 export default function ModelPicker({ value, onChange }: ModelPickerProps) {
+  const { resolved: mlxCaps, errored: mlxErrored, retry: retryMlxCaps } = useMlxCaps();
+  // S12a (§C L1): worker B2's own flip point — an entry stays entirely
+  // OFF the picker until its own `available` reads true (undefined reads
+  // as available, matching modelCatalog.ts's own doc on every
+  // pre-existing entry being left unannotated).
+  const visibleEntries = MODEL_CATALOG.filter((entry) => entry.available !== false);
+
   return (
     <div
       role="radiogroup"
@@ -40,38 +165,66 @@ export default function ModelPicker({ value, onChange }: ModelPickerProps) {
       data-testid="model-picker"
       className="space-y-1 border border-edge bg-panel2 p-1 font-mono"
     >
-      {MODEL_CATALOG.map((entry) => {
+      {visibleEntries.map((entry) => {
         const selected = entry.id === value;
-        const select = () => onChange(entry.id);
+        const gate = mlxGateFor(entry, mlxCaps, mlxErrored);
+        const select = () => {
+          if (gate.disabled) return;
+          onChange(entry.id);
+        };
         return (
-          <button
-            key={entry.id}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            data-testid={`model-option-${entry.id}`}
-            onClick={select}
-            onKeyDown={(e) => handleButtonKeyDown(e, select)}
-            className={`flex w-full items-center justify-between gap-3 border p-2.5 text-left text-sm transition-colors ${
-              selected ? "border-act bg-panel3 text-fg" : "border-edge text-fg hover:bg-panel3"
-            }`}
-          >
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="font-medium">{entry.id}</span>
-                <span className="text-xs text-mut">{entry.label}</span>
-                {entry.recommended && (
-                  <span className="shrink-0 border border-lab-green/30 px-1.5 py-0 text-[10px] text-lab-green">
-                    推荐
-                  </span>
+          <div key={entry.id} className="space-y-1">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-disabled={gate.disabled || undefined}
+              disabled={gate.disabled}
+              data-testid={`model-option-${entry.id}`}
+              title={gate.reason ?? undefined}
+              onClick={select}
+              onKeyDown={(e) => handleButtonKeyDown(e, select)}
+              className={`flex w-full items-center justify-between gap-3 border p-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                selected ? "border-act bg-panel3 text-fg" : "border-edge text-fg hover:bg-panel3"
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium">{entry.id}</span>
+                  <span className="text-xs text-mut">{entry.label}</span>
+                  {entry.recommended && (
+                    <span className="shrink-0 border border-lab-green/30 px-1.5 py-0 text-[10px] text-lab-green">
+                      推荐
+                    </span>
+                  )}
+                </div>
+                <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
+                  {entry.macSpeedHint} · {entry.qualityHint}
+                </div>
+                {gate.reason && (
+                  <div className="mt-1 flex items-center gap-1 text-[11px] text-warn-soft">
+                    <WarningCircle size={11} weight="fill" className="shrink-0" aria-hidden />
+                    {gate.reason}
+                  </div>
                 )}
               </div>
-              <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
-                {entry.macSpeedHint} · {entry.qualityHint}
-              </div>
-            </div>
-            <span className="shrink-0 text-xs text-mut">{entry.size}</span>
-          </button>
+              <span className="shrink-0 text-xs text-mut">{entry.size}</span>
+            </button>
+            {gate.showRetry && (
+              <button
+                type="button"
+                data-testid={`model-option-${entry.id}-retry`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  retryMlxCaps();
+                }}
+                className="btn-tactile ml-2.5 flex items-center gap-1 text-[11px] text-mut hover:text-fg"
+              >
+                <ArrowClockwise size={11} weight="regular" aria-hidden />
+                重试
+              </button>
+            )}
+          </div>
         );
       })}
     </div>

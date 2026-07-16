@@ -267,6 +267,17 @@ function ConsentScreen({
           <p className="text-mut2">预计下载体积约 0.5–1.5 GB，视网络情况需要几分钟到十几分钟。</p>
         </div>
 
+        {/* S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md,
+           §C Q8, worker A3) — no branching needed here for the parakeet
+           stub: ModelPicker.tsx's own gating already hides any catalog
+           entry with `available === false` (modelCatalog.ts's own
+           parakeet-tdt-0.6b-v3 stub reads that way until worker B2
+           flips it), so this step "accommodates" the row simply by
+           construction — `chosen`/`model` above can never resolve to a
+           row this picker never rendered a click target for in the
+           first place. Once B2 flips `available: true`, the SAME
+           ModelPicker (still gated on mlxOnly/mlxCaps) starts offering
+           it here with zero further change to this file. */}
         <ModelPicker value={model} onChange={setModel} />
 
         {/* zh-en guidance (blueprint decision A, verbatim) — honest,

@@ -156,6 +156,27 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(onBeginProvision).toHaveBeenCalledWith("large-v3");
   });
 
+  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C Q8,
+  // worker A3) — the wizard's own model-picker step "accommodates" the
+  // parakeet stub simply by never rendering it: this is an INTEGRATION
+  // check (real MODEL_CATALOG, real embedded <ModelPicker>, not
+  // ModelPicker's own mocked-catalog unit tests) that the wizard step
+  // never leaks the still-`available:false` row through, and can never
+  // land it as the eventual onBeginProvision(model) argument either.
+  it("WIZARD_CONSENT_REQUIRED: the embedded <ModelPicker> never renders the still-unavailable parakeet-tdt-0.6b-v3 stub (§C L1 — worker B2 flips it later)", async () => {
+    mockOsSpeechCaps = { supported: false };
+    const onBeginProvision = vi.fn();
+    await renderWizard({ phase: "WIZARD_CONSENT_REQUIRED" }, [], { onBeginProvision });
+
+    const parakeet = MODEL_CATALOG.find((m) => m.id === "parakeet-tdt-0.6b-v3");
+    expect(parakeet?.available).toBe(false); // sanity: the stub really is still gated
+    expect(container!.querySelector('[data-testid="model-option-parakeet-tdt-0.6b-v3"]')).toBeNull();
+
+    const visibleCount = MODEL_CATALOG.filter((m) => m.available !== false).length;
+    expect(container!.querySelectorAll('[role="radio"]').length).toBe(visibleCount);
+    expect(container!.querySelectorAll('[role="radio"]').length).toBeLessThan(MODEL_CATALOG.length);
+  });
+
   // S11 osspeech blueprint (§3 Worker D, §A4) — EngineChoiceScreen
   // gating: it becomes the WIZARD_CONSENT_REQUIRED screen (replacing
   // ConsentScreen) IFF osspeech caps report supported; osspeech choice

@@ -717,6 +717,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const switchingModel = useTasks(
     (s) => switchModelTaskId !== null && s.tasks[switchModelTaskId]?.status === "running",
   );
+  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+  // Provision state machine, worker A3) — display-only wiring for the
+  // "mlx-install" task kind (A2's provisionMachine.ts/bootstrap.ts own
+  // its actual emission, as part of picking a parakeet-family model's
+  // two-phase provision; see modelCatalog.ts's own mlxOnly doc). Unlike
+  // switchingModel/installingDiarization above, this dialog never
+  // dispatches an mlx-install task itself (there is no local
+  // "mlxInstallTaskId" to key off, and no call site to attach one to —
+  // handleSwitchModel just calls trackSwitchModel and moves on, same
+  // "TaskCenterDrawer/TaskTray own progress from here on" posture that
+  // function's own doc comment already states), so this reads the
+  // registry by KIND instead of a specific id — true whenever ANY
+  // mlx-install task is running, regardless of which call site started
+  // it. A primitive-returning selector (registry.ts's own INVARIANT
+  // doc), so no useShallow wrapping is needed here.
+  const installingMlx = useTasks((s) => Object.values(s.tasks).some((t) => t.kind === "mlx-install" && t.status === "running"));
 
   // Settings redesign: which nav-rail category the content pane shows.
   // Local-only (NOT the zustand store, not part of draft) — pure
@@ -1906,13 +1922,30 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       <button
                         type="button"
                         onClick={() => (modelPickerOpen ? setModelPickerOpen(false) : handleOpenModelPicker())}
-                        disabled={meetingActive || switchingModel || reprovisioningDesktop || installingDiarization}
+                        disabled={meetingActive || switchingModel || reprovisioningDesktop || installingDiarization || installingMlx}
                         title={meetingActive ? "会议进行中，结束后可切换模型" : undefined}
                         className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         更换模型
                       </button>
                     </div>
+
+                    {/* S12a (§C Provision state machine) — mlx-install's
+                       own progress lives in TaskCenterDrawer/TaskTray
+                       exactly like model-download/diar-install's does
+                       (see installingMlx's own doc comment above); this
+                       is only the same "安装中，进度见右下角「后台任务」"
+                       pointer 安装扩展 already shows below, so a parakeet
+                       pick's Phase 1 (MLX venv) isn't silently invisible
+                       right here while it blocks 更换模型/下载并切换/
+                       重新运行安装向导/安装扩展 above via the SAME mutual-
+                       exclusion set (S4 review pair Finding 1c). zh copy
+                       new to this sprint — 4.6 pass, not polished here
+                       (see modelCatalog.ts's own doc on the same
+                       convention). */}
+                    {installingMlx && (
+                      <div className="text-xs leading-[1.7] text-mut2">正在安装 MLX 运行环境，进度见右下角「后台任务」</div>
+                    )}
 
                     {modelPickerOpen && (
                       <div className="space-y-2 border border-edge bg-panel2 p-3">
@@ -1921,7 +1954,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           <button
                             type="button"
                             onClick={() => void handleSwitchModel()}
-                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive || installingDiarization}
+                            disabled={switchingModel || pickedModel === installedModel || reprovisioningDesktop || meetingActive || installingDiarization || installingMlx}
                             className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             {switchingModel ? "处理中…" : "下载并切换"}
@@ -1941,7 +1974,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <button
                       type="button"
                       onClick={() => void handleReprovisionDesktop()}
-                      disabled={reprovisioningDesktop || switchingModel || meetingActive || installingDiarization}
+                      disabled={reprovisioningDesktop || switchingModel || meetingActive || installingDiarization || installingMlx}
                       title={meetingActive ? "会议进行中，结束后可重新运行安装向导" : undefined}
                       className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                     >
@@ -2058,7 +2091,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       type="button"
                       onClick={() => void handleInstallDiarization()}
                       disabled={
-                        installingDiarization || reprovisioningDesktop || switchingModel || meetingActive
+                        installingDiarization || reprovisioningDesktop || switchingModel || meetingActive || installingMlx
                       }
                       title={meetingActive ? "会议进行中，结束后可安装说话人分离扩展" : undefined}
                       className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
