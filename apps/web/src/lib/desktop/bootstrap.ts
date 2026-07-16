@@ -305,6 +305,21 @@ const EXTERNAL_SIDECAR_MODE_MESSAGE = "当前为外部管理模式，此操作�
 const defaultNow = (): string => new Date().toISOString();
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** S12a (v0.4.4, §C Q6/HF-token) — the `{hfToken}` fragment to spread
+ *  into performSwitchModel's own direct start_server invoke() call
+ *  below (that call isn't a provisionMachine Effect, so it never goes
+ *  through provisionRunner.ts's runEffects/hfTokenArg at all). `{}`
+ *  (nothing to spread) when `deps.readHfToken` is absent OR returns an
+ *  empty/whitespace-only string, `{hfToken: <trimmed>}` otherwise — an
+ *  independently-defined copy of provisionRunner.ts's own identically-
+ *  shaped, identically-named helper, same "small dependency-shaped
+ *  logic stays a private per-file copy" precedent as defaultNow/
+ *  defaultSleep immediately above. */
+function hfTokenArg(deps: BootstrapDeps): { hfToken: string } | Record<string, never> {
+  const token = deps.readHfToken?.().trim();
+  return token ? { hfToken: token } : {};
+}
+
 /** POST {httpBase}/download-model {model} -> 202 {job_id} (S4 chunk 1's
  *  sidecar endpoint) — httpBaseFromWs(DEFAULT_SETTINGS.whisperUrl) is
  *  the SAME managed-mode derivation runnerDeps.settings/probeSidecar
@@ -317,7 +332,23 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => set
  *  as a general fetch replacement. Error-body handling mirrors
  *  upload.ts's ingestUrl (try the JSON body's own `error` field, fall
  *  back to a generic zh message) — not reused directly since it's a
- *  different endpoint/body shape, just the same shape of convention. */
+ *  different endpoint/body shape, just the same shape of convention.
+ *
+ *  S12a Q6 INVARIANT (accepted limitation, not a bug): this job runs
+ *  INSIDE whichever sidecar process is CURRENTLY listening on :8766 —
+ *  the ALREADY-spawned server's own env, set once at ITS OWN
+ *  start_server/prewarm_model call. A server started before the user
+ *  configured Settings.hfToken therefore will NOT see HF_TOKEN for
+ *  THIS download job even if the token is configured moments before
+ *  clicking 「下载并切换」— only that server's NEXT restart (this same
+ *  switch's own start_server call further down, or any later
+ *  prewarm/switch) picks up a just-configured token, since `hfToken` is
+ *  read fresh (BootstrapDeps.readHfToken) at THAT call, not at job-post
+ *  time. By design: fixing this would mean either re-spawning the
+ *  server before every download job (defeats the point of an
+ *  already-running sidecar) or threading the token through the running
+ *  process at runtime (no such Rust command exists) — out of scope for
+ *  this task. */
 async function postDownloadModel(model: string): Promise<string> {
   const base = httpBaseFromWs(DEFAULT_SETTINGS.whisperUrl);
   const res = await fetch(`${base}/download-model`, {
@@ -788,6 +819,26 @@ export interface BootstrapDeps {
    *  already-tested wiring untouched rather than growing its blast
    *  radius to cover a second, independent caller. */
   sleep?: (ms: number) => Promise<void>;
+  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+   *  Q6/§3.5 HF-token) — a LIVE read of the user's configured
+   *  Settings.hfToken, threaded into runnerDeps below (provisionRunner.
+   *  ts's own RunnerDeps.readHfToken, for the prewarmModel/startServer
+   *  effects) AND read directly by performSwitchModel's own restart
+   *  section further down (a direct invoke() call, not a
+   *  provisionMachine Effect at all). Injected rather than imported for
+   *  the SAME reason isMeetingActive above is — see that field's own
+   *  doc comment and BootstrapDeps.setTransport's. Deliberately
+   *  SYNCHRONOUS (mirrors isMeetingActive exactly, not the three
+   *  awaited-once-up-front accessors above it): a prewarm/start/switch
+   *  call can happen minutes into an already-running session, and the
+   *  user may configure Settings.hfToken AFTER bootstrap first ran —
+   *  see resolveReadHfToken below for the one real implementation,
+   *  which resolves the async store-hydration dance ONCE and hands
+   *  back a plain sync closure reading whatever is CURRENTLY
+   *  persisted. Absent (every pre-S12a test, and any caller that
+   *  hasn't wired it) means "no token" — both invoke payloads simply
+   *  omit the `hfToken` key, byte-identical to before this task. */
+  readHfToken?: () => string;
 }
 
 /** The testable core — see this file's header comment. Resolves once
@@ -895,6 +946,10 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     },
     probeSidecarFn: deps.probeSidecarFn,
     now: deps.now,
+    // S12a Q6: threaded straight through — see BootstrapDeps.
+    // readHfToken's own doc comment above and RunnerDeps.readHfToken's
+    // (provisionRunner.ts).
+    readHfToken: deps.readHfToken,
   };
   const probe = deps.probeSidecarFn ?? probeSidecar;
   const restartClock = deps.restartClock ?? Date.now;
@@ -1448,7 +1503,16 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       try {
         await stopServer(deps.invoke);
         if (generation !== myGeneration) return;
-        await deps.invoke<StartServerResult>("start_server", { model });
+        // S12a Q6: `hfToken` rides alongside `model`, same as
+        // provisionRunner.ts's own startServer effect (see hfTokenArg's
+        // own doc comment above) — this restart is the switch flow's
+        // OWN direct start_server call, not a provisionMachine Effect,
+        // so it needs its own copy of the same passthrough. THIS call
+        // (unlike the download job just above) reads the token fresh
+        // and DOES pick up a just-configured one — see
+        // postDownloadModel's own doc comment for the accepted
+        // limitation this asymmetry creates.
+        await deps.invoke<StartServerResult>("start_server", { model, ...hfTokenArg(deps) });
         if (generation !== myGeneration) return;
       } catch (error) {
         const message = describeError(error);
@@ -1923,12 +1987,39 @@ async function resolveIsMeetingActive(): Promise<() => boolean> {
   };
 }
 
+/** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+ *  Q6/§3.5 HF-token) — the real BootstrapDeps.readHfToken
+ *  implementation. Mirrors resolveIsMeetingActive immediately above
+ *  exactly (same dynamic-import + hydration-gate-ONCE + "hand back a
+ *  plain SYNCHRONOUS closure over the already-resolved `useApp`
+ *  reference" shape, same rationale): a prewarm_model/start_server call
+ *  can happen minutes into an already-running session (a model switch,
+ *  a crash-restart), and the user may configure Settings.hfToken AFTER
+ *  bootstrap first ran — the returned closure re-reads
+ *  `useApp.getState().settings.hfToken` fresh on every call, never a
+ *  value snapshotted once at bootstrap start. */
+async function resolveReadHfToken(): Promise<() => string> {
+  const { useApp } = await import("../store");
+  if (!useApp.getState().hydrated) {
+    await new Promise<void>((resolve) => {
+      const unsubscribe = useApp.subscribe((state) => {
+        if (state.hydrated) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+  return () => useApp.getState().settings.hfToken;
+}
+
 async function bootstrapWithRealDeps(): Promise<DesktopBootstrapHandle> {
-  const [tauriFetch, invoke, listen, isMeetingActive] = await Promise.all([
+  const [tauriFetch, invoke, listen, isMeetingActive, readHfToken] = await Promise.all([
     getTauriFetch(),
     getInvoke(),
     getListen(),
     resolveIsMeetingActive(),
+    resolveReadHfToken(),
   ]);
   return bootstrapDesktop({
     invoke,
@@ -1940,6 +2031,7 @@ async function bootstrapWithRealDeps(): Promise<DesktopBootstrapHandle> {
     getDesktopEngine: getPersistedEngine,
     persistDesktopModel: persistDesktopModelToStore,
     isMeetingActive,
+    readHfToken,
   });
 }
 

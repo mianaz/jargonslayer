@@ -19,11 +19,14 @@
 //   readMarker   -> invoke("read_provision_marker")            -> string | null
 //   writeMarker  -> invoke("write_provision_marker", { json }) -> void
 //   runUv        -> invoke("run_uv", { args, env })             -> ProcessResult, uv://log-streamed
-//   prewarmModel -> invoke("prewarm_model", { model })          -> ProcessResult, uv://log-
+//   prewarmModel -> invoke("prewarm_model", { model, hfToken? }) -> ProcessResult, uv://log-
 //                   AND prewarm://progress-streamed (S4 chunk 2's
 //                   --download-only progress line -> {downloaded,total}
-//                   events; see withDownloadProgress)
-//   startServer  -> invoke("start_server", { model })           -> StartServerResult
+//                   events; see withDownloadProgress). `hfToken` (S12a
+//                   Q6) rides along only when RunnerDeps.readHfToken
+//                   resolves a non-empty token — see hfTokenArg.
+//   startServer  -> invoke("start_server", { model, hfToken? }) -> StartServerResult.
+//                   Same S12a Q6 `hfToken` passthrough as prewarmModel.
 //   stopServer   -> invoke("stop_server")                       -> void (Finding 7: the
 //                   LEADING effect on a STARTING/POLLING_HEALTH retry
 //                   — see provisionMachine.ts's handleRetry)
@@ -136,6 +139,43 @@ export interface RunnerDeps {
    *  hermetic, instant unit tests (a recorded fake never actually
    *  waits). */
   sleep?: (ms: number) => Promise<void>;
+  /** S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+   *  Q6/§3.5 HF-token) — a LIVE read of the user's configured
+   *  Settings.hfToken, threaded into the prewarmModel/startServer
+   *  effects' own invoke payloads below (see runStepEffect) so Rust's
+   *  `prewarm_model`/`start_server` can set `HF_TOKEN` in the download/
+   *  server spawn env (server.rs's `hf_extra_env`) — de-risking the
+   *  ~2.5GB parakeet first-run download against anonymous-HF
+   *  throttling (Q6). Deliberately a plain SYNCHRONOUS getter (this
+   *  file's own RunnerDeps.settings is pinned to DEFAULT_SETTINGS —
+   *  see that field's own doc comment — so the token can never be read
+   *  from `deps.settings` itself), injected rather than imported so
+   *  this file stays store-agnostic (zero @tauri-apps/zustand imports
+   *  of its own, this file's header comment) — bootstrap.ts's
+   *  runnerDeps wires the real implementation, mirroring
+   *  resolveIsMeetingActive's own "resolve store hydration once, hand
+   *  back a synchronous closure" shape (bootstrap.ts). Absent (every
+   *  pre-S12a test, and any caller that hasn't wired it) means "no
+   *  token" — both invoke payloads simply omit the `hfToken` key
+   *  (Rust's `Option<String>` param treats a missing key as `None`,
+   *  same as an empty/whitespace-only token — see hfTokenArg below),
+   *  so every existing test's exact-payload assertions stay
+   *  byte-identical. */
+  readHfToken?: () => string;
+}
+
+/** Builds the `{hfToken}` fragment to spread into the prewarm_model/
+ *  start_server invoke payloads below — `{}` (nothing to spread) when
+ *  `deps.readHfToken` is absent OR returns an empty/whitespace-only
+ *  string, `{hfToken: <trimmed>}` otherwise. A local, unexported
+ *  helper — mirrors this file's own defaultNow/defaultSleep precedent
+ *  (small, swappable-dependency-shaped logic kept as a private copy
+ *  per file rather than cross-imported; bootstrap.ts's performSwitchModel
+ *  carries an identical, independently-defined copy for its own direct
+ *  start_server call, which isn't a provisionMachine Effect at all). */
+function hfTokenArg(deps: RunnerDeps): { hfToken: string } | Record<string, never> {
+  const token = deps.readHfToken?.().trim();
+  return token ? { hfToken: token } : {};
 }
 
 const noopLog: OnLog = () => {};
@@ -293,10 +333,13 @@ async function runStepEffect(
         // caught by this function's own try/catch below exactly like
         // any other invoke failure; no special-casing needed on this
         // side, it already carries the specific message through
-        // verbatim as STEP_ERROR.error.
+        // verbatim as STEP_ERROR.error. S12a Q6: `hfToken` rides
+        // alongside `model` (see hfTokenArg's own doc comment) — Rust's
+        // prewarm_model sets HF_TOKEN in the download spawn env only
+        // when this key is present and non-empty.
         const result = await withUvLog(deps, onLog, () =>
           withDownloadProgress(deps, onDownloadProgress, () =>
-            deps.invoke<ProcessResult>("prewarm_model", { model: effect.model }),
+            deps.invoke<ProcessResult>("prewarm_model", { model: effect.model, ...hfTokenArg(deps) }),
           ),
         );
         return processResultToEvent(step, result);
@@ -306,8 +349,12 @@ async function runStepEffect(
         // stdout/stderr go to whisper_server.log (server.rs's
         // start_server), not the uv://log event; StartServerResult
         // carries no exit code to interpret (the server is meant to
-        // keep running) — resolving at all IS success.
-        await deps.invoke<StartServerResult>("start_server", { model: effect.model });
+        // keep running) — resolving at all IS success. S12a Q6:
+        // `hfToken` rides alongside `model` (see hfTokenArg's own doc
+        // comment) — Rust's start_server sets HF_TOKEN in the
+        // long-lived sidecar spawn env only when this key is present
+        // and non-empty.
+        await deps.invoke<StartServerResult>("start_server", { model: effect.model, ...hfTokenArg(deps) });
         return { type: "STEP_OK", step };
       }
     }

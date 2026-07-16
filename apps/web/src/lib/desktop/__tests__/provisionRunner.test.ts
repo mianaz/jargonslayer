@@ -444,6 +444,63 @@ describe("runEffects — prewarmModel (DOWNLOAD_MODEL)", () => {
     expect(lines).toEqual([["stdout", "Downloading small model..."]]);
   });
 
+  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+  // Q6/§3.5 HF-token) — RunnerDeps.readHfToken's own passthrough.
+  describe("hfToken passthrough (§C Q6)", () => {
+    it("readHfToken returning a non-empty token adds hfToken to the invoke payload, trimmed", async () => {
+      const { invoke, calls } = makeFakeInvoke({ prewarm_model: () => ({ code: 0 }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = {
+        invoke,
+        listen,
+        settings: DEFAULT_SETTINGS,
+        readHfToken: () => "  hf_abc123  ",
+      };
+      await runEffects(
+        { phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" },
+        [{ kind: "prewarmModel", model: "small" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "prewarm_model", args: { model: "small", hfToken: "hf_abc123" } }]);
+    });
+
+    it("readHfToken returning an empty string omits the hfToken key entirely (Rust's Option<String> treats a missing key as None)", async () => {
+      const { invoke, calls } = makeFakeInvoke({ prewarm_model: () => ({ code: 0 }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, readHfToken: () => "" };
+      await runEffects(
+        { phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" },
+        [{ kind: "prewarmModel", model: "small" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "prewarm_model", args: { model: "small" } }]);
+    });
+
+    it("readHfToken returning a whitespace-only string ALSO omits the key", async () => {
+      const { invoke, calls } = makeFakeInvoke({ prewarm_model: () => ({ code: 0 }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, readHfToken: () => "   " };
+      await runEffects(
+        { phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" },
+        [{ kind: "prewarmModel", model: "small" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "prewarm_model", args: { model: "small" } }]);
+    });
+
+    it("no readHfToken dep at all (every pre-S12a caller) omits the key — byte-identical to before this task", async () => {
+      const { invoke, calls } = makeFakeInvoke({ prewarm_model: () => ({ code: 0 }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS };
+      await runEffects(
+        { phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" },
+        [{ kind: "prewarmModel", model: "small" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "prewarm_model", args: { model: "small" } }]);
+    });
+  });
+
   it("a non-zero exit code -> STEP_ERROR{retriable:true}", async () => {
     const { invoke } = makeFakeInvoke({ prewarm_model: () => ({ code: 137 }) });
     const { listen } = makeFakeListen();
@@ -531,6 +588,52 @@ describe("runEffects — startServer (STARTING), with and without a bundled writ
 
     expect(event).toEqual({ type: "STEP_OK", step: "STARTING" });
     expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium" } }]);
+  });
+
+  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+  // Q6/§3.5 HF-token) — RunnerDeps.readHfToken's own passthrough,
+  // mirrors the prewarmModel describe block's own coverage above.
+  describe("hfToken passthrough (§C Q6)", () => {
+    it("readHfToken returning a non-empty token adds hfToken to the invoke payload, trimmed", async () => {
+      const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = {
+        invoke,
+        listen,
+        settings: DEFAULT_SETTINGS,
+        readHfToken: () => "  hf_abc123  ",
+      };
+      await runEffects(
+        { phase: "STEP", step: "STARTING", status: "RUNNING" },
+        [{ kind: "startServer", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium", hfToken: "hf_abc123" } }]);
+    });
+
+    it("readHfToken returning an empty/whitespace-only string omits the hfToken key entirely", async () => {
+      const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, readHfToken: () => "   " };
+      await runEffects(
+        { phase: "STEP", step: "STARTING", status: "RUNNING" },
+        [{ kind: "startServer", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium" } }]);
+    });
+
+    it("no readHfToken dep at all omits the key — byte-identical to before this task", async () => {
+      const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS };
+      await runEffects(
+        { phase: "STEP", step: "STARTING", status: "RUNNING" },
+        [{ kind: "startServer", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium" } }]);
+    });
   });
 
   it("start_server never touches uv://log", async () => {

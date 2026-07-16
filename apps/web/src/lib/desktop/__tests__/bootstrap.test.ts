@@ -1711,6 +1711,92 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     expect(handle.currentSwitchModelProgress()).toBeNull();
   });
 
+  // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
+  // Q6/§3.5 HF-token) — performSwitchModel's own restart start_server
+  // call threads BootstrapDeps.readHfToken exactly like provisionRunner.
+  // ts's startServer effect does (provisionRunner.test.ts's own
+  // "hfToken passthrough" coverage) — this suite proves the SAME
+  // contract holds for the switch flow's direct (non-Effect) call.
+  describe("hfToken passthrough on the restart's start_server call (§C Q6)", () => {
+    function stubMediumDownload(): void {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (input: unknown) => {
+          const url = String(input);
+          if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-hf" }, 202);
+          if (url.includes("/jobs/job-hf")) return jsonResponse({ status: "done", progress: 1, error: null });
+          throw new Error(`unexpected fetch(${url})`);
+        }),
+      );
+    }
+
+    it("readHfToken returning a non-empty token adds hfToken to start_server's own invoke payload, trimmed", async () => {
+      stubMediumDownload();
+      let startServerArgs: Record<string, unknown> | undefined;
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        stop_server: () => undefined,
+        start_server: (args) => {
+          startServerArgs = args;
+          return { alreadyRunning: false };
+        },
+        write_provision_marker: () => undefined,
+      });
+      const deps = healthyDeps({ invoke, readHfToken: () => "  hf_abc123  " });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await handle.switchModel("medium");
+
+      expect(startServerArgs).toEqual({ model: "medium", hfToken: "hf_abc123" });
+    });
+
+    it("readHfToken returning an empty/whitespace-only string omits the hfToken key entirely", async () => {
+      stubMediumDownload();
+      let startServerArgs: Record<string, unknown> | undefined;
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        stop_server: () => undefined,
+        start_server: (args) => {
+          startServerArgs = args;
+          return { alreadyRunning: false };
+        },
+        write_provision_marker: () => undefined,
+      });
+      const deps = healthyDeps({ invoke, readHfToken: () => "   " });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await handle.switchModel("medium");
+
+      expect(startServerArgs).toEqual({ model: "medium" });
+    });
+
+    it("no readHfToken dep at all (healthyDeps' own default) omits the key — byte-identical to before this task", async () => {
+      stubMediumDownload();
+      let startServerArgs: Record<string, unknown> | undefined;
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => existingMarkerJson,
+        stop_server: () => undefined,
+        start_server: (args) => {
+          startServerArgs = args;
+          return { alreadyRunning: false };
+        },
+        write_provision_marker: () => undefined,
+      });
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      await handle.switchModel("medium");
+
+      expect(startServerArgs).toEqual({ model: "medium" });
+    });
+  });
+
   it("a same-session crash-restart AFTER a successful switch relaunches the NEW model, not the pre-switch one (ctx reseed)", async () => {
     const { listen, emit } = makeEmittableListen();
     const fetchMock = vi.fn(async (input: unknown) => {
