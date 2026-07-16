@@ -2193,20 +2193,24 @@ def health_payload(model_name: str, installed: bool, ready: bool, error: Optiona
 # s4-model-wizard-blueprint.md): --download-only (first-run one-shot,
 # see run_download_only) and JobManager.start_download_job (:8766
 # model-switch job) — "one shared helper, only invocation + progress
-# transport differ." Every huggingface_hub/faster_whisper/tqdm import
-# below is deferred into the function that needs it (mirrors
-# load_model()'s own lazy `from faster_whisper import WhisperModel`)
-# so importing this module itself stays independent of the ML stack —
-# every OTHER test file relies on that already.
+# transport differ." Every huggingface_hub/tqdm import below is
+# deferred into the function that needs it, so importing this module
+# itself stays independent of the ML stack — every OTHER test file
+# relies on that already. Neither of this section's own repo-id maps
+# (WHISPER_REPO_IDS/PARAKEET_REPO_ID below) needs faster_whisper at all
+# any more (S12a fix round F3, see WHISPER_REPO_IDS's own docstring) —
+# only load_model() (the actual model-LOADING path, not download)
+# still lazily `from faster_whisper import WhisperModel`s, and only
+# when a whisper model is what's being loaded.
 # =================================================================
 
 # S12a (v0.4.4, MLX local-STT lane, docs/design-explorations/
-# s12-mlx-blueprint.md §C/R1) — parakeet-tdt-0.6b-v3 is the first
-# model NOT resolved through faster_whisper's own _MODELS table (see
-# _repo_id_for_model below); it rides the SAME MODEL_CHOICES/download/
-# validate machinery as every whisper model (decision Q1: "a model
-# under `whisper`, not a new engine"), byte-identical for every
-# faster-whisper entry.
+# s12-mlx-blueprint.md §C/R1) — parakeet-tdt-0.6b-v3 rides the SAME
+# MODEL_CHOICES/download/validate machinery as every whisper model
+# (decision Q1: "a model under `whisper`, not a new engine"); see
+# PARAKEET_REPO_ID/PARAKEET_ALLOW_PATTERNS below for its registry
+# entry and WHISPER_REPO_IDS (further down) for every faster-whisper
+# entry's own (static, dependency-free — F3) repo id.
 PARAKEET_MODEL = "parakeet-tdt-0.6b-v3"
 
 MODEL_CHOICES = [
@@ -2297,28 +2301,56 @@ def check_disk_space(total_bytes: int, check_dir: str) -> None:
         )
 
 
+# Static repo-id map for the 6 whisper-family MODEL_CHOICES entries —
+# DELIBERATELY not a lazy `from faster_whisper.utils import _MODELS`
+# lookup (S12a fix round F3, HIGH, Sol3, 2026-07-16 adversarial pair —
+# docs/design-explorations/s12-mlx-blueprint.md §D). faster_whisper is
+# absent from the mlx venv's lock by design (requirements-mlx.lock
+# pins only parakeet-mlx + websockets; §C R1: "faster_whisper imports
+# stay lazy inside FasterWhisperBackend... one file runs under either
+# venv") — but the ORIGINAL lazy `_MODELS` import here still ran for
+# EVERY non-parakeet model, including when this same whisper_server.py
+# process is the one running under the mlx venv (S12b, parakeet
+# selected). A user switching BACK to a whisper model then hit
+# /download-model -> download_model_snapshot -> _repo_id_for_model,
+# which raised ModuleNotFoundError even when the target model was
+# already cached — stuck on parakeet with no way back. Red-confirmed
+# live before this fix: `sys.modules["faster_whisper"] = None` then
+# `_repo_id_for_model("medium")` raised exactly that. A static map
+# needs no import at all, so this path is now venv-independent — see
+# test_model_registry.py's import-blocked section, which resolves
+# every non-parakeet MODEL_CHOICES id with faster_whisper made
+# unimportable.
+#
+# Values verified live against the installed faster-whisper==1.2.1's
+# own faster_whisper.utils._MODELS dict (test_model_registry.py's
+# base-venv drift-guard section re-asserts this map against that same
+# live dict on every run — a future faster-whisper bump that moves one
+# of these entries fails that test loudly instead of silently
+# drifting, the exact risk the old lazy-lookup docstring flagged).
+WHISPER_REPO_IDS: dict[str, str] = {
+    "tiny": "Systran/faster-whisper-tiny",
+    "base": "Systran/faster-whisper-base",
+    "small": "Systran/faster-whisper-small",
+    "medium": "Systran/faster-whisper-medium",
+    "large-v3": "Systran/faster-whisper-large-v3",
+    "large-v3-turbo": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+}
+
+
 def _repo_id_for_model(model: str) -> str:
     """Resolve `model` to its Hugging Face Hub repo id — the first half
     of the model->(repo_id, allow_patterns) registry (see
     _allow_patterns_for_model below for the other half). PARAKEET_MODEL
     short-circuits to its static PARAKEET_REPO_ID; every other model
-    (every faster-whisper entry, byte-identical to before S12a) resolves
-    the SAME way faster-whisper's own WhisperModel(model) does internally
-    — reuses faster_whisper.utils._MODELS directly (verified against the
-    pinned faster-whisper==1.2.1: utils.download_model looks up this
-    exact dict) rather than hand-duplicating the mapping, so a future
-    faster-whisper bump that changes an entry can't silently drift the
-    two out of sync. The faster_whisper import stays deferred here (this
-    branch is skipped entirely for parakeet), keeping this module
-    importable under the separate mlx venv, which never installs
-    faster-whisper (§C R1: "every module-level import ... must be
-    satisfiable in the mlx venv... faster_whisper imports stay lazy")."""
+    resolves via the static WHISPER_REPO_IDS map above — NO import at
+    all (S12a fix round F3; see that map's own docstring for why the
+    prior lazy faster_whisper.utils._MODELS lookup broke switching back
+    from parakeet inside the mlx venv). Dependency-free end to end."""
     if model == PARAKEET_MODEL:
         return PARAKEET_REPO_ID
 
-    from faster_whisper.utils import _MODELS
-
-    repo_id = _MODELS.get(model)
+    repo_id = WHISPER_REPO_IDS.get(model)
     if repo_id is None:
         raise ValueError(f"未知模型：{model}")
     return repo_id
@@ -2543,6 +2575,33 @@ def load_model(model_name: str, device: str, compute_type: str):
     return model, load_seconds
 
 
+def normalize_hf_token(token: Optional[str]) -> Optional[str]:
+    """Normalize an --hf-token/$HF_TOKEN value (S12a fix round F8,
+    LOW, Sol8 — docs/design-explorations/s12-mlx-blueprint.md §D): a
+    whitespace-only string ("   ") is truthy in Python, so left un-
+    normalized it would make print_banner's `diarize_enabled=bool(
+    args.hf_token)` advertise diarization as armed, and every down-
+    stream consumer (WhisperServer.default_hf_token/JobManager.
+    hf_token/run_download_only's hf_token) would send that garbage as
+    an actual Authorization value on real requests. Also strips
+    surrounding whitespace off a non-blank token (cheap hygiene
+    against an accidentally pasted trailing newline/space) — mirrors
+    F8's Rust half in the same direction (server.rs trims + omits
+    before setting $HF_TOKEN in the spawn env, so a blank Settings
+    field never becomes a truthy env var in the first place). Returns
+    None for None, "", or an all-whitespace string; otherwise the
+    stripped token. parse_args() below is this file's ONE call site —
+    --hf-token's own argparse default already unifies the CLI value
+    and the $HF_TOKEN env fallback into the single args.hf_token
+    attribute (`default=os.environ.get("HF_TOKEN")` on that argument,
+    below), so normalizing it once there covers both sources; no
+    downstream code needs its own whitespace check."""
+    if token is None:
+        return None
+    stripped = token.strip()
+    return stripped or None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -2639,7 +2698,12 @@ def parse_args() -> argparse.Namespace:
             "newline-delimited JSON progress to stdout)"
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    # S12a fix round F8: normalize ONCE here — see normalize_hf_token's
+    # own docstring — so every downstream consumer reads an already-
+    # normalized value.
+    args.hf_token = normalize_hf_token(args.hf_token)
+    return args
 
 
 def print_banner(

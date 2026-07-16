@@ -16,13 +16,24 @@ Run:
 
 Covers:
   - MODEL_CHOICES/PARAKEET_MODEL/PARAKEET_REPO_ID/PARAKEET_ALLOW_
-    PATTERNS/MODEL_DOWNLOAD_ALLOW_PATTERNS: exact constant values
+    PATTERNS/MODEL_DOWNLOAD_ALLOW_PATTERNS/WHISPER_REPO_IDS: exact
+    constant values
   - _repo_id_for_model / _allow_patterns_for_model (the registry's two
-    halves): parakeet resolves to its static entry WITHOUT ever
-    touching faster_whisper.utils._MODELS; every non-parakeet model
-    still delegates to it, byte-identical to pre-S12a (faster_whisper
-    faked via sys.modules — never a real import, matching this file's
-    own zero-heavy-dependency posture)
+    halves): parakeet resolves to its static PARAKEET_REPO_ID; every
+    whisper-family model resolves via the static WHISPER_REPO_IDS map
+    — NO faster_whisper import at all (S12a fix round F3, HIGH, Sol3,
+    docs/design-explorations/s12-mlx-blueprint.md §D — the ORIGINAL
+    lazy `from faster_whisper.utils import _MODELS` lookup broke
+    switching back from parakeet to a whisper model once the server
+    ran under the mlx venv, which never installs faster_whisper).
+    Two dedicated F3 sections: (1) a base-venv drift guard asserting
+    WHISPER_REPO_IDS matches the REAL installed faster_whisper.utils.
+    _MODELS exactly (guarded/SKIP if unavailable); (2) an import-
+    BLOCKED test (faster_whisper genuinely unimportable via
+    sys.modules, mirroring test_whisper_protocol.py's pyannote idiom)
+    resolving EVERY MODEL_CHOICES id, RED-verified against the pre-fix
+    code (see git history / the worker report for the red-run
+    transcript)
   - download_model_snapshot, driven end-to-end against a FAKE
     huggingface_hub (sys.modules-faked HfApi/constants/
     snapshot_download — never a real import/network call):
@@ -50,6 +61,13 @@ Covers:
     attribute derives from HF_HOME as <HF_HOME>/hub when not
     independently overridden (live subprocess probe, controlled env)
   - parse_args(): --model accepts the parakeet id via MODEL_CHOICES
+  - normalize_hf_token / parse_args's ONE normalization point (S12a fix
+    round F8, LOW, Sol8, §D): a whitespace-only --hf-token/$HF_TOKEN
+    value becomes None (was truthy pre-fix — falsely advertised
+    diarization as armed and sent garbage as an Authorization value);
+    covers the pure function directly plus both real sources parse_args()
+    unifies (CLI flag + $HF_TOKEN env fallback, via os.environ mutation
+    — no faking needed, argparse's own default reads it fresh per call)
 """
 
 from __future__ import annotations
@@ -126,63 +144,46 @@ check(
 
 # =================================================================
 # _repo_id_for_model / _allow_patterns_for_model — the registry's two
-# halves. faster_whisper is faked via sys.modules (a dotted import
-# needs the PARENT key present too) so this section never imports the
-# real (heavy) package — matches test_whisper_protocol.py's pyannote
-# idiom exactly.
+# halves. Since the S12a fix round (F3, HIGH, Sol3 — docs/design-
+# explorations/s12-mlx-blueprint.md §D), _repo_id_for_model no longer
+# imports faster_whisper AT ALL for whisper-family models — it's a
+# static WHISPER_REPO_IDS dict lookup. The two sections below are F3's
+# own required tests: (1) a base-venv drift guard against the REAL
+# installed faster_whisper.utils._MODELS (guarded/SKIP if unavailable,
+# same posture as the cache-root-invariant section further down); (2)
+# an import-BLOCKED test (faster_whisper made unimportable via
+# sys.modules — the exact "= None" force-ImportError idiom test_
+# whisper_protocol.py uses for pyannote) proving every MODEL_CHOICES
+# id still resolves. (2) is RED-verified: run against the pre-fix
+# whisper_server.py (which lazily imported faster_whisper.utils inside
+# the non-parakeet branch), the same block reproduces Sol's finding —
+# `_repo_id_for_model("medium")` raised ModuleNotFoundError.
 # =================================================================
 
-
-def _set_fake_faster_whisper(models: dict[str, str]) -> dict[str, object]:
-    saved: dict[str, object] = {
-        name: sys.modules.get(name, _UNSET)
-        for name in ("faster_whisper", "faster_whisper.utils")
-    }
-    fake_pkg = types.ModuleType("faster_whisper")
-    fake_utils = types.ModuleType("faster_whisper.utils")
-    fake_utils._MODELS = models  # type: ignore[attr-defined]
-    fake_pkg.utils = fake_utils  # type: ignore[attr-defined]
-    sys.modules["faster_whisper"] = fake_pkg
-    sys.modules["faster_whisper.utils"] = fake_utils
-    return saved
-
-
-def _restore_faster_whisper(saved: dict[str, object]) -> None:
-    for name, prev in saved.items():
-        if prev is _UNSET:
-            sys.modules.pop(name, None)
-        else:
-            sys.modules[name] = prev  # type: ignore[assignment]
-
-
-_saved_fw = _set_fake_faster_whisper(
-    {"small": "fake/small-repo-id", "tiny": "fake/tiny-repo-id"}
+check(
+    "_repo_id_for_model: parakeet resolves to PARAKEET_REPO_ID",
+    whisper_server._repo_id_for_model(whisper_server.PARAKEET_MODEL)
+    == whisper_server.PARAKEET_REPO_ID,
 )
+check(
+    "_repo_id_for_model: every whisper-family MODEL_CHOICES entry resolves "
+    "via the static WHISPER_REPO_IDS map",
+    all(
+        whisper_server._repo_id_for_model(m) == whisper_server.WHISPER_REPO_IDS[m]
+        for m in whisper_server.MODEL_CHOICES
+        if m != whisper_server.PARAKEET_MODEL
+    ),
+)
+_raised: Exception | None = None
 try:
-    check(
-        "_repo_id_for_model: parakeet short-circuits to PARAKEET_REPO_ID "
-        "BEFORE ever touching faster_whisper.utils._MODELS",
-        whisper_server._repo_id_for_model(whisper_server.PARAKEET_MODEL)
-        == whisper_server.PARAKEET_REPO_ID,
-    )
-    check(
-        "_repo_id_for_model: every non-parakeet model still delegates to "
-        "faster_whisper.utils._MODELS, byte-identical to pre-S12a",
-        whisper_server._repo_id_for_model("small") == "fake/small-repo-id"
-        and whisper_server._repo_id_for_model("tiny") == "fake/tiny-repo-id",
-    )
-    _raised: Exception | None = None
-    try:
-        whisper_server._repo_id_for_model("unknown-model-xyz")
-    except ValueError as exc:  # noqa: BLE001 - capturing intentionally
-        _raised = exc
-    check(
-        "_repo_id_for_model: an unknown non-parakeet model still raises "
-        "ValueError with the 未知模型 zh message, unchanged",
-        _raised is not None and "未知模型" in str(_raised),
-    )
-finally:
-    _restore_faster_whisper(_saved_fw)
+    whisper_server._repo_id_for_model("unknown-model-xyz")
+except ValueError as exc:  # noqa: BLE001 - capturing intentionally
+    _raised = exc
+check(
+    "_repo_id_for_model: an unknown non-parakeet model still raises "
+    "ValueError with the 未知模型 zh message, unchanged",
+    _raised is not None and "未知模型" in str(_raised),
+)
 
 check(
     "_allow_patterns_for_model: parakeet returns PARAKEET_ALLOW_PATTERNS exactly",
@@ -195,6 +196,103 @@ check(
     whisper_server._allow_patterns_for_model("small")
     == whisper_server.MODEL_DOWNLOAD_ALLOW_PATTERNS,
 )
+check(
+    "WHISPER_REPO_IDS: covers exactly the 6 whisper-family MODEL_CHOICES "
+    "entries, no more/fewer",
+    set(whisper_server.WHISPER_REPO_IDS)
+    == set(whisper_server.MODEL_CHOICES) - {whisper_server.PARAKEET_MODEL},
+)
+
+
+# =================================================================
+# F3 test (1): base-venv drift guard — WHISPER_REPO_IDS must match the
+# REAL installed faster_whisper.utils._MODELS exactly, for every key it
+# claims. Guarded/SKIP if faster_whisper isn't importable (this file's
+# own posture elsewhere — see the cache-root-invariant section further
+# down); when it IS available (this repo's own sidecar/.venv, base
+# pins), this is a real, non-faked assertion against the live package,
+# not a fixture — a future faster-whisper bump that moves one of these
+# 6 entries fails this check loudly instead of silently drifting.
+# =================================================================
+
+try:
+    from faster_whisper.utils import _MODELS as _REAL_FASTER_WHISPER_MODELS
+
+    _FW_AVAILABLE = True
+except ImportError as exc:  # pragma: no cover - only if faster_whisper truly isn't installed
+    _FW_AVAILABLE = False
+    print(f"SKIP: WHISPER_REPO_IDS drift-guard section (faster_whisper not importable: {exc})")
+
+if _FW_AVAILABLE:
+    for _model, _expected_repo_id in whisper_server.WHISPER_REPO_IDS.items():
+        check(
+            f"WHISPER_REPO_IDS drift guard: '{_model}' matches the live installed "
+            "faster_whisper.utils._MODELS exactly",
+            _REAL_FASTER_WHISPER_MODELS.get(_model) == _expected_repo_id,
+        )
+
+
+# =================================================================
+# F3 test (2): import-BLOCKED — faster_whisper made unimportable via
+# sys.modules (the "= None" idiom; a dotted import needs the PARENT
+# key blocked too), mirroring test_whisper_protocol.py's pyannote-not-
+# installed idiom exactly. Every MODEL_CHOICES id (whisper-family AND
+# parakeet) must still resolve via _repo_id_for_model AND survive a
+# full download_model_snapshot() call (huggingface_hub itself faked
+# below too, so this stays fully offline) — the literal real-world
+# regression: switching from parakeet back to a whisper model inside
+# the mlx venv, where faster_whisper is genuinely absent.
+# =================================================================
+
+
+def _block_faster_whisper() -> dict[str, object]:
+    saved: dict[str, object] = {
+        name: sys.modules.get(name, _UNSET)
+        for name in ("faster_whisper", "faster_whisper.utils")
+    }
+    sys.modules.pop("faster_whisper", None)
+    sys.modules["faster_whisper.utils"] = None  # type: ignore[assignment]
+    return saved
+
+
+def _unblock_faster_whisper(saved: dict[str, object]) -> None:
+    for name, prev in saved.items():
+        if prev is _UNSET:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = prev  # type: ignore[assignment]
+
+
+_saved_fw_block = _block_faster_whisper()
+try:
+    _raised_blocked: Exception | None = None
+    try:
+        import faster_whisper.utils  # noqa: F401 - proving the block actually works
+    except ImportError as exc:  # noqa: BLE001 - capturing intentionally
+        _raised_blocked = exc
+    check(
+        "import-blocked harness sanity: `import faster_whisper.utils` genuinely "
+        "raises ImportError while blocked (the block itself works)",
+        _raised_blocked is not None,
+    )
+
+    check(
+        "_repo_id_for_model: resolves EVERY MODEL_CHOICES id (incl. parakeet) "
+        "with faster_whisper fully unimportable — the exact scenario a server "
+        "running under the mlx venv (S12b) is in when a user switches back to "
+        "a whisper model",
+        all(
+            whisper_server._repo_id_for_model(m)
+            == (
+                whisper_server.PARAKEET_REPO_ID
+                if m == whisper_server.PARAKEET_MODEL
+                else whisper_server.WHISPER_REPO_IDS[m]
+            )
+            for m in whisper_server.MODEL_CHOICES
+        ),
+    )
+finally:
+    _unblock_faster_whisper(_saved_fw_block)
 
 
 # =================================================================
@@ -380,10 +478,16 @@ finally:
 
 
 # Whisper-family path through the SAME download_model_snapshot, driven
-# through the SAME fake huggingface_hub — proves the refactor left it
-# byte-identical (repo_id resolution + allow_patterns) alongside the
-# new parakeet branch, not just in isolation.
-_saved_fw2 = _set_fake_faster_whisper({"small": "fake/small-repo-id"})
+# through the SAME fake huggingface_hub, with faster_whisper BLOCKED
+# entirely (F3's own literal regression scenario: a server running
+# under the mlx venv — where faster_whisper is genuinely absent — gets
+# a /download-model request for a whisper model, e.g. switching back
+# from parakeet). Pre-fix, this exact call raised ModuleNotFoundError
+# (red-confirmed live before landing WHISPER_REPO_IDS); post-fix it
+# must succeed end-to-end, proving the static map removed the
+# dependency from the whole download path, not just _repo_id_for_model
+# in isolation.
+_saved_fw3 = _block_faster_whisper()
 _saved_hub2 = _set_fake_huggingface_hub()
 whisper_server.check_disk_space = _fake_check_disk_space
 try:
@@ -394,9 +498,10 @@ try:
     repo_id = whisper_server.download_model_snapshot("small", hf_token=None)
 
     check(
-        "download_model_snapshot('small'): still resolves via faster_whisper."
-        "utils._MODELS, untouched by the parakeet branch",
-        repo_id == "fake/small-repo-id",
+        "download_model_snapshot('small'): succeeds with faster_whisper fully "
+        "unimportable (F3 — the switch-back-from-parakeet-inside-the-mlx-venv "
+        "regression) and resolves the correct static repo id",
+        repo_id == whisper_server.WHISPER_REPO_IDS["small"],
     )
     check(
         "download_model_snapshot('small'): snapshot_download still receives "
@@ -415,7 +520,7 @@ try:
     )
 finally:
     whisper_server.check_disk_space = _real_check_disk_space
-    _restore_faster_whisper(_saved_fw2)
+    _unblock_faster_whisper(_saved_fw3)
     _restore_huggingface_hub(_saved_hub2)
 
 
@@ -518,6 +623,103 @@ try:
     )
 finally:
     sys.argv = _saved_argv
+
+
+# =================================================================
+# normalize_hf_token / parse_args's ONE normalization point (S12a fix
+# round F8, LOW, Sol8 — docs/design-explorations/s12-mlx-blueprint.md
+# §D): a whitespace-only --hf-token/$HF_TOKEN value must become None,
+# not a truthy garbage token (pre-fix, print_banner's diarize_enabled=
+# bool(args.hf_token) would falsely advertise diarization as armed,
+# and JobManager/WhisperServer would send the garbage as an actual
+# Authorization value). Covers the pure function directly AND both
+# real sources parse_args() unifies through the one args.hf_token
+# attribute — the CLI flag and the $HF_TOKEN env fallback (--hf-
+# token's own argparse default reads os.environ.get("HF_TOKEN") fresh
+# on every parse_args() call, so mutating os.environ before calling it
+# genuinely exercises the env path, no faking needed).
+# =================================================================
+
+check(
+    "normalize_hf_token: None stays None",
+    whisper_server.normalize_hf_token(None) is None,
+)
+check(
+    "normalize_hf_token: an empty string becomes None",
+    whisper_server.normalize_hf_token("") is None,
+)
+check(
+    "normalize_hf_token: a whitespace-only string becomes None",
+    whisper_server.normalize_hf_token("   ") is None,
+)
+check(
+    "normalize_hf_token: tabs/newlines-only also becomes None",
+    whisper_server.normalize_hf_token("\t\n  \n") is None,
+)
+check(
+    "normalize_hf_token: a real token passes through unchanged",
+    whisper_server.normalize_hf_token("hf_abc123") == "hf_abc123",
+)
+check(
+    "normalize_hf_token: a real token with surrounding whitespace is stripped",
+    whisper_server.normalize_hf_token("  hf_abc123  ") == "hf_abc123",
+)
+
+_saved_argv2 = sys.argv
+_saved_hf_token_env = os.environ.get("HF_TOKEN", _UNSET)
+try:
+    # (a) CLI arg, whitespace-only -> None
+    os.environ.pop("HF_TOKEN", None)
+    sys.argv = ["whisper_server.py", "--hf-token", "   "]
+    args = whisper_server.parse_args()
+    check(
+        "parse_args: a whitespace-only --hf-token CLI value normalizes to None",
+        args.hf_token is None,
+    )
+
+    # (b) CLI arg, real value -> passes through (stripped)
+    sys.argv = ["whisper_server.py", "--hf-token", "  hf_real_token  "]
+    args = whisper_server.parse_args()
+    check(
+        "parse_args: a real --hf-token CLI value survives normalization (stripped)",
+        args.hf_token == "hf_real_token",
+    )
+
+    # (c) env fallback, whitespace-only -> None — the SAME normalization
+    # point covers both sources, since --hf-token's own argparse default
+    # already unifies them into one args.hf_token attribute.
+    os.environ["HF_TOKEN"] = "   "
+    sys.argv = ["whisper_server.py"]
+    args = whisper_server.parse_args()
+    check(
+        "parse_args: a whitespace-only $HF_TOKEN env fallback normalizes to "
+        "None too (one normalization point, both sources)",
+        args.hf_token is None,
+    )
+
+    # (d) env fallback, real value -> passes through
+    os.environ["HF_TOKEN"] = "hf_env_token"
+    sys.argv = ["whisper_server.py"]
+    args = whisper_server.parse_args()
+    check(
+        "parse_args: a real $HF_TOKEN env fallback survives normalization",
+        args.hf_token == "hf_env_token",
+    )
+
+    # (e) neither set -> None (sanity, unaffected by the fix)
+    os.environ.pop("HF_TOKEN", None)
+    sys.argv = ["whisper_server.py"]
+    args = whisper_server.parse_args()
+    check(
+        "parse_args: no --hf-token/$HF_TOKEN at all -> None, unaffected",
+        args.hf_token is None,
+    )
+finally:
+    sys.argv = _saved_argv2
+    if _saved_hf_token_env is _UNSET:
+        os.environ.pop("HF_TOKEN", None)
+    else:
+        os.environ["HF_TOKEN"] = _saved_hf_token_env
 
 
 # =================================================================
