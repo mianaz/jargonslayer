@@ -123,6 +123,21 @@ export class AppAudioEngine implements STTEngine {
   // it early.
   private helperTerminated = false;
 
+  // F17 (S12 blueprint §2.6′, generation-safe appAudio stop-wait parity —
+  // Sol adversarial finding 17): mirrors osSpeech.ts's `running` flag for
+  // stop()'s own gate below, but GENERATION-SCOPED rather than a shared
+  // boolean — this file's own generation-isolation invariant (see the
+  // LOCAL `helperStarted` in start()) means a plain shared boolean would
+  // let an OLDER, late-resolving start_app_audio invoke() set it back
+  // AFTER a newer start()'s own reset, corrupting stop()'s gate for
+  // whichever generation is actually live (wrong-generation 4s waits, or
+  // teardown clearing the live generation's own flag). Set in start()
+  // (see that method's own comment) only once THIS call's generation is
+  // confirmed NOT superseded — an abandoned old call never touches this.
+  // stop() captures its own current generation and both waits and clears
+  // only on a match (see stop() below).
+  private helperStartedGeneration: number | null = null;
+
   // stop()'s wait for the helper's "ended" status — see
   // STOP_ENDED_TIMEOUT_MS's own doc comment above.
   private stopEndedResolve: (() => void) | null = null;
@@ -277,10 +292,18 @@ export class AppAudioEngine implements STTEngine {
     }
 
     // Mirrors every check above, one last time, for the just-requested
-    // capture itself.
+    // capture itself. F17: this is also the ONLY place
+    // helperStartedGeneration is ever assigned — deliberately AFTER this
+    // superseded() check, not alongside the local `helperStarted = true`
+    // above, so an abandoned OLD call (superseded by a newer start())
+    // touches NO instance state at all; only a call that reaches here
+    // live claims the instance flag for its own generation (see that
+    // field's own doc comment, and stop()'s matching gen check below).
     if (superseded()) {
       await abandonStart();
+      return;
     }
+    this.helperStartedGeneration = myGeneration;
   }
 
   private handleStatus(myGeneration: number, payload: AudiocapStatusPayload): void {
@@ -522,6 +545,16 @@ export class AppAudioEngine implements STTEngine {
   async stop(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
+    // F17: captured synchronously, atomically with `this.stopping = true`
+    // above (no await between them, so no concurrent start() can
+    // interleave) — `gen` is exactly the generation THIS stop() call is
+    // being asked to stop. A concurrent start() may still bump
+    // this.generation further after this point, but that call's own
+    // superseded() check (`|| this.stopping`) makes it abandon itself
+    // before ever assigning helperStartedGeneration for its own newer
+    // generation — so only `gen` itself could ever have set that field,
+    // and the match check below stays sound.
+    const gen = this.generation;
 
     const invoke = await getInvoke();
     try {
@@ -544,8 +577,20 @@ export class AppAudioEngine implements STTEngine {
     // live user-stop drain path (helper alive -> stop() -> "ended"
     // arrives DURING the wait, caught by handleStatus's `if
     // (this.stopping)` branch above) is untouched: helperTerminated is
-    // still false at the moment this check runs in that case.
-    if (this.unlistenStatus && !this.helperTerminated) {
+    // still false at the moment this check runs in that case. F17 (S12
+    // blueprint §2.6′): ALSO only if a session for THIS generation
+    // actually started — `this.helperStartedGeneration === gen` — in the
+    // first place. A REJECTED start_app_audio invoke() (see start()'s own
+    // catch block) routes through this SAME stop() to unwind without
+    // helperStartedGeneration ever having been set for its generation;
+    // unlistenStatus is already registered by then too (both acquired
+    // BEFORE the invoke), so without this extra check the wait below
+    // still ran and burned the full STOP_ENDED_TIMEOUT_MS for an "ended"
+    // no helper process was ever going to send. Generation-scoped (not a
+    // shared boolean, see that field's own doc comment) so an OLDER,
+    // late-resolving start_app_audio invoke() from an already-abandoned
+    // call can never satisfy or corrupt a NEWER generation's own gate.
+    if (this.unlistenStatus && !this.helperTerminated && this.helperStartedGeneration === gen) {
       await this.waitForEndedOrTimeout();
     }
 
@@ -570,6 +615,13 @@ export class AppAudioEngine implements STTEngine {
     const unlisten = this.unlistenStatus;
     this.unlistenStatus = null;
     unlisten?.();
+
+    // F17: clear only the MATCHING generation's flag — a newer start()
+    // may already have claimed helperStartedGeneration for its own live
+    // generation by the time this (older) stop() call finally reaches
+    // teardown; clearing unconditionally here would corrupt that newer
+    // generation's own stop() gate out from under it.
+    if (this.helperStartedGeneration === gen) this.helperStartedGeneration = null;
 
     this.events = null;
   }

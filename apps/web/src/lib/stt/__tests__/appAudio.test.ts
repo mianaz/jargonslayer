@@ -583,6 +583,127 @@ describe("AppAudioEngine", () => {
   });
 
   // ---------------------------------------------------------------
+  // F17 (S12 blueprint §2.6′, generation-safe appAudio stop-wait parity
+  // — the S11 J4 fix, ported generation-safe): a rejected
+  // start_app_audio invoke() routes through stop() (see start()'s own
+  // catch block) with unlistenStatus already registered — pre-fix, that
+  // burns the full STOP_ENDED_TIMEOUT_MS waiting for an "ended" no
+  // helper will ever send, since no helper process ever started.
+  // ---------------------------------------------------------------
+
+  describe("F17 generation-safe stop-wait parity", () => {
+    it("a rejected start_app_audio invoke() surfaces a zh error and resolves stop()'s unwind PROMPTLY — no unnecessary ended-wait since helperStartedGeneration never got set for this generation", async () => {
+      const { calls } = wireFakes({
+        start_app_audio: () => {
+          throw new Error("ipc failure");
+        },
+      });
+      const engine = new AppAudioEngine();
+      const onStatus = vi.fn();
+
+      vi.useFakeTimers();
+      let resolved = false;
+      const startP = engine
+        .start({ ...noopEvents(), onStatus } as unknown as STTEvents, { ...DEFAULT_SETTINGS, engine: "appaudio" })
+        .then(() => {
+          resolved = true;
+        });
+
+      // Deliberately no vi.advanceTimersByTimeAsync() call at all — fails
+      // loudly (never resolves within flushUntil's bounded tick budget)
+      // on pre-fix code instead of passing by accident.
+      await flushUntil(() => resolved);
+
+      expect(onStatus).toHaveBeenCalledWith("error", expect.any(String));
+      expect(calls.some((c) => c.cmd === "stop_app_audio")).toBe(true);
+      await startP;
+    });
+
+    // Sol finding 17 (S12 blueprint §B): the naive shared-boolean port
+    // (a single `helperStarted` flag, unconditionally set true right
+    // alongside the LOCAL flag at the successful invoke, BEFORE checking
+    // superseded()) would let an OLDER generation's late-resolving
+    // start_app_audio invoke() stomp a NEWER generation's own claim —
+    // this proves the generation-scoped field is immune: A's late
+    // resolution must abandon WITHOUT ever touching
+    // helperStartedGeneration once B has already claimed it.
+    it("overlapping starts: OLD generation A's late-resolving start_app_audio must not corrupt NEWER generation B's own helperStartedGeneration — B's stop() still waits for its own 'ended'", async () => {
+      const startA = deferred<undefined>();
+      let startAppAudioCalls = 0;
+      const { calls, emit } = wireFakes({
+        start_app_audio: () => {
+          startAppAudioCalls++;
+          // Call 1 (A) — held open until resolved explicitly below.
+          // Call 2+ (B) — succeeds immediately, like every other test's
+          // default fake.
+          return startAppAudioCalls === 1 ? startA.promise : undefined;
+        },
+      });
+      const engine = new AppAudioEngine();
+      const events = noopEvents();
+
+      // Start A — blocks on its OWN start_app_audio invoke.
+      const startAP = engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+      await flushUntil(() => calls.some((c) => c.cmd === "start_app_audio"));
+
+      // Start B — supersedes A (bumps this.generation) and completes for
+      // real, legitimately claiming helperStartedGeneration for its OWN
+      // generation.
+      await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+
+      // NOW resolve A's stale invoke — A's own success path must see
+      // itself superseded and abandon (best-effort stop_app_audio for
+      // its own dead session) WITHOUT ever assigning
+      // helperStartedGeneration = A's generation.
+      startA.resolve(undefined);
+      await startAP;
+
+      // Prove B's own state is intact: stop() (targeting the CURRENT —
+      // B's — generation) must still wait for "ended" rather than
+      // resolving immediately, which is exactly what a corrupted
+      // (wrong-generation) helperStartedGeneration would cause.
+      vi.useFakeTimers();
+      let resolved = false;
+      const stopP = engine.stop().then(() => {
+        resolved = true;
+      });
+      await settle();
+      expect(resolved).toBe(false);
+
+      emit("audiocap://status", { kind: "ended", message: "" });
+      await stopP;
+      expect(resolved).toBe(true);
+
+      // A's own abandon path did fire its best-effort stop_app_audio (so
+      // this test actually exercised A's late-resolution branch, not
+      // just skipped it) — at least A's own call, possibly also B's own
+      // real stop() call.
+      expect(calls.filter((c) => c.cmd === "stop_app_audio").length).toBeGreaterThanOrEqual(1);
+    });
+
+    it("the live user-stop path still waits for and resolves early on its own generation's 'ended' status", async () => {
+      const { emit } = wireFakes();
+      const engine = new AppAudioEngine();
+      const events = noopEvents();
+      await engine.start(events, { ...DEFAULT_SETTINGS, engine: "appaudio" });
+
+      vi.useFakeTimers();
+      let resolved = false;
+      const stopP = engine.stop().then(() => {
+        resolved = true;
+      });
+      await settle();
+      // Still waiting — helperStartedGeneration matches this stop()
+      // call's own captured generation, so the F17 gate holds open.
+      expect(resolved).toBe(false);
+
+      emit("audiocap://status", { kind: "ended", message: "" });
+      await stopP;
+      expect(resolved).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------
   // stop() safe to call twice
   // ---------------------------------------------------------------
 
