@@ -594,7 +594,27 @@ export interface DesktopBootstrapHandle {
    *  joins. Also generation-guarded from the inside (Finding 1b):
    *  captures its own generation at entry and rechecks it after every
    *  await, aborting silently if superseded — mirrors drive()'s own
-   *  pattern, belt-and-suspenders on top of the shared latch. */
+   *  pattern, belt-and-suspenders on top of the shared latch.
+   *
+   *  S12b fix round (§F FB8, MED) — SAME-TARGET NO-OP: settles with
+   *  zero download/stop/start/marker-write when the on-disk marker's
+   *  own model ALREADY equals `model` (and, for an mlx-family target,
+   *  its own extras are still verified valid — see
+   *  isAlreadyInstalledAndValid's own doc comment for exactly what
+   *  that reuses). Implemented as performSwitchModel's own FIRST
+   *  action (see that function's own doc comment for why it does NOT
+   *  live here, ahead of the busy-latch check, the way an earlier
+   *  draft of this fix placed it): this method's own pre-latch gates
+   *  must stay fully SYNCHRONOUS (Finding 3's own generation/latch
+   *  invariant — an `await` inserted before `sidecarLifecycleInFlight`
+   *  is set would let a concurrent reprovision()/switchModel() call
+   *  race in and wrongly observe the latch as free). The latch is
+   *  still acquired for a same-target no-op (a very short hold — one
+   *  invoke round trip, maybe two), so a concurrent reprovision()/
+   *  switchModel() correctly rejects against it exactly as it would
+   *  against any other in-flight switchModel() call; only the
+   *  DOWNLOAD/marker/stop/start work is skipped once the no-op check
+   *  itself resolves true. */
   switchModel: (model: string) => Promise<void>;
   /** Subscribe to every phase update during an in-flight switchModel()
    *  call — see SwitchModelProgress's own doc comment for why this is
@@ -1100,7 +1120,76 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         // iteration) — reset BEFORE its prewarmModel effect runs, so a
         // retry never starts from a stale progress value left over from
         // the failed attempt.
-        if (current.state.step === "DOWNLOAD_MODEL") resetDownloadProgress();
+        if (current.state.step === "DOWNLOAD_MODEL") {
+          resetDownloadProgress();
+          // S12b fix round (§F FB1, BLOCKER) — the first-run WIZARD's
+          // own counterpart of performSwitchModel's leading
+          // ensureMlxExtras phase. Without this, an mlx-family
+          // ctx.model reaching DOWNLOAD_MODEL via beginProvision() ->
+          // INSTALL_PYTHON -> CREATE_VENV -> INSTALL_DEPS (all
+          // base-venv steps, byte-unchanged below for every
+          // whisper-family model) would fire prewarmModel's own
+          // prewarm_model invoke DIRECTLY — server.rs's own
+          // venv_for_model then resolves `mlxVenvPython` for the
+          // download child (a venv ensureMlxExtras never got a chance
+          // to build), and prewarm fails outright against a
+          // nonexistent interpreter. Reuses ensureMlxExtras() VERBATIM
+          // (not a new driven step/effect) — deliberately: that
+          // function already owns the disk check, the skip-if-
+          // already-valid check, the venv/pip/preflight/pip-check
+          // sequence, its OWN `--clear` self-heal, AND emits through
+          // switchModelProgress$ (the mlx-install task row surface,
+          // §Task 7) — routing this through provisionMachine.ts's pure
+          // transition()/runEffects instead would mean re-plumbing
+          // that SAME progress surface (plus `paths`) into
+          // provisionRunner.ts, which has neither, for zero
+          // behavioral gain; provisionMachine.ts stays a plain,
+          // synchronous, zero-IO reducer either way. A structural
+          // no-op for every whisper-family model (the
+          // MLX_ONLY_MARKER_MODELS gate below) — a plain first-run's
+          // own invoke order/effects stay byte-identical to before
+          // this fix.
+          if (MLX_ONLY_MARKER_MODELS.includes(ctx.model)) {
+            try {
+              await ensureMlxExtras();
+            } catch (error) {
+              if (generation !== myGeneration) return; // superseded — apply nothing further, mirrors this loop's own runEffects guard below.
+              const message = describeError(error);
+              diagLog("error", "desktop-provision", "安装 MLX 运行环境失败", redactHomePath(message));
+              // Same "the pane must never read 暂无输出 on a failure"
+              // rule as the STEP_ERROR branch further below — RAW
+              // (unredacted) display.
+              notifyLog("stderr", `安装 MLX 运行环境失败：${message}`);
+              // Lands on DOWNLOAD_MODEL/ERROR — deliberately NOT
+              // INSTALL_MLX (this file's own §D F2 code already uses
+              // that landing, for a DIFFERENT scenario: a fresh
+              // CHECKING-time capability probe with nothing yet
+              // attempted, whose own handleRetry branch re-enters
+              // CHECKING from scratch, provisionMachine.ts). By THIS
+              // point in the wizard flow, INSTALL_PYTHON/CREATE_VENV/
+              // INSTALL_DEPS have ALREADY succeeded — retrying via
+              // "re-enter CHECKING" would blindly re-attempt
+              // CREATE_VENV against an already-existing base-venv
+              // directory (venvCreate has no --clear arm) and fail a
+              // SECOND, more confusing way. DOWNLOAD_MODEL's own
+              // EXISTING retry semantic (handleRetry's generic
+              // fallback: re-enter DOWNLOAD_MODEL directly, never
+              // CHECKING) is the "closest existing shape" that
+              // actually behaves correctly here — and since THIS hook
+              // re-fires on EVERY DOWNLOAD_MODEL entry (fresh OR
+              // retried, re-checked fresh above), retrying naturally
+              // re-runs ensureMlxExtras first, which self-heals via
+              // its own `--clear` arm on a second failure.
+              current = {
+                state: { phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR", error: message, retriable: true },
+                effects: [],
+              };
+              notify();
+              return;
+            }
+            if (generation !== myGeneration) return;
+          }
+        }
       }
       const event = await runEffects(current.state, current.effects, runnerDeps);
       if (generation !== myGeneration) return; // superseded — apply nothing further.
@@ -1499,6 +1588,35 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     }
   }
 
+  /** S12b fix round (§F FB8, MED) — performSwitchModel's own SAME-
+   *  TARGET no-op check: `true` iff the on-disk marker's own model
+   *  ALREADY equals `model` AND (for an mlx-family target only) its
+   *  own extras are still verified valid.
+   *
+   *  Whisper-family target: the marker match ALONE is sufficient —
+   *  there is no separate "extras validity" concept for a whisper
+   *  model (its only dependency is the base venv, which is assumed
+   *  intact whenever `current.state.phase === "HEALTHY"`, switchModel's
+   *  own precondition).
+   *
+   *  Mlx-family target: reuses the EXACT SAME skip-check
+   *  ensureMlxExtras' own fresh (non-`--clear`) attempt leads with —
+   *  a real `mlx_import_preflight` re-import, not a cached/assumed
+   *  answer — so a marker that says "parakeet" but whose mlx venv has
+   *  since gone missing/broken (§D F2's own `invalid-venv` case,
+   *  should the user have hit that earlier) correctly falls through
+   *  to the real (repair) install below, rather than wrongly no-op-
+   *  ing over a broken environment. */
+  async function isAlreadyInstalledAndValid(model: string): Promise<boolean> {
+    const marker = parseMarker(await deps.invoke<string | null>("read_provision_marker").catch(() => null));
+    if (!marker || marker.model !== model) return false;
+    if (!MLX_ONLY_MARKER_MODELS.includes(model)) return true;
+    const preflight = await deps
+      .invoke<MlxImportPreflightResult>("mlx_import_preflight")
+      .catch(() => null);
+    return preflight?.ok === true;
+  }
+
   /** The real work behind the `switchModel` handle action (split out
    *  as its own nested function, mirroring drive()/driveGuarded()'s own
    *  split, so the returned handle method itself stays a thin validate
@@ -1520,6 +1638,25 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     // somehow bypassed.
     const myGeneration = generation;
     try {
+      // S12b fix round (§F FB8, MED) — the SAME-TARGET no-op, checked
+      // FIRST (before even the mlx-extras bucket below): deliberately
+      // NOT placed in switchModel() itself, ahead of the busy-latch
+      // check there — this method's own pre-latch gates must stay
+      // fully SYNCHRONOUS (Finding 3's generation/latch invariant; an
+      // `await` inserted before sidecarLifecycleInFlight is SET would
+      // let a concurrent reprovision()/switchModel() call race in and
+      // wrongly observe the latch as free — see switchModel()'s own
+      // doc comment on DesktopBootstrapHandle for the full rationale).
+      // Landing it HERE instead means a same-target call still
+      // correctly HOLDS the latch for its own (very short: one or two
+      // invoke round trips) duration — a concurrent reprovision()/
+      // switchModel() rejects against it exactly as it would against
+      // any other in-flight switchModel() call — only the real
+      // download/marker/stop/start work below is skipped.
+      if (await isAlreadyInstalledAndValid(model)) {
+        return;
+      }
+      if (generation !== myGeneration) return;
       // S12a (§C Provision, Q5's two-phase flow): Phase 1, only for an
       // mlx-family target — a plain whisper-family switchModel() call
       // never enters this branch, so its own bucket 1 (below) stays

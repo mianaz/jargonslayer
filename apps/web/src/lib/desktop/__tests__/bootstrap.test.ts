@@ -1761,6 +1761,208 @@ describe("bootstrapDesktop — S4 chunk 3: model picker wiring (beginProvision(m
   });
 });
 
+// S12b fix round (§F FB1, BLOCKER) — the first-run WIZARD's own
+// ensureMlxExtras wiring (drive()'s own DOWNLOAD_MODEL pre-step hook —
+// see that hook's own doc comment, bootstrap.ts, for why it reuses
+// ensureMlxExtras() verbatim rather than a new driven step/effect).
+// Sol's own gap: pre-fix, beginProvision() drove straight through to
+// prewarm_model for an mlx-family ctx.model with NO prior venv
+// creation — server.rs's venv_for_model would then resolve
+// mlxVenvPython, a nonexistent interpreter, and prewarm would fail.
+describe("bootstrapDesktop — first-run WIZARD parakeet provisioning (§F FB1)", () => {
+  const parakeetModel = "parakeet-tdt-0.6b-v3";
+
+  /** Distinguishes the MLX venv's own run_uv calls from the BASE
+   *  venv's (INSTALL_PYTHON/CREATE_VENV/INSTALL_DEPS, which ALSO run
+   *  unconditionally ahead of DOWNLOAD_MODEL and are already covered,
+   *  byte-unchanged, by every OTHER test in this file) — by the actual
+   *  target path, not just args[0] (both venvs' own `venv <dir>
+   *  --python 3.12` calls share args[0]==="venv"). Returns `null` (not
+   *  pushed to the test's own `order` array) for every base-venv/
+   *  irrelevant call, keeping the asserted order focused on exactly
+   *  what §F FB1 is about: mlx sequencing relative to prewarm_model. */
+  function mlxRunUvLabel(args: string[]): string | null {
+    if (args[0] === "venv" && args[1] === paths.mlxVenvDir) return "run_uv:mlx-venv-create";
+    if (args[0] === "pip" && args[1] === "install" && args[3] === paths.mlxVenvPython) return "run_uv:mlx-pip-install";
+    if (args[0] === "pip" && args[1] === "check" && args[3] === paths.mlxVenvPython) return "run_uv:mlx-pip-check";
+    return null;
+  }
+
+  it("beginProvision('parakeet-tdt-0.6b-v3') runs ensureMlxExtras' FULL sequence STRICTLY BEFORE prewarm_model: mlx_capabilities -> mlx_import_preflight(skip-check) -> app_data_disk_free -> venv-create -> pip-install -> mlx_import_preflight(verify) -> pip-check -> prewarm_model -> write_provision_marker -> start_server", async () => {
+    const order: string[] = [];
+    let probeCalls = 0;
+    let preflightCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        mlx_capabilities: () => {
+          order.push("mlx_capabilities");
+          return { mlxSupported: true, reason: null };
+        },
+        mlx_import_preflight: () => {
+          preflightCalls += 1;
+          order.push(`mlx_import_preflight(${preflightCalls})`);
+          // 1st call = ensureMlxExtras' own leading skip-check (not
+          // yet installed); 2nd call = the real post-install
+          // verification.
+          return preflightCalls === 1 ? { ok: false, stderr: "" } : { ok: true, stderr: "" };
+        },
+        app_data_disk_free: () => {
+          order.push("app_data_disk_free");
+          return { freeBytes: 20 * 1024 ** 3 };
+        },
+        run_uv: (args) => {
+          const label = mlxRunUvLabel(args?.args as string[]);
+          if (label) order.push(label);
+          return { code: 0 };
+        },
+        prewarm_model: (args) => {
+          order.push("prewarm_model");
+          expect(args?.model).toBe(parakeetModel);
+          return { code: 0 };
+        },
+        write_provision_marker: (args) => {
+          order.push("write_provision_marker");
+          expect((JSON.parse(args?.json as string) as { model: string }).model).toBe(parakeetModel);
+          return undefined;
+        },
+        start_server: (args) => {
+          order.push("start_server");
+          expect(args?.model).toBe(parakeetModel);
+          return { alreadyRunning: false };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED (fresh, no marker)
+
+    handle.beginProvision(parakeetModel);
+    const finalState = await waitForStable(handle);
+
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(order).toEqual([
+      "mlx_capabilities",
+      "mlx_import_preflight(1)",
+      "app_data_disk_free",
+      "run_uv:mlx-venv-create",
+      "run_uv:mlx-pip-install",
+      "mlx_import_preflight(2)",
+      "run_uv:mlx-pip-check",
+      "prewarm_model",
+      "write_provision_marker",
+      "start_server",
+    ]);
+  });
+
+  it("a failure surviving ensureMlxExtras' OWN --clear self-heal (both pip-install attempts fail) lands the wizard on a retriable DOWNLOAD_MODEL/ERROR — not a dead end — with ZERO marker writes; retryStep() re-runs ensureMlxExtras and recovers all the way to HEALTHY once the underlying problem clears", async () => {
+    let probeCalls = 0;
+    let pipInstallAttempts = 0;
+    let markerWrites = 0;
+    let mlxInstalled = false;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => ({ ok: mlxInstalled, stderr: mlxInstalled ? "" : "not yet installed" }),
+        app_data_disk_free: () => ({ freeBytes: 20 * 1024 ** 3 }),
+        run_uv: (args) => {
+          const a = args?.args as string[];
+          if (a[0] === "pip" && a[1] === "install" && a[3] === paths.mlxVenvPython) {
+            pipInstallAttempts += 1;
+            // Fails BOTH attempts of the FIRST ensureMlxExtras() call
+            // (fresh + its own internal --clear self-heal) — a
+            // genuine failure that must surface to the wizard.
+            // Succeeds once retryStep() triggers a SECOND, fresh
+            // ensureMlxExtras() call.
+            if (pipInstallAttempts <= 2) return { code: 1 };
+            mlxInstalled = true;
+            return { code: 0 };
+          }
+          return { code: 0 };
+        },
+        prewarm_model: () => ({ code: 0 }),
+        write_provision_marker: () => {
+          markerWrites += 1;
+          return undefined;
+        },
+        start_server: () => ({ alreadyRunning: false }),
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+
+    handle.beginProvision(parakeetModel);
+    const errored = await waitForStable(handle);
+    expect(errored).toEqual({
+      phase: "STEP",
+      step: "DOWNLOAD_MODEL",
+      status: "ERROR",
+      error: "安装 MLX 依赖失败（退出码 1）",
+      retriable: true,
+    });
+    expect(markerWrites).toBe(0); // no marker write on the failed attempt
+
+    handle.retryStep();
+    const finalState = await waitForStable(handle);
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(pipInstallAttempts).toBe(3); // 2 (first ensureMlxExtras call, both attempts) + 1 (retry's own first attempt, now succeeding)
+    expect(markerWrites).toBe(1); // exactly the one real, post-prewarm write
+  });
+
+  it("a plain WHISPER-family first-run (e.g. 'medium') never triggers ANY mlx invoke at all — byte-identical order to before this fix", async () => {
+    const calledCmds: string[] = [];
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke(successfulPipelineHandlers, (cmd) => calledCmds.push(cmd)),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+    handle.beginProvision("medium");
+    const finalState = await waitForStable(handle);
+
+    expect(finalState).toEqual({ phase: "HEALTHY" });
+    expect(calledCmds).toEqual([
+      "app_paths",
+      "read_provision_marker",
+      "run_uv", // INSTALL_PYTHON
+      "run_uv", // CREATE_VENV
+      "run_uv", // INSTALL_DEPS
+      "prewarm_model", // DOWNLOAD_MODEL — no mlx_capabilities/mlx_import_preflight/app_data_disk_free ever precedes it
+      "write_provision_marker",
+      "start_server",
+    ]);
+    expect(calledCmds).not.toContain("mlx_capabilities");
+    expect(calledCmds).not.toContain("mlx_import_preflight");
+    expect(calledCmds).not.toContain("app_data_disk_free");
+  });
+});
+
 // ---------------------------------------------------------------
 // S4 chunk 4 (blueprint decision C: switch flow) — switchModel() +
 // installedModel(). Every test below starts from a HEALTHY (adopted)
@@ -2430,6 +2632,160 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
 
     await expect(handle.switchModel("not-a-real-model")).rejects.toThrow("不支持的模型：not-a-real-model");
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+  });
+});
+
+// S12b fix round (§F FB8, MED) — switchModel()'s own SAME-TARGET no-op:
+// re-selecting the model that's ALREADY installed+running must not
+// repeat the download poll or restart an already-healthy sidecar. (The
+// OTHER half of FB8 — installedModel() staleness after a download-task
+// completes — is worker B2's, in SettingsDialog.tsx; not this file's
+// concern.)
+describe("bootstrapDesktop — switchModel() SAME-TARGET no-op (§F FB8)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    resetMlxCapsCache();
+  });
+
+  it("whisper-family: re-selecting the marker's OWN model resolves with ZERO download/stop/start/marker-write invokes — only read_provision_marker", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const calledCmds: string[] = [];
+    const invoke = makeFakeInvoke(
+      { app_paths: () => paths, read_provision_marker: () => existingMarkerJson }, // existingMarkerJson's own model is "small"
+      (cmd) => calledCmds.push(cmd),
+    );
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+    calledCmds.length = 0;
+
+    await handle.switchModel("small"); // the marker's OWN model — must not throw
+
+    expect(calledCmds).toEqual(["read_provision_marker"]);
+    expect(fetchMock).not.toHaveBeenCalled(); // no /download-model POST at all
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+  });
+
+  it("mlx-family: re-selecting the marker's OWN parakeet model, with its extras STILL valid (mlx_import_preflight ok:true), resolves with ZERO mlx-install/download/stop/start/marker-write invokes", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const parakeetMarkerJson = JSON.stringify({
+      schema: 1,
+      model: "parakeet-tdt-0.6b-v3",
+      py: "3.12",
+      deps: "x",
+      ts: "2026-07-01T00:00:00.000Z",
+    });
+    const calledCmds: string[] = [];
+    const invoke = makeFakeInvoke(
+      {
+        app_paths: () => paths,
+        read_provision_marker: () => parakeetMarkerJson,
+        mlx_import_preflight: () => ({ ok: true, stderr: "" }),
+      },
+      (cmd) => calledCmds.push(cmd),
+    );
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+    calledCmds.length = 0;
+
+    await handle.switchModel("parakeet-tdt-0.6b-v3");
+
+    expect(calledCmds).toEqual(["read_provision_marker", "mlx_import_preflight"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(calledCmds).not.toContain("run_uv");
+    expect(calledCmds).not.toContain("app_data_disk_free");
+    expect(calledCmds).not.toContain("write_provision_marker");
+    expect(calledCmds).not.toContain("stop_server");
+    expect(calledCmds).not.toContain("start_server");
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+  });
+
+  it("mlx-family: the marker says parakeet, but its extras are NO LONGER valid (mlx_import_preflight ok:false) — does NOT no-op, falls through to a real (repair) install", async () => {
+    const parakeetMarkerJson = JSON.stringify({
+      schema: 1,
+      model: "parakeet-tdt-0.6b-v3",
+      py: "3.12",
+      deps: "x",
+      ts: "2026-07-01T00:00:00.000Z",
+    });
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-repair" }, 202);
+      if (url.includes("/jobs/job-repair")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let runUvCalls = 0;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => parakeetMarkerJson,
+      mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+      mlx_import_preflight: () => ({ ok: false, stderr: "broken venv" }), // NEVER valid in this test — every call, skip-check included
+      app_data_disk_free: () => ({ freeBytes: 20 * 1024 ** 3 }),
+      run_uv: () => {
+        runUvCalls += 1;
+        return { code: 0 };
+      },
+      stop_server: () => undefined,
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: () => undefined,
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    // Not asserting success here (mlx_import_preflight NEVER resolves
+    // ok:true in this mock, so ensureMlxExtras' own post-install
+    // verification would keep failing too) — only that it did NOT
+    // silently no-op: real venv-mutating work was attempted.
+    await handle.switchModel("parakeet-tdt-0.6b-v3").catch(() => {});
+    expect(runUvCalls).toBeGreaterThan(0); // real install work happened — proves this was NOT the no-op path
+  });
+
+  it("a same-target no-op call still correctly HOLDS the shared latch for its own (brief) duration — a concurrent reprovision() rejects against it, same as any other in-flight switchModel() call", async () => {
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => undefined,
+      write_provision_marker: () => undefined,
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    const switchPromise = handle.switchModel("small"); // same-target — will resolve via the no-op path
+    await expect(handle.reprovision()).rejects.toThrow("另一项本地服务操作正在进行");
+    await switchPromise;
+
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
+  });
+
+  it("a DIFFERENT target still runs the full switch flow, unaffected by the same-target no-op check", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-diff" }, 202);
+      if (url.includes("/jobs/job-diff")) return jsonResponse({ status: "done", progress: 1, error: null });
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson, // model "small"
+      stop_server: () => undefined,
+      start_server: () => ({ alreadyRunning: false }),
+      write_provision_marker: () => undefined,
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    await handle.switchModel("medium"); // different target — must NOT no-op
+
+    expect(fetchMock).toHaveBeenCalled();
     expect(handle.currentState()).toEqual({ phase: "HEALTHY" });
   });
 });
