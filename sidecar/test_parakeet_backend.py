@@ -85,6 +85,7 @@ from whisper_server import (  # noqa: E402
     ParakeetMlxServer,
     backend_for_model,
     new_job,
+    parakeet_busy_response,
 )
 from whisper_server import _ParakeetAudio  # noqa: E402 - internal, mirrors FinalizeJob's own import
 
@@ -495,6 +496,20 @@ class FakeBackend:
         # missing entry defaults to "" (empty result).
         self.partial_texts: list[str] = []
         self.final_texts: list[str] = []
+        # FB2 call-order test: one tag per actual method invocation,
+        # in call order, across ALL four methods below — lets a test
+        # assert the EXACT interleaving (e.g. "close" strictly before
+        # "generate"/batch_final).
+        self.call_order: list[str] = []
+        # FB5 fail-injection: set any of these to an Exception instance
+        # to make that operation raise instead of its normal fake
+        # behavior — one exception object is consumed exactly once
+        # (cleared after raising) so a test can also assert recovery
+        # behavior on a LATER, healthy call within the same test.
+        self.fail_open: "Exception | None" = None
+        self.fail_add_audio: "Exception | None" = None
+        self.fail_batch_final: "Exception | None" = None
+        self.fail_close: "Exception | None" = None
 
     def try_acquire_stream(self) -> bool:
         if self._busy:
@@ -510,19 +525,35 @@ class FakeBackend:
         # own open_streaming_context contract (G1 live-gate fix: every
         # real call routes through a dedicated executor thread; see
         # that class's own docstring).
+        self.call_order.append("open")
+        if self.fail_open is not None:
+            exc, self.fail_open = self.fail_open, None
+            raise exc
         self.opened_contexts += 1
         ctx = FakeStreamingCtx()
         ctx.__enter__()
         return ctx
 
     async def close_streaming_context(self, ctx: FakeStreamingCtx) -> None:
+        self.call_order.append("close")
+        if self.fail_close is not None:
+            exc, self.fail_close = self.fail_close, None
+            raise exc
         ctx.__exit__(None, None, None)
 
     async def add_audio(self, ctx: FakeStreamingCtx, chunk: object) -> None:
+        self.call_order.append("add_audio")
+        if self.fail_add_audio is not None:
+            exc, self.fail_add_audio = self.fail_add_audio, None
+            raise exc
         self.add_audio_calls.append(chunk)
         ctx._text = self.partial_texts.pop(0) if self.partial_texts else ""
 
     async def batch_final(self, pcm: object) -> str:
+        self.call_order.append("batch_final")
+        if self.fail_batch_final is not None:
+            exc, self.fail_batch_final = self.fail_batch_final, None
+            raise exc
         self.batch_final_calls.append(pcm)
         return self.final_texts.pop(0) if self.final_texts else ""
 
@@ -557,6 +588,40 @@ class FakeWsEmptyStream(FakeWs):
 
     async def __anext__(self):
         raise StopAsyncIteration
+
+
+class FakeWsController(FakeWs):
+    """Like FakeWs, but supports `async for message in ws` as a queue
+    of pre-loaded incoming messages, followed by blocking until close()
+    is called (by ANYONE — the test OR, for FB5, the worker task
+    itself) — mirrors a real websockets connection's receive loop,
+    which unblocks with ConnectionClosed once the socket actually
+    closes, regardless of which task initiated that close. Used for
+    FB5's end-to-end handle() tests (a model-call failure must self-
+    close AND let handle()'s own outer finally run to completion)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._incoming: list[object] = []
+        self._closed_event = asyncio.Event()
+
+    def queue_incoming(self, message: object) -> None:
+        self._incoming.append(message)
+
+    async def close(self) -> None:
+        await super().close()
+        self._closed_event.set()
+
+    def __aiter__(self) -> "FakeWsController":
+        return self
+
+    async def __anext__(self):
+        if self._incoming:
+            return self._incoming.pop(0)
+        await self._closed_event.wait()
+        from websockets.exceptions import ConnectionClosedOK
+
+        raise ConnectionClosedOK(None, None)
 
 
 def make_parakeet_server(backend: FakeBackend, emit_partials: bool = False) -> ParakeetMlxServer:
@@ -709,10 +774,11 @@ async def test_stop_drains_tail_final_then_stopped() -> None:
         await asyncio.wait_for(worker, timeout=2.0)
 
         check(
-            "stop-drain: client sees the tail final THEN stopped, in that exact order",
-            [m["type"] for m in ws.sent] == ["final", "stopped"],
+            "stop-drain: client sees the tail final THEN stopped THEN the connection closes (FB7 self-close), in that exact order",
+            [m["type"] for m in ws.sent] == ["final", "stopped", "closed"],
         )
         check("stop-drain: the tail final carries seg_id 0", ws.sent[0].get("seg_id") == 0)
+        check("stop-drain (FB7): the server closed the connection itself exactly once", ws.close_calls == 1)
     finally:
         await stop_worker(worker)
 
@@ -727,7 +793,10 @@ async def test_stop_with_no_pending_speech_sends_only_stopped() -> None:
     try:
         await server._handle_text(ws, state, cmd_queue, json.dumps({"type": "stop"}))
         await asyncio.wait_for(worker, timeout=2.0)
-        check("stop with nothing pending: only 'stopped' is sent, no final", [m["type"] for m in ws.sent] == ["stopped"])
+        check(
+            "stop with nothing pending: 'stopped' then closed (FB7), no final",
+            [m["type"] for m in ws.sent] == ["stopped", "closed"],
+        )
     finally:
         await stop_worker(worker)
 
@@ -947,8 +1016,8 @@ async def test_double_stop_enqueues_only_one_sentinel_parakeet() -> None:
     try:
         await asyncio.wait_for(worker, timeout=2.0)
         check(
-            "parakeet double stop: exactly one 'stopped' ack is ever sent and the worker exits cleanly",
-            [m["type"] for m in ws.sent] == ["stopped"],
+            "parakeet double stop: exactly one 'stopped' ack is ever sent, then closed (FB7), and the worker exits cleanly",
+            [m["type"] for m in ws.sent] == ["stopped", "closed"],
         )
     finally:
         await stop_worker(worker)
@@ -1068,6 +1137,342 @@ def test_transcribe_job_faster_whisper_path_unaffected_by_parakeet_branch() -> N
 
 
 # =================================================================
+# S12b fix round B — FB2 (BLOCKER): close-before-batch_final ordering
+# =================================================================
+
+
+async def test_boundary_closes_context_before_batch_final_fb2() -> None:
+    """FB2 (BLOCKER, Sol2): the streaming context must be closed/reset
+    BEFORE batch_final runs — upstream's __exit__ is what restores full
+    ('rel_pos') attention (StreamingParakeet.__exit__); running
+    batch_final on a still-open context would run generate() under
+    LOCAL attention, silently degrading every final's quality. Feeds
+    one Audio command (opens the context) then a Boundary — asserts
+    the FakeBackend's own call_order log shows 'close' strictly before
+    'batch_final', not just eventually — immediately before, with
+    nothing else interleaved."""
+    backend = FakeBackend()
+    backend.partial_texts = ["partial text"]
+    backend.final_texts = ["final text"]
+    server = make_parakeet_server(backend, emit_partials=True)
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    cmd_queue: "asyncio.Queue" = asyncio.Queue()
+    worker = await start_worker(server, ws, state, cmd_queue)
+    try:
+        await cmd_queue.put(_ParakeetAudio(frame=speech_frame()))
+        await cmd_queue.join()
+        mark_pending_speech(state)
+        await server._finalize_boundary(state, cmd_queue, force=True)
+        await cmd_queue.join()
+
+        check("FB2 setup: the context was actually opened for the Audio command", "open" in backend.call_order)
+        check(
+            "FB2: call order is exactly open, add_audio, close, batch_final — close strictly before batch_final",
+            backend.call_order == ["open", "add_audio", "close", "batch_final"],
+        )
+        finals = [m for m in ws.sent if m["type"] == "final"]
+        check("FB2: the final itself still arrives normally after the reorder", finals and finals[0]["text"] == "final text")
+    finally:
+        await stop_worker(worker)
+
+
+# =================================================================
+# S12b fix round B — FB4 (HIGH): live x file shared-workload mutual
+# exclusion. Uses the REAL ParakeetMlxBackend (not FakeBackend) so
+# these tests exercise the actual threading.Lock-backed reservation
+# JobManager.start_job/start_url_job and ParakeetMlxServer.handle both
+# contend for — the integration itself, not just the abstract shape.
+# =================================================================
+
+
+def test_fb4_job_admission_blocked_by_live_ws_session() -> None:
+    backend = ParakeetMlxBackend(PARAKEET_MODEL)
+    check(
+        "FB4 setup: the (simulated) live ws session acquires the shared workload slot",
+        backend.try_acquire_stream() is True,
+    )
+
+    jm = JobManager(model=backend, model_name=PARAKEET_MODEL, default_language="en", hf_token=None)
+    job_id = jm.start_job("/tmp/jargonslayer-test-fb4-nonexistent.wav", "en")
+    check(
+        "FB4: start_job refuses admission (returns None) while the slot is held by a live ws session",
+        job_id is None,
+    )
+    check("FB4: no job was ever recorded for the refused admission", jm.jobs == {})
+
+
+async def test_fb4_ws_session_blocked_by_running_job() -> None:
+    backend = ParakeetMlxBackend(PARAKEET_MODEL)
+    check(
+        "FB4 setup: the (simulated) running parakeet job acquires the shared workload slot",
+        backend.try_acquire_stream() is True,
+    )
+
+    server = ParakeetMlxServer(backend=backend, default_language="en", emit_partials=False, save_audio_path=None)
+    ws = FakeWs()
+    await server.handle(ws)
+    check(
+        "FB4: a ws session gets the EXISTING typed parakeet-busy event while a job holds the slot (no new code path)",
+        [m["type"] for m in ws.sent] == ["parakeet-busy", "closed"],
+    )
+
+
+def test_fb4_start_url_job_blocked_too() -> None:
+    backend = ParakeetMlxBackend(PARAKEET_MODEL)
+    check("FB4 setup: the slot is held", backend.try_acquire_stream() is True)
+    jm = JobManager(model=backend, model_name=PARAKEET_MODEL, default_language="en", hf_token=None)
+    job_id = jm.start_url_job("https://example.com/video", "en")
+    check("FB4: start_url_job is ALSO gated by the same shared slot", job_id is None)
+    check("FB4: no URL job was ever recorded for the refused admission", jm.jobs == {})
+
+
+def test_fb4_faster_whisper_jobs_unaffected() -> None:
+    # A non-ParakeetMlxBackend model (here, a bare object() — start_job's
+    # isinstance check must exclude it from the shared-slot gate
+    # entirely; the job WILL fail once its background thread actually
+    # tries to transcribe with no real model, but ADMISSION itself must
+    # never be blocked regardless of any parakeet workload state).
+    jm = JobManager(model=object(), model_name="small", default_language="en", hf_token=None)
+    job_id = jm.start_job("/tmp/jargonslayer-test-fb4-whisper-unaffected.bin", "en")
+    check(
+        "FB4: a non-parakeet model's start_job is never gated by the shared slot",
+        isinstance(job_id, str) and len(job_id) > 0,
+    )
+
+
+def test_fb4_release_on_job_crash() -> None:
+    backend = ParakeetMlxBackend(PARAKEET_MODEL)
+
+    def failing_transcribe_file(file_path: str, language: str):
+        raise RuntimeError("boom-transcribe-file")
+
+    backend.transcribe_file = failing_transcribe_file  # type: ignore[method-assign]
+
+    jm = JobManager(model=backend, model_name=PARAKEET_MODEL, default_language="en", hf_token=None)
+    job_id = jm.start_job("/tmp/jargonslayer-test-fb4-crash.bin", "en")
+    check("FB4 crash setup: admission succeeded (the slot was free)", job_id is not None)
+
+    deadline = time.monotonic() + 5.0
+    job = None
+    while time.monotonic() < deadline:
+        job = jm.get(job_id)
+        if job is not None and job.get("status") in ("done", "error"):
+            break
+        time.sleep(0.01)
+
+    check("FB4 crash: the job's background thread actually finished with status=error", job is not None and job.get("status") == "error")
+    check(
+        "FB4 crash: the shared slot was released in the job's own OUTERMOST finally, not left stuck busy",
+        backend.try_acquire_stream() is True,
+    )
+
+
+def test_parakeet_busy_response_shape() -> None:
+    body = parakeet_busy_response()
+    check(
+        "parakeet_busy_response: type discriminator matches the ws wire event's own ('parakeet-busy')",
+        body.get("type") == "parakeet-busy",
+    )
+    check(
+        "parakeet_busy_response: carries the exact zh copy the fix round specified",
+        body.get("error") == "本机正在实时转录，请结束后再上传",
+    )
+
+
+# =================================================================
+# S12b fix round B — FB5 (HIGH): per-command exception containment.
+# Each test injects a failure into exactly ONE of the four operations
+# (open/add_audio/batch_final/close) via a REAL handle() call (through
+# FakeWsController, which models a real ws's receive loop unblocking
+# via ConnectionClosed once close() fires from ANY task) and asserts
+# the typed error event, the socket close, AND — critically — that the
+# shared slot is released so the NEXT connection is accepted.
+# =================================================================
+
+
+async def test_fb5_open_streaming_context_failure_is_contained() -> None:
+    backend = FakeBackend()
+    backend.fail_open = RuntimeError("boom-open")
+    server = make_parakeet_server(backend, emit_partials=True)
+    ws = FakeWsController()
+    ws.queue_incoming(loud_pcm_bytes(5))
+    await asyncio.wait_for(server.handle(ws), timeout=5.0)
+
+    types = [m["type"] for m in ws.sent]
+    check("FB5 (open fails): a typed parakeet-error event was sent", "parakeet-error" in types)
+    check("FB5 (open fails): the connection was closed", ws.close_calls >= 1)
+    check(
+        "FB5 (open fails): the shared slot was released — the NEXT connection is accepted",
+        backend.try_acquire_stream() is True,
+    )
+
+
+async def test_fb5_add_audio_failure_is_contained() -> None:
+    backend = FakeBackend()
+    backend.fail_add_audio = RuntimeError("boom-add-audio")
+    server = make_parakeet_server(backend, emit_partials=True)
+    ws = FakeWsController()
+    ws.queue_incoming(loud_pcm_bytes(5))
+    await asyncio.wait_for(server.handle(ws), timeout=5.0)
+
+    types = [m["type"] for m in ws.sent]
+    check("FB5 (add_audio fails): a typed parakeet-error event was sent", "parakeet-error" in types)
+    check("FB5 (add_audio fails): the connection was closed", ws.close_calls >= 1)
+    check(
+        "FB5 (add_audio fails): the ALREADY-open context was still torn down (teardown attempted despite the failure)",
+        "close" in backend.call_order,
+    )
+    check(
+        "FB5 (add_audio fails): the shared slot was released — the NEXT connection is accepted",
+        backend.try_acquire_stream() is True,
+    )
+
+
+async def test_fb5_batch_final_failure_is_contained() -> None:
+    backend = FakeBackend()
+    backend.fail_batch_final = RuntimeError("boom-batch-final")
+    server = make_parakeet_server(backend, emit_partials=False)
+    ws = FakeWsController()
+    ws.queue_incoming(loud_pcm_bytes(20))  # 640ms > MIN_SPEECH_MS(350ms)
+    ws.queue_incoming(json.dumps({"type": "stop"}))
+    await asyncio.wait_for(server.handle(ws), timeout=5.0)
+
+    types = [m["type"] for m in ws.sent]
+    check("FB5 (batch_final fails): a typed parakeet-error event was sent", "parakeet-error" in types)
+    check("FB5 (batch_final fails): 'stopped' was NEVER sent — the connection terminated on the error first", "stopped" not in types)
+    check("FB5 (batch_final fails): the connection was closed", ws.close_calls >= 1)
+    check(
+        "FB5 (batch_final fails): the shared slot was released — the NEXT connection is accepted",
+        backend.try_acquire_stream() is True,
+    )
+
+
+async def test_fb5_close_streaming_context_failure_is_contained() -> None:
+    backend = FakeBackend()
+    backend.fail_close = RuntimeError("boom-close")
+    server = make_parakeet_server(backend, emit_partials=True)
+    ws = FakeWsController()
+    ws.queue_incoming(loud_pcm_bytes(20))
+    ws.queue_incoming(json.dumps({"type": "stop"}))
+    await asyncio.wait_for(server.handle(ws), timeout=5.0)
+
+    types = [m["type"] for m in ws.sent]
+    check("FB5 (close fails): a typed parakeet-error event was sent", "parakeet-error" in types)
+    check("FB5 (close fails): 'stopped' was never sent", "stopped" not in types)
+    check("FB5 (close fails): the connection was closed", ws.close_calls >= 1)
+    check(
+        "FB5 (close fails): the shared slot was released — the NEXT connection is accepted",
+        backend.try_acquire_stream() is True,
+    )
+
+
+# =================================================================
+# S12b fix round B — FB7-server (MED): self-close after stopped is
+# already covered by the updated stop-drain/stop-with-nothing-pending/
+# double-stop tests above (their assertions now include "closed" as
+# the trailing event). This section covers the OTHER FB7-server half:
+# a one-shot diar_status "unavailable" on a diarize:true config,
+# matching the whisper path's own event shape.
+# =================================================================
+
+
+async def test_fb7_diar_status_unavailable_on_diarize_config() -> None:
+    server = make_parakeet_server(FakeBackend())
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    cmd_queue: "asyncio.Queue" = asyncio.Queue()
+
+    await server._handle_text(ws, state, cmd_queue, json.dumps({"type": "config", "diarize": True}))
+    check(
+        "FB7: exactly one diar_status event is sent when diarize:true arrives (honest arming feedback)",
+        [m["type"] for m in ws.sent] == ["diar_status"],
+    )
+    check("FB7: state matches the whisper path's own 'unavailable' shape", ws.sent[0].get("state") == "unavailable")
+    check(
+        "FB7: detail is a non-empty string",
+        isinstance(ws.sent[0].get("detail"), str) and len(ws.sent[0]["detail"]) > 0,
+    )
+    check("FB7: ConnectionState.diar_status_sent latches True (one-shot, reused field)", state.diar_status_sent is True)
+
+    await server._handle_text(ws, state, cmd_queue, json.dumps({"type": "config", "diarize": True}))
+    check("FB7: a second diarize:true config does NOT re-send diar_status (one-shot)", len(ws.sent) == 1)
+
+
+async def test_fb7_diarize_false_never_sends_diar_status() -> None:
+    server = make_parakeet_server(FakeBackend())
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    cmd_queue: "asyncio.Queue" = asyncio.Queue()
+    await server._handle_text(ws, state, cmd_queue, json.dumps({"type": "config", "partials": True}))
+    check("FB7: a config with no diarize field never sends diar_status", ws.sent == [])
+
+
+# =================================================================
+# S12b fix round B — FB9 (LOW): a discarded (sub-MIN_SPEECH_MS) forced
+# boundary must reset/close the streaming context — otherwise the
+# still-open, blip-contaminated context gets silently REUSED for the
+# next utterance's live partials.
+# =================================================================
+
+
+async def test_fb9_discarded_blip_resets_context_for_next_utterance() -> None:
+    backend = FakeBackend()
+    backend.partial_texts = ["blip text", "real utterance text"]
+    server = make_parakeet_server(backend, emit_partials=True)
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    cmd_queue: "asyncio.Queue" = asyncio.Queue()
+    # Decouple from wall-clock partial throttling (PARTIAL_INTERVAL_S) —
+    # the blip's OWN partial already consumes the throttle window (its
+    # text is non-empty, so it emits immediately), and the real
+    # utterance's Audio command below follows within microseconds in
+    # this test; without this, the real partial would be suppressed by
+    # the SAME throttle test_partial_emission_is_throttled exercises on
+    # purpose elsewhere — an unrelated interaction FB9 isn't about.
+    saved_interval = whisper_server.PARTIAL_INTERVAL_S
+    whisper_server.PARTIAL_INTERVAL_S = 0.0
+    worker = await start_worker(server, ws, state, cmd_queue)
+    try:
+        # Blip: a few loud frames (96ms, well under MIN_SPEECH_MS=350ms),
+        # then an external force (mirrors "flush"/an early "stop")
+        # discards it before any natural VAD silence-hang boundary.
+        await server._handle_binary(ws, state, cmd_queue, loud_pcm_bytes(3))
+        await cmd_queue.join()
+        await server._finalize_boundary(state, cmd_queue, force=True)
+        await cmd_queue.join()
+
+        check("FB9 setup: the blip's own Audio command opened a context", backend.opened_contexts == 1)
+        check("FB9 setup: no final was ever sent for the discarded blip", [m for m in ws.sent if m["type"] == "final"] == [])
+        check(
+            "FB9: the discarded boundary reset/closed the blip's context (call order: open, add_audio, close)",
+            backend.call_order == ["open", "add_audio", "close"],
+        )
+
+        # Real utterance: a fresh Audio command must open a NEW context,
+        # never reuse the blip's now-closed/contaminated one.
+        await server._handle_binary(ws, state, cmd_queue, loud_pcm_bytes(3))
+        await cmd_queue.join()
+
+        check(
+            "FB9: the next utterance's partial opens a FRESH context (opened_contexts == 2)",
+            backend.opened_contexts == 2,
+        )
+        check(
+            "FB9: call order shows a SECOND 'open' after the reset — never reused across the discard",
+            backend.call_order == ["open", "add_audio", "close", "open", "add_audio"],
+        )
+        partials = [m for m in ws.sent if m["type"] == "partial"]
+        check(
+            "FB9: the real utterance's own partial text reaches the client, uncontaminated by the blip",
+            bool(partials) and partials[-1]["text"] == "real utterance text",
+        )
+    finally:
+        whisper_server.PARTIAL_INTERVAL_S = saved_interval
+        await stop_worker(worker)
+
+
+# =================================================================
 # runner
 # =================================================================
 
@@ -1093,6 +1498,15 @@ ASYNC_TESTS = [
     test_double_stop_enqueues_only_one_sentinel_parakeet,
     test_parakeet_busy_rejects_second_session,
     test_close_without_stop_releases_stream_slot,
+    test_boundary_closes_context_before_batch_final_fb2,
+    test_fb4_ws_session_blocked_by_running_job,
+    test_fb5_open_streaming_context_failure_is_contained,
+    test_fb5_add_audio_failure_is_contained,
+    test_fb5_batch_final_failure_is_contained,
+    test_fb5_close_streaming_context_failure_is_contained,
+    test_fb7_diar_status_unavailable_on_diarize_config,
+    test_fb7_diarize_false_never_sends_diar_status,
+    test_fb9_discarded_blip_resets_context_for_next_utterance,
 ]
 
 
@@ -1113,6 +1527,11 @@ test_transcribe_file_empty_sentences_returns_empty_segments_and_zero_duration()
 test_try_acquire_stream_and_release()
 test_transcribe_job_dispatches_to_parakeet_backend()
 test_transcribe_job_faster_whisper_path_unaffected_by_parakeet_branch()
+test_fb4_job_admission_blocked_by_live_ws_session()
+test_fb4_start_url_job_blocked_too()
+test_fb4_faster_whisper_jobs_unaffected()
+test_fb4_release_on_job_crash()
+test_parakeet_busy_response_shape()
 asyncio.run(run_async_tests())
 
 
