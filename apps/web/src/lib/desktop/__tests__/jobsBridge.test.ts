@@ -48,6 +48,9 @@ const fakePaths: DesktopPaths = {
   diarRequirementsPath: "",
   logPath: "",
   markerPath: "",
+  mlxVenvDir: "",
+  mlxVenvPython: "",
+  mlxRequirementsLockPath: "",
 };
 
 /** Mirrors bootstrap.ts's own (module-private) NOT_DESKTOP_HANDLE shape

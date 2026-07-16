@@ -24,6 +24,9 @@ const paths: DesktopPaths = {
   diarRequirementsPath: "/fake/Resources/sidecar/requirements-diar.txt",
   logPath: "/fake/Logs/whisper_server.log",
   markerPath: "/fake/AppData/.provisioned.json",
+  mlxVenvDir: "/fake/AppData/mlx-venv",
+  mlxVenvPython: "/fake/AppData/mlx-venv/bin/python",
+  mlxRequirementsLockPath: "/fake/Resources/sidecar/requirements-mlx.lock",
 };
 
 interface FakeCall {

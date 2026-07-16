@@ -569,6 +569,9 @@ const NOT_DESKTOP_PATHS: DesktopPaths = {
   diarRequirementsPath: "",
   logPath: "",
   markerPath: "",
+  mlxVenvDir: "",
+  mlxVenvPython: "",
+  mlxRequirementsLockPath: "",
 };
 
 const NOT_DESKTOP_HANDLE: DesktopBootstrapHandle = {
