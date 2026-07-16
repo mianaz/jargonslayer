@@ -1641,7 +1641,12 @@ class JobManager:
 
         try:
             self._set(job_id, status="running", status_detail="下载中")
-            download_model_snapshot(model, on_progress)
+            # S12a Q6: thread this manager's own CLI/env token (the
+            # SAME self.hf_token diarization already falls back to,
+            # see __init__) into the download itself — previously NO
+            # token reached downloads at all (s12-mlx-blueprint.md §B
+            # finding 10/§C R1).
+            download_model_snapshot(model, on_progress, hf_token=self.hf_token)
             self._set(job_id, status="done", progress=1.0, status_detail=None)
         except Exception as exc:  # noqa: BLE001 - report any failure to the client
             self._set(job_id, status="error", error=str(exc))
@@ -2195,7 +2200,24 @@ def health_payload(model_name: str, installed: bool, ready: bool, error: Optiona
 # every OTHER test file relies on that already.
 # =================================================================
 
-MODEL_CHOICES = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]
+# S12a (v0.4.4, MLX local-STT lane, docs/design-explorations/
+# s12-mlx-blueprint.md §C/R1) — parakeet-tdt-0.6b-v3 is the first
+# model NOT resolved through faster_whisper's own _MODELS table (see
+# _repo_id_for_model below); it rides the SAME MODEL_CHOICES/download/
+# validate machinery as every whisper model (decision Q1: "a model
+# under `whisper`, not a new engine"), byte-identical for every
+# faster-whisper entry.
+PARAKEET_MODEL = "parakeet-tdt-0.6b-v3"
+
+MODEL_CHOICES = [
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large-v3",
+    "large-v3-turbo",
+    PARAKEET_MODEL,
+]
 
 # The SAME allow_patterns faster_whisper.utils.download_model uses
 # internally (verified against the pinned faster-whisper==1.2.1's
@@ -2211,6 +2233,26 @@ MODEL_DOWNLOAD_ALLOW_PATTERNS = [
     "tokenizer.json",
     "vocabulary.*",
 ]
+
+# mlx-community/parakeet-tdt-0.6b-v3's repo id + allow_patterns —
+# verified LIVE two ways (s12-mlx-blueprint.md §B finding 12 / §C R1,
+# 2026-07-16): (1) the HF repo's own file listing has config.json,
+# model.safetensors, tokenizer.model, tokenizer.vocab, vocab.txt
+# (+README/.gitattributes); (2) the installed parakeet_mlx==0.5.2
+# wheel's utils.from_pretrained (unzipped, NOT installed into any venv
+# — see requirements-mlx.in's own note) calls
+# `hf_hub_download(repo, "config.json", cache_dir=cache_dir)` and
+# `hf_hub_download(repo, "model.safetensors", cache_dir=cache_dir)`
+# ONLY — the vocab is embedded in config.json and the tokenizer/vocab
+# files on the repo are simply never read. A pre-download that mirrors
+# EXACTLY this two-file set is therefore both the honest disk-space
+# total (model.safetensors alone is 2,508,288,736 bytes = ~2.51GB live
+# 2026-07-16, NOT the ~1GB an earlier estimate assumed — §B finding
+# 12) and precisely what a later `from_pretrained(repo, cache_dir=
+# None)` call needs — no wasted bytes on the unused tokenizer/vocab
+# files, same invariant MODEL_DOWNLOAD_ALLOW_PATTERNS keeps above.
+PARAKEET_REPO_ID = "mlx-community/parakeet-tdt-0.6b-v3"
+PARAKEET_ALLOW_PATTERNS = ["config.json", "model.safetensors"]
 
 
 def validate_download_model(model: Any) -> Optional[str]:
@@ -2256,19 +2298,42 @@ def check_disk_space(total_bytes: int, check_dir: str) -> None:
 
 
 def _repo_id_for_model(model: str) -> str:
-    """Resolve `model` to its Hugging Face Hub repo id the SAME way
-    faster-whisper's own WhisperModel(model) does internally — reuses
-    faster_whisper.utils._MODELS directly (verified against the pinned
-    faster-whisper==1.2.1: utils.download_model looks up this exact
-    dict) rather than hand-duplicating the mapping, so a future
+    """Resolve `model` to its Hugging Face Hub repo id — the first half
+    of the model->(repo_id, allow_patterns) registry (see
+    _allow_patterns_for_model below for the other half). PARAKEET_MODEL
+    short-circuits to its static PARAKEET_REPO_ID; every other model
+    (every faster-whisper entry, byte-identical to before S12a) resolves
+    the SAME way faster-whisper's own WhisperModel(model) does internally
+    — reuses faster_whisper.utils._MODELS directly (verified against the
+    pinned faster-whisper==1.2.1: utils.download_model looks up this
+    exact dict) rather than hand-duplicating the mapping, so a future
     faster-whisper bump that changes an entry can't silently drift the
-    two out of sync."""
+    two out of sync. The faster_whisper import stays deferred here (this
+    branch is skipped entirely for parakeet), keeping this module
+    importable under the separate mlx venv, which never installs
+    faster-whisper (§C R1: "every module-level import ... must be
+    satisfiable in the mlx venv... faster_whisper imports stay lazy")."""
+    if model == PARAKEET_MODEL:
+        return PARAKEET_REPO_ID
+
     from faster_whisper.utils import _MODELS
 
     repo_id = _MODELS.get(model)
     if repo_id is None:
         raise ValueError(f"未知模型：{model}")
     return repo_id
+
+
+def _allow_patterns_for_model(model: str) -> list[str]:
+    """Resolve `model` to its snapshot_download allow_patterns — the
+    second half of the model->(repo_id, allow_patterns) registry (see
+    _repo_id_for_model above). PARAKEET_MODEL uses PARAKEET_ALLOW_
+    PATTERNS (exactly the 2 files parakeet_mlx.from_pretrained reads);
+    every other model keeps MODEL_DOWNLOAD_ALLOW_PATTERNS, byte-
+    identical to before S12a."""
+    if model == PARAKEET_MODEL:
+        return PARAKEET_ALLOW_PATTERNS
+    return MODEL_DOWNLOAD_ALLOW_PATTERNS
 
 
 def _make_progress_bar_class(total: int, on_progress):
@@ -2329,9 +2394,12 @@ def _make_progress_bar_class(total: int, on_progress):
     return _ProgressBar
 
 
-def download_model_snapshot(model: str, on_progress=None) -> str:
-    """Download one faster-whisper model's CT2 snapshot from the
-    Hugging Face Hub, reporting cumulative progress via
+def download_model_snapshot(
+    model: str, on_progress=None, hf_token: Optional[str] = None
+) -> str:
+    """Download one model's snapshot from the Hugging Face Hub —
+    faster-whisper's CT2 snapshot, or (S12a) parakeet's config.json +
+    model.safetensors pair — reporting cumulative progress via
     on_progress(downloaded_bytes, total_bytes) as it goes (best-effort
     granularity — see _make_progress_bar_class; always called once
     more with (total, total) at the very end, so a caller always sees
@@ -2340,11 +2408,35 @@ def download_model_snapshot(model: str, on_progress=None) -> str:
     JobManager.start_download_job (:8766 model-switch job) — decision B
     of docs/design-explorations/s4-model-wizard-blueprint.md: "one
     shared helper, only invocation + progress transport differ."
+    repo_id/allow_patterns come from the model->(repo_id, allow_
+    patterns) registry (_repo_id_for_model/_allow_patterns_for_model
+    above, s12-mlx-blueprint.md §C R1).
 
     Runs under the process's own HF_HOME (set by the Rust launcher
     exactly like load_model()'s WhisperModel(...) call already relies
     on) — no explicit cache_dir override here, for the same reason; a
-    later load_model() call finds this snapshot already cached.
+    later load_model() (faster-whisper) or ParakeetMlxBackend's
+    from_pretrained(repo, cache_dir=None) (S12b) call finds this
+    snapshot already cached under the SAME root, because neither this
+    function nor either loader ever passes an explicit cache_dir —
+    both resolve huggingface_hub's own default (HF_HUB_CACHE, itself
+    derived from HF_HOME) identically. Introducing a divergent
+    cache_dir here would silently break that and trigger a second
+    full download at load time (s12-mlx-blueprint.md §B finding 10 —
+    the exact bug this invariant avoids); see test_download.py's cache-
+    root-invariant section.
+
+    `hf_token` (S12a Q6/F11): threaded from the caller's own --hf-token/
+    $HF_TOKEN (JobManager.self.hf_token / args.hf_token — the SAME
+    token diarization already falls back to) into BOTH the metadata
+    call and the actual snapshot_download, raising rate limits and
+    improving resumption reliability for a large anonymous pull (her
+    18%-stall field incident, 2026-07-13). `token=None` (the default)
+    is not a behavior change from before this parameter existed —
+    huggingface_hub's own build_hf_headers still falls back to reading
+    $HF_TOKEN/the cached login token implicitly in that case — this
+    param just makes an explicit CLI/Settings-supplied token
+    deterministic rather than relying on that implicit resolution.
 
     Raises RuntimeError with a zh message if free disk space is short
     (checked BEFORE any write — see check_disk_space), or re-raises
@@ -2356,14 +2448,15 @@ def download_model_snapshot(model: str, on_progress=None) -> str:
     from huggingface_hub import snapshot_download as hf_snapshot_download
 
     repo_id = _repo_id_for_model(model)
+    allow_patterns = _allow_patterns_for_model(model)
 
-    info = HfApi().model_info(repo_id, files_metadata=True)
+    info = HfApi().model_info(repo_id, files_metadata=True, token=hf_token)
     total = sum(
         sibling.size or 0
         for sibling in info.siblings or []
         if any(
             fnmatch.fnmatch(sibling.rfilename, pattern)
-            for pattern in MODEL_DOWNLOAD_ALLOW_PATTERNS
+            for pattern in allow_patterns
         )
     )
 
@@ -2371,13 +2464,17 @@ def download_model_snapshot(model: str, on_progress=None) -> str:
     # exactly the directory snapshot_download itself resolves to below
     # (we don't pass cache_dir, so it defaults the same way), which is
     # itself derived from HF_HOME — respected exactly as load_model()'s
-    # WhisperModel(...) call already relies on.
+    # WhisperModel(...) call already relies on. `total` here is already
+    # the honest per-model figure (allow_patterns-filtered — ~2.51GB
+    # for parakeet, not a stale ~1GB estimate — s12-mlx-blueprint.md §B
+    # finding 12), so this ×1.2 precheck floor is honest too.
     check_disk_space(total, hf_constants.HF_HUB_CACHE)
 
     progress_bar_cls = _make_progress_bar_class(total, on_progress or (lambda d, t: None))
     hf_snapshot_download(
         repo_id,
-        allow_patterns=MODEL_DOWNLOAD_ALLOW_PATTERNS,
+        allow_patterns=allow_patterns,
+        token=hf_token,
         tqdm_class=progress_bar_cls,
     )
     if on_progress is not None:
@@ -2398,7 +2495,7 @@ def should_emit_download_progress(
     return (now - last_emit >= 0.5) or (percent != last_percent)
 
 
-def run_download_only(model: str) -> bool:
+def run_download_only(model: str, hf_token: Optional[str] = None) -> bool:
     """--download-only mode body (decision B's first-run one-shot
     path, see main()): run download_model_snapshot, emitting
     newline-delimited JSON progress lines to stdout for the Rust
@@ -2406,7 +2503,9 @@ def run_download_only(model: str) -> bool:
     s4-model-wizard-blueprint.md's Anchors: tqdm's own \\r bars won't
     survive run_venv_python_streaming), then a final download_done/
     download_error line. Returns True on success, False on failure —
-    main() turns this into the process exit code."""
+    main() turns this into the process exit code. `hf_token` (S12a
+    Q6): threaded straight from args.hf_token (--hf-token/$HF_TOKEN,
+    see parse_args) into download_model_snapshot."""
     last_emit = 0.0
     last_percent = -1
 
@@ -2426,7 +2525,7 @@ def run_download_only(model: str) -> bool:
         )
 
     try:
-        download_model_snapshot(model, on_progress)
+        download_model_snapshot(model, on_progress, hf_token=hf_token)
     except Exception as exc:  # noqa: BLE001 - report any failure to the launcher
         print(json.dumps({"type": "download_error", "message": str(exc)}), flush=True)
         return False
@@ -2573,7 +2672,7 @@ async def main() -> None:
         # First-run one-shot (decision B) — pure download, no server/
         # port at all; skips load_model()/run_http_server()/
         # websockets.serve() entirely. See run_download_only.
-        ok = run_download_only(args.model)
+        ok = run_download_only(args.model, hf_token=args.hf_token)
         sys.exit(0 if ok else 1)
 
     model, load_seconds = load_model(args.model, args.device, args.compute)

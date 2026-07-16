@@ -55,6 +55,19 @@ Covers:
     via download_conflict_response's own shape (a thin handler
     assertion — see that section below for why a live handler isn't
     constructed here either)
+  - S12a (v0.4.4, MLX local-STT lane, docs/design-explorations/
+    s12-mlx-blueprint.md §C R1/Q6): MODEL_CHOICES/validate_download_
+    model accept the new parakeet-tdt-0.6b-v3 entry; JobManager._run_
+    download_job and run_download_only both thread their hf_token
+    (--hf-token/$HF_TOKEN) into download_model_snapshot, which
+    previously received no token at all — download_model_snapshot
+    itself stubbed to CAPTURE the hf_token kwarg, same no-network
+    posture as every other section here. The model->(repo_id, allow_
+    patterns) registry itself (parakeet vs. every faster-whisper
+    model, byte-identical) and the HF cache-root invariant are covered
+    in test_model_registry.py instead — they need a fake huggingface_
+    hub/faster_whisper import surface this file deliberately never
+    touches (see its own module docstring).
 """
 
 from __future__ import annotations
@@ -98,13 +111,27 @@ def check(label: str, cond: bool) -> None:
 # =================================================================
 
 check(
-    "MODEL_CHOICES: exactly the 6 models the argparse/marker allowlists ship "
-    "(tiny/base/small/medium/large-v3/large-v3-turbo)",
-    MODEL_CHOICES == ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"],
+    "MODEL_CHOICES: exactly the 7 models the argparse/marker allowlists ship "
+    "(tiny/base/small/medium/large-v3/large-v3-turbo/parakeet-tdt-0.6b-v3 — S12a "
+    "adds parakeet last, every faster-whisper entry byte-identical)",
+    MODEL_CHOICES
+    == [
+        "tiny",
+        "base",
+        "small",
+        "medium",
+        "large-v3",
+        "large-v3-turbo",
+        "parakeet-tdt-0.6b-v3",
+    ],
 )
 check(
-    "validate_download_model: accepts every MODEL_CHOICES entry",
+    "validate_download_model: accepts every MODEL_CHOICES entry (incl. parakeet)",
     all(validate_download_model(m) is None for m in MODEL_CHOICES),
+)
+check(
+    "validate_download_model: accepts the parakeet model id explicitly",
+    validate_download_model("parakeet-tdt-0.6b-v3") is None,
 )
 check(
     "validate_download_model: rejects an unknown model name",
@@ -383,7 +410,7 @@ def _make_job_manager() -> JobManager:
     return JobManager(model=None, model_name="small", default_language="en", hf_token=None)
 
 
-def _fake_download_ok(model, on_progress=None):  # noqa: ARG001 - model unused by the fake
+def _fake_download_ok(model, on_progress=None, hf_token=None):  # noqa: ARG001 - model/hf_token unused by the fake
     if on_progress is not None:
         on_progress(50, 100)
         on_progress(100, 100)
@@ -427,7 +454,7 @@ finally:
     whisper_server.download_model_snapshot = _real_download_model_snapshot
 
 
-def _fake_download_fail(model, on_progress=None):  # noqa: ARG001
+def _fake_download_fail(model, on_progress=None, hf_token=None):  # noqa: ARG001
     raise RuntimeError("磁盘空间不足：测试用固定失败")
 
 
@@ -478,7 +505,7 @@ finally:
 _release_download = threading.Event()
 
 
-def _fake_download_blocks_until_released(model, on_progress=None):  # noqa: ARG001
+def _fake_download_blocks_until_released(model, on_progress=None, hf_token=None):  # noqa: ARG001
     if not _release_download.wait(timeout=5.0):
         raise AssertionError("test bug: _release_download was never set")
     return "fake/repo-id"
@@ -536,6 +563,75 @@ try:
         job_id_2 is not None and active_2 is None,
     )
     _wait_for_job(jm, job_id_2)
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+
+# =================================================================
+# hf_token threading (S12a Q6/F11, s12-mlx-blueprint.md §C R1) —
+# previously NEITHER JobManager._run_download_job NOR run_download_
+# only passed a token to download_model_snapshot at all (verified live
+# against this exact pre-S12a source before this chunk landed); both
+# now thread their own --hf-token/$HF_TOKEN through. download_model_
+# snapshot itself is stubbed (module-attribute monkeypatch, same as
+# every section above) purely to CAPTURE the hf_token kwarg it was
+# called with — no network/model touches this process.
+# =================================================================
+
+_captured_hf_token: list[object] = []
+
+
+def _fake_download_captures_token(model, on_progress=None, hf_token=None):  # noqa: ARG001
+    _captured_hf_token.append(hf_token)
+    return "fake/repo-id"
+
+
+whisper_server.download_model_snapshot = _fake_download_captures_token
+try:
+    _captured_hf_token.clear()
+    jm = JobManager(model=None, model_name="small", default_language="en", hf_token="jm-token-abc")
+    job_id, _ = jm.start_download_job("medium")
+    _wait_for_job(jm, job_id)
+    check(
+        "JobManager._run_download_job: threads self.hf_token (the SAME CLI/env "
+        "token diarization already falls back to) into download_model_snapshot",
+        _captured_hf_token == ["jm-token-abc"],
+    )
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+whisper_server.download_model_snapshot = _fake_download_captures_token
+try:
+    _captured_hf_token.clear()
+    jm = JobManager(model=None, model_name="small", default_language="en", hf_token=None)
+    job_id, _ = jm.start_download_job("small")
+    _wait_for_job(jm, job_id)
+    check(
+        "JobManager._run_download_job: an unset self.hf_token (None) still reaches "
+        "download_model_snapshot explicitly as None, not silently omitted",
+        _captured_hf_token == [None],
+    )
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+whisper_server.download_model_snapshot = _fake_download_captures_token
+try:
+    _captured_hf_token.clear()
+    # run_download_only prints real NDJSON progress/done lines to real
+    # stdout here (download_model_snapshot is stubbed, but the NDJSON
+    # emission around it isn't) — harmless noise in this suite's own
+    # plain-script output, not asserted on; only the hf_token threading
+    # and the True/False return matter to this section.
+    ok = whisper_server.run_download_only("small", hf_token="dl-only-token")
+    check("run_download_only: threads hf_token into download_model_snapshot", _captured_hf_token == ["dl-only-token"])
+    check("run_download_only: returns True on a successful download", ok is True)
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+whisper_server.download_model_snapshot = _fake_download_fail
+try:
+    ok = whisper_server.run_download_only("small", hf_token=None)
+    check("run_download_only: returns False when download_model_snapshot raises", ok is False)
 finally:
     whisper_server.download_model_snapshot = _real_download_model_snapshot
 

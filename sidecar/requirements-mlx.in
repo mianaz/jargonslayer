@@ -1,0 +1,78 @@
+# Desktop sidecar OPTIONAL MLX local-STT add-on (v0.4.4 S12a, docs/
+# design-explorations/s12-mlx-blueprint.md §C R1) — parakeet-mlx, the
+# Apple-Silicon-only backend behind the parakeet-tdt-0.6b-v3 model.
+# UNLIKE requirements-diar.txt (installed on TOP of the shared base
+# venv), this rides a SEPARATE, hash-locked venv (`<app-data>/mlx-
+# venv`, Rust `venv_for_model(model)` picks it for `parakeet-*`) — §B
+# finding 8 found the shared-venv plan unsatisfiable: parakeet-mlx's
+# own transitive tree pulls librosa -> numba, and numba 0.66.0 declares
+# `numpy<2.5,>=1.22`, which cannot coexist with the base venv's pinned
+# `numpy==2.5.1` (requirements-sidecar.txt) in one environment. A
+# separate venv sidesteps the conflict entirely rather than trying to
+# resolve it — faster-whisper and parakeet-mlx never share an
+# environment, so the numba/numpy clash is structurally impossible.
+#
+# This file is the uv pip compile SOURCE — commit requirements-mlx.lock
+# (generated from this file, hash-pinned) as the actual bundled Tauri
+# resource; this .in file itself is not installed from directly.
+# Regenerate the lock with EXACTLY (§C R1, flags verified against the
+# pinned uv 0.11.28's own `uv pip compile --help`; the exact command is
+# also self-recorded in requirements-mlx.lock's own header via
+# --custom-compile-command, so it never drifts from what actually
+# produced the committed file):
+#   MACOSX_DEPLOYMENT_TARGET=14.0 uv pip compile requirements-mlx.in \
+#     -o requirements-mlx.lock --python-platform aarch64-apple-darwin \
+#     --python-version 3.12 --generate-hashes --upgrade
+#
+# TWO non-obvious footguns discovered live generating this file
+# (2026-07-16), both silent — neither errors, both just quietly pick an
+# older/wrong package:
+#   1. MACOSX_DEPLOYMENT_TARGET is REQUIRED. Without it, uv's generic
+#      `aarch64-apple-darwin` platform target defaults to a macOS 13
+#      floor and silently resolves mlx down to 0.29.3 (the newest
+#      version still shipping a macosx_13_0_arm64 wheel — mlx 0.30.0+
+#      dropped macOS 13 entirely, macosx_14_0_arm64+ only). This
+#      project's actual gate is macOS >=14.0 (docs/design-explorations/
+#      s12-mlx-blueprint.md §C Gating/F13 — mlx_capabilities() requires
+#      native arm64 + macOS >=14.0), so resolving against a macOS 13
+#      floor is both needlessly conservative AND drifts from the
+#      blueprint's own verified-live evidence (mlx 0.32.0, §9). Setting
+#      MACOSX_DEPLOYMENT_TARGET=14.0 resolves mlx/mlx-metal to 0.32.0
+#      instead — verified this is the ONLY package the flag moves (a
+#      full package-list diff against the macOS-13-floor resolution
+#      showed zero other version changes).
+#   2. --upgrade is REQUIRED on every regeneration. `uv pip compile`
+#      treats an EXISTING file at -o as a preference/pin source (like
+#      pip-compile's own incremental behavior) UNLESS --upgrade is
+#      passed — re-running the command with an already-present (even
+#      stale/wrong, e.g. the macOS-13-floor mlx==0.29.3 above)
+#      requirements-mlx.lock already on disk silently keeps reusing its
+#      old pins instead of re-resolving fresh, even across an unrelated
+#      env-var change. --no-cache alone does NOT fix this (verified
+#      live: still returned 0.29.3); only --upgrade (or deleting the
+#      file first) does.
+#
+# NEVER installed into any dev/CI venv to generate this lock — `uv pip
+# compile` only resolves, it doesn't install (verified: this repo's own
+# sidecar/.venv has neither parakeet-mlx nor mlx present after
+# generating requirements-mlx.lock).
+#
+# websockets pinned to match the base venv's own exact pin
+# (requirements-sidecar.txt: websockets==13.1) — whisper_server.py's
+# module-level `import websockets` must resolve identically whichever
+# venv (base or mlx) actually runs it (§C R1: "every module-level
+# import of whisper_server.py must be satisfiable in the mlx venv...
+# one file runs under either venv"); parakeet-mlx itself doesn't
+# depend on websockets at all, so this entry exists purely for that
+# shared-file-two-venvs invariant, not a parakeet-mlx transitive need.
+#
+# parakeet-mlx==0.5.2 (Apache-2.0, verified live against PyPI's JSON
+# API 2026-07-16): requires_dist = dacite>=1.9.2, huggingface-hub>=
+# 0.30.2, librosa>=0.11.0, mlx>=0.22.1, numpy>=2.2.5, typer>=0.15.3;
+# requires_python>=3.10; torch-free. See requirements-mlx.lock's own
+# resolved tree + this repo's S12a A4 worker report for the full
+# transitive dependency/license inventory (soxr LGPL-2.1-or-later via
+# librosa, libsndfile LGPL-2.1-or-later via soundfile — both flagged
+# for the release NOTICE).
+parakeet-mlx==0.5.2
+websockets==13.1
