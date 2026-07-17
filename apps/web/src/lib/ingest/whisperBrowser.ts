@@ -16,6 +16,11 @@
 // lazily instantiated).
 
 import type { WhisperWorkerInMessage, WhisperWorkerOutMessage } from "./whisper.worker";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
+
+// v0.4.4 field ruling (round 2, item 1): same 内置-vs-浏览器 framing split
+// as ImportHub's card — a desktop user never chose a "browser".
+const WORKER_LABEL = IS_DESKTOP ? "内置转录" : "浏览器转录";
 
 export { mapChunksToSegments } from "./whisper.worker";
 
@@ -91,7 +96,7 @@ export function transcribeInBrowser(
         reject(
           new Error(
             detail
-              ? `浏览器转录 worker 出错：${detail}`
+              ? `${WORKER_LABEL} worker 出错：${detail}`
               : "转录组件加载失败（多为网络中断或本地服务器已停止），请刷新页面后重试",
           ),
         ),
@@ -102,7 +107,7 @@ export function transcribeInBrowser(
     // leave this promise pending forever: no error, no diag entry,
     // an import task spinning until tab close.
     worker.onmessageerror = () => {
-      finish(() => reject(new Error("浏览器转录 worker 消息解码失败，请刷新页面后重试")));
+      finish(() => reject(new Error(`${WORKER_LABEL} worker 消息解码失败，请刷新页面后重试`)));
     };
 
     const inMsg: WhisperWorkerInMessage = { type: "transcribe", audio, modelId };

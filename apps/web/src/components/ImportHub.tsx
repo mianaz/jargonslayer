@@ -39,6 +39,7 @@ import {
   type ParsedTranscript,
 } from "@/lib/ingest/parseTranscript";
 import { runTracked, runTrackedAsync, type TaskKind } from "@/lib/tasks/registry";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { decideVideoRouting, resolveImportPath, type ImportPath } from "@/lib/tasks/videoRouting";
 
 const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 Whisper";
@@ -377,7 +378,14 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                         : "border-edge text-fg hover:bg-panel3"
                     }`}
                   >
-                    <div className="font-medium">浏览器转录（不出本机）</div>
+                    {/* v0.4.4 field ruling (finding round 2, item 1): calling
+                       this path "浏览器" inside the DESKTOP app is a misframe —
+                       to a desktop user it's all just "the app", so the card
+                       reads 内置轻量转录 there; the web PWA keeps 浏览器转录,
+                       where the browser really is the runtime the user chose. */}
+                    <div className="font-medium">
+                      {IS_DESKTOP ? "内置轻量转录（不出本机）" : "浏览器转录（不出本机）"}
+                    </div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
                       内置小型 Whisper 模型（base），质量低于本地大模型·文件不上传·音频与视频均支持（自动提取音轨）·首次需下载模型
                     </div>

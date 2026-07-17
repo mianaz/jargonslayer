@@ -2147,18 +2147,24 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                for 识别语言; automatic cloud fallback otherwise. Same row
                pattern as 实时转录预览 above, webspeech's own engine-scope
                toggle. */}
-            <label className="flex items-center justify-between gap-3 py-1">
-              <div>
-                <div className="text-sm text-fg">设备端识别（推荐）</div>
-                <div className="mt-0.5 text-xs leading-[1.7] text-mut2">
-                  浏览器支持时在本机识别语音，音频不再发送到浏览器厂商云端；不支持时自动回退云端识别。仅浏览器识别引擎生效。
+            {/* v0.4.4 field ruling (finding round 2, item 1): the row only
+               governs the webspeech engine, which desktop builds filter out
+               entirely (ENGINE_CARDS above) — rendering a 「仅浏览器识别引擎
+               生效」 toggle in an app with no such engine was pure noise. */}
+            {!IS_DESKTOP && (
+              <label className="flex items-center justify-between gap-3 py-1">
+                <div>
+                  <div className="text-sm text-fg">设备端识别（推荐）</div>
+                  <div className="mt-0.5 text-xs leading-[1.7] text-mut2">
+                    浏览器支持时在本机识别语音，音频不再发送到浏览器厂商云端；不支持时自动回退云端识别。仅浏览器识别引擎生效。
+                  </div>
                 </div>
-              </div>
-              <ToggleSwitch
-                checked={draft.preferOnDeviceSpeech}
-                onChange={(checked) => patch({ preferOnDeviceSpeech: checked })}
-              />
-            </label>
+                <ToggleSwitch
+                  checked={draft.preferOnDeviceSpeech}
+                  onChange={(checked) => patch({ preferOnDeviceSpeech: checked })}
+                />
+              </label>
+            )}
           </section>
           </>
           )}

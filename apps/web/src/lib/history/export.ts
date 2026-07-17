@@ -11,6 +11,7 @@ import type {
   TranslationPair,
 } from "@jargonslayer/core/types";
 import { formatElapsedClock, resolveSessionElapsedBasis, segmentElapsedMs } from "../segmentElapsed";
+import { IS_DESKTOP } from "@/lib/platform/desktop";
 
 const ENGINE_LABELS: Record<STTEngineKind, string> = {
   demo: "演示模式",
@@ -25,7 +26,10 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   osspeech: "系统识别",
   soniox: "Soniox 云端识别",
   import: "导入",
-  "browser-whisper": "浏览器 Whisper",
+  // v0.4.4 field ruling (round 2, item 1): the desktop app never frames
+  // this path as "浏览器" — it's 内置 there (see ImportHub's own card);
+  // the web PWA keeps the accurate browser wording.
+  "browser-whisper": IS_DESKTOP ? "内置 Whisper" : "浏览器 Whisper",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
