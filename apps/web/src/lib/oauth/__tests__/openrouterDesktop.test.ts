@@ -94,7 +94,19 @@ async function flushUntilFake(check: () => boolean, maxTicks = 50): Promise<void
 
 const PORT = 54321;
 
-function makeDeps(overrides: Partial<{ startPort: () => number; tauriFetch: TauriFetchFn }> = {}) {
+// Field-test fix (v0.4.4): default getSettings mirrors a real never-
+// touched-since-install user — the pre-fix bare Anthropic defaults —
+// so the DEFAULT makeDeps() call exercises the realistic "OAuth fixes
+// a stale model" path end-to-end; tests that don't care about the
+// remap at all (every failure-mapping/timeout case below) can ignore
+// it since updateSettings is never even called on those paths.
+function makeDeps(
+  overrides: Partial<{
+    startPort: () => number;
+    tauriFetch: TauriFetchFn;
+    currentModels: Pick<Settings, "detectModel" | "summaryModel">;
+  }> = {},
+) {
   const { invoke, calls: invokeCalls } = makeFakeInvoke({
     oauth_loopback_start: () => (overrides.startPort ? overrides.startPort() : PORT),
     oauth_loopback_cancel: () => undefined,
@@ -104,8 +116,12 @@ function makeDeps(overrides: Partial<{ startPort: () => number; tauriFetch: Taur
   const tauriFetch =
     overrides.tauriFetch ?? (vi.fn().mockResolvedValue(jsonResponse({ key: "sk-or-v1-abc" })) as unknown as TauriFetchFn);
   const updateSettings = vi.fn<(patch: Partial<Settings>) => void>();
-  const deps: ConnectOpenRouterDesktopDeps = { invoke, listen, openUrl, tauriFetch, updateSettings };
-  return { deps, invokeCalls, emit, unlisten, openUrl, tauriFetch, updateSettings };
+  const getSettings = vi.fn(
+    () =>
+      overrides.currentModels ?? { detectModel: "claude-haiku-4-5", summaryModel: "claude-sonnet-5" },
+  );
+  const deps: ConnectOpenRouterDesktopDeps = { invoke, listen, openUrl, tauriFetch, updateSettings, getSettings };
+  return { deps, invokeCalls, emit, unlisten, openUrl, tauriFetch, updateSettings, getSettings };
 }
 
 beforeEach(() => {
@@ -118,7 +134,7 @@ afterEach(() => {
 });
 
 describe("connectOpenRouterDesktopWith — happy path", () => {
-  it("exchanges the code, writes settings exactly like the web callback page, settles ok:true, and cleans up", async () => {
+  it("exchanges the code, writes settings exactly like the web callback page (PLUS the field-test detectModel/summaryModel remap, since makeDeps' default getSettings mirrors the pre-fix bare Anthropic defaults), settles ok:true, and cleans up", async () => {
     const { deps, emit, unlisten, tauriFetch, updateSettings, invokeCalls, openUrl } = makeDeps();
 
     const resultPromise = connectOpenRouterDesktopWith(deps);
@@ -132,11 +148,87 @@ describe("connectOpenRouterDesktopWith — happy path", () => {
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
       apiKey: "sk-or-v1-abc",
+      detectModel: "deepseek/deepseek-v4-flash",
+      summaryModel: "deepseek/deepseek-v4-pro",
     });
     expect(unlisten).toHaveBeenCalledTimes(1);
     expect(invokeCalls.map((c) => c.cmd)).toEqual(["oauth_loopback_start", "oauth_loopback_cancel"]);
     // exchangeCodeForKeyDirect POSTs through the injected tauriFetch, never global fetch.
     expect(tauriFetch).toHaveBeenCalledTimes(1);
+  });
+
+  // Field-test fix (v0.4.4, real user report): the bug itself — a
+  // never-touched-since-install user (still on the pre-fix bare
+  // Anthropic defaults) connects OpenRouter, then their very first
+  // detect/summary call 400s ("claude-haiku-4-5 is not a valid model
+  // ID") because nothing remapped the model. RED against the pre-fix
+  // code (which wrote only provider/baseUrl/apiKey): this exact
+  // assertion — detectModel/summaryModel present in the updateSettings
+  // call — would have failed before openrouterModelDefaults.ts existed.
+  it("field-test fix: a bare pre-fix detectModel/summaryModel gets remapped to the DeepSeek OpenRouter defaults alongside the key", async () => {
+    const { deps, emit, openUrl, updateSettings } = makeDeps({
+      currentModels: { detectModel: "claude-haiku-4-5", summaryModel: "claude-sonnet-5" },
+    });
+
+    const resultPromise = connectOpenRouterDesktopWith(deps);
+    await flushUntil(() => openUrl.mock.calls.length > 0);
+    emit("oauth://openrouter", { code: "auth-code-1" });
+    await resultPromise;
+
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        detectModel: "deepseek/deepseek-v4-flash",
+        summaryModel: "deepseek/deepseek-v4-pro",
+      }),
+    );
+  });
+
+  it("never clobbers a user's own already-slash-shaped OpenRouter model (deliberate custom slug)", async () => {
+    const { deps, emit, openUrl, updateSettings } = makeDeps({
+      currentModels: { detectModel: "openai/gpt-5.4", summaryModel: "anthropic/claude-opus-4.8" },
+    });
+
+    const resultPromise = connectOpenRouterDesktopWith(deps);
+    await flushUntil(() => openUrl.mock.calls.length > 0);
+    emit("oauth://openrouter", { code: "auth-code-1" });
+    await resultPromise;
+
+    const call = updateSettings.mock.calls[0][0];
+    expect(call).not.toHaveProperty("detectModel");
+    expect(call).not.toHaveProperty("summaryModel");
+  });
+
+  it("reads getSettings at the moment the exchange succeeds, not at connect-click time (a slow round-trip must see the LATEST models)", async () => {
+    // Mutable, not a mockReturnValueOnce sequence — getSettings is only
+    // ever CALLED once in the real flow (right at exchange-success), so
+    // a call-count-based mock would never actually exercise "reads
+    // late, not early"; a variable that changes AFTER connect-click but
+    // BEFORE the code arrives does.
+    let currentModels: Pick<Settings, "detectModel" | "summaryModel"> = {
+      detectModel: "claude-haiku-4-5",
+      summaryModel: "claude-sonnet-5",
+    };
+    const { deps, emit, openUrl, updateSettings } = makeDeps();
+    deps.getSettings = () => currentModels;
+
+    const resultPromise = connectOpenRouterDesktopWith(deps);
+    await flushUntil(() => openUrl.mock.calls.length > 0);
+    // Between opening the browser and the code arriving, detectModel
+    // was already fixed some OTHER way (e.g. a #56 domain override
+    // save) — still bare-defaulted at connect-click time, current now.
+    currentModels = { detectModel: "openai/gpt-5.4", summaryModel: "claude-sonnet-5" };
+    emit("oauth://openrouter", { code: "auth-code-1" });
+    await resultPromise;
+
+    // detectModel already slash-shaped BY THE TIME OF SUCCESS -> left
+    // alone; summaryModel still bare -> remapped. A snapshot-at-click
+    // implementation would have wrongly remapped detectModel too (it
+    // was bare at click time).
+    expect(updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({ summaryModel: "deepseek/deepseek-v4-pro" }),
+    );
+    const call = updateSettings.mock.calls[0][0];
+    expect(call).not.toHaveProperty("detectModel");
   });
 
   it("subscribes listen() BEFORE calling openUrl() (pinned ordering)", async () => {
@@ -201,6 +293,11 @@ describe("connectOpenRouterDesktopWith — failure mapping", () => {
       openUrl,
       tauriFetch: vi.fn() as unknown as TauriFetchFn,
       updateSettings: vi.fn(),
+      // These failure-mapping/timeout/cancel paths never reach the
+      // updateSettings write at all (asserted below), so getSettings'
+      // own return value is irrelevant — already-slash-shaped so it's
+      // an obvious no-op if a future refactor ever DID reach it.
+      getSettings: () => ({ detectModel: "openai/gpt-5.4", summaryModel: "anthropic/claude-opus-4.8" }),
     };
 
     const result = await connectOpenRouterDesktopWith(deps);
@@ -260,6 +357,11 @@ describe("connectOpenRouterDesktopWith — failure mapping", () => {
       openUrl: vi.fn<OpenExternalFn>(),
       tauriFetch: vi.fn() as unknown as TauriFetchFn,
       updateSettings: vi.fn(),
+      // These failure-mapping/timeout/cancel paths never reach the
+      // updateSettings write at all (asserted below), so getSettings'
+      // own return value is irrelevant — already-slash-shaped so it's
+      // an obvious no-op if a future refactor ever DID reach it.
+      getSettings: () => ({ detectModel: "openai/gpt-5.4", summaryModel: "anthropic/claude-opus-4.8" }),
     };
 
     const result = await connectOpenRouterDesktopWith(deps);
@@ -370,6 +472,11 @@ describe("connectOpenRouterDesktopWith — JS-side ~180s timeout", () => {
       openUrl,
       tauriFetch: vi.fn() as unknown as TauriFetchFn,
       updateSettings: vi.fn(),
+      // These failure-mapping/timeout/cancel paths never reach the
+      // updateSettings write at all (asserted below), so getSettings'
+      // own return value is irrelevant — already-slash-shaped so it's
+      // an obvious no-op if a future refactor ever DID reach it.
+      getSettings: () => ({ detectModel: "openai/gpt-5.4", summaryModel: "anthropic/claude-opus-4.8" }),
     };
 
     const resultPromise = connectOpenRouterDesktopWith(deps);
@@ -429,6 +536,11 @@ describe("cancelOpenRouterConnect (F3/F4 export)", () => {
       openUrl,
       tauriFetch: vi.fn() as unknown as TauriFetchFn,
       updateSettings: vi.fn(),
+      // These failure-mapping/timeout/cancel paths never reach the
+      // updateSettings write at all (asserted below), so getSettings'
+      // own return value is irrelevant — already-slash-shaped so it's
+      // an obvious no-op if a future refactor ever DID reach it.
+      getSettings: () => ({ detectModel: "openai/gpt-5.4", summaryModel: "anthropic/claude-opus-4.8" }),
     };
 
     const resultPromise = connectOpenRouterDesktopWith(deps);

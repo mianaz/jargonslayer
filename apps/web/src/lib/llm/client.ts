@@ -306,9 +306,13 @@ async function detectViaNext(
  *  MODEL` mirrors the server's pickModel BYOK branch exactly (see
  *  anthropic.ts's pickModel: `requestedModel ?? fallbackDefault`) —
  *  detectViaNext never injects `creds.model` into the wire body either
- *  (only into the diag ctx label), so callers that don't set
- *  body.model themselves (e.g. stt/upload.ts) get the same task
- *  default here as they do server-side today. */
+ *  (only into the diag ctx label). This fallback is a pure defensive
+ *  backstop, not a path any caller is meant to lean on: every real
+ *  detectApi caller (scheduler.ts, LookupPopover.tsx, stt/upload.ts,
+ *  testConnection below) forwards `resolveTaskCreds(settings,
+ *  "detect").model` itself — an omitted body.model would otherwise
+ *  silently fall to this task-wide default rather than the user's own
+ *  configured (possibly non-OpenRouter) model (v0.4.4 field fix). */
 async function detectViaClient(
   body: DetectRequest,
   settings: Settings,
@@ -725,9 +729,15 @@ export async function translateApi(
   body: TranslateRequest,
   settings: Settings,
 ): Promise<TranslateResponse> {
-  // #56: translate's resolved model is "" when inherited (no top-level
-  // model field for this domain — see resolveTaskCreds), which must
-  // send NO body model at all (today's server-default behavior),
+  // #56 / R1 field fix: translate has no top-level model field of its
+  // own — when inherited (no enabled taskLlm.translate override),
+  // resolveTaskCreds now folds in settings.detectModel (rather than
+  // ""), so `resolvedModel` is truthy for any normal user and this
+  // reliably forwards their real configured model instead of silently
+  // falling to the server/task-wide (DeepSeek-slug) default. `""` can
+  // still occur only in the degenerate case of an explicitly-blanked
+  // detectModel field, in which case sending NO body model at all
+  // (today's server-default behavior) is still the right fallback —
   // never a literal empty-string model. Callers (translate/queue.ts,
   // ingest/importText.ts) never set body.model themselves — resolved
   // here, once, same as headers.
@@ -825,13 +835,25 @@ async function translateViaClient(
 
 /** Probe the configured provider/key/baseUrl with a trivial detect
  *  call and translate the outcome into a user-facing message for the
- *  Settings dialog's 「测试连接」button. Never throws. */
+ *  Settings dialog's 「测试连接」button. Never throws.
+ *
+ *  R1 field fix: this used to call detectApi with no `model` at all,
+ *  same bug class as stt/upload.ts's own pre-fix call — a non-
+ *  OpenRouter openai-compat/Anthropic-direct user's 测试连接 would
+ *  silently probe the task-wide (DeepSeek-slug) default instead of
+ *  their own configured detect model and 404, even though their real
+ *  model/key pairing was fine. Forwards the same resolved detect model
+ *  every other real detectApi caller already does. */
 export async function testConnection(
   settings: Settings,
 ): Promise<{ ok: boolean; message: string }> {
   try {
     await detectApi(
-      { context: "", new_text: "We need to circle back on this." },
+      {
+        context: "",
+        new_text: "We need to circle back on this.",
+        model: resolveTaskCreds(settings, "detect").model,
+      },
       settings,
     );
     return { ok: true, message: "连接成功，模型可用" };

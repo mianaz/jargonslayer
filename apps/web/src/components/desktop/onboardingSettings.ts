@@ -8,18 +8,47 @@
 // component/reducer shell thin around them.
 
 import type { Settings } from "@jargonslayer/core/types";
+import { remapOpenRouterModelDefaults } from "@/lib/oauth/openrouterModelDefaults";
+
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 /** Paste-key path (OnboardingByokStep primary path): the EXACT settings
  *  shape the web OAuth callback writes (app/oauth/openrouter/page.tsx
  *  ~lines 83-87) — same shape regardless of whether the key came from
  *  OAuth or was pasted by hand. `null` on an empty/whitespace-only
- *  input (caller must not write a blank key). */
+ *  input (caller must not write a blank key).
+ *
+ *  R4 field fix (v0.4.4): both REAL OAuth-completion sites
+ *  (openrouterDesktop.ts's connectOpenRouterDesktopWith, this app's own
+ *  app/oauth/openrouter/page.tsx) already spread
+ *  `remapOpenRouterModelDefaults(currentSettings)` alongside this exact
+ *  provider/baseUrl/apiKey write — this onboarding paste-key path was
+ *  the one bypass: a user who pastes an existing OpenRouter key here
+ *  (skipping OAuth entirely) kept whatever bare Anthropic-flavored
+ *  detectModel/summaryModel Settings already had, 400ing on the very
+ *  first detect/summary call exactly like the field report the other
+ *  two sites were fixed for. Takes `currentSettings` (just the two
+ *  fields the remap actually reads) so this stays a pure function,
+ *  same posture as buildHfTokenPatch below — the caller
+ *  (OnboardingByokStep.tsx) already has `useApp`'s live settings
+ *  in scope. This function's own resulting baseUrl is ALWAYS
+ *  OPENROUTER_BASE_URL below (the onboarding paste field has no other
+ *  provider) — the remap spread is therefore unconditional here,
+ *  unlike the two real OAuth-completion sites, which write to a LIVE
+ *  settings object that might already be non-OpenRouter and gate on
+ *  the resulting baseUrl's hostname before remapping. */
 export function buildByokKeyPatch(
   rawKey: string,
-): Pick<Settings, "provider" | "baseUrl" | "apiKey"> | null {
+  currentSettings: Pick<Settings, "detectModel" | "summaryModel">,
+): (Pick<Settings, "provider" | "baseUrl" | "apiKey"> & Partial<Pick<Settings, "detectModel" | "summaryModel">>) | null {
   const trimmed = rawKey.trim();
   if (!trimmed) return null;
-  return { provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1", apiKey: trimmed };
+  return {
+    provider: "openai-compat",
+    baseUrl: OPENROUTER_BASE_URL,
+    apiKey: trimmed,
+    ...remapOpenRouterModelDefaults(currentSettings),
+  };
 }
 
 /** 说话人分离 token path (OnboardingDiarizeStep) — writes the existing

@@ -17,6 +17,7 @@ import {
   OAUTH_STATE_STORAGE_KEY,
   OAUTH_VERIFIER_STORAGE_KEY,
 } from "@/lib/oauth/openrouterPkce";
+import { remapOpenRouterModelDefaults } from "@/lib/oauth/openrouterModelDefaults";
 
 type Phase = "exchanging" | "success" | "error";
 
@@ -80,10 +81,16 @@ export default function OpenRouterOAuthCallbackPage() {
 
       try {
         const { key } = await exchangeCodeForKey({ code, codeVerifier });
+        // Field-test fix (v0.4.4): mirrors openrouterDesktop.ts's own
+        // exchange-success write exactly — see that file's own doc
+        // comment on remapOpenRouterModelDefaults (bare Anthropic ids
+        // 400 the moment provider/baseUrl point at OpenRouter; a
+        // deliberate custom OpenRouter slug is left untouched).
         updateSettings({
           provider: "openai-compat",
           baseUrl: "https://openrouter.ai/api/v1",
           apiKey: key,
+          ...remapOpenRouterModelDefaults(useApp.getState().settings),
         });
         setPhase("success");
       } catch (err) {

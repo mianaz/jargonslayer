@@ -198,7 +198,11 @@ export default function LookupPopover() {
     setGlossaryLoading(true);
     try {
       const defined = await defineApi(
-        { phrase: lookup.text, context: lookup.contextText },
+        {
+          phrase: lookup.text,
+          context: lookup.contextText,
+          model: resolveTaskCreds(settings, "detect").model,
+        },
         settings,
       );
       setDraft({

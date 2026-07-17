@@ -79,9 +79,14 @@ describe("resolveTaskCreds — round-trip equivalence (absent taskLlm ≡ legacy
     expect(resolveTaskCreds(settings, "summary").model).toBe(settings.summaryModel);
   });
 
-  it("translate: model is empty string when taskLlm is absent (translate has no legacy top-level model field — today's TranslateRequest never sent one)", () => {
-    const settings = makeSettings();
-    expect(resolveTaskCreds(settings, "translate").model).toBe("");
+  // R1 field fix (v0.4.4): translate has no legacy top-level model
+  // field of its own — it now inherits settings.detectModel (rather
+  // than "") when taskLlm.translate is absent/disabled, so a resolved
+  // translate call always forwards a real model instead of silently
+  // falling to the server/task-wide default.
+  it("translate: model inherits settings.detectModel when taskLlm is absent", () => {
+    const settings = makeSettings({ detectModel: "claude-haiku-4-5" });
+    expect(resolveTaskCreds(settings, "translate").model).toBe("claude-haiku-4-5");
   });
 });
 
@@ -102,6 +107,7 @@ describe("resolveTaskCreds — disabled/absent entry falls through to primary", 
       provider: "anthropic",
       baseUrl: "",
       apiKey: "primary-key",
+      detectModel: "claude-haiku-4-5",
       taskLlm: {
         translate: {
           enabled: false,
@@ -116,7 +122,7 @@ describe("resolveTaskCreds — disabled/absent entry falls through to primary", 
     expect(resolved.provider).toBe("anthropic"); // NOT openai-compat
     expect(resolved.baseUrl).toBe(""); // NOT the attacker baseUrl
     expect(resolved.apiKey).toBe("primary-key"); // NOT the attacker key
-    expect(resolved.model).toBe(""); // NOT the attacker model — inherited default
+    expect(resolved.model).toBe("claude-haiku-4-5"); // NOT the attacker model — inherited detectModel (R1 field fix)
   });
 
   it("no taskLlm map at all (undefined) resolves identically to an empty map", () => {
@@ -185,11 +191,12 @@ describe("resolveTaskCreds — enabled override inheritance, field by field", ()
     expect(resolveTaskCreds(settings, "detect").model).toBe("claude-haiku-4-5");
   });
 
-  it("enabled:true for translate with no model set resolves to '' (translate's inheritance root, same as disabled)", () => {
+  it("enabled:true for translate with no model set falls back to settings.detectModel (translate's inheritance root, R1 field fix)", () => {
     const settings = makeSettings({
+      detectModel: "claude-haiku-4-5",
       taskLlm: { translate: { enabled: true, provider: "openai-compat", baseUrl: "https://api.deepseek.com" } },
     });
-    expect(resolveTaskCreds(settings, "translate").model).toBe("");
+    expect(resolveTaskCreds(settings, "translate").model).toBe("claude-haiku-4-5");
   });
 
   it("domains are fully independent — configuring one domain never affects another's resolution", () => {
@@ -201,18 +208,20 @@ describe("resolveTaskCreds — enabled override inheritance, field by field", ()
       },
     });
     // summary and translate were never touched — must resolve exactly
-    // as if taskLlm.detect didn't exist.
+    // as if taskLlm.detect didn't exist (provider/baseUrl fall through
+    // to DEFAULT_SETTINGS' own — R2 field fix — openai-compat/
+    // OpenRouter values, since makeSettings never overrides them here).
     expect(resolveTaskCreds(settings, "summary")).toEqual({
-      provider: "anthropic",
-      baseUrl: "",
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
       apiKey: "",
       model: "claude-sonnet-5",
     });
     expect(resolveTaskCreds(settings, "translate")).toEqual({
-      provider: "anthropic",
-      baseUrl: "",
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
       apiKey: "",
-      model: "",
+      model: "claude-haiku-4-5", // inherits settings.detectModel (R1 field fix)
     });
   });
 });

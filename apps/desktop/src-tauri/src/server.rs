@@ -122,6 +122,31 @@ fn hf_extra_env(hf_token: &Option<String>) -> Vec<(String, String)> {
     env
 }
 
+/// S13 hotfix (v0.4.4 field report: "huge python RAM usage even after
+/// transcription finished" — see whisper_server.py's own "S13 hotfix"
+/// module-section doc comment, above its `LazyWhisperModel`, for the
+/// full field-bug/fix rationale) — the argv addition for that file's
+/// own opt-in `--lazy-load` flag: present (a single `"--lazy-load"`
+/// element) only when `lazy_load` is explicitly `Some(true)`; `None`
+/// (every start_server caller before this hotfix, and performSwitchModel's
+/// own direct call, which never threads this field at all — see
+/// provisionRunner.ts's own RunnerDeps.readLazyLoad doc comment for why
+/// that call stays eager unconditionally) or `Some(false)` both
+/// produce an EMPTY Vec — the exact spawn argv this hotfix's own
+/// "byte-identical when absent" requirement demands. A tiny pure fn
+/// (mirrors hf_extra_env's own "extract as a pure, independently-unit-
+/// testable helper" precedent immediately above) rather than inlining
+/// the `if` at the call site, so this on/off argv shape is verified
+/// directly (see this module's own #[cfg(test)] section) without
+/// spawning a real process.
+fn lazy_load_args(lazy_load: &Option<bool>) -> Vec<String> {
+    if lazy_load.unwrap_or(false) {
+        vec!["--lazy-load".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
 /// §C F13/F14's "belt" — Rust `start_server` re-checks `mlx_capabilities`
 /// before spawning a parakeet model (JS's own `provisionMachine`
 /// marker-capability-check is the primary guard; this is defense in
@@ -397,6 +422,7 @@ pub async fn start_server(
     state: tauri::State<'_, ServerState>,
     model: String,
     hf_token: Option<String>,
+    lazy_load: Option<bool>,
 ) -> Result<StartServerResult, String> {
     validate_model(&model)?;
     // §C F13/F14 belt: re-check mlx capabilities before ever spawning a
@@ -451,8 +477,7 @@ pub async fn start_server(
     // base venv for whisper-family models, the separate mlx venv for
     // `parakeet-*` (see venv_for_model's own doc comment).
     let venv_python = venv_for_model(&paths, &model).to_path_buf();
-    let mut cmd = StdCommand::new(&venv_python);
-    cmd.args([
+    let mut args = vec![
         path_to_string(&paths.script_path),
         "--model".to_string(),
         model,
@@ -462,12 +487,20 @@ pub async fn start_server(
         "8766".to_string(),
         "--host".to_string(),
         "127.0.0.1".to_string(),
-    ])
-    .env("HF_HOME", &paths.models_dir)
-    // Q6/§3.5 — HF_TOKEN-when-configured + HF_HUB_DISABLE_TELEMETRY=1-
-    // always, same additions prewarm_model's own spawn gets (hf_extra_env's
-    // own doc comment).
-    .envs(hf_extra_env(&hf_token));
+    ];
+    // S13 hotfix — see lazy_load_args's own doc comment. A no-op
+    // (empty extend) for every pre-hotfix caller and for
+    // performSwitchModel's own restart call (which never passes this
+    // field at all): byte-identical argv to before this hotfix.
+    args.extend(lazy_load_args(&lazy_load));
+
+    let mut cmd = StdCommand::new(&venv_python);
+    cmd.args(&args)
+        .env("HF_HOME", &paths.models_dir)
+        // Q6/§3.5 — HF_TOKEN-when-configured + HF_HUB_DISABLE_TELEMETRY=1-
+        // always, same additions prewarm_model's own spawn gets (hf_extra_env's
+        // own doc comment).
+        .envs(hf_extra_env(&hf_token));
 
     let log_out = log_file.clone();
     let log_err = log_file.clone();
@@ -740,6 +773,25 @@ mod tests {
         // emit its own HF_HOME entry — callers set that separately.
         let env = hf_extra_env(&Some("tok".to_string()));
         assert!(!env.iter().any(|(k, _)| k == "HF_HOME"));
+    }
+
+    // ---- S13 hotfix: lazy_load_args ----
+
+    #[test]
+    fn lazy_load_args_is_empty_when_absent() {
+        // None — every pre-hotfix caller, and performSwitchModel's own
+        // restart call, which never threads this field at all.
+        assert_eq!(lazy_load_args(&None), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lazy_load_args_is_empty_when_explicitly_false() {
+        assert_eq!(lazy_load_args(&Some(false)), Vec::<String>::new());
+    }
+
+    #[test]
+    fn lazy_load_args_adds_the_flag_when_explicitly_true() {
+        assert_eq!(lazy_load_args(&Some(true)), vec!["--lazy-load".to_string()]);
     }
 
     // ---- S12a §C F13/F14: check_mlx_capable_if_parakeet ----

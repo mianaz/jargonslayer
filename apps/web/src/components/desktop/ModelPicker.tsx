@@ -218,74 +218,84 @@ export default function ModelPicker({ value, onChange, hideDefinitivelyUnsupport
   });
 
   return (
-    <div
-      role="radiogroup"
-      aria-label="识别模型"
-      data-testid="model-picker"
-      className="space-y-1 border border-edge bg-panel2 p-1 font-mono"
-    >
-      {visibleEntries.map((entry) => {
-        const selected = entry.id === value;
-        const gate = mlxGateFor(entry, mlxCaps, mlxErrored);
-        const select = () => {
-          if (gate.disabled) return;
-          onChange(entry.id);
-        };
-        return (
-          <div key={entry.id} className="space-y-1">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              aria-disabled={gate.disabled || undefined}
-              disabled={gate.disabled}
-              data-testid={`model-option-${entry.id}`}
-              title={gate.reason ?? undefined}
-              onClick={select}
-              onKeyDown={(e) => handleButtonKeyDown(e, select)}
-              className={`flex w-full items-center justify-between gap-3 border p-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
-                selected ? "border-act bg-panel3 text-fg" : "border-edge text-fg hover:bg-panel3"
-              }`}
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="font-medium">{entry.id}</span>
-                  <span className="text-xs text-mut">{entry.label}</span>
-                  {entry.recommended && (
-                    <span className="shrink-0 border border-lab-green/30 px-1.5 py-0 text-[10px] text-lab-green">
-                      推荐
-                    </span>
-                  )}
-                </div>
-                <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
-                  {entry.macSpeedHint} · {entry.qualityHint}
-                </div>
-                {gate.reason && (
-                  <div className="mt-1 flex items-center gap-1 text-[11px] text-warn-soft">
-                    <WarningCircle size={11} weight="fill" className="shrink-0" aria-hidden />
-                    {gate.reason}
-                  </div>
-                )}
-              </div>
-              <span className="shrink-0 text-xs text-mut">{entry.size}</span>
-            </button>
-            {gate.showRetry && (
+    <div className="space-y-1">
+      {/* v0.4.4 field-fix (finding 1 — real user report: "浏览器识别 —
+         what is the actual used model?" / "should have more clear
+         explanation that these are 本地大模型"): a Settings user or a
+         wizard user landing here sees Whisper's several sizes AND
+         parakeet listed side by side with no shared framing — this one
+         line names the category (both families run ON-DEVICE) without
+         touching any existing per-row label below. */}
+      <p className="text-xs text-mut2">本地大模型，均在本机运行</p>
+      <div
+        role="radiogroup"
+        aria-label="识别模型"
+        data-testid="model-picker"
+        className="space-y-1 border border-edge bg-panel2 p-1 font-mono"
+      >
+        {visibleEntries.map((entry) => {
+          const selected = entry.id === value;
+          const gate = mlxGateFor(entry, mlxCaps, mlxErrored);
+          const select = () => {
+            if (gate.disabled) return;
+            onChange(entry.id);
+          };
+          return (
+            <div key={entry.id} className="space-y-1">
               <button
                 type="button"
-                data-testid={`model-option-${entry.id}-retry`}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  retryMlxCaps();
-                }}
-                className="btn-tactile ml-2.5 flex items-center gap-1 text-[11px] text-mut hover:text-fg"
+                role="radio"
+                aria-checked={selected}
+                aria-disabled={gate.disabled || undefined}
+                disabled={gate.disabled}
+                data-testid={`model-option-${entry.id}`}
+                title={gate.reason ?? undefined}
+                onClick={select}
+                onKeyDown={(e) => handleButtonKeyDown(e, select)}
+                className={`flex w-full items-center justify-between gap-3 border p-2.5 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                  selected ? "border-act bg-panel3 text-fg" : "border-edge text-fg hover:bg-panel3"
+                }`}
               >
-                <ArrowClockwise size={11} weight="regular" aria-hidden />
-                重试
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="font-medium">{entry.id}</span>
+                    <span className="text-xs text-mut">{entry.label}</span>
+                    {entry.recommended && (
+                      <span className="shrink-0 border border-lab-green/30 px-1.5 py-0 text-[10px] text-lab-green">
+                        推荐
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-xs leading-[1.6] text-mut2">
+                    {entry.macSpeedHint} · {entry.qualityHint}
+                  </div>
+                  {gate.reason && (
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-warn-soft">
+                      <WarningCircle size={11} weight="fill" className="shrink-0" aria-hidden />
+                      {gate.reason}
+                    </div>
+                  )}
+                </div>
+                <span className="shrink-0 text-xs text-mut">{entry.size}</span>
               </button>
-            )}
-          </div>
-        );
-      })}
+              {gate.showRetry && (
+                <button
+                  type="button"
+                  data-testid={`model-option-${entry.id}-retry`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    retryMlxCaps();
+                  }}
+                  className="btn-tactile ml-2.5 flex items-center gap-1 text-[11px] text-mut hover:text-fg"
+                >
+                  <ArrowClockwise size={11} weight="regular" aria-hidden />
+                  重试
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

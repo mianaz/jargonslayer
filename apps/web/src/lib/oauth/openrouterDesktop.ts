@@ -39,6 +39,7 @@ import {
   type TauriFetchFn,
 } from "../desktop/tauriApi";
 import { buildAuthUrl, codeChallengeS256, exchangeCodeForKeyDirect, generateCodeVerifier } from "./openrouterPkce";
+import { remapOpenRouterModelDefaults } from "./openrouterModelDefaults";
 
 /** See this module's own header comment. */
 const CALLBACK_HOST = "127.0.0.1";
@@ -63,6 +64,13 @@ export interface ConnectOpenRouterDesktopDeps {
   openUrl: OpenExternalFn;
   tauriFetch: TauriFetchFn;
   updateSettings: (patch: Partial<Settings>) => void;
+  /** Field-test fix (v0.4.4): read at the moment the code exchange
+   *  succeeds (NOT snapshotted at connect-click time) — decides
+   *  whether this connect should ALSO remap detectModel/summaryModel
+   *  (see openrouterModelDefaults.ts's own doc comment). A getter
+   *  rather than a passed-in value so a slow ~180s OAuth round-trip
+   *  still reads whatever the user's models are right now. */
+  getSettings: () => Pick<Settings, "detectModel" | "summaryModel">;
 }
 
 /** `oauth://openrouter` event payload — mirrors oauth.rs's own
@@ -242,10 +250,19 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
                 // EXACT same settings write as the web callback page
                 // (app/oauth/openrouter/page.tsx's own handleConnect
                 // effect) — see that file's own updateSettings call.
+                // Field-test fix (v0.4.4): ...plus a conditional
+                // detectModel/summaryModel remap (openrouterModelDefaults.ts)
+                // — a bare Anthropic id paired with this OpenRouter
+                // baseUrl 400s on detect/summary's very first call; a
+                // user's own already-slash-shaped OpenRouter model
+                // (deliberate custom slug, or a prior remap) is left
+                // untouched by remapOpenRouterModelDefaults' own
+                // heuristic.
                 deps.updateSettings({
                   provider: "openai-compat",
                   baseUrl: "https://openrouter.ai/api/v1",
                   apiKey: key,
+                  ...remapOpenRouterModelDefaults(deps.getSettings()),
                 });
                 settle({ ok: true });
               } catch (err) {
@@ -274,7 +291,8 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
   }
 }
 
-/** Hydration-gated read of store.ts's `updateSettings` action — mirrors
+/** Hydration-gated read of store.ts's `updateSettings` action (+, since
+ *  the field-test fix above, a `getSettings` reader too) — mirrors
  *  bootstrap.ts's own getPersistedSidecarMode/persistDesktopModelToStore
  *  (same dynamic-import + "await hydrated before touching settings"
  *  shape, same rationale: store.ts's own hydrate() does a raw
@@ -285,7 +303,10 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
  *  needs its own copy rather than widening that file's touch list for
  *  one caller" precedent bootstrap.ts's own withUvLog doc comment
  *  already sets for the identical situation. */
-async function resolveUpdateSettings(): Promise<(patch: Partial<Settings>) => void> {
+async function resolveSettingsAccess(): Promise<{
+  getSettings: () => Pick<Settings, "detectModel" | "summaryModel">;
+  updateSettings: (patch: Partial<Settings>) => void;
+}> {
   const { useApp } = await import("../store");
   if (!useApp.getState().hydrated) {
     await new Promise<void>((resolve) => {
@@ -297,7 +318,10 @@ async function resolveUpdateSettings(): Promise<(patch: Partial<Settings>) => vo
       });
     });
   }
-  return (patch) => useApp.getState().updateSettings(patch);
+  return {
+    getSettings: () => useApp.getState().settings,
+    updateSettings: (patch) => useApp.getState().updateSettings(patch),
+  };
 }
 
 /** PINNED CONTRACT (S10 blueprint): the wizard's OAuth button (Chunk C)
@@ -307,12 +331,12 @@ async function resolveUpdateSettings(): Promise<(patch: Partial<Settings>) => vo
  *  bootstrapWithRealDeps (Promise.all of the tauriApi.ts getters, then
  *  one call into the injected-deps core). */
 export async function connectOpenRouterDesktop(): Promise<ConnectOpenRouterResult> {
-  const [invoke, listen, openUrl, tauriFetch, updateSettings] = await Promise.all([
+  const [invoke, listen, openUrl, tauriFetch, settingsAccess] = await Promise.all([
     getInvoke(),
     getListen(),
     getOpener(),
     getTauriFetch(),
-    resolveUpdateSettings(),
+    resolveSettingsAccess(),
   ]);
-  return connectOpenRouterDesktopWith({ invoke, listen, openUrl, tauriFetch, updateSettings });
+  return connectOpenRouterDesktopWith({ invoke, listen, openUrl, tauriFetch, ...settingsAccess });
 }

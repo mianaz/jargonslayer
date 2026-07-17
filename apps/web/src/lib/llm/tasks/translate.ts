@@ -12,7 +12,17 @@ import type { LlmProvider, TranslateResponse } from "@jargonslayer/core/types";
 import { buildTranslateSystemPrompt, buildTranslateUserMessage } from "@jargonslayer/core/llm/prompts";
 import { TranslateSegmentsSchema, type ProviderCaller } from "../providerCore";
 
-export const DEFAULT_TRANSLATE_MODEL = "claude-haiku-4-5";
+// Field-test fix (v0.4.4) — see tasks/detect.ts's DEFAULT_DETECT_MODEL
+// doc comment for the full rationale (bare Anthropic ids 400 on
+// OpenRouter; DeepSeek's own OpenRouter slug is the new default). This
+// is also the server's own pickModel fallback for translate — but as
+// of the R1 field fix, translate's resolved model now inherits the
+// top-level 检测模型 (settings.detectModel, see taskConfig.ts's
+// resolveTaskCreds) whenever no #56 per-task override is enabled, so
+// this constant is a near-unreachable last resort: only a genuinely
+// blank detectModel (or a fully keyless/server-managed call with no
+// resolved model at all) ever actually falls through to it.
+export const DEFAULT_TRANSLATE_MODEL = "deepseek/deepseek-v4-flash";
 
 export interface TranslateTaskInput {
   apiKey: string;

@@ -186,7 +186,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
     sidecarUp === false
       ? IS_DESKTOP
         ? `本地服务·${sidecarMode === "managed" ? "托管" : "外部"}未连接——见 设置 → 转录引擎`
-        : "本地 Whisper sidecar 未连接——见 设置 → 转录引擎"
+        : "本地 Whisper 未连接——见 设置 → 转录引擎"
       : undefined;
 
   const count = cards.length + terms.length;

@@ -120,6 +120,7 @@ import {
   defineApi,
   summarizeApi,
   translateApi,
+  testConnection,
   NoKeyError,
   RateLimitApiError,
   resetSubscriptionToastLatch,
@@ -508,6 +509,33 @@ describe("detectApi — Next.js path status-code failures log to the diag ring b
 // Next.js path exercised above.
 // ---------------------------------------------------------------
 
+// ---------------------------------------------------------------
+// R1 field fix: testConnection used to call detectApi with no
+// `model` at all, silently probing the task-wide (DeepSeek-slug)
+// default rather than the user's own configured detect model — a
+// non-OpenRouter openai-compat/Anthropic-direct user's 测试连接 could
+// 404 even though their real model/key pairing was fine.
+// ---------------------------------------------------------------
+
+describe("testConnection — forwards the resolved detect-domain model", () => {
+  it("sends resolveTaskCreds(settings, \"detect\").model as the request body's model field", async () => {
+    mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
+
+    await testConnection(
+      makeSettings({
+        provider: "openai-compat",
+        baseUrl: "https://api.deepseek.com/v1",
+        detectModel: "deepseek-chat",
+      }),
+    );
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string);
+    expect(sentBody.model).toBe("deepseek-chat");
+  });
+});
+
 describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, the real provider when a key was actually sent", () => {
   it("detectApi: no apiKey configured -> diag detail says provider=server, never the idle settings.provider (anthropic)", async () => {
     mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
@@ -525,8 +553,14 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
   it("detectApi: an apiKey IS configured -> diag detail names the real provider, not 'server'", async () => {
     mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
 
+    // R2 field fix: DEFAULT_SETTINGS.provider is now "openai-compat" —
+    // explicitly pin "anthropic" here so this test still exercises the
+    // real-provider-named case regardless of what the idle default is.
     await expect(
-      detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "sk-real-key" })),
+      detectApi(
+        { context: "", new_text: "hi" },
+        makeSettings({ apiKey: "sk-real-key", provider: "anthropic" }),
+      ),
     ).rejects.toThrow();
 
     const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");

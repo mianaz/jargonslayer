@@ -37,6 +37,7 @@ import { PREVIEW_TIER } from "./deployTier";
 import { IS_DESKTOP } from "./platform/desktop";
 import { diagLog } from "./diag/log";
 import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
+import { remapOpenRouterModelDefaults } from "./oauth/openrouterModelDefaults";
 
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
@@ -563,6 +564,51 @@ function withLearnKeyLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/** Field-test fix (v0.4.4, real user report): an existing user who
+ *  connected OpenRouter BEFORE this fix shipped (or restored a pre-fix
+ *  full backup, #57) has baseUrl=openrouter.ai persisted alongside a
+ *  bare Anthropic-flavored detectModel/summaryModel — every detect/
+ *  summary call 400s ("... is not a valid model ID") until they
+ *  happen to retype the model field by hand. One-shot at hydrate,
+ *  idempotent (an already-remapped or deliberately-custom slash-
+ *  shaped model is a no-op on every later hydrate too — see
+ *  remapOpenRouterModelDefaults' own doc comment for the exact
+ *  heuristic). Gated on the baseUrl host so this NEVER touches an
+ *  Anthropic-direct/DeepSeek-direct/Ollama/etc user's own models —
+ *  exact same hostname check resolveLlmConfig's own isOpenRouter uses
+ *  server-side, kept independent here rather than shared (that one's
+ *  Node-only, reads a server env var, and lives in a completely
+ *  different module). Pure so it's unit-testable without touching the
+ *  real store, same posture as applyPlatformEngineDefaults/
+ *  applyTierDefaults immediately above.
+ *
+ *  R2 ripple fix (v0.4.4): ALSO requires provider === "openai-compat"
+ *  — a request only ever reaches OpenRouter when the provider is
+ *  openai-compat (baseUrl is never even read for the anthropic
+ *  provider — see taskHeaders/resolveTaskCreds). Before DEFAULT_
+ *  SETTINGS.baseUrl became the OpenRouter URL (R2), a legacy/partial
+ *  persisted blob that OMITTED baseUrl entirely safely folded in the
+ *  old "" default (not OpenRouter) regardless of its own `provider`;
+ *  after R2 it would instead silently inherit the new OpenRouter
+ *  default baseUrl and get an explicitly-`provider:"anthropic"` user's
+ *  perfectly-fine Claude models incorrectly remapped to DeepSeek slugs
+ *  — exactly the "NEVER touches an Anthropic-direct... user" promise
+ *  this function's own doc above already made. The provider check
+ *  closes that gap without changing the hostname check's own behavior
+ *  for any already-openai-compat settings object. */
+export function applyOpenRouterModelDefaults(settings: Settings): Settings {
+  if (settings.provider !== "openai-compat") return settings;
+  let isOpenRouter = false;
+  try {
+    isOpenRouter = new URL(settings.baseUrl).hostname === "openrouter.ai";
+  } catch {
+    isOpenRouter = false;
+  }
+  if (!isOpenRouter) return settings;
+  const patch = remapOpenRouterModelDefaults(settings);
+  return Object.keys(patch).length > 0 ? { ...settings, ...patch } : settings;
+}
+
 /** Fold persisted settings over defaults, migrating legacy field
  *  shapes. #54: pre-v0.2.2 settings had dictionaryOnly (force
  *  offline) instead of aiDetect (opt into the LLM upgrade layer) —
@@ -583,7 +629,12 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // coercions and why "first run" is `saved`'s own engine key, not the
   // post-fold value (a returning user's persisted engine:"demo", from
   // running the ≡ menu's 演示, must NOT be re-coerced).
-  return applyTierDefaults(platformSettings, PREVIEW_TIER, !!saved && "engine" in saved);
+  const tierSettings = applyTierDefaults(platformSettings, PREVIEW_TIER, !!saved && "engine" in saved);
+  // OpenRouter model remap runs LAST — unrelated to either coercion
+  // above (detectModel/summaryModel vs. engine), order is arbitrary
+  // either way, but this needs the fully-folded `baseUrl` (from
+  // `legacy`/DEFAULT_SETTINGS above) to decide.
+  return applyOpenRouterModelDefaults(tierSettings);
 }
 
 // ---------------------------------------------------------------

@@ -337,9 +337,18 @@ describe("translate — real route (server) vs real client path: byte-identical 
     // translateApi, which forwards `body` mostly unchanged) and
     // translateViaClient (`lang: body.lang`) — so it must be passed
     // here explicitly, matching the server fixture's own `lang` field.
+    //
+    // R1 field fix: translate's resolved creds.model now normally
+    // inherits settings.detectModel (see taskConfig.ts's
+    // resolveTaskCreds) and wins over this request's own `model` in
+    // translateViaClient's `creds.model || (body.model ?? DEFAULT)`
+    // fallback chain — byokSettings' detectModel is explicitly blanked
+    // here so this test can still isolate and prove the body.model ??
+    // DEFAULT_TRANSLATE_MODEL fallback parity below (a real, if now
+    // rarer, path — see ResolvedTaskCreds.model's own doc comment).
     await translateApi(
       { segments, lang: "zh", model: "client-chosen-translate-model" },
-      byokSettings(),
+      byokSettings({ detectModel: "" }),
     );
     expect(clientFetch).toHaveBeenCalledTimes(1);
     const clientBody = requestBodyOf(clientFetch.mock.calls[0]);

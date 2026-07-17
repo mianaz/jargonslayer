@@ -84,7 +84,10 @@ describe("shouldAutoPromoteToAdvanced — auto-promote predicate", () => {
   // Table-driven: one advanced-only field deviating from its default
   // (holding everything else at default) must promote on its own.
   const DEVIATIONS: { name: string; patch: Partial<Settings> }[] = [
-    { name: "provider", patch: { provider: "openai-compat" } },
+    // R2 field fix (v0.4.4): DEFAULT_SETTINGS.provider is now
+    // "openai-compat" — deviate to "anthropic" instead so this case
+    // still actually differs from the default.
+    { name: "provider", patch: { provider: "anthropic" } },
     { name: "baseUrl", patch: { baseUrl: "https://api.deepseek.com" } },
     { name: "apiKey", patch: { apiKey: "sk-test" } },
     { name: "detectModel", patch: { detectModel: "claude-sonnet-5" } },

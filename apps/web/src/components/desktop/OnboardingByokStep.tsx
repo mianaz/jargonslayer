@@ -37,6 +37,7 @@ export interface OnboardingByokStepProps {
 
 export default function OnboardingByokStep({ onNext }: OnboardingByokStepProps) {
   const updateSettings = useApp((s) => s.updateSettings);
+  const settings = useApp((s) => s.settings);
   const [key, setKey] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [oauthHint, setOauthHint] = useState<string | null>(null);
@@ -65,7 +66,7 @@ export default function OnboardingByokStep({ onNext }: OnboardingByokStepProps) 
 
   const savePastedKey = () => {
     cancelOpenRouterConnect();
-    const patch = buildByokKeyPatch(key);
+    const patch = buildByokKeyPatch(key, settings);
     if (!patch) return;
     updateSettings(patch);
     onNext();

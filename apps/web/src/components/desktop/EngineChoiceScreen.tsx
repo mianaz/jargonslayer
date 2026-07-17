@@ -51,8 +51,16 @@ const CARDS: { value: EngineChoice; title: string; points: string[] }[] = [
   },
   {
     value: "whisper",
-    title: "Whisper · 更高质量",
-    points: ["支持说话人分离", "多语混合更强", "需下载模型（约 1.5GB）"],
+    // v0.4.4 field-fix (finding 1 — real user report: "parakeet under
+    // whisper is confusing... should have more clear explanation that
+    // these are 本地大模型"): this card is the gateway into
+    // ConsentScreen's own <ModelPicker>, where Whisper's several sizes
+    // AND Parakeet both live side by side — framing it as "本地大模型"
+    // up front (rather than a bare "Whisper") tells the user everything
+    // listed there, including parakeet, is one local-large-model family
+    // running on-device, not a separate/unrelated thing.
+    title: "本地大模型 · 更高质量",
+    points: ["Whisper、Parakeet 等本地大模型", "支持说话人分离", "多语混合更强", "需下载模型（约 0.5GB 起）"],
   },
 ];
 

@@ -77,7 +77,7 @@ const ENGINE_OPTIONS: {
   {
     value: "whisper",
     label: "本地 Whisper",
-    hint: "隐私保护最强，需启动本地 sidecar",
+    hint: "隐私保护最强，需启动本地 Whisper",
     posture: "local",
   },
   IS_DESKTOP

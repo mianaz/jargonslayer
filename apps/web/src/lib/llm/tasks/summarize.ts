@@ -46,7 +46,12 @@ import {
   type ProviderCaller,
 } from "../providerCore";
 
-export const DEFAULT_SUMMARIZE_MODEL = "claude-sonnet-5";
+// Field-test fix (v0.4.4) — see tasks/detect.ts's DEFAULT_DETECT_MODEL
+// doc comment for the full rationale (bare Anthropic ids 400 on
+// OpenRouter; DeepSeek's own OpenRouter slug is the new default — the
+// PRO variant here, since summary is async and has no live-UI budget,
+// unlike detect/define/translate's FLASH variant).
+export const DEFAULT_SUMMARIZE_MODEL = "deepseek/deepseek-v4-pro";
 
 // ---------------------------------------------------------------
 // Request-size caps — see this file's header comment for why the

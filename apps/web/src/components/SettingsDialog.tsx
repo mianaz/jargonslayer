@@ -218,7 +218,15 @@ const LANGUAGE_OPTIONS = [
   { value: "en-IN", label: "English (India)" },
 ];
 
+// Field-test fix (v0.4.4): the DeepSeek OpenRouter slug leads each
+// list — it's the new DEFAULT_DETECT_MODEL/DEFAULT_SUMMARIZE_MODEL
+// (tasks/detect.ts, tasks/summarize.ts), so it's what an OpenRouter
+// user actually gets absent a typed override. The bare Anthropic ids
+// stay listed too (datalists are suggestions, not an allowlist) —
+// still correct for an Anthropic-direct user, who gets them pre-filled
+// via the "anthropic" PROVIDER_PRESETS entry below instead.
 const DETECT_MODEL_OPTIONS = [
+  "deepseek/deepseek-v4-flash",
   "claude-haiku-4-5",
   "claude-sonnet-5",
   "deepseek-chat",
@@ -226,17 +234,24 @@ const DETECT_MODEL_OPTIONS = [
 ];
 
 const SUMMARY_MODEL_OPTIONS = [
+  "deepseek/deepseek-v4-pro",
   "claude-sonnet-5",
   "claude-opus-4-8",
   "deepseek-chat",
 ];
 
-// #56: translate has no PRIMARY top-level model field (see
-// resolveTaskCreds — inherited default is the server's own
-// pickModel fallback, "claude-haiku-4-5"), so this list — unlike
-// DETECT_MODEL_OPTIONS/SUMMARY_MODEL_OPTIONS above — only exists for
-// the 分任务模型（高级） translate block's datalist seed.
+// #56: translate has no PRIMARY top-level model field of its own — R1
+// field fix (v0.4.4): when inherited (no enabled taskLlm.translate
+// override), resolveTaskCreds now folds in the top-level 检测模型
+// (settings.detectModel) rather than sending no body model at all, so
+// an unconfigured translate call always rides whatever the user
+// already set for detection instead of silently falling to the
+// server/task-wide (DeepSeek-slug) DEFAULT_TRANSLATE_MODEL fallback.
+// This list — unlike DETECT_MODEL_OPTIONS/SUMMARY_MODEL_OPTIONS above
+// — only exists for the 分任务模型（高级） translate block's own
+// datalist seed (the per-domain OVERRIDE, still independent of 检测模型).
 const TRANSLATE_MODEL_OPTIONS = [
+  "deepseek/deepseek-v4-flash",
   "claude-haiku-4-5",
   "claude-sonnet-5",
   "deepseek-chat",
@@ -339,6 +354,12 @@ const PROVIDER_PRESETS: SettingsProviderPreset[] = [
     label: "Anthropic 官方 (api.anthropic.com)",
     provider: "anthropic",
     baseUrl: "",
+    // Field-test fix (v0.4.4): DEFAULT_SETTINGS.detectModel/summaryModel
+    // switched to the DeepSeek OpenRouter slugs (product decision) —
+    // an Anthropic-direct user picking THIS preset still gets today's
+    // Claude models pre-filled, via this suggestedModels entry rather
+    // than the (now DeepSeek-flavored) global default.
+    suggestedModels: { detectModel: "claude-haiku-4-5", summaryModel: "claude-sonnet-5" },
   },
   {
     id: "deepseek",
@@ -359,6 +380,13 @@ const PROVIDER_PRESETS: SettingsProviderPreset[] = [
     label: "OpenRouter (https://openrouter.ai/api/v1)",
     provider: "openai-compat",
     baseUrl: "https://openrouter.ai/api/v1",
+    // Field-test fix (v0.4.4): picking this preset by hand (as opposed
+    // to the "Connect with OpenRouter" OAuth button, which does its
+    // own conditional remap — see openrouterModelDefaults.ts) must
+    // ALSO land on real OpenRouter slugs, not whatever bare id happened
+    // to be in the field before — a bare Anthropic id here 400s on the
+    // very first detect/summary call.
+    suggestedModels: { detectModel: "deepseek/deepseek-v4-flash", summaryModel: "deepseek/deepseek-v4-pro" },
   },
   {
     // Poe's OpenAI-compatible endpoint lets a Poe subscription drive
@@ -1183,6 +1211,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (IS_DESKTOP) {
       setConnectingOpenRouter(true);
       setOpenRouterOauthHint(null);
+      // Field-test-fix follow-up: snapshotted BEFORE the call, so the
+      // post-connect merge below can tell whether connectOpenRouterDesktop's
+      // own conditional detectModel/summaryModel remap
+      // (openrouterModelDefaults.ts) actually fired THIS time — see
+      // that merge's own comment for why a plain "always pull live
+      // model into draft" would reintroduce the exact clobber this
+      // whole block exists to prevent.
+      const beforeSettings = useApp.getState().settings;
       try {
         const result = await connectOpenRouterDesktop();
         if (result.ok) {
@@ -1201,9 +1237,46 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           // made earlier in the SAME dialog session. Functional update,
           // merging just provider/baseUrl/apiKey into the EXISTING
           // draft instead.
+          //
+          // Field-test fix (real user report): connectOpenRouterDesktop
+          // may ALSO have remapped detectModel/summaryModel (a bare
+          // Anthropic id 400s on OpenRouter) — that write landed on the
+          // LIVE store same as provider/baseUrl/apiKey above, so it
+          // needs the identical resync or a later 保存 would silently
+          // revert it back to the stale pre-connect draft value (the
+          // exact bug: OAuth "fixes" the model, then 保存 undoes the
+          // fix). remapOpenRouterModelDefaults is CONDITIONAL (only
+          // overwrites a bare id), so an unconditional pull-into-draft
+          // here would clobber an unrelated, still-unsaved 检测模型/
+          // 会议报告模型 edit the user typed in THIS dialog session.
+          //
+          // R3 (adversarial review, HIGH): the gate below must check
+          // whether the DRAFT itself is dirty (`draft[field] ===
+          // beforeSettings[field]`), NOT whether `live` changed —the
+          // ORIGINAL gate (`live[field] !== beforeSettings[field]`)
+          // pulled the live value into the draft whenever the remap
+          // fired on the LIVE store, with zero regard for whether the
+          // user had ALREADY typed a different, still-unsaved model
+          // into the draft in this same session — clobbering that
+          // unsaved edit the instant OAuth's own conditional remap
+          // happened to also touch the live model. Checking the draft's
+          // own dirtiness instead preserves any unsaved edit
+          // unconditionally, while still resyncing an untouched draft
+          // field to whatever the live remap decided.
           {
             const live = useApp.getState().settings;
-            setDraft((d) => ({ ...d, provider: live.provider, baseUrl: live.baseUrl, apiKey: live.apiKey }));
+            setDraft((d) => ({
+              ...d,
+              provider: live.provider,
+              baseUrl: live.baseUrl,
+              apiKey: live.apiKey,
+              ...(d.detectModel === beforeSettings.detectModel
+                ? { detectModel: live.detectModel }
+                : {}),
+              ...(d.summaryModel === beforeSettings.summaryModel
+                ? { summaryModel: live.summaryModel }
+                : {}),
+            }));
           }
           showToast("已成功连接 OpenRouter");
         } else {
@@ -1365,7 +1438,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     try {
       const health = await fetchSidecarHealth(draft);
       if (!health) {
-        showToast("无法连接 sidecar，请先启动（README）");
+        showToast("无法连接本地 Whisper，请先启动（README）");
         return;
       }
       if (health.diarization_ready) {
@@ -1782,7 +1855,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 {!sidecarStatus?.up && (
                   <div className="text-xs leading-[1.7] text-mut2">
-                    需要本地 Whisper sidecar——见{" "}
+                    需要本地 Whisper——见{" "}
                     <button
                       type="button"
                       onClick={() => void openExternal("https://github.com/mianaz/jargonslayer#readme")}
@@ -2208,7 +2281,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </button>
               </div>
               <div className="mt-1 text-xs text-mut2">
-                仅存本机，随任务经 localhost 传给 sidecar，不经任何云端
+                仅存本机，随任务经 localhost 传给本地服务，不经任何云端
               </div>
             </div>
 
@@ -2268,7 +2341,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 <div className="mt-0.5 text-xs leading-[26px] text-mut2">
                   {PREVIEW_TIER
-                    ? "需要本地版 + 本地 sidecar"
+                    ? "需要本地版 + 本地 Whisper"
                     : realtimeDiarizeAvailable
                       ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
                       : draft.engine === "osspeech"

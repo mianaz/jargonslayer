@@ -176,7 +176,7 @@ function EscapeHatch({ paths, onRecheckHealth }: { paths: DesktopPaths; onRechec
         >
           README「本地版安装」
         </button>{" "}
-        手动安装 Python 环境和依赖，或者在 设置 → 转录引擎 中把托管模式切换为「外部」，直接连接你自己启动的 sidecar。
+        手动安装 Python 环境和依赖，或者在 设置 → 转录引擎 中把托管模式切换为「外部」，直接连接你自己启动的本地 Whisper 服务。
       </div>
       <div className="space-y-0.5 font-mono text-[11px] text-mut2">
         <div>安装目录：{paths.appData}</div>
@@ -341,7 +341,7 @@ function ConsentScreen({
           </button>
         </div>
         <div className="border-t border-edge pt-3 text-xs leading-[1.7] text-mut2">
-          稍后再说也完全可以正常使用云端 / BYOK 转录与检测；随时可以在 设置 → 转录引擎 里重新打开这个向导。已经有自己的本地 sidecar？见{" "}
+          稍后再说也完全可以正常使用云端 / BYOK 转录与检测；随时可以在 设置 → 转录引擎 里重新打开这个向导。已经有自己的本地 Whisper 服务？见{" "}
           <button
             type="button"
             onClick={() => void openExternal(README_URL)}

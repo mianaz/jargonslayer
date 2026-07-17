@@ -16,9 +16,15 @@ export interface ResolvedTaskCreds {
   provider: LlmProvider;
   baseUrl: string;
   apiKey: string;
-  // "" for translate-when-inherited (today's server-default behavior —
-  // translate has no user-facing top-level model field, see
-  // DEFAULT_SETTINGS's own comment on detectModel/summaryModel).
+  // R1 field fix (v0.4.4): translate has no top-level model field of
+  // its OWN, so when inherited (no enabled per-domain override) it
+  // rides the detect domain's model — settings.detectModel — rather
+  // than resolving to "" (which used to mean "send no body model at
+  // all, let the server-side task default decide"; that default is
+  // now a DeepSeek OpenRouter slug and 404s for a non-OpenRouter
+  // openai-compat/Anthropic-direct user, same bug class R1 fixes for
+  // every other model-blind call path). A per-domain taskLlm.translate
+  // override, when enabled, still wins exactly as before.
   model: string;
 }
 
@@ -27,12 +33,11 @@ export interface ResolvedTaskCreds {
  *  Absent/disabled override (the default for every pre-#56 user) is
  *  byte-identical to reading `settings` directly, for every domain. */
 export function resolveTaskCreds(settings: Settings, domain: LlmTaskDomain): ResolvedTaskCreds {
-  const primaryModel =
-    domain === "summary"
-      ? settings.summaryModel
-      : domain === "detect"
-        ? settings.detectModel
-        : ""; // translate has no legacy top-level model — inherited = server default
+  // "summary" reads its own legacy field; "detect" AND "translate"
+  // both resolve to settings.detectModel — translate has no top-level
+  // model field of its own, so it inherits detect's (R1 field fix, see
+  // ResolvedTaskCreds.model doc above).
+  const primaryModel = domain === "summary" ? settings.summaryModel : settings.detectModel;
 
   const t = settings.taskLlm?.[domain];
   if (!t?.enabled) {

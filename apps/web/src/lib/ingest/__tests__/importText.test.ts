@@ -252,6 +252,46 @@ describe("importTranscriptText", () => {
     expect(session!.translations ?? {}).toEqual({});
   });
 
+  it("finding 3 (field report): AI-detect failing on every chunk (NoKeyError) surfaces ONE aggregated zh warning, dictionary-only results still save", async () => {
+    mockDetectApi.mockRejectedValue(new NoKeyError("未配置 API Key"));
+
+    const raw = "hello there.\ngeneral kenobi.";
+    const { sessionId, warnings } = await importTranscriptText({
+      raw,
+      translate: false,
+      settings: makeSettings(),
+      onProgress: vi.fn(),
+    });
+
+    expect(warnings).toEqual(["AI 检测未生效：未配置 API Key，本次仅词典检测"]);
+    const session = await storage.getSession(sessionId);
+    expect(session).not.toBeNull();
+  });
+
+  // R6 (Sol F6 wording fix): when at least one OTHER batch in the same
+  // run succeeded via the LLM, the wording flips to "AI 检测未完全生效" /
+  // "部分内容仅词典检测" instead of the zero-succeeded template above —
+  // two padded batches (1200+ chars each) so the chunker can't merge
+  // them into a single batch; the first succeeds, the second hits
+  // NoKeyError (1-of-2 already meets the >= half majority trigger).
+  it("R6/F6: SOME batches succeeding via the LLM uses the '部分未生效' wording, not the zero-succeeded one", async () => {
+    mockDetectApi
+      .mockResolvedValueOnce(emptyDetectRes())
+      .mockRejectedValueOnce(new NoKeyError("未配置 API Key"));
+
+    const raw = `${"first batch text content here. ".repeat(60)}\n${"second batch text content here. ".repeat(60)}`;
+    const { sessionId, warnings } = await importTranscriptText({
+      raw,
+      translate: false,
+      settings: makeSettings(),
+      onProgress: vi.fn(),
+    });
+
+    expect(warnings).toEqual(["AI 检测未完全生效：未配置 API Key，部分内容仅词典检测"]);
+    const session = await storage.getSession(sessionId);
+    expect(session).not.toBeNull();
+  });
+
   it("a transient translate error is retried once after 4s — retry success keeps the batch, no warning", async () => {
     const raw = "hello there.\ngeneral kenobi.";
     mockTranslateApi

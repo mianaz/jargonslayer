@@ -76,7 +76,7 @@ export class TabAudioEngine implements STTEngine {
       events,
       settings,
       connectFailureMessage: (url) =>
-        `标签页音频需要本地 Whisper sidecar（见 README），无法连接 ${url}`,
+        `标签页音频需要本地 Whisper（见 README），无法连接 ${url}`,
     });
     this.transport = transport;
 

@@ -175,7 +175,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().title).toBe("本地 Whisper sidecar 未连接——见 设置 → 转录引擎");
+    expect(privacySegment().title).toBe("本地 Whisper 未连接——见 设置 → 转录引擎");
   });
 
   it("hints for engine:tabaudio too (the other sidecar-backed engine)", async () => {

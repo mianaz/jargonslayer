@@ -15,7 +15,7 @@ import {
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { NoKeyError, RateLimitApiError, translateApi } from "../llm/client";
-import { runDetectionPipeline } from "../stt/upload";
+import { formatLlmDetectFailureWarning, runDetectionPipeline } from "../stt/upload";
 import * as storage from "../history/storage";
 import { parseTranscript, ParseTranscriptError } from "./parseTranscript";
 
@@ -219,6 +219,14 @@ export async function importTranscriptText(
     settings,
     (done, total) => onProgress("detect", done, total),
     () => warnings.push("检测请求多次被限流，剩余内容已切换到词典模式"),
+    // v0.4.4 field-fix (finding 3) / R6 (Sol F5/F6): the NoKeyError/
+    // persistent-failure/per-batch-rate-limit-degraded sibling of the
+    // run-level rate-limit warning above — see runDetectionPipeline's
+    // own onLlmDetectFailure doc comment for the majority-failed
+    // trigger, and formatLlmDetectFailureWarning's own doc for the
+    // zero-vs-some-succeeded template split (shared with upload.ts's
+    // buildSessionFromSegments so both never drift apart).
+    (message, partial) => warnings.push(formatLlmDetectFailureWarning(message, partial)),
   );
 
   let translations: Record<string, string> | undefined;

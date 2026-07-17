@@ -18,6 +18,7 @@ import {
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { detectApi, NoKeyError, RateLimitApiError, taskHeaders } from "../llm/client";
+import { resolveTaskCreds } from "../llm/taskConfig";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
 import { scanCustomEntries } from "../history/glossary";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
@@ -40,6 +41,13 @@ const RATE_LIMIT_WAIT_MS = 65_000;
 const MAX_WAITS_PER_BATCH = 2;
 const MAX_WAITS_PER_RUN = 5;
 const TRANSIENT_RETRY_DELAY_MS = 4_000;
+// R6 field fix (Sol F5/F6): reused verbatim from the existing run-level
+// rate-limit warning's own phrasing (see importText.ts's
+// onRateLimitFallback callback: "检测请求多次被限流，剩余内容已切换到词典
+// 模式") so the per-batch degraded-by-rate-limit case below reads
+// consistently with the run-level one, rather than inventing a second
+// wording for the same underlying cause.
+const RATE_LIMIT_DEGRADED_REASON = "检测请求多次被限流";
 
 export interface JobSegment {
   start: number;
@@ -190,6 +198,19 @@ export interface DetectionPipelineResult {
   terms: TermCard[];
 }
 
+/** R6/F6 wording fix: builds the exact zh completion-toast fragment for
+ *  onLlmDetectFailure's `(message, partial)` signal — "AI 检测未生效"
+ *  when NO batch succeeded via the LLM this run, "AI 检测未完全生效" when
+ *  at least one did (see runDetectionPipeline's own doc comment for the
+ *  `partial` contract). Exported so importText.ts's own onLlmDetectFailure
+ *  wiring builds the IDENTICAL template rather than forking a second,
+ *  driftable copy. */
+export function formatLlmDetectFailureWarning(message: string, partial: boolean): string {
+  return partial
+    ? `AI 检测未完全生效：${message}，部分内容仅词典检测`
+    : `AI 检测未生效：${message}，本次仅词典检测`;
+}
+
 /** Shared detection/merge stage for every import path (sidecar job,
  * browser-Whisper import, text import #43): runs LLM detection per
  * ~1200-char batch (falling back to the offline dictionary on
@@ -212,13 +233,50 @@ export interface DetectionPipelineResult {
  * surface a warning. `onProgress` is called after each batch completes
  * (success, dictionary fallback, or rate-limit fallback all count as
  * "done"). Both new params are optional and trailing so the existing
- * sidecar-job/cloud call sites keep compiling unchanged. */
+ * sidecar-job/cloud call sites keep compiling unchanged.
+ *
+ * v0.4.4 field-fix (finding 3 — silent AI-detect failure): a
+ * NoKeyError/persistent-upstream-error fallback used to fall back to
+ * the dictionary for its batch with zero signal anywhere but diagLog —
+ * a user whose API key went invalid mid-release got dictionary-only
+ * results on EVERY chunk with a completion toast that looked
+ * perfectly normal. `onLlmDetectFailure` (optional, trailing — same
+ * additive shape as onRateLimitFallback) fires AT MOST ONCE per run,
+ * only when a MAJORITY of batches (>= half, including "all") fell back
+ * to the dictionary for a reason OTHER than rate-limiting while
+ * settings.aiDetect was on — rate-limit exhaustion already has its own
+ * dedicated onRateLimitFallback signal above (and is deliberately
+ * excluded here so a persistently-rate-limited run doesn't ALSO fire
+ * this generic one, doubling the warning). Passes the last such
+ * error's own `.message` straight through — every thrower in
+ * llm/client.ts (NoKeyError/RateLimitApiError/UpstreamError) already
+ * carries an honest, ready-to-show zh message, so there's nothing to
+ * translate or reword here. Second `partial` arg (R6/F6): true when at
+ * least one OTHER batch in this same run succeeded via the LLM — the
+ * caller picks between the "AI 检测未生效" (zero succeeded) and "AI 检测
+ * 部分未生效" (some succeeded) templates accordingly.
+ *
+ * R6 field fix (Sol F5): a batch that exhausts only its OWN per-batch
+ * rate-limit wait cap (MAX_WAITS_PER_BATCH) WITHOUT the run-level cap
+ * also tripping was previously excluded from every tally — a short
+ * (1-2 batch) import could exhaust its lone batch's own cap without
+ * ever reaching the run-wide MAX_WAITS_PER_RUN threshold that fires
+ * onRateLimitFallback, completing with a fully dictionary-only result
+ * and ZERO warning anywhere. `rateLimitDegradedBatches` tracks exactly
+ * that case (mirrors nonRateLimitFailures' own batch-level tally
+ * mechanism) and, at completion, feeds the SAME onLlmDetectFailure
+ * slot (reusing RATE_LIMIT_DEGRADED_REASON as the reason text) whenever
+ * ITS OWN majority threshold is met — still mutually exclusive with
+ * onRateLimitFallback (a batch that trips the RUN-level latch is
+ * already covered by that signal, so it's excluded here exactly like
+ * nonRateLimitFailures already excludes every RateLimitApiError). */
 export async function runDetectionPipeline(
   segmentTexts: { text: string }[],
   finalSegments: TranscriptSegment[],
   settings: Settings,
   onProgress?: (done: number, total: number) => void,
   onRateLimitFallback?: () => void,
+  onLlmDetectFailure?: (message: string, partial: boolean) => void,
 ): Promise<DetectionPipelineResult> {
   let cards: ExpressionCard[] = [];
   let terms: TermCard[] = [];
@@ -230,6 +288,16 @@ export async function runDetectionPipeline(
   let runWaits = 0;
   let rateLimitLatched = false;
   let rateLimitFallbackFired = false;
+  let llmSucceededBatches = 0;
+  // Finding 3: count of batches that fell back to the dictionary for a
+  // NON-rate-limit reason (NoKeyError, or a persistent transient error
+  // past its one retry) while aiDetect was on — a lone batch's own
+  // per-batch rate-limit exhaustion is a RateLimitApiError too, so
+  // it's excluded here on purpose (see the `lastErr` check below).
+  let nonRateLimitFailures = 0;
+  let lastNonRateLimitFailureMessage: string | null = null;
+  // R6/F5: see this function's own doc comment above.
+  let rateLimitDegradedBatches = 0;
 
   for (let i = 0; i < batches.length; i++) {
     const batch = batches[i];
@@ -237,6 +305,7 @@ export async function runDetectionPipeline(
     let batchWaits = 0;
     let transientRetried = false;
     let res: DetectResponse | null = null;
+    let lastErr: unknown = null;
 
     // settings.aiDetect off (#54) = the user chose fully offline — the
     // import paths honor it the same way the live scheduler does:
@@ -244,9 +313,13 @@ export async function runDetectionPipeline(
     if (settings.aiDetect && !rateLimitLatched) {
       for (;;) {
         try {
-          res = await detectApi({ context, new_text: batch }, settings);
+          res = await detectApi(
+            { context, new_text: batch, model: resolveTaskCreds(settings, "detect").model },
+            settings,
+          );
           break;
         } catch (err) {
+          lastErr = err;
           if (
             err instanceof RateLimitApiError &&
             batchWaits < MAX_WAITS_PER_BATCH &&
@@ -298,6 +371,7 @@ export async function runDetectionPipeline(
       const merged = mergeDetections(cards, terms, res, "llm", settings.minConfidence, now);
       cards = merged.cards;
       terms = merged.terms;
+      llmSucceededBatches++;
     } else {
       const fallback = scanDictionary(batch);
       const merged = mergeDetections(
@@ -310,10 +384,51 @@ export async function runDetectionPipeline(
       );
       cards = merged.cards;
       terms = merged.terms;
+
+      // Finding 3: this batch's own genuine failure (NOT a
+      // RateLimitApiError — that's the separate, already-signaled
+      // fallback path above) counts toward the run's majority-failed
+      // tally. A batch skipped entirely because an EARLIER batch
+      // already latched the run's rate limit never sets `lastErr` at
+      // all, so it's naturally excluded here too.
+      if (lastErr && !(lastErr instanceof RateLimitApiError)) {
+        nonRateLimitFailures++;
+        lastNonRateLimitFailureMessage =
+          lastErr instanceof Error ? lastErr.message : String(lastErr);
+      } else if (lastErr instanceof RateLimitApiError && !rateLimitLatched) {
+        // R6/F5: this batch's own per-batch cap (not the run-level
+        // one — `rateLimitLatched` would be true if THIS batch's own
+        // retries were what tripped it, and that case is already
+        // covered by onRateLimitFallback above) exhausted with no
+        // other tally ever catching it.
+        rateLimitDegradedBatches++;
+      }
     }
 
     tail = `${tail} ${batch}`.slice(-CONTEXT_TAIL_CHARS);
     onProgress?.(i + 1, batches.length);
+  }
+
+  // Finding 3 / R6: fire at most once per run, and only when the
+  // run-level rate-limit path above hasn't ALREADY signaled a fallback
+  // (never two detect warnings for one import) — "majority" is >= half
+  // the batches, which also covers the all-chunks-failed case the field
+  // report hit. Two independent majority checks feed the SAME single
+  // slot: a non-rate-limit failure majority takes priority (matches
+  // pre-R6 behavior byte-for-byte when no rate-limit degradation
+  // occurred), falling through to the rate-limit-degraded majority
+  // otherwise — the two tallies are effectively partitioned across
+  // batches (a batch counts toward at most one), so both reaching
+  // majority simultaneously is only possible on a small batch count,
+  // and picking the non-rate-limit reason first is a reasonable
+  // tie-break rather than a meaningful design choice either way.
+  const anyLlmSucceeded = llmSucceededBatches > 0;
+  if (!rateLimitFallbackFired) {
+    if (nonRateLimitFailures > 0 && nonRateLimitFailures * 2 >= batches.length) {
+      onLlmDetectFailure?.(lastNonRateLimitFailureMessage ?? "检测失败", anyLlmSucceeded);
+    } else if (rateLimitDegradedBatches > 0 && rateLimitDegradedBatches * 2 >= batches.length) {
+      onLlmDetectFailure?.(RATE_LIMIT_DEGRADED_REASON, anyLlmSucceeded);
+    }
   }
 
   // ---- per-segment personal glossary scan ----
@@ -332,7 +447,20 @@ export async function runDetectionPipeline(
 /** Build a full session (transcript + detected cards/terms) from a
  * finished job. Runs LLM detection per ~1200-char batch (falling back
  * to the offline dictionary on no-key/failure), plus a per-segment
- * personal-glossary scan — mirroring the live meeting detection mix. */
+ * personal-glossary scan — mirroring the live meeting detection mix.
+ *
+ * v0.4.4 field-fix (finding 3) — DEFERRED for this path on purpose: a
+ * detect-failure warning has nowhere to go from here. This function's
+ * only callers (importAndTrack/importUrlAndTrack below) report success
+ * via `ImportCallbacks.onDone(sessionId)` — a contract registry.ts's
+ * own header comment documents as "kept completely unchanged" (design
+ * decision 2) precisely so the sidecar-job path stays untouched by UI-
+ * layer churn. Widening it to also carry warnings would ripple into
+ * that file's TrackedCallbacks/runTracked (outside this hotfix's file
+ * set) for a payoff this hotfix's scope doesn't require — the browser-
+ * Whisper (buildSessionFromSegments) and text-import
+ * (importTranscriptText) paths already had a `warnings[]` reaching
+ * their completion toast and are the ones fixed here. */
 export async function buildSessionFromJob(
   job: JobStatus,
   settings: Settings,
@@ -389,11 +517,22 @@ export interface PlainTranscriptSegment {
  * `engine`/`title` so both the cloud path (#22) and the in-browser
  * Whisper path (#43 phase 2a, importAudio.ts) share one
  * implementation — only the acquisition method differs, everything
- * downstream (timeline synthesis, runDetectionPipeline) is identical. */
+ * downstream (timeline synthesis, runDetectionPipeline) is identical.
+ *
+ * v0.4.4 field-fix (finding 3): `warnings`, when passed, is mutated
+ * in place exactly like runTranslation's own `warnings` parameter — a
+ * detect-side failure (see runDetectionPipeline's onLlmDetectFailure
+ * doc above) is pushed into the SAME array the caller later merges
+ * translate warnings into (importAudio.ts), so both phases reach the
+ * one completion toast the same way. Optional/trailing: the sidecar-
+ * job path (buildSessionFromJob below) is unaffected and still
+ * surfaces no detect warnings — deferred, see that function's own
+ * callers (ImportCallbacks has no warnings channel to carry it out). */
 export async function buildSessionFromSegments(
   segments: PlainTranscriptSegment[],
   settings: Settings,
   opts: { title: string; engine: STTEngineKind },
+  warnings?: string[],
 ): Promise<MeetingSession> {
   const base = Date.now();
   const finalSegments: TranscriptSegment[] = segments.map((s, i) => ({
@@ -405,7 +544,14 @@ export async function buildSessionFromSegments(
     engine: opts.engine,
   }));
 
-  const { cards, terms } = await runDetectionPipeline(segments, finalSegments, settings);
+  const { cards, terms } = await runDetectionPipeline(
+    segments,
+    finalSegments,
+    settings,
+    undefined,
+    undefined,
+    (message, partial) => warnings?.push(formatLlmDetectFailureWarning(message, partial)),
+  );
 
   const startedAt = finalSegments.length > 0 ? finalSegments[0].startedAt : base;
   const endedAt =
@@ -448,12 +594,30 @@ export interface ImportOptions {
  * can't tell a sidecar-path failure from a browser-path one to
  * reproduce that itself, so the two sidecar call sites in ImportHub
  * wrap their onError with withSidecarHint to restore it. */
-export const SIDECAR_UNREACHABLE_HINT = "，确认 sidecar 已启动且 --http-port 开启";
+export const SIDECAR_UNREACHABLE_HINT = "，确认本地 Whisper 服务已启动且 --http-port 开启";
+
+/** R7 field fix (Sol F8, client half — WIRE CONTRACT with the sidecar):
+ *  the sidecar surfaces a model-LOAD failure (as opposed to "can't
+ *  reach the sidecar at all") as a job/ws error whose message STARTS
+ *  WITH this literal prefix. The sidecar is reachable and answered —
+ *  telling the user to "start the sidecar / --http-port" is actively
+ *  wrong advice for this case, so withSidecarHint below detects it and
+ *  swaps in the honest local-model-load framing instead. */
+const MODEL_LOAD_FAILURE_PREFIX = "模型加载失败";
 
 /** Appends SIDECAR_UNREACHABLE_HINT to a task-registry error message —
  * see the constant's own doc above for why this lives here rather than
- * being derived from TaskKind. */
+ * being derived from TaskKind.
+ *
+ * R7 exception (Sol F8): a MODEL_LOAD_FAILURE_PREFIX-prefixed message
+ * means the sidecar was reached and answered — it just couldn't load
+ * the configured Whisper model — so the "start the sidecar" connection
+ * advice is skipped in favor of an honest "本地 Whisper 模型加载失败：
+ * <detail>" message. */
 export function withSidecarHint(message: string): string {
+  if (message.startsWith(MODEL_LOAD_FAILURE_PREFIX)) {
+    return `本地 Whisper ${message}`;
+  }
   return `${message}${SIDECAR_UNREACHABLE_HINT}`;
 }
 

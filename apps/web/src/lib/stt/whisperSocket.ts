@@ -41,7 +41,7 @@ export class WhisperSocketEngine implements STTEngine {
       events,
       settings,
       connectFailureMessage: (url) =>
-        `无法连接本地 Whisper（${url}）。请先启动 sidecar：cd sidecar && python whisper_server.py（详见 README）`,
+        `无法连接本地 Whisper（${url}）。请先启动本地 Whisper 服务：cd sidecar && python whisper_server.py（详见 README）`,
     });
     this.transport = transport;
 

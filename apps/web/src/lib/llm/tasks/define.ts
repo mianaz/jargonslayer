@@ -7,7 +7,10 @@ import type { DefineResult, ExplainLanguage, LlmProvider } from "@jargonslayer/c
 import { buildDefineSystemPrompt, buildDefineUserMessage } from "@jargonslayer/core/llm/prompts";
 import { DefineResultSchema, type ProviderCaller } from "../providerCore";
 
-export const DEFAULT_DEFINE_MODEL = "claude-haiku-4-5";
+// Field-test fix (v0.4.4) — see tasks/detect.ts's DEFAULT_DETECT_MODEL
+// doc comment for the full rationale (bare Anthropic ids 400 on
+// OpenRouter; DeepSeek's own OpenRouter slug is the new default).
+export const DEFAULT_DEFINE_MODEL = "deepseek/deepseek-v4-flash";
 
 // Length ceilings mirror the prompt's own guidance (see
 // DEFINE_SYSTEM_PROMPT); enforced in code rather than zod .max() so a

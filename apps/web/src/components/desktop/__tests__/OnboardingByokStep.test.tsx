@@ -21,16 +21,34 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 
-const { updateSettings, connectOpenRouterDesktop, cancelOpenRouterConnect, openExternal } = vi.hoisted(() => ({
-  updateSettings: vi.fn(),
-  connectOpenRouterDesktop: vi.fn(),
-  cancelOpenRouterConnect: vi.fn(),
-  openExternal: vi.fn(),
-}));
+const { updateSettings, connectOpenRouterDesktop, cancelOpenRouterConnect, openExternal, getMockSettings, setMockSettings } =
+  vi.hoisted(() => {
+    let settings = { detectModel: "deepseek/deepseek-v4-flash", summaryModel: "deepseek/deepseek-v4-pro" };
+    return {
+      updateSettings: vi.fn(),
+      connectOpenRouterDesktop: vi.fn(),
+      cancelOpenRouterConnect: vi.fn(),
+      openExternal: vi.fn(),
+      getMockSettings: () => settings,
+      setMockSettings: (s: typeof settings) => {
+        settings = s;
+      },
+    };
+  });
 
+// R4 field fix (v0.4.4): savePastedKey now also reads live `settings`
+// (buildByokKeyPatch's currentSettings param, for the
+// remapOpenRouterModelDefaults spread) — already slash-shaped models
+// by default so every PRE-EXISTING assertion below (a bare provider/
+// baseUrl/apiKey patch, no extra fields) stays valid; setMockSettings
+// lets the R4-specific bare-model test further down override it.
 vi.mock("@/lib/store", () => ({
-  useApp: (selector: (s: { updateSettings: typeof updateSettings }) => unknown) =>
-    selector({ updateSettings }),
+  useApp: (
+    selector: (s: {
+      updateSettings: typeof updateSettings;
+      settings: { detectModel: string; summaryModel: string };
+    }) => unknown,
+  ) => selector({ updateSettings, settings: getMockSettings() }),
 }));
 vi.mock("@/lib/oauth/openrouterDesktop", () => ({ connectOpenRouterDesktop, cancelOpenRouterConnect }));
 vi.mock("@/lib/platform/openExternal", () => ({ openExternal }));
@@ -63,6 +81,7 @@ describe("OnboardingByokStep", () => {
     container?.remove();
     container = null;
     vi.clearAllMocks();
+    setMockSettings({ detectModel: "deepseek/deepseek-v4-flash", summaryModel: "deepseek/deepseek-v4-pro" });
   });
 
   async function mount(onNext: () => void) {
@@ -112,6 +131,39 @@ describe("OnboardingByokStep", () => {
       apiKey: "sk-or-abc123",
     });
     expect(onNext).toHaveBeenCalledTimes(1);
+  });
+
+  // R4 field fix (v0.4.4): pasting an OpenRouter key here must ALSO
+  // remap a bare (pre-fix) Anthropic-flavored detectModel/summaryModel
+  // — mirroring the two REAL OAuth-completion sites (openrouterDesktop.ts,
+  // app/oauth/openrouter/page.tsx), which already spread this remap
+  // alongside the identical provider/baseUrl/apiKey write. RED against
+  // the pre-fix buildByokKeyPatch(key) (no currentSettings param at
+  // all): updateSettings would have been called with the bare patch
+  // ONLY, leaving "claude-haiku-4-5"/"claude-sonnet-5" live to 400 on
+  // the very first detect/summary call.
+  it("R4: pasting a key ALSO remaps a bare legacy detectModel/summaryModel to the DeepSeek OpenRouter defaults", async () => {
+    setMockSettings({ detectModel: "claude-haiku-4-5", summaryModel: "claude-sonnet-5" });
+    const onNext = vi.fn();
+    await mount(onNext);
+
+    const input = container!.querySelector('[data-testid="input-onboarding-byok-key"]') as HTMLInputElement;
+    await act(async () => {
+      typeInto(input, "sk-or-abc123");
+    });
+    await act(async () => {
+      container!.querySelector('[data-testid="btn-onboarding-save-key"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+
+    expect(updateSettings).toHaveBeenCalledWith({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "sk-or-abc123",
+      detectModel: "deepseek/deepseek-v4-flash",
+      summaryModel: "deepseek/deepseek-v4-pro",
+    });
   });
 
   it("使用 OpenRouter 登录 -> ok:true advances without writing Settings itself (connectOpenRouterDesktop already did)", async () => {

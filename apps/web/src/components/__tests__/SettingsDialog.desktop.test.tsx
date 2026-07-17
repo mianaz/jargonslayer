@@ -100,6 +100,7 @@ import { useApp } from "../../lib/store";
 import { useTasks } from "../../lib/tasks/registry";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import type { DesktopBootstrapHandle } from "@/lib/desktop/bootstrap";
+import { remapOpenRouterModelDefaults } from "@/lib/oauth/openrouterModelDefaults";
 import SettingsDialog from "../SettingsDialog";
 
 // Already on the "openrouter" preset (provider/baseUrl match
@@ -235,6 +236,162 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
     // …and the newly-issued key IS reflected in the draft.
     const keyInput = container!.querySelector('input[placeholder="sk-…"]') as HTMLInputElement;
     expect(keyInput.value).toBe("sk-or-newly-issued");
+
+    // F (persistence investigation): the typed-but-unsaved 检测模型 edit
+    // must survive all the way through a real 保存, not just the
+    // post-connect resync above — this is scenario (2) from the task's
+    // own investigation list ("does the typed draft value survive
+    // 保存?"). detectModel was UNCHANGED by this mock's own updateSettings
+    // (only provider/baseUrl/apiKey), so the diff-based model resync
+    // (see handleConnectOpenRouter's own beforeSettings comment) never
+    // touches draft.detectModel — 保存 writes the user's typed value
+    // straight through.
+    await act(async () => {
+      findButtonContaining("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useApp.getState().settings.detectModel).toBe("my-custom-detect-model-xyz");
+  });
+
+  // Field-test fix (real user report) — the bug this whole diff-based
+  // resync closes: connectOpenRouterDesktop's own conditional
+  // detectModel/summaryModel remap (openrouterModelDefaults.ts) lands
+  // on the LIVE store same as provider/baseUrl/apiKey, but the ORIGINAL
+  // F5 merge above never resynced those two fields into `draft` — so a
+  // user who never touched the 检测模型/会议报告模型 fields at all would
+  // click 保存 (writing their STALE open-time draft, still the bare
+  // pre-fix model) and silently revert the very fix OAuth just applied.
+  // RED against the pre-fix merge (provider/baseUrl/apiKey only): this
+  // test's final two assertions would have failed (settings reverted to
+  // "claude-haiku-4-5"/"claude-sonnet-5") before the diff-based
+  // detectModel/summaryModel merge existed.
+  it("field-test fix: OAuth's own conditional detectModel/summaryModel remap is resynced into the draft too — 保存 (without ever touching those fields) must not revert it back to the stale pre-connect value", async () => {
+    useApp.setState({
+      settings: {
+        ...openRouterSeedSettings(),
+        detectModel: "claude-haiku-4-5",
+        summaryModel: "claude-sonnet-5",
+      },
+      hydrated: true,
+    });
+
+    mockConnectOpenRouterDesktop.mockImplementation(async () => {
+      // Mirrors the REAL connectOpenRouterDesktop's conditional remap
+      // (openrouterModelDefaults.ts): live detectModel/summaryModel
+      // were bare, so the real OAuth completion would ALSO have
+      // patched them alongside provider/baseUrl/apiKey.
+      useApp.getState().updateSettings({
+        provider: "openai-compat",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "sk-or-newly-issued",
+        detectModel: "deepseek/deepseek-v4-flash",
+        summaryModel: "deepseek/deepseek-v4-pro",
+      });
+      return { ok: true };
+    });
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      findNavButton("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // User never touches 检测模型/会议报告模型 at all — connects straight away.
+    await act(async () => {
+      findButtonContaining("一键连接 OpenRouter 账号").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await flush();
+
+    await act(async () => {
+      findButtonContaining("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.detectModel).toBe("deepseek/deepseek-v4-flash");
+    expect(useApp.getState().settings.summaryModel).toBe("deepseek/deepseek-v4-pro");
+  });
+
+  // R3 (adversarial review, HIGH): the ORIGINAL diff-based merge above
+  // keyed its detectModel/summaryModel resync off whether LIVE changed
+  // (`live[field] !== beforeSettings[field]`) — so a user who typed
+  // their OWN unsaved custom 检测模型 edit into the draft got it
+  // silently clobbered the instant OAuth's REAL conditional remap
+  // (openrouterModelDefaults.ts's remapOpenRouterModelDefaults) ALSO
+  // happened to touch the live model (because the pre-connect live
+  // value was still a bare id). Exercises the REAL remap function
+  // (not a credential-only mock) so this is provably the actual
+  // production interaction, not a stand-in. RED against the pre-fix
+  // `live[field] !== beforeSettings[field]` gate: the final assertion
+  // below would have failed (detectModel reverted to
+  // "deepseek/deepseek-v4-flash", the live remap's own output,
+  // clobbering the user's still-unsaved "my-custom-detect-model-xyz").
+  it("R3: an unsaved custom 检测模型 draft edit survives OAuth connect even when the REAL remapOpenRouterModelDefaults ALSO fires on the live store", async () => {
+    useApp.setState({
+      settings: {
+        ...openRouterSeedSettings(),
+        detectModel: "claude-haiku-4-5", // bare — remapOpenRouterModelDefaults will touch this on connect
+        summaryModel: "claude-sonnet-5",
+      },
+      hydrated: true,
+    });
+
+    mockConnectOpenRouterDesktop.mockImplementation(async () => {
+      // Mirrors connectOpenRouterDesktopWith's own real sequencing:
+      // deps.getSettings() reads live settings at the moment the code
+      // exchange succeeds, and the real remapOpenRouterModelDefaults
+      // (imported here, not reimplemented) decides the patch.
+      const liveNow = useApp.getState().settings;
+      useApp.getState().updateSettings({
+        provider: "openai-compat",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "sk-or-newly-issued",
+        ...remapOpenRouterModelDefaults(liveNow),
+      });
+      return { ok: true };
+    });
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      findNavButton("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const detectInput = container!.querySelector(
+      'input[list="primary-detect-options"]',
+    ) as HTMLInputElement | null;
+    if (!detectInput) throw new Error("检测模型 input not found");
+    await act(async () => {
+      typeInto(detectInput, "my-custom-detect-model-xyz");
+    });
+    expect(detectInput.value).toBe("my-custom-detect-model-xyz");
+
+    await act(async () => {
+      findButtonContaining("一键连接 OpenRouter 账号").dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await flush();
+
+    // The real remap DID fire on the live store (proving this isn't a
+    // vacuous test)...
+    expect(useApp.getState().settings.detectModel).toBe("deepseek/deepseek-v4-flash");
+    // ...but the user's own unsaved draft edit must survive the resync
+    // untouched.
+    const detectInputAfter = container!.querySelector(
+      'input[list="primary-detect-options"]',
+    ) as HTMLInputElement;
+    expect(detectInputAfter.value).toBe("my-custom-detect-model-xyz");
+
+    await act(async () => {
+      findButtonContaining("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useApp.getState().settings.detectModel).toBe("my-custom-detect-model-xyz");
   });
 });
 

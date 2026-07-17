@@ -297,6 +297,33 @@ const SIDECAR_LIFECYCLE_BUSY_MESSAGE = "另一项本地服务操作正在进行"
  *  similar wordings" rationale as SIDECAR_LIFECYCLE_BUSY_MESSAGE above. */
 const EXTERNAL_SIDECAR_MODE_MESSAGE = "当前为外部管理模式，此操作仅适用于内置本地服务";
 
+/** S13 hotfix (v0.4.4 field report: "huge python RAM usage even after
+ *  transcription finished" — a 系统识别/osspeech user who never uses the
+ *  whisper sidecar for live meetings at all still got it fully loaded,
+ *  every launch: an already-provisioned install's STARTING path
+ *  (below) restarts the sidecar unconditionally on EVERY launch,
+ *  regardless of which STT engine is actually persisted — the S11
+ *  "park dormant" gate (`osspeechDormant` below) only covers a FRESH
+ *  NEEDS_PROVISION decision, not a provisioned-dead restart).
+ *
+ *  The three STT engines that actually talk to whisper_server.py over
+ *  its ws transport: "whisper" directly (lib/stt/whisperSocket.ts),
+ *  plus "tabaudio"/"appaudio" (lib/stt/tabAudio.ts, lib/stt/appAudio.ts
+ *  — both reuse the SAME WsTransport, just a different audio-capture
+ *  source). Every OTHER engine (osspeech chief among them — the
+ *  field-test bug this const exists for; also soniox/webspeech/demo)
+ *  never opens a ws connection to the sidecar at all — though an
+ *  osspeech user can still legitimately reach the sidecar's OWN :8766
+ *  upload-a-recording HTTP job API via ImportHub's "本地 Whisper" file-
+ *  import option (offered whenever the health probe answers), which is
+ *  exactly why this hotfix does NOT skip start_server for these
+ *  engines entirely (that fuller dormancy redesign is deliberately
+ *  deferred) — it only defers the model's own (multi-GB, for medium/
+ *  large models) RAM footprint until that FIRST actual use, via
+ *  whisper_server.py's own opt-in `--lazy-load` flag (see runnerDeps'
+ *  own readLazyLoad below). */
+const SIDECAR_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
+
 /** S12a fix round (§D F6, MEDIUM) — ensureMlxExtras' own combined
  *  pre-Phase-1 disk-space reserve, named honestly (each summand is what
  *  it actually is, not a bare round "5GB") so a future re-tuning has
@@ -995,6 +1022,18 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     // readHfToken's own doc comment above and RunnerDeps.readHfToken's
     // (provisionRunner.ts).
     readHfToken: deps.readHfToken,
+    // S13 hotfix (field-test RAM-usage fix) — see provisionRunner.ts's
+    // own RunnerDeps.readLazyLoad doc comment for the full contract.
+    // `persistedEngine` is the SAME "await BEFORE any provisioning
+    // decision" read the S11 osspeechDormant gate above already uses
+    // (this file's own header comment) — reused here directly, not
+    // re-read, so this covers the STARTING step regardless of whether
+    // it's reached via a fresh provision or a provisioned-dead restart
+    // (both funnel through this ONE runnerDeps object — see the drive
+    // loop's own runEffects call further down). `undefined` (every
+    // pre-S13 test, and any caller that hasn't wired getDesktopEngine)
+    // returns false — "eager", byte-identical to before this hotfix.
+    readLazyLoad: () => persistedEngine !== undefined && !SIDECAR_ENGINES.has(persistedEngine),
   };
   const probe = deps.probeSidecarFn ?? probeSidecar;
   const restartClock = deps.restartClock ?? Date.now;

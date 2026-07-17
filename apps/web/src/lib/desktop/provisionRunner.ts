@@ -25,8 +25,14 @@
 //                   events; see withDownloadProgress). `hfToken` (S12a
 //                   Q6) rides along only when RunnerDeps.readHfToken
 //                   resolves a non-empty token — see hfTokenArg.
-//   startServer  -> invoke("start_server", { model, hfToken? }) -> StartServerResult.
+//   startServer  -> invoke("start_server", { model, hfToken?, lazyLoad? }) -> StartServerResult.
 //                   Same S12a Q6 `hfToken` passthrough as prewarmModel.
+//                   `lazyLoad` (S13 hotfix, field-test RAM-usage fix)
+//                   rides along only when RunnerDeps.readLazyLoad
+//                   returns true — see lazyLoadArg. bootstrap.ts's
+//                   runnerDeps wires it from the persisted STT engine
+//                   at THIS launch (see BootstrapDeps.getDesktopEngine's
+//                   own doc comment there).
 //   stopServer   -> invoke("stop_server")                       -> void (Finding 7: the
 //                   LEADING effect on a STARTING/POLLING_HEALTH retry
 //                   — see provisionMachine.ts's handleRetry)
@@ -163,6 +169,36 @@ export interface RunnerDeps {
    *  so every existing test's exact-payload assertions stay
    *  byte-identical. */
   readHfToken?: () => string;
+  /** S13 hotfix (v0.4.4 field report: "huge python RAM usage even
+   *  after transcription finished" — a 系统识别/osspeech user who never
+   *  touches the whisper sidecar still got it fully loaded, every
+   *  launch, because an already-provisioned install's STARTING path
+   *  restarts the sidecar unconditionally regardless of which STT
+   *  engine is actually persisted). A LIVE read of whether whisper_
+   *  server.py's classic faster-whisper backend should defer its model
+   *  load until first use (`--lazy-load`) rather than loading eagerly
+   *  at boot — see that file's own `--lazy-load` argparse help and its
+   *  `LazyWhisperModel` module-section doc comment. Threaded into the
+   *  startServer effect's own invoke payload below (see lazyLoadArg)
+   *  exactly like readHfToken's `hfToken` passthrough above.
+   *
+   *  bootstrap.ts wires the real implementation: true only when the
+   *  user's persisted `settings.engine` is affirmatively known AND is
+   *  NOT one of the three sidecar-backed engines (whisper/tabaudio/
+   *  appaudio — see that file's own SIDECAR_ENGINES). Absent (every
+   *  pre-S13 test, and any caller that hasn't wired it) means "eager",
+   *  byte-identical to before this hotfix — both invoke payloads
+   *  simply omit the `lazyLoad` key (Rust's `Option<bool>` param
+   *  treats a missing key as `None`, same as an explicit `false` — see
+   *  lazyLoadArg below), so every existing test's exact-payload
+   *  assertions stay byte-identical.
+   *
+   *  Deliberately NEVER read by performSwitchModel's own direct
+   *  start_server call (bootstrap.ts) — a user actively switching
+   *  whisper models IS a whisper-engine user, so that call stays eager
+   *  unconditionally; only THIS file's startServer effect (the
+   *  provisioned-dead/fresh-provision STARTING step) ever threads it. */
+  readLazyLoad?: () => boolean;
 }
 
 /** Builds the `{hfToken}` fragment to spread into the prewarm_model/
@@ -177,6 +213,21 @@ export interface RunnerDeps {
 function hfTokenArg(deps: RunnerDeps): { hfToken: string } | Record<string, never> {
   const token = deps.readHfToken?.().trim();
   return token ? { hfToken: token } : {};
+}
+
+/** Builds the `{lazyLoad}` fragment to spread into the start_server
+ *  invoke payload below — `{}` (nothing to spread) when
+ *  `deps.readLazyLoad` is absent or returns false, `{lazyLoad: true}`
+ *  only when it returns true. Mirrors hfTokenArg's own "omit-the-key-
+ *  unless-truthy" shape exactly (see that function's own doc comment)
+ *  — see RunnerDeps.readLazyLoad's own doc comment for the real
+ *  (bootstrap.ts-wired) implementation. Deliberately only ever spread
+ *  into the startServer case below, never prewarmModel's — prewarm's
+ *  own `--download-only` mode never loads the model at all (see
+ *  whisper_server.py's run_download_only), so lazy-load has nothing to
+ *  defer there. */
+function lazyLoadArg(deps: RunnerDeps): { lazyLoad: true } | Record<string, never> {
+  return deps.readLazyLoad?.() ? { lazyLoad: true } : {};
 }
 
 const noopLog: OnLog = () => {};
@@ -409,8 +460,15 @@ async function runStepEffect(
         // `hfToken` rides alongside `model` (see hfTokenArg's own doc
         // comment) — Rust's start_server sets HF_TOKEN in the
         // long-lived sidecar spawn env only when this key is present
-        // and non-empty.
-        await deps.invoke<StartServerResult>("start_server", { model: effect.model, ...hfTokenArg(deps) });
+        // and non-empty. S13 hotfix: `lazyLoad` rides alongside too
+        // (see lazyLoadArg's own doc comment) — Rust's start_server
+        // adds whisper_server.py's own `--lazy-load` flag only when
+        // this key is present and true.
+        await deps.invoke<StartServerResult>("start_server", {
+          model: effect.model,
+          ...hfTokenArg(deps),
+          ...lazyLoadArg(deps),
+        });
         return { type: "STEP_OK", step };
       }
     }

@@ -769,6 +769,83 @@ describe("runEffects — startServer (STARTING), with and without a bundled writ
     });
   });
 
+  // S13 hotfix (field-test RAM-usage fix) — RunnerDeps.readLazyLoad's
+  // own passthrough, mirrors the hfToken describe block just above.
+  describe("lazyLoad passthrough (S13 hotfix)", () => {
+    it("readLazyLoad returning true adds lazyLoad:true to the invoke payload", async () => {
+      const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = {
+        invoke,
+        listen,
+        settings: DEFAULT_SETTINGS,
+        readLazyLoad: () => true,
+      };
+      await runEffects(
+        { phase: "STEP", step: "STARTING", status: "RUNNING" },
+        [{ kind: "startServer", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium", lazyLoad: true } }]);
+    });
+
+    it("readLazyLoad returning false omits the key entirely", async () => {
+      const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, readLazyLoad: () => false };
+      await runEffects(
+        { phase: "STEP", step: "STARTING", status: "RUNNING" },
+        [{ kind: "startServer", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium" } }]);
+    });
+
+    it("no readLazyLoad dep at all omits the key — byte-identical to before this hotfix", async () => {
+      const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS };
+      await runEffects(
+        { phase: "STEP", step: "STARTING", status: "RUNNING" },
+        [{ kind: "startServer", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "start_server", args: { model: "medium" } }]);
+    });
+
+    it("hfToken and lazyLoad can both ride the same invoke payload together", async () => {
+      const { invoke, calls } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = {
+        invoke,
+        listen,
+        settings: DEFAULT_SETTINGS,
+        readHfToken: () => "hf_abc123",
+        readLazyLoad: () => true,
+      };
+      await runEffects(
+        { phase: "STEP", step: "STARTING", status: "RUNNING" },
+        [{ kind: "startServer", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([
+        { cmd: "start_server", args: { model: "medium", hfToken: "hf_abc123", lazyLoad: true } },
+      ]);
+    });
+
+    it("prewarmModel never receives lazyLoad — it never loads the model at all (--download-only)", async () => {
+      const { invoke, calls } = makeFakeInvoke({ prewarm_model: () => ({ code: 0 }) });
+      const { listen } = makeFakeListen();
+      const deps: RunnerDeps = { invoke, listen, settings: DEFAULT_SETTINGS, readLazyLoad: () => true };
+      await runEffects(
+        { phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" },
+        [{ kind: "prewarmModel", model: "medium" }],
+        deps,
+      );
+      expect(calls).toEqual([{ cmd: "prewarm_model", args: { model: "medium" } }]);
+    });
+  });
+
   it("start_server never touches uv://log", async () => {
     const { invoke } = makeFakeInvoke({ start_server: () => ({ alreadyRunning: false }) });
     const { listen, listenCalls } = makeFakeListen();

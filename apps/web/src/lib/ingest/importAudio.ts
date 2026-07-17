@@ -65,7 +65,7 @@ export class AudioTooLongError extends Error {
 }
 
 export class AudioTooLargeError extends Error {
-  constructor(message = "音频过大（超过 200 MB），请改用本地 Whisper sidecar 转录") {
+  constructor(message = "音频过大（超过 200 MB），请改用本地 Whisper 转录") {
     super(message);
     this.name = "AudioTooLargeError";
   }
@@ -218,12 +218,22 @@ export async function importAudio(opts: ImportAudioOptions): Promise<ImportAudio
     text: s.text,
   }));
 
-  const session: MeetingSession = await buildSessionFromSegments(segments, settings, {
-    title: `导入 ${file.name}`,
-    engine: "browser-whisper",
-  });
-
+  // v0.4.4 field-fix (finding 3): declared before buildSessionFromSegments
+  // so its own detect-failure warning (if any — see that function's own
+  // doc comment) lands in the SAME array translate's warning below
+  // merges into, reaching ImportHub's completion toast exactly like
+  // translate warnings already did.
   const warnings: string[] = [];
+  const session: MeetingSession = await buildSessionFromSegments(
+    segments,
+    settings,
+    {
+      title: `导入 ${file.name}`,
+      engine: "browser-whisper",
+    },
+    warnings,
+  );
+
   if (translate && session.segments.length > 0) {
     const translations = await runTranslation(
       session.segments,

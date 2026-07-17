@@ -53,10 +53,14 @@ describe("EngineChoiceScreen", () => {
     expect(osspeechCard.textContent).toContain("无需下载");
     expect(osspeechCard.textContent).toContain("macOS 原生识别");
     expect(osspeechCard.textContent).toContain("音频不离开本机");
-    expect(whisperCard.textContent).toContain("Whisper · 更高质量");
+    expect(whisperCard.textContent).toContain("本地大模型 · 更高质量");
+    expect(whisperCard.textContent).toContain("Whisper、Parakeet 等本地大模型");
     expect(whisperCard.textContent).toContain("支持说话人分离");
     expect(whisperCard.textContent).toContain("多语混合更强");
-    expect(whisperCard.textContent).toContain("需下载模型（约 1.5GB）");
+    // R8/F10 (size-claim fix): the smallest selectable whisper model
+    // (modelCatalog.ts's "small") is ~0.46GB, not the ~1.5GB of the
+    // RECOMMENDED "medium" entry the pre-fix copy quoted.
+    expect(whisperCard.textContent).toContain("需下载模型（约 0.5GB 起）");
 
     await act(async () => {
       container!.querySelector('[data-testid="btn-engine-choice-continue"]')!.dispatchEvent(

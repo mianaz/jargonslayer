@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   aliasesAfterRename,
+  applyOpenRouterModelDefaults,
   applyPlatformEngineDefaults,
   applySpeakerUpdateToSegments,
   applyTierDefaults,
@@ -965,6 +966,144 @@ describe("migrateSettings — S9/D7 platform coercion composes with applyTierDef
   it("a stored appaudio (e.g. a full-tier backup restored from a desktop export) is coerced to tabaudio on a real (web) migrateSettings call", () => {
     const s = migrateSettings({ engine: "appaudio" } as Partial<Settings>);
     expect(s.engine).toBe("tabaudio");
+  });
+});
+
+// Field-test fix (v0.4.4, real user report): an EXISTING user who
+// connected OpenRouter before this fix shipped (baseUrl=openrouter.ai
+// persisted alongside a bare Anthropic-flavored detectModel/
+// summaryModel) must have that pairing repaired the moment the app
+// hydrates their old settings — not just a brand-new OAuth connect
+// going forward (that's the openrouterDesktop.ts/page.tsx side, see
+// openrouterModelDefaults.test.ts). RED against the pre-fix store.ts
+// (no applyOpenRouterModelDefaults call in migrateSettings at all):
+// the "an existing OpenRouter user's stored bare model gets remapped
+// on hydrate" case below would have kept detectModel === "claude-
+// haiku-4-5" forever, since nothing else in the persisted-settings
+// fold ever touches it.
+describe("applyOpenRouterModelDefaults — field-test fix: bare Anthropic model + OpenRouter baseUrl", () => {
+  function withOpenRouter(overrides: Partial<Settings> = {}): Settings {
+    return {
+      ...DEFAULT_SETTINGS,
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      ...overrides,
+    };
+  }
+
+  it("remaps a bare (pre-fix) detectModel/summaryModel to the DeepSeek OpenRouter defaults", () => {
+    const s = applyOpenRouterModelDefaults(
+      withOpenRouter({ detectModel: "claude-haiku-4-5", summaryModel: "claude-sonnet-5" }),
+    );
+    expect(s.detectModel).toBe("deepseek/deepseek-v4-flash");
+    expect(s.summaryModel).toBe("deepseek/deepseek-v4-pro");
+  });
+
+  it("is idempotent — running it again on the already-remapped result is a no-op", () => {
+    const once = applyOpenRouterModelDefaults(
+      withOpenRouter({ detectModel: "claude-haiku-4-5", summaryModel: "claude-sonnet-5" }),
+    );
+    const twice = applyOpenRouterModelDefaults(once);
+    expect(twice).toEqual(once);
+  });
+
+  it("never touches a user's own deliberate custom OpenRouter slug", () => {
+    const s = applyOpenRouterModelDefaults(
+      withOpenRouter({ detectModel: "openai/gpt-5.4", summaryModel: "anthropic/claude-opus-4.8" }),
+    );
+    expect(s.detectModel).toBe("openai/gpt-5.4");
+    expect(s.summaryModel).toBe("anthropic/claude-opus-4.8");
+  });
+
+  it("never touches an Anthropic-direct user's models, even bare ones — gated on baseUrl host, not the model shape alone", () => {
+    const s = applyOpenRouterModelDefaults({
+      ...DEFAULT_SETTINGS,
+      provider: "anthropic",
+      baseUrl: "",
+      detectModel: "claude-haiku-4-5",
+      summaryModel: "claude-sonnet-5",
+    });
+    expect(s.detectModel).toBe("claude-haiku-4-5");
+    expect(s.summaryModel).toBe("claude-sonnet-5");
+  });
+
+  // R2 ripple fix (v0.4.4): DEFAULT_SETTINGS.baseUrl is now the
+  // OpenRouter URL — an explicit provider:"anthropic" settings object
+  // whose baseUrl HAPPENS to still read as the OpenRouter host (e.g. a
+  // legacy/partial blob that folded in the new default) must still
+  // never get remapped. RED against the pre-fix hostname-only gate:
+  // this would have remapped detectModel/summaryModel to the DeepSeek
+  // slugs despite provider being explicitly "anthropic".
+  it("never touches an Anthropic-direct user's models even when baseUrl itself reads as the OpenRouter host (provider gate, not baseUrl alone)", () => {
+    const s = applyOpenRouterModelDefaults({
+      ...DEFAULT_SETTINGS,
+      provider: "anthropic",
+      baseUrl: "https://openrouter.ai/api/v1",
+      detectModel: "claude-haiku-4-5",
+      summaryModel: "claude-sonnet-5",
+    });
+    expect(s.detectModel).toBe("claude-haiku-4-5");
+    expect(s.summaryModel).toBe("claude-sonnet-5");
+  });
+
+  it("never touches a DeepSeek-direct/other openai-compat user's models — exact hostname match, not a substring", () => {
+    const s = applyOpenRouterModelDefaults(
+      withOpenRouter({
+        baseUrl: "https://api.deepseek.com",
+        detectModel: "deepseek-chat",
+        summaryModel: "deepseek-chat",
+      }),
+    );
+    expect(s.detectModel).toBe("deepseek-chat");
+    expect(s.summaryModel).toBe("deepseek-chat");
+  });
+
+  it("a malformed baseUrl never throws — treated as not-OpenRouter", () => {
+    expect(() =>
+      applyOpenRouterModelDefaults(withOpenRouter({ baseUrl: "not a url" })),
+    ).not.toThrow();
+  });
+
+  it("leaves every other settings field untouched", () => {
+    const s = applyOpenRouterModelDefaults(
+      withOpenRouter({ detectModel: "claude-haiku-4-5", language: "en-GB" }),
+    );
+    expect(s.language).toBe("en-GB");
+  });
+});
+
+describe("migrateSettings — field-test fix composes the OpenRouter model remap with the existing folds (end-to-end)", () => {
+  it("an existing OpenRouter user's stored bare model gets remapped on hydrate", () => {
+    const s = migrateSettings({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      detectModel: "claude-haiku-4-5",
+      summaryModel: "claude-sonnet-5",
+    } as Partial<Settings>);
+    expect(s.detectModel).toBe("deepseek/deepseek-v4-flash");
+    expect(s.summaryModel).toBe("deepseek/deepseek-v4-pro");
+  });
+
+  // R2 field fix (v0.4.4): DEFAULT_SETTINGS is now provider:"openai-
+  // compat" + baseUrl the OpenRouter URL (was "anthropic"/"") — a
+  // brand-new install's models are already slash-shaped DeepSeek
+  // OpenRouter slugs, so applyOpenRouterModelDefaults' own remap is a
+  // no-op here regardless (see remapOpenRouterModelDefaults' own
+  // isBareModelId check) — untouched, just for a different reason than
+  // before this fix.
+  it("a brand-new install (no saved settings at all) gets the new global DeepSeek defaults, untouched by the OpenRouter gate (already slash-shaped)", () => {
+    expect(migrateSettings(null).detectModel).toBe("deepseek/deepseek-v4-flash");
+    expect(migrateSettings(null).summaryModel).toBe("deepseek/deepseek-v4-pro");
+  });
+
+  it("an Anthropic-direct user's stored models are never touched by hydrate", () => {
+    const s = migrateSettings({
+      provider: "anthropic",
+      detectModel: "claude-haiku-4-5",
+      summaryModel: "claude-sonnet-5",
+    } as Partial<Settings>);
+    expect(s.detectModel).toBe("claude-haiku-4-5");
+    expect(s.summaryModel).toBe("claude-sonnet-5");
   });
 });
 

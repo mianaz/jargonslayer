@@ -6,11 +6,17 @@
 // modules exist — see this worker's own report for the full rationale.
 
 import { describe, expect, it } from "vitest";
+import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import { buildByokKeyPatch, buildHfTokenPatch, describeOAuthFailure } from "../onboardingSettings";
 
 describe("buildByokKeyPatch", () => {
-  it("trims and returns the EXACT settings shape the web OAuth callback writes (provider/baseUrl/apiKey)", () => {
-    expect(buildByokKeyPatch("  sk-or-abc123  ")).toEqual({
+  it("trims and returns the EXACT settings shape the web OAuth callback writes (provider/baseUrl/apiKey), unchanged when the current models are already slash-shaped", () => {
+    expect(
+      buildByokKeyPatch("  sk-or-abc123  ", {
+        detectModel: "deepseek/deepseek-v4-flash",
+        summaryModel: "deepseek/deepseek-v4-pro",
+      }),
+    ).toEqual({
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
       apiKey: "sk-or-abc123",
@@ -18,8 +24,41 @@ describe("buildByokKeyPatch", () => {
   });
 
   it("returns null for empty or whitespace-only input", () => {
-    expect(buildByokKeyPatch("")).toBeNull();
-    expect(buildByokKeyPatch("   ")).toBeNull();
+    expect(buildByokKeyPatch("", DEFAULT_SETTINGS)).toBeNull();
+    expect(buildByokKeyPatch("   ", DEFAULT_SETTINGS)).toBeNull();
+  });
+
+  // R4 field fix (v0.4.4): this onboarding paste-key path was the one
+  // OpenRouter-completion site that never remapped a bare Anthropic-
+  // flavored detectModel/summaryModel — mirrors both REAL sites
+  // (openrouterDesktop.ts's connectOpenRouterDesktopWith,
+  // app/oauth/openrouter/page.tsx's handleConnect effect), which both
+  // already spread remapOpenRouterModelDefaults(currentSettings)
+  // alongside the identical provider/baseUrl/apiKey write.
+  it("R4: remaps bare legacy (pre-fix) detectModel/summaryModel to the DeepSeek OpenRouter defaults", () => {
+    const patch = buildByokKeyPatch("sk-or-abc123", {
+      detectModel: "claude-haiku-4-5",
+      summaryModel: "claude-sonnet-5",
+    });
+    expect(patch).toEqual({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "sk-or-abc123",
+      detectModel: "deepseek/deepseek-v4-flash",
+      summaryModel: "deepseek/deepseek-v4-pro",
+    });
+  });
+
+  it("R4: never touches a user's own deliberate custom OpenRouter slug", () => {
+    const patch = buildByokKeyPatch("sk-or-abc123", {
+      detectModel: "openai/gpt-5.4",
+      summaryModel: "anthropic/claude-opus-4.8",
+    });
+    expect(patch).toEqual({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKey: "sk-or-abc123",
+    });
   });
 });
 

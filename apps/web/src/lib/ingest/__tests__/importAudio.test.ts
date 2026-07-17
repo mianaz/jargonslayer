@@ -233,7 +233,7 @@ describe("importAudio", () => {
     ).rejects.toThrow(AudioTooLargeError);
     await expect(
       importAudio({ file, translate: false, settings: makeSettings(), onProgress: vi.fn() }),
-    ).rejects.toThrow("音频过大（超过 200 MB），请改用本地 Whisper sidecar 转录");
+    ).rejects.toThrow("音频过大（超过 200 MB），请改用本地 Whisper 转录");
 
     expect(mockTranscribeInBrowser).not.toHaveBeenCalled();
   });
@@ -290,6 +290,21 @@ describe("importAudio", () => {
     });
 
     expect(warnings).toEqual(["未配置 API Key，已跳过中文对照"]);
+    const session = await storage.getSession(sessionId);
+    expect(session).not.toBeNull();
+  });
+
+  it("finding 3 (field report): AI-detect failing on every chunk (NoKeyError) surfaces ONE aggregated zh warning, dictionary-only results still save", async () => {
+    mockDetectApi.mockRejectedValue(new NoKeyError("未配置 API Key"));
+
+    const { warnings, sessionId } = await importAudio({
+      file: fakeFile(),
+      translate: false,
+      settings: makeSettings(),
+      onProgress: vi.fn(),
+    });
+
+    expect(warnings).toEqual(["AI 检测未生效：未配置 API Key，本次仅词典检测"]);
     const session = await storage.getSession(sessionId);
     expect(session).not.toBeNull();
   });

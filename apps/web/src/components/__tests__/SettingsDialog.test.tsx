@@ -717,6 +717,108 @@ describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox
 });
 
 // ---------------------------------------------------------------
+// PROVIDER_PRESETS suggestedModels (field-test fix v0.4.4): global
+// DEFAULT_SETTINGS.detectModel/summaryModel switched to the DeepSeek
+// OpenRouter slugs (product decision) — the "anthropic" preset's own
+// suggestedModels is what preserves today's claude-haiku-4-5/
+// claude-sonnet-5 pre-fill for an Anthropic-direct user picking that
+// preset by hand (handleSelectPreset), and "openrouter"'s own
+// suggestedModels makes hand-picking that preset land on real
+// OpenRouter slugs immediately, same as the OAuth button's own
+// conditional remap (openrouterModelDefaults.ts) — belt-and-suspenders
+// for a user who fills the preset in manually instead of using
+// "一键连接 OpenRouter 账号".
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — PROVIDER_PRESETS suggestedModels (field-test fix v0.4.4)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    // Seeded with distinctive models, neither preset's own suggestion —
+    // so a passing assertion below can only be explained by the
+    // preset's OWN suggestedModels actually firing, not a coincidental
+    // match with whatever DEFAULT_SETTINGS already had.
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", detectModel: "custom-model-x", summaryModel: "custom-model-y" },
+      hydrated: true,
+    });
+    // useProviderModels' own debounced fetch fires once the credentials
+    // block mounts — stubbed so CI never turns it into a real network
+    // call (same posture SettingsDialog.desktop.test.tsx's F5 suite
+    // already documents for the identical mount).
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllGlobals();
+  });
+
+  function findProviderSelect(): HTMLSelectElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "提供方");
+    const select = label?.parentElement?.querySelector("select");
+    if (!select) throw new Error("提供方 select not found");
+    return select as HTMLSelectElement;
+  }
+
+  function modelInputValue(datalistId: string): string {
+    const input = container!.querySelector(`input[list="${datalistId}"]`) as HTMLInputElement | null;
+    if (!input) throw new Error(`input[list="${datalistId}"] not found`);
+    return input.value;
+  }
+
+  async function selectPreset(id: string): Promise<void> {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const select = findProviderSelect();
+    await act(async () => {
+      select.value = id;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  it("selecting the anthropic preset fills claude-haiku-4-5/claude-sonnet-5 — preserving today's Anthropic-direct behavior via the preset instead of the (now DeepSeek-flavored) global default", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await selectPreset("anthropic");
+
+    expect(modelInputValue("primary-detect-options")).toBe("claude-haiku-4-5");
+    expect(modelInputValue("primary-summary-options")).toBe("claude-sonnet-5");
+  });
+
+  it("selecting the openrouter preset fills the DeepSeek OpenRouter slugs (deepseek/deepseek-v4-flash + deepseek/deepseek-v4-pro)", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await selectPreset("openrouter");
+
+    expect(modelInputValue("primary-detect-options")).toBe("deepseek/deepseek-v4-flash");
+    expect(modelInputValue("primary-summary-options")).toBe("deepseek/deepseek-v4-pro");
+  });
+});
+
+// ---------------------------------------------------------------
 // 转录引擎 更换模型 (v0.4 S4 chunk 4, blueprint decision C's switch
 // flow). Same IS_DESKTOP limitation this file's own Soniox describe
 // block above already documents ("PREVIEW_TIER/IS_DESKTOP are

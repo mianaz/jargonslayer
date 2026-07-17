@@ -61,6 +61,9 @@ Covers:
     attribute derives from HF_HOME as <HF_HOME>/hub when not
     independently overridden (live subprocess probe, controlled env)
   - parse_args(): --model accepts the parakeet id via MODEL_CHOICES
+  - parse_args(): S13 hotfix's --lazy-load flag defaults False (absent),
+    True when passed (LazyWhisperModel's own coverage lives in
+    test_lazy_load.py, not here)
   - normalize_hf_token / parse_args's ONE normalization point (S12a fix
     round F8, LOW, Sol8, §D): a whitespace-only --hf-token/$HF_TOKEN
     value becomes None (was truthy pre-fix — falsely advertised
@@ -623,6 +626,32 @@ try:
     )
 finally:
     sys.argv = _saved_argv
+
+
+# =================================================================
+# S13 hotfix: parse_args's --lazy-load flag — a plain store_true, off
+# by default (byte-identical to every pre-hotfix launch of this file
+# when the flag is never passed).
+# =================================================================
+
+_saved_argv_lazy = sys.argv
+try:
+    sys.argv = ["whisper_server.py"]
+    args = whisper_server.parse_args()
+    check(
+        "parse_args: --lazy-load defaults to False when absent (byte-"
+        "identical to before this hotfix)",
+        args.lazy_load is False,
+    )
+
+    sys.argv = ["whisper_server.py", "--lazy-load"]
+    args = whisper_server.parse_args()
+    check(
+        "parse_args: --lazy-load sets args.lazy_load=True when passed",
+        args.lazy_load is True,
+    )
+finally:
+    sys.argv = _saved_argv_lazy
 
 
 # =================================================================

@@ -132,9 +132,15 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
   describe("item 5 — provider only names a real value when a key is actually configured", () => {
     it("reports the literal '(未配置)' string, never settings.provider, when no key is configured (default settings)", () => {
       const report = buildDiagnosticReport(DEFAULT_SETTINGS);
-      expect(DEFAULT_SETTINGS.provider).toBe("anthropic"); // sanity: this is the misleading default
+      // R2 field fix (v0.4.4): DEFAULT_SETTINGS.provider is now
+      // "openai-compat" (paired with the OpenRouter baseUrl, coherent
+      // with the DeepSeek OpenRouter model slugs) rather than the old
+      // misleading "anthropic" — the assertion below must hold
+      // regardless of the raw default value: no key configured means
+      // the report NEVER echoes the idle settings.provider string.
+      expect(DEFAULT_SETTINGS.provider).toBe("openai-compat");
       expect(report).toContain('"provider": "(未配置)"');
-      expect(report).not.toContain('"provider": "anthropic"');
+      expect(report).not.toContain(`"provider": "${DEFAULT_SETTINGS.provider}"`);
     });
 
     it("reports the real provider once a key IS configured", () => {

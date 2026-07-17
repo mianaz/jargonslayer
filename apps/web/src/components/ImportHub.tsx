@@ -41,7 +41,7 @@ import {
 import { runTracked, runTrackedAsync, type TaskKind } from "@/lib/tasks/registry";
 import { decideVideoRouting, resolveImportPath, type ImportPath } from "@/lib/tasks/videoRouting";
 
-const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 sidecar";
+const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 Whisper";
 const FILE_ACCEPT = "audio/*,.m4a,.mp3,.wav,.flac,.mp4,.webm,.mov,.mkv,.m4v,video/*";
 const PARSE_DEBOUNCE_MS = 300;
 
@@ -56,6 +56,23 @@ const TEXT_PHASE_LABEL: Record<"parse" | "detect" | "translate", string> = {
   detect: "检测",
   translate: "翻译",
 };
+
+// R5 field fix (Sol F4): a completion toast used to append ONLY
+// warnings[0] — importTranscriptText's own `warnings` array starts as
+// the PARSER's warnings, then has any translate/AI-detect warning
+// pushed on afterward (see importText.ts), so a parser warning
+// silently hid a later AI-detect one (importAudio.ts's own `warnings`
+// can carry the same kind of multi-source stacking too). Renders every
+// UNIQUE warning, capped at 2, with an "等 N 条提示" suffix (N = the
+// total unique count) once there are more than that — never silently
+// drops one warning in favor of another.
+function warningsSuffix(warnings: string[]): string {
+  if (warnings.length === 0) return "";
+  const unique = Array.from(new Set(warnings));
+  const shown = unique.slice(0, 2);
+  const parts = unique.length > 2 ? [...shown, `等 ${unique.length} 条提示`] : shown;
+  return `，${parts.join("；")}`;
+}
 
 function speakerCount(parsed: ParsedTranscript): number {
   return new Set(parsed.segments.map((s) => s.speaker).filter(Boolean)).size;
@@ -218,9 +235,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
           .result.then(async ({ sessionId, warnings }) => {
             await loadSession(sessionId);
             await useApp.getState().hydrate();
-            showToast(
-              warnings.length > 0 ? `音频已转录，分析完成，${warnings[0]}` : "音频已转录，分析完成",
-            );
+            showToast(`音频已转录，分析完成${warningsSuffix(warnings)}`);
           })
           .catch(() => {
             // registry.error already recorded (runTrackedAsync) — the
@@ -258,7 +273,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
       .result.then(async ({ sessionId, warnings }) => {
         await loadSession(sessionId);
         await useApp.getState().hydrate();
-        showToast(warnings.length > 0 ? `文稿已导入，分析完成，${warnings[0]}` : "文稿已导入，分析完成");
+        showToast(`文稿已导入，分析完成${warningsSuffix(warnings)}`);
       })
       .catch(() => {
         // registry.error already recorded — surfaced in the task tray.
@@ -364,7 +379,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                   >
                     <div className="font-medium">浏览器转录（不出本机）</div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      文件不上传·音频与视频均支持（自动提取音轨）·首次需下载模型
+                      内置小型 Whisper 模型（base），质量低于本地大模型·文件不上传·音频与视频均支持（自动提取音轨）·首次需下载模型
                     </div>
                   </button>
                   <button
@@ -383,7 +398,7 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
                       {routing.sidecarLocked && <PreviewLockedBadge />}
                     </div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      需启动本地 sidecar·音频与视频均支持
+                      需启动本地 Whisper·音频与视频均支持
                     </div>
                     {routing.sidecarAvailable && diarizationHealth !== undefined && (
                       <div className="mt-0.5 text-[10px] leading-[1.7]">
@@ -523,10 +538,10 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
             </div>
             <div className="text-xs leading-[1.7] text-mut">
               {PREVIEW_TIER
-                ? "需本地 Whisper sidecar（体验版不提供）"
+                ? "需本地 Whisper（体验版不提供）"
                 : sidecarReachable
-                  ? "通过本地 sidecar 下载并转录，仅限本地版·请确保你有权处理该内容"
-                  : "需本地 Whisper sidecar，未检测到可用的 sidecar"}
+                  ? "通过本地 Whisper 下载并转录，仅限本地版·请确保你有权处理该内容"
+                  : "需本地 Whisper，未检测到运行中的本地服务"}
             </div>
             <input
               type="text"

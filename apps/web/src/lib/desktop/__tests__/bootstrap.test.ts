@@ -835,6 +835,126 @@ describe("bootstrapDesktop — osspeech ENGINE_CHOICE pre-consent branch (S11 bl
   });
 });
 
+// S13 hotfix (v0.4.4 field report: "huge python RAM usage even after
+// transcription finished" — see bootstrap.ts's own SIDECAR_ENGINES doc
+// comment for the full field-bug rationale): a PROVISIONED_DEAD restart
+// (valid marker, probe dead — this file's own "PROVISIONED_DEAD (valid
+// marker, probe dead)" test above) is the EXACT case the S11
+// osspeechDormant gate does NOT cover (that gate only fires on a fresh
+// NEEDS_PROVISION CHECK_RESULT — see this file's own isFreshProvisionEntry
+// call site) — so THIS suite proves the start_server invoke itself
+// carries lazyLoad appropriately instead, via runnerDeps.readLazyLoad.
+describe("bootstrapDesktop — STARTING's start_server carries lazyLoad for a provisioned-dead restart (S13 hotfix)", () => {
+  const validMarkerJson = JSON.stringify({
+    schema: 1,
+    model: "small",
+    py: "3.12",
+    deps: "faster-whisper==1.2.1,websockets==13.1,numpy==2.5.1",
+    ts: "2026-07-01T00:00:00.000Z",
+  });
+
+  function provisionedDeadDeps(overrides: Partial<BootstrapDeps> = {}): {
+    deps: BootstrapDeps;
+    startServerArgs: () => Record<string, unknown> | undefined;
+  } {
+    let startServerArgs: Record<string, unknown> | undefined;
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        read_provision_marker: () => validMarkerJson,
+        start_server: (args) => {
+          startServerArgs = args;
+          return { alreadyRunning: false };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 }; // dead (CHECKING) -> healthy (POLLING_HEALTH, post-start_server)
+      },
+      ...overrides,
+    };
+    return { deps, startServerArgs: () => startServerArgs };
+  }
+
+  it("persistedEngine='osspeech' (a never-uses-the-sidecar engine) adds lazyLoad:true to start_server", async () => {
+    const { deps, startServerArgs } = provisionedDeadDeps({ getDesktopEngine: async () => "osspeech" });
+    const handle = await bootstrapDesktop(deps);
+    expect(await waitForStable(handle)).toEqual({ phase: "HEALTHY" });
+    expect(startServerArgs()).toEqual({ model: "small", lazyLoad: true });
+  });
+
+  it("persistedEngine='whisper' (a sidecar-backed engine) never adds lazyLoad — stays eager", async () => {
+    const { deps, startServerArgs } = provisionedDeadDeps({ getDesktopEngine: async () => "whisper" });
+    const handle = await bootstrapDesktop(deps);
+    expect(await waitForStable(handle)).toEqual({ phase: "HEALTHY" });
+    expect(startServerArgs()).toEqual({ model: "small" });
+  });
+
+  it("persistedEngine='tabaudio'/'appaudio' (also sidecar-backed via the same WsTransport) never adds lazyLoad either", async () => {
+    for (const engine of ["tabaudio", "appaudio"]) {
+      const { deps, startServerArgs } = provisionedDeadDeps({ getDesktopEngine: async () => engine });
+      const handle = await bootstrapDesktop(deps);
+      expect(await waitForStable(handle)).toEqual({ phase: "HEALTHY" });
+      expect(startServerArgs()).toEqual({ model: "small" });
+    }
+  });
+
+  it("getDesktopEngine absent (every pre-S13 caller/test) never adds lazyLoad — byte-identical to before this hotfix", async () => {
+    const { deps, startServerArgs } = provisionedDeadDeps();
+    const handle = await bootstrapDesktop(deps);
+    expect(await waitForStable(handle)).toEqual({ phase: "HEALTHY" });
+    expect(startServerArgs()).toEqual({ model: "small" });
+  });
+
+  it("performSwitchModel's OWN restart start_server call never carries lazyLoad even for an osspeech-persisted engine — switching whisper models IS whisper-engine use", async () => {
+    // Reaches HEALTHY via the adopt path (probe already up), then drives
+    // switchModel() directly — mirrors the "hfToken passthrough on the
+    // restart's start_server call" suite's own pattern further below,
+    // just asserting the ABSENCE of lazyLoad instead.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-s13" }, 202);
+        if (url.includes("/jobs/job-s13")) return jsonResponse({ status: "done", progress: 1, error: null });
+        throw new Error(`unexpected fetch(${url})`);
+      }),
+    );
+    let startServerArgs: Record<string, unknown> | undefined;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => undefined,
+      start_server: (args) => {
+        startServerArgs = args;
+        return { alreadyRunning: false };
+      },
+      write_provision_marker: () => undefined,
+    });
+    const deps: BootstrapDeps = {
+      invoke,
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+      sleep: async () => {},
+      now: () => "2026-07-12T00:00:00.000Z",
+      getDesktopEngine: async () => "osspeech",
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    await handle.switchModel("medium");
+
+    expect(startServerArgs).toEqual({ model: "medium" });
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("chooseOsSpeechEngine() (S11 blueprint §3 Worker D, §A4)", () => {
   afterEach(() => {
     useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });

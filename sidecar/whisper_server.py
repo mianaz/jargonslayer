@@ -147,6 +147,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import fnmatch
+import gc
 import importlib
 import json
 import os
@@ -650,36 +651,65 @@ class WhisperServer:
         self.default_hf_token = default_hf_token
 
     async def handle(self, ws: WebSocketServerProtocol) -> None:
-        state = ConnectionState(language=self.default_language)
-        if self.save_audio_path:
-            state.wav_writer = open_wav_writer(self.save_audio_path)
-
-        # Protocol v2: one background consumer per connection owns every
-        # call to _transcribe for finalized segments — see module
-        # docstring's "Finalize scheduling" section.
-        consumer_task = asyncio.create_task(self._consume_finalize_queue(ws, state))
-
+        # S13 hotfix (--lazy-load only; isinstance-gated exactly like
+        # JobManager's own pre-existing ParakeetMlxBackend checks
+        # elsewhere in this file — see LazyWhisperModel's own module-
+        # section docstring): a live ws connection counts as ONE unit
+        # of "active work" for as long as it stays open. A no-op, free
+        # isinstance check when self.model is the raw faster-whisper
+        # model (the --lazy-load-absent, eager path) — this whole
+        # method is otherwise byte-identical to before this hotfix.
+        # Wrapped in its OWN outer try/finally (rather than folded into
+        # the existing one below) so acquire()/release() stay correctly
+        # paired even if something before the existing try block itself
+        # raises (e.g. open_wav_writer) — see LazyWhisperModel.acquire's
+        # own docstring for why it's safe to call unconditionally here.
+        lazy_model = self.model if isinstance(self.model, LazyWhisperModel) else None
         try:
-            async for message in ws:
-                if isinstance(message, (bytes, bytearray)):
-                    await self._handle_binary(ws, state, bytes(message))
-                else:
-                    await self._handle_text(ws, state, message)
-        except ConnectionClosed:
-            pass
-        finally:
-            # Flush any in-progress speech before the client goes away
-            # (a connection that closes WITHOUT ever sending {"type":
-            # "stop"} — e.g. a crashed tab — gets no "stopped" ack, and
-            # none is expected), then cancel the consumer cleanly.
-            await self._finalize_segment(ws, state, force=True)
-            consumer_task.cancel()
+            if lazy_model is not None:
+                # acquire() can block on the model's FIRST-ever load (a
+                # few seconds) — routed through asyncio.to_thread so
+                # that blocking never stalls THIS event loop (and thus
+                # every OTHER connection's own audio/VAD) while it
+                # happens.
+                await asyncio.to_thread(lazy_model.acquire)
+
+            state = ConnectionState(language=self.default_language)
+            if self.save_audio_path:
+                state.wav_writer = open_wav_writer(self.save_audio_path)
+
+            # Protocol v2: one background consumer per connection owns every
+            # call to _transcribe for finalized segments — see module
+            # docstring's "Finalize scheduling" section.
+            consumer_task = asyncio.create_task(self._consume_finalize_queue(ws, state))
+
             try:
-                await consumer_task
-            except asyncio.CancelledError:
+                async for message in ws:
+                    if isinstance(message, (bytes, bytearray)):
+                        await self._handle_binary(ws, state, bytes(message))
+                    else:
+                        await self._handle_text(ws, state, message)
+            except ConnectionClosed:
                 pass
-            if state.wav_writer is not None:
-                state.wav_writer.close()
+            finally:
+                # Flush any in-progress speech before the client goes away
+                # (a connection that closes WITHOUT ever sending {"type":
+                # "stop"} — e.g. a crashed tab — gets no "stopped" ack, and
+                # none is expected), then cancel the consumer cleanly.
+                await self._finalize_segment(ws, state, force=True)
+                consumer_task.cancel()
+                try:
+                    await consumer_task
+                except asyncio.CancelledError:
+                    pass
+                if state.wav_writer is not None:
+                    state.wav_writer.close()
+        finally:
+            # release() is cheap (lock + counter + maybe arming a
+            # threading.Timer) — no to_thread needed, unlike acquire()
+            # above.
+            if lazy_model is not None:
+                lazy_model.release()
 
     async def _handle_text(
         self, ws: WebSocketServerProtocol, state: ConnectionState, raw: str
@@ -2331,7 +2361,25 @@ class JobManager:
     def _run_job(
         self, job_id: str, file_path: str, language: str, hf_token: Optional[str]
     ) -> None:
+        # S13 hotfix (--lazy-load only; isinstance-gated exactly like
+        # this method's own ParakeetMlxBackend checks below — see
+        # LazyWhisperModel's own module-section docstring): a running/
+        # queued classic-whisper file job counts as ONE unit of "active
+        # work" for its whole lifetime. Computed once here (not inside
+        # the try) so the SAME lazy_model reference reaches this
+        # method's own finally below regardless of what raises inside
+        # the try. `acquire()` itself is called FROM INSIDE the try
+        # (first line) rather than out here — its own load may raise,
+        # and this method's existing `except Exception` below is what
+        # already reports any job-phase failure to the client; see
+        # LazyWhisperModel.acquire's own docstring for why that's safe
+        # (the active-work counter is incremented before the load is
+        # even attempted, so release() below stays correctly paired
+        # regardless of whether the load itself succeeds).
+        lazy_model = self.model if isinstance(self.model, LazyWhisperModel) else None
         try:
+            if lazy_model is not None:
+                lazy_model.acquire()
             self._set(job_id, status="running")
             self._transcribe_job(job_id, file_path, language)
 
@@ -2352,6 +2400,11 @@ class JobManager:
             # release only ever fires when acquire actually did).
             if isinstance(self.model, ParakeetMlxBackend):
                 self.model.release_stream()
+            # S13 hotfix: mirrors the FB4 release just above, for the
+            # classic backend's own activity counter (see this method's
+            # own lazy_model note above).
+            if lazy_model is not None:
+                lazy_model.release()
             try:
                 os.remove(file_path)
             except OSError:
@@ -2408,8 +2461,15 @@ class JobManager:
         download, 0.3-1.0 for transcription (DIARIZE_HOLD_PROGRESS
         still governs the diarization hold within that range, exactly
         as for an uploaded file)."""
+        # S13 hotfix: mirrors _run_job's own lazy_model note above —
+        # acquired here (holds through the yt-dlp download phase too,
+        # same "reserve for the job's whole lifetime" posture FB4's own
+        # parakeet release_stream() already takes for this method).
+        lazy_model = self.model if isinstance(self.model, LazyWhisperModel) else None
         tmp_dir = tempfile.mkdtemp(prefix="jargonslayer-ingest-")
         try:
+            if lazy_model is not None:
+                lazy_model.acquire()
             self._set(job_id, status="running", status_detail="下载中")
             file_path, title = self._download_via_ytdlp(job_id, url, tmp_dir)
             self._set(
@@ -2440,6 +2500,9 @@ class JobManager:
             # failure, well before transcription ever starts).
             if isinstance(self.model, ParakeetMlxBackend):
                 self.model.release_stream()
+            # S13 hotfix: mirrors the FB4 release just above.
+            if lazy_model is not None:
+                lazy_model.release()
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def start_download_job(self, model: str) -> tuple[Optional[str], Optional[str]]:
@@ -3531,6 +3594,258 @@ def load_model(model_name: str, device: str, compute_type: str):
     return model, load_seconds
 
 
+# =================================================================
+# S13 hotfix (v0.4.4 field report: "huge python RAM usage even after
+# transcription finished" — a 系统识别/osspeech user who never touches
+# the whisper sidecar still got it fully loaded, every launch, because
+# an already-provisioned install's STARTING path (bootstrap.ts)
+# restarts the sidecar unconditionally regardless of which STT engine
+# is actually persisted — the S11 "park dormant" gate only covers a
+# FRESH NEEDS_PROVISION decision, not this case; see that file's own
+# SIDECAR_ENGINES/getDesktopEngine wiring). Classic faster-whisper
+# backend ONLY — ParakeetMlxBackend above is untouched by this hotfix
+# (a different beast: MLX weights bound to a dedicated executor
+# thread, no ctranslate2 involved at all).
+#
+# Opt-in via --lazy-load (parse_args below): main() constructs THIS
+# wrapper instead of calling load_model() eagerly at boot, and passes
+# it as the SAME `model=` constructor arg WhisperServer/JobManager
+# already take. Every isinstance(self.model, LazyWhisperModel) check
+# added by this hotfix (WhisperServer.handle, JobManager._run_job/
+# _run_url_job) mirrors JobManager's own pre-existing isinstance(self.
+# model, ParakeetMlxBackend) idiom exactly — so the eager path (flag
+# absent: main() calls load_model() directly and passes the RAW
+# faster-whisper WhisperModel, exactly as before this hotfix) hits
+# isinstance(..., LazyWhisperModel) == False everywhere and is
+# otherwise completely untouched: zero behavior change, byte-identical
+# spawn/runtime path.
+#
+# Verified LIVE (2026-07-16, sidecar/.venv against the already-cached
+# Systran/faster-whisper-medium snapshot in ~/.cache/huggingface, no
+# network): ctranslate2.models.Whisper's OWN unload_model()/
+# load_model() pair (the seemingly "correct" API for exactly this
+# warm-swap use case — faster_whisper.WhisperModel.model IS a
+# ctranslate2.models.Whisper) does NOT actually shrink process RSS in
+# practice — its own docstring's "keep enough runtime context to
+# quickly resume" is apparently doing exactly that, keeping memory
+# resident (measured: RSS unchanged across an unload_model() + explicit
+# gc.collect() call). What DOES work: dropping the WHOLE WhisperModel
+# Python wrapper (`self._model = None`) + gc.collect() — measured
+# ~2.3GB -> ~1.6GB RSS on a real medium/int8 load -> transcribe ->
+# unload cycle, repeatable across two full load/unload cycles with no
+# growth. The ~1.6GB floor (not a full return to the ~220MB pre-load
+# baseline) is an accepted partial-credit outcome — native-allocator
+# arena retention (ctranslate2/oneDNN/BLAS thread pools), not a leak —
+# still a substantial, real fix for the field-reported symptom.
+# Reloading after an unload therefore reconstructs a FRESH WhisperModel
+# via this file's own load_model() above (the exact same call the
+# eager path makes at boot), rather than trying to reuse ctranslate2's
+# own faster-but-apparently-non-freeing resume path.
+# =================================================================
+
+IDLE_UNLOAD_MINUTES = 15.0  # --lazy-load only: default idle window (LazyWhisperModel.release) before releasing the loaded model; a plain constant per this hotfix's own spec (no new CLI flag needed)
+
+
+class LazyWhisperModel:
+    """Opt-in (--lazy-load only) wrapper around a faster-whisper
+    WhisperModel: defers the actual load (this file's own load_model())
+    until first use, and releases it again after IDLE_UNLOAD_MINUTES of
+    zero "active work" (see acquire/release below). Exposes ONE proxy
+    method — `.transcribe(*args, **kwargs)` — matching the raw
+    WhisperModel's own call signature exactly, so NEITHER of this
+    file's two real call sites (WhisperServer._transcribe, JobManager.
+    _transcribe_job's faster-whisper branch) needs to change beyond
+    main() constructing this wrapper instead of the raw model.
+
+    `_lock` deliberately guards `_model`/`_active_count`/`_idle_timer`
+    TOGETHER (not three separate locks) — this is what makes "never
+    unload mid-job" actually hold: `_on_idle_timeout` (the threading.
+    Timer callback) and a competing `acquire()` can never observe each
+    other's half-finished state, since whichever reaches the lock first
+    completes its entire critical section (including, for
+    `_on_idle_timeout`, the unload itself) before the other proceeds."""
+
+    def __init__(
+        self,
+        model_name: str,
+        device: str,
+        compute_type: str,
+        *,
+        idle_unload_seconds: float = IDLE_UNLOAD_MINUTES * 60.0,
+    ) -> None:
+        self.model_name = model_name
+        self.device = device
+        self.compute_type = compute_type
+        # Overridable ONLY for tests (see test_lazy_load.py) — every
+        # real caller (main()) uses the IDLE_UNLOAD_MINUTES default.
+        self.idle_unload_seconds = idle_unload_seconds
+        self._model: Any = None
+        self._active_count = 0
+        self._lock = threading.Lock()
+        self._idle_timer: Optional[threading.Timer] = None
+        # F7 fix (Sol, MINOR): monotonically-increasing identity for
+        # whichever timer is CURRENTLY armed — see _start_idle_timer_
+        # locked/_on_idle_timeout below for why a stale callback needs
+        # this to detect it's been superseded.
+        self._timer_generation = 0
+
+    def transcribe(self, *args, **kwargs):
+        """Proxy for WhisperModel.transcribe — same call signature/
+        return shape both real call sites already use (see this
+        class's own docstring), so neither needs to change beyond
+        main() constructing this wrapper instead of the raw model.
+        Ensures the model is loaded first (blocking only on the FIRST
+        call, or the first call after an idle-unload; every other call
+        sees an already-warm model)."""
+        self.ensure_loaded()
+        return self._model.transcribe(*args, **kwargs)
+
+    def ensure_loaded(self) -> None:
+        """Loads the model if it isn't currently resident. Safe to
+        call from any thread — double-checked under `_lock` so two
+        callers racing the very first load only ever pay for one
+        actual load_model() call (the second simply finds `_model`
+        already set once it acquires the lock).
+
+        F8 fix (Sol, MINOR — wrong operational advice on a load
+        failure): this is the ONE load site both real call paths
+        (transcribe()'s direct call, and acquire()'s call below — which
+        covers BOTH WhisperServer.handle's ws path and JobManager.
+        _run_job/_run_url_job's job path) go through, so wrapping the
+        exception here exactly once is enough for either path to carry
+        it. A load failure (corrupt/missing model files, OOM, etc.) is
+        re-raised prefixed with the literal Chinese string "模型加载失败："
+        (model load failed:) followed by the original exception's own
+        message — this is a WIRE CONTRACT the client-side code matches
+        on verbatim to tell a load failure (server was reachable, the
+        job/connection was accepted) apart from an actual "can't reach
+        the sidecar at all" failure, which gets different advice.
+        `self._model` is never assigned on this path (the exception
+        fires before that line runs), so it's left exactly as it was —
+        None on a first-ever load, meaning the NEXT ensure_loaded() call
+        (via the next acquire()/transcribe()) retries a fresh load from
+        scratch; never double-wrapped, since each retry wraps whatever
+        THAT attempt's own load_model() call raises, not a previous
+        wrapped message."""
+        with self._lock:
+            if self._model is None:
+                try:
+                    self._model, _ = load_model(self.model_name, self.device, self.compute_type)
+                except Exception as exc:  # noqa: BLE001 - wrap once here; see docstring's WIRE CONTRACT note
+                    raise RuntimeError(f"模型加载失败：{exc}") from exc
+
+    def acquire(self) -> None:
+        """Call at the start of one unit of "active work" (a live ws
+        connection opening, or a file/URL job starting/queued) —
+        WhisperServer.handle and JobManager._run_job/_run_url_job each
+        call this exactly once, paired with exactly one LATER release()
+        call regardless of how that unit of work ends (success, error,
+        or a crash mid-job — see each call site's own try/finally).
+
+        Increments the counter FIRST (a fast, non-raising, lock-
+        protected step) and only THEN attempts the load — so a load
+        failure (this method's own `ensure_loaded()` call, which DOES
+        propagate) still leaves the counter correctly incremented,
+        keeping every acquire() unconditionally pairable with exactly
+        one later release() regardless of whether the load itself
+        succeeds (the caller's own existing error handling — a ws
+        connection closing uncleanly, or a job's `except Exception` —
+        already covers a load failure like any other per-connection/
+        per-job exception; this class only needs its OWN bookkeeping to
+        stay consistent either way).
+
+        Also cancels any pending idle-unload countdown (see release())
+        — a fresh unit of work arriving mid-countdown must never let
+        that countdown fire out from under it; see _cancel_idle_timer_
+        locked."""
+        with self._lock:
+            self._active_count += 1
+            self._cancel_idle_timer_locked()
+        self.ensure_loaded()
+
+    def release(self) -> None:
+        """Call at the end of one unit of work. Once the LAST active
+        unit ends (count reaches 0), arms a fresh IDLE_UNLOAD_MINUTES
+        countdown (see _start_idle_timer_locked/_on_idle_timeout) —
+        never while count > 0, and any later acquire() cancels a
+        pending one outright, so the countdown genuinely restarts on
+        every fresh burst of activity rather than ever firing mid-job.
+        Clamped at 0 (never negative) so this stays safe to call
+        exactly once per acquire() even on an unusual exit path."""
+        with self._lock:
+            self._active_count = max(0, self._active_count - 1)
+            if self._active_count == 0 and self._model is not None:
+                self._start_idle_timer_locked()
+
+    def _cancel_idle_timer_locked(self) -> None:
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+
+    def _start_idle_timer_locked(self) -> None:
+        self._cancel_idle_timer_locked()
+        # F7 fix (Sol, MINOR — stale-timer-unloads-a-freshly-used-model):
+        # every freshly-armed timer gets its OWN identity, captured here
+        # and handed to its callback as an argument (NOT read back off
+        # `self._idle_timer` inside the callback — that attribute is
+        # exactly what a stale callback would otherwise misread as "me").
+        # See _on_idle_timeout's own docstring for the race this closes.
+        self._timer_generation += 1
+        generation = self._timer_generation
+        timer = threading.Timer(self.idle_unload_seconds, self._on_idle_timeout, args=(generation,))
+        timer.daemon = True
+        self._idle_timer = timer
+        timer.start()
+
+    def _on_idle_timeout(self, generation: int) -> None:
+        """threading.Timer's own callback thread. `generation` is the
+        identity _start_idle_timer_locked captured at ARM time for
+        exactly this timer instance.
+
+        F7 fix (Sol, MINOR): the pre-fix version re-checked only
+        `_active_count`, which misses a real (if narrow) race — Timer A
+        fires and blocks on `_lock`; meanwhile a fresh unit of work
+        arrives, cancels A (too late: A already fired and is just
+        waiting on the lock), completes its OWN work, and installs
+        Timer B via a fresh release(). Once A finally gets the lock,
+        `_active_count` is back to 0 (B's own work already finished) —
+        so the old bare active_count check would wrongly let A unload
+        the model B is now responsible for, breaking the promised idle
+        window and forcing an avoidable cold reload. Comparing
+        `generation` against `self._timer_generation` (both read/written
+        only under `_lock`) catches this: A's captured generation is
+        stale the instant ANY newer timer (B) has been armed, regardless
+        of whether A's own cancel() call landed in time — so A returns
+        here without touching `_model`/`_idle_timer` at all, leaving B
+        (and its own countdown) completely intact.
+
+        Also re-checks `_active_count` same as before — a fresh
+        acquire() that beat this callback to the lock (however narrow
+        the race) means active work is underway RIGHT NOW; acquire()
+        already cancels this exact timer instance in the overwhelmingly
+        common case (see _cancel_idle_timer_locked), so reaching this
+        method at all already means the timer fired before any such
+        cancel() landed — this check remains the belt for that
+        vanishingly narrow race, not the primary mechanism (the
+        generation check above is what closes the specific bug this
+        fix addresses)."""
+        with self._lock:
+            if generation != self._timer_generation:
+                return  # stale callback — a newer timer (or fresh activity) has since superseded this one
+            if self._active_count > 0:
+                return
+            self._idle_timer = None
+            if self._model is None:
+                return  # nothing loaded (e.g. every acquire() so far failed to load) — nothing to unload
+            self._model = None
+        # Outside the lock: gc.collect() is a global, thread-safe
+        # operation (see class docstring) — never needs to serialize
+        # against a concurrent acquire()/ensure_loaded() reload, which
+        # would simply construct a brand-new, fully-reachable
+        # WhisperModel this collection pass can't and shouldn't touch.
+        gc.collect()
+
+
 def normalize_hf_token(token: Optional[str]) -> Optional[str]:
     """Normalize an --hf-token/$HF_TOKEN value (S12a fix round F8,
     LOW, Sol8 — docs/design-explorations/s12-mlx-blueprint.md §D): a
@@ -3606,6 +3921,30 @@ def parse_args() -> argparse.Namespace:
         help="计算精度 / compute type, e.g. int8, float16, float32 (default: int8)",
     )
     parser.add_argument(
+        "--lazy-load",
+        action="store_true",
+        default=False,
+        help=(
+            "经典 faster-whisper 模型（--model 非 parakeet 时）延迟到首次实际"
+            "使用（ws 连接或文件/URL 任务）才加载，而非默认的启动时立即加载"
+            "（LazyWhisperModel，见本文件同名类注释）；配合空闲释放一起使用"
+            f"（默认 {int(IDLE_UNLOAD_MINUTES)} 分钟内零活跃连接/任务后自动释放"
+            "已加载模型，下次使用再加载），供未使用本地 Whisper 的引擎（如系统"
+            "识别）在已预置安装的情况下也不必让 sidecar 常驻多 GB 内存 / defer "
+            "the classic faster-whisper model's load (--model, when NOT a "
+            "parakeet id) until first actual use (a ws connection or a "
+            "file/URL job), instead of eagerly loading it at boot — pairs "
+            "with idle-unload (releases the loaded model after "
+            f"{int(IDLE_UNLOAD_MINUTES)} idle minutes with zero active "
+            "connections/jobs, reloading again on next use) so a launch "
+            "whose configured STT engine never actually needs the sidecar "
+            "(e.g. 系统识别/osspeech) doesn't keep multi-GB of RAM resident "
+            "for nothing. Never affects a parakeet-mlx model (always eager "
+            "— see ParakeetMlxBackend). Default: off (eager) — byte-"
+            "identical to every pre-existing launch of this file"
+        ),
+    )
+    parser.add_argument(
         "--save-audio",
         default=None,
         metavar="PATH",
@@ -3670,12 +4009,21 @@ def print_banner(
     port: int,
     http_port: int,
     diarize_enabled: bool,
+    lazy: bool = False,
 ) -> None:
     print("=" * 60)
     print("JargonSlayer 本地 Whisper 服务 / local Whisper sidecar")
     print(f"  model:     {model_name}")
     print(f"  device:    {device}")
-    print(f"  load:      {load_seconds:.2f}s")
+    # S13 hotfix: `lazy` defaults False so the parakeet call site below
+    # (which never passes this kwarg) and every pre-hotfix caller print
+    # the exact same "load: Xs" line as before — only an explicit
+    # lazy=True (main()'s own --lazy-load branch) swaps it for a fixed
+    # line, since load_seconds has no real meaning yet (nothing loaded).
+    if lazy:
+        print("  load:      lazy（首次使用时加载）/ lazy (loads on first use)")
+    else:
+        print(f"  load:      {load_seconds:.2f}s")
     print(f"  diarize:   {'on' if diarize_enabled else 'off'}")
     print(f"ws://{host}:{port} 等待连接 — 在 JargonSlayer 设置中选择「本地 Whisper」")
     print(
@@ -3725,7 +4073,19 @@ async def main() -> None:
             hf_token=args.hf_token,
         )
     else:
-        model, load_seconds = load_model(args.model, args.device, args.compute)
+        if args.lazy_load:
+            # S13 hotfix (--lazy-load, classic faster-whisper backend
+            # only — see LazyWhisperModel's own module-section
+            # docstring above): skip load_model() entirely here — the
+            # model loads on FIRST actual use (a ws connection or a
+            # file/URL job), not at boot. `load_seconds` has no real
+            # meaning yet (nothing was loaded), hence print_banner's
+            # own lazy=True branch below prints a fixed line instead of
+            # a measured Xs figure.
+            model: Any = LazyWhisperModel(args.model, args.device, args.compute)
+            load_seconds = 0.0
+        else:
+            model, load_seconds = load_model(args.model, args.device, args.compute)
         print_banner(
             args.model,
             args.device,
@@ -3734,6 +4094,7 @@ async def main() -> None:
             args.port,
             args.http_port,
             diarize_enabled=bool(args.hf_token),
+            lazy=args.lazy_load,
         )
 
         server = WhisperServer(

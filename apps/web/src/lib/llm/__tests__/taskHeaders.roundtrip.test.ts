@@ -122,7 +122,7 @@ describe("round-trip equivalence — no taskLlm ≡ legacy, for every Next.js-ro
       expect(bodyOf(init).model).toBe(settings.summaryModel);
     });
 
-    it(`translateApi, variant #${i}: headers match legacy authHeaders exactly, and body carries NO model field (today's behavior — no user-facing translate model)`, async () => {
+    it(`translateApi, variant #${i}: headers match legacy authHeaders exactly, and body carries the inherited 检测模型 (R1 field fix — translate has no top-level model field of its own, so it now rides settings.detectModel)`, async () => {
       const settings = makeSettings(overrides);
       mockFetch.mockResolvedValue(jsonRes({ translations: [] }));
 
@@ -134,9 +134,7 @@ describe("round-trip equivalence — no taskLlm ≡ legacy, for every Next.js-ro
         "Content-Type": "application/json",
         ...legacyAuthHeaders(settings),
       });
-      const body = bodyOf(init);
-      expect(body.model).toBeUndefined();
-      expect("model" in body).toBe(false); // not even present as an explicit undefined/""
+      expect(bodyOf(init).model).toBe(settings.detectModel);
     });
   }
 });

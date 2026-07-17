@@ -16,8 +16,20 @@ import { DetectResponseSchema, clampConfidence, type ProviderCaller } from "../p
 /** BYOK/no-override fallback model — single-sourced so route.ts's
  *  pickModel(...) call and the client path's own `body.model ??
  *  DEFAULT_DETECT_MODEL` resolution can never drift apart (extract,
- *  don't fork — same rule this session applies to prompts/schemas). */
-export const DEFAULT_DETECT_MODEL = "claude-haiku-4-5";
+ *  don't fork — same rule this session applies to prompts/schemas).
+ *
+ *  Field-test fix (v0.4.4): a bare Anthropic id here 400s the moment a
+ *  user's provider is "openai-compat" pointed at OpenRouter (e.g. the
+ *  "Connect with OpenRouter" button) — OpenRouter needs a "vendor/
+ *  model" slug. Product decision: DeepSeek's own OpenRouter slug is
+ *  the new default (not Claude) — this exact id is already proven live
+ *  in deployTier.ts's PREVIEW_LIVE_MODELS. Anthropic-direct users still
+ *  get claude-haiku-4-5 back via SettingsDialog.tsx's "anthropic"
+ *  PROVIDER_PRESETS entry (suggestedModels), not this global default.
+ *  See lib/oauth/openrouterModelDefaults.ts for the migration/OAuth-
+ *  completion remap that keeps an existing OpenRouter user's Settings
+ *  consistent with this default. */
+export const DEFAULT_DETECT_MODEL = "deepseek/deepseek-v4-flash";
 
 const MAX_EXPRESSIONS = 6;
 const MAX_TERMS = 4;

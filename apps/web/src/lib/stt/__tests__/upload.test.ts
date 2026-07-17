@@ -101,6 +101,28 @@ describe("runDetectionPipeline — rate-limit pacing", () => {
     expect(onProgress).toHaveBeenCalledWith(1, 1);
   });
 
+  // R1 (model-blind call path fix): detectApi must be called with the
+  // resolved detect-domain model, exactly like the live scheduler
+  // (scheduler.ts) and LookupPopover already do — otherwise a non-
+  // OpenRouter openai-compat/Anthropic-direct user silently falls to
+  // the (DeepSeek-slug) server default and 404s. Pre-fix, this batch's
+  // detectApi call carried no `model` field at all.
+  it("forwards the resolved detect-domain model to detectApi (not the server/task default)", async () => {
+    settings = makeSettings({
+      provider: "openai-compat",
+      baseUrl: "https://api.deepseek.com/v1",
+      detectModel: "deepseek-chat",
+    });
+    mockDetectApi.mockResolvedValueOnce(emptyRes());
+
+    await runDetectionPipeline([{ text: "circle back on our ARR next week" }], [], settings);
+
+    expect(mockDetectApi).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "deepseek-chat" }),
+      settings,
+    );
+  });
+
   it("a RateLimitApiError sleeps 65s then retries the same batch, succeeding without falling back to the dictionary", async () => {
     mockDetectApi.mockRejectedValueOnce(new RateLimitApiError()).mockResolvedValueOnce(emptyRes());
 
@@ -160,6 +182,39 @@ describe("runDetectionPipeline — rate-limit pacing", () => {
     expect(mockDetectApi).toHaveBeenCalledTimes(3);
     expect(mockScanDictionary).toHaveBeenCalledTimes(1);
     expect(onRateLimitFallback).not.toHaveBeenCalled();
+  });
+
+  // R6 field fix (Sol F5): the SAME scenario as the test immediately
+  // above (a lone batch exhausting only its OWN per-batch cap, run-level
+  // cap never reached) used to warn NOTHING — the batch's failure is a
+  // RateLimitApiError (excluded from nonRateLimitFailures on purpose)
+  // AND onRateLimitFallback never fires (the run-level cap, 5, was never
+  // reached with only 2 waits spent) — a fully-degraded 1-batch import
+  // completed silently. RED against the pre-fix code (no
+  // rateLimitDegradedBatches tally at all): onLlmDetectFailure would
+  // never have been called here.
+  it("R6/F5: a lone batch degraded ONLY by its own per-batch rate-limit cap still fires onLlmDetectFailure (reusing the run-level rate-limit wording, zero batches succeeded)", async () => {
+    mockDetectApi.mockRejectedValue(new RateLimitApiError());
+
+    const onRateLimitFallback = vi.fn();
+    const onLlmDetectFailure = vi.fn();
+    const promise = runDetectionPipeline(
+      [{ text: "one single batch, all attempts rate-limited" }],
+      [],
+      settings,
+      undefined,
+      onRateLimitFallback,
+      onLlmDetectFailure,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(65_000);
+    await vi.advanceTimersByTimeAsync(65_000);
+    await promise;
+
+    expect(onRateLimitFallback).not.toHaveBeenCalled();
+    expect(onLlmDetectFailure).toHaveBeenCalledTimes(1);
+    expect(onLlmDetectFailure).toHaveBeenCalledWith("检测请求多次被限流", false);
   });
 
   it("exceeding the run-level wait cap (5) latches dictionary fallback for every remaining batch, calling detectApi no further times", async () => {
@@ -231,6 +286,88 @@ describe("runDetectionPipeline — rate-limit pacing", () => {
     expect(mockScanDictionary).toHaveBeenCalledTimes(1);
   });
 
+  it("finding 3 (field report): EVERY batch failing with NoKeyError fires onLlmDetectFailure ONCE with the upstream (already-zh) error message", async () => {
+    mockDetectApi.mockRejectedValue(new NoKeyError("未配置 API Key"));
+
+    const onLlmDetectFailure = vi.fn();
+    // Two padded batches so this isn't just a single-batch degenerate
+    // case — both fail, so both "all" and "majority" trigger the fire.
+    const promise = runDetectionPipeline(
+      [
+        { text: "first batch, no key at all. ".repeat(40) },
+        { text: "second batch, still no key. ".repeat(40) },
+      ],
+      [],
+      settings,
+      undefined,
+      undefined,
+      onLlmDetectFailure,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await promise;
+
+    expect(mockScanDictionary).toHaveBeenCalledTimes(2);
+    expect(onLlmDetectFailure).toHaveBeenCalledTimes(1);
+    // R6/F6: `partial` (2nd arg) is false — ZERO batches succeeded via
+    // the LLM this run, so the caller picks the "AI 检测未生效" template.
+    expect(onLlmDetectFailure).toHaveBeenCalledWith("未配置 API Key", false);
+  });
+
+  it("a MINORITY of batches failing with NoKeyError (1 of 3) does NOT fire onLlmDetectFailure", async () => {
+    mockDetectApi
+      .mockResolvedValueOnce(emptyRes())
+      .mockRejectedValueOnce(new NoKeyError())
+      .mockResolvedValueOnce(emptyRes());
+
+    const onLlmDetectFailure = vi.fn();
+    const promise = runDetectionPipeline(
+      [
+        { text: "batch one, succeeds. ".repeat(40) },
+        { text: "batch two, no key. ".repeat(40) },
+        { text: "batch three, succeeds. ".repeat(40) },
+      ],
+      [],
+      settings,
+      undefined,
+      undefined,
+      onLlmDetectFailure,
+    );
+
+    await vi.advanceTimersByTimeAsync(0);
+    await promise;
+
+    expect(onLlmDetectFailure).not.toHaveBeenCalled();
+  });
+
+  it("a run latched by the run-level rate-limit cap does NOT ALSO fire onLlmDetectFailure (one detect warning per import, not two)", async () => {
+    mockDetectApi.mockRejectedValue(new RateLimitApiError());
+    const longBatches = [
+      { text: "batch one text content here".repeat(60) },
+      { text: "batch two text content here".repeat(60) },
+      { text: "batch three text content here".repeat(60) },
+    ];
+
+    const onRateLimitFallback = vi.fn();
+    const onLlmDetectFailure = vi.fn();
+    const promise = runDetectionPipeline(
+      longBatches,
+      [],
+      settings,
+      undefined,
+      onRateLimitFallback,
+      onLlmDetectFailure,
+    );
+
+    for (let i = 0; i < 6; i++) {
+      await vi.advanceTimersByTimeAsync(65_000);
+    }
+    await promise;
+
+    expect(onRateLimitFallback).toHaveBeenCalledTimes(1);
+    expect(onLlmDetectFailure).not.toHaveBeenCalled();
+  });
+
   it("a transient (non-429, non-NoKey) error is retried once after 4s — retry success keeps the LLM result, no dictionary", async () => {
     mockDetectApi
       .mockRejectedValueOnce(new Error("upstream 502"))
@@ -300,6 +437,31 @@ describe("buildSessionFromSegments — reuse (#43 phase 2a)", () => {
     expect(session.segments).toHaveLength(2);
     expect(session.segments[0].engine).toBe("browser-whisper");
     expect(session.segments[0].text).toBe("circle back on this");
+  });
+
+  it("finding 3: a passed `warnings` array receives the aggregated AI-detect-failure message when both batches fail with NoKeyError", async () => {
+    mockDetectApi.mockRejectedValue(new NoKeyError("未配置 API Key"));
+
+    const warnings: string[] = [];
+    await buildSessionFromSegments(
+      segments,
+      settings,
+      { title: "会话标题", engine: "browser-whisper" },
+      warnings,
+    );
+
+    expect(warnings).toEqual(["AI 检测未生效：未配置 API Key，本次仅词典检测"]);
+  });
+
+  it("finding 3: omitting the `warnings` array is a no-op — no throw even when every batch fails", async () => {
+    mockDetectApi.mockRejectedValue(new NoKeyError());
+
+    await expect(
+      buildSessionFromSegments(segments, settings, {
+        title: "会话标题",
+        engine: "browser-whisper",
+      }),
+    ).resolves.toMatchObject({ title: "会话标题" });
   });
 
   it("导入 <filename> title + whisper engine shape (what the sunset #22 cloud helper used to wrap) still holds via direct call", async () => {
@@ -700,6 +862,22 @@ describe("withSidecarHint — ImportHub sidecar-path error hint (#58 review fix 
   });
 
   it("the hint text itself is the exact pre-#58 HistoryDrawer copy", () => {
-    expect(SIDECAR_UNREACHABLE_HINT).toBe("，确认 sidecar 已启动且 --http-port 开启");
+    expect(SIDECAR_UNREACHABLE_HINT).toBe("，确认本地 Whisper 服务已启动且 --http-port 开启");
+  });
+
+  // R7 field fix (Sol F8, client half — wire contract with the
+  // sidecar): a model-load failure means the sidecar WAS reached and
+  // answered — "confirm the sidecar is started" is actively wrong
+  // advice for this case. Tests the client-side decoration against the
+  // pinned contract string directly (passes without the sibling's own
+  // server-side change landing first, since this only exercises the
+  // client half of the contract).
+  it("R7: a message starting with the 模型加载失败 prefix skips the connection advice, surfacing 本地 Whisper 模型加载失败 instead", () => {
+    expect(withSidecarHint("模型加载失败：磁盘空间不足")).toBe("本地 Whisper 模型加载失败：磁盘空间不足");
+    expect(withSidecarHint("模型加载失败：磁盘空间不足")).not.toContain(SIDECAR_UNREACHABLE_HINT);
+  });
+
+  it("R7: an ordinary (non-model-load) message is unaffected — still gets the connection advice", () => {
+    expect(withSidecarHint("上传失败（500）")).toBe(`上传失败（500）${SIDECAR_UNREACHABLE_HINT}`);
   });
 });

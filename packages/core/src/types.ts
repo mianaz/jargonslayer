@@ -540,13 +540,42 @@ export const DEFAULT_SETTINGS: Settings = {
   // reliability default); the first-run picker overwrites it with the
   // user's explicit choice (S4 chunk 3).
   whisperModel: "small",
-  provider: "anthropic",
-  baseUrl: "",
+  // R2 field fix (v0.4.4, adversarial review): provider:"anthropic" +
+  // baseUrl:"" used to be paired with the DeepSeek OpenRouter model
+  // slugs below — internally incoherent (a fresh user who pastes an
+  // Anthropic key without ever touching the already-"active" anthropic
+  // preset gets a DeepSeek/OpenRouter-flavored model id sent to
+  // Anthropic's API and 404s). "openai-compat" + the OpenRouter base
+  // URL make the DEFAULTS self-consistent with both the DeepSeek slugs
+  // below and the product's promoted "Connect with OpenRouter" OAuth
+  // onboarding (SettingsDialog.tsx's PROVIDER_PRESETS "openrouter"
+  // entry now matches on sight, via CredentialFields' presetIdFor).
+  // Anthropic-direct users still get Claude models back via the
+  // "anthropic" preset's own suggestedModels the moment they pick it —
+  // this only changes what an UNTOUCHED default looks like.
+  provider: "openai-compat",
+  baseUrl: "https://openrouter.ai/api/v1",
   apiKey: "",
-  // Haiku for live detection: low latency + high call volume.
-  // Both models are user-configurable in Settings.
-  detectModel: "claude-haiku-4-5",
-  summaryModel: "claude-sonnet-5",
+  // Field-test fix (v0.4.4, real user report): these were bare
+  // Anthropic ids (claude-haiku-4-5/claude-sonnet-5) — 400s the moment
+  // provider is "openai-compat" pointed at OpenRouter (e.g. the
+  // "Connect with OpenRouter" button), which needs a "vendor/model"
+  // slug instead. Product decision: DeepSeek's own OpenRouter slugs
+  // are the new global default (not Claude) — FLASH for low-latency
+  // live detection, PRO for the async (no live-UI budget) summary;
+  // both ids are already proven live (apps/web's deployTier.ts
+  // PREVIEW_LIVE_MODELS/PREVIEW_SUMMARY_MODELS) — kept in sync BY HAND
+  // with apps/web/src/lib/llm/tasks/{detect,summarize}.ts's own
+  // DEFAULT_* consts (this package can't import the web app's task
+  // modules the other way around; those are the ones actually
+  // consumed by pickModel/the client no-override path — this Settings
+  // default is what a brand-new Settings object seeds the field with).
+  // Anthropic-direct users get claude-haiku-4-5/claude-sonnet-5 back
+  // via SettingsDialog.tsx's "anthropic" PROVIDER_PRESETS entry
+  // instead of this global default. Both models stay user-configurable
+  // in Settings either way.
+  detectModel: "deepseek/deepseek-v4-flash",
+  summaryModel: "deepseek/deepseek-v4-pro",
   autoDetect: true,
   aiDetect: true,
   minConfidence: 0.55,

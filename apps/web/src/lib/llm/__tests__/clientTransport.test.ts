@@ -30,8 +30,20 @@ import { MAX_SEGMENTS, MAX_TOTAL_SEGMENT_CHARS, SUMMARIZE_TOO_LARGE_MESSAGE } fr
 
 const mockFetch = vi.fn();
 
+// R2 field fix (v0.4.4): DEFAULT_SETTINGS.provider is now "openai-
+// compat" — this whole file exercises the Anthropic direct-SDK path
+// (anthropicMessage/anthropicErrorResponse fixtures, api.anthropic.com
+// URL assertions), so this local default pins provider:"anthropic"
+// explicitly rather than relying on the (now different) global
+// default, same as every other settings-shape test file in this repo
+// that has its own opinion about which provider it means to exercise.
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
-  return { ...DEFAULT_SETTINGS, apiKey: "sk-ant-BYOK-test-key", ...overrides };
+  return {
+    ...DEFAULT_SETTINGS,
+    apiKey: "sk-ant-BYOK-test-key",
+    provider: "anthropic",
+    ...overrides,
+  };
 }
 
 function anthropicMessage(text: string, status = 200): Response {
