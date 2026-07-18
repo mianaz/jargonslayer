@@ -1,0 +1,1256 @@
+[
+  {
+    "term": "machine learning",
+    "source_id": "machine-learning",
+    "source_display_text": "machine learning",
+    "definition": "A program or system that trains a model from input data. The trained model can make useful predictions from new (never-before-seen) data drawn from the same distribution as the one used to train the model.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Machine learning",
+      "en_url": "https://en.wikipedia.org/wiki/Machine_learning",
+      "zh_wiki_title": "机器学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%9C%BA%E5%99%A8%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "机器学习（英语：machine learning，简称ML）是人工智能的一个分支。机器学习理论主要是设计和分析一些让计算机可以自动“学习”的算法。机器学习算法是一类从数据中自动分析获得规律，并利用规律对未知数据进行预测的算法。因为学习算法中涉及了大量的统计学理论，机器学习与推断统计学联系尤为密切，也被称为统计学习理论。算法设计方面，机器学习理论关注可以实现的，行之有效的学习算法（要防止错误累积）。很多推论问题属于非程序化決策，所以部分的机器学习研究是开发容易处理的近似算法。 机器学习已广泛应用于数据挖掘、计算机视觉、自然语言处理、生物特征识别、搜索引擎、医学诊断、检测信用卡欺诈、证券市场分析、DNA序列测序、语音和手写识别、游戏和机器人等领域。机器学习在近30多年已发展为一门多领域科际集成，涉及概率论、统计学、逼近论、凸分析、计算复杂性理论、信息论等多门学科。"
+    }
+  },
+  {
+    "term": "supervised learning",
+    "source_id": "supervised-machine-learning",
+    "source_display_text": "supervised machine learning",
+    "definition": "Training a model from features and their corresponding labels. Supervised machine learning is analogous to learning a subject by studying a set of questions and their corresponding answers. After mastering the mapping between questions and answers, a student can then provide answers to new (never-before-seen) questions on the same topic.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Supervised learning",
+      "en_url": "https://en.wikipedia.org/wiki/Supervised_learning",
+      "zh_wiki_title": "监督学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%9B%91%E7%9D%A3%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "监督学习（英语：Supervised learning），又叫有监督学习，监督式学习，是机器学习的一种方法，可以由训练资料中学到或建立一个模式（函数 / learning model），并依此模式推测新的实例。训练资料是由输入对象（通常是向量）和预期输出所组成。函数的输出可以是一个连续的值（称为回归分析），或是预测一个分类标签（称作分类）。 一个监督式学习者的任务在观察完一些事先标记过的训练示例（输入和预期输出）后，去预测这个函数对任何可能出现的输入的输出。要达到此目的，学习者必须以\"合理\"（见归纳偏向）的方式从现有的资料中一般化到非观察到的情况。在人类和动物感知中，则通常被称为概念学习（concept learning）。 cGAN（条件式GAN）通过附加标签信息y扩展目标函数： LcGAN​=E[logD(x∣y)]+E[log(1−D(G(z∣y)))]"
+    }
+  },
+  {
+    "term": "unsupervised learning",
+    "source_id": "unsupervised-machine-learning",
+    "source_display_text": "unsupervised machine learning",
+    "definition": "Training a model to find patterns in a dataset, typically an unlabeled dataset.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Unsupervised learning",
+      "en_url": "https://en.wikipedia.org/wiki/Unsupervised_learning",
+      "zh_wiki_title": "無監督學習",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%84%A1%E7%9B%A3%E7%9D%A3%E5%AD%B8%E7%BF%92",
+      "zh_extract_full": "无监督学习（英语：unsupervised learning），又称非监督式学习，是机器学习的一种方法，没有给定事先标记过的训练示例，自动对输入的资料进行分类或分群。无监督学习的主要运用包含：聚类分析（cluster analysis）、关系规则（association rule）、维度缩减（dimensionality reduce）。它是监督式学习和强化学习等策略之外的一种选择。 一个常见的无监督学习是数据聚类。在人工神经网络中，生成对抗网络（GAN）、自组织映射（SOM）和适应性共振理论（ART）则是最常用的非监督式学习。 ART模型允许集群的个数可随着问题的大小而变动，并让用户控制成员和同一个集群之间的相似度分数，其方式为透过一个由用户自定而被称为警觉参数的常量。ART也用于模式识别，如自动目标识别和数字信号处理。第一个版本为\"ART1\"，是由卡本特和葛罗斯柏格所发展的。"
+    }
+  },
+  {
+    "term": "semi-supervised learning",
+    "source_id": "semi-supervised-learning",
+    "source_display_text": "semi-supervised learning",
+    "definition": "Training a model on data where some of the training examples have labels but others don't. One technique for semi-supervised learning is to infer labels for the unlabeled examples, and then to train on the inferred labels to create a new model. Semi-supervised learning can be useful if labels are expensive to obtain but unlabeled examples are plentiful.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"semi-supervised learning\" resolved to English Wikipedia article \"Weak supervision\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "reinforcement learning",
+    "source_id": "reinforcement-learning-rl",
+    "source_display_text": "reinforcement learning (RL)",
+    "definition": "A family of algorithms that learn an optimal policy, whose goal is to maximize return when interacting with an environment. For example, the ultimate reward of most games is victory. Reinforcement learning systems can become expert at playing complex games by evaluating sequences of previous game moves that ultimately led to wins and sequences that ultimately led to losses.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Reinforcement learning",
+      "en_url": "https://en.wikipedia.org/wiki/Reinforcement_learning",
+      "zh_wiki_title": "强化学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BC%BA%E5%8C%96%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "强化学习（英语：Reinforcement learning，简称RL）是机器学习中的一个领域，强调如何基于环境而行动，以取得最大化的预期利益。强化学习是除了监督学习和非监督学习之外的第三种基本的机器学习方法。与监督学习不同的是，强化学习不需要带标签的输入输出对，同时也无需对非最优解的精确地纠正。其关注点在于寻找（对未知领域的）探索和（对已有知识的）利用的平衡，强化学习中的“探索-利用”的交换，在多臂赌博机问题和有限MDP中研究得最多。 其灵感来源于心理学中的行为主义理论，即有机体如何在环境给予的奖励或惩罚的刺激下，逐步形成对刺激的预期，产生能获得最大利益的习惯性行为。这个方法具有普适性，因此在其他许多领域都有研究，例如博弈论、控制论、运筹学、信息论、仿真优化、多智能体系统、群体智能、统计学以及遗传算法。在运筹学和控制理论研究的语境下，强化学习被称作“近似动态规划”（approximate dynamic programming，ADP）。在最优控制理论中也有研究这个问题，虽然大部分的研究是关于最优解的存在和特性，并非是学习或者近似方面。在经济学和博弈论中，强化学习被用来解释在有限理性的条件下如何出现平衡。 在强化学习问题中，智能体（agent）与环境的交互通常被抽象为马尔可夫决策过程（Markov decision processes，MDP），因为很多强化学习算法在这种假设下才能使用动态规划的方法。传统的动态规划方法和强化学习算法的主要区别是，后者不需要关于MDP的知识，而且针对无法找到确切方法的大规模MDP。 对于时刻 t {\\displaystyle t} 下观测（observation） o t ∈ O {\\displaystyle o_{t}\\in O} 与环境实际状态 s t ∈ S {\\displaystyle s_{t}\\in S} 的关系，MDP可以被分为： 完全可观测MDP，若 o t = s t {\\displaystyle o_{t}=s_{t}} 部分可观测MDP (POMDP)，若 o t ⊂ s t {\\displaystyle o_{t}\\subset s_{t}} 对于Q-learning，其对应的策略 π {\\displaystyle \\pi } 可被定义为： π ( a | s ) = e Q ( s , a ) / τ ∑ a ′ ∈ A e Q ( s , a ′ ) / τ {\\displaystyle \\pi (a\\vert s)={\\frac {e^{Q(s,a)/\\tau }}{\\sum _{a^{\\prime }\\in A}e^{Q(s,a^{\\prime })/\\tau }}}} 其中 τ ∈ R + {\\displaystyle \\tau \\in \\mathbb {R} ^{+}} 为温度参数，用于控制策略的随机程度。 τ {\\displaystyle \\tau } 趋于0时，策略趋于贪心策略（ a r g m a x a ∈ A Q ( s , a ) {\\displaystyle \\mathrm {argmax} _{a\\in A}Q(s,a)} ）； τ {\\displaystyle \\tau } 趋于正无穷时，策略趋于均匀随机。"
+    }
+  },
+  {
+    "term": "self-supervised learning",
+    "source_id": "self-supervised-learning",
+    "source_display_text": "self-supervised learning",
+    "definition": "A family of techniques for converting an unsupervised machine learning problem into a supervised machine learning problem by creating surrogate labels from unlabeled examples.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Self-supervised learning",
+      "en_url": "https://en.wikipedia.org/wiki/Self-supervised_learning",
+      "zh_wiki_title": "自监督学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%87%AA%E7%9B%91%E7%9D%A3%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "自监督学习（英语：self-supervised learning，缩写：SSL）是机器学习中的一种学习范式，指模型在没有人工标注标签的情况下，从输入数据本身构造监督信号，并通过这种自动生成的任务学习可迁移的表示。自监督学习通常被视为无监督学习的一类，但训练过程又具有监督学习的形式。及模型会根据数据内部结构生成目标标签，例如预测被遮蔽的词、还原被遮挡的图像块、判断两个增强视图是否来自同一图像，或预测音频片段中被遮蔽的潜在表示。 自监督学习的目标通常不是直接完成预训练时设置的任务，而是借助这些任务学习通用特征，再迁移到图像分类、目标检测、语音识别、机器翻译、问答、推荐系统、医学影像分析和图表示学习等下游任务。随着大规模预训练模型、Transformer、大语言模型和视觉基础模型的发展，自监督学习成为深度学习中利用大规模未标注数据的重要方法之一。"
+    }
+  },
+  {
+    "term": "transfer learning",
+    "source_id": "transfer-learning",
+    "source_display_text": "transfer learning",
+    "definition": "Transferring information from one machine learning task to another. For example, in multi-task learning, a single model solves multiple tasks, such as a deep model that has different output nodes for different tasks. Transfer learning might involve transferring knowledge from the solution of a simpler task to a more complex one, or involve transferring knowledge from a task where there is more data to one where there is less data.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Transfer learning",
+      "en_url": "https://en.wikipedia.org/wiki/Transfer_learning",
+      "zh_wiki_title": "迁移学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%BF%81%E7%A7%BB%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "迁移学习（英语：Transfer learning）是属于机器学习的一种研究领域。它专注于存储已有问题的解决模型，并将其利用在其他不同但相关问题上。 比如说，用来辨识汽车的知识（或者是模型）也可以被用来提升识别卡车的能力。"
+    }
+  },
+  {
+    "term": "few-shot learning",
+    "source_id": "few-shot-learning",
+    "source_display_text": "few-shot learning",
+    "definition": "A machine learning approach, often used for object classification, designed to train effective classification models from only a small number of training examples.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Few-shot learning",
+      "en_url": "https://en.wikipedia.org/wiki/Few-shot_learning",
+      "zh_wiki_title": "小样本学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%B0%8F%E6%A0%B7%E6%9C%AC%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "小样本学习（英语：few-shot learning，简称：FSL）是机器学习中研究如何让模型在只有少量标注样本的条件下学习新类别、新任务或新概念的方法与问题设置。与依赖大规模标注数据的常规监督学习不同，小样本学习试图利用先验知识、预训练表征、任务间共性或元学习机制，使模型能在有限数据下保持泛化能力。该领域与元学习、迁移学习、表征学习、贝叶斯推断和深度学习关系密切，并在计算机视觉、自然语言处理、医学影像、音频分析、机器人学习和大型语言模型提示学习等领域得到应用。"
+    }
+  },
+  {
+    "term": "zero-shot learning",
+    "source_id": "zero-shot-learning",
+    "source_display_text": "zero-shot learning",
+    "definition": "A type of machine learning training where the model infers a prediction for a task that it was not specifically already trained on. In other words, the model is given zero task-specific training examples but asked to do inference for that task.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Zero-shot learning",
+      "en_url": "https://en.wikipedia.org/wiki/Zero-shot_learning",
+      "zh_wiki_title": "零样本学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%9B%B6%E6%A0%B7%E6%9C%AC%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "零样本学习（英语：zero-shot learning，简称：ZSL）是机器学习中的一种问题设定，指模型在没有目标类别或目标任务标注样本的情况下，对这些“未见”类别或任务作出预测。经典零样本学习通常以类别为单位划分训练和测试：训练集只包含“见过类”（seen classes）的标注样本，测试阶段则要求模型识别训练时没有出现过的“未见类”（unseen classes）。为了实现这种迁移，模型通常需要借助类别属性、文本描述、词向量、知识图谱或其他语义表示，把训练类别和测试类别联系起来。 零样本学习与小样本学习、单一样本学习相近，但含义不同。少样本学习要求模型只用少量标注样本完成新任务，单样本学习通常只给出一个样本；零样本学习则不向模型提供目标类别的标注样本。在大语言模型和提示工程语境中，零样本也常指提示词只说明任务，不给出示例；若提示词包含一个或多个示例，则通常称为单样本或少样本提示。"
+    }
+  },
+  {
+    "term": "fine-tuning",
+    "source_id": "fine-tuning",
+    "source_display_text": "fine-tuning",
+    "definition": "A second, task-specific training pass performed on a pre-trained model to refine its parameters for a specific use case. For example, the full training sequence for some large language models is as follows:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Fine-tuning (deep learning)",
+      "en_url": "https://en.wikipedia.org/wiki/Fine-tuning_(deep_learning)",
+      "zh_wiki_title": "微调 (深度学习)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BE%AE%E8%B0%83_(%E6%B7%B1%E5%BA%A6%E5%AD%A6%E4%B9%A0)",
+      "zh_extract_full": "微调（又称大模型微调，英语：fine-tuning）是深度学习中迁移学习的一种方法，其中预训练模型的权重会在新数据上进行训练。微调可以在整个神经网络上执行，也可以仅在其部分层上执行，此时未进行微调的层会被“冻结”（在反向传播步骤中不更新）。模型还可以通过“适配器”进行增强，适配器的参数远少于原始模型，通过调整适配器的权重并保持模型的其余权重不变的方式，以参数有效的方式进行微调。 对于一些体系结构，比如卷积神经网络，通常会将较早的层（靠近输入层的层）冻结，因为它们捕捉到较低层次的特征，而较后的层通常能够识别更高层次的特征，这些特征可能更相关于模型训练的任务。 对于在大型和通用语料库上进行预训练的模型，通常通过重用模型的参数作为起点，并添加一个从头开始训练的任务特定层进行微调。 对整个模型进行微调也很常见，通常会产生更好的结果，但计算成本更高。 微调通常通过监督学习完成，但也有使用弱监督进行模型微调的技术。 微调可以与基于人类反馈的强化学习目标相结合，以生成像ChatGPT（GPT-3的微调版本）和Sparrow等语言模型。"
+    }
+  },
+  {
+    "term": "pretraining",
+    "source_id": "pre-training",
+    "source_display_text": "pre-training",
+    "definition": "The initial training of a model on a large dataset. Some pre-trained models are clumsy giants and must typically be refined through additional training. For example, ML experts might pre-train a large language model on a vast text dataset, such as all the English pages in Wikipedia. Following pre-training, the resulting model might be further refined through any of the following techniques:",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: pretraining (machine learning), pretraining, pre training, pretraining (file format)"
+    }
+  },
+  {
+    "term": "overfitting",
+    "source_id": "overfitting",
+    "source_display_text": "overfitting",
+    "definition": "Creating a model that matches the training data so closely that the model fails to make correct predictions on new data.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Overfitting",
+      "en_url": "https://en.wikipedia.org/wiki/Overfitting",
+      "zh_wiki_title": "過適",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%81%8E%E9%81%A9",
+      "zh_extract_full": "在统计学中，过拟合（英语：overfitting，或称拟合过度）是指过于紧密或精确地匹配特定数据集，以致于无法良好地拟合其他数据或预测未来的观察结果的现象。过拟合模型指的是相较有限的数据而言，参数过多或者结构过于复杂的统计模型。发生过拟合时，模型的偏差小而方差大。过拟合的本质是训练算法从统计噪声中不自觉获取了信息并表达在了模型结构的参数当中。相较用于训练的数据总量来说，一个模型只要结构足够复杂或参数足够多，就总是可以完美地适应数据的。过拟合一般可以视为违反奥卡姆剃刀原则。 与过拟合相对应的概念是欠拟合（英语：underfitting，或称：拟合不足）；它是指相较于数据而言，模型参数过少或者模型结构过于简单，以至于无法捕捉到数据中的规律的现象。发生欠拟合时，模型的偏差大而方差小。 在机器学习或人工神经网络中，过拟合与欠拟合有时也被称为“过训练（英语：overtraining）”和“欠训练（英语：undertraining）”。 之所以存在过拟合的可能，是因为选择模型的标准和评价模型的标准是不一致的。举例来说，选择模型时往往是选取在训练数据上表现最好的模型；但评价模型时则是观察模型在训练过程中不可见数据上的表现。当模型尝试“记住”训练数据而非从训练数据中学习规律时，就可能发生过拟合。一般来说，当参数的自由度或模型结构的复杂度超过数据所包含信息内容时，拟合后的模型可能使用任意多的参数，这会降低或破坏模型泛化的能力。 在统计学习和机器学习中，为了避免或减轻过拟合现象，须要使用额外的技巧（如模型选择、交叉验证、提前停止、正则化、剪枝、贝叶斯信息量准则、赤池信息量准则或dropout）。在treatment learning中，使用最小最佳支持值（英语：minimum best support value）来避免过拟合。这些方法大致可分为两类：1. 对模型的复杂度进行惩罚，从而避免产生过于复杂的模型；2. 在验证数据上测试模型的效果，从而模拟模型在实际工作环境的数据上的表现。"
+    }
+  },
+  {
+    "term": "underfitting",
+    "source_id": "underfitting",
+    "source_display_text": "underfitting",
+    "definition": "Producing a model with poor predictive ability because the model hasn't fully captured the complexity of the training data. Many problems can cause underfitting, including:",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "generalization",
+    "source_id": "generalization",
+    "source_display_text": "generalization",
+    "definition": "A model's ability to make correct predictions on new, previously unseen data. A model that can generalize is the opposite of a model that is overfitting.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "cross-validation",
+    "source_id": "cross-validation",
+    "source_display_text": "cross-validation",
+    "definition": "A mechanism for estimating how well a model would generalize to new data by testing the model against one or more non-overlapping data subsets withheld from the training set.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: cross-validation (machine learning), cross-validation, cross validation, cross-validation (file format)"
+    }
+  },
+  {
+    "term": "validation set",
+    "source_id": "validation-set",
+    "source_display_text": "validation set",
+    "definition": "The subset of the dataset that performs initial evaluation against a trained model. Typically, you evaluate the trained model against the validation set several times before evaluating the model against the test set.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "test set",
+    "source_id": "test-set",
+    "source_display_text": "test set",
+    "definition": "A subset of the dataset reserved for testing a trained model.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "imbalanced dataset",
+    "source_id": "imbalanced-dataset",
+    "source_display_text": "imbalanced dataset",
+    "definition": "Synonym for class-imbalanced dataset.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: imbalanced dataset (machine learning), imbalanced dataset"
+    }
+  },
+  {
+    "term": "data augmentation",
+    "source_id": "data-augmentation",
+    "source_display_text": "data augmentation",
+    "definition": "Artificially boosting the range and number of training examples by transforming existing examples to create additional examples. For example, suppose images are one of your features, but your dataset doesn't contain enough image examples for the model to learn useful associations. Ideally, you'd add enough labeled images to your dataset to enable your model to train properly. If that's not possible, data augmentation can rotate, stretch, and reflect each image to produce many variants of the original picture, possibly yielding enough labeled data to enable excellent training.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "regression",
+    "source_id": "regression-model",
+    "source_display_text": "regression model",
+    "definition": "Informally, a model that generates a numerical prediction. (In contrast, a classification model generates a class prediction.) For example, the following are all regression models:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Regression analysis",
+      "en_url": "https://en.wikipedia.org/wiki/Regression_analysis",
+      "zh_wiki_title": "迴歸分析",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%BF%B4%E6%AD%B8%E5%88%86%E6%9E%90",
+      "zh_extract_full": "回归分析（英语：Regression Analysis）是一种统计学上分析数据的方法，目的在于了解两个或多个变量间是否相关、相关方向与强度，并建立数学模型以便观察特定变量来预测研究者感兴趣的变量。更具体的来说，回归分析可以帮助人们了解在只有一个自变量变化时因变量的变化量。一般来说，通过回归分析我们可以由给出的自变量估计因变量的条件期望。 回归分析是建立被解释变量 Y {\\displaystyle Y} （或称因变量、依变量、反因变量）与解释变量 X {\\displaystyle X} （或称自变量、独立变量）之间关系的模型。简单线性回归使用一个自变量 X {\\displaystyle X} ，复回归使用超过一个自变量（ X 1 , X 2 . . . X i {\\displaystyle X_{1},X_{2}...X_{i}} ）。"
+    }
+  },
+  {
+    "term": "linear regression",
+    "source_id": "linear-regression",
+    "source_display_text": "linear regression",
+    "definition": "A type of machine learning model in which both of the following are true:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Linear regression",
+      "en_url": "https://en.wikipedia.org/wiki/Linear_regression",
+      "zh_wiki_title": "線性回歸",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%B7%9A%E6%80%A7%E5%9B%9E%E6%AD%B8",
+      "zh_extract_full": "在统计学中，线性回归（英语：linear regression）是利用称为线性回归方程的最小二乘函数对一个或多个自变量和因变量之间关系进行建模的一种回归分析。这种函数是一个或多个称为回归系数的模型参数的线性组合。只有一个自变量的情况称为简单回归，大于一个自变量情况的叫做多元线性回归（multivariable linear regression）。 在线性回归中，数据使用线性预测函数来建模，并且未知的模型参数也是通过数据来估计。这些模型被叫做线性模型。最常用的线性回归建模是给定X值的y的条件均值是X的仿射函数。不太一般的情况，线性回归模型可以是一个中位数或一些其他的给定X的条件下y的条件分布的分位数作为X的线性函数表示。像所有形式的回归分析一样，线性回归也把焦点放在给定X值的y的条件概率分布，而不是X和y的联合概率分布（多元分析领域）。 线性回归是回归分析中第一种经过严格研究并在实际应用中广泛使用的类型。这是因为线性依赖于其未知参数的模型比非线性依赖于其未知参数的模型更容易拟合，而且产生的估计的统计特性也更容易确定。 线性回归有很多实际用途。分为以下两大类： 如果目标是预测或者映射，线性回归可以用来对观测数据集的和X的值拟合出一个预测模型。当完成这样一个模型以后，对于一个新增的X值，在没有给定与它相配对的y的情况下，可以用这个拟合过的模型预测出一个y值。 给定一个变量y和一些变量 X 1 {\\displaystyle X_{1}} ,..., X p {\\displaystyle X_{p}} ，这些变量有可能与y相关，线性回归分析可以用来量化y与Xj之间相关性的强度，评估出与y不相关的 X j {\\displaystyle X_{j}} ，并识别出哪些 X j {\\displaystyle X_{j}} 的子集包含了关于y的冗余信息。 线性回归模型经常用最小二乘逼近来拟合，但他们也可能用别的方法来拟合，比如用最小化“拟合缺陷”在一些其他规范里（比如最小绝对误差回归），或者在桥回归中最小化最小二乘损失函数的惩罚。相反，最小二乘逼近可以用来拟合那些非线性的模型。因此，尽管“最小二乘法”和“线性模型”是紧密相连的，但他们是不能划等号的。 线性回归的“回归”指的是回归到平均值。"
+    }
+  },
+  {
+    "term": "logistic regression",
+    "source_id": "logistic-regression",
+    "source_display_text": "logistic regression",
+    "definition": "A type of regression model that predicts a probability. Logistic regression models have the following characteristics:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Logistic regression",
+      "en_url": "https://en.wikipedia.org/wiki/Logistic_regression",
+      "zh_wiki_title": "邏輯斯諦迴歸",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%82%8F%E8%BC%AF%E6%96%AF%E8%AB%A6%E8%BF%B4%E6%AD%B8",
+      "zh_extract_full": "逻辑斯谛回归（英语：Logistic regression，又译作逻辑斯谛斯回归、罗吉斯回归、逻辑回归、对数几率回归），在统计学中是一种对数几率模型（英语：Logit model，又译作逻辑斯谛模型、评定模型、分类评定模型），是离散选择法模型之一，属于多元变量分析范畴，是社会学、生物统计学、临床、数量心理学、计量经济学、市场营销等统计实证分析的常用方法。 通过使事件的对数发生率（log-odd）成为一个或多个自变量的线性组合，对事件发生的概率进行建模。形式上，在二元逻辑回归中，有一个二元因变量，由指示变量编码，其中两个值标记为“0”和“1”，而自变量每个都可以是二元变量（两个类，由指示变量）或连续变量（任何实值）。标记为“1”的值的相应概率可以在0和1之间变化；将对数发生率转换为概率的函数就是逻辑斯谛函数，因此得名。对数发生率单位称为logit，来自logistic unit。 二元变量在统计学中广泛用于对某一类别或事件发生概率的建模，例如团队获胜概率、患者健康概率等，而其中，逻辑模型则自大约1970年以来最常用的二元回归模型。当存在两个以上可能值（例如图像是否是猫、狗、狮子等）时，二元变量可以推广为分类变量，并且二元逻辑回归推广为多项逻辑回归。如果多个类别是有序的，则可以使用序数逻辑回归。逻辑回归模型本身只是简单地根据输入对输出概率进行建模，并不执行统计分类。"
+    }
+  },
+  {
+    "term": "regularization",
+    "source_id": "regularization",
+    "source_display_text": "regularization",
+    "definition": "Any mechanism that reduces overfitting. Popular types of regularization include:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Regularization (mathematics)",
+      "en_url": "https://en.wikipedia.org/wiki/Regularization_(mathematics)",
+      "zh_wiki_title": "正则化 (数学)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%AD%A3%E5%88%99%E5%8C%96_(%E6%95%B0%E5%AD%A6)",
+      "zh_extract_full": "在数学与计算机科学中，尤其是在机器学习和逆问题领域中，正则化（英语：regularization）是指为解决适定性问题或过拟合而加入额外信息的过程。 在机器学习和逆问题的优化过程中，正则项往往被加在目标函数当中。"
+    }
+  },
+  {
+    "term": "dropout",
+    "source_id": "dropout-regularization",
+    "source_display_text": "dropout regularization",
+    "definition": "A form of regularization useful in training neural networks. Dropout regularization removes a random selection of a fixed number of the units in a network layer for a single gradient step. The more units dropped out, the stronger the regularization. This is analogous to training the network to emulate an exponentially large ensemble of smaller networks. For full details, see Dropout: A Simple Way to Prevent Neural Networks from Overfitting.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: dropout (machine learning), dropout, regularization, dropout (file format)"
+    }
+  },
+  {
+    "term": "early stopping",
+    "source_id": "early-stopping",
+    "source_display_text": "early stopping",
+    "definition": "A method for regularization that involves ending training before training loss finishes decreasing. In early stopping, you intentionally stop training the model when the loss on a validation dataset starts to increase; that is, when generalization performance worsens.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Early stopping",
+      "en_url": "https://en.wikipedia.org/wiki/Early_stopping",
+      "zh_wiki_title": "提前停止",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8F%90%E5%89%8D%E5%81%9C%E6%AD%A2",
+      "zh_extract_full": "在机器学习中，提前停止（英语：early stopping）是一种在使用诸如梯度下降之类的迭代优化方法时，可对抗过拟合的正则化方法。这些迭代优化方法在每轮迭代过程中，都会使得模型更好地与训练集拟合。在某个时间点之前，更好地拟合训练集使得模型在训练集之外的数据上（验证集）表现得更好；但在该时间点之后，更好地拟合训练集反而会增大泛化误差。提前停止规则给出停止迭代的条件，以便在模型开始过拟合之前停止迭代优化。提前停止规则已被用于多种机器学习方法。"
+    }
+  },
+  {
+    "term": "gradient descent",
+    "source_id": "gradient-descent",
+    "source_display_text": "gradient descent",
+    "definition": "A mathematical technique to minimize loss. Gradient descent iteratively adjusts weights and biases, gradually finding the best combination to minimize loss.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Gradient descent",
+      "en_url": "https://en.wikipedia.org/wiki/Gradient_descent",
+      "zh_wiki_title": "梯度下降法",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A2%AF%E5%BA%A6%E4%B8%8B%E9%99%8D%E6%B3%95",
+      "zh_extract_full": "梯度下降法（英语：Gradient descent）是一种求解无约束最优化问题的一阶迭代最优化算法，它被用来求得可微函数的局部极小值，通常也称为最陡下降法，但是不该与近似积分的最陡下降法（英语：Method of steepest descent）混淆。 要使用梯度下降法找到一个函数的局部极小值，必须向函数上当前点对应梯度（或者是近似梯度）的反方向的规定步长距离点进行迭代搜索，因为这是最陡下降的方向。如果相反地向梯度正方向迭代进行搜索，则会接近函数的局部极大值点，这个过程则被称为梯度上升法。梯度下降法在机器学习中对于成本的最小化或损失函数的最小化都特别有用。梯度下降法不应与局部搜索算法（英语：local search algorithms）相混淆，尽管两者都是迭代最优化算法。 梯度下降法通常被认为是奥古斯丁-路易·柯西（法语：Augustin-Louis Cauchy）在1847年首次提出的。雅克·所罗门·阿达马（法语：Jacques Solomon Hadamard）在1907年独立提出了一个类似的方法。哈斯凯尔·柯里（英语：Haskell Brooks Curry）在1944年首先研究了该方法对非线性优化问题的收敛性；在随后的几十年里，该方法得到了越来越多的研究和使用。 随机梯度下降法（英语：stochastic gradient descent）作为梯度下降法的一个简单延展，是目前用于训练大多数深度学习结构（英语：deep networks）的最基本的算法。"
+    }
+  },
+  {
+    "term": "stochastic gradient descent (SGD)",
+    "source_id": "stochastic-gradient-descent-sgd",
+    "source_display_text": "stochastic gradient descent (SGD)",
+    "definition": "A gradient descent algorithm in which the batch size is one. In other words, SGD trains on a single example chosen uniformly at random from a training set.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"stochastic gradient descent\" resolved to English Wikipedia article \"Stochastic gradient descent\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "learning rate",
+    "source_id": "learning-rate",
+    "source_display_text": "learning rate",
+    "definition": "A floating-point number that tells the gradient descent algorithm how strongly to adjust weights and biases on each iteration. For example, a learning rate of 0.3 would adjust weights and biases three times more powerfully than a learning rate of 0.1.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Learning rate",
+      "en_url": "https://en.wikipedia.org/wiki/Learning_rate",
+      "zh_wiki_title": "学习率",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%AD%A6%E4%B9%A0%E7%8E%87",
+      "zh_extract_full": "在机器学习和统计学中，学习率（英语：Learning rate）是优化算法中的一个可调参数，它决定了每次迭代的步长，使得优化向损失函数的最小值前进。它影响到新学习到的信息在多大程度上取代了旧信息，暗示了机器学习模型 \"学习 \"的速度。在自适应控制中，学习率通常被称为增益（Gain）。 设置学习率需要在收敛速度和过冲（Overshooting）之间进行权衡。学习时的前进方向通常由损失函数的负梯度决定，而学习率决定了在这个方向上迈出多大一步。过高的学习率会使迈一大步，超过最小值；但过低的学习率会导致收敛速度变慢，或收敛于局部最小值。 为了加速收敛，防止振荡和陷入不理想的局部极小值，学习率在训练过程中往往按照计划或自适应改变。"
+    }
+  },
+  {
+    "term": "loss function",
+    "source_id": "loss-function",
+    "source_display_text": "loss function",
+    "definition": "During training or testing, a mathematical function that calculates the loss on a batch of examples. A loss function returns a lower loss for models that makes good predictions than for models that make bad predictions.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Loss function",
+      "en_url": "https://en.wikipedia.org/wiki/Loss_function",
+      "zh_wiki_title": "损失函数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8D%9F%E5%A4%B1%E5%87%BD%E6%95%B0",
+      "zh_extract_full": "在数学优化与决策论中，损失函数（亦称成本函数或误差函数）是将事件或变量值映射至实数域的函数，其数值直观体现与该事件相关的“代价”。优化问题的核心目标即是最小化损失函数。与之相对的目标函数在不同领域有不同称谓——收益函数、效用函数、适应度函数等——这类函数则需要通过最大化来实现价值。值得注意的是，损失函数的设计往往融合多层级结构的要素。 统计学科领域内，损失函数常被应用于参数估计过程，其函数形式通常反映数据实例中估计值与真实值之间的差异度量。这一概念虽可追溯至拉普拉斯时代，但直到20世纪中叶才经由瓦尔德·亚伯拉罕重新引入统计学体系。 在经济学中，损失通常指经济成本或遗憾；在分类问题中，则体现为错误分类样本的惩罚项；精算学领域自哈拉尔德·克拉梅尔20世纪20年代的研究起，该函数主要应用于保险金与赔付额的建模；最优控制理论中，它定义为未达成目标值的惩罚项；而在金融风险管理中，则直接对应货币价值的损失。"
+    }
+  },
+  {
+    "term": "cross-entropy",
+    "source_id": "cross-entropy",
+    "source_display_text": "cross-entropy",
+    "definition": "A generalization of Log Loss to multi-class classification problems. Cross-entropy quantifies the difference between two probability distributions. See also perplexity.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Cross-entropy",
+      "en_url": "https://en.wikipedia.org/wiki/Cross-entropy",
+      "zh_wiki_title": "交叉熵",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%BA%A4%E5%8F%89%E7%86%B5",
+      "zh_extract_full": "在信息论中，基于相同事件测度的两个概率分布 p {\\displaystyle p} 和 q {\\displaystyle q} 的交叉熵（英语：Cross entropy）是指，当基于一个“非自然”（相对于“真实”分布 p {\\displaystyle p} 而言）的概率分布 q {\\displaystyle q} 进行编码时，在事件集合中唯一标识一个事件所需要的平均比特数（bit）。 给定两个概率分布 p {\\displaystyle p} 和 q {\\displaystyle q} ， p {\\displaystyle p} 相对于 q {\\displaystyle q} 的交叉熵定义为： H ( p , q ) = E p ⁡ [ − log ⁡ q ] = H ( p ) + D K L ( p ‖ q ) , {\\displaystyle H(p,q)=\\operatorname {E} _{p}[-\\log q]=H(p)+D_{\\mathrm {KL} }(p\\|q),\\!} 其中 H ( p ) {\\displaystyle H(p)} 是 p {\\displaystyle p} 的熵， D K L ( p ‖ q ) {\\displaystyle D_{\\mathrm {KL} }(p\\|q)} 是从 p {\\displaystyle p} 与 q {\\displaystyle q} 的KL散度(也被称为p相对于q的相对熵)。 对于离散分布 p {\\displaystyle p} 和 q {\\displaystyle q} ，这意味着： H ( p , q ) = − ∑ x p ( x ) log ⁡ q ( x ) . {\\displaystyle H(p,q)=-\\sum _{x}p(x)\\,\\log q(x).\\!} 对于连续分布也是类似的。我们假设 p {\\displaystyle p} 和 q {\\displaystyle q} 在测度 r {\\displaystyle r} 上是绝对连续的(通常 r {\\displaystyle r} 是Lebesgue measure on a Borel σ-algebra)。设 P {\\displaystyle P} 和 Q {\\displaystyle Q} 分别为 p {\\displaystyle p} 和 q {\\displaystyle q} 在测度 r {\\displaystyle r} 上概率密度函数。则 − ∫ X P ( x ) log ⁡ Q ( x ) d r ( x ) = E p ⁡ [ − log ⁡ Q ] . {\\displaystyle -\\int _{X}P(x)\\,\\log Q(x)\\,dr(x)=\\operatorname {E} _{p}[-\\log Q].\\!}"
+    }
+  },
+  {
+    "term": "mean squared error (MSE)",
+    "source_id": "mean-squared-error-mse",
+    "source_display_text": "Mean Squared Error (MSE)",
+    "definition": "The average loss per example when L2 loss is used. Calculate Mean Squared Error as follows:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Mean squared error",
+      "en_url": "https://en.wikipedia.org/wiki/Mean_squared_error",
+      "zh_wiki_title": "均方误差",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%9D%87%E6%96%B9%E8%AF%AF%E5%B7%AE",
+      "zh_extract_full": "在统计学中，平均平方误差（mean-square error，MSE）或均方误差，又称均方偏差（mean-square deviation，MSD）、均方差，是预测值或估计值与真实值的差异平方的均值。均方误差越小说明模型的预测或者参数的估计精度越准确。"
+    }
+  },
+  {
+    "term": "backpropagation",
+    "source_id": "backpropagation",
+    "source_display_text": "backpropagation",
+    "definition": "The algorithm that implements gradient descent in neural networks.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Backpropagation",
+      "en_url": "https://en.wikipedia.org/wiki/Backpropagation",
+      "zh_wiki_title": "反向传播算法",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8F%8D%E5%90%91%E4%BC%A0%E6%92%AD%E7%AE%97%E6%B3%95",
+      "zh_extract_full": "反向传播（英语：Backpropagation，意为误差反向传播，缩写为BP）是对多层人工神经网络进行梯度下降的算法，也就是用链式法则以网络每层的权重为变量计算损失函数的梯度，以更新权重来最小化损失函数。"
+    }
+  },
+  {
+    "term": "vanishing gradient problem",
+    "source_id": "vanishing-gradient-problem",
+    "source_display_text": "vanishing gradient problem",
+    "definition": "The tendency for the gradients of early hidden layers of some deep neural networks to become surprisingly flat (low). Increasingly lower gradients result in increasingly smaller changes to the weights on nodes in a deep neural network, leading to little or no learning. Models suffering from the vanishing gradient problem become difficult or impossible to train. Long Short-Term Memory cells address this issue.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Vanishing gradient problem",
+      "en_url": "https://en.wikipedia.org/wiki/Vanishing_gradient_problem",
+      "zh_wiki_title": "梯度消失问题",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A2%AF%E5%BA%A6%E6%B6%88%E5%A4%B1%E9%97%AE%E9%A2%98",
+      "zh_extract_full": "梯度消失问题（英语：Vanishing gradient problem）是一种机器学习中的难题，出现在以梯度下降法和反向传播训练人工神经网络的时候。在每次训练的迭代中，神经网路权重的更新值与误差函数的偏导数成比例，然而在某些情况下，梯度值会几乎消失，使得权重无法得到有效更新，甚至神经网络可能完全无法继续训练。举个例子来说明问题起因，一个传统的激励函数如双曲正切函数，其梯度值在 (-1, 1)范围内，反向传播以链式法则来计算梯度。 这样做的效果，相当于在n层网络中，将n个这些小数字相乘来计算“前端”层的梯度，这就使梯度（误差信号）随着n呈指数递减，导致前端层的训练非常缓慢。 反向传播使研究人员从头开始训练监督式深度人工神经网络，最初收效甚微。1991年赛普·霍克赖特的毕业论文正式确认了“梯度消失问题”失败的原因。梯度消失问题不仅影响多层前馈网络，还影响循环神经网络。循环网络是通过将前馈网络深度展开来训练，在网络处理的输入序列的每个时间步骤中，都会产生一个新的层。 当所使用的激励函数之导数可以取较大值时，则可能会遇到相关的梯度爆炸问题（Exploding gradient problem）。"
+    }
+  },
+  {
+    "term": "batch normalization",
+    "source_id": "batch-normalization",
+    "source_display_text": "batch normalization",
+    "definition": "Normalizing the input or output of the activation functions in a hidden layer. Batch normalization can provide the following benefits:",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"batch normalization\" resolved to English Wikipedia article \"Batch normalization\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "hyperparameter",
+    "source_id": "hyperparameter",
+    "source_display_text": "hyperparameter",
+    "definition": "The variables that you or a hyperparameter tuning service adjust during successive runs of training a model. For example, learning rate is a hyperparameter. You could set the learning rate to 0.01 before one training session. If you determine that 0.01 is too high, you could perhaps set the learning rate to 0.003 for the next training session.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Hyperparameter (machine learning)",
+      "en_url": "https://en.wikipedia.org/wiki/Hyperparameter_(machine_learning)",
+      "zh_wiki_title": "超参数 (机器学习)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%B6%85%E5%8F%82%E6%95%B0_(%E6%9C%BA%E5%99%A8%E5%AD%A6%E4%B9%A0)",
+      "zh_extract_full": "在机器学习中，超参数（英语：Hyperparameter）是事先给定的，用来控制学习过程的参数。而其他参数（例如节点权重）的值是通过训练得出的。 超参数可分为模型超参数（Model Hyperparameters）和算法超参数（Algorithm Hyperparameters）。模型超参数主要用于模型选择，其无助于学习训练集特征；而算法超参数理论上对模型的性能没有影响，而会影响学习的速度和质量。一个典型的模型超参数是神经网络的拓扑结构及大小；而学习率和批量大小（Batch size）、小批量大小（Mini-Batch size）则是典型的算法超参数。 不同的模型训练算法需要用到不同的超参数，一些简单的算法（如普通最小二乘回归）不需要超参数。给定超参数，训练算法会从数据中学习参数。例如，LASSO算法在普通最小二乘回归中加入正则化超参数，在通过训练算法估计参数之前，必须先设置这个超参数。"
+    }
+  },
+  {
+    "term": "batch size",
+    "source_id": "batch-size",
+    "source_display_text": "batch size",
+    "definition": "The number of examples in a batch. For instance, if the batch size is 100, then the model processes 100 examples per iteration.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: batch size (machine learning), batch size"
+    }
+  },
+  {
+    "term": "epoch",
+    "source_id": "epoch",
+    "source_display_text": "epoch",
+    "definition": "A full training pass over the entire training set such that each example has been processed once.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "activation function",
+    "source_id": "activation-function",
+    "source_display_text": "activation function",
+    "definition": "A function that enables neural networks to learn nonlinear (complex) relationships between features and the label.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Activation function",
+      "en_url": "https://en.wikipedia.org/wiki/Activation_function",
+      "zh_wiki_title": "激活函数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%BF%80%E6%B4%BB%E5%87%BD%E6%95%B0",
+      "zh_extract_full": "在计算网络中， 一个节点的激活函数定义了该节点在给定的输入或输入的集合下的输出。标准的计算机芯片电路可以看作是根据输入得到开（1）或关（0）输出的数字电路激活函数。这与神经网络中的线性感知机的行为类似。然而，只有非线性激活函数才允许这种网络仅使用少量节点来计算非平凡问题。 在人工神经网络中，这个功能也被称为传递函数。"
+    }
+  },
+  {
+    "term": "sigmoid function",
+    "source_id": "sigmoid-function",
+    "source_display_text": "sigmoid function",
+    "definition": "A mathematical function that \"squishes\" an input value into a constrained range, typically 0 to 1 or -1 to +1. That is, you can pass any number (two, a million, negative billion, whatever) to a sigmoid and the output will still be in the constrained range. A plot of the sigmoid activation function looks as follows:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Sigmoid function",
+      "en_url": "https://en.wikipedia.org/wiki/Sigmoid_function",
+      "zh_wiki_title": "S型函数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/S%E5%9E%8B%E5%87%BD%E6%95%B0",
+      "zh_extract_full": "S型函数（英语：sigmoid function，或称乙状函数）是一种函数，因其函数图像形状像字母S得名。其形状曲线至少有2个焦点，也叫“二焦点曲线函数”。S型函数是有界、可微的实函数，在实数范围内均有取值，且导数恒为非负，有且只有一个拐点。S型函数和S型曲线指的是同一事物。 逻辑斯谛函数是一种常见的S型函数，其公式如下： S ( t ) = 1 1 + e − t . {\\displaystyle S(t)={\\frac {1}{1+e^{-t}}}.} 其级数展开为： s := 1 / 2 + 1 4 t − 1 48 t 3 + 1 480 t 5 − 17 80640 t 7 + 31 1451520 t 9 − 691 319334400 t 11 + O ( t 12 ) {\\displaystyle s:=1/2+{\\frac {1}{4}}t-{\\frac {1}{48}}t^{3}+{\\frac {1}{480}}t^{5}-{\\frac {17}{80640}}t^{7}+{\\frac {31}{1451520}}t^{9}-{\\frac {691}{319334400}}t^{11}+O(t^{12})} 其他S型函数案例见下。在一些学科领域，特别是人工神经网络中，S型函数通常特指逻辑斯谛函数。"
+    }
+  },
+  {
+    "term": "softmax",
+    "source_id": "softmax",
+    "source_display_text": "softmax",
+    "definition": "A function that determines probabilities for each possible class in a multi-class classification model. The probabilities add up to exactly 1.0. For example, the following table shows how softmax distributes various probabilities:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Softmax function",
+      "en_url": "https://en.wikipedia.org/wiki/Softmax_function",
+      "zh_wiki_title": "Softmax函数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/Softmax%E5%87%BD%E6%95%B0",
+      "zh_extract_full": "在数学，尤其是概率论和相关领域中，Softmax函数，或称归一化指数函数，是逻辑斯谛函数的一种推广。它能将一个含任意实数的K维向量 z {\\displaystyle \\mathbf {z} } “压缩”到另一个K维实向量 σ ( z ) {\\displaystyle \\sigma (\\mathbf {z} )} 中，使得每一个元素的范围都在 ( 0 , 1 ) {\\displaystyle (0,1)} 之间，并且所有元素的和为1(也可视为一个 (k-1)维的hyperplane或subspace)。该函数的形式通常按下面的式子给出： σ ( z ) j = e z j ∑ k = 1 K e z k {\\displaystyle \\sigma (\\mathbf {z} )_{j}={\\frac {e^{z_{j}}}{\\sum _{k=1}^{K}e^{z_{k}}}}} for j = 1, …, K. Softmax函数实际上是有限项离散概率分布的梯度对数归一化。因此，Softmax函数在包括 多项逻辑回归 ，多项线性判别分析，朴素贝叶斯分类器和人工神经网络等的多种基于概率的多分类问题方法中都有着广泛应用。 特别地，在多项逻辑回归和线性判别分析中，函数的输入是从K个不同的线性函数得到的结果，而样本向量 x 属于第 j 个分类的概率为： P ( y = j | x ) = e x T w j ∑ k = 1 K e x T w k {\\displaystyle P(y=j|\\mathbf {x} )={\\frac {e^{\\mathbf {x} ^{\\mathsf {T}}\\mathbf {w} _{j}}}{\\sum _{k=1}^{K}e^{\\mathbf {x} ^{\\mathsf {T}}\\mathbf {w} _{k}}}}} 这可以被视作K个线性函数 x ↦ x T w 1 , … , x ↦ x T w K {\\displaystyle \\mathbf {x} \\mapsto \\mathbf {x} ^{\\mathsf {T}}\\mathbf {w} _{1},\\ldots ,\\mathbf {x} \\mapsto \\mathbf {x} ^{\\mathsf {T}}\\mathbf {w} _{K}} Softmax函数的复合（ x T w {\\displaystyle \\mathbf {x} ^{\\mathsf {T}}\\mathbf {w} } x {\\displaystyle \\mathbf {x} } w {\\displaystyle \\mathbf {w} } ）。 实际实现的时候，为了防止溢出，会先把每个元素减去原先的最大值 m {\\displaystyle m} 。 σ ( z ) i = e x i ∑ j e x j = e − m e − m e x i ∑ j e x j = e x i − m ∑ j e x j − m {\\displaystyle \\sigma (\\mathbf {z} )_{i}={\\frac {e^{x_{i}}}{\\sum _{j}e^{x_{j}}}}={\\frac {e^{-m}}{e^{-m}}}{\\frac {e^{x_{i}}}{\\sum _{j}e^{x_{j}}}}={\\frac {e^{x_{i}-m}}{\\sum _{j}e^{x_{j}-m}}}}"
+    }
+  },
+  {
+    "term": "ReLU",
+    "source_id": "rectified-linear-unit-relu",
+    "source_display_text": "Rectified Linear Unit (ReLU)",
+    "definition": "An activation function with the following behavior:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Rectified linear unit",
+      "en_url": "https://en.wikipedia.org/wiki/Rectified_linear_unit",
+      "zh_wiki_title": "线性整流函数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%BA%BF%E6%80%A7%E6%95%B4%E6%B5%81%E5%87%BD%E6%95%B0",
+      "zh_extract_full": "整流线性单位函数（Rectified Linear Unit, ReLU），又称修正线性单元，是一种人工神经网络中常用的激励函数（activation function），通常指代以斜坡函数及其变种为代表的非线性函数。 比较常用的线性整流函数有斜坡函数 f ( x ) = max ( 0 , x ) {\\displaystyle f(x)=\\max(0,x)} ，以及带泄露整流函数（Leaky ReLU），其中 x {\\displaystyle x} 为神经元（Neuron）的输入。线性整流被认为有一定的生物学原理，并且由于在实践中通常有着比其他常用激励函数（譬如逻辑斯谛函数）更好的效果，而被如今的深度神经网络广泛使用于诸如图像识别等计算机视觉人工智能领域。"
+    }
+  },
+  {
+    "term": "convolutional neural network (CNN)",
+    "source_id": "convolutional-neural-network",
+    "source_display_text": "convolutional neural network",
+    "definition": "A neural network in which at least one layer is a convolutional layer. A typical convolutional neural network consists of some combination of the following layers:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Convolutional neural network",
+      "en_url": "https://en.wikipedia.org/wiki/Convolutional_neural_network",
+      "zh_wiki_title": "卷积神经网络",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8D%B7%E7%A7%AF%E7%A5%9E%E7%BB%8F%E7%BD%91%E7%BB%9C",
+      "zh_extract_full": "卷积神经网络（英语：convolutional neural network，缩写：CNN）是一种前馈神经网络，它的人工神经元可以响应一部分覆盖范围内的周围单元，对于大型图像处理有出色表现。 卷积神经网络由一个或多个卷积层和顶端的全连通层（对应经典的神经网络）组成，同时也包括关联权重和池化层（pooling layer）。这一结构使得卷积神经网络能够利用输入数据的二维结构。与其他深度学习结构相比，卷积神经网络在图像和语音识别方面能够给出更好的结果。这一模型也可以使用反向传播算法进行训练。相比较其他深度、前馈神经网络，卷积神经网络需要考量的参数更少，使之成为一种颇具吸引力的深度学习结构。 卷积神经网络的灵感来自于动物视觉皮层组织的神经连接方式。单个神经元只对有限区域内的刺激作出反应，不同神经元的感知区域相互重叠从而覆盖整个视野。"
+    }
+  },
+  {
+    "term": "recurrent neural network (RNN)",
+    "source_id": "recurrent-neural-network",
+    "source_display_text": "recurrent neural network",
+    "definition": "A neural network that is intentionally run multiple times, where parts of each run feed into the next run. Specifically, hidden layers from the previous run provide part of the input to the same hidden layer in the next run. Recurrent neural networks are particularly useful for evaluating sequences, so that the hidden layers can learn from previous runs of the neural network on earlier parts of the sequence.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Recurrent neural network",
+      "en_url": "https://en.wikipedia.org/wiki/Recurrent_neural_network",
+      "zh_wiki_title": "循环神经网络",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BE%AA%E7%8E%AF%E7%A5%9E%E7%BB%8F%E7%BD%91%E7%BB%9C",
+      "zh_extract_full": "循环神经网络（recurrent neural network：RNN）是神经网络的一种。 数学形式化定义 h t = σ ( W h x t + U h h t − 1 + b h ) {\\displaystyle h_{t}=\\sigma (W_{h}x_{t}+U_{h}h_{t-1}+b_{h})} 其中 W h {\\textstyle W_{h}} , U h {\\textstyle U_{h}} ​为权重矩阵， σ {\\textstyle \\sigma } 通常为 tanh {\\textstyle \\tanh } 函数 单纯的RNN因为无法处理随着递归，权重指数级爆炸或梯度消失问题，难以捕捉长期时间关联；而结合不同的LSTM可以很好解决这个问题。 定理：当最大奇异值ρ(∇ht​)>1时梯度爆炸，ρ(∇ht​)<1时梯度消失 时间循环神经网络可以描述动态时间行为，因为和前馈神经网络（feedforward neural network）接受较特定结构的输入不同，RNN将状态在自身网络中循环传递，因此可以接受更广泛的时间序列结构输入。手写识别是最早成功利用RNN的研究结果。"
+    }
+  },
+  {
+    "term": "LSTM",
+    "source_id": "long-short-term-memory-lstm",
+    "source_display_text": "Long Short-Term Memory (LSTM)",
+    "definition": "A type of cell in a recurrent neural network used to process sequences of data in applications such as handwriting recognition, machine translation, and image captioning. LSTMs address the vanishing gradient problem that occurs when training RNNs due to long data sequences by maintaining history in an internal memory state based on new input and context from previous cells in the RNN.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Long short-term memory",
+      "en_url": "https://en.wikipedia.org/wiki/Long_short-term_memory",
+      "zh_wiki_title": "長短期記憶",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%95%B7%E7%9F%AD%E6%9C%9F%E8%A8%98%E6%86%B6",
+      "zh_extract_full": "长短期记忆（英语：Long Short-Term Memory，LSTM）是一种时间循环神经网络（RNN），论文首次发表于1997年。由于独特的设计结构，LSTM适合于处理和预测时间序列中间隔和延迟非常长的重要事件。 LSTM的表现通常比时间循环神经网络及隐马尔科夫模型（HMM）更好，比如用在不分段连续手写识别上。2009年，用LSTM构建的人工神经网络模型赢得过ICDAR手写识别比赛冠军。LSTM还普遍用于自主语音识别，2013年运用TIMIT自然演讲数据库达成17.7%错误率的纪录。作为非线性模型，LSTM可作为复杂的非线性单元用于构造更大型深度神经网络。 通常情况，一个LSTM单元由细胞单元（cell）、输入门（input gate）、输出门（output gate）、遗忘门（forget gate）组成。"
+    }
+  },
+  {
+    "term": "deep neural network",
+    "source_id": "deep-neural-network",
+    "source_display_text": "deep neural network",
+    "definition": "Synonym for deep model.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Deep learning",
+      "en_url": "https://en.wikipedia.org/wiki/Deep_learning",
+      "zh_wiki_title": "深度学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%B7%B1%E5%BA%A6%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "深度学习（英语：deep learning）是机器学习的分支，是一种以人工神经网络为架构，对资料进行表征学习的算法。深度学习中的形容词“深度”是指在网络中使用多层。 早期的工作表明，线性感知器不能成为通用分类器，但具有非多项式激活函数和一个无限宽度隐藏层的网络可以成为通用分类器。 深度学习是机器学习中一种基于对数据进行表征学习的算法。观测值（例如一幅图像）可以使用多种方式来表示，如每个像素强度值的向量，或者更抽象地表示成一系列边、特定形状的区域等。而使用某些特定的表示方法更容易从实例中学习任务（例如，人脸识别或面部表情识别）。深度学习的好处是用非监督式或半监督式的特征学习和分层特征提取高效算法来替代手工获取特征。 表征学习的目标是寻求更好的表示方法并建立更好的模型来从大规模未标记数据中学习这些表示方法。表示方法来自神经科学，并松散地建立在类似神经系统中的信息处理和对通信模式的理解上，如神经编码，试图定义拉动神经元的反应之间的关系以及大脑中的神经元的电活动之间的关系。 至今已有数种深度学习框架，如深度神经网络、卷积神经网络和深度置信网络和循环神经网络已被应用在计算机视觉、语音识别、自然语言处理、音频识别与生物信息学等领域并获取了极好的效果。 另外，“深度学习”已成为时髦术语，或者说是人工神经网络的品牌重塑。"
+    }
+  },
+  {
+    "term": "autoencoder",
+    "source_id": "autoencoder",
+    "source_display_text": "autoencoder",
+    "definition": "A system that learns to extract the most important information from the input. Autoencoders are a combination of an encoder and decoder. Autoencoders rely on the following two-step process:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Autoencoder",
+      "en_url": "https://en.wikipedia.org/wiki/Autoencoder",
+      "zh_wiki_title": "自编码器",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%87%AA%E7%BC%96%E7%A0%81%E5%99%A8",
+      "zh_extract_full": "自编码器（英语：autoencoder）也称自动编码器，是一种人工神经网络，用于学习无标签数据的有效编码；属一种无监督学习。 自编码（autoencoding）的目的是：学习对高维度数据做低维度“表示”（“表征”或“编码”）；因此， 通常用于降维。最近，自编码的概念广泛地用于数据的生成模型。 自2010年以来，一些先进的人工智能在深度学习网络中采用了采用堆叠式稀疏自编码。"
+    }
+  },
+  {
+    "term": "GAN",
+    "source_id": "generative-adversarial-network-gan",
+    "source_display_text": "generative adversarial network (GAN)",
+    "definition": "A system to create new data in which a generator creates data and a discriminator determines whether that created data is valid or invalid.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Generative adversarial network",
+      "en_url": "https://en.wikipedia.org/wiki/Generative_adversarial_network",
+      "zh_wiki_title": "生成对抗网络",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%94%9F%E6%88%90%E5%AF%B9%E6%8A%97%E7%BD%91%E7%BB%9C",
+      "zh_extract_full": "生成对抗网络（英语：Generative Adversarial Network，简称GAN）是非监督式学习的一种方法，通过两个神经网络相互博弈的方式进行学习。该方法由伊恩·古德费洛等人于2014年提出。 生成对抗网络由一个生成网络与一个判别网络组成。生成网络从潜在空间（latent space）中随机取样作为输入，其输出结果需要尽量模仿训练集中的真实样本。判别网络的输入则为真实样本或生成网络的输出，其目的是将生成网络的输出从真实样本中尽可能分辨出来。而生成网络则要尽可能地欺骗判别网络。两个网络相互对抗、不断调整参数，最终目的是使判别网络无法判断生成网络的输出结果是否真实。 生成对抗网络常用于生成以假乱真的图片。此外，该方法还被用于视频帧预测、三维物体模型等。 生成对抗网络虽然最开始提出是为了无监督学习，但经证明对半监督学习、完全监督学习、强化学习GAIL（Generative Adversarial Imitation Learning）通过逆强化学习框架实现策略优化也有效。 在2016年的一个研讨会上，杨立昆称生成式对抗网络为“机器学习这二十年来最酷的想法”。"
+    }
+  },
+  {
+    "term": "support vector machine (SVM)",
+    "source_id": "kernel-support-vector-machines-ksvms",
+    "source_display_text": "Kernel Support Vector Machines (KSVMs)",
+    "definition": "A classification algorithm that seeks to maximize the margin between positive and negative classes by mapping input data vectors to a higher dimensional space. For example, consider a classification problem in which the input dataset has a hundred features. To maximize the margin between positive and negative classes, a KSVM could internally map those features into a million-dimension space. KSVMs uses a loss function called hinge loss.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Support vector machine",
+      "en_url": "https://en.wikipedia.org/wiki/Support_vector_machine",
+      "zh_wiki_title": "支持向量机",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%94%AF%E6%8C%81%E5%90%91%E9%87%8F%E6%9C%BA",
+      "zh_extract_full": "在机器学习中，支持向量机 （台湾称支援向量機，英语：support vector machine，常简称为SVM，又名支持向量网络）是在分类与回归分析中分析数据的监督式学习模型与相关的学习算法。给定一组训练实例，每个训练实例被标记为属于两个类别中的一个或另一个，SVM训练算法建立一个将新的实例分配给两个类别之一的模型，使其成为非概率二元线性分类器。SVM模型是将实例表示为空间中的点，这样映射就使得单独类别的实例被尽可能宽的明显的间隔分开。然后，将新的实例映射到同一空间，并基于它们落在间隔的哪一侧来预测所属类别。 除了进行线性分类之外，SVM还可以使用所谓的核技巧有效地进行非线性分类，将其输入隐式映射到高维特征空间中。 当数据未被标记时，不能进行监督式学习，需要用非监督式学习，它会尝试找出数据到簇的自然聚类，并将新数据映射到这些已形成的簇。将支持向量机改进的聚类算法被称为支持向量聚类，当数据未被标记或者仅一些数据被标记时，支持向量聚类经常在工业应用中用作分类步骤的预处理。"
+    }
+  },
+  {
+    "term": "decision tree",
+    "source_id": "decision-tree",
+    "source_display_text": "decision tree",
+    "definition": "A supervised learning model composed of a set of conditions and leaves organized hierarchically. For example, the following is a decision tree:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Decision tree learning",
+      "en_url": "https://en.wikipedia.org/wiki/Decision_tree_learning",
+      "zh_wiki_title": "决策树学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%86%B3%E7%AD%96%E6%A0%91%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "决策树学习是统计学、数据挖掘和机器学习中使用的一种预测建模方法。它使用决策树作为预测模型，从样本的观测数据（对应决策树的分支）推断出该样本的预测结果（对应决策树的叶节点）。 按预测结果的差异，决策树学习可细分两类。（1）分类树，其预测结果仅限于一组离散数值。树的每个分支对应一组由逻辑与连接的分类特征，而该分支上的叶节点对应由上述特征可以预测出的分类标签。（2）回归树，其预测结果为连续值（例如实数）。 在决策分析中，一棵可视的决策树可以向用户形象地展示决策的结果和过程。在数据挖掘和机器学习中，一棵决策树主要用于描述数据（此后亦可基于习得的预测模型去支持决策)。本页侧重描述数据挖掘中的决策树。"
+    }
+  },
+  {
+    "term": "random forest",
+    "source_id": "random-forest",
+    "source_display_text": "random forest",
+    "definition": "An ensemble of decision trees in which each decision tree is trained with a specific random noise, such as bagging.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Random forest",
+      "en_url": "https://en.wikipedia.org/wiki/Random_forest",
+      "zh_wiki_title": "随机森林",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%9A%8F%E6%9C%BA%E6%A3%AE%E6%9E%97",
+      "zh_extract_full": "在机器学习中，随机森林是一个包含多个决策树的分类器，并且其输出的类别是由个别树输出的类别的众数而定。 这个术语是1995年由贝尔实验室的何天琴所提出的随机决策森林（random decision forests）而来的。 然后Leo Breiman和Adele Cutler发展出推论出随机森林的算法。而\"Random Forests\"是他们的商标。 这个方法则是结合Breimans的“Bootstrap aggregating”想法和Ho的“random subspace method”以建造决策树的集合。"
+    }
+  },
+  {
+    "term": "gradient boosting",
+    "source_id": "gradient-boosting",
+    "source_display_text": "gradient boosting",
+    "definition": "A training algorithm where weak models are trained to iteratively improve the quality (reduce the loss) of a strong model. For example, a weak model could be a linear or small decision tree model. The strong model becomes the sum of all the previously trained weak models.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Gradient boosting",
+      "en_url": "https://en.wikipedia.org/wiki/Gradient_boosting",
+      "zh_wiki_title": "梯度提升技术",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A2%AF%E5%BA%A6%E6%8F%90%E5%8D%87%E6%8A%80%E6%9C%AF",
+      "zh_extract_full": "梯度提升，亦称作梯度增强，是一种用于回归和分类问题的机器学习技术。其产生的预测模型是弱预测模型的集成，如采用典型的决策树作为弱预测模型，这时则为梯度提升树（GBT或GBDT）。像其他提升方法一样，它以分阶段的方式构建模型，但它通过允许对任意可微分损失函数进行优化作为对一般提升方法的推广。 梯度提升技术源自于Leo Breiman于1997年时将提升方法用于优化算法的观察。随后Jerome H. Friedman于1999年时提出了显式回归梯度增强算法。Llew Mason、Jonathan Baxter、Peter Bartlett和Marcus Frean则针对梯度提升在一般的函数空间的运用进行研究，并于1999年在研讨会发表之后，同年正式发表了论文。该论文介绍了将提升算法看作“函数空间上的梯度下降迭代”算法的观点。也就是将其视为通过迭代地选择指向负梯度方向的函数（弱预测模型），来优化函数空间上的成本函数的算法。这种将提升视为函数梯度的观点，导致了提升算法被运用于回归和分类之外的其他机器学习和统计领域的后续发展。"
+    }
+  },
+  {
+    "term": "k-means",
+    "source_id": "k-means",
+    "source_display_text": "k-means",
+    "definition": "A popular clustering algorithm that groups examples in unsupervised learning. The k-means algorithm basically does the following:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "K-means clustering",
+      "en_url": "https://en.wikipedia.org/wiki/K-means_clustering",
+      "zh_wiki_title": "K-平均算法",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/K-%E5%B9%B3%E5%9D%87%E7%AE%97%E6%B3%95",
+      "zh_extract_full": "k-均值算法（英文：k-means clustering）源于信号处理中的一种向量量化方法，现在则更多地作为一种聚类分析方法流行于数据挖掘领域。k-均值聚类的目的是：把 n {\\displaystyle n} 个点（可以是样本的一次观察或一个实例）划分到k个聚类中，使得每个点都属于离他最近的均值（此即聚类中心）对应的聚类，以之作为聚类的标准。这个问题将归结为一个把数据空间划分为Voronoi cells的问题。 这个问题在计算上是NP困难的，不过存在高效的启发式算法。一般情况下，都使用效率比较高的启发式算法，它们能够快速收敛于一个局部最优解。这些算法通常类似于通过迭代优化方法处理高斯混合分布的最大期望算法（EM算法）。而且，它们都使用聚类中心来为数据建模；然而k-均值聚类倾向于在可比较的空间范围内寻找聚类，期望-最大化技术却允许聚类有不同的形状。 k-均值聚类与k-近邻之间没有任何关系（后者是另一流行的机器学习技术）。"
+    }
+  },
+  {
+    "term": "clustering",
+    "source_id": "clustering",
+    "source_display_text": "clustering",
+    "definition": "Grouping related examples, particularly during unsupervised learning. Once all the examples are grouped, a human can optionally supply meaning to each cluster.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: clustering (machine learning), clustering, clustering (file format)"
+    }
+  },
+  {
+    "term": "ensemble",
+    "source_id": "ensemble",
+    "source_display_text": "ensemble",
+    "definition": "A collection of models trained independently whose predictions are averaged or aggregated. In many cases, an ensemble produces better predictions than a single model. For example, a random forest is an ensemble built from multiple decision trees. Note that not all decision forests are ensembles.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: ensemble (machine learning), ensemble, ensemble (file format)"
+    }
+  },
+  {
+    "term": "bagging",
+    "source_id": "bagging",
+    "source_display_text": "bagging",
+    "definition": "A method to train an ensemble where each constituent model trains on a random subset of training examples sampled with replacement. For example, a random forest is a collection of decision trees trained with bagging.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Bootstrap aggregating",
+      "en_url": "https://en.wikipedia.org/wiki/Bootstrap_aggregating",
+      "zh_wiki_title": "Bagging算法",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/Bagging%E7%AE%97%E6%B3%95",
+      "zh_extract_full": "Bagging算法 （英语：Bootstrap aggregating，引导聚集算法），又称装袋算法，是机器学习领域的一种集成学习算法。最初由Leo Breiman于1994年提出。Bagging算法可与其他分类、回归算法结合，提高其准确率、稳定性的同时，透过降低结果的变异数，避免过拟合的发生。"
+    }
+  },
+  {
+    "term": "boosting",
+    "source_id": "boosting",
+    "source_display_text": "boosting",
+    "definition": "A machine learning technique that iteratively combines a set of simple and not very accurate classification models (referred to as \"weak classifiers\") into a classification model with high accuracy (a \"strong classifier\") by upweighting the examples that the model is currently misclassifying.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Boosting (machine learning)",
+      "en_url": "https://en.wikipedia.org/wiki/Boosting_(machine_learning)",
+      "zh_wiki_title": "提升方法",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8F%90%E5%8D%87%E6%96%B9%E6%B3%95",
+      "zh_extract_full": "提升方法（Boosting）是一种机器学习中的集成学习元启发算法，主要用来减小监督式学习中偏差并且也减小方差，以及一系列将弱学习器转换为强学习器的机器学习算法。面对的问题是迈可·肯斯（Michael Kearns）和莱斯利·瓦利安特(Leslie Valiant)提出的：一组“弱学习者”的集合能否生成一个“强学习者”？弱学习者一般是指一个分类器，它的结果只比随机分类好一点点；强学习者指分类器的结果非常接近真值。 Robert Schapire在1990年的一篇论文中对肯斯和瓦利安特的问题的肯定回答在机器学习和统计方面产生了重大影响，最显着的是导致了提升方法的发展 。"
+    }
+  },
+  {
+    "term": "attention",
+    "source_id": "attention",
+    "source_display_text": "attention",
+    "definition": "A mechanism used in a neural network that indicates the importance of a particular word or part of a word. Attention compresses the amount of information a model needs to predict the next token/word. A typical attention mechanism might consist of a weighted sum over a set of inputs, where the weight for each input is computed by another part of the neural network.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Attention (machine learning)",
+      "en_url": "https://en.wikipedia.org/wiki/Attention_(machine_learning)",
+      "zh_wiki_title": "注意力机制",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%B3%A8%E6%84%8F%E5%8A%9B%E6%9C%BA%E5%88%B6",
+      "zh_extract_full": "注意力机制（英语：attention）是人工神经网络中一种模仿认知注意力的技术。这种机制可以增强神经网络输入数据中某些部分的权重，同时减弱其他部分的权重，以此将网络的关注点聚焦于数据中最重要的一小部分。数据中哪些部分比其他部分更重要取决于上下文。可以通过梯度下降法对注意力机制进行训练。 类似于注意力机制的架构最早于1990年代提出，当时提出的名称包括乘法模块（multiplicative module）、sigma pi单元、超网络（hypernetwork）等。注意力机制的灵活性来自于它的“软权重”特性，即这种权重是可以在运行时改变的，而非像通常的权重一样必须在运行时保持固定。注意力机制的用途包括神经图灵机中的记忆功能、可微分神经计算机中的推理任务、Transformer 模型中的语言处理、Perceiver（感知器）模型中的多模态数据处理（声音、图像、视频和文本）。"
+    }
+  },
+  {
+    "term": "self-attention",
+    "source_id": "self-attention-also-called-self-attention-layer",
+    "source_display_text": "self-attention (also called self-attention layer)",
+    "definition": "A neural network layer that transforms a sequence of embeddings (for example, token embeddings) into another sequence of embeddings. Each embedding in the output sequence is constructed by integrating information from the elements of the input sequence through an attention mechanism.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: self-attention (machine learning), self-attention, self attention also called self attention layer, self-attention (file format)"
+    }
+  },
+  {
+    "term": "embedding",
+    "source_id": "embedding-vector",
+    "source_display_text": "embedding vector",
+    "definition": "Broadly speaking, an array of floating-point numbers taken from any hidden layer that describe the inputs to that hidden layer. Often, an embedding vector is the array of floating-point numbers trained in an embedding layer. For example, suppose an embedding layer must learn an embedding vector for each of the 73,000 tree species on Earth. Perhaps the following array is the embedding vector for a baobab tree:",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"embedding (machine learning)\" resolved to English Wikipedia article \"Embedding (machine learning)\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "word embedding",
+    "source_id": "word-embedding",
+    "source_display_text": "word embedding",
+    "definition": "Representing each word in a word set within an embedding vector; that is, representing each word as a vector of floating-point values between 0.0 and 1.0. Words with similar meanings have more-similar representations than words with different meanings. For example, carrots, celery, and cucumbers would all have relatively similar representations, which would be very different from the representations of airplane, sunglasses, and toothpaste.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Word embedding",
+      "en_url": "https://en.wikipedia.org/wiki/Word_embedding",
+      "zh_wiki_title": "词嵌入",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%AF%8D%E5%B5%8C%E5%85%A5",
+      "zh_extract_full": "词嵌入（英语：Word embedding）是自然语言处理（NLP）中语言模型与表征学习技术的统称。概念上而言，它是指把一个维数为所有词的数量的高维空间嵌入到一个维数低得多的连续向量空间中，每个单词或词组被映射为实数域上的向量。 词嵌入的方法包括人工神经网络、对词语同现矩阵降维、几率模型以及单词所在上下文的显式表示等。 在底层输入中，使用词嵌入来表示词组的方法极大提升了NLP中语法分析器和文本情感分析等的效果。"
+    }
+  },
+  {
+    "term": "latent space",
+    "source_id": "latent-space",
+    "source_display_text": "latent space",
+    "definition": "Synonym for embedding space.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Latent space",
+      "en_url": "https://en.wikipedia.org/wiki/Latent_space",
+      "zh_wiki_title": "潜空间 (机器学习)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%BD%9C%E7%A9%BA%E9%97%B4_(%E6%9C%BA%E5%99%A8%E5%AD%A6%E4%B9%A0)",
+      "zh_extract_full": "潜空间（英语：Latent space）也被称为潜特征空间或嵌入空间，是一组元素在流形内的嵌入，相似的元素在潜空间内的距离较小。潜空间中的位置由一组潜变量定义，这些潜变量产生于元素间的相似性。 大多数情况下，潜空间的维度都要设定得低于数据点特征空间的维度，意味着潜空间的构建实际上是降维，也可看作是数据压缩的一种形式。潜空间通常通过机器学习进行拟合，然后可被用作机器学习模型的特征空间，包括分类器等监督预测器。 对机器学习模型潜空间的解释是一个活跃的研究领域，但很难实现。由于机器学习模型的黑箱性质，潜空间可能是完全不直观的。此外，潜空间往往是高维、复杂、非线性的，进一步增加了解释的难度。一些可视化技术用于将潜空间展现出来，但潜空间的解释和模型本身往往没有直接联系。这类技术包括t分布随机邻域嵌入（t-SNE），其中潜空间被映射到二维以实现可视化。潜空间中的距离难以用物理单位表达，所以对距离的解释取决于具体应用。 有许多算法可在给定一组数据项和一个相似性函数的情况下创建潜空间嵌入。"
+    }
+  },
+  {
+    "term": "encoder",
+    "source_id": "encoder",
+    "source_display_text": "encoder",
+    "definition": "In general, any ML system that converts from a raw, sparse, or external representation into a more processed, denser, or more internal representation.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: encoder (machine learning), encoder, encoder (file format)"
+    }
+  },
+  {
+    "term": "decoder",
+    "source_id": "decoder",
+    "source_display_text": "decoder",
+    "definition": "In general, any ML system that converts from a processed, dense, or internal representation to a more raw, sparse, or external representation.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: decoder (machine learning), decoder, decoder (file format)"
+    }
+  },
+  {
+    "term": "language model",
+    "source_id": "language-model",
+    "source_display_text": "language model",
+    "definition": "A model that estimates the probability of a token or sequence of tokens occurring in a longer sequence of tokens.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Language model",
+      "en_url": "https://en.wikipedia.org/wiki/Language_model",
+      "zh_wiki_title": "語言模型",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%AA%9E%E8%A8%80%E6%A8%A1%E5%9E%8B",
+      "zh_extract_full": "语言模型是一个自然语言中的词语几率分布模型，例如提供一个长度为 m {\\displaystyle m} 的字词序列 w 1 , w 2 , . . . , w m {\\displaystyle w_{1},w_{2},...,w_{m}} ，计算这些字词的概率： P ( w 1 , … , w m ) {\\displaystyle P(w_{1},\\ldots ,w_{m})} 。通过语言模型，可以确定哪个词语出现的可能性更大，或者通过若干上文语境词来预测下一个最可能出现的词语。 语言模型经常使用在许多自然语言处理方面的应用，如语音识别，机器翻译，词性标注，句法分析，手写体识别和信息检索。由于字词与句子都是任意组合的长度，因此在训练过的语言模型中会出现未曾出现的字符串(资料稀疏的问题)，也使得在语料库中估算字符串的几率变得很困难，这也是要使用近似的平滑n-元语法(N-gram)模型之原因。 在语音识别和在资料压缩的领域中，这种模式试图捕捉语言的特性，并预测在语音串列中的下一个字。 在语音识别中，声音与单词序列相匹配。当来自语言模型的证据与发音模型和声学模型相结合时，歧义更容易解决。 当用于信息检索，语言模型是与文件有关的集合。以查询字“Q”作为输入，依据几率将文件作排序，而该几率 P ( Q | M d ) {\\displaystyle P(Q|M_{d})} 代表该文件的语言模型所产生的语句之几率。"
+    }
+  },
+  {
+    "term": "LLM",
+    "source_id": "large-language-model",
+    "source_display_text": "large language model",
+    "definition": "At a minimum, a language model having a very high number of parameters. More informally, any Transformer-based language model, such as Gemini or GPT.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Large language model",
+      "en_url": "https://en.wikipedia.org/wiki/Large_language_model",
+      "zh_wiki_title": "大型语言模型",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%A4%A7%E5%9E%8B%E8%AF%AD%E8%A8%80%E6%A8%A1%E5%9E%8B",
+      "zh_extract_full": "大型语言模型（英语：large language model，LLM），也称大语言模型，简称大模型，是一种基于人工神经网络的语言模型。其名称中的“大型”指模型具有庞大的参数量（通常在数十亿至数万亿级别，如GPT-3含1750亿参数）以及巨大的训练数据规模。大语言模型通常采用自监督机器学习方法，从而能够基于海量无标注的文本进行训练。大语言模型专为自然语言处理任务而设计，尤其适用于语言生成。其中包含Gemini和GPT-4o在内的部分多模态大模型能够同时处理文字、图片、音频和视频等不同输入形式。规模最大、功能最强大的LLM基本采用生成式预训练 Transformer (GPT) 模型，它们为ChatGPT、Gemini、Perplexity和Claude等聊天机器人提供了核心功能。这些模型能够预测人类语言语料库中固有的句法、语义和本体信息，且展示出相当多训练期间“记住”的关于世界的常识。但它们也继承了训练数据中存在的误差和偏差。 由于大语言模型的记忆和泛化能力强大，其通常能用作通用模型：即使在没有针对特定任务（例如情感分析、命名实体识别、文本翻译、摘要生成或数学推理）进行训练的情况下，LLM往往也能够在这些任务中表现出色。 而这些功能以往通常需要定制系统才能实现。 此外，基于其跨任务泛化能力，也可以针对特定任务对LLM进行微调，或通过提示工程进行引导，从而在极少量特定任务数据下实现或增强特定功能，如对话代理、代码生成、知识检索和自动推理等功能。 LLM源于早期的统计语言模型、神经概率语言模型和循环神经网络方法。2017年推出的Transformer架构用自注意力机制取代了循环神经网络结构，从而实现了高效的并行化、更长的上下文处理能力以及在前所未有的数据量上进行可扩展的训练。 这项创新催生了GPT、BERT及其后续模型，这些模型展现出了大规模涌现行为，例如少样本学习和组合推理。 为了扩展训练数据以增强模型能力，大部分LLM训练过程中存在利用网络上大量未经授权的公开艺术家作品、用户与模型的交互以及其他公司LLM的输出（知识蒸馏）等数据训练AI的作法，在全球引发了广泛的关于版权诉讼、道德争议和隐私保护的讨论。"
+    }
+  },
+  {
+    "term": "token",
+    "source_id": "token",
+    "source_display_text": "token",
+    "definition": "In a language model, the atomic unit that the model is training on and making predictions on. A token is typically one of the following:",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: token (machine learning), token, token (file format)"
+    }
+  },
+  {
+    "term": "tokenizer",
+    "source_id": "tokenizer",
+    "source_display_text": "tokenizer",
+    "definition": "A system or algorithm that translates a sequence of input data into tokens.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Lexical analysis",
+      "en_url": "https://en.wikipedia.org/wiki/Lexical_analysis",
+      "zh_wiki_title": "词法分析",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%AF%8D%E6%B3%95%E5%88%86%E6%9E%90",
+      "zh_extract_full": "词法分析（英语：lexical analysis）是计算机科学中将字符序列转换为词元（英语：token，台湾作符元，也有译为标记或记号）序列的过程。进行词法分析的程序或者函数叫作词法分析器（lexical analyzer，简称lexer），也叫扫描器（scanner）。词法分析器一般以函数的形式存在，供语法分析器调用。"
+    }
+  },
+  {
+    "term": "prompt engineering",
+    "source_id": "prompt-engineering",
+    "source_display_text": "prompt engineering",
+    "definition": "The art of creating prompts that elicit the desired responses from a large language model. Humans perform prompt engineering. Writing well-structured prompts is an essential part of ensuring useful responses from a large language model. Prompt engineering depends on many factors, including:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Prompt engineering",
+      "en_url": "https://en.wikipedia.org/wiki/Prompt_engineering",
+      "zh_wiki_title": "提示工程",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8F%90%E7%A4%BA%E5%B7%A5%E7%A8%8B",
+      "zh_extract_full": "提示工程（英语：Prompt engineering）是人工智能中的一个概念，特别是自然语言处理（NLP）。 在提示工程中，任务的描述会被嵌入到输入中。例如，不是隐含地给予模型一定的参数，而是以问题的形式直接输入。 提示工程的典型工作方式是将一个或多个任务转换为基于提示的数据集，并通过所谓的“基于提示的学习（prompt-based learning）”来训练语言模型。 提示工程可以从一个大型的“冻结”预训练语言模型开始工作，其中只学习了提示的表示方法，即所谓的“前缀调整（prefix-tuning）”或“提示调整（prompt tuning）”。 语言模型GPT-2和GPT-3是提示工程的重要步骤。"
+    }
+  },
+  {
+    "term": "few-shot prompting",
+    "source_id": "few-shot-prompting",
+    "source_display_text": "few-shot prompting",
+    "definition": "A prompt that contains more than one (a \"few\") example demonstrating how the large language model should respond. For example, the following lengthy prompt contains two examples showing a large language model how to answer a query.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Prompt engineering",
+      "en_url": "https://en.wikipedia.org/wiki/Prompt_engineering",
+      "zh_wiki_title": "提示工程",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8F%90%E7%A4%BA%E5%B7%A5%E7%A8%8B",
+      "zh_extract_full": "提示工程（英语：Prompt engineering）是人工智能中的一个概念，特别是自然语言处理（NLP）。 在提示工程中，任务的描述会被嵌入到输入中。例如，不是隐含地给予模型一定的参数，而是以问题的形式直接输入。 提示工程的典型工作方式是将一个或多个任务转换为基于提示的数据集，并通过所谓的“基于提示的学习（prompt-based learning）”来训练语言模型。 提示工程可以从一个大型的“冻结”预训练语言模型开始工作，其中只学习了提示的表示方法，即所谓的“前缀调整（prefix-tuning）”或“提示调整（prompt tuning）”。 语言模型GPT-2和GPT-3是提示工程的重要步骤。"
+    }
+  },
+  {
+    "term": "chain-of-thought prompting",
+    "source_id": "chain-of-thought-prompting",
+    "source_display_text": "chain-of-thought prompting",
+    "definition": "A prompt engineering technique that encourages a large language model (LLM) to explain its reasoning, step by step. For example, consider the following prompt, paying particular attention to the second sentence:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Prompt engineering",
+      "en_url": "https://en.wikipedia.org/wiki/Prompt_engineering",
+      "zh_wiki_title": "提示工程",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8F%90%E7%A4%BA%E5%B7%A5%E7%A8%8B",
+      "zh_extract_full": "提示工程（英语：Prompt engineering）是人工智能中的一个概念，特别是自然语言处理（NLP）。 在提示工程中，任务的描述会被嵌入到输入中。例如，不是隐含地给予模型一定的参数，而是以问题的形式直接输入。 提示工程的典型工作方式是将一个或多个任务转换为基于提示的数据集，并通过所谓的“基于提示的学习（prompt-based learning）”来训练语言模型。 提示工程可以从一个大型的“冻结”预训练语言模型开始工作，其中只学习了提示的表示方法，即所谓的“前缀调整（prefix-tuning）”或“提示调整（prompt tuning）”。 语言模型GPT-2和GPT-3是提示工程的重要步骤。"
+    }
+  },
+  {
+    "term": "temperature (sampling)",
+    "source_id": "temperature",
+    "source_display_text": "temperature",
+    "definition": "A hyperparameter that controls the degree of randomness of a model's output. Higher temperatures result in more random output, while lower temperatures result in less random output.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "perplexity",
+    "source_id": "perplexity",
+    "source_display_text": "perplexity",
+    "definition": "One measure of how well a model is accomplishing its task. For example, suppose your task is to read the first few letters of a word a user is typing on a phone keyboard, and to offer a list of possible completion words. Perplexity, P, for this task is approximately the number of guesses you need to offer in order for your list to contain the actual word the user is trying to type.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"perplexity\" -> en:\"Perplexity\" -> zh:\"困惑度\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+    }
+  },
+  {
+    "term": "precision",
+    "source_id": "precision",
+    "source_display_text": "precision",
+    "definition": "A metric for classification models that answers the following question:",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: precision (machine learning), precision, precision (file format)"
+    }
+  },
+  {
+    "term": "recall",
+    "source_id": "recall",
+    "source_display_text": "recall",
+    "definition": "A metric for classification models that answers the following question:",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: recall (machine learning), recall, recall (file format)"
+    }
+  },
+  {
+    "term": "accuracy",
+    "source_id": "accuracy",
+    "source_display_text": "accuracy",
+    "definition": "The number of correct classification predictions divided by the total number of predictions. That is:",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "confusion matrix",
+    "source_id": "confusion-matrix",
+    "source_display_text": "confusion matrix",
+    "definition": "An NxN table that summarizes the number of correct and incorrect predictions that a classification model made. For example, consider the following confusion matrix for a binary classification model:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Confusion matrix",
+      "en_url": "https://en.wikipedia.org/wiki/Confusion_matrix",
+      "zh_wiki_title": "混淆矩阵",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%B7%B7%E6%B7%86%E7%9F%A9%E9%98%B5",
+      "zh_extract_full": "在机器学习领域和统计分类问题中，混淆矩阵（英语：confusion matrix）是可视化工具，特别用于监督学习，在无监督学习一般叫做匹配矩阵。矩阵的每一列代表一个类的实例预测，而每一行表示一个实际的类的实例。之所以如此命名，是因为通过这个矩阵可以方便地看出机器是否将两个不同的类混淆了（比如说把一个类错当成了另一个）。 混淆矩阵（也称误差矩阵）是一种特殊的, 具有两个维度的（实际和预测）列联表（英语：contingency table），并且两维度中都有着一样的类别的集合。"
+    }
+  },
+  {
+    "term": "ROC curve",
+    "source_id": "roc-receiver-operating-characteristic-curve",
+    "source_display_text": "ROC (receiver operating characteristic) Curve",
+    "definition": "A graph of true positive rate versus false positive rate for different classification thresholds in binary classification.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Receiver operating characteristic",
+      "en_url": "https://en.wikipedia.org/wiki/Receiver_operating_characteristic",
+      "zh_wiki_title": "ROC曲线",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/ROC%E6%9B%B2%E7%BA%BF",
+      "zh_extract_full": "在信号检测理论中，接收者操作特征曲线，或者叫ROC曲线（英语：Receiver operating characteristic curve），是一种坐标图式的分析工具，用于选择最佳的信号侦测模型、舍弃次佳的模型或者在同一模型中设定最佳阈值。 在做决策时，ROC分析能不受成本／效益的影响，给出客观中立的建议。 ROC曲线首先是由二战中的电子工程师和雷达工程师发明的，用来侦测战场上的敌军载具（飞机、船舰），也就是信号检测理论。之后很快就被引入了心理学来进行信号的知觉检测。数十年来，ROC分析被用于医学、无线电、生物学、犯罪心理学领域中，而且最近在机器学习（machine learning）和数据挖掘（data mining）领域也得到了很好的发展。"
+    }
+  },
+  {
+    "term": "AUC",
+    "source_id": "auc-area-under-the-roc-curve",
+    "source_display_text": "AUC (Area under the ROC curve)",
+    "definition": "A number between 0.0 and 1.0 representing a binary classification model's ability to separate positive classes from negative classes. The closer the AUC is to 1.0, the better the model's ability to separate classes from each other.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: AUC (machine learning), AUC, area under the roc curve, AUC (file format)"
+    }
+  },
+  {
+    "term": "mAP@k",
+    "source_id": "mean-average-precision-at-k-mapk",
+    "source_display_text": "mean average precision at k (mAP@k)",
+    "definition": "The statistical mean of all average precision at k scores across a validation dataset. One use of mean average precision at k is to judge the quality of recommendations generated by a recommendation system.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: mAP@k (machine learning), mAP@k, mean average precision at k, mAP@k (file format)"
+    }
+  },
+  {
+    "term": "true positive rate (TPR)",
+    "source_id": "true-positive-rate-tpr",
+    "source_display_text": "true positive rate (TPR)",
+    "definition": "Synonym for recall. That is:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Sensitivity and specificity",
+      "en_url": "https://en.wikipedia.org/wiki/Sensitivity_and_specificity",
+      "zh_wiki_title": "靈敏度和特異度",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%9D%88%E6%95%8F%E5%BA%A6%E5%92%8C%E7%89%B9%E7%95%B0%E5%BA%A6",
+      "zh_extract_full": "灵敏度和特异度（英语：Sensitivity and specificity），或称敏感性和特异性，是从数学角度描述某种病症检验的准确性，在医学中广为使用。 灵敏度（Sensitivity，也称为真阳性率、召回率（Recall） ）是指实际为阳性的样本中，判断为阳性的比例（例如真正有生病的人中，被判断为有生病者的比例），计算方式是真阳性除以真阳性+假阴性（实际为阳性，但判断为阴性）的比值。 特异度（Specificity，也称为真阴性率）是指实际为阴性的样本中，判断为阴性的比例（例如真正未生病的人中，被医院判断为未生病者的比例），计算方式是真阴性除以真阴性+假阳性（实际为阴性，但判断为阳性）的比值。 必须注意的是“阳性”与“阴性”这两个词并不指涉固定的值，仅是表示存在或不存在，当使用在不同主题时，其意义不会相同。例如应用在讨论疾病时，“阳性”可以表示“染病”，“阴性”可以表示“健康”。 包括医学诊断检验的许多测试中，灵敏度是指真阳性没有被忽视的程度（所以伪阴性很少），而特异度是真阴性确实鉴别的程度（所以伪阳性很少）。因此，一个高灵敏度的检验很少忽略真阳性（例如：即使有异常仍然检验为无异常）；而高特异度检验则很少将不是检验目标的其他东西鉴别为阳性（例如：检验出一种非常相似的细菌却将其误判为目标细菌）。一个高灵敏度且高特异度的检验表示其两方面都做得好，所以这个检验“很少忽略它正在寻找的目标并且很少将其他东西误判为目标。” 灵敏度可以作为避免假阴性的量化指标，而特异度可以作为避免假阳性的量化指标。对于任何测试而言，都需要在灵敏度及特异度之间进行取舍。例如机场安检中对于登机人员是否有携带危险物品的检查，扫描器可能会在检查到像皮带头或锁匙等低危险物品时触发（低特异度），但会减少实际携带了危险物品，但没有检查到的可能性（高灵敏度）。这个取舍可以用ROC曲线（接收者操作特征曲线）来表示。完美的分类器可以达到100%的灵敏度（所有生病的人都会检测为生病），及100%的特异度（没有一个健康不生病的人会被检测为生病）。但是理论上所有的分类器都会有最小的误差范围，称为贝叶斯错误率。"
+    }
+  },
+  {
+    "term": "false positive rate (FPR)",
+    "source_id": "false-positive-rate-fpr",
+    "source_display_text": "false positive rate (FPR)",
+    "definition": "The proportion of actual negative examples for which the model mistakenly predicted the positive class. The following formula calculates the false positive rate:",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"false positive rate\" resolved to English Wikipedia article \"False positive rate\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "R-squared",
+    "source_id": "r-squared",
+    "source_display_text": "R-squared",
+    "definition": "A regression metric indicating how much variation in a label is due to an individual feature or to a feature set. R-squared is a value between 0 and 1, which you can interpret as follows:",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Coefficient of determination",
+      "en_url": "https://en.wikipedia.org/wiki/Coefficient_of_determination",
+      "zh_wiki_title": "决定系数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%86%B3%E5%AE%9A%E7%B3%BB%E6%95%B0",
+      "zh_extract_full": "决定系数，或称判定系数（英语：Coefficient of determination，记为R2），在统计学中用于度量因变量的变异中可由自变量解释部分所占的比例，以此来判断回归模型的解释力。 对于简单线性回归而言，决定系数为样本相关系数的平方。当加入其他回归自变量后，决定系数相应地变为多重相关系数的平方。 假设一数据集包括y1,...,yn共n个观察值，相对应的模型预测值分别为f1,...,fn。定义残差ei = yi − fi，平均观察值为 y ¯ = 1 n ∑ i = 1 n y i . {\\displaystyle {\\bar {y}}={\\frac {1}{n}}\\sum _{i=1}^{n}y_{i}.} 于是可以得到总平方和 S S tot = ∑ i ( y i − y ¯ ) 2 , {\\displaystyle SS_{\\text{tot}}=\\sum _{i}(y_{i}-{\\bar {y}})^{2},} 残差平方和 S S res = ∑ i ( y i − f i ) 2 = ∑ i e i 2 {\\displaystyle SS_{\\text{res}}=\\sum _{i}(y_{i}-f_{i})^{2}=\\sum _{i}e_{i}^{2}\\,} 由此，决定系数可定义为 R 2 ≡ 1 − S S r e s S S t o t . {\\displaystyle R^{2}\\equiv 1-{SS_{\\rm {res}} \\over SS_{\\rm {tot}}}.\\,}"
+    }
+  },
+  {
+    "term": "Gini impurity",
+    "source_id": "gini-impurity",
+    "source_display_text": "gini impurity",
+    "definition": "A metric similar to entropy. Splitters use values derived from either gini impurity or entropy to compose conditions for classification decision trees. Information gain is derived from entropy. No universally accepted equivalent term for the metric derived from gini impurity exists; however, this unnamed metric is just as important as information gain.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "information gain",
+    "source_id": "information-gain",
+    "source_display_text": "information gain",
+    "definition": "In decision forests, the difference between a node's entropy and the weighted (by number of examples) sum of the entropy of its children nodes. A node's entropy is the entropy of the examples in that node.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "entropy",
+    "source_id": "entropy",
+    "source_display_text": "entropy",
+    "definition": "In information theory, a description of how unpredictable a probability distribution is. Alternatively, entropy is also defined as how much information each example contains. A distribution has the highest possible entropy when all values of a random variable are equally likely.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Entropy (information theory)",
+      "en_url": "https://en.wikipedia.org/wiki/Entropy_(information_theory)",
+      "zh_wiki_title": "熵 (信息论)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%86%B5_(%E4%BF%A1%E6%81%AF%E8%AE%BA)",
+      "zh_extract_full": "在信息论中，熵（英语：entropy，又称信息熵、信源熵、平均自信息量）是接收的每条消息中包含的信息的平均量。这里的“消息”代表来自分布或数据流中的事件、样本或特征。（熵最好理解为不确定性的量度而不是确定性的量度，因为越随机的信源的熵越大。）来自信源的另一个特征是样本的概率分布。这里的想法是，比较不可能发生的事情，当它发生了，会提供更多的信息。由于一些其他的原因，把信息（熵）定义为概率分布的对数的相反数是有道理的。事件的概率分布和每个事件的信息量构成了一个随机变量，这个随机变量的均值（即期望）就是这个分布产生的信息量的平均值（即熵）。熵的单位通常为比特，但也用Sh、nat、Hart计量，取决于定义用到对数的底。 采用概率分布的对数作为信息的量度的原因是其可加性。例如，投掷一次硬币提供了1 Sh的信息，而掷m次就为m位。更一般地，你需要用log2(n)位来表示一个可以取n个值的变量。 在1948年，克劳德·艾尔伍德·香农将热力学的熵，引入到信息论，因此它又被称为香农熵（Shannon entropy）。"
+    }
+  },
+  {
+    "term": "decision threshold",
+    "source_id": "decision-threshold",
+    "source_display_text": "decision threshold",
+    "definition": "Synonym for classification threshold.",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: decision threshold (machine learning), decision threshold"
+    }
+  },
+  {
+    "term": "Bayesian neural network",
+    "source_id": "bayesian-neural-network",
+    "source_display_text": "Bayesian neural network",
+    "definition": "A probabilistic neural network that accounts for uncertainty in weights and outputs. A standard neural network regression model typically predicts a scalar value; for example, a standard model predicts a house price of 853,000. In contrast, a Bayesian neural network predicts a distribution of values; for example, a Bayesian model predicts a house price of 853,000 with a standard deviation of 67,200.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "Bayesian optimization",
+    "source_id": "bayesian-optimization",
+    "source_display_text": "Bayesian optimization",
+    "definition": "A probabilistic regression model technique for optimizing computationally expensive objective functions by instead optimizing a surrogate that quantifies the uncertainty using a Bayesian learning technique. Since Bayesian optimization is itself very expensive, it is usually used to optimize expensive-to-evaluate tasks that have a small number of parameters, such as selecting hyperparameters.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Bayesian optimization",
+      "en_url": "https://en.wikipedia.org/wiki/Bayesian_optimization",
+      "zh_wiki_title": "贝叶斯优化",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%B4%9D%E5%8F%B6%E6%96%AF%E4%BC%98%E5%8C%96",
+      "zh_extract_full": "贝叶斯优化是一种用于对黑盒函数进行全局优化的序贯设计策略，它不假定任何函数形式。该方法通常用于优化代价高昂、难以评估的函数。随着21世纪人工智能的兴起，贝叶斯优化算法在机器学习问题中获得了显著应用，常用于超参数优化（hyperparameter values）。"
+    }
+  },
+  {
+    "term": "prior",
+    "source_id": "prior-belief",
+    "source_display_text": "prior belief",
+    "definition": "What you believe about the data before you begin training on it. For example, L2 regularization relies on a prior belief that weights should be small and normally distributed around zero.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Prior probability",
+      "en_url": "https://en.wikipedia.org/wiki/Prior_probability",
+      "zh_wiki_title": "先验概率",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%85%88%E9%AA%8C%E6%A6%82%E7%8E%87",
+      "zh_extract_full": "在贝叶斯统计中，某一不确定量p的先验概率（英语：Prior probability）分布是在考虑“观测数据”前，能表达p不确定性的概率分布。它旨在描述这个不确定量的不确定程度，而不是这个不确定量的随机性。这个不确定量可以是一个参数，或者是一个隐含变量（latent variable）。依据应用领域的不同，先验概率又叫做先验概率、先验概率、事前先验概率、居先概率。 在使用贝叶斯定理时，我们通过将先验概率与似然函数相乘，随后标准化，来得到后验概率分布，也就是给出某数据，该不确定量的条件分布。 先验概率通常是主观的猜测，为了使计算后验概率方便，有时候会选择共轭先验。如果后验概率和先验概率是同一族的，则认为它们是共轭分布，这个先验概率就是对应于似然函数的共轭先验。"
+    }
+  },
+  {
+    "term": "CDF",
+    "source_id": "cumulative-distribution-function-cdf",
+    "source_display_text": "cumulative distribution function (CDF)",
+    "definition": "A function that defines the frequency of samples less than or equal to a target value. For example, consider a normal distribution of continuous values. A CDF tells you that approximately 50% of samples should be less than or equal to the mean and that approximately 84% of samples should be less than or equal to one standard deviation above the mean.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Cumulative distribution function",
+      "en_url": "https://en.wikipedia.org/wiki/Cumulative_distribution_function",
+      "zh_wiki_title": "累积分布函数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%B4%AF%E7%A7%AF%E5%88%86%E5%B8%83%E5%87%BD%E6%95%B0",
+      "zh_extract_full": "累积分布函数（英语：cumulative distribution function，CDF）或概率分布函数，简称分布函数，是概率密度函数的积分，能完整描述一个实随机变量 X {\\displaystyle X} 的概率分布。 所有基于实数的概率分布函数，无论离散或连续， 有且仅有唯一的向右单调递增的连续函数（即右连左极函数） F : R → [ 0 , 1 ] {\\displaystyle F\\colon \\mathbb {R} \\rightarrow [0,1]} , 且满足 lim x → − ∞ F ( x ) = 0 {\\displaystyle \\lim _{x\\rightarrow -\\infty }F(x)=0} 以及 lim x → ∞ F ( x ) = 1 {\\displaystyle \\lim _{x\\rightarrow \\infty }F(x)=1} 。 在标量连续分布的情况下，它给出了从负无穷到 x {\\displaystyle x} 的概率密度函数下的面积。 累积分布函数也用于指定多元随机变量的分布。"
+    }
+  },
+  {
+    "term": "PDF (probability density function)",
+    "source_id": "probability-density-function",
+    "source_display_text": "probability density function",
+    "definition": "A function that identifies the frequency of data samples having exactly a particular value. When a dataset's values are continuous floating-point numbers, exact matches rarely occur. However, integrating a probability density function from value x to value y yields the expected frequency of data samples between x and y.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Probability density function",
+      "en_url": "https://en.wikipedia.org/wiki/Probability_density_function",
+      "zh_wiki_title": "機率密度函數",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A9%9F%E7%8E%87%E5%AF%86%E5%BA%A6%E5%87%BD%E6%95%B8",
+      "zh_extract_full": "概率密度函数（Probability density function，简写作PDF ，在不致于混淆时可简称为密度函数）是描述随机变量的输出值，在某个确定的取值点附近的可能性的函数。图中，横轴为随机变量的取值，纵轴为概率密度函数的值，而随机变量的取值落在某个区域内的概率为概率密度函数在这个区域上的积分。当概率密度函数存在的时候，累积分布函数是概率密度函数的积分。概率密度函数有时也被称为概率分布函数，但这种称法可能会和累积分布函数(CDF)或概率质量函数(PMF)混淆。一般来说，PMF 用于离散随机变量（在可数集上取值的随机变量），而 PDF 用于连续随机变量。"
+    }
+  },
+  {
+    "term": "outlier detection",
+    "source_id": "outlier-detection",
+    "source_display_text": "outlier detection",
+    "definition": "The process of identifying outliers in a training set.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"outlier detection\" -> en:\"Anomaly detection\" -> zh:\"异常检测\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+    }
+  },
+  {
+    "term": "feature vector",
+    "source_id": "feature-vector",
+    "source_display_text": "feature vector",
+    "definition": "The array of feature values comprising an example. The feature vector is input during training and during inference. For example, the feature vector for a model with two discrete features might be:",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "dimensionality reduction",
+    "source_id": "dimension-reduction",
+    "source_display_text": "dimension reduction",
+    "definition": "Decreasing the number of dimensions used to represent a particular feature in a feature vector, typically by converting to an embedding vector.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Dimensionality reduction",
+      "en_url": "https://en.wikipedia.org/wiki/Dimensionality_reduction",
+      "zh_wiki_title": "降维",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%99%8D%E7%BB%B4",
+      "zh_extract_full": "在机器学习和统计学领域，降维（dimensionality reduction）是指在某些限定条件下，降低随机变量个数，得到一组“不相关”主变量的过程。 降维可进一步细分为变量选择和特征提取两大方法。"
+    }
+  },
+  {
+    "term": "inference",
+    "source_id": "inference",
+    "source_display_text": "inference",
+    "definition": "In traditional machine learning, the process of making predictions by applying a trained model to unlabeled examples. See Supervised Learning in the Intro to ML course to learn more.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "quantization",
+    "source_id": "quantization",
+    "source_display_text": "quantization",
+    "definition": "Overloaded term that could be used in any of the following ways:",
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: quantization (machine learning), quantization, quantization (file format)"
+    }
+  },
+  {
+    "term": "knowledge distillation",
+    "source_id": "distillation",
+    "source_display_text": "distillation",
+    "definition": "The process of reducing the size of one model (known as the teacher) into a smaller model (known as the student) that emulates the original model's predictions as faithfully as possible. Distillation is useful because the smaller model has two key benefits over the larger model (the teacher):",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Knowledge distillation",
+      "en_url": "https://en.wikipedia.org/wiki/Knowledge_distillation",
+      "zh_wiki_title": "知識蒸餾",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%9F%A5%E8%AD%98%E8%92%B8%E9%A4%BE",
+      "zh_extract_full": "知识蒸馏（knowledge distillation）是人工智能领域的一项模型训练技术。该技术透过类似于教师—学生的方式，令规模较小、结构较为简单的人工智能模型从已经经过充足训练的大型、复杂模型身上学习其掌握的知识。该技术可以让小型简单模型快速有效学习到大型复杂模型透过漫长训练才能得到的结果，从而改善模型的效率、减少运算开销，因此亦被称为模型蒸馏（model distillation）。"
+    }
+  },
+  {
+    "term": "oversampling",
+    "source_id": "oversampling",
+    "source_display_text": "oversampling",
+    "definition": "Reusing the examples of a minority class in a class-imbalanced dataset in order to create a more balanced training set.",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "downsampling",
+    "source_id": "downsampling",
+    "source_display_text": "downsampling",
+    "definition": "Overloaded term that can mean either of the following:",
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+    }
+  },
+  {
+    "term": "selection bias",
+    "source_id": "selection-bias",
+    "source_display_text": "selection bias",
+    "definition": "Errors in conclusions drawn from sampled data due to a selection process that generates systematic differences between samples observed in the data and those not observed. The following forms of selection bias exist:",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"selection bias\" resolved to English Wikipedia article \"Selection bias\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "confirmation bias",
+    "source_id": "confirmation-bias",
+    "source_display_text": "confirmation bias",
+    "definition": "The tendency to search for, interpret, favor, and recall information in a way that confirms one's pre-existing beliefs or hypotheses. Machine learning developers may inadvertently collect or label data in ways that influence an outcome supporting their existing beliefs. Confirmation bias is a form of implicit bias.",
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Confirmation bias",
+      "en_url": "https://en.wikipedia.org/wiki/Confirmation_bias",
+      "zh_wiki_title": "確認偏誤",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%A2%BA%E8%AA%8D%E5%81%8F%E8%AA%A4",
+      "zh_extract_full": "确认偏误（或称确认偏差、证实偏差、肯证偏误、验证偏误、验证性偏见、我方偏见，英语：Confirmation bias）是个人选择性地回忆、搜集有利细节，忽略不利或矛盾的信息，来支持自己已有的想法或假设的趋势，属于认知偏误的其中一类以及归纳推理中的一个系统性错误。当人们选择性收集或回忆信息时，又或带有偏见地解读信息时，他们便展现了确认偏误。 这种偏见尤其显见于带有强烈情绪的问题和传统观念上。例如，人们面对情伤，大多难以割舍，会在反复的情绪中来回摆荡挣扎，过程中不断回顾并对自己给予合理的解释与交代，直到身心得到平衡安顿为止。另外，经常进行相似的操作，也容易产生确认偏误，人们常会因为熟悉有关行动而过于自满，甚至忽略当前的重要信息；飞行员出现确认偏误即是导致空难的成因之一。"
+    }
+  }
+]

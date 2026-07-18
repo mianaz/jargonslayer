@@ -1,0 +1,555 @@
+{
+  "id": "bioinformatics-edam",
+  "name": "生物信息学术语（EDAM Ontology）",
+  "description": "生物信息学常用操作、数据类型、文件格式与研究主题术语，取自 EDAM Ontology。中文释义来自对应中文维基百科条目导言（非机器翻译），部分术语未找到可信中文维基条目，暂缺中文释义。",
+  "version": "1.25",
+  "expressions": [],
+  "terms": [
+    {
+      "term": "FASTA",
+      "type": "acronym",
+      "gloss_en": "FASTA format including NCBI-style IDs.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "FASTQ",
+      "type": "acronym",
+      "gloss_en": "FASTQ short read format ignoring quality scores.",
+      "gloss_zh": "FASTQ格式是一种保存生物序列及其测序质量得分信息的文本格式",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "SAM",
+      "type": "acronym",
+      "gloss_en": "Sequence Alignment/Map (SAM) format for alignment of nucleotide sequences (e.g. sequencing reads) to (a) reference sequence(s). May contain base-call and alignment qualities and…",
+      "gloss_zh": "SAM是生物信息学中一种用于储存已比对到基因组上的序列信息的文件格式",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "BAM",
+      "type": "acronym",
+      "gloss_en": "BAM format, the binary, BGZF-formatted compressed version of SAM format for alignment of nucleotide sequences (e.g. sequencing reads) to (a) reference sequence(s). May contain…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "CRAM",
+      "type": "acronym",
+      "gloss_en": "Reference-based compression of alignment format",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "VCF",
+      "type": "acronym",
+      "gloss_en": "Variant Call Format (VCF) for sequence variation (indels, polymorphisms, structural variation).",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "GFF3",
+      "type": "acronym",
+      "gloss_en": "Generic Feature Format version 3 (GFF3) of sequence features.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "GTF",
+      "type": "acronym",
+      "gloss_en": "Gene Transfer Format (GTF), a restricted version of GFF.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "BED",
+      "type": "acronym",
+      "gloss_en": "Browser Extensible Data (BED) format of sequence annotation track, typically to be displayed in a genome browser.",
+      "gloss_zh": "BED（Browser Extensible Data，字面意思是“浏览器可延展数据”）是一种基因组学中用于表示…",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "PDB",
+      "type": "acronym",
+      "gloss_en": "Entry format of PDB database in PDB format.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "mmCIF",
+      "type": "acronym",
+      "gloss_en": "Entry format of PDB database in mmCIF format.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "HDF5",
+      "type": "acronym",
+      "gloss_en": "HDF5 is a data model, library, and file format for storing and managing data, based on Hierarchical Data Format (HDF).",
+      "gloss_zh": "层级数据格式是设计用来存储和组织大量数据的一组文件格式",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "MAF",
+      "type": "acronym",
+      "gloss_en": "Multiple Alignment Format (MAF) supporting alignments of whole genomes with rearrangements, directions, multiple pieces to the alignment, and so forth.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Newick format",
+      "type": "tech",
+      "gloss_en": "Phylogenetic tree Newick (text) format.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "ClustalW format",
+      "type": "tech",
+      "gloss_en": "ClustalW format for (aligned) sequences.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "PLINK PED/MAP",
+      "type": "tech",
+      "gloss_en": "The PED/MAP file describes data used by the Plink package.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "K-mer countgraph",
+      "type": "tech",
+      "gloss_en": "A list of k-mers and their occurences in a dataset. Can also be used as an implicit De Bruijn graph.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence alignment",
+      "type": "tech",
+      "gloss_en": "Alignment of multiple molecular sequences.",
+      "gloss_zh": "序列比对指将两个或多个序列排列在一起，标明其相似之处",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Multiple sequence alignment",
+      "type": "tech",
+      "gloss_en": "Align more than two molecular sequences.",
+      "gloss_zh": "多重序列比对是对三个以上的生物学序列，如蛋白质序列、DNA序列或RNA序列所作的序列比对",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Phylogenetic tree",
+      "type": "tech",
+      "gloss_en": "The raw data (not just an image) from which a phylogenetic tree is directly generated or plotted, such as topology, lengths (in time or in expected amounts of variance) and a…",
+      "gloss_zh": "系统发生树又称为种系发生树、亲缘关系树，或演化树，是一种呈现不同物种或是同物种不同族群的个体之间亲缘关系的树状图",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Gene expression",
+      "type": "tech",
+      "gloss_en": "The analysis of levels and patterns of synthesis of gene products (proteins and functional RNA) including interpretation in functional terms of gene expression data.",
+      "gloss_zh": "基因表达又称基因表现，是用基因中的信息来合成基因产物的过程",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence assembly",
+      "type": "tech",
+      "gloss_en": "An assembly of fragments of a (typically genomic) DNA sequence.",
+      "gloss_zh": "序列组装是生物信息学中的一种分析方法",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Codon usage table",
+      "type": "tech",
+      "gloss_en": "Table of codon usage data calculated from one or more nucleic acid sequences.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Nucleic acid sequence",
+      "type": "tech",
+      "gloss_en": "One or more nucleic acid sequences, possibly with associated annotation.",
+      "gloss_zh": "核酸序列是指核酸结构中的含氮碱基，共有四种，分别为A、T、C、G，并且有无穷尽的线性排列组合来表达基因…",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Protein sequence",
+      "type": "tech",
+      "gloss_en": "One or more protein sequences, possibly with associated annotation.",
+      "gloss_zh": "蛋白质一级结构是肽或蛋白质中氨基酸的线性序列，即氨基酸序列",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Genome assembly",
+      "type": "tech",
+      "gloss_en": "The process of assembling many short DNA sequences together such thay they represent the original chromosomes from which the DNA originated.",
+      "gloss_zh": "序列组装是生物信息学中的一种分析方法",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Variant calling",
+      "type": "tech",
+      "gloss_en": "Detect, identify and map mutations, such as single nucleotide polymorphisms, short indels and structural variants, in multiple DNA sequences. Typically the alignment and…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Gene expression profiling",
+      "type": "tech",
+      "gloss_en": "The measurement of the activity (expression) of multiple genes in a cell, tissue, sample etc., in order to get an impression of biological function.",
+      "gloss_zh": "基因表达谱是一种在分子生物学领域，借助cDNA、表达序列标签或寡核苷酸芯片来测定细胞基因表达情况的方法",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Differential gene expression analysis",
+      "type": "tech",
+      "gloss_en": "Identify from molecular sequence analysis (typically from analysis of microarray or RNA-seq data) genes whose expression levels are significantly different between two sample…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Phylogenetic inference",
+      "type": "tech",
+      "gloss_en": "Construct a phylogenetic tree.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Phylogenetic reconstruction",
+      "type": "tech",
+      "gloss_en": "Reconstructing the inner node labels of a phylogenetic tree from its leafes.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Read mapping",
+      "type": "tech",
+      "gloss_en": "Align short oligonucleotide sequences (reads) to a larger (genomic) sequence.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence trimming",
+      "type": "tech",
+      "gloss_en": "Cut (remove) the end from a molecular sequence.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence clustering",
+      "type": "tech",
+      "gloss_en": "Build clusters of similar sequences, typically using scores from pair-wise alignment or other comparison of the sequences.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Structure prediction",
+      "type": "tech",
+      "gloss_en": "The prediction of molecular structure, including the prediction, modelling, recognition or design of protein secondary or tertiary structure or other structural features, and the…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Protein structure prediction",
+      "type": "tech",
+      "gloss_en": "Predict tertiary structure (backbone and side-chain conformation) of protein sequences.",
+      "gloss_zh": "蛋白质结构预测是指从蛋白质的氨基酸序列中预测蛋白质的三维结构",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Homology modelling",
+      "type": "tech",
+      "gloss_en": "Build a three-dimensional protein model based on known (for example homologs) structures.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Molecular docking",
+      "type": "tech",
+      "gloss_en": "Model the structure of a protein in complex with a small molecule or another macromolecule.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Gene set enrichment analysis",
+      "type": "tech",
+      "gloss_en": "Identify classes of genes or proteins that are over or under-represented in a large set of genes or proteins. For example analysis of a set of genes corresponding to a gene…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Enrichment analysis",
+      "type": "tech",
+      "gloss_en": "Analysis of a set of objects, such as genes, annotated with given categories, where eventual over-/under-representation of certain categories within the studied set of objects is…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Structural variation detection",
+      "type": "tech",
+      "gloss_en": "Detect large regions in a genome subject to copy-number variation, or other structural variations in genome(s).",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Copy number variation detection",
+      "type": "tech",
+      "gloss_en": "Identify where sections of the genome are repeated and the number of repeats in the genome varies between individuals.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Genotyping",
+      "type": "tech",
+      "gloss_en": "Analyse DNA sequence data to identify differences between the genetic composition (genotype) of an individual compared to other individual's or a reference sequence.",
+      "gloss_zh": "基因型分型又称基因分型，是利用生物检定法检测某一个体DNA序列的过程，同时可将目标序列比对另一个体序列或参考序列…",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Peak calling",
+      "type": "tech",
+      "gloss_en": "Identify putative protein-binding regions in a genome sequence from analysis of Chip-sequencing data or ChIP-on-chip data.",
+      "gloss_zh": "Peak calling是一种用于鉴定经染色质免疫沉淀-测序或MeDIP-测序实验后所得到的比对读段富集在基因组哪些区域…",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence motif discovery",
+      "type": "tech",
+      "gloss_en": "Discover new motifs or conserved patterns in sequences or sequence alignments (de-novo discovery).",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "PCR primer design",
+      "type": "tech",
+      "gloss_en": "Design or predict oligonucleotide primers for PCR and DNA amplification etc.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Local alignment",
+      "type": "tech",
+      "gloss_en": "Locally align two or more molecular sequences.",
+      "gloss_zh": "史密斯-沃特曼算法是一种进行局部序列比对的算法，用于找出两个核苷酸序列或蛋白质序列之间的相似区域",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Global alignment",
+      "type": "tech",
+      "gloss_en": "Globally align two or more molecular sequences.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence similarity search",
+      "type": "tech",
+      "gloss_en": "Search a sequence database and retrieve sequences that are similar to a query sequence.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence database search",
+      "type": "tech",
+      "gloss_en": "Search a sequence database by sequence comparison and retrieve similar sequences. sequences matching a given sequence motif or pattern, such as a Prosite pattern or regular…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Taxonomic classification",
+      "type": "tech",
+      "gloss_en": "The full name for a group of organisms, reflecting their biological classification and (usually) conforming to a standard nomenclature.",
+      "gloss_zh": "生物分类学简称分类学，是关于生物个体的鉴定、归类和命名的原理和方法的学科；此三要件间有相互依存的关系",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Scaffolding",
+      "type": "tech",
+      "gloss_en": "Link together a non-contiguous series of genomic sequences into a scaffold, consisting of sequences separated by gaps of known length. The sequences that are linked are typically…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "K-mer counting",
+      "type": "tech",
+      "gloss_en": "Count k-mers (substrings of length k) in DNA sequence data.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence read processing",
+      "type": "tech",
+      "gloss_en": "The processing of reads from high-throughput sequencing machines.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "SNP detection",
+      "type": "tech",
+      "gloss_en": "Find single nucleotide polymorphisms (SNPs) - single nucleotide change in base positions - between sequences. Typically done for sequences from a high-throughput sequencing…",
+      "gloss_zh": "单核苷酸多态性是在同一物种不同个体的基因组DNA中的等位序列上，因同一特定位点的单个核苷酸变异所引起的DNA序列多态性",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Variant effect prediction",
+      "type": "tech",
+      "gloss_en": "Predict the effect of point mutation on a protein structure, in terms of strucural effects and protein folding, stability and function.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Variant classification",
+      "type": "tech",
+      "gloss_en": "Classify variants based on their potential effect on genes, especially functional effects on the expressed proteins.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Variant prioritisation",
+      "type": "tech",
+      "gloss_en": "Identify biologically interesting variants by prioritizing individual variants, for example, homozygous variants absent in control genomes.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Genomics",
+      "type": "other",
+      "gloss_en": "Whole genomes of one or more organisms, or genomes in general, such as meta-information on genomes, genome projects, gene names etc.",
+      "gloss_zh": "基因组学，或基因体学，是研究生物基因组和如何利用基因的一门学科",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Proteomics",
+      "type": "other",
+      "gloss_en": "Protein and peptide identification, especially in the study of whole proteomes of organisms.",
+      "gloss_zh": "蛋白质组学，是对蛋白质特别是其结构和功能的大规模研究，是在90年代初期，由马克·威尔金斯和学者们首先提出的新名词",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Transcriptomics",
+      "type": "other",
+      "gloss_en": "The analysis of transcriptomes, or a set of all the RNA molecules in a specific cell, tissue etc.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Metabolomics",
+      "type": "other",
+      "gloss_en": "The systematic study of metabolites, the chemical processes they are involved, and the chemical fingerprints of specific cellular processes in a whole cell, tissue, organ or…",
+      "gloss_zh": "代谢物组学是涉及代谢产物、小分子底物、中间体和细胞代谢产物的化学过程的科学研究",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Metagenomics",
+      "type": "other",
+      "gloss_en": "The study of genetic material recovered from environmental samples, and associated environmental data.",
+      "gloss_zh": "宏基因组学，又译元基因组学、总体基因体学，是一门直接取得环境中所有遗传物质的研究",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Phylogenetics",
+      "type": "other",
+      "gloss_en": "The study of evolutionary relationships amongst organisms from analysis of genetic information (typically gene or protein sequences).",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Phylogeny",
+      "type": "other",
+      "gloss_en": "The study of evolutionary relationships amongst organisms.",
+      "gloss_zh": "系统发生树又称为种系发生树、亲缘关系树，或演化树，是一种呈现不同物种或是同物种不同族群的个体之间亲缘关系的树状图",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Sequence analysis",
+      "type": "other",
+      "gloss_en": "Analyse one or more known molecular sequences.",
+      "gloss_zh": "序列分析是指通过一定的方法确定DNA上核苷酸排列的顺序，包括序列比对",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Genotype and phenotype",
+      "type": "other",
+      "gloss_en": "The study of genetic constitution of a living entity, such as an individual, and organism, a cell and so on, typically with respect to a particular observable phenotypic traits,…",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Structural biology",
+      "type": "other",
+      "gloss_en": "The molecular structure of biological molecules, particularly macromolecules such as proteins and nucleic acids.",
+      "gloss_zh": "结构生物学是分子生物学、生物化学和生物物理学的分支学科，其研究涉及生物大分子的三级结构、它们是如何获得它们的结构…",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Molecular interactions, pathways and networks",
+      "type": "other",
+      "gloss_en": "Molecular interactions, biological pathways, networks and other models.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Epigenomics",
+      "type": "other",
+      "gloss_en": "The study of the epigenetic modifications of a whole cell, tissue, organism etc.",
+      "gloss_zh": "表观基因组学是对细胞遗传物质上所有表观遗传修饰的研究",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Systems biology",
+      "type": "other",
+      "gloss_en": "The holistic modelling and analysis of complex biological systems and the interactions therein.",
+      "gloss_zh": "系统生物学，是一个使用整体论的方式， 整合不同学科、层次的信息，以研究、分析、理解生物系统如何行使功能的学术领域",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Population genomics",
+      "type": "other",
+      "gloss_en": "Large-scale study (typically comparison) of DNA sequences of populations.",
+      "gloss_zh": "群体基因组学 是大规模地比较群体的DNA序列",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "RNA-Seq",
+      "type": "tech",
+      "gloss_en": "A topic concerning high-throughput sequencing of cDNA to measure the RNA content (transcriptome) of a sample, for example, to investigate how different alleles of a gene are…",
+      "gloss_zh": "RNA测序或核糖核酸测序，是指分析特定RNA片段的碱基序列，也就是腺嘌呤、尿嘧啶、胞嘧啶、鸟嘌呤的排列方式",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "ChIP-seq",
+      "type": "tech",
+      "gloss_en": "The analysis of protein-DNA interactions where chromatin immunoprecipitation (ChIP) is used in combination with massively parallel DNA sequencing to identify the binding sites of…",
+      "gloss_zh": "染色质免疫沉淀-测序被用于分析蛋白质与DNA的交互作用",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Whole genome sequencing",
+      "type": "tech",
+      "gloss_en": "Laboratory technique to sequence the complete DNA sequence of an organism's genome at a single time.",
+      "gloss_zh": "全基因组测序或基因组测序，是利用高通量测序技术，检测并获得细胞或组织中全部基因组序列的方法…",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "Exome sequencing",
+      "type": "tech",
+      "gloss_en": "Laboratory technique to sequence all the protein-coding regions in a genome, i.e., the exome.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    },
+    {
+      "term": "DNA polymorphism",
+      "type": "other",
+      "gloss_en": "DNA polymorphism.",
+      "gloss_zh": "暂无中文释义",
+      "pack": "bioinformatics-edam"
+    }
+  ],
+  "license": "CC BY-SA 4.0",
+  "source": "EDAM Ontology (https://edamontology.org)",
+  "sourceUrl": "https://raw.githubusercontent.com/edamontology/edamontology/master/releases/EDAM.tsv",
+  "sourceVersion": "1.25",
+  "citation": "Ison, J. et al. EDAM: an ontology of bioinformatics operations, types of data, topics, and formats. Bioinformatics 29(10), 2013.",
+  "compiledAt": "2026-07-18",
+  "glossZhNote": "gloss_zh is enriched per-term via enrich-zh.mjs — follows this entry's derived English Wikipedia title (EDAM itself has no Chinese gloss and no wikilink of its own) to its Chinese Wikipedia interwiki counterpart and uses that article's lead paragraph, real human-written CC BY-SA text, never a machine translation. Terms with no confident match keep the placeholder \"暂无中文释义\"; see provenance's per-term zh.status field (and the task report for terms flagged as too ambiguous to auto-resolve safely)."
+}

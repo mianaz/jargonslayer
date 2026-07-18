@@ -1,0 +1,977 @@
+[
+  {
+    "term": "FASTA",
+    "edam_label": "FASTA",
+    "edam_id": "http://edamontology.org/format_1929",
+    "definition": "FASTA format including NCBI-style IDs.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"FASTA\" resolved to English Wikipedia article \"FASTA\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "FASTQ",
+    "edam_label": "FASTQ",
+    "edam_id": "http://edamontology.org/format_1930",
+    "definition": "FASTQ short read format ignoring quality scores.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "FASTQ format",
+      "en_url": "https://en.wikipedia.org/wiki/FASTQ_format",
+      "zh_wiki_title": "FASTQ格式",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/FASTQ%E6%A0%BC%E5%BC%8F",
+      "zh_extract_full": "FASTQ格式是一种保存生物序列（通常为核酸序列）及其测序质量得分信息的文本格式。序列与质量得分皆由单个ASCII字符表示。 该格式最初由维尔康姆基金会桑格研究所开发，旨在将FASTA格式序列及其质量数据集成在一起。而目前，FASTQ格式已经成为了保存高通量测序结果的事实标准。"
+    }
+  },
+  {
+    "term": "SAM",
+    "edam_label": "SAM",
+    "edam_id": "http://edamontology.org/format_2573",
+    "definition": "Sequence Alignment/Map (SAM) format for alignment of nucleotide sequences (e.g. sequencing reads) to (a) reference sequence(s). May contain base-call and alignment qualities and other data.|The format supports short and long reads (up to 128Mbp) produced by different sequencing platforms and is used to hold mapped data within the GATK and across the Broad Institute, the Sanger Centre, and throughout the 1000 Genomes project.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "SAM (file format)",
+      "en_url": "https://en.wikipedia.org/wiki/SAM_(file_format)",
+      "zh_wiki_title": "SAM格式",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/SAM%E6%A0%BC%E5%BC%8F",
+      "zh_extract_full": "SAM（Sequence Alignment Map，可直译为“序列比对地图”）是生物信息学中一种用于储存已比对到基因组上的序列信息的文件格式。SAM格式是在千人基因组计划期间由李恒等人为了取代过去的MAQ格式开发出来的。SAM这一名称是参与这一项目的犹他大学教授加博尔·马思决定的。他在现在的SAM格式开发出来以前就开发出了一种同名的结构文件，不过当时他开发的SAM格式更接近于BLAST算法的输出结果。现在SAM格式已成为学界与工业界都广泛接受的生物信息学格式之一，经过数次修正之后，目前的SAM格式甚至也可以储存没有比对到基因组上的序列信息。SAM格式不仅可以储存第二代测序中的短长度序列的比对信息，也可以储存长至128MB的长序列的比对信息。 SAM格式压缩后以二进制格式表示产生的文件称为BAM格式（Binary Alignment Map）。"
+    }
+  },
+  {
+    "term": "BAM",
+    "edam_label": "BAM",
+    "edam_id": "http://edamontology.org/format_2572",
+    "definition": "BAM format, the binary, BGZF-formatted compressed version of SAM format for alignment of nucleotide sequences (e.g. sequencing reads) to (a) reference sequence(s). May contain base-call and alignment qualities and other data.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"BAM (file format)\" resolved to English Wikipedia article \"BAM (file format)\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "CRAM",
+    "edam_label": "CRAM",
+    "edam_id": "http://edamontology.org/format_3462",
+    "definition": "Reference-based compression of alignment format",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"CRAM (file format)\" resolved to English Wikipedia article \"CRAM (file format)\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "VCF",
+    "edam_label": "VCF",
+    "edam_id": "http://edamontology.org/format_3016",
+    "definition": "Variant Call Format (VCF) for sequence variation (indels, polymorphisms, structural variation).",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"VCF (file format)\" resolved to English Wikipedia article \"Variant Call Format\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "GFF3",
+    "edam_label": "GFF3",
+    "edam_id": "http://edamontology.org/format_1975",
+    "definition": "Generic Feature Format version 3 (GFF3) of sequence features.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"GFF3\" resolved to English Wikipedia article \"General feature format\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "GTF",
+    "edam_label": "GTF",
+    "edam_id": "http://edamontology.org/format_2306",
+    "definition": "Gene Transfer Format (GTF), a restricted version of GFF.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: GTF (machine learning), GTF, GTF (file format)"
+    }
+  },
+  {
+    "term": "BED",
+    "edam_label": "BED",
+    "edam_id": "http://edamontology.org/format_3003",
+    "definition": "Browser Extensible Data (BED) format of sequence annotation track, typically to be displayed in a genome browser.|BED detail format includes 2 additional columns (http://genome.ucsc.edu/FAQ/FAQformat#format1.7) and BED 15 includes 3 additional columns for experiment scores (http://genomewiki.ucsc.edu/index.php/Microarray_track).",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "BED (file format)",
+      "en_url": "https://en.wikipedia.org/wiki/BED_(file_format)",
+      "zh_wiki_title": "BED (文件格式)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/BED_(%E6%96%87%E4%BB%B6%E6%A0%BC%E5%BC%8F)",
+      "zh_extract_full": "BED（Browser Extensible Data，字面意思是“（基因组）浏览器可延展数据”）是一种基因组学中用于表示、标记基因组区域位置信息中的文件格式，于人类基因组计划中首次出现。BED文件是目前基因组学事实上的标准格式之一。"
+    }
+  },
+  {
+    "term": "PDB",
+    "edam_label": "PDB",
+    "edam_id": "http://edamontology.org/format_1476",
+    "definition": "Entry format of PDB database in PDB format.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: PDB (machine learning), PDB, PDB (file format)"
+    }
+  },
+  {
+    "term": "mmCIF",
+    "edam_label": "mmCIF",
+    "edam_id": "http://edamontology.org/format_1477",
+    "definition": "Entry format of PDB database in mmCIF format.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"mmCIF\" resolved to English Wikipedia article \"Macromolecular Crystallographic Information File\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "HDF5",
+    "edam_label": "HDF5",
+    "edam_id": "http://edamontology.org/format_3590",
+    "definition": "HDF5 is a data model, library, and file format for storing and managing data, based on Hierarchical Data Format (HDF).|HDF5 is the new version, according to the HDF group, a completely different technology (https://support.hdfgroup.org/products/hdf4/ compared to HDF.|An HDF5 file appears to the user as a directed graph. The nodes of this graph are the higher-level HDF5 objects that are exposed by the HDF5 APIs: Groups, Datasets, Named datatypes. Currently supported by the Python MDTraj package.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Hierarchical Data Format",
+      "en_url": "https://en.wikipedia.org/wiki/Hierarchical_Data_Format",
+      "zh_wiki_title": "HDF",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/HDF",
+      "zh_extract_full": "层级数据格式（Hierarchical Data Format：HDF）是设计用来存储和组织大量数据的一组文件格式（HDF4，HDF5）。它最初开发于美国国家超级计算应用中心，现在由非营利社团HDF Group支持，其任务是确保HDF5技术的持续开发和存储在HDF中数据的持续可访问性。 伴随着这个目标，HDF库和相关工具可在自由的类BSD许可证下获得用于一般使用。HDF被很多商业和非商业软件平台所支持，包括Java、MATLAB、Scilab、Octave、Mathematica、IDL、Python、R、Fortran和Julia。可免费获得的HDF发行中包括了库，命令行实用程序，测试包源代码，Java接口，和基于Java的HDF查看器（HDFView）。 当前版本是HDF5，在设计和API上与主要的遗留版本HDF4有显著区别。"
+    }
+  },
+  {
+    "term": "MAF",
+    "edam_label": "MAF",
+    "edam_id": "http://edamontology.org/format_3008",
+    "definition": "Multiple Alignment Format (MAF) supporting alignments of whole genomes with rearrangements, directions, multiple pieces to the alignment, and so forth.|Typically generated by Multiz and TBA aligners; can be displayed in a genome browser like a sequence annotation track. This should not be confused with MIRA Assembly Format or Mutation Annotation Format.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: MAF (machine learning), MAF, MAF (file format)"
+    }
+  },
+  {
+    "term": "Newick format",
+    "edam_label": "newick",
+    "edam_id": "http://edamontology.org/format_1910",
+    "definition": "Phylogenetic tree Newick (text) format.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Newick format\" resolved to English Wikipedia article \"Newick format\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "ClustalW format",
+    "edam_label": "ClustalW format",
+    "edam_id": "http://edamontology.org/format_1982",
+    "definition": "ClustalW format for (aligned) sequences.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: ClustalW format (machine learning), ClustalW format"
+    }
+  },
+  {
+    "term": "PLINK PED/MAP",
+    "edam_label": "PED/MAP",
+    "edam_id": "http://edamontology.org/format_3288",
+    "definition": "The PED/MAP file describes data used by the Plink package.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: PLINK PED/MAP (machine learning), PLINK PED/MAP, PED/MAP"
+    }
+  },
+  {
+    "term": "K-mer countgraph",
+    "edam_label": "K-mer countgraph",
+    "edam_id": "http://edamontology.org/format_3665",
+    "definition": "A list of k-mers and their occurences in a dataset. Can also be used as an implicit De Bruijn graph.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: K-mer countgraph (machine learning), K-mer countgraph, K mer countgraph"
+    }
+  },
+  {
+    "term": "Sequence alignment",
+    "edam_label": "Sequence alignment",
+    "edam_id": "http://edamontology.org/data_0863",
+    "definition": "Alignment of multiple molecular sequences.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Sequence alignment",
+      "en_url": "https://en.wikipedia.org/wiki/Sequence_alignment",
+      "zh_wiki_title": "序列比對",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BA%8F%E5%88%97%E6%AF%94%E5%B0%8D",
+      "zh_extract_full": "序列比对指将两个或多个序列排列在一起，标明其相似之处。序列中可以插入间隔（通常用短横线“-”表示）。对应的相同或相似的符号（在核酸中是A, T(或U), C, G，在蛋白质中是氨基酸残基的单字母表示）排列在同一列上。 tcctctgcctctgccatcat---caaccccaaagt |||| ||| ||||| ||||| |||||||||||| tcctgtgcatctgcaatcatgggcaaccccaaagt 这一方法常用于研究由共同祖先进化而来的序列，特别是如蛋白质序列或DNA序列等生物序列。在比对中，错配与突变相应，而空位与插入或缺失对应。序列比对还可用于语言进化或文本间相似性之类的研究。 术语“序列比对”也指构建上述比对或在潜在的不相关序列的数据库中寻找significant alignments。"
+    }
+  },
+  {
+    "term": "Multiple sequence alignment",
+    "edam_label": "Multiple sequence alignment",
+    "edam_id": "http://edamontology.org/operation_0492",
+    "definition": "Align more than two molecular sequences.|This includes methods that use an existing alignment, for example to incorporate sequences into an alignment, or combine several multiple alignments into a single, improved alignment.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Multiple sequence alignment",
+      "en_url": "https://en.wikipedia.org/wiki/Multiple_sequence_alignment",
+      "zh_wiki_title": "多重序列比對",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%A4%9A%E9%87%8D%E5%BA%8F%E5%88%97%E6%AF%94%E5%B0%8D",
+      "zh_extract_full": "多重序列比对（Multiple sequence alignment；MSA）是对三个以上的生物学序列（biological sequence），如蛋白质序列、DNA序列或RNA序列所作的序列比对。一般来说，是输入一组假定拥有演化关系的序列。从MSA的结果可推导出序列的同源性，而种系发生关系也可引导出这些序列共同的演化始祖。如右图般的视觉化叙述可描绘出各种突变事件，例如点突变的单格变化，或是如删除突变与插入突变，可使各个序列之间产生鸿沟。MSA常用来研究序列的保守性，或是蛋白质结构域的三级结构与二级结构，甚至是个别的氨基酸或核苷酸。"
+    }
+  },
+  {
+    "term": "Phylogenetic tree",
+    "edam_label": "Phylogenetic tree",
+    "edam_id": "http://edamontology.org/data_0872",
+    "definition": "The raw data (not just an image) from which a phylogenetic tree is directly generated or plotted, such as topology, lengths (in time or in expected amounts of variance) and a confidence interval for each length.|A phylogenetic tree is usually constructed from a set of sequences from which an alignment (or data matrix) is calculated. See also 'Phylogenetic tree image'.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Phylogenetic tree",
+      "en_url": "https://en.wikipedia.org/wiki/Phylogenetic_tree",
+      "zh_wiki_title": "系統發生樹",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%B3%BB%E7%B5%B1%E7%99%BC%E7%94%9F%E6%A8%B9",
+      "zh_extract_full": "系统发生树（英语：phylogenetic tree）又称为种系发生树、亲缘关系树，或演化树（英语：evolutionary tree），是一种呈现不同物种或是同物种不同族群的个体之间亲缘关系的树状图。分析个体亲缘关系的学术领域称为系统发生学（phylogenetics），可应用于多个领域的研究，如支序分类学（cladistics）、流行病学（epidemiology），以及生态学（ecology）。地球上所有生命都是一个系统发生树的一部分，表明有共同的祖先。"
+    }
+  },
+  {
+    "term": "Gene expression",
+    "edam_label": "Gene expression",
+    "edam_id": "http://edamontology.org/topic_0203",
+    "definition": "The analysis of levels and patterns of synthesis of gene products (proteins and functional RNA) including interpretation in functional terms of gene expression data.|Gene expression levels are analysed by identifying, quantifying or comparing mRNA transcripts, for example using microarrays, RNA-seq, northern blots, gene-indexed expression profiles etc.|This includes the study of codon usage in nucleotide sequence(s), genetic codes and so on.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Gene expression",
+      "en_url": "https://en.wikipedia.org/wiki/Gene_expression",
+      "zh_wiki_title": "基因表現",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%9F%BA%E5%9B%A0%E8%A1%A8%E7%8F%BE",
+      "zh_extract_full": "基因表达（英语：gene expression）又称基因表现，是用基因中的信息来合成基因产物的过程。产物通常是蛋白质，但对于非蛋白质编码基因，如tRNA和小核RNA（snRNA），产物则是RNA。所有已知生物都通过基因表达来生成生命所需的高分子物质。 基因表达的过程可概分为：DNA转录、RNA剪接、RNA转译、蛋白质转译后修饰，这四大步骤。基因表达调控控制细胞的结构与功能，同时也是细胞分化、形态发生及生物体的多功能性和适应性的基础。不同的时间、不同的环境，以及不同部位的细胞，或是基因在细胞中的含量差异，皆可能使基因产生不同的表现。基因调节也可以作为进化变化的底物，因为基因表达的时间，位置和数量的控制可以对基因在细胞或多细胞生物体中的功能（作用）具有深远的影响。 在遗传学中，基因表达是基因型产生表现型（即可观察的性状）的最基本的层次。"
+    }
+  },
+  {
+    "term": "Sequence assembly",
+    "edam_label": "Sequence assembly",
+    "edam_id": "http://edamontology.org/data_0925",
+    "definition": "An assembly of fragments of a (typically genomic) DNA sequence.|Typically, an assembly is a collection of contigs (for example ESTs and genomic DNA fragments) that are ordered, aligned and merged. Annotation of the assembled sequence might be included.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Sequence assembly",
+      "en_url": "https://en.wikipedia.org/wiki/Sequence_assembly",
+      "zh_wiki_title": "序列組裝",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BA%8F%E5%88%97%E7%B5%84%E8%A3%9D",
+      "zh_extract_full": "序列组装（Sequence assembly）是生物信息学中的一种分析方法。此方法通过序列比对和序列合并等演算，将短片段的DNA建构成为较长的连续序列。此技术的创立，是因为被测序的核酸分子通常长度都远大于目前存在的DNA测序技术。而此分析能试图从有限长度的DNA测序结果，重建出原本被测序分子的样貌。 序列组装最常被使用在高通量测序数据的分析上（例如基因组霰弹枪测序，或者RNA转录体测序）。这一类的测序技术会产生大量的测序片段（read，复数reads），而这些片段的长度依照不同的技术，短为数十，长可至上万个碱基对（前者如因美纳（Illumina）的测序平台，后者如PacBio的SMRT-测序或奈米孔洞测序）。而序列组装旨在合并这些短片段来重建原本的分子序列。 我们可将序列组装想像成从大量片段的文字中拼凑出一整篇文章的过程：被测序的分子就是那篇文章，而测序片段就是那段文章中，随机切取出来的句子。其中一种重建出这段文章的方式，就是找到句子中重叠的部分，因为一旦找到够多重叠的部分，我们就有机会将每个句子连接到一起，进而得到原始的文章。不难想像，此过程的困难不仅仅在于需要进行大量的片段比对，还会因原本文章的复杂度而制造更多问题：例如原本的文章可能有许多重复的段落，而带有这些重复段落的文句可能会重叠在一起；又或者我们所拿到的句子中若有错别字，亦会增加寻找重叠片段的难度。同样的问题也同样存在于生物信息的序列组装分析里。"
+    }
+  },
+  {
+    "term": "Codon usage table",
+    "edam_label": "Codon usage table",
+    "edam_id": "http://edamontology.org/data_1597",
+    "definition": "Table of codon usage data calculated from one or more nucleic acid sequences.|A codon usage table might include the codon usage table name, optional comments and a table with columns for codons and corresponding codon usage data. A genetic code can be extracted from or represented by a codon usage table.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Codon usage table (machine learning), Codon usage table"
+    }
+  },
+  {
+    "term": "Nucleic acid sequence",
+    "edam_label": "Nucleic acid sequence",
+    "edam_id": "http://edamontology.org/data_2977",
+    "definition": "One or more nucleic acid sequences, possibly with associated annotation.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Nucleic acid sequence",
+      "en_url": "https://en.wikipedia.org/wiki/Nucleic_acid_sequence",
+      "zh_wiki_title": "核酸序列",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A0%B8%E9%85%B8%E5%BA%8F%E5%88%97",
+      "zh_extract_full": "核酸序列（英语：nucleic acid sequence）是指核酸结构中的含氮碱基，共有四种，分别为A（腺嘌呤）、T（胸腺嘧啶）、C（胞嘧啶）、G（鸟嘌呤），并且有无穷尽的线性排列组合来表达基因，而各个基因都具有独特的碱基序列。两个碱基形成一个碱基对，碱基对的配对规律是固定的，即A配对T，C配对G。三个相邻的碱基对形成一个密码子。一种密码子对应一种氨基酸，不同的氨基酸合成不同的蛋白质。在DNA的复制及蛋白质的合成过程中，碱基配对规律是十分关键的。 DNA的字母排列有A、C、G、T，(RNA则为A、U、C、G，详见RNA)。碱基对会无间隔的排列在一起，例如序列AAAGTCTGAC。任意长度大于4的一串核苷酸被称作一个序列。 关于它的生物功能，则依赖于上下文的序列，一个序列可能被正读，反读；包含编码或者无编码。DNA序列也可能包含非编码DNA。 核酸也具有二级结构和三级结构 。 一级结构有时被错误地称为一级序列。 相反，没有并行的二级或三级序列概念。"
+    }
+  },
+  {
+    "term": "Protein sequence",
+    "edam_label": "Protein sequence",
+    "edam_id": "http://edamontology.org/data_2976",
+    "definition": "One or more protein sequences, possibly with associated annotation.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Protein primary structure",
+      "en_url": "https://en.wikipedia.org/wiki/Protein_primary_structure",
+      "zh_wiki_title": "蛋白質一級結構",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%9B%8B%E7%99%BD%E8%B3%AA%E4%B8%80%E7%B4%9A%E7%B5%90%E6%A7%8B",
+      "zh_extract_full": "蛋白质一级结构（protein primary structure）是肽或蛋白质中氨基酸的线性序列，即氨基酸序列（amino acid sequence）。按照惯例，蛋白质的一级结构被报道从氨基末端（N）端到羧基末端（C）端。蛋白质生物合成最通常由细胞中的核糖体进行。肽也可以在实验室中合成。蛋白质一级结构可以直接进行蛋白质测序，或从DNA序列推断。 在生物化学里，生物分子的一级结构是其分子组成和分子间化学键结的精确模样。对于一典型的无分支、无交叉的生物聚合物（如DNA、RNA或典型的细胞内蛋白质等分子），其第一结构等同于描述其单体单位的序列，即如DNA序列和肽序列。“一级结构”这一名词在Linderstrom-Lang于1951年的Lane Medical Lectures上首次被提到。一级结构和一级序列有一点相似，即使在二级或三级结构中并没有平行的概念。"
+    }
+  },
+  {
+    "term": "Genome assembly",
+    "edam_label": "Genome assembly",
+    "edam_id": "http://edamontology.org/operation_0525",
+    "definition": "The process of assembling many short DNA sequences together such thay they represent the original chromosomes from which the DNA originated.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Sequence assembly",
+      "en_url": "https://en.wikipedia.org/wiki/Sequence_assembly",
+      "zh_wiki_title": "序列組裝",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BA%8F%E5%88%97%E7%B5%84%E8%A3%9D",
+      "zh_extract_full": "序列组装（Sequence assembly）是生物信息学中的一种分析方法。此方法通过序列比对和序列合并等演算，将短片段的DNA建构成为较长的连续序列。此技术的创立，是因为被测序的核酸分子通常长度都远大于目前存在的DNA测序技术。而此分析能试图从有限长度的DNA测序结果，重建出原本被测序分子的样貌。 序列组装最常被使用在高通量测序数据的分析上（例如基因组霰弹枪测序，或者RNA转录体测序）。这一类的测序技术会产生大量的测序片段（read，复数reads），而这些片段的长度依照不同的技术，短为数十，长可至上万个碱基对（前者如因美纳（Illumina）的测序平台，后者如PacBio的SMRT-测序或奈米孔洞测序）。而序列组装旨在合并这些短片段来重建原本的分子序列。 我们可将序列组装想像成从大量片段的文字中拼凑出一整篇文章的过程：被测序的分子就是那篇文章，而测序片段就是那段文章中，随机切取出来的句子。其中一种重建出这段文章的方式，就是找到句子中重叠的部分，因为一旦找到够多重叠的部分，我们就有机会将每个句子连接到一起，进而得到原始的文章。不难想像，此过程的困难不仅仅在于需要进行大量的片段比对，还会因原本文章的复杂度而制造更多问题：例如原本的文章可能有许多重复的段落，而带有这些重复段落的文句可能会重叠在一起；又或者我们所拿到的句子中若有错别字，亦会增加寻找重叠片段的难度。同样的问题也同样存在于生物信息的序列组装分析里。"
+    }
+  },
+  {
+    "term": "Variant calling",
+    "edam_label": "Variant calling",
+    "edam_id": "http://edamontology.org/operation_3227",
+    "definition": "Detect, identify and map mutations, such as single nucleotide polymorphisms, short indels and structural variants, in multiple DNA sequences. Typically the alignment and comparison of the fluorescent traces produced by DNA sequencing hardware, to study genomic alterations.|Somatic variant calling is the detection of variations established in somatic cells and hence not inherited as a germ line variant.|Variant detection|Methods often utilise a database of aligned reads.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Variant calling\" resolved to English Wikipedia article \"SNV calling from NGS data\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Gene expression profiling",
+    "edam_label": "Gene expression profiling",
+    "edam_id": "http://edamontology.org/operation_0314",
+    "definition": "The measurement of the activity (expression) of multiple genes in a cell, tissue, sample etc., in order to get an impression of biological function.|Gene expression profiling generates some sort of gene expression profile, for example from microarray data.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Gene expression profiling",
+      "en_url": "https://en.wikipedia.org/wiki/Gene_expression_profiling",
+      "zh_wiki_title": "基因表达谱",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%9F%BA%E5%9B%A0%E8%A1%A8%E8%BE%BE%E8%B0%B1",
+      "zh_extract_full": "基因表达谱是一种在分子生物学领域，借助cDNA、表达序列标签（EST）或寡核苷酸芯片来测定细胞基因表达情况（包括特定基因是否表达、表达丰度、不同组织、不同发育阶段以及不同生理状态下的表达差异）的方法。通过一次性测定大量基因构建起细胞功能的总体态势图，可以从图谱中区分出正在分裂的细胞，以及细胞对于特征性治疗的反应。基因表达谱还有助于了解疾病的发病机制、药物的生理反应和治疗效果。"
+    }
+  },
+  {
+    "term": "Differential gene expression analysis",
+    "edam_label": "Differential gene expression profiling",
+    "edam_id": "http://edamontology.org/operation_3223",
+    "definition": "Identify from molecular sequence analysis (typically from analysis of microarray or RNA-seq data) genes whose expression levels are significantly different between two sample groups.|Differential gene expression analysis is used, for example, to identify which genes are up-regulated (increased expression) or down-regulated (decreased expression) between a group treated with a drug and a control groups.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Differential gene expression analysis (machine learning), Differential gene expression analysis, Differential gene expression profiling"
+    }
+  },
+  {
+    "term": "Phylogenetic inference",
+    "edam_label": "Phylogenetic inference",
+    "edam_id": "http://edamontology.org/operation_0323",
+    "definition": "Construct a phylogenetic tree.|Phylogenetic trees are usually constructed from a set of sequences from which an alignment (or data matrix) is calculated.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Phylogenetic inference\" resolved to English Wikipedia article \"Computational phylogenetics\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Phylogenetic reconstruction",
+    "edam_label": "Phylogenetic reconstruction",
+    "edam_id": "http://edamontology.org/operation_3478",
+    "definition": "Reconstructing the inner node labels of a phylogenetic tree from its leafes.|Note that this is somewhat different from simply analysing an existing tree or constructing a completely new one.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Phylogenetic reconstruction (machine learning), Phylogenetic reconstruction"
+    }
+  },
+  {
+    "term": "Read mapping",
+    "edam_label": "Read mapping",
+    "edam_id": "http://edamontology.org/operation_3198",
+    "definition": "Align short oligonucleotide sequences (reads) to a larger (genomic) sequence.|The purpose of read mapping is to identify the location of sequenced fragments within a reference genome and assumes that there is, in fact, at least local similarity between the fragment and reference sequences.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Read mapping (machine learning), Read mapping"
+    }
+  },
+  {
+    "term": "Sequence trimming",
+    "edam_label": "Sequence trimming",
+    "edam_id": "http://edamontology.org/operation_3192",
+    "definition": "Cut (remove) the end from a molecular sequence.|This includes ennd trimming Trim sequences (typically from an automated DNA sequencer) to remove misleading ends. For example trim polyA tails, introns and primer sequence flanking the sequence of amplified exons, or other unwanted sequence. trimming to a reference sequence, Trim sequences (typically from an automated DNA sequencer) to remove the sequence ends that extend beyond an assembled reference sequence. vector trimming Trim sequences (typically from an automated DNA sequencer) to remove sequence-specific end regions, typically contamination from vector sequences.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Sequence trimming (machine learning), Sequence trimming"
+    }
+  },
+  {
+    "term": "Sequence clustering",
+    "edam_label": "Sequence clustering",
+    "edam_id": "http://edamontology.org/operation_0291",
+    "definition": "Build clusters of similar sequences, typically using scores from pair-wise alignment or other comparison of the sequences.|The clusters may be output or used internally for some other purpose.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Sequence clustering\" resolved to English Wikipedia article \"Sequence clustering\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Structure prediction",
+    "edam_label": "Structure prediction",
+    "edam_id": "http://edamontology.org/topic_0082",
+    "definition": "The prediction of molecular structure, including the prediction, modelling, recognition or design of protein secondary or tertiary structure or other structural features, and the folding of nucleic acid molecules and the prediction or design of nucleic acid (typically RNA) sequences with specific conformations.|This includes the recognition (prediction and assignment) of known protein structural domains or folds in protein sequence(s), for example by threading, or the alignment of molecular sequences to structures, structural (3D) profiles or templates (representing a structure or structure alignment).",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Structure prediction (machine learning), Structure prediction"
+    }
+  },
+  {
+    "term": "Protein structure prediction",
+    "edam_label": "Protein structure prediction",
+    "edam_id": "http://edamontology.org/operation_0474",
+    "definition": "Predict tertiary structure (backbone and side-chain conformation) of protein sequences.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Protein structure prediction",
+      "en_url": "https://en.wikipedia.org/wiki/Protein_structure_prediction",
+      "zh_wiki_title": "蛋白质结构预测",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%9B%8B%E7%99%BD%E8%B4%A8%E7%BB%93%E6%9E%84%E9%A2%84%E6%B5%8B",
+      "zh_extract_full": "蛋白质结构预测（英语：Protein structure prediction）是指从蛋白质的氨基酸序列中预测蛋白质的三维结构。也就是说，从蛋白质一级结构预测它的折叠和二级、三级、四级结构。结构预测与蛋白质设计的反问题有着根本的不同。蛋白质结构预测是生物信息学与理论化学所追求的最重要目标之一；它在医学上（例如，在药物设计）和在生物技术上（例如，新的酶的设计）都是非常重要的。每隔两年，当前蛋白质结构预测技术的性能在蛋白质结构预测技术的关键测试（CASP）实验中被评测。蛋白质结构预测的网络服务器连续的评测是由社区项目CAMEO3D执行。"
+    }
+  },
+  {
+    "term": "Homology modelling",
+    "edam_label": "Protein modelling",
+    "edam_id": "http://edamontology.org/operation_0477",
+    "definition": "Build a three-dimensional protein model based on known (for example homologs) structures.|The model might be of a whole, part or aspect of protein structure. Molecular modelling methods might use sequence-structure alignment, structural templates, molecular dynamics, energy minimisation etc.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Homology modelling\" resolved to English Wikipedia article \"Homology modeling\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Molecular docking",
+    "edam_label": "Molecular docking",
+    "edam_id": "http://edamontology.org/operation_0478",
+    "definition": "Model the structure of a protein in complex with a small molecule or another macromolecule.|This includes protein-protein interactions, protein-nucleic acid, protein-ligand binding etc. Methods might predict whether the molecules are likely to bind in vivo, their conformation when bound, the strength of the interaction, possible mutations to achieve bonding and so on.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Molecular docking\" resolved to English Wikipedia article \"Docking (molecular)\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Gene set enrichment analysis",
+    "edam_label": "Gene-set enrichment analysis",
+    "edam_id": "http://edamontology.org/operation_2436",
+    "definition": "Identify classes of genes or proteins that are over or under-represented in a large set of genes or proteins.  For example analysis of a set of genes corresponding to a gene expression profile, annotated with Gene Ontology (GO) concepts, where eventual over-/under-representation of certain GO concept within the studied set of genes is revealed.|The Gene Ontology (GO) is typically used, the input is a set of Gene IDs, and the output of the analysis is typically a ranked list of GO concepts, each associated with a p-value.|\"Gene set analysis\" (often used interchangeably or in an overlapping sense with \"gene-set enrichment analysis\") refers to the functional analysis (term enrichment) of a differentially expressed set of genes, rather than all genes analysed.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Gene set enrichment analysis\" resolved to English Wikipedia article \"Gene set enrichment analysis\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Enrichment analysis",
+    "edam_label": "Enrichment analysis",
+    "edam_id": "http://edamontology.org/operation_3501",
+    "definition": "Analysis of a set of objects, such as genes, annotated with given categories, where eventual over-/under-representation of certain categories within the studied set of objects is revealed.|Categories from a relevant ontology can be used. The input is typically a set of genes or other biological objects, possibly represented by their identifiers, and the output of the analysis is typically a ranked list of categories, each associated with a statistical metric of over-/under-representation within the studied data.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Enrichment analysis (machine learning), Enrichment analysis"
+    }
+  },
+  {
+    "term": "Structural variation detection",
+    "edam_label": "Structural variation detection",
+    "edam_id": "http://edamontology.org/operation_3228",
+    "definition": "Detect large regions in a genome subject to copy-number variation, or other structural variations in genome(s).|Methods might involve analysis of whole-genome array comparative genome hybridisation or single-nucleotide polymorphism arrays, paired-end mapping of sequencing data, or from analysis of short reads from new sequencing technologies.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Structural variation detection (machine learning), Structural variation detection"
+    }
+  },
+  {
+    "term": "Copy number variation detection",
+    "edam_label": "Copy number variation detection",
+    "edam_id": "http://edamontology.org/operation_3961",
+    "definition": "Identify where sections of the genome are repeated and the number of repeats in the genome varies between individuals.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Copy number variation detection (machine learning), Copy number variation detection"
+    }
+  },
+  {
+    "term": "Genotyping",
+    "edam_label": "Genotyping",
+    "edam_id": "http://edamontology.org/operation_3196",
+    "definition": "Analyse DNA sequence data to identify differences between the genetic composition (genotype) of an individual compared to other individual's or a reference sequence.|Methods might consider cytogenetic analyses, copy number polymorphism (and calculate copy number calls for copy-number variation(CNV) regions), single nucleotide polymorphism (SNP), , rare copy number variation (CNV) identification, loss of heterozygosity data and so on.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Genotyping",
+      "en_url": "https://en.wikipedia.org/wiki/Genotyping",
+      "zh_wiki_title": "基因型分型",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%9F%BA%E5%9B%A0%E5%9E%8B%E5%88%86%E5%9E%8B",
+      "zh_extract_full": "基因型分型（英语：genotyping）又称基因分型，是利用生物检定法检测某一个体DNA序列的过程，同时可将目标序列比对另一个体序列或参考序列，来确定个体基因型差异；常用于显示该个体等位基因从其父母遗传而来的情况。通常，基因型分型利用DNA序列定义群体信息，而不涉及定义该个体的基因。 目前的基因型分型方法包括限制性片段长度多态性识别法（RFLPI）、多态随机扩增检测法（RAPD）、扩增片段长度多态性识别法（AFLPD）、聚合酶链式反应（PCR）、DNA测序、等位基因专有低核苷酸探针检测法探针检测法（英文：allele specific oligonucleotide (ASO) probes）以及基因微阵列混合法。基因型分型对于研究与疾病相关的基因和基因变体极其重要。但囿于目前技术，几乎所有的基因型分型都只能部分完成，每个个体仅有一小部分的基因型被分型。新的大规模DNA测序技术 保证未来我们可以获得全基因组基因分型。 基因型分型广泛用微生物。例如病毒与细菌 均可被基因型分型，由此我们通常可以追溯疾病暴发的源头，以更好的控制病原体的传播。 此领域常被命名为分子流行病学，并与法医学与微生物学息息相关。 对于人类的基因型分型亦有重要意义，例如，如需追溯某个体的遗传学父亲或母亲，只需十至二十段基因组区间即可（如单核苷酸多态性，英语：SNP）。相比于人类全基因组多达三十亿的核苷酸，这是极小的一部分。 当对转基因有机体进行基因型分型时，通常只需检测一段基因组区间即可。一个聚合酶链式反应常常足以完成转基因小鼠的分型，这对当今哺乳动物的医学实验极其重要。 常用的基因型分型算法和工具包括：GATK , Mach 等，其中适用于家族研究的工具包括FamLDCaller, LDIV 等。"
+    }
+  },
+  {
+    "term": "Peak calling",
+    "edam_label": "Peak calling",
+    "edam_id": "http://edamontology.org/operation_3222",
+    "definition": "Identify putative protein-binding regions in a genome sequence from analysis of Chip-sequencing data or ChIP-on-chip data.|Chip-sequencing combines chromatin immunoprecipitation (ChIP) with massively parallel DNA sequencing to generate a set of reads, which are aligned to a genome sequence.  The enriched areas contain the binding sites of DNA-associated proteins.  For example, a transcription factor binding site. ChIP-on-chip in contrast combines chromatin immunoprecipitation ('ChIP') with microarray ('chip').  \"Peak-pair calling\" is similar to \"Peak calling\" in the context of ChIP-exo.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Peak calling",
+      "en_url": "https://en.wikipedia.org/wiki/Peak_calling",
+      "zh_wiki_title": "Peak calling",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/Peak_calling",
+      "zh_extract_full": "Peak calling是一种用于鉴定经染色质免疫沉淀-测序或MeDIP-测序实验后所得到的比对读段富集在基因组哪些区域中的一种计算方法。当免疫沉淀的蛋白质是一种转录因子时，那么DNA的富集区域就是这种它的转录因子结合位点（TFBS）。主流的Peak calling软件有MACS等。 Peak calling可应用于转录组/外显组测序，亦可用于对MeRIP-测序或m6A-测序的RNA表观基因组测序数据进行分析；利用如exomePeak等的软件程序，可检测出转录后RNA修饰位点。"
+    }
+  },
+  {
+    "term": "Sequence motif discovery",
+    "edam_label": "Sequence motif discovery",
+    "edam_id": "http://edamontology.org/operation_0238",
+    "definition": "Discover new motifs or conserved patterns in sequences or sequence alignments (de-novo discovery).|Motifs and patterns might be conserved or over-represented (occur with improbable frequency).",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Sequence motif discovery (machine learning), Sequence motif discovery"
+    }
+  },
+  {
+    "term": "PCR primer design",
+    "edam_label": "PCR primer design",
+    "edam_id": "http://edamontology.org/operation_0308",
+    "definition": "Design or predict oligonucleotide primers for PCR and DNA amplification etc.|Primer design involves predicting or selecting primers that are specific to a provided PCR template. Primers can be designed with certain properties such as size of product desired, primer size etc. The output might be a minimal or overlapping primer set.|This includes predicting primers based on gene structure, promoters, exon-exon junctions, predicting primers that are conserved across multiple genomes or species, primers for for gene transcription profiling,  for genotyping polymorphisms, for example single nucleotide polymorphisms (SNPs),  for large scale sequencing, or for methylation PCRs.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: PCR primer design (machine learning), PCR primer design"
+    }
+  },
+  {
+    "term": "Local alignment",
+    "edam_label": "Local alignment",
+    "edam_id": "http://edamontology.org/operation_0495",
+    "definition": "Locally align two or more molecular sequences.|Local alignment methods identify regions of local similarity.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Smith–Waterman algorithm",
+      "en_url": "https://en.wikipedia.org/wiki/Smith%E2%80%93Waterman_algorithm",
+      "zh_wiki_title": "史密斯-沃特曼算法",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8F%B2%E5%AF%86%E6%96%AF-%E6%B2%83%E7%89%B9%E6%9B%BC%E7%AE%97%E6%B3%95",
+      "zh_extract_full": "史密斯-沃特曼算法（Smith-Waterman algorithm）是一种进行局部序列比对（相对于全局比对）的算法，用于找出两个核苷酸序列或蛋白质序列之间的相似区域。该算法的目的不是进行全序列的比对，而是找出两个序列中具有高相似度的片段。 该算法由坦普尔·史密斯和迈克尔·沃特曼于1981年提出。史密斯-沃特曼算法是尼德曼-翁施算法的一个变体，二者都是动态规划算法。这一算法的优势在于可以在给定的打分方法下找出两个序列的最优的局部比对（打分方法使用了置换矩阵和空位罚分）。该算法和尼德曼-翁施算法的主要区别在于该算法不存在负分（负分被替换为零），因此局部比对成为可能。回溯从分数最高的矩阵元素开始，直到遇到分数为零的元素停止。分数最高的局部比对结果在此过程中产生。在实际运用中，人们通常使用该算法的优化版本。"
+    }
+  },
+  {
+    "term": "Global alignment",
+    "edam_label": "Global alignment",
+    "edam_id": "http://edamontology.org/operation_0496",
+    "definition": "Globally align two or more molecular sequences.|Global alignment methods identify similarity across the entire length of the sequences.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Global alignment (machine learning), Global alignment"
+    }
+  },
+  {
+    "term": "Sequence similarity search",
+    "edam_label": "Sequence similarity search",
+    "edam_id": "http://edamontology.org/operation_0346",
+    "definition": "Search a sequence database and retrieve sequences that are similar to a query sequence.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic/wrong-scope, no better EN article known"
+    }
+  },
+  {
+    "term": "Sequence database search",
+    "edam_label": "Sequence database search",
+    "edam_id": "http://edamontology.org/operation_0338",
+    "definition": "Search a sequence database by sequence comparison and retrieve similar sequences. sequences matching a given sequence motif or pattern, such as a Prosite pattern or regular expression.|This excludes direct retrieval methods (e.g. the dbfetch program).",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Sequence database search (machine learning), Sequence database search"
+    }
+  },
+  {
+    "term": "Taxonomic classification",
+    "edam_label": "Taxonomic classification",
+    "edam_id": "http://edamontology.org/data_1872",
+    "definition": "The full name for a group of organisms, reflecting their biological classification and (usually) conforming to a standard nomenclature.|Name components correspond to levels in a taxonomic hierarchy (e.g. 'Genus', 'Species', etc.) Meta information such as a reference where the name was defined and a date might be included.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Taxonomy (biology)",
+      "en_url": "https://en.wikipedia.org/wiki/Taxonomy_(biology)",
+      "zh_wiki_title": "生物分类学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%94%9F%E7%89%A9%E5%88%86%E7%B1%BB%E5%AD%A6",
+      "zh_extract_full": "生物分类学（英语：biotaxonomy）简称分类学（taxonomy），是关于生物个体的鉴定（identification）、归类（classification）和命名（nomenclature）的原理和方法的学科；此三要件间有相互依存的关系。生物分类学范围包括：研究生物类群间的异同程度，阐明生物间的亲缘关系、演化过程和发展规律。 生物分类学是生物学最基础的学科之一，其历史可追溯至亚里士多德和泰奥弗拉斯托斯的动物和植物分类。18世纪卡尔·林奈创立了二名法和系统的分类阶元体系，奠定了现代分类学的基础。20世纪以来，演化生物学和分子系统学的发展深刻改变了分类学的理论与方法，支序系统学和分子系统发生学成为重建生物演化关系的主流手段。 要将生物分类，首先要知道生物与非生物的定义，但是我们似乎没有办法准确定义，以病毒来说，虽然可在其他生物体内寄生并复制，但在生物体外却没有一般生物的特征如制造或摄取营养，生殖等现象。又如引起疯牛病的朊粒（prion）可以造成感染却无DNA成分，一直以来，DNA被视为生命遗传物质，经由与RNA的转录转译过程，形成蛋白质，再进一步形成组成细胞的各个部分，如细胞膜、胞器等，而细胞则是我们长久以来所认为组成生命体的最小单位。"
+    }
+  },
+  {
+    "term": "Scaffolding",
+    "edam_label": "Scaffolding",
+    "edam_id": "http://edamontology.org/operation_3216",
+    "definition": "Link together a non-contiguous series of genomic sequences into a scaffold, consisting of sequences separated by gaps of known length.  The sequences that are linked are typically typically contigs; contiguous sequences corresponding to read overlaps.|Scaffold may be positioned along a chromosome physical map to create a \"golden path\".",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Scaffolding (bioinformatics)\" resolved to English Wikipedia article \"Scaffolding (bioinformatics)\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "K-mer counting",
+    "edam_label": "k-mer counting",
+    "edam_id": "http://edamontology.org/operation_3472",
+    "definition": "Count k-mers (substrings of length k) in DNA sequence data.|k-mer counting is used in genome and transcriptome assembly, metagenomic sequencing, and for error correction of sequence reads.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: K-mer counting (machine learning), K-mer counting, k mer counting"
+    }
+  },
+  {
+    "term": "Sequence read processing",
+    "edam_label": "Sequence read processing",
+    "edam_id": "http://edamontology.org/operation_3921",
+    "definition": "The processing of reads from high-throughput sequencing machines.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Sequence read processing (machine learning), Sequence read processing"
+    }
+  },
+  {
+    "term": "SNP detection",
+    "edam_label": "SNP detection",
+    "edam_id": "http://edamontology.org/operation_0484",
+    "definition": "Find single nucleotide polymorphisms (SNPs) - single nucleotide change in base positions - between sequences. Typically done for sequences from a high-throughput sequencing experiment that differ from a reference genome and which might, especially by reference to population frequency or functional data, indicate a polymorphism.|This includes functional SNPs for large-scale genotyping purposes, disease-associated non-synonymous SNPs etc.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Single-nucleotide polymorphism",
+      "en_url": "https://en.wikipedia.org/wiki/Single-nucleotide_polymorphism",
+      "zh_wiki_title": "單核苷酸多態性",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%96%AE%E6%A0%B8%E8%8B%B7%E9%85%B8%E5%A4%9A%E6%85%8B%E6%80%A7",
+      "zh_extract_full": "单核苷酸多态性（single-nucleotide polymorphism，SNP，读作/snɪp/）是在同一物种不同个体的基因组DNA中的等位序列上，因同一特定位点的单个核苷酸变异所引起的DNA序列多态性。SNP通常特指生殖细胞系的单核苷酸置换变异（germline substitution），此变异可通过遗传传递给后代，并成为群体中稳定的遗传多态性。 单核苷酸多态性（SNP）是DNA序列中单个核苷酸的置换导致的、且分布于种群中相当一部分个体（如：1%以上）中的基因多样性。此单个核苷酸置换包括转换（transition）、颠换（transversion）、缺失（deletion）和插入（insertion）等机制。例如，对于某种生物，同一位置基因组片段一部分为AAGCCTA，另一部分为AAGCTTA，则认为此处存在SNP、两种基因型属于等位基因。 几乎所有常见的SNP位点只有两个等位基因。单核苷酸态性（SNP）位点的分布是均匀的，在非编码区比在编码区更常见。一般来说，自然选择倾向于保留最益于遗传适应性的SNP位点。其他因素，如基因重组和突变率也可判断SNP位点的密度。 SNP的密度可以通过微卫星DNA进行预测。AT微卫星是SNP密度有效的检测方式，在SNP显著降低及较低GC含量的区域，AT出现大片重复。 在一个种群中，SNP可以以次要等位基因频率的形式体现，即那些等位基因频率很低的基因座。SNP等位基因的频率在不同人群中具有差异性，因此，常见于某地区或民族的SNP等位基因在其他的地区或民族则可能很少见。 DNA指纹图谱是指个体间的遗传变异（尤其是在基因组的非编码区），常被用于法医学。同时，这些遗传变异也构成了人体对疾病易感性的差异，以及疾病的严重程度及治疗效果的差异。例如，载脂蛋白E（APOE）的单碱基突变与阿尔兹海默病发生低风险相关。 人类遗传基因的各种差异，90%可归因于SNP引起的基因变异。在人类基因组中，每隔100至300个碱基就会存在一处SNP位点。每3个SNP位点中有2个会是胞嘧啶（C）和胸腺嘧啶（T）的相互转变。"
+    }
+  },
+  {
+    "term": "Variant effect prediction",
+    "edam_label": "Variant effect prediction",
+    "edam_id": "http://edamontology.org/operation_0331",
+    "definition": "Predict the effect of point mutation on a protein structure, in terms of strucural effects and protein folding, stability and function.|Protein SNP mapping maps and modesl the effects of single nucleotide polymorphisms (SNPs) on protein structure(s).  Methods might predict silent or pathological mutations.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Variant effect prediction (machine learning), Variant effect prediction"
+    }
+  },
+  {
+    "term": "Variant classification",
+    "edam_label": "Variant classification",
+    "edam_id": "http://edamontology.org/operation_3225",
+    "definition": "Classify variants based on their potential effect on genes, especially functional effects on the expressed proteins.|Variants are typically classified by their position (intronic, exonic, etc.) in a gene transcript and (for variants in coding exons) by their effect on the protein sequence (synonymous, non-synonymous, frameshifting, etc.)",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Variant classification (machine learning), Variant classification"
+    }
+  },
+  {
+    "term": "Variant prioritisation",
+    "edam_label": "Variant prioritisation",
+    "edam_id": "http://edamontology.org/operation_3226",
+    "definition": "Identify biologically interesting variants by prioritizing individual variants, for example, homozygous variants absent in control genomes.|Variant prioritisation can be used for example to produce a list of variants responsible for 'knocking out' genes in specific genomes. Methods amino acid substitution, aggregative approaches, probabilistic approach, inheritance and unified likelihood-frameworks.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Variant prioritisation (machine learning), Variant prioritisation"
+    }
+  },
+  {
+    "term": "Genomics",
+    "edam_label": "Genomics",
+    "edam_id": "http://edamontology.org/topic_0622",
+    "definition": "Whole genomes of one or more organisms, or genomes in general, such as meta-information on genomes, genome projects, gene names etc.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Genomics",
+      "en_url": "https://en.wikipedia.org/wiki/Genomics",
+      "zh_wiki_title": "基因組學",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%9F%BA%E5%9B%A0%E7%B5%84%E5%AD%B8",
+      "zh_extract_full": "基因组学（英语：Genomics），或基因体学，是研究生物基因组和如何利用基因的一门学科。该学科提供基因组信息以及相关数据系统利用，试图解决生物，医学，和工业领域的重大问题。 基因组学能为一些疾病提供新的诊断、治疗方法。例如，对刚诊断为乳腺癌的女性，一个名为“Oncotype DX”的基因组测试，能用来评估病人乳腺癌复发的个体危险率以及化疗效果，这有助于医生获得更多的治疗信息并进行个性化医疗。基因组学还被用于食品与农业部门。 基因组学的主要工具和方法包括：生物信息学，遗传分析，基因表达测量和基因功能鉴定。"
+    }
+  },
+  {
+    "term": "Proteomics",
+    "edam_label": "Proteomics",
+    "edam_id": "http://edamontology.org/topic_0121",
+    "definition": "Protein and peptide identification, especially in the study of whole proteomes of organisms.|Includes metaproteomics: proteomics analysis of an environmental sample.|Proteomics includes any methods (especially high-throughput) that separate, characterize and identify expressed proteins such as mass spectrometry, two-dimensional gel electrophoresis and protein microarrays, as well as in-silico methods that perform proteolytic or mass calculations on a protein sequence and other analyses of protein production data, for example in different cells or tissues.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Proteomics",
+      "en_url": "https://en.wikipedia.org/wiki/Proteomics",
+      "zh_wiki_title": "蛋白质组学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%9B%8B%E7%99%BD%E8%B4%A8%E7%BB%84%E5%AD%A6",
+      "zh_extract_full": "蛋白质组学（英语：proteomics，又译作蛋白质体学），是对蛋白质特别是其结构和功能的大规模研究，是在90年代初期，由马克·威尔金斯(Marc Wikins)和学者们首先提出的新名词。更重要的是，基因组是相当稳定的实体，而蛋白质组通过与基因组的相互作用而不断发生着改变。一个生命体在其机体的不同部分以及生命周期的不同阶段，其蛋白表达可能存在巨大的差异。 蛋白质组是由有机体或系统产生或修饰的整套蛋白质。 这随着时间和细胞或有机体经历的不同要求或压力而变化。蛋白质组学是一个跨学科的领域，它从人类基因组计划的遗传信息中受益匪浅，它还涵盖了新兴的科学研究和从细胞内蛋白质组成，结构和其独特活动模式的整体水平探索蛋白质组学。它是功能基因组学的重要组成部分。 蛋白质组学研究的关键技术包括质谱分析、X射线晶体学、核磁共振和凝胶电泳。 有两种蛋白质组学方法：活体样品研究和重组蛋白合成。在第二种情形下，用遗传工程方法来克隆待合成的DNA模板，以及把这些基因剪切到宿主细胞（典型的是细菌）中，后者被培养用于大规模蛋白表达。 接着，被合成蛋白需要被从宿主细胞中提取和纯化。纯化的蛋白随后通过结晶（及X-射线晶体衍射）或核磁共振来确定其结构。"
+    }
+  },
+  {
+    "term": "Transcriptomics",
+    "edam_label": "Transcriptomics",
+    "edam_id": "http://edamontology.org/topic_3308",
+    "definition": "The analysis of transcriptomes, or a set of all the RNA molecules in a specific cell, tissue etc.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Transcriptomics\" resolved to English Wikipedia article \"Transcriptomics technologies\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Metabolomics",
+    "edam_label": "Metabolomics",
+    "edam_id": "http://edamontology.org/topic_3172",
+    "definition": "The systematic study of metabolites, the chemical processes they are involved, and the chemical fingerprints of specific cellular processes in a whole cell, tissue, organ or organism.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Metabolomics",
+      "en_url": "https://en.wikipedia.org/wiki/Metabolomics",
+      "zh_wiki_title": "代谢物组学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%BB%A3%E8%B0%A2%E7%89%A9%E7%BB%84%E5%AD%A6",
+      "zh_extract_full": "代谢物组学（英语：metabolomics）是涉及代谢产物、小分子底物、中间体和细胞代谢产物的化学过程的科学研究。具体而言，代谢物组学是“对特定的细胞过程遗留下的特殊化学指纹的系统研究”，即对其它们的小分子代谢产物的整体研究。代谢物组(Metabolome)定义为在一个生物细胞，组织，器官或生物体中所有的代谢产物的集合，它们是细胞过程的最终产物。因此，当信使RNA(mRNA)、基因表达的数据、和蛋白质组学分析揭示了细胞中产生的一组基因产物，这些数据代表了细胞功能的一个方面。 相反，代谢分析可以提供该细胞生理学的即时快照， 因此，代谢组学提供了生物体的直接“生理状态的功能读数”。 代谢物组和其他细胞整体（基因组、转录组、蛋白质组、和脂类组）之间确实存在可量化的相关性，可用于预测生物样品中代谢物的丰度，例如 mRNA 丰度。 系统生物学的终极挑战之一是将代谢物组学与所有其他组学信息整合起来，以更好地理解细胞生物学。"
+    }
+  },
+  {
+    "term": "Metagenomics",
+    "edam_label": "Metagenomics",
+    "edam_id": "http://edamontology.org/topic_3174",
+    "definition": "The study of genetic material recovered from environmental samples, and associated environmental data.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Metagenomics",
+      "en_url": "https://en.wikipedia.org/wiki/Metagenomics",
+      "zh_wiki_title": "宏基因组学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%AE%8F%E5%9F%BA%E5%9B%A0%E7%BB%84%E5%AD%A6",
+      "zh_extract_full": "宏基因组学（英语：Metagenomics），又译元基因组学、总体基因体学，是一门直接取得环境中所有遗传物质的研究。由该研究的领域广泛，也可称为环境基因体学、生态基因体学或群落基因体学。在早期研究中，微生物基因体必须将环境基因即DNA或RNA克隆进入大肠杆菌体内，并利用复制选殖的方式，借此分析在自然环境中复制选殖特定基因(通常为16S rRNA)的多样性。但是，结果表明绝大多数的微生物的生物多样性已在基于依靠复制选殖的方法中而所被遗漏。最近的研究使用“霰弹枪”或PCR定向测序用以获得来自所有样本社区中的所有成员的所有基因的大部分无偏差的样本基因。而归因于其能够揭示以前隐藏的微生物多样性，宏基因组学为观察微生物世界提供了一个强大的视角，很有可能因此彻底改变对整个生命世界的理解。此外，随着DNA测序的价格不断下降，宏基因组学现在允许微生物生态学以相较此前更大的规模和细节进行调查。"
+    }
+  },
+  {
+    "term": "Phylogenetics",
+    "edam_label": "Phylogenetics",
+    "edam_id": "http://edamontology.org/topic_3293",
+    "definition": "The study of evolutionary relationships amongst organisms from analysis of genetic information (typically gene or protein sequences).",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Phylogenetics\" -> en:\"Phylogenetics\" -> zh:\"系统发生学\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+    }
+  },
+  {
+    "term": "Phylogeny",
+    "edam_label": "Phylogeny",
+    "edam_id": "http://edamontology.org/topic_0084",
+    "definition": "The study of evolutionary relationships amongst organisms.|This includes diverse phylogenetic methods, including phylogenetic tree construction, typically from molecular sequence or morphological data, methods that simulate DNA sequence evolution, a phylogenetic tree or the underlying data, or which estimate or use molecular clock and stratigraphic (age) data, methods for studying gene evolution etc.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Phylogenetic tree",
+      "en_url": "https://en.wikipedia.org/wiki/Phylogenetic_tree",
+      "zh_wiki_title": "系統發生樹",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%B3%BB%E7%B5%B1%E7%99%BC%E7%94%9F%E6%A8%B9",
+      "zh_extract_full": "系统发生树（英语：phylogenetic tree）又称为种系发生树、亲缘关系树，或演化树（英语：evolutionary tree），是一种呈现不同物种或是同物种不同族群的个体之间亲缘关系的树状图。分析个体亲缘关系的学术领域称为系统发生学（phylogenetics），可应用于多个领域的研究，如支序分类学（cladistics）、流行病学（epidemiology），以及生态学（ecology）。地球上所有生命都是一个系统发生树的一部分，表明有共同的祖先。"
+    }
+  },
+  {
+    "term": "Sequence analysis",
+    "edam_label": "Sequence analysis",
+    "edam_id": "http://edamontology.org/operation_2403",
+    "definition": "Analyse one or more known molecular sequences.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Sequence analysis",
+      "en_url": "https://en.wikipedia.org/wiki/Sequence_analysis",
+      "zh_wiki_title": "序列分析",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BA%8F%E5%88%97%E5%88%86%E6%9E%90",
+      "zh_extract_full": "序列分析是指通过一定的方法确定DNA上核苷酸排列的顺序，包括序列比对。序列分析是分子生物学的重要技术之一。"
+    }
+  },
+  {
+    "term": "Genotype and phenotype",
+    "edam_label": "Genotype and phenotype",
+    "edam_id": "http://edamontology.org/topic_0625",
+    "definition": "The study of genetic constitution of a living entity, such as an individual, and organism, a cell and so on, typically with respect to a particular observable phenotypic traits, or resources concerning such traits, which might be an aspect of biochemistry, physiology, morphology, anatomy, development and so on.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Genotype and phenotype\" resolved to English Wikipedia article \"Genotype–phenotype distinction\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "Structural biology",
+    "edam_label": "Structural biology",
+    "edam_id": "http://edamontology.org/topic_1317",
+    "definition": "The molecular structure of biological molecules, particularly macromolecules such as proteins and nucleic acids.|This includes experimental methods for biomolecular structure determination, such as X-ray crystallography, nuclear magnetic resonance (NMR), circular dichroism (CD) spectroscopy, microscopy etc., including the assignment or modelling of molecular structure from such data.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Structural biology",
+      "en_url": "https://en.wikipedia.org/wiki/Structural_biology",
+      "zh_wiki_title": "结构生物学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%BB%93%E6%9E%84%E7%94%9F%E7%89%A9%E5%AD%A6",
+      "zh_extract_full": "结构生物学（Structural biology）是分子生物学、生物化学和生物物理学的分支学科，其研究涉及生物大分子（如蛋白质的分子和核酸的分子）的三级结构（tertiary structure）（包括构架和形态）、它们是如何获得它们的结构、它们的结构改变如何影响其功能。 生物学家对该主题非常感兴趣，因为大分子实现了细胞的大多数功能，并且只有通过卷绕成特定的三维形状才能实现这些功能；这种结构是分子的“三级结构”，它以复杂的方式依赖于每个分子的基本组成或“一级结构”（Primary structure）。"
+    }
+  },
+  {
+    "term": "Molecular interactions, pathways and networks",
+    "edam_label": "Molecular interactions, pathways and networks",
+    "edam_id": "http://edamontology.org/topic_0602",
+    "definition": "Molecular interactions, biological pathways, networks and other models.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: Molecular interactions, pathways and networks (machine learning), Molecular interactions, pathways and networks"
+    }
+  },
+  {
+    "term": "Epigenomics",
+    "edam_label": "Epigenomics",
+    "edam_id": "http://edamontology.org/topic_3173",
+    "definition": "The study of the epigenetic modifications of a whole cell, tissue, organism etc.|Epigenetics concerns the heritable changes in gene expression owing to mechanisms other than DNA sequence variation.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Epigenomics",
+      "en_url": "https://en.wikipedia.org/wiki/Epigenomics",
+      "zh_wiki_title": "表观基因组学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%A1%A8%E8%A7%82%E5%9F%BA%E5%9B%A0%E7%BB%84%E5%AD%A6",
+      "zh_extract_full": "表观基因组学（英语：Epigenomics）是对细胞遗传物质（称为表观基因组）上所有表观遗传修饰的研究。这个领域类似于基因组学和蛋白质组学，即研究细胞的基因组和蛋白质组的学科。 表观遗传修饰是细胞DNA或组蛋白的可逆修饰，它会影响基因表达，而不会改变DNA序列。表观基因组的维持是一个持续的过程，它透过参与DNA修复等关键生物学机制，在真核生物基因组的稳定性中发挥重要作用。 植物性黄酮类化合物被认为能够抑制导致癌症的表观基因组标记。DNA甲基化和组蛋白修饰是两种最具代表性的表观遗传修饰。表观遗传修饰在基因表现和调控中发挥重要作用，并参与多种细胞过程，例如分化/发育和肿瘤发生。近年来，随着基因组高通量检测技术的应用，表观遗传学进行全局性研究才成为可能。"
+    }
+  },
+  {
+    "term": "Systems biology",
+    "edam_label": "Systems biology",
+    "edam_id": "http://edamontology.org/topic_2259",
+    "definition": "The holistic modelling and analysis of complex biological systems and the interactions therein.|This includes databases of models and methods to construct or analyse a model.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Systems biology",
+      "en_url": "https://en.wikipedia.org/wiki/Systems_biology",
+      "zh_wiki_title": "系统生物学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%B3%BB%E7%BB%9F%E7%94%9F%E7%89%A9%E5%AD%A6",
+      "zh_extract_full": "系统生物学（英语：systems biology），是一个使用整体论（而非还原论）的方式， 整合不同学科、层次的信息，以研究、分析、理解（即多组学整合分析）生物系统如何行使功能的学术领域。系统生物学通过研究各个生物系统内部所有组成成分间，各分子层面上的相互关系和相互作用（例如，与细胞信号传送、代谢通路、细胞器、细胞、生理系统与生物等相关的基因和蛋白网络），期望最终能够建立整个系统的可理解模型，以及为有机体绘制完整图谱。系统生物学使用计算机模拟，数学分析的方法来构建复杂生物系统的模型。 系统生物学不同于以往只注意个别的基因和蛋白质的实验生物学，研究所有的基因、所有的蛋白质和组分间的所有相互关系；其目标是：对复杂的生物系统构建计算的数学模型，从总体上预测生物系统的真实性。特别是从2000年开始，这个概念在各种环境下被广泛用于生物学。人类基因组计划是生物学中应用系统思维的一个例子，它导致新的合作的方式来处理在遗传学生物学领域的问题。系统生物学的目标之一是模拟和发现涌现的特性，细胞的，组织的和生物体的特性，作为一个系统，其理论描述只能用系统生物学的技术进行。这些通常涉及代谢网络或细胞信号传送网络。 系统生物学开始于对基因和蛋白质的研究，该研究使用高通量技术来测定某物种在给定条件干涉下基因组和蛋白质组的变化。研究基因组的高通量技术包括用来测定mRNA变化的生物芯片技术。高通量蛋白质组学方法包括质谱，该技术用于鉴定蛋白质，检测蛋白修饰和量化蛋白质表达水平。"
+    }
+  },
+  {
+    "term": "Population genomics",
+    "edam_label": "Population genomics",
+    "edam_id": "http://edamontology.org/topic_3796",
+    "definition": "Large-scale study (typically comparison) of DNA sequences of populations.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Population genomics",
+      "en_url": "https://en.wikipedia.org/wiki/Population_genomics",
+      "zh_wiki_title": "群体基因组学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%BE%A4%E4%BD%93%E5%9F%BA%E5%9B%A0%E7%BB%84%E5%AD%A6",
+      "zh_extract_full": "群体基因组学 是大规模地比较群体的DNA序列。 群体基因组学是一个跟 群体遗传学 有关的新词。 群体基因组学在整个基因组水平上对基因组进行研究，帮助我们更好的理解基因组上的细小变化 ，从而理解群体的分化历史和地理分布。"
+    }
+  },
+  {
+    "term": "RNA-Seq",
+    "edam_label": "RNA-Seq",
+    "edam_id": "http://edamontology.org/topic_3170",
+    "definition": "A topic concerning high-throughput sequencing of cDNA to measure the RNA content (transcriptome) of a sample, for example, to investigate how different alleles of a gene are expressed, detect post-transcriptional mutations or identify gene fusions.|This includes small RNA profiling (small RNA-Seq), for example to find novel small RNAs, characterize mutations and analyze expression of small RNAs.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "RNA-Seq",
+      "en_url": "https://en.wikipedia.org/wiki/RNA-Seq",
+      "zh_wiki_title": "RNA測序",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/RNA%E6%B8%AC%E5%BA%8F",
+      "zh_extract_full": "RNA测序（RNA sequencing，RNA-seq）或核糖核酸测序，是指分析特定RNA片段的碱基序列，也就是腺嘌呤（A）、尿嘧啶（U）、胞嘧啶（C）、鸟嘌呤（G）的排列方式。 全转录物组测序（whole transcriptome sequencing，WTS），相对于全基因组测序（WGS），是利用高通量测序技术，检测并获得细胞或组织在特定功能状态下所转录的所有RNA产物序列的方法，属于一种狭义的RNA测序。WTS基于第二代测序技术的转录组学研究方法，使用第二代测序的能力，在给定时刻从一个基因组中，揭示RNA的存在和数量的一个快照。 首先提取生物样品的全部转录的RNA，然后反转录为c-DNA后进行的二代高通量测序，在此基础上进行片段的重叠组装，从而可得到一个个的转录本。进而可以形成对该生物样品当前发育状态的基因表达状况的全局了解（global）。进一步说，若和下一阶段的生物样品的RNA-Seq转录组进行比较，则可以得到全部的（在转录层面）基因表达的上调及下调—这就形成了表达谱，针对关键基因则可以形成你要想要的通路（pathway）的构建。"
+    }
+  },
+  {
+    "term": "ChIP-seq",
+    "edam_label": "ChIP-seq",
+    "edam_id": "http://edamontology.org/topic_3169",
+    "definition": "The analysis of protein-DNA interactions where chromatin immunoprecipitation (ChIP) is used in combination with massively parallel DNA sequencing to identify the binding sites of DNA-associated proteins.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "ChIP sequencing",
+      "en_url": "https://en.wikipedia.org/wiki/ChIP_sequencing",
+      "zh_wiki_title": "染色质免疫沉淀-测序",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%9F%93%E8%89%B2%E8%B4%A8%E5%85%8D%E7%96%AB%E6%B2%89%E6%B7%80-%E6%B5%8B%E5%BA%8F",
+      "zh_extract_full": "染色质免疫沉淀-测序（英语：ChIP-sequencing，简称为ChIP-seq）被用于分析蛋白质与DNA的交互作用。该技术将染色质免疫沉淀（ChIP）与大规模并行DNA测序结合起来以鉴定与DNA相关蛋白的结合部位。其可被用于精确绘制任意目的蛋白在全基因组上的结合位点。在此之前，ChIP-on-chip是研究这些蛋白-DNA联系的最常用的技术。"
+    }
+  },
+  {
+    "term": "Whole genome sequencing",
+    "edam_label": "Whole genome sequencing",
+    "edam_id": "http://edamontology.org/topic_3673",
+    "definition": "Laboratory technique to sequence the complete DNA sequence of an organism's genome at a single time.",
+    "obsolete": false,
+    "zh": {
+      "status": "ok",
+      "en_title_used": "Whole genome sequencing",
+      "en_url": "https://en.wikipedia.org/wiki/Whole_genome_sequencing",
+      "zh_wiki_title": "全基因組定序",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%85%A8%E5%9F%BA%E5%9B%A0%E7%B5%84%E5%AE%9A%E5%BA%8F",
+      "zh_extract_full": "全基因组测序（whole genome sequencing，WGS）或基因组测序（genome sequencing），是利用高通量测序技术，检测并获得细胞或组织中全部基因组（常为染色体中DNA）序列的方法，亦即将一个生物的基因组完整（或接近完整）测序的流程。全基因组测序用于研究未知基因组的序列、不同个体基因组的差异等。 自1990年代起，陆续有生物的基因组被完整测序，最早被测序完成的生物为流感嗜血杆菌（1995年），1996年首次有真核生物（酿酒酵母）被完整测序。2014年以后全基因组测序逐渐开始被用于临床用途，以病人基因组信息决定其疗法，即个性化医疗。2000年全基因体测序技术获《科学》期刊选为该年的年度突破。"
+    }
+  },
+  {
+    "term": "Exome sequencing",
+    "edam_label": "Exome sequencing",
+    "edam_id": "http://edamontology.org/topic_3676",
+    "definition": "Laboratory technique to sequence all the protein-coding regions in a genome, i.e., the exome.|Exome sequencing is considered a cheap alternative to whole genome sequencing.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Exome sequencing\" resolved to English Wikipedia article \"Exome sequencing\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "DNA polymorphism",
+    "edam_label": "DNA polymorphism",
+    "edam_id": "http://edamontology.org/topic_2885",
+    "definition": "DNA polymorphism.|Includes microsatellite polymorphism in a DNA sequence.  A microsatellite polymorphism is a very short subsequence that is repeated a variable number of times between individuals. These repeats consist of the nucleotides cytosine and adenosine.|Includes restriction fragment length polymorphisms (RFLP) in a DNA sequence.  An RFLP is defined by the presence or absence of a specific restriction site of a bacterial restriction enzyme.|Includes single nucleotide polymorphisms (SNP) and associated data, for example, the discovery and annotation of SNPs.  A SNP is a DNA sequence variation where a single nucleotide differs between members of a species or paired chromosomes in an individual.|Includes variable number of tandem repeat (VNTR) polymorphism in a DNA sequence.  VNTRs occur in non-coding regions of DNA and consists sub-sequence that is repeated a multiple (and varied) number of times.",
+    "obsolete": false,
+    "zh": {
+      "status": "flagged",
+      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: DNA polymorphism (machine learning), DNA polymorphism"
+    }
+  }
+]

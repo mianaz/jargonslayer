@@ -1,0 +1,664 @@
+[
+  {
+    "term": "p-value",
+    "source_id": "p-value",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "P-value",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/P-value",
+    "definition_en": "In null-hypothesis significance testing, the p-value is the probability of obtaining test results at least as extreme as the result actually observed, under the assumption that the null hypothesis is correct.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "P值",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/P%E5%80%BC",
+      "zh_extract_full": "p值（英语：p - value）为假设检验中，假设零假设为真时，观测到至少与实际观测样本一样极端的样本的概率。p值越小，说明在零假设下，观测到的极端结果的概率越小。尽管学术出版物中常常使用基于p值的假设检验，对p值的误用却很常见。因此，对p值误用的讨论是数学与元科学的重要课题之一。"
+    }
+  },
+  {
+    "term": "null hypothesis",
+    "source_id": "null_hypothesis",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Null hypothesis",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Null_hypothesis",
+    "definition_en": "The statement being tested in a test of statistical significance; usually a statement of 'no effect' or 'no difference'.[3] For example, in a test of whether light has an effect on sleep, the null hypothesis would be that light has no effect on sleep (i.e. sleep patterns are the same regardless of the lighting conditions). The null hypothesis is an expression of the expectation that the dependent variable will not change significantly as the independent variable is modified; statistical significance is measured and reported according to the degree to which this expectation is met. Contrast alternative hypothesis.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "零假设",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%9B%B6%E5%81%87%E8%AE%BE",
+      "zh_extract_full": "在推论统计学中，零假设（英语：Null hypothesis，又译虚无假设、原假设，符号： H 0 {\\displaystyle H_{0}} ）是做统计检验时的一类假设。 零假设的内容一般是希望能证明为错误的假设，与零假设相对的是备择假设，即希望通过证伪零假设而证明正确的另一种假说。从数学上来看，零假设和备择假设的地位是相等的，但是在统计学的实际运用中，常常需要强调一类假设为应当或期望实现的假设，例如在相关性检验中，一般会取“两者之间无关联”作为零假设，而在独立性检验中，一般会取“两者之间非独立”作为零假设。 如果一个统计检验的结果拒绝（reject）零假设（结论不支持零假设），而实际上真实的情况属于零假设，那么称这个检验犯了第一类错误。反之，如果检验结果支持零假设，而实际上真实的情况属于备择假设，那么称这个检验犯了第二类错误。通常的做法是，在保持第一类错误出现的机会在某个特定水平上的时候（即显著性差异值或α值），尽量减少第二类错误出现的概率。"
+    }
+  },
+  {
+    "term": "alternative hypothesis",
+    "source_id": "alternative_hypothesis",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Alternative hypothesis",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Alternative_hypothesis",
+    "definition_en": "In statistical hypothesis testing, the alternative hypothesis is one of the propositions in the hypothesis test.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "對立假說",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%B0%8D%E7%AB%8B%E5%81%87%E8%AA%AA",
+      "zh_extract_full": "备择假设（英语：Alternative hypothesis，记作 H a {\\displaystyle H_{a}} 或 H 1 {\\displaystyle H_{1}} ），是做统计检验时的一类假说。 假设检验依样本证据判断对统计假说的真伪。其中零假设（Null hypothesis，记作 H 0 {\\displaystyle H_{0}} ），通常由研究者决定，反映研究者对未知参数的看法，而站在零假设立场对立面的即为备择假设，需要透过统计检验来证明备择假设为真，当有充足证据拒绝零假设时，即可接受备择假设，而若无充足证据证明备择假设为真时，则“不拒绝”零假设。 在统计学中，备择假设通常以Ha或H1表示。假设的提出是为了在统计假设检验中进行比较。 在推论统计学领域，可以透过解释力和预测力(predictive power)来比较两个相互竞争的假设。"
+    }
+  },
+  {
+    "term": "statistical significance",
+    "source_id": "statistical_significance",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Statistical significance",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Statistical_significance",
+    "definition_en": "In statistical hypothesis testing, a result has statistical significance when a result at least as extreme would be very infrequent if the null hypothesis were true.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "显著性差异",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%98%BE%E8%91%97%E6%80%A7%E5%B7%AE%E5%BC%82",
+      "zh_extract_full": "统计学的假设检验中，显著性差异（或统计学意义，英语：statistical significance）是对数据差异性的评价，当某次实验的结果在零假设下不大可能发生时，就认为该结果具有显著性差异。更准确而言，譬如某项研究设定了一个数值α（显著性水平），表示零假设本来正确但却被拒绝的出错概率（并非零假设为真的概率、备择假设为假的概率、实验再现失败率），然后用p值表示零假设条件为真时得到某结果或更极端结果的概率。当 p ≤ α {\\displaystyle p\\leq \\alpha } 时，就可以认为结果具有统计学意义，或数据之间具有了显著性差异。显著性水平应当在开始数据收集前就设定，通常习惯设定为5%或更低，因研究的具体学科领域而异。 在任何涉及到从总体中抽取样本的实验或观察性研究中，观察到的结果都有可能只不过是由抽样误差产生的。但是，如果一个观察结果的 p {\\displaystyle p} 值小于（或等于）显著性水平 α {\\displaystyle \\alpha } ，研究者就可以得出“该结果能反映总体的特征”的结论，并拒绝零假设。 显著性差异的原因可能是： 参与比对的数据是来自不同实验对象，如比－西一般能力测验中，大学学历被试组的成绩与小学学历被试组之间，会存在显著性差异； 也可能是因为实验处理对实验对象造成了改变，因而前测、后测的数据会有显著性差异。例如，记忆术研究发现，被试者学习某记忆法前的成绩，和学习记忆法后的记忆成绩会有显著性差异，则这一差异很可能来自于这种记忆法对被试记忆能力的改变。"
+    }
+  },
+  {
+    "term": "Type I / Type II error",
+    "source_id": "type_i_and_type_ii_errors",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Type I and type II errors",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Type_I_and_type_II_errors",
+    "definition_en": "Type I error, or a false positive, is the incorrect rejection of a true null hypothesis in statistical hypothesis testing.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "型一錯誤與型二錯誤",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%9E%8B%E4%B8%80%E9%8C%AF%E8%AA%A4%E8%88%87%E5%9E%8B%E4%BA%8C%E9%8C%AF%E8%AA%A4",
+      "zh_extract_full": "第一类错误与第二类错误（英语：Type I error & Type II error）为统计学中推论统计学统计术语，表示统计学假设检验中的两种错误。"
+    }
+  },
+  {
+    "term": "t-test",
+    "source_id": "student's_t-test",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Student's t-test",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Student's_t-test",
+    "definition_en": "Student's t-test is a statistical test used to test whether the difference between the response of two groups is statistically significant or not.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "司徒頓t檢定",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8F%B8%E5%BE%92%E9%A0%93t%E6%AA%A2%E5%AE%9A",
+      "zh_extract_full": "学生t 检验（英语：Student's t-test）是指零假设成立时的任一检验统计有学生t分布的统计假设检验，属于参数统计。学生t检验常作为检验一群来自正态分配总体的独立样本之期望是否为某一实数，或是二（两）群来自正态分配总体的独立样本之期望的差是否为某一实数。举个简单的例子，在某个学校中我们可以从某个年级中随机抽样一群男生，以检验该年级男生与全校男生之身高差异程度是否如我们所假设的某个值。"
+    }
+  },
+  {
+    "term": "ANOVA",
+    "source_id": "analysis_of_variance",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Analysis of variance",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Analysis_of_variance",
+    "definition_en": "Analysis of variance (ANOVA) is a family of statistical methods used to compare the means of two or more groups by analyzing variance.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "方差分析",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%96%B9%E5%B7%AE%E5%88%86%E6%9E%90",
+      "zh_extract_full": "方差分析（英语：Analysis of variance，简称：ANOVA）为数据分析中常见的统计模型，主要为探讨连续型（Continuous）数据类型之因变量与类别型数据类型之自变量的关系，当自变项的因子中包含等于或超过三个类别情况下，检验其各类别间平均数是否相等的统计模式，广义上可将T检验中方差相等（Equality of variance）的合并T检验（Pooled T-test）视为是方差分析的一种，基于T检验为分析两组平均数是否相等，并且采用相同的计算概念，而实际上当方差分析套用在合并T检验的分析上时，产生的F值则会等于T检验的平方项。 方差分析依靠F-分布为概率分布的依据，利用平方和（Sum of square）与自由度（Degree of freedom）所计算的组间与组内均方（Mean of square）估计出F值，若有显著差异则考量进行事后比较或称多重比较（Multiple comparison），较常见的为薛费法(事后比较法)、杜其范围检验与邦费罗尼校正，用于探讨其各组之间的差异为何。 在方差分析的基本运算概念下，依照所感兴趣的因子数量而可分为单因子方差分析、双因子方差分析、多因子方差分析三大类，依照因子的特性不同而有三种类型，固定效应方差分析（fixed-effect analysis of variance）、随机效应方差分析（random-effect analysis of variance）与混合效应方差分析（Mixed-effect analaysis of variance），然而第三种类型在后期发展上被认为是Mixed model的分支，关于更进一步的探讨可参考Mixed model的部分。 方差分析优于两组比较的T检验之处，在于后者会导致多重比较（multiple comparisons）的问题而致使第一类错误（Type one error）的机会增高，因此比较多组平均数是否有差异则是方差分析的主要命题。 在统计学中，方差分析（ANOVA）是一系列统计模型及其相关的过程总称，其中某一变量的方差可以分解为归属于不同变量来源的部分。其中最简单的方式中，方差分析的统计测试能够说明几组数据的平均值是否相等，因此得到两组的T检验。在做多组双变量T检验的时候，错误的概率会越来越大，特别是第一类错误，因此方差分析只在二到四组平均值的时候比较有效。"
+    }
+  },
+  {
+    "term": "chi-squared test",
+    "source_id": "chi-squared_test",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Chi-squared test",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Chi-squared_test",
+    "definition_en": "A chi-squared test (also chi-square or χ2 test) is a statistical hypothesis test used in the analysis of contingency tables when the sample sizes are large.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "卡方检验",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8D%A1%E6%96%B9%E6%A3%80%E9%AA%8C",
+      "zh_extract_full": "卡方检验（Chi-Squared Test或 χ 2 {\\displaystyle \\chi ^{2}} Test）是一种用于分析列联表分类变量的假设检验方法，这种方法可以判断列联表内两个分类变量是否影响统计量（即列联表中的观测值）。在没有其他的限定条件或说明时，卡方检验一般代指的是皮尔森卡方检定。在卡方检验的一般运用中，研究人员将观察量的值划分成若干互斥的分类，并且使用一套理论（或零假设）尝试去说明观察量的值落入不同分类的概率分布的模型。而卡方检验的目的就在于去衡量这个假设对观察结果所反映的程度。"
+    }
+  },
+  {
+    "term": "statistical power",
+    "source_id": "power",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Power (statistics)",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Power_(statistics)",
+    "definition_en": "In frequentist statistics, power is the probability of detecting an effect (i.e.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "檢定力",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%AA%A2%E5%AE%9A%E5%8A%9B",
+      "zh_extract_full": "统计功效（英语：statistical power），或称检验功效（power of a test），是指假设检验中，当备择假设（ H a {\\displaystyle H_{a}} ，或记作 H 1 {\\displaystyle H_{1}} ）为真时正确地拒绝零假设（ H 0 {\\displaystyle H_{0}} ）的概率，即 power = Pr ( reject H 0 ∣ H a is true ) . {\\displaystyle {\\text{power}}=\\Pr {\\big (}{\\text{reject }}H_{0}\\mid H_{a}{\\text{ is true}}{\\big )}.} 换言之，统计功效也可以看作是当备择假设为真时将其接受的概率。当功效增加时，第二类错误出现的概率（即伪阴性率β）减少。此时，功效可以表示为(1-β)。 在给定的显著性水平下，功效分析可以用于计算给定效应值时所需的最小样本数；相反地，功效分析也可以用来计算给定样本数时所能检验到的最小效应值。"
+    }
+  },
+  {
+    "term": "confidence interval",
+    "source_id": "confidence_interval_(ci)",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Confidence interval",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Confidence_interval",
+    "definition_en": "In inferential statistics, a range of plausible values for some unknown parameter, such as a population mean, defined as an interval with a lower bound and an upper bound.[2] The precise values of these bounds are calculated from a pre-determined confidence level, chosen by the researcher. The confidence level represents the frequency of intervals that, over the long run, capture the true value of the unknown parameter; i.e. 95% of confidence intervals computed at the 95% confidence level contain the true value, and likewise for other confidence levels. For example, based on a study of sleep habits among a random sample of 100 people, a researcher may estimate at the 95% confidence level that the overall population sleeps somewhere between 5 and 9 hours per night. There is a 95% chance that the true population mean falls within this interval, because 95% of random samples taken from this same population will yield 95% confidence intervals that contain the true mean.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "信賴區間",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%BF%A1%E8%B3%B4%E5%8D%80%E9%96%93",
+      "zh_extract_full": "在统计学中，一个概率样本的置信区间（英语：confidence interval，CI），是对产生这个样本的总体的参数分布（parametric distribution）中的某一个未知参数值，以区间形式给出的估计。相对于点估计（point estimation）用一个样本统计量来估计参数值，置信区间还蕴含了估计的精确度的信息。在现代机器学习中越来越常用的置信集合（confidence set）概念是置信区间在多维分析的推广。 置信区间在频率学派中间使用，其在贝叶斯统计中的对应概念是可信区间（credible interval）。两者建立在不同的概念基础上的，贝叶斯统计将分布的位置参数视为随机变量，并对给定观测到的数据之后未知参数的后验分布进行描述，故无论对随机样本还是已观测数据，构造出来的可信区间，其可信水平都是一个合法的概率；而置信区间的置信水平，只在考虑随机样本时可以被理解为一个概率。"
+    }
+  },
+  {
+    "term": "confidence level",
+    "source_id": "confidence_level",
+    "source_type": "glossary-inline",
+    "en_wiki_title": null,
+    "en_wiki_url": null,
+    "definition_en": "A number indicating the probability that the confidence interval (range) captures the true population mean. For example, a confidence interval with a 95% confidence level has a 95% chance of capturing the population mean. Technically, this means that, if the experiment were repeated many times, 95% of the CIs computed at this level would contain the true population mean.[2]",
+    "zh": {
+      "status": "flagged",
+      "reason": "term has no dedicated Wikipedia article link on the glossary page"
+    }
+  },
+  {
+    "term": "estimator",
+    "source_id": "estimator",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Estimator",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Estimator",
+    "definition_en": "A function of the known data that is used to estimate an unknown parameter; an estimate is the result of the actual application of the function to a particular set of data. For example, the mean can be used as an estimator.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "估计量",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%BC%B0%E8%AE%A1%E9%87%8F",
+      "zh_extract_full": "在统计学中，估计量（英语：estimator），亦称推定量，是基于观测数据计算某一已知量之估计值的规则：因此，估计量（规则本身）、被估量（感兴趣的未知量，英语：estimand）以及估计值（规则所产生的结果，英语：estimate）是三个相互区别的概念。例如，样本均值是总体均值的一个常用估计量。估计量分为点估计量和区间估计量：点估计量产生单一值的结果，区间估计量则产生一个包含合理值的范围。 估计量可视为一个统计量（即数据的函数），用于推断统计模型中未知参数的值。估计量本身是一个随机变量，其某一特定实现即为估计值。待估参数可以是有限维的（在参数模型和半参数模型中），也可以是无限维的（在半参数模型和非参数模型中）。估计理论关注估计量的性质，即通过定义各种性质来比较同一参数的不同估计量在不同规则下的优劣；而稳健统计则进一步权衡在严格假设下具有良好性质与在更宽泛条件下具有较差性质之间的平衡。"
+    }
+  },
+  {
+    "term": "maximum likelihood estimation",
+    "source_id": "maximum_likelihood_estimation",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Maximum likelihood estimation",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Maximum_likelihood_estimation",
+    "definition_en": "In statistics, maximum likelihood estimation (MLE) is a method of estimating the parameters of an assumed probability distribution, given some observed data.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "最大似然估计",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%9C%80%E5%A4%A7%E4%BC%BC%E7%84%B6%E4%BC%B0%E8%AE%A1",
+      "zh_extract_full": "在统计学中，最大似然估计（英语：maximum likelihood estimation，简作MLE），也称极大似然估计，是用来估计一个概率模型的参数的一种方法。"
+    }
+  },
+  {
+    "term": "likelihood function",
+    "source_id": "likelihood_function",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Likelihood function",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Likelihood_function",
+    "definition_en": "A conditional probability function considered a function of its second argument with its first argument held fixed. For example, imagine pulling a numbered ball with a number k from a bag of n balls, numbered 1 to n; a likelihood function for the random variable N could be described as the probability of pulling k given that there are n balls: the likelihood will be 1/n for n greater than or equal to k, and 0 for n smaller than k. Unlike a probability distribution function, this likelihood function will not sum up to 1 on the sample space.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "似然函数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%BC%BC%E7%84%B6%E5%87%BD%E6%95%B0",
+      "zh_extract_full": "在数理统计学中，似然函数（英语：likelihood function）是一种关于统计模型中的参数的函数，表示模型参数中的似然性（英语：likelihood）。似然函数在统计推断中有重大作用，如在最大似然估计和费雪信息之中的应用等等。文字意义上，“似然性”与“或然性”或“概率”意思相近，都是指某种事件发生的可能性，但是在统计学中，“似然性”和“概率”（或然性）有明确的区分：概率，用于在已知一些参数的情况下，预测接下来在观测上所得到的结果；似然性，则是用于在已知某些观测所得到的结果时，对有关事物之性质的参数进行估值，也就是说已观察到某事件后，对相关参数进行猜测。 在这种意义上，似然函数可以理解为条件概率的逆反。在已知某个参数B时，事件A会发生的概率写作： P ( A ∣ B ) = P ( A , B ) P ( B ) {\\displaystyle P(A\\mid B)={\\frac {P(A,B)}{P(B)}}\\!} 利用贝叶斯定理， P ( B ∣ A ) = P ( A ∣ B ) P ( B ) P ( A ) {\\displaystyle P(B\\mid A)={\\frac {P(A\\mid B)\\;P(B)}{P(A)}}\\!} 因此，我们可以反过来构造表示似然性的方法：已知有事件A发生，运用似然函数 L ( B ∣ A ) {\\displaystyle \\mathbb {L} (B\\mid A)} ，我们估计或猜测参数B的不同值的可能性。形式上，似然函数也是一种条件概率函数，但我们关注的变量改变了： b ↦ P ( A ∣ B = b ) {\\displaystyle b\\mapsto P(A\\mid B=b)\\!} 注意到这里并不要求似然函数满足归一性： ∑ b ∈ B P ( A ∣ B = b ) = 1 {\\displaystyle \\sum _{b\\in {\\mathcal {B}}}P(A\\mid B=b)=1} 。一个似然函数乘以一个正的常数之后仍然是似然函数。对所有 α > 0 {\\displaystyle \\alpha >0} ，都可以有似然函数： L ( b ∣ A ) = α P ( A ∣ B = b ) {\\displaystyle L(b\\mid A)=\\alpha \\;P(A\\mid B=b)\\!}"
+    }
+  },
+  {
+    "term": "degrees of freedom",
+    "source_id": "degrees_of_freedom",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Degrees of freedom (statistics)",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Degrees_of_freedom_(statistics)",
+    "definition_en": "In statistics, the number of degrees of freedom is the number of values in the final calculation of a statistic that are free to vary.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "自由度 (统计学)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%87%AA%E7%94%B1%E5%BA%A6_(%E7%BB%9F%E8%AE%A1%E5%AD%A6)",
+      "zh_extract_full": "在统计学中，自由度（英语：degree of freedom, df）是指当以样本的统计量来估计总体的参数时，样本中独立或能自由变化的数据的个数，称为该统计量的自由度。一般来说，自由度等于独立变量数减掉其衍生量数；举例来说，方差的定义是样本减平均值（一个由样本决定的衍生量）的平方之和，因此对N个随机样本而言，其自由度为N-1。 数学上，自由度是一个随机向量的维度数，也就是一个向量能被完整描述所需的最少单位向量数。举例来说，从电脑萤幕到厨房的位移能够用三维向量 a i ^ + b j ^ + c k ^ {\\displaystyle a{\\widehat {i}}+b{\\widehat {j}}+c{\\widehat {k}}} 来描述，因此这个位移向量的自由度是3。自由度也通常与这些向量的坐标平方和，以及卡方分布中的参数有所关联。"
+    }
+  },
+  {
+    "term": "Bayesian inference",
+    "source_id": "bayesian_inference",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Bayesian inference",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Bayesian_inference",
+    "definition_en": "Bayesian inference ( BAY-zee-ən or BAY-zhən) is a method of statistical inference in which Bayes' theorem is used to calculate a probability of a hypothesis, given prior evidence, and update it as more information becomes available.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "贝叶斯推断",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%B4%9D%E5%8F%B6%E6%96%AF%E6%8E%A8%E6%96%AD",
+      "zh_extract_full": "贝叶斯推断（英语：Bayesian inference）是推断统计的一种方法。这种方法使用贝叶斯定理，在有更多证据及信息时，更新特定假设的概率。贝叶斯推断是统计学（特别是数理统计学）中很重要的技巧之一。贝叶斯更新（Bayesian updating）在序列分析中格外的重要。贝叶斯推断应用在许多的领域中，包括科学、工程学、哲学、医学、体育运动、法律等。在决策论的哲学中，贝叶斯推断和主观概率有密切关系，常常称为贝叶斯概率。 贝叶斯定理是由统计学家托马斯·贝叶斯根据许多特例推导而成，后来被许多研究者推广为一普遍的定理。"
+    }
+  },
+  {
+    "term": "prior (probability)",
+    "source_id": "prior_probability",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Prior probability",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Prior_probability",
+    "definition_en": "In Bayesian inference, prior beliefs or other information that is available before new data or observations are taken into account.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "先验概率",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%85%88%E9%AA%8C%E6%A6%82%E7%8E%87",
+      "zh_extract_full": "在贝叶斯统计中，某一不确定量p的先验概率（英语：Prior probability）分布是在考虑“观测数据”前，能表达p不确定性的概率分布。它旨在描述这个不确定量的不确定程度，而不是这个不确定量的随机性。这个不确定量可以是一个参数，或者是一个隐含变量（latent variable）。依据应用领域的不同，先验概率又叫做先验概率、先验概率、事前先验概率、居先概率。 在使用贝叶斯定理时，我们通过将先验概率与似然函数相乘，随后标准化，来得到后验概率分布，也就是给出某数据，该不确定量的条件分布。 先验概率通常是主观的猜测，为了使计算后验概率方便，有时候会选择共轭先验。如果后验概率和先验概率是同一族的，则认为它们是共轭分布，这个先验概率就是对应于似然函数的共轭先验。"
+    }
+  },
+  {
+    "term": "posterior (probability)",
+    "source_id": "posterior_probability",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Posterior probability",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Posterior_probability",
+    "definition_en": "The result of a Bayesian analysis that encapsulates the combination of prior beliefs or information (the prior probability) with observed data.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "后验概率",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%90%8E%E9%AA%8C%E6%A6%82%E7%8E%87",
+      "zh_extract_full": "在贝叶斯统计中，一个随机事件或者一个不确定事件的后验概率（Posterior probability）是在考虑和给出相关证据或数据后所得到的条件概率。同样，后验概率分布是一个未知量（视为随机变量）基于试验和调查后得到的概率分布。“后验”在本文中代表考虑了被测试事件的相关证据。"
+    }
+  },
+  {
+    "term": "normal distribution",
+    "source_id": "normal_distribution",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Normal distribution",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Normal_distribution",
+    "definition_en": "In probability theory and statistics, a normal distribution or Gaussian distribution is a type of continuous probability distribution for a real-valued random variable.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "正态分布",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%AD%A3%E6%80%81%E5%88%86%E5%B8%83",
+      "zh_extract_full": "正态分布（normal distribution，台湾作常态分布），物理学中通称高斯分布（Gaussian distribution），是一个非常常见的连续概率分布。正态分布在统计学上十分重要，经常用在自然和社会科学来代表一个不明的随机变量。 若随机变量 X {\\displaystyle X} 服从一个平均数为 μ {\\displaystyle \\mu } 、标准差为 σ {\\displaystyle \\sigma } 的正态分布，则记为： X ∼ N ( μ , σ 2 ) , {\\displaystyle X\\sim N(\\mu ,\\sigma ^{2}),} 则其概率密度函数为 f ( x ) = 1 σ 2 π e − ( x − μ ) 2 2 σ 2 {\\displaystyle f(x)={\\frac {1}{\\sigma {\\sqrt {2\\pi }}}}\\;e^{-{\\frac {\\left(x-\\mu \\right)^{2}}{2\\sigma ^{2}}}}\\!} 正态分布的数学期望值或期望 μ {\\displaystyle \\mu } ,可解释为位置参数，决定了分布的位置；其方差 σ 2 {\\displaystyle \\sigma ^{2}} 的平方根或标准差 σ {\\displaystyle \\sigma } 可解释尺度参数，决定了分布的幅度。 中心极限定理指出，在特定条件下，一个具有有限均值和方差的随机变量的多个样本(观察值)的平均值本身就是一个随机变量，其分布随着样本数量的增加而收敛于正态分布。因此，许多与独立过程总和有关的物理量，例如测量误差，通常可被近似为正态分布。 正态分布的概率密度函数曲线呈钟形，因此人们又经常称之为钟形曲线（类似于寺庙里的大钟，因此得名）。我们通常所说的标准正态分布是位置参数 μ = 0 {\\displaystyle \\mu =0} ，尺度参数 σ 2 = 1 {\\displaystyle \\sigma ^{2}=1} 的正态分布（见右图中红色曲线）。"
+    }
+  },
+  {
+    "term": "binomial distribution",
+    "source_id": "binomial_distribution",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Binomial distribution",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Binomial_distribution",
+    "definition_en": "In probability theory and statistics, the binomial distribution with parameters n and p is the discrete probability distribution of the number of successes in a sequence of n independent experiments, each asking a yes–no question, and each with its own Boolean-valued outcome: success (with probability p) or failure (with probability q = 1 − p).",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "二項式分布",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%BA%8C%E9%A0%85%E5%BC%8F%E5%88%86%E5%B8%83",
+      "zh_extract_full": "在概率论和统计学中，二项分布（英语：binomial distribution）是一种离散概率分布，描述在进行独立随机试验时，每次试验都有相同概率“成功”的情况下，获得成功的总次数。掷硬币十次出现五次正面的概率、产品合格率 99 % {\\displaystyle \\,99\\%\\,} 时抽出一百件样本没有发现一件次品的概率等等，都可以由二项分布给出。 只有“成功”和“失败”两种可能结果，每次重复时成功概率不变的独立随机试验称作伯努利试验，例如上述的掷硬币出现正面或反面、对产品进行抽样检查时抽到正品或次品。伯努利试验作为理论模型，其前提在现实中无法完全得到满足，比如生产线会磨损，因此每件产品合格的概率并非固定。尽管如此，二项分布给出的概率通常足以用于提供有用的推断；即使在已知前提没有满足的场合，二项分布也能用于参考和比较。二项分布的应用出现在遗传学、质量控制等领域之中。"
+    }
+  },
+  {
+    "term": "chi-squared distribution",
+    "source_id": "chi-squared_distribution",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Chi-squared distribution",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Chi-squared_distribution",
+    "definition_en": "In probability theory and statistics, the χ 2 -distribution with k degrees of freedom is the distribution of a sum of the squares of k independent standard normal random variables.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "卡方分佈",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8D%A1%E6%96%B9%E5%88%86%E4%BD%88",
+      "zh_extract_full": "卡方分布（英语：chi-square distribution, χ²-distribution，或写作χ²分布）是概率论与统计学中常用的一种概率分布。卡方分布是一种特殊的伽玛分布，是统计推断中应用最为广泛的概率分布之一，例如假设检验和置信区间的计算。卡方分布也是由标准正态变量的平方和形成的分布。 由卡方分布延伸出来皮尔逊卡方检验常用于： 样本某性质的比例分布与总体理论分布的拟合优度（例如某行政机关男女比是否符合该机关所在城镇的男女比）； 同一总体的两个随机变量是否独立（例如人的身高与交通违规的关联性）； 二或多个总体同一属性的同素性检验（意大利面店和寿司店的营业额有没有差距）。（详见皮尔逊卡方检验）"
+    }
+  },
+  {
+    "term": "probability distribution",
+    "source_id": "probability_distribution",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Probability distribution",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Probability_distribution",
+    "definition_en": "A function that gives the probability of all elements in a given space; see List of probability distributions.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "概率分布",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A6%82%E7%8E%87%E5%88%86%E5%B8%83",
+      "zh_extract_full": "概率分布（英语：probability distribution）简称分布，亦称概率分配或分配，是概率论中的一个概念。 使用时可以有以下两种含义： 广义地，它指称：随机变量的概率性质——当我们说概率空间 ( Ω , F , P ) {\\displaystyle (\\Omega ,{\\mathcal {F}},\\mathbb {P} )} 中的两个随机变量X和Y具有同样的分布时，我们是无法用概率 P {\\displaystyle \\mathbb {P} } 来区别他们的。换言之： 称X和Y为同分布的随机变量，当且仅当对任意事件 A ∈ F {\\displaystyle A\\in {\\mathcal {F}}} ，有 P ( X ∈ A ) = P ( Y ∈ A ) {\\displaystyle \\mathbb {P} (X\\in A)=\\mathbb {P} (Y\\in A)} 成立。 但是，不能认为同分布的随机变量是相同的随机变量。事实上即使X与Y同分布，也可以没有任何点ω使得X(ω)=Y(ω)。在这个意义下，可以把随机变量分类，每一类称作一个分布，其中的所有随机变量都同分布。用更简要的语言来说，同分布是一种等价关系，每一个等价类就是一个分布。需注意的是，通常谈到的离散分布、均匀分布、伯努利分布、正态分布、泊松分布等，都是指各种类型的分布，而不能视作一个分布。 狭义地，它是指：随机变量的概率分布函数。设X是样本空间 ( Ω , F ) {\\displaystyle (\\Omega ,{\\mathcal {F}})} 上的随机变量， P {\\displaystyle \\mathbb {P} } 为概率测度，则称如下定义的函数是X的分布函数，或称累积分布函数： F X ( a ) = P ( X ≤ a ) {\\displaystyle F_{X}(a)=\\mathbb {P} (X\\leq a)} ，对任意实数 a {\\displaystyle a} 定义。 具有相同分布函数的随机变量一定是同分布的，因此可以用分布函数来描述一个分布，但更常用的描述手段是概率密度函数。"
+    }
+  },
+  {
+    "term": "sampling distribution",
+    "source_id": "sampling_distribution",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Sampling distribution",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Sampling_distribution",
+    "definition_en": "The probability distribution, obtained by repeated sampling of the population, of a given statistic.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "抽样分布",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8A%BD%E6%A0%B7%E5%88%86%E5%B8%83",
+      "zh_extract_full": "在统计学中，抽样分布是由随机抽样的样本统计量所形成的概率分布。总体的数值特征被称为参数，例如总体均值 μ {\\displaystyle \\mu } 、总体标准差 σ {\\displaystyle \\sigma } 和总体比例 p {\\displaystyle p} 等。而对于样本而言，样本统计量可以看做是样本的函数，是一个随机变量。每一次抽样都会得到一个对应的样本均值 x ¯ {\\displaystyle {\\bar {x}}} 、样本误差 s {\\displaystyle s} 和样本比例 p ¯ {\\displaystyle {\\bar {p}}} 等，作为对总体参数的估计值。而这些统计量所形成的概率分布即抽样分布。"
+    }
+  },
+  {
+    "term": "central limit theorem",
+    "source_id": "central_limit_theorem",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Central limit theorem",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Central_limit_theorem",
+    "definition_en": "In probability theory, the central limit theorem (CLT) states that, under appropriate conditions, the distribution of a normalized version of the sample mean converges to a standard normal distribution.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "中心极限定理",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%B8%AD%E5%BF%83%E6%9E%81%E9%99%90%E5%AE%9A%E7%90%86",
+      "zh_extract_full": "中心极限定理（英语：central limit theorem，简作 CLT）是概率论中的一组定理。在概率论中，中心极限定理 (CLT) 确定的为，在许多情况下，对于独立并同样分布的随机变量，即使原始变量本身不是正态分布，标准化样本均值的抽样分布也趋向于标准正态分布。这组定理是数理统计学和误差分析的理论基础，指出了大量随机变量之和近似服从正态分布的条件。"
+    }
+  },
+  {
+    "term": "law of large numbers",
+    "source_id": "law_of_large_numbers_(lln)",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Law of large numbers",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Law_of_large_numbers",
+    "definition_en": "A theorem according to which the average of the results obtained from performing the same experiment a large number of times should be close to the experiment's expected value, and tends to become closer to the expected value as more trials are performed. The law suggests that a sufficiently large number of trials is necessary for the results of any experiment to be considered reliable, and by extension that performing only a small number of trials may produce an incomplete or misleading interpretation of the experiment's outcomes.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "大數法則",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%A4%A7%E6%95%B8%E6%B3%95%E5%89%87",
+      "zh_extract_full": "在数学与统计学中，大数定律（英语：Law of large numbers）又称大数法则、大数律，是描述相当多次数重复实验的结果的定律。根据这个定律知道，样本数量越多，则其算术平均值就有越高的概率接近期望。 大数定律很重要，因为它“说明”了一些随机事件的均值的长期稳定性。人们发现，在重复试验中，随着试验次数的增加，事件发生的频率趋于一个稳定值；人们同时也发现，在对物理量的测量实践中，测定值的算术平均也具有稳定性。比如，我们向上抛一枚硬币，硬币落下后哪一面朝上是偶然的，但当我们上抛硬币的次数足够多后，达到上万次甚至几十万几百万次以后，我们就会发现，硬币每一面向上的次数约占总次数的二分之一，亦即偶然之中包含着必然。 上述现象是切比雪夫不等式的一个特殊应用情况，辛钦定理和伯努利大数定律也都概括了这一现象，它们统称为大数定律。"
+    }
+  },
+  {
+    "term": "random variable",
+    "source_id": "random_variable",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Random variable",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Random_variable",
+    "definition_en": "A measurable function on a probability space, often real-valued. The distribution function of a random variable gives the probability of the different values of the variable. The mean and variance of a random variable can also be derived. See also discrete random variable and continuous random variable.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "随机变量",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E9%9A%8F%E6%9C%BA%E5%8F%98%E9%87%8F",
+      "zh_extract_full": "随机变量是一种数学概念，用来表示随机试验结果的变量。"
+    }
+  },
+  {
+    "term": "mean",
+    "source_id": "mean",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Mean",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Mean",
+    "definition_en": "1. The expected value of a random variable.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "平均数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%B9%B3%E5%9D%87%E6%95%B0",
+      "zh_extract_full": "平均数（英语：Mean, Average，或称平均值）是统计中的一个重要概念。为集中趋势的最常用测度值，目的是确定一组数据的均衡点。"
+    }
+  },
+  {
+    "term": "median",
+    "source_id": "median",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Median",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Median",
+    "definition_en": "The median of a set of numbers is the value separating the higher half from the lower half of a data sample, a population, or a probability distribution.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "中位數",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%B8%AD%E4%BD%8D%E6%95%B8",
+      "zh_extract_full": "统计学上，中位数（英语：Median），又称中央值、中值，是一个样本、种群或概率分布中之一个数值，其可将数值集合划分为数量相等的上下两部分。对于有限的数集，可以通过把所有观察值高低排序后找出正中间的一个作为中位数。如果观察值有偶数个，则中位数不唯一，通常取最中间的两个数值的平均数作为中位数。 一个数集中最多有一半的数值小于中位数，也最多有一半的数值大于中位数。如果大于和小于中位数的数值个数均少于一半，那么数集中必有若干值等同于中位数。 设连续随机变量 X {\\displaystyle X} 的分布函数为 F ( X ) {\\displaystyle F(X)} ，那么满足条件 P ( X ≤ m ) = F ( m ) = 1 2 {\\displaystyle P(X\\leq m)=F(m)={\\frac {1}{2}}} 的数称为 X {\\displaystyle X} 或分布 F {\\displaystyle F} 的中位数。 对于一组有限个数的数据来说，其中位数是这样的一种数：这群数据的一半的数据比它大，而另外一半数据比它小。 计算有限个数的数据的中位数的方法是：把所有的同类数据按照大小的顺序排列。如果数据的个数是奇数，则中间那个数据就是这群数据的中位数；如果数据的个数是偶数，则中间那2个数据的算术平均值就是这群数据的中位数。"
+    }
+  },
+  {
+    "term": "mode (statistics)",
+    "source_id": "mode",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Mode (statistics)",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Mode_(statistics)",
+    "definition_en": "In statistics, the mode is the value that appears most often in a set of data values.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "众数 (数学)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E4%BC%97%E6%95%B0_(%E6%95%B0%E5%AD%A6)",
+      "zh_extract_full": "众数（英语：mode）指一组数据中出现次数最多的数据值。例如{8，7，7，8，6，5，5，8，8，8}中，出现最多的是8，因此众数是8，众数可能是一个数（数据值），但也可能是多个数（数据值）。若数据的数据值出现次数相同且无其他数据值时，则不存在众数。例如{5，2，8，2，5，8}中，2、5、8出现次数相同且没有其他数，因此此数据不存在众数。 在离散概率分布中，众数是指概率质量函数有最大值的数据，也就是最容易取様到的数据。在连续概率分布中，众数是指概率密度函数有最大值的数据（峰值）。 在统计学上，众数和平均数、中位数类似，都是总体或随机变量有关集中趋势的重要信息。在高斯分布（正态分布）中，众数为峰值所在的位置，和平均数、中位数相同。但若分布是高度偏斜分布，众数可能会和平均数、中位数有很大的差异。 分布中的众数不一定只有一个，若概率质量函数或概率密度函数在x1, x2......等多个点都有最大值，就会有多个众数，最极端的情形是离散型均匀分布，所有的点概率都相同，所有的点都是众数。若概率密度函数有数个局部最大值，一般会将这几个极值都称为众数，此连续概率分布会称为多峰分布（和单峰性相反）。 若是对称的单峰分布（例如正态分布），众数和平均数、中位数会重合。若一随机变量是由对称的总体中产生，可以用取样的平均值来估计总体的众数。"
+    }
+  },
+  {
+    "term": "standard deviation",
+    "source_id": "standard_deviation",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Standard deviation",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Standard_deviation",
+    "definition_en": "The most commonly used measure of statistical dispersion. It is the square root of the variance, and is generally denoted with the lowercase Greek letter σ (sigma).",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "標準偏差",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A8%99%E6%BA%96%E5%81%8F%E5%B7%AE",
+      "zh_extract_full": "标准偏差（standard deviation，std dev，SD）又称标准差、中误差，在统计学中，是衡量一组变量值相对于其算术平均值（期望）变异程度（离散程度）的指标。标准差越小（低），表示这些变量值越倾向于聚集在数据集的算术平均值（也视作期望）附近；反之，标准差越大（高），则意味着这些变量值分布得越分散。 标准差通常用于界定哪些数据属于异常值（离群值），而哪些不属于异常值。在数学文本和方程式中，通常用小写希腊字母 σ 表示总体标准差（population SD），用小写拉丁字母 s 表示样本标准差（sample SD）。在实际研究中，我们通常无法获取总体所有数据，因此会抽取样本来推断总体，借由样本的变异度来推估计总体的变异度。 在概率统计中，标准差最常作为评估一组数值的离散程度之用。标准偏差（标准差）的操作型定义为： 一群数值与其算术平均数之差异的平方，再取算术平均数，此时得变异数（variance，σ2，s2）又称方差，最后取二次方根；即“方差开算术平方根”。 标准差可反映组内个体间的离散程度，也可表示内部符合精度，作为在一定条件下衡量测量精度的一种数值指标。标准差与期望之比为标准离差率。 标准差具有两种性质： 为非负数值（因为平方后再做平方根）； 与测量资料具有相同单位（这样才能比对）。 一个总量的标准差或一个随机变量的标准差，及一个子集合样品数的标准差之间，有所差别。标准差的概念由卡尔·皮尔逊引入到统计中。"
+    }
+  },
+  {
+    "term": "standard error",
+    "source_id": "standard_error",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Standard error",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Standard_error",
+    "definition_en": "The standard error (SE) of a statistic (usually an estimator of a parameter, like the average or mean) is the standard deviation of its sampling distribution.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "标准误差",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A0%87%E5%87%86%E8%AF%AF%E5%B7%AE",
+      "zh_extract_full": "标准误差（英语：standard error），也称标准误，即样本平均数抽样分布的标准差（standard deviation），是描述对应的样本平均数抽样分布的离散程度及衡量对应样本平均数抽样误差大小的尺度。"
+    }
+  },
+  {
+    "term": "variance",
+    "source_id": "variance",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Variance",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Variance",
+    "definition_en": "A measure of its statistical dispersion of a random variable, indicating how far from the expected value its values typically are. The variance of random variable X is typically designated as var ⁡ ( X ) , σ X 2 , or simply σ 2",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "方差",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%96%B9%E5%B7%AE",
+      "zh_extract_full": "方差（英语：variance）又称变异数、变方，在概率论及统计学中，描述的是一个随机变量的离散程度，即一组数字与其平均值之间的距离的度量，是随机变量与其总体均值或样本均值的离差的平方的期望。方差在统计中有非常核心的地位，其应用领域包括描述统计学、推论统计学、假设检验、度量拟合优度，以及蒙特卡洛采样。由于科学分析经常涉及统计，方差也是重要的科研工具。方差是标准差的平方、分布的二阶矩，以及随机变量与其自身的协方差，其常用的符号表示有 σ 2 {\\displaystyle \\sigma ^{2}} 、 s 2 {\\displaystyle s^{2}} 、 Var ⁡ ( X ) {\\displaystyle \\operatorname {Var} (X)} 、 V ( X ) {\\displaystyle V(X)} ，以及 V ( X ) {\\displaystyle \\mathbb {V} (X)} 。 方差作为离散度量的优点是，它比其他离散度量（如平均差）更易于代数运算；例如，一组不相关的随机变量和的方差等于它们方差的和。在实际应用中，方差的一个缺点是它与随机变量的单位不同，而标准差则单位相同，这就是计算完成后通常采用标准差来衡量离散程度的原因。 有两个不同的概念都被称为“方差”。一种如上所述，是理论概率分布的方差。而另一种方差是一组观测值的特征。观测值通常是从真实世界的系统中测量的。如果给出系统的所有可能的观测，则它们算出的方差称为总体方差；然而，一般情况下我们只使用总体的一个子集（样本），由此计算出的方差称为样本方差。用样本计算出的方差可认为是对整个总体的方差的估计量。 方差的正平方根称为该随机变量的标准差；方差除以期望归一化的值叫分散指数；标准差除以平均值归一化的值叫变异系数。"
+    }
+  },
+  {
+    "term": "expected value",
+    "source_id": "expected_value",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Expected value",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Expected_value",
+    "definition_en": "The sum of the probabilities of each possible outcome of an experiment multiplied by their corresponding payoff or \"value\". Thus, it represents the average amount one \"expects\" to win per bet if bets with identical odds are repeated many times. For example, the expected value of rolling a fair six-sided die is 3.5. The concept is, intuitively, a generalization of the weighted average of all possible outcomes of a particular procedure or experiment, and can be viewed as the arithmetic mean of a large number of independent realizations of the experiment. The expected value of random variable X is typically written as E(X) for the expectation operator, and μ (mu) for the parameter.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "期望值",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%9C%9F%E6%9C%9B%E5%80%BC",
+      "zh_extract_full": "在概率论和统计学中，一个离散性随机变量的期望（或数学期望，亦简称期望，物理学中称为期待值）是试验中每次可能的结果乘以其结果概率的总和。换句话说，期望像是随机试验在同样的机会下重复多次，所有那些可能状态平均的结果，便基本上等同“期望”所期望的数。期望可能与每一个结果都不相等。换句话说，期望是该变量输出值的加权平均。期望并不一定包含于其分布值域，也并不一定等于值域平均值。 例如，掷一枚公平的六面骰子，其每次“点数”的期望是3.5，计算如下： E ⁡ ( X ) = 1 ⋅ 1 6 + 2 ⋅ 1 6 + 3 ⋅ 1 6 + 4 ⋅ 1 6 + 5 ⋅ 1 6 + 6 ⋅ 1 6 = 1 + 2 + 3 + 4 + 5 + 6 6 = 3.5 {\\displaystyle {\\begin{aligned}\\operatorname {E} (X)&=1\\cdot {\\frac {1}{6}}+2\\cdot {\\frac {1}{6}}+3\\cdot {\\frac {1}{6}}+4\\cdot {\\frac {1}{6}}+5\\cdot {\\frac {1}{6}}+6\\cdot {\\frac {1}{6}}\\\\[6pt]&={\\frac {1+2+3+4+5+6}{6}}=3.5\\end{aligned}}} 不过如上所说明的，3.5虽是“点数”的期望，但却不属于可能结果中的任一个，没有可能掷出此点数。"
+    }
+  },
+  {
+    "term": "range (statistics)",
+    "source_id": "range",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Range (statistics)",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Range_(statistics)",
+    "definition_en": "The length of the smallest interval which contains all of the data in a dataset, calculated as the arithmetic difference between the largest and smallest values contained in the dataset and expressed in the same units used for the data. The range provides a measure of the statistical dispersion of the dataset.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "全距",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%85%A8%E8%B7%9D",
+      "zh_extract_full": "统计学中，全距，又称极差，是一组数值中最大值与最小值之间的差，单位与数值相同，是一种测量离散程度的方法。R做为符号。 全距为离散程度的最简单测度值，易受极端值影响。其适用于等距变量、比率变量，不适用于名义变量或次序变量。"
+    }
+  },
+  {
+    "term": "quartile",
+    "source_id": "quartile",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Quartile",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Quartile",
+    "definition_en": "A type of quantile which divides a range of data points into four groups, termed quarters, of equal size. For any quartile-divided dataset, there are exactly three quartiles or cut points that create the four groups. The first quartile ( Q 1) is defined as the middle data point or value that is halfway between the smallest value (minimum) and the median of the dataset, such that 25 percent of the data lies below this quartile. The second quartile ( Q 2) is the median itself, with 50 percent of the data below this point. The third quartile ( Q 3) is defined as the middle value halfway between the median and the largest value (maximum) of the dataset, such that 75 percent of the data lies below this quartile. Because the data must be ordered from smallest to largest in order to compute them, quartiles are a type of order statistic.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "四分位数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%9B%9B%E5%88%86%E4%BD%8D%E6%95%B0",
+      "zh_extract_full": "四分位数（英语：Quartile）是统计学中分位数的一种，即把所有数值由小到大排列并分成四等份，处于三个分割点位置的数值就是四分位数。"
+    }
+  },
+  {
+    "term": "percentile",
+    "source_id": "percentile",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Percentile",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Percentile",
+    "definition_en": "In statistics, a percentile or percentile score, also known as centile (often denoted as P k or Pk, for a given percentage k), is a score greater than a given percentage of all scores (or data point value) in a sample.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "百分位数",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%99%BE%E5%88%86%E4%BD%8D%E6%95%B0",
+      "zh_extract_full": "百分位数（英语：percentile）是统计学术语，若将一组数据从小到大排序，并计算相应的累计百分点，则某百分点所对应数据的值，就称为这百分点的百分位数，以 P k {\\displaystyle P_{k}} 表示第 k {\\displaystyle k} 百分位数。 百分位数是用来比较个体在群体中的相对地位量数（英语：measures of relative position）。 一个数值的百分等级（percentile rank），也称PR值，是其在同一概率分布中超过其他数值的百分比。在教育统计学中，百分等级可用来表现测验成绩。"
+    }
+  },
+  {
+    "term": "interquartile range (IQR)",
+    "source_id": "interquartile_range_(iqr)",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Interquartile range",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Interquartile_range",
+    "definition_en": "A measure of the statistical dispersion or spread of a dataset, defined as the difference between the 25th and 75th percentiles of the data. To calculate the IQR, the dataset is divided into four rank-ordered even parts or quartiles, the boundaries between which, at the 25th, 50th, and 75th percentiles, are denoted Q 1, Q 2, and Q 3, respectively; the IQR = Q 3 − Q 1.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Interquartile range\" -> en:\"Interquartile range\" -> zh:\"四分位距\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+    }
+  },
+  {
+    "term": "z-score",
+    "source_id": "standard_score",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Standard score",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Standard_score",
+    "definition_en": "In statistics, the standard score or z-score is the number of standard deviations by which the value of a raw score (i.e., an observed value or data point) is above or below the mean value of what is being observed or measured.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "標準分數",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%A8%99%E6%BA%96%E5%88%86%E6%95%B8",
+      "zh_extract_full": "标准分数（Standard Score，又称z-score，中文称为Z-分数或标准分或标准计分）在统计学中是一种无因次值，就是一种纯数字标记，是借由从单一（原始）分数中减去总体的平均值，再依照总体（母集合）的标准差分割成不同的差距，按照z值公式，各个样本在经过变换后，通常在正、负五到六之间不等。其算数平均数必为0，标准差必为1。"
+    }
+  },
+  {
+    "term": "skewness",
+    "source_id": "skewness",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Skewness",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Skewness",
+    "definition_en": "A measure of the asymmetry of the probability distribution of a real-valued random variable about its mean. Roughly speaking, a distribution has positive skew (right-skewed) if the higher tail is longer, and negative skew (left-skewed) if the lower tail is longer. Perfectly symmetrical distributions always have zero skewness, though zero skewness does not necessarily imply a symmetrical distribution.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Skewness\" -> en:\"Skewness\" -> zh:\"偏度\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+    }
+  },
+  {
+    "term": "kurtosis",
+    "source_id": "kurtosis",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Kurtosis",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Kurtosis",
+    "definition_en": "A measure of the \"tailedness\" of the probability distribution of a real-valued random variable. There are different ways of quantifying, estimating, and interpreting kurtosis, but a common interpretation is that kurtosis represents the degree to which the shape of the distribution is influenced by infrequent extreme observations (outliers); in this case, higher kurtosis means more of the variance is due to infrequent extreme deviations, as opposed to frequent modestly sized deviations.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Kurtosis\" -> en:\"Kurtosis\" -> zh:\"峰度\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+    }
+  },
+  {
+    "term": "sample mean",
+    "source_id": "sample_mean",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Sample mean and covariance",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Sample_mean_and_covariance",
+    "definition_en": "The arithmetic mean of a sample of values drawn from a population, commonly denoted by x ¯ . An example is the average test score of a subset of 10 students from a class. On the assumption that the sample is representative of the larger population, the sample mean is often used as an estimator of the population mean, which in this example would be the average test score of all of the students in the class.",
+    "zh": {
+      "status": "flagged",
+      "reason": "candidate \"Sample mean and covariance\" resolved to English Wikipedia article \"Sample mean and covariance\" but it has no zh interwiki link"
+    }
+  },
+  {
+    "term": "correlation",
+    "source_id": "correlation",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Correlation",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Correlation",
+    "definition_en": "A numeric measure of the strength of a linear relationship between two random variables (one can use it to quantify, for example, how shoe size and height are correlated in the population). An example is the Pearson product-moment correlation coefficient, which is found by dividing the covariance of the two variables by the product of their standard deviations. Independent variables, by definition, have a correlation of 0. A population correlation is often represented by the symbol ρ , and a sample correlation by r .",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "相关 (概率论)",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E7%9B%B8%E5%85%B3_(%E6%A6%82%E7%8E%87%E8%AE%BA)",
+      "zh_extract_full": "相关（correlation）又称相关性、关联，在概率论和统计学中，指一种随机变量或现象与另一种或几种之间变动伴随关系。相关关系又称统计关系，一般会描述这些变量或现象关联程度的强度和方向。 在统计学中，相关的意义是：用来衡量两个变量相对于其相互独立的距离。在这个广义的定义下，有许多根据数据特点用来衡量数据相关性而定义的系数，称作 相关系数。在评估相关时，利用相关系数来计量的两个或几个随机变量协同变化的程度；当变量间呈现同一方向的变化趋势时，即同时增加或减少，称为正相关，反之，则称为负相关。"
+    }
+  },
+  {
+    "term": "covariance",
+    "source_id": "covariance",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Covariance",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Covariance",
+    "definition_en": "Given two random variables X and Y, with expected values E ( X ) = μ and E ( Y ) = ν , the expected value of random variable ( X − μ ) ( Y − ν ) , written in statistical notation as cov ⁡ ( X , Y ) . The covariance is used for measuring correlation; it can be interpreted as the degree to which the two variables change simultaneously with each other or \"co-vary\".",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "协方差",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8D%8F%E6%96%B9%E5%B7%AE",
+      "zh_extract_full": "在概率论与统计学中，协方差（英语：Covariance）用于衡量随机变量间的相关程度。"
+    }
+  },
+  {
+    "term": "regression analysis",
+    "source_id": "regression_analysis",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Regression analysis",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Regression_analysis",
+    "definition_en": "A data analysis or statistical model that employs a set of statistical methods which estimate the relationships between a dependent variable and one or more error-free independent variables. The most common example of such a model is a linear regression, in which the equation of a line that most closely fits a set of data points according to a specific mathematical criterion is calculated and plotted on a graph of the data points; other forms of regression use related methods to estimate alternative parameters or to estimate conditional expectations from various non-linear models.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "迴歸分析",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E8%BF%B4%E6%AD%B8%E5%88%86%E6%9E%90",
+      "zh_extract_full": "回归分析（英语：Regression Analysis）是一种统计学上分析数据的方法，目的在于了解两个或多个变量间是否相关、相关方向与强度，并建立数学模型以便观察特定变量来预测研究者感兴趣的变量。更具体的来说，回归分析可以帮助人们了解在只有一个自变量变化时因变量的变化量。一般来说，通过回归分析我们可以由给出的自变量估计因变量的条件期望。 回归分析是建立被解释变量 Y {\\displaystyle Y} （或称因变量、依变量、反因变量）与解释变量 X {\\displaystyle X} （或称自变量、独立变量）之间关系的模型。简单线性回归使用一个自变量 X {\\displaystyle X} ，复回归使用超过一个自变量（ X 1 , X 2 . . . X i {\\displaystyle X_{1},X_{2}...X_{i}} ）。"
+    }
+  },
+  {
+    "term": "confounder",
+    "source_id": "confounder",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Confounder",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Confounder",
+    "definition_en": "A variable that influences both the dependent variable and the independent variable, causing a spurious association. The existence of hidden confounding variables is an important quantitative explanation why correlation does not imply causation: if changes in two variables appear to be correlated, it is risky to presume that one change causes the other because it is possible that one or more unidentified confounders has in fact caused the changes in both variables. A classic example is the correlation between increased consumption of ice cream and increased crime in the summer. It is irrational to assume that eating more ice cream makes people commit more crime, or vice versa; it is more likely that one or more additional variables, e.g. warmer weather, increase both ice cream consumption and crime simultaneously. In this example, warmer weather is the confounder.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "干擾因素",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%B9%B2%E6%93%BE%E5%9B%A0%E7%B4%A0",
+      "zh_extract_full": "干扰因素（英语：confounder、confound或confounding variable），又称为干扰因子、干扰变量、混淆变量、共变因等，在统计学和因果关系中是指会同时影响自变量和因变量，导致出现伪关系的一种变量。在不严谨的语境下，干扰因子也可以指所有未知变量（lurking variable），包括中介变因和对撞变因。干扰因子会造成伪关系，是相关不蕴涵因果的原因之一。"
+    }
+  },
+  {
+    "term": "outlier",
+    "source_id": "outlier",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Outlier",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Outlier",
+    "definition_en": "In statistics, an outlier is a data point that differs significantly from other observations.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "异常值",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%BC%82%E5%B8%B8%E5%80%BC",
+      "zh_extract_full": "在统计学中，异常值（又称离群值）是指与其他观测值有显著差异的数据点。异常值可能是由实验误差造成；后者有时会从数据集中排除。异常值可能会导致统计分析中出现严重问题。 能妥善处理异常值的估计量，称为“稳健”。例如，中位数是集中趋势的稳健统计量，但平均数则不然。"
+    }
+  },
+  {
+    "term": "descriptive statistics",
+    "source_id": "descriptive_statistics",
+    "source_type": "linked-article-lead",
+    "en_wiki_title": "Descriptive statistics",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Descriptive_statistics",
+    "definition_en": "A descriptive statistic (in the count noun sense) is a summary statistic that quantitatively describes or summarizes features from a collection of information, while descriptive statistics (in the mass noun sense) is the process of using and analysing those statistics.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "描述统计学",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8F%8F%E8%BF%B0%E7%BB%9F%E8%AE%A1%E5%AD%A6",
+      "zh_extract_full": "敘述统计（descriptive statistics），是统计学中，来描绘或总结观察量的基本情况的统计总称。其与统计推断相对应。"
+    }
+  },
+  {
+    "term": "statistical inference",
+    "source_id": "statistical_inference",
+    "source_type": "glossary-inline",
+    "en_wiki_title": "Statistical inference",
+    "en_wiki_url": "https://en.wikipedia.org/wiki/Statistical_inference",
+    "definition_en": "Inference about a population based on a random sample drawn from that population or, more generally, about a random process from its observed behavior during a finite period of time.",
+    "zh": {
+      "status": "ok",
+      "zh_wiki_title": "推論統計學",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E6%8E%A8%E8%AB%96%E7%B5%B1%E8%A8%88%E5%AD%B8",
+      "zh_extract_full": "推断统计学，或称统计推断（英语：Statistical inference），指统计学中，研究如何根据样本数据去推断总体数量特征的方法。它是在对样本数据进行描述的基础上，对统计总体的未知数量特征做出以概率形式表述的推断。更概括地说，是在一段有限的时间内，通过对一个随机过程的观察来进行推断的。 统计学中，统计推断与描述统计相对应。 统计推断的结果常用来决定下一步的作法，可能是要做更深入的试验或问卷，或是是决定是否要实行某项方案。"
+    }
+  }
+]
