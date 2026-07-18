@@ -404,6 +404,15 @@ export interface Settings {
   // legacy field migrates to !aiDetect in store.hydrate).
   aiDetect: boolean;
   minConfidence: number;
+  // v0.4.5 detect-span QC (item 6, owner ruling 2026-07-17): the length
+  // ceiling above which an AI-detected span the model tagged
+  // category:idiom|slang is dropped as an over-selected sentence rather
+  // than kept as a genuine multi-word idiom. Configurable per her call;
+  // default 12 words / 90 chars. Non-idiom categories use a tighter
+  // fixed cap and CJK spans a fixed internal char cap (成语/俗语 are
+  // short) — neither is governed by these two. See lib/detect/spanQc.ts.
+  detectIdiomMaxWords: number;
+  detectIdiomMaxChars: number;
   // agent-native output layer
   autoExport: boolean; // write session .md/.json to a chosen folder on save
   webhookUrl: string; // "" = off; POST session JSON after meeting
@@ -579,6 +588,8 @@ export const DEFAULT_SETTINGS: Settings = {
   autoDetect: true,
   aiDetect: true,
   minConfidence: 0.55,
+  detectIdiomMaxWords: 12,
+  detectIdiomMaxChars: 90,
   autoExport: false,
   webhookUrl: "",
   exportFrontmatter: true,
