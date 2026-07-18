@@ -21,7 +21,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
-import SettingsDialog from "../SettingsDialog";
+import SettingsDialog, { SETTINGS_CATEGORIES, type SettingsCategoryId } from "../SettingsDialog";
+
+// Copy constants (tech-debt ledger #4, 2026-07-17): derives an expected
+// nav-label array straight from SETTINGS_CATEGORIES instead of
+// re-pinning a second copy of the zh labels here — a reword in
+// SettingsDialog.tsx can't silently desync these assertions from it.
+function labelsOf(ids: SettingsCategoryId[]): string[] {
+  return ids.map((id) => SETTINGS_CATEGORIES.find((c) => c.id === id)!.label);
+}
 
 function deviantSettings(): Settings {
   // shouldAutoPromoteToAdvanced (settingsSections.ts) trips on ANY
@@ -437,7 +445,7 @@ describe("SettingsDialog — settings redesign: nav rail + page-per-section", ()
     // one simple row, so it's always listed too. The four advanced-only
     // whole sections (diarization/taskLlm/dataIntegration/
     // subscriptionDirect) are absent.
-    expect(buttons.map((b) => b.textContent)).toEqual(["转录引擎", "AI 检测", "显示"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(labelsOf(["engine", "aiDetect", "display"]));
     expect(buttons[0].getAttribute("aria-current")).toBe("page");
     expect(buttons[1].getAttribute("aria-current")).toBeNull();
     expect(buttons[2].getAttribute("aria-current")).toBeNull();
@@ -450,14 +458,9 @@ describe("SettingsDialog — settings redesign: nav rail + page-per-section", ()
     });
     await flush();
 
-    expect(navButtons().map((b) => b.textContent)).toEqual([
-      "转录引擎",
-      "说话人分离",
-      "AI 检测",
-      "分任务模型（高级）",
-      "数据与联动",
-      "显示",
-    ]);
+    expect(navButtons().map((b) => b.textContent)).toEqual(
+      labelsOf(["engine", "diarization", "aiDetect", "taskLlm", "dataIntegration", "display"]),
+    );
   });
 
   it("clicking a nav entry moves aria-current and swaps the content pane to ONLY that category — the previous category's own fields unmount, not just hide", async () => {
@@ -776,6 +779,13 @@ describe("SettingsDialog — PROVIDER_PRESETS suggestedModels (field-test fix v0
     return input.value;
   }
 
+  function findBaseUrlInput(): HTMLInputElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "Base URL");
+    const input = label?.parentElement?.querySelector("input");
+    if (!input) throw new Error("Base URL input not found");
+    return input as HTMLInputElement;
+  }
+
   async function selectPreset(id: string): Promise<void> {
     const navButtons = Array.from(
       container!.querySelectorAll('nav[aria-label="设置分类"] button'),
@@ -815,6 +825,25 @@ describe("SettingsDialog — PROVIDER_PRESETS suggestedModels (field-test fix v0
 
     expect(modelInputValue("primary-detect-options")).toBe("deepseek/deepseek-v4-flash");
     expect(modelInputValue("primary-summary-options")).toBe("deepseek/deepseek-v4-pro");
+  });
+
+  // Tech-debt ledger item 4 (2026-07-17): suggestedModels ids verified
+  // against OpenAI's own current model listing (see PROVIDER_PRESETS'
+  // own doc comment on this entry for the gpt-5-mini/gpt-5.4 -> real
+  // gpt-5.6-luna/gpt-5.6-sol correction) — same suggestedModels posture
+  // as the anthropic/openrouter presets above, not a bare baseUrl switch.
+  it("selecting the openai preset switches provider/baseUrl to OpenAI's official endpoint and fills gpt-5.6-luna/gpt-5.6-sol", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await selectPreset("openai");
+
+    expect(findProviderSelect().value).toBe("openai");
+    expect(findBaseUrlInput().value).toBe("https://api.openai.com/v1");
+    expect(modelInputValue("primary-detect-options")).toBe("gpt-5.6-luna");
+    expect(modelInputValue("primary-summary-options")).toBe("gpt-5.6-sol");
   });
 });
 

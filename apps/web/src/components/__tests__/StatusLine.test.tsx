@@ -14,7 +14,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
-import StatusLine from "../StatusLine";
+import StatusLine, {
+  DETECT_MODE_LABEL,
+  ENGINE_SELECT_PLACEHOLDER,
+  SIDECAR_DOWN_HINT_WEB,
+} from "../StatusLine";
 
 describe("StatusLine — detect-mode toggle", () => {
   let container: HTMLDivElement | null = null;
@@ -69,7 +73,7 @@ describe("StatusLine — detect-mode toggle", () => {
 
     const toggle = container!.querySelector('[data-testid="statusline-detect-toggle"]');
     expect(toggle).not.toBeNull();
-    expect(toggle!.textContent).toBe("词典+AI 检测");
+    expect(toggle!.textContent).toBe(DETECT_MODE_LABEL.llm);
 
     await act(async () => {
       toggle!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -81,7 +85,7 @@ describe("StatusLine — detect-mode toggle", () => {
     expect(useApp.getState().detectMode).toBe("dictionary");
     expect(
       container!.querySelector('[data-testid="statusline-detect-toggle"]')!.textContent,
-    ).toBe("词典检测");
+    ).toBe(DETECT_MODE_LABEL.dictionary);
 
     await act(async () => {
       container!
@@ -175,7 +179,7 @@ describe("StatusLine — sidecar-down tooltip", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().title).toBe("本地 Whisper 未连接——见 设置 → 转录引擎");
+    expect(privacySegment().title).toBe(SIDECAR_DOWN_HINT_WEB);
   });
 
   it("hints for engine:tabaudio too (the other sidecar-backed engine)", async () => {
@@ -696,7 +700,7 @@ describe("StatusLine — engine dropdown", () => {
     );
     expect(placeholder).toBeDefined();
     expect(placeholder!.disabled).toBe(true);
-    expect(placeholder!.textContent).toBe("选择引擎");
+    expect(placeholder!.textContent).toBe(ENGINE_SELECT_PLACEHOLDER);
   });
 });
 

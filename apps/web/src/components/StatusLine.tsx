@@ -15,11 +15,21 @@ import { isEngineControlBusy } from "@/components/Header";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
 
-const DETECT_MODE_LABEL: Record<string, string> = {
+// Exported (tech-debt ledger #4, 2026-07-17): StatusLine.test.tsx
+// imports this instead of re-pinning its own copy of the zh labels, so
+// a reword here can't silently desync from a test asserting the old
+// string.
+export const DETECT_MODE_LABEL: Record<string, string> = {
   llm: "词典+AI 检测",
   dictionary: "词典检测",
   off: "检测关闭",
 };
+
+// Same reasoning — the engine <select>'s own placeholder + sidecar-down
+// hint below, both pinned by exact-equality assertions in
+// StatusLine.test.tsx.
+export const ENGINE_SELECT_PLACEHOLDER = "选择引擎";
+export const SIDECAR_DOWN_HINT_WEB = "本地 Whisper 未连接——见 设置 → 转录引擎";
 
 // S10 field-fix #5: engines whose transcription actually flows through
 // wsTransport.ts (the ONE lag_ms producer, via the local Whisper
@@ -71,7 +81,7 @@ function EngineDropdown() {
     >
       {(engine === "demo" || engine === "import") && (
         <option value="" disabled>
-          选择引擎
+          {ENGINE_SELECT_PLACEHOLDER}
         </option>
       )}
       {ENGINE_OPTIONS.map((opt) => {
@@ -186,7 +196,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
     sidecarUp === false
       ? IS_DESKTOP
         ? `本地服务·${sidecarMode === "managed" ? "托管" : "外部"}未连接——见 设置 → 转录引擎`
-        : "本地 Whisper 未连接——见 设置 → 转录引擎"
+        : SIDECAR_DOWN_HINT_WEB
       : undefined;
 
   const count = cards.length + terms.length;

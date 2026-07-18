@@ -73,7 +73,7 @@ vi.mock("@/lib/desktop/mlxCaps", () => ({
   refreshMlxCaps: () => mlxState.probeImpl(),
 }));
 
-import DesktopWizard from "../DesktopWizard";
+import DesktopWizard, { RETURN_TO_CONSENT_LABEL, WIZARD_BUSY_LABEL } from "../DesktopWizard";
 import type { DesktopBootstrapState, DesktopLogLine } from "@/lib/desktop/bootstrap";
 import { MODEL_CATALOG, WIZARD_PRESELECTED_MODEL } from "@/lib/desktop/modelCatalog";
 import type { DesktopPaths } from "@/lib/desktop/uvCommands";
@@ -218,8 +218,13 @@ describe("DesktopWizard — state-driven rendering", () => {
     expect(consent.textContent).not.toContain("Whisper 每约 30 秒判定一种语言");
     expect(consent.textContent).not.toContain("Apple Silicon 实时→medium");
 
+    // Copy constants (tech-debt ledger #4): derives the expected label
+    // from MODEL_CATALOG's own id/size, mirroring the 更换模型-tracking
+    // test below instead of re-pinning a second copy of the "开始安装（…）"
+    // wrapper text here.
+    const parakeet = MODEL_CATALOG.find((m) => m.id === "parakeet-tdt-0.6b-v3")!;
     const beginBtn = container!.querySelector('[data-testid="btn-begin-provision"]')!;
-    expect(beginBtn.textContent).toBe("开始安装（parakeet-tdt-0.6b-v3 · ~2.5GB）");
+    expect(beginBtn.textContent).toBe(`开始安装（${parakeet.id} · ${parakeet.size}）`);
   });
 
   it("WIZARD_CONSENT_REQUIRED: embeds <ModelPicker>, pre-selected to WIZARD_PRESELECTED_MODEL, and the 开始安装 button text tracks the selection", async () => {
@@ -530,20 +535,20 @@ describe("DesktopWizard — state-driven rendering", () => {
     );
 
     const backBtn = container!.querySelector('[data-testid="btn-back-to-consent"]')! as HTMLButtonElement;
-    expect(backBtn.textContent).toBe("返回重新选择");
+    expect(backBtn.textContent).toBe(RETURN_TO_CONSENT_LABEL);
     await act(async () => {
       backBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(onReprovision).toHaveBeenCalledTimes(1);
     // busy while the awaited reprovision is still in flight — mirrors
     // TerminalErrorScreen's own 处理中… contract.
-    expect(backBtn.textContent).toBe("处理中…");
+    expect(backBtn.textContent).toBe(WIZARD_BUSY_LABEL);
     expect(backBtn.disabled).toBe(true);
     await act(async () => {
       resolveReprovision();
       await reprovisionGate;
     });
-    expect(backBtn.textContent).toBe("返回重新选择");
+    expect(backBtn.textContent).toBe(RETURN_TO_CONSENT_LABEL);
     expect(backBtn.disabled).toBe(false);
 
     await act(async () => {

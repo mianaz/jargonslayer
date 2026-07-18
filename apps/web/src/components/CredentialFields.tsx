@@ -17,6 +17,7 @@ import { useProviderModels } from "@/hooks/useProviderModels";
 
 export type ProviderPresetId =
   | "anthropic"
+  | "openai"
   | "deepseek"
   | "qwen"
   | "openrouter"

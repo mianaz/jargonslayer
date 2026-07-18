@@ -101,7 +101,11 @@ import { useTasks } from "../../lib/tasks/registry";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import type { DesktopBootstrapHandle } from "@/lib/desktop/bootstrap";
 import { remapOpenRouterModelDefaults } from "@/lib/oauth/openrouterModelDefaults";
-import SettingsDialog from "../SettingsDialog";
+import SettingsDialog, {
+  OSSPEECH_PREINSTALL_BUSY_LABEL,
+  OSSPEECH_PREINSTALL_DONE_LABEL,
+  OSSPEECH_PREINSTALL_IDLE_LABEL,
+} from "../SettingsDialog";
 
 // Already on the "openrouter" preset (provider/baseUrl match
 // PROVIDER_PRESETS' own "openrouter" entry) — this is what makes
@@ -673,20 +677,20 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     });
 
     const btn = container!.querySelector('[data-testid="btn-preinstall-osspeech"]') as HTMLButtonElement;
-    expect(btn.textContent).toBe("预下载模型");
+    expect(btn.textContent).toBe(OSSPEECH_PREINSTALL_IDLE_LABEL);
 
     await act(async () => {
       btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(mockPreinstallOsSpeech).toHaveBeenCalledWith("zh-CN");
-    expect(btn.textContent).toBe("下载中…");
+    expect(btn.textContent).toBe(OSSPEECH_PREINSTALL_BUSY_LABEL);
     expect(btn.disabled).toBe(true);
 
     await act(async () => {
       resolvePreinstall();
       await Promise.resolve();
     });
-    expect(btn.textContent).toBe("已下载");
+    expect(btn.textContent).toBe(OSSPEECH_PREINSTALL_DONE_LABEL);
     expect(btn.disabled).toBe(true);
   });
 
@@ -708,7 +712,7 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
       btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     expect(mockPreinstallOsSpeech).toHaveBeenCalledWith("zh-CN");
-    expect(btn.textContent).toBe("已下载");
+    expect(btn.textContent).toBe(OSSPEECH_PREINSTALL_DONE_LABEL);
 
     const languageSelect = findLanguageSelect();
     await act(async () => {
@@ -716,7 +720,7 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
       languageSelect.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
-    expect(btn.textContent).toBe("预下载模型");
+    expect(btn.textContent).toBe(OSSPEECH_PREINSTALL_IDLE_LABEL);
     expect(btn.disabled).toBe(false);
   });
 

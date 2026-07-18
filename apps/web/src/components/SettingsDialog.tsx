@@ -211,6 +211,14 @@ const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   cloud: "云端",
 };
 
+// S11 osspeech blueprint §Q5's 预下载模型 button (see its own JSX below):
+// exported (tech-debt ledger #4, 2026-07-17) so SettingsDialog.desktop.
+// test.tsx imports these instead of re-pinning its own copy of the zh
+// busy/done/idle labels.
+export const OSSPEECH_PREINSTALL_IDLE_LABEL = "预下载模型";
+export const OSSPEECH_PREINSTALL_BUSY_LABEL = "下载中…";
+export const OSSPEECH_PREINSTALL_DONE_LABEL = "已下载";
+
 const LANGUAGE_OPTIONS = [
   { value: "en-US", label: "English (US)" },
   { value: "en-GB", label: "English (UK)" },
@@ -231,6 +239,7 @@ const DETECT_MODEL_OPTIONS = [
   "claude-sonnet-5",
   "deepseek-chat",
   "qwen-plus",
+  "gpt-5.6-luna",
 ];
 
 const SUMMARY_MODEL_OPTIONS = [
@@ -238,6 +247,7 @@ const SUMMARY_MODEL_OPTIONS = [
   "claude-sonnet-5",
   "claude-opus-4-8",
   "deepseek-chat",
+  "gpt-5.6-sol",
 ];
 
 // #56: translate has no PRIMARY top-level model field of its own — R1
@@ -299,7 +309,7 @@ const UI_MODE_OPTIONS: { value: Settings["uiMode"]; label: string }[] = [
 // category"): one nav entry per existing <section> — id per category,
 // label copied verbatim from that section's own <SectionHeading>. Order
 // matches the dialog's previous top-to-bottom section order exactly.
-type SettingsCategoryId =
+export type SettingsCategoryId =
   | "engine"
   | "diarization"
   | "aiDetect"
@@ -308,7 +318,11 @@ type SettingsCategoryId =
   | "subscriptionDirect"
   | "display";
 
-const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = [
+// Exported (tech-debt ledger #4, 2026-07-17): SettingsDialog.test.tsx
+// derives its expected nav-label arrays from this instead of re-pinning
+// its own copy of the zh labels, so a reword here can't silently desync
+// from a test asserting the old string.
+export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = [
   { id: "engine", label: "转录引擎" },
   { id: "diarization", label: "说话人分离" },
   { id: "aiDetect", label: "AI 检测" },
@@ -360,6 +374,23 @@ const PROVIDER_PRESETS: SettingsProviderPreset[] = [
     // Claude models pre-filled, via this suggestedModels entry rather
     // than the (now DeepSeek-flavored) global default.
     suggestedModels: { detectModel: "claude-haiku-4-5", summaryModel: "claude-sonnet-5" },
+  },
+  {
+    // Tech-debt ledger item 4 (2026-07-17). suggestedModels ids verified
+    // against OpenAI's own current model listing rather than guessed:
+    // the requested "gpt-5-mini"/"gpt-5.4" pair doesn't match — OpenAI's
+    // live lineup is the GPT-5.6 family (Sol = frontier/flagship, Terra
+    // = balanced, Luna = budget/cost-sensitive), no "mini" tier exists
+    // today. Mapped onto this preset's own cheap-tier/flagship-tier
+    // roles: gpt-5.6-luna (budget) for 检测模型, gpt-5.6-sol (frontier)
+    // for 会议报告模型 — same "force-applied is fine, it's just a suggested
+    // pre-fill the user can retype" posture the anthropic/deepseek/
+    // openrouter presets above already take.
+    id: "openai",
+    label: "OpenAI (https://api.openai.com/v1)",
+    provider: "openai-compat",
+    baseUrl: "https://api.openai.com/v1",
+    suggestedModels: { detectModel: "gpt-5.6-luna", summaryModel: "gpt-5.6-sol" },
   },
   {
     id: "deepseek",
@@ -1812,7 +1843,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   onClick={() => void handlePreinstallOsSpeech()}
                   className="btn-tactile shrink-0 border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {preinstallingOsSpeech ? "下载中…" : osSpeechPreinstallDone ? "已下载" : "预下载模型"}
+                  {preinstallingOsSpeech
+                    ? OSSPEECH_PREINSTALL_BUSY_LABEL
+                    : osSpeechPreinstallDone
+                      ? OSSPEECH_PREINSTALL_DONE_LABEL
+                      : OSSPEECH_PREINSTALL_IDLE_LABEL}
                 </button>
               </div>
             )}
