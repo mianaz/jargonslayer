@@ -77,6 +77,7 @@ import CredentialFields, {
   type ProviderPreset,
   type ProviderPresetId,
 } from "@/components/CredentialFields";
+import AiStatusPanel from "@/components/AiStatusPanel";
 import {
   buildAuthUrl,
   codeChallengeS256,
@@ -2528,6 +2529,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 >
                   {testingConnection ? "测试中…" : "测试连接"}
                 </button>
+
+                {/* v0.4.5 ambient AI-status mirror (design doc
+                   v045-ai-transparency-qc.md Part A) — the same
+                   4-row AiStatusPanel StatusLine's popover shows,
+                   right here as the config-moment host. */}
+                <AiStatusPanel />
               </div>
             )}
 
@@ -2585,6 +2592,61 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     filtered by this control, from any source. */}
                 <div className="mt-1 text-xs text-mut2">
                   低于该置信度的 AI 检测结果不会生成表达卡片——调高更准但更少，调低更多但可能误报；词典、我的词典命中不受影响；此项不影响术语卡片。
+                </div>
+
+                {/* v0.4.5 detect-span QC (design doc v045-ai-
+                   transparency-qc.md Part B, owner ruling: 「行话最大词数/
+                   字符数」are configurable, not a hardcoded constant) —
+                   settings.detectIdiomMaxWords/detectIdiomMaxChars,
+                   consumed by lib/detect/spanQc.ts's category-aware cap
+                   (idiom/slang only; other categories keep a fixed
+                   tighter cap this control doesn't touch). Reuses the
+                   aiDetectConfidence section's own "advanced" gate above
+                   (no new SETTINGS_UI_LEVELS key — settingsSections.ts
+                   is outside this worker's file set) since it's the same
+                   "AI 检测 tuning knob, rarely touched" shelf. */}
+                <div className="mt-3 grid grid-cols-2 gap-3 border-t border-edge pt-3">
+                  <div>
+                    <label className="text-xs text-mut">行话最大词数</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={draft.detectIdiomMaxWords}
+                      onChange={(e) => {
+                        // F5 (Sol+Opus review, MAJOR/silent-failure): a
+                        // blank/0/negative value here silently drops
+                        // EVERY idiom/slang span app-wide (spanQc.ts's
+                        // category-aware cap) until the user notices — an
+                        // unenforced `min` attribute is only a spinner
+                        // hint, not validation. Only patch on a finite
+                        // integer >= 1; anything else leaves the last-
+                        // good draft value in place instead of saving
+                        // Number("")===0.
+                        const n = Math.trunc(Number(e.target.value));
+                        if (Number.isFinite(n) && n >= 1) patch({ detectIdiomMaxWords: n });
+                      }}
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-mut">行话最大字符数</label>
+                    <input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={draft.detectIdiomMaxChars}
+                      onChange={(e) => {
+                        // Same guard as 行话最大词数 above.
+                        const n = Math.trunc(Number(e.target.value));
+                        if (Number.isFinite(n) && n >= 1) patch({ detectIdiomMaxChars: n });
+                      }}
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="mt-1 text-xs text-mut2">
+                  AI 判定为「习语/俗语」的检测结果，超过这里设置的词数或字符数上限会被当作整句误标而丢弃，而不是保留为一个真正的长行话；其他类别的检测结果不受此项影响。
                 </div>
               </div>
             )}

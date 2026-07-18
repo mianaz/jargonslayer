@@ -21,16 +21,17 @@
 // site's own comment. Graceful truncation instead of a hard reject is
 // a deliberate non-goal until the desktop UX pass.
 
-import type {
-  DetectedExpression,
-  DetectedTerm,
-  ExplainLanguage,
-  Flashcard,
-  LlmProvider,
-  MeetingSummary,
-  SummarizeRequest,
-  SummaryResult,
-  TranslationPair,
+import {
+  DEFAULT_SETTINGS,
+  type DetectedExpression,
+  type DetectedTerm,
+  type ExplainLanguage,
+  type Flashcard,
+  type LlmProvider,
+  type MeetingSummary,
+  type SummarizeRequest,
+  type SummaryResult,
+  type TranslationPair,
 } from "@jargonslayer/core/types";
 import {
   buildSweepSystemPrompt,
@@ -45,6 +46,22 @@ import {
   TranslationsSchema,
   type ProviderCaller,
 } from "../providerCore";
+import { filterDetectSpans, type DetectSpanCaps } from "../../detect/spanQc";
+
+// v0.4.5 detect-span QC (item 6): this module is isomorphic (shared by
+// the Next.js route AND the client-side BYOK path — see header
+// comment above) and, unlike scheduler.ts/upload.ts, has no `Settings`
+// object threaded through it — route.ts is a stateless server handler
+// with no user Settings store to read at all. `SummarizeTaskInput.
+// spanQcCaps` is therefore OPTIONAL: a caller that has the user's real
+// settings.detectIdiomMaxWords/Chars (client.ts's summarizeViaClient
+// does) can pass them through; one that doesn't (or hasn't been wired
+// up yet) falls back to DEFAULT_SETTINGS' own values below, so the
+// sweep's span QC is never silently skipped either way.
+const DEFAULT_SPAN_QC_CAPS: DetectSpanCaps = {
+  idiomMaxWords: DEFAULT_SETTINGS.detectIdiomMaxWords,
+  idiomMaxChars: DEFAULT_SETTINGS.detectIdiomMaxChars,
+};
 
 // Field-test fix (v0.4.4) — see tasks/detect.ts's DEFAULT_DETECT_MODEL
 // doc comment for the full rationale (bare Anthropic ids 400 on
@@ -94,6 +111,9 @@ export interface SummarizeTaskInput {
   terms: DetectedTerm[];
   lang?: ExplainLanguage;
   profile?: string;
+  /** v0.4.5 detect-span QC (item 6) — see DEFAULT_SPAN_QC_CAPS' own doc
+   *  comment above for why this is optional rather than required. */
+  spanQcCaps?: DetectSpanCaps;
 }
 
 // ---------------------------------------------------------------
@@ -288,8 +308,9 @@ async function runSweepStage(
   llm: SummarizeLlmConfig,
   lang: ExplainLanguage,
   profileHint: string | undefined,
+  spanQcCaps: DetectSpanCaps,
   call: ProviderCaller,
-): Promise<{ expressions: DetectedExpression[]; terms: DetectedTerm[] }> {
+): Promise<{ expressions: DetectedExpression[]; terms: DetectedTerm[]; qcDropped: number }> {
   const fullTranscript = segments
     .map((s) => (s.speaker ? `${s.speaker}: ${s.text}` : s.text))
     .join("\n");
@@ -305,15 +326,33 @@ async function runSweepStage(
       ...llm,
     });
 
+    // v0.4.5 detect-span QC (field bug: the sweep had NO span-length
+    // QC at all before this fix — see spanQc.ts's own header comment).
+    // Filtered BEFORE the top-N slice so a dropped oversized span never
+    // occupies one of the sweep's limited expression slots.
+    //
+    // F4 (adversarial review): this module is isomorphic and, on the
+    // default web transport, runs server-side inside the /api/summarize
+    // route — calling recordLlmQcDrop here would write to a throwaway
+    // server-process zustand store no browser ever reads. Tally the
+    // drop count and hand it back through runSummarizeTask's returned
+    // SummaryResult instead; client.ts's summarizeApi (the one place
+    // both transports funnel through) is what actually records it.
+    let qcDropped = 0;
+    const filtered = filterDetectSpans(res, spanQcCaps, (droppedCount) => {
+      qcDropped = droppedCount;
+    });
+
     return {
-      expressions: res.expressions
+      expressions: filtered.expressions
         .slice(0, SWEEP_MAX_EXPRESSIONS)
         .map((e) => ({ ...e, confidence: clampConfidence(e.confidence) })),
-      terms: res.terms.slice(0, SWEEP_MAX_TERMS),
+      terms: filtered.terms.slice(0, SWEEP_MAX_TERMS),
+      qcDropped,
     };
   } catch (err) {
     console.warn("[summarize] sweep stage failed, proceeding without it", err);
-    return { expressions: [], terms: [] };
+    return { expressions: [], terms: [], qcDropped: 0 };
   }
 }
 
@@ -386,6 +425,7 @@ export async function runSummarizeTask(
 ): Promise<SummaryResult> {
   const { apiKey, model, llm, segments, expressions, terms } = input;
   const lang = input.lang ?? "zh";
+  const spanQcCaps = input.spanQcCaps ?? DEFAULT_SPAN_QC_CAPS;
 
   const summary = await runSummaryStage(apiKey, model, segments, llm, call);
 
@@ -399,6 +439,7 @@ export async function runSummarizeTask(
       llm,
       lang,
       input.profile,
+      spanQcCaps,
       call,
     ),
   ]);
@@ -411,5 +452,6 @@ export async function runSummarizeTask(
     flashcards,
     generatedAt: Date.now(),
     model,
+    sweepQcDropped: sweep.qcDropped,
   };
 }

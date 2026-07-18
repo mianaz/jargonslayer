@@ -238,6 +238,16 @@ export interface SummarizeRequest {
   // as `lang` above: affects the missed-items sweep stage only (the
   // summary/translation stages stay untouched, same v1 scope as lang).
   profile?: string;
+  // v0.4.5 detect-span QC (item 6, F3 field fix): the user's configured
+  // idiom-category length caps (Settings.detectIdiomMaxWords/Chars),
+  // threaded through so the sweep stage (which runs server-side on the
+  // default web transport) honors the SAME caps the live/import detect
+  // paths already read straight off Settings, instead of always falling
+  // back to the isomorphic task module's own DEFAULT_SPAN_QC_CAPS. Inline
+  // shape (not DetectSpanCaps from apps/web's detect layer) — core must
+  // not import from an app package. Optional: an absent value falls back
+  // to the default, same as before this field existed.
+  spanQcCaps?: { idiomMaxWords: number; idiomMaxChars: number };
 }
 
 export interface TranslationPair {
@@ -298,6 +308,17 @@ export interface SummaryResult {
   flashcards: Flashcard[];
   generatedAt: number;
   model: string;
+  // v0.4.5 detect-span QC (item 6, F4 field fix): count of sweep-stage
+  // expressions dropped as over-selected spans (spanQc.ts's
+  // filterDetectSpans). Serialized through SummaryResult rather than
+  // recorded inside the (isomorphic, server-reachable) sweep stage
+  // itself, so BOTH the Next.js-routed and client-transport paths let
+  // the BROWSER be the one that updates telemetry.ts's session-scoped
+  // store — see lib/llm/client.ts's summarizeApi. Optional (rather than
+  // required) so older persisted/fixture SummaryResult objects that
+  // predate this field stay valid — runSummarizeTask always populates
+  // it; a reader treats an absent value as 0 (`?? 0`).
+  sweepQcDropped?: number;
 }
 
 // API error body shared by routes: { error: string, code?: "no_key" | ... }

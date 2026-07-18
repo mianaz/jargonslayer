@@ -126,6 +126,7 @@ import {
   resetSubscriptionToastLatch,
 } from "../client";
 import { clearDiag, getDiagEntries } from "../../diag/log";
+import { useLlmTelemetry, resetLlmTelemetry } from "../telemetry";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return { ...DEFAULT_SETTINGS, ...overrides };
@@ -153,6 +154,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  resetLlmTelemetry();
 });
 
 // ---------------------------------------------------------------
@@ -603,5 +605,213 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
     const entries = getDiagEntries().filter((e) => e.tag === "llm-define");
     expect(entries).toHaveLength(1);
     expect(entries[0].detail).toContain("provider=server");
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.4.5 telemetry wiring — each of the 4 exported *Api functions
+// records exactly one recordLlmCall(domain, outcome) per resolved
+// call, domain-mapped detect/define/translate/summary (telemetry.ts's
+// own FOUR-buckets comment covers why define gets its own bucket
+// despite riding detect's creds). Default settings (subscriptionDirect:
+// false) route every call here through the plain Next.js /api/* path,
+// same as the diag-ring-buffer tests above — errorResponseJson's
+// status code drives which of NoKeyError/RateLimitApiError/
+// UpstreamError the shared throwForStatus throws, which client.ts's
+// telemetryKind then maps to nokey/ratelimit/upstream.
+// ---------------------------------------------------------------
+
+describe("LLM telemetry wiring", () => {
+  it("detectApi: records detect/ok on success", async () => {
+    mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
+    await detectApi({ context: "", new_text: "hi" }, makeSettings());
+    expect(useLlmTelemetry.getState().detect).toMatchObject({
+      calls: 1,
+      failures: 0,
+      lastStatus: "ok",
+    });
+  });
+
+  it("defineApi: records define/ok on success", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({ kind: "expression", headword: "h", variants: [], chinese_explanation: "z", example: "e" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await defineApi({ phrase: "x", context: "" }, makeSettings());
+    expect(useLlmTelemetry.getState().define).toMatchObject({
+      calls: 1,
+      failures: 0,
+      lastStatus: "ok",
+    });
+  });
+
+  it("translateApi: records translate/ok on success", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ segments: [] }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    await translateApi({ segments: [], lang: "zh" }, makeSettings());
+    expect(useLlmTelemetry.getState().translate).toMatchObject({
+      calls: 1,
+      failures: 0,
+      lastStatus: "ok",
+    });
+  });
+
+  it("summarizeApi: records summary/ok on success", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    await summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings());
+    expect(useLlmTelemetry.getState().summary).toMatchObject({
+      calls: 1,
+      failures: 0,
+      lastStatus: "ok",
+    });
+  });
+
+  const errorCases: Array<{ status: number; kind: "nokey" | "ratelimit" | "upstream" }> = [
+    { status: 401, kind: "nokey" },
+    { status: 429, kind: "ratelimit" },
+    { status: 502, kind: "upstream" },
+  ];
+
+  it.each(errorCases)(
+    "detectApi: records detect/{kind: $kind} on a $status response",
+    async ({ status, kind }) => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "e" }, status));
+      await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toThrow();
+      expect(useLlmTelemetry.getState().detect).toMatchObject({
+        calls: 1,
+        failures: 1,
+        lastStatus: "fail",
+        lastErrorKind: kind,
+      });
+    },
+  );
+
+  it.each(errorCases)(
+    "defineApi: records define/{kind: $kind} on a $status response",
+    async ({ status, kind }) => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "e" }, status));
+      await expect(defineApi({ phrase: "x", context: "" }, makeSettings())).rejects.toThrow();
+      expect(useLlmTelemetry.getState().define).toMatchObject({
+        calls: 1,
+        failures: 1,
+        lastStatus: "fail",
+        lastErrorKind: kind,
+      });
+    },
+  );
+
+  it.each(errorCases)(
+    "translateApi: records translate/{kind: $kind} on a $status response",
+    async ({ status, kind }) => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "e" }, status));
+      await expect(translateApi({ segments: [], lang: "zh" }, makeSettings())).rejects.toThrow();
+      expect(useLlmTelemetry.getState().translate).toMatchObject({
+        calls: 1,
+        failures: 1,
+        lastStatus: "fail",
+        lastErrorKind: kind,
+      });
+    },
+  );
+
+  it.each(errorCases)(
+    "summarizeApi: records summary/{kind: $kind} on a $status response",
+    async ({ status, kind }) => {
+      mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "e" }, status));
+      await expect(
+        summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings()),
+      ).rejects.toThrow();
+      expect(useLlmTelemetry.getState().summary).toMatchObject({
+        calls: 1,
+        failures: 1,
+        lastStatus: "fail",
+        lastErrorKind: kind,
+      });
+    },
+  );
+
+  it("detectApi: a subscription-direct NoKeyError (the designed dictionary-fallback signal, not a crash) still records detect/{kind:'nokey'} — not suppressed", async () => {
+    mockAgentHealth.mockResolvedValue({
+      ok: true,
+      claude_sdk_available: true,
+      claude_logged_in: true,
+      codex_available: false,
+      codex_logged_in: null,
+      warns: [],
+    });
+    mockAgentDetect.mockRejectedValue(new AgentRateLimitError());
+
+    await expect(
+      detectApi({ context: "", new_text: "hi" }, makeSettings({ subscriptionDirect: true })),
+    ).rejects.toBeInstanceOf(NoKeyError);
+
+    expect(useLlmTelemetry.getState().detect).toMatchObject({
+      calls: 1,
+      failures: 1,
+      lastStatus: "fail",
+      lastErrorKind: "nokey",
+    });
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.4.5 detect-span QC (item 6) — F3/F4 field fixes.
+// ---------------------------------------------------------------
+
+function summaryResponseJson(overrides: Partial<Record<string, unknown>> = {}): Response {
+  return new Response(
+    JSON.stringify({
+      summary: { topic: { en: "t", zh: "t" }, key_points: [], decisions: [], action_items: [] },
+      translations: [],
+      flashcards: [],
+      generatedAt: 0,
+      model: "m",
+      sweepQcDropped: 0,
+      ...overrides,
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } },
+  );
+}
+
+describe("summarizeApi — F3: threads the user's idiom caps to the server route", () => {
+  it("sends spanQcCaps: { idiomMaxWords, idiomMaxChars } from settings in the /api/summarize request body", async () => {
+    mockFetch.mockResolvedValue(summaryResponseJson());
+
+    await summarizeApi(
+      { segments: [], expressions: [], terms: [] },
+      makeSettings({ detectIdiomMaxWords: 8, detectIdiomMaxChars: 60 }),
+    );
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    const sentBody = JSON.parse(init.body as string);
+    expect(sentBody.spanQcCaps).toEqual({ idiomMaxWords: 8, idiomMaxChars: 60 });
+  });
+});
+
+describe("summarizeApi — F4: records the sweep's QC-dropped count client-side (the sweep stage itself no longer touches telemetry — see tasks/summarize.ts)", () => {
+  it("a resolved result with sweepQcDropped > 0 bumps telemetry summary.qcDropped and logs a 'summary-ai-oversize' diag entry", async () => {
+    mockFetch.mockResolvedValue(summaryResponseJson({ sweepQcDropped: 3 }));
+
+    await summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings());
+
+    expect(useLlmTelemetry.getState().summary.qcDropped).toBe(3);
+    const entries = getDiagEntries().filter((e) => e.tag === "summary-ai-oversize");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe("dropped=3");
+  });
+
+  it("a resolved result with sweepQcDropped === 0 (the common case) records nothing — no diag entry, qcDropped stays 0", async () => {
+    mockFetch.mockResolvedValue(summaryResponseJson({ sweepQcDropped: 0 }));
+
+    await summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings());
+
+    expect(useLlmTelemetry.getState().summary.qcDropped).toBe(0);
+    expect(getDiagEntries().filter((e) => e.tag === "summary-ai-oversize")).toHaveLength(0);
   });
 });

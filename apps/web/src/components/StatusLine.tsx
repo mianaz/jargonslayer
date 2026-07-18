@@ -6,6 +6,7 @@
 // {cards+terms} counter, then the mascot perch where Bit the pixel
 // dragon lives (overflow-visible so it stands taller than the bar).
 
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
@@ -14,6 +15,9 @@ import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
 import { isEngineControlBusy } from "@/components/Header";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
+import AiStatusPanel, { deriveHealthStatus, type AiHealthStatus } from "@/components/AiStatusPanel";
+import { useLlmTelemetry } from "@/lib/llm/telemetry";
+import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 
 // Exported (tech-debt ledger #4, 2026-07-17): StatusLine.test.tsx
 // imports this instead of re-pinning its own copy of the zh labels, so
@@ -93,6 +97,97 @@ function EngineDropdown() {
         );
       })}
     </select>
+  );
+}
+
+// v0.4.5 AI-status chip (owner ruling on the design doc's Q3: a fuller
+// "检测 · luna ✓" label over a single worst-state dot — status bar is
+// tight, but she picked legibility). shortModelName strips a
+// "vendor/model" OpenRouter-style slug down to its model half (the
+// only concrete rule the design gives — the last "/"-separated
+// segment); a bare model id with no slash passes through unchanged.
+export function shortModelName(model: string): string {
+  const idx = model.lastIndexOf("/");
+  return idx === -1 ? model : model.slice(idx + 1);
+}
+
+// Exported (same "don't re-pin raw zh in the test" convention as
+// DETECT_MODE_LABEL above) — the glyph mirrors AiStatusPanel's own
+// deriveHealthStatus 3-state collapse (grey/neutral for a keyless
+// nokey "failure" too, not just a genuinely-never-called row).
+// neutral is "…", not "·" — the label's own "检测 · {model}" separator
+// already uses "·", and a glyph identical to the separator would be
+// impossible to tell apart at a glance (or in a test assertion).
+export const AI_STATUS_CHIP_GLYPH: Record<AiHealthStatus, string> = {
+  ok: "✓",
+  fail: "✗",
+  neutral: "…",
+};
+
+export const AI_STATUS_CHIP_DOMAIN_LABEL = "检测";
+
+// Chip + popover: always-visible "检测 · {model} {glyph}" label for the
+// detect agent (the one every meeting actually uses live), click opens
+// the full 4-row AiStatusPanel. Click-outside/Escape close mirrors
+// Header.tsx's HamburgerMenu exactly (same pattern, this bar's own
+// popover). Opens UPWARD (bottom-full) since this bar sits at the
+// bottom of the screen — mirrors HamburgerMenu's positioning inverted.
+function AiStatusChip() {
+  const settings = useApp((s) => s.settings);
+  const detectStat = useLlmTelemetry((s) => s.detect);
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const handleMouseDown = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKey);
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => {
+      document.removeEventListener("keydown", handleKey);
+      document.removeEventListener("mousedown", handleMouseDown);
+    };
+  }, [open]);
+
+  const resolved = resolveTaskCreds(settings, "detect");
+  const model = shortModelName(resolved.model);
+  const glyph = AI_STATUS_CHIP_GLYPH[deriveHealthStatus(detectStat)];
+
+  return (
+    <div ref={rootRef} className="relative flex h-full items-center">
+      <button
+        type="button"
+        data-testid="statusline-ai-status-chip"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title="AI 状态"
+        className="flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3"
+      >
+        <span className="hidden sm:inline">
+          {AI_STATUS_CHIP_DOMAIN_LABEL} · {model} {glyph}
+        </span>
+        <span className="sm:hidden">
+          {AI_STATUS_CHIP_DOMAIN_LABEL} {glyph}
+        </span>
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          data-testid="statusline-ai-status-popover"
+          className="absolute bottom-[calc(100%+4px)] left-0 z-30 w-72 border border-edge bg-panel2 p-3 shadow-lg"
+        >
+          <AiStatusPanel />
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -245,6 +340,8 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
           {DETECT_MODE_LABEL[detectMode]}
         </button>
       )}
+      <span className="text-mut2">|</span>
+      <AiStatusChip />
       <span className="text-mut2">|</span>
       <span
         title={sidecarDownHint}

@@ -14,9 +14,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
+import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
+import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import StatusLine, {
+  AI_STATUS_CHIP_DOMAIN_LABEL,
+  AI_STATUS_CHIP_GLYPH,
   DETECT_MODE_LABEL,
   ENGINE_SELECT_PLACEHOLDER,
+  shortModelName,
   SIDECAR_DOWN_HINT_WEB,
 } from "../StatusLine";
 
@@ -701,6 +706,103 @@ describe("StatusLine — engine dropdown", () => {
     expect(placeholder).toBeDefined();
     expect(placeholder!.disabled).toBe(true);
     expect(placeholder!.textContent).toBe(ENGINE_SELECT_PLACEHOLDER);
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.4.5 AI-status chip (design doc v045-ai-transparency-qc.md Part A,
+// owner ruling on Q3: a fuller "检测 · luna ✓" label over a single
+// worst-state dot). Always shows the detect agent's resolved model
+// short-name + a health glyph; clicking opens the popover hosting the
+// full 4-row AiStatusPanel (that panel's own coverage — dot colors,
+// zero-config banner, per-row counts — lives in AiStatusPanel.test.tsx,
+// not re-pinned here).
+// ---------------------------------------------------------------
+
+describe("StatusLine — AI 状态 chip", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(async () => {
+    if (root) {
+      await act(async () => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({ settings: { ...DEFAULT_SETTINGS } }));
+    resetLlmTelemetry();
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function chip(): HTMLButtonElement {
+    const el = container!.querySelector('[data-testid="statusline-ai-status-chip"]');
+    if (!el) throw new Error("AI status chip not found");
+    return el as HTMLButtonElement;
+  }
+
+  it("shows the fuller label — domain + model short-name + neutral glyph — before detect was ever called", async () => {
+    useApp.setState((s) => ({
+      settings: { ...s.settings, detectModel: "deepseek/deepseek-v4-flash" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain(AI_STATUS_CHIP_DOMAIN_LABEL);
+    expect(chip().textContent).toContain(shortModelName("deepseek/deepseek-v4-flash"));
+    expect(chip().textContent).toContain(AI_STATUS_CHIP_GLYPH.neutral);
+  });
+
+  it("switches to the ok glyph once detect has a recorded success this session", async () => {
+    recordLlmCall("detect", "ok");
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain(AI_STATUS_CHIP_GLYPH.ok);
+  });
+
+  it("clicking the chip opens the popover hosting the 4-row AiStatusPanel; clicking again closes it", async () => {
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(container!.querySelector('[data-testid="statusline-ai-status-popover"]')).toBeNull();
+
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="statusline-ai-status-popover"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="ai-status-row-detect"]')).not.toBeNull();
+
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="statusline-ai-status-popover"]')).toBeNull();
   });
 });
 

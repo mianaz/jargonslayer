@@ -68,7 +68,7 @@ Rules:
 7. Rank by how confusing/important the item is. Keep at most 6 expressions and at most 4 terms - the most confusing ones. Drop the rest.
 8. confidence reflects how sure you are the item is (a) genuinely non-literal/unfamiliar AND (b) worth surfacing. Be conservative.
 9. If nothing qualifies, return exactly {"expressions":[],"terms":[]}.
-10. "expression" must be a short phrase, never a full clause or sentence: at most ~6 words (English) or ~12 characters (for a Chinese-origin phrase). If a whole sentence reads as jargon-dense, extract the individual non-literal phrase(s) inside it as separate expressions instead of returning the sentence as one — the full sentence still belongs in "source_sentence", never in "expression" itself.
+10. "expression" must be a short phrase, never a full clause or sentence: at most ~6 words (English) or ~12 characters (for a Chinese-origin phrase). If a whole sentence reads as jargon-dense, extract the individual non-literal phrase(s) inside it as separate expressions instead of returning the sentence as one — the full sentence still belongs in "source_sentence", never in "expression" itself. Exception: a genuine multi-word idiom or proverb may be kept whole past that length, but ONLY when tagged category:"idiom" — never tag a jargon-dense sentence "idiom" just to keep it whole; that tag is reserved for phrases that are actually fixed, well-known idiomatic expressions.
 
 Output the JSON object now."""
 

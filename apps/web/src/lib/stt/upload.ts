@@ -22,6 +22,9 @@ import { resolveTaskCreds } from "../llm/taskConfig";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
 import { scanCustomEntries } from "../history/glossary";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
+import { filterDetectSpans } from "../detect/spanQc";
+import { recordLlmQcDrop } from "../llm/telemetry";
+import { diagLog } from "../diag/log";
 import * as storage from "../history/storage";
 import { useApp } from "../store";
 import { withBase } from "../basePath";
@@ -368,7 +371,20 @@ export async function runDetectionPipeline(
     }
 
     if (res) {
-      const merged = mergeDetections(cards, terms, res, "llm", settings.minConfidence, now);
+      // v0.4.5 detect-span QC (field bug: this import path had NO
+      // span-length QC at all before this fix — see spanQc.ts's own
+      // header comment; scheduler.ts's live path already had one, but
+      // it never ran here). Caps come from settings (item 2), same as
+      // the live scheduler.
+      const filtered = filterDetectSpans(
+        res,
+        { idiomMaxWords: settings.detectIdiomMaxWords, idiomMaxChars: settings.detectIdiomMaxChars },
+        (droppedCount) => {
+          diagLog("info", "detect-ai-oversize", "AI 表达超长已过滤", `dropped=${droppedCount}`);
+          recordLlmQcDrop("detect", droppedCount);
+        },
+      );
+      const merged = mergeDetections(cards, terms, filtered, "llm", settings.minConfidence, now);
       cards = merged.cards;
       terms = merged.terms;
       llmSucceededBatches++;
