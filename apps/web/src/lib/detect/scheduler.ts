@@ -11,6 +11,7 @@
 import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
 import { resolveTaskCreds } from "../llm/taskConfig";
 import { diagLog } from "../diag/log";
+import { recordLlmQcDrop } from "../llm/telemetry";
 import type {
   DetectResponse,
   DetectionSource,
@@ -18,6 +19,7 @@ import type {
   TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { filterDetectSpans } from "./spanQc";
 
 export type DetectMode = "llm" | "dictionary" | "off";
 
@@ -75,49 +77,12 @@ const DICT_DIAG_THROTTLE_MS = 60_000;
 // addFinal) never pass through here, so neither can ever be silently
 // dropped by it.
 //
-// CJK-aware: Chinese has no whitespace word boundaries, so an
-// expression containing any CJK character is capped purely by
-// character count; otherwise capped by whitespace-separated word count
-// OR raw character count, whichever is stricter (catches a run-on
-// phrase with few but very long "words" too).
+// v0.4.5: the filter itself (constants + CJK regex + category-aware
+// caps) now lives in spanQc.ts — SHARED with the import pipeline
+// (upload.ts) and the post-meeting sweep (summarize.ts), which had no
+// span-length QC at all before this fix. See that module's own header
+// comment for the category cap table.
 // ---------------------------------------------------------------
-const AI_EXPRESSION_MAX_WORDS = 8;
-const AI_EXPRESSION_MAX_CHARS = 64;
-const AI_EXPRESSION_MAX_CJK_CHARS = 20;
-// CJK Unified Ideographs block, U+4E00-U+9FFF (covers the vast
-// majority of everyday Chinese characters).
-const CJK_RE = /[一-鿿]/;
-
-/** True when `expression` is implausibly long for a term/phrase (a
- *  whole sentence, not what the detect contract asks for) — exported
- *  for direct unit testing of the boundary cases. */
-export function isOversizedAiExpression(expression: string): boolean {
-  const trimmed = expression.trim();
-  if (CJK_RE.test(trimmed)) {
-    return trimmed.length > AI_EXPRESSION_MAX_CJK_CHARS;
-  }
-  const words = trimmed.split(/\s+/).filter(Boolean);
-  return words.length > AI_EXPRESSION_MAX_WORDS || trimmed.length > AI_EXPRESSION_MAX_CHARS;
-}
-
-/** Drops oversized expressions from an LLM detect response; `terms`
- *  passes through untouched (never oversized in the way this bug
- *  reports — a term is already, by rule 4's own definition, a short
- *  acronym/name/metric). Returns the SAME `res` reference when nothing
- *  was dropped (cheap no-op on the common case, and lets callers use
- *  `!==` as a "did anything change" check). `onDrop` receives only the
- *  COUNT of dropped items, never their text — see
- *  recordOversizedAiDiagHit's own privacy note below. */
-export function filterOversizedAiExpressions(
-  res: DetectResponse,
-  onDrop?: (droppedCount: number) => void,
-): DetectResponse {
-  const kept = res.expressions.filter((e) => !isOversizedAiExpression(e.expression));
-  const droppedCount = res.expressions.length - kept.length;
-  if (droppedCount === 0) return res;
-  onDrop?.(droppedCount);
-  return { expressions: kept, terms: res.terms };
-}
 
 interface Batch {
   context: string;
@@ -275,7 +240,7 @@ export class DetectionScheduler {
 
   /** Fix: "ai detection is catching whole sentences rather than
    *  phrases" — observability for the post-filter above (see
-   *  filterOversizedAiExpressions), same throttle posture as
+   *  spanQc.ts's filterDetectSpans), same throttle posture as
    *  recordDictDiagHit: counts only, no expression text (log.ts's
    *  PRIVACY RULE), accumulated across hits and written at most once
    *  per DICT_DIAG_THROTTLE_MS except the very FIRST hit of this
@@ -413,12 +378,19 @@ export class DetectionScheduler {
         return;
       }
 
-      // Post-filter (defense in depth, see filterOversizedAiExpressions'
-      // own doc above): drops any expression the LLM returned anyway
-      // despite the prompt-level constraint. Dictionary/custom cards
-      // never reach this call — only this "llm" success path does.
-      const filtered = filterOversizedAiExpressions(res, (droppedCount) =>
-        this.recordOversizedAiDiagHit(droppedCount),
+      // Post-filter (defense in depth, see spanQc.ts's own doc above):
+      // drops any expression the LLM returned anyway despite the
+      // prompt-level constraint. Dictionary/custom cards never reach
+      // this call — only this "llm" success path does. Caps come from
+      // settings (item 2, v0.4.5) rather than a fixed constant, so the
+      // owner's per-user idiom-length dial actually takes effect here.
+      const filtered = filterDetectSpans(
+        res,
+        { idiomMaxWords: settings.detectIdiomMaxWords, idiomMaxChars: settings.detectIdiomMaxChars },
+        (droppedCount) => {
+          this.recordOversizedAiDiagHit(droppedCount);
+          recordLlmQcDrop("detect", droppedCount);
+        },
       );
       this.opts.onDetection(filtered, "llm", { batchWindowStart: batch.windowStart });
 

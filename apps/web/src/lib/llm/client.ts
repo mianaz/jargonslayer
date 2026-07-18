@@ -22,6 +22,12 @@ import { diagLog } from "../diag/log";
 import { resolveTaskCreds } from "./taskConfig";
 import type { ResolvedTaskCreds } from "./taskConfig";
 import { renderProfileHint } from "@jargonslayer/core/llm/profileHint";
+import {
+  recordLlmCall,
+  recordLlmQcDrop,
+  type LlmTelemetryDomain,
+  type LlmTelemetryErrorKind,
+} from "./telemetry";
 // v0.4 S2 (PLAN-v0.4 §1A/§4) — client-side callProvider path: an
 // internal, default-OFF flag (llmTransport.ts's useClientTransport)
 // lets every *Api function below call the provider directly instead of
@@ -80,6 +86,46 @@ export class UpstreamError extends Error {
   constructor(message = "模型请求失败") {
     super(message);
     this.name = "UpstreamError";
+  }
+}
+
+// v0.4.5 AI-transparency telemetry (telemetry.ts) — the single
+// instanceof ladder mapping this file's error taxonomy onto
+// telemetry.ts's three failure kinds, so the four wrap points below
+// don't each repeat it. Anything that isn't a NoKeyError/
+// RateLimitApiError (including UpstreamError itself, and any error
+// that reaches an exported *Api function unclassified — e.g. a
+// propagated AgentUpstreamError from the subscription-direct
+// pre-branch below) records as "upstream": telemetry only needs to
+// distinguish "no key" / "rate limited" from "everything else went
+// wrong", not re-derive the full taxonomy.
+function telemetryKind(err: unknown): LlmTelemetryErrorKind {
+  if (err instanceof NoKeyError) return "nokey";
+  if (err instanceof RateLimitApiError) return "ratelimit";
+  return "upstream";
+}
+
+/** Wraps one exported *Api function's ENTIRE body — including detectApi/
+ *  defineApi's subscription-direct pre-branch (attemptSubscriptionDirect
+ *  below) — so every call this session resolves into telemetry.ts's
+ *  per-domain store exactly once, whichever internal path actually
+ *  served it. Deliberately wraps the OUTERMOST call rather than each of
+ *  detectViaNext/detectViaClient/agentDetect individually: a
+ *  subscription-direct NoKeyError (the designed dictionary-fallback
+ *  signal — see attemptSubscriptionDirect's own comment) is still a
+ *  real failed call from the telemetry panel's point of view, and
+ *  instrumenting the inner paths too would double-count a request that
+ *  falls through from one path to another. Never swallows — always
+ *  re-throws after recording, so every existing caller's error contract
+ *  (NoKeyError-as-dictionary-fallback, etc.) is unchanged. */
+async function withTelemetry<T>(domain: LlmTelemetryDomain, fn: () => Promise<T>): Promise<T> {
+  try {
+    const result = await fn();
+    recordLlmCall(domain, "ok");
+    return result;
+  } catch (err) {
+    recordLlmCall(domain, { kind: telemetryKind(err) });
+    throw err;
   }
 }
 
@@ -357,6 +403,31 @@ export async function summarizeApi(
   body: SummarizeRequest,
   settings: Settings,
 ): Promise<SummaryResult> {
+  return withTelemetry("summary", async () => {
+    const result = await summarizeApiImpl(body, settings);
+    // F4 (adversarial review): tasks/summarize.ts's runSweepStage no
+    // longer calls recordLlmQcDrop itself (see that module's own
+    // comment) — on the default web transport it runs server-side
+    // inside /api/summarize, where a store write never reaches this
+    // browser tab. This is the one place BOTH transports funnel
+    // through (summarizeApiImpl's fetch response and its
+    // summarizeViaClient branch both resolve into the same
+    // SummaryResult), so it's the single correct place to record the
+    // sweep's drop count client-side — mirrors upload.ts's own
+    // detect-ai-oversize diag+telemetry pairing.
+    const dropped = result.sweepQcDropped ?? 0;
+    if (dropped > 0) {
+      diagLog("info", "summary-ai-oversize", "AI 表达超长已过滤", `dropped=${dropped}`);
+    }
+    recordLlmQcDrop("summary", dropped);
+    return result;
+  });
+}
+
+async function summarizeApiImpl(
+  body: SummarizeRequest,
+  settings: Settings,
+): Promise<SummaryResult> {
   const creds = resolveTaskCreds(settings, "summary");
   const ctx: RequestErrorContext = { tag: "llm-summary", provider: ctxProvider(creds), model: body.model ?? creds.model };
 
@@ -376,6 +447,15 @@ export async function summarizeApi(
         ...body,
         lang: settings.explainLanguage,
         profile: renderProfileHint(settings.profile),
+        // v0.4.5 detect-span QC (item 6, F3 field fix): this route
+        // handler runs statelessly and has no Settings store of its own
+        // (see tasks/summarize.ts's DEFAULT_SPAN_QC_CAPS doc) — without
+        // this, the sweep silently used the default 12-word/90-char
+        // idiom caps even when the user tightened/loosened them.
+        spanQcCaps: {
+          idiomMaxWords: settings.detectIdiomMaxWords,
+          idiomMaxChars: settings.detectIdiomMaxChars,
+        },
       } satisfies SummarizeRequest),
       signal: AbortSignal.timeout(300000),
     });
@@ -461,6 +541,17 @@ async function summarizeViaClient(
         terms: body.terms,
         lang: settings.explainLanguage,
         profile: renderProfileHint(settings.profile),
+        // v0.4.5 detect-span QC: the post-meeting sweep runs the same
+        // oversized-span filter as live/import detection. runSummarizeTask
+        // defaults to DEFAULT_SETTINGS's idiom caps when omitted (the
+        // isomorphic server route has no Settings store), but THIS direct
+        // path does have the user's real settings in scope — pass their
+        // configured caps so the sweep honors a tightened/loosened idiom
+        // ceiling the same as the other two detect paths.
+        spanQcCaps: {
+          idiomMaxWords: settings.detectIdiomMaxWords,
+          idiomMaxChars: settings.detectIdiomMaxChars,
+        },
       },
       call,
     );
@@ -682,6 +773,13 @@ export async function detectApi(
   body: DetectRequest,
   settings: Settings,
 ): Promise<DetectResponse> {
+  return withTelemetry("detect", () => detectApiImpl(body, settings));
+}
+
+async function detectApiImpl(
+  body: DetectRequest,
+  settings: Settings,
+): Promise<DetectResponse> {
   if (shouldAttemptSubscriptionDirect(settings)) {
     const result = await attemptSubscriptionDirect(settings, () => agentDetect(body, settings));
     if (result === null) {
@@ -709,6 +807,13 @@ export async function defineApi(
   body: DefineRequest,
   settings: Settings,
 ): Promise<DefineResult> {
+  return withTelemetry("define", () => defineApiImpl(body, settings));
+}
+
+async function defineApiImpl(
+  body: DefineRequest,
+  settings: Settings,
+): Promise<DefineResult> {
   if (shouldAttemptSubscriptionDirect(settings)) {
     const result = await attemptSubscriptionDirect(settings, () => agentDefine(body, settings));
     if (result === null) {
@@ -726,6 +831,13 @@ export async function defineApi(
 }
 
 export async function translateApi(
+  body: TranslateRequest,
+  settings: Settings,
+): Promise<TranslateResponse> {
+  return withTelemetry("translate", () => translateApiImpl(body, settings));
+}
+
+async function translateApiImpl(
   body: TranslateRequest,
   settings: Settings,
 ): Promise<TranslateResponse> {

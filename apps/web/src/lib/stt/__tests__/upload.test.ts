@@ -51,6 +51,8 @@ import {
   SIDECAR_UNREACHABLE_HINT,
   type PlainTranscriptSegment,
 } from "../upload";
+import { clearDiag, getDiagEntries } from "../../diag/log";
+import { resetLlmTelemetry, useLlmTelemetry } from "../../llm/telemetry";
 
 const mockDetectApi = vi.mocked(detectApi);
 const mockScanDictionary = vi.mocked(scanDictionary);
@@ -407,6 +409,119 @@ describe("runDetectionPipeline — rate-limit pacing", () => {
 
     expect(mockDetectApi).toHaveBeenCalledTimes(2);
     expect(mockScanDictionary).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.4.5 detect-span QC (item 6, field bug follow-up): scheduler.ts's
+// live path already had a span-length guard, but this import path
+// (runDetectionPipeline's "llm" success branch) had NONE at all — an
+// oversized/whole-sentence expression the LLM tagged despite the
+// prompt-level constraint reached mergeDetections untouched. RED
+// against the pre-fix code (no filterDetectSpans call in the `if
+// (res)` branch at all): the oversized expression below would have
+// survived into `result.cards`.
+// ---------------------------------------------------------------
+describe("runDetectionPipeline — detect-span QC (v0.4.5 item 6, the import-path gap)", () => {
+  let settings: Settings;
+
+  beforeEach(() => {
+    settings = makeSettings();
+    mockDetectApi.mockReset();
+    mockScanDictionary.mockReset();
+    mockScanDictionary.mockReturnValue(emptyRes());
+    clearDiag();
+    resetLlmTelemetry();
+  });
+
+  const oversizedSentence =
+    "The referee made a controversial offside call in the final minute of the match";
+
+  it("drops an oversized llm-tagged expression before it reaches result.cards, keeping a short one from the same batch", async () => {
+    mockDetectApi.mockResolvedValueOnce({
+      expressions: [
+        {
+          expression: "circle back",
+          category: "phrase",
+          meaning: "m",
+          chinese_explanation: "z",
+          plain_english: "p",
+          tone: "t",
+          confidence: 0.9,
+          source_sentence: "s",
+        },
+        {
+          expression: oversizedSentence,
+          category: "phrase",
+          meaning: "m",
+          chinese_explanation: "z",
+          plain_english: "p",
+          tone: "t",
+          confidence: 0.9,
+          source_sentence: oversizedSentence,
+        },
+      ],
+      terms: [],
+    });
+
+    const result = await runDetectionPipeline(
+      [{ text: "circle back on this. " + oversizedSentence }],
+      [],
+      settings,
+    );
+
+    expect(result.cards.map((c) => c.expression)).toEqual(["circle back"]);
+  });
+
+  it("logs a detect-ai-oversize diag entry and bumps the 'detect' QC-dropped telemetry counter on drop", async () => {
+    mockDetectApi.mockResolvedValueOnce({
+      expressions: [
+        {
+          expression: oversizedSentence,
+          category: "phrase",
+          meaning: "m",
+          chinese_explanation: "z",
+          plain_english: "p",
+          tone: "t",
+          confidence: 0.9,
+          source_sentence: oversizedSentence,
+        },
+      ],
+      terms: [],
+    });
+
+    await runDetectionPipeline([{ text: oversizedSentence }], [], settings);
+
+    const entries = getDiagEntries().filter((e) => e.tag === "detect-ai-oversize");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).toBe("dropped=1");
+    expect(useLlmTelemetry.getState().detect.qcDropped).toBe(1);
+  });
+
+  it("a genuine short idiom survives untouched (no false-positive drop)", async () => {
+    mockDetectApi.mockResolvedValueOnce({
+      expressions: [
+        {
+          expression: "burning the midnight oil",
+          category: "idiom",
+          meaning: "m",
+          chinese_explanation: "z",
+          plain_english: "p",
+          tone: "t",
+          confidence: 0.9,
+          source_sentence: "We've been burning the midnight oil.",
+        },
+      ],
+      terms: [],
+    });
+
+    const result = await runDetectionPipeline(
+      [{ text: "We've been burning the midnight oil." }],
+      [],
+      settings,
+    );
+
+    expect(result.cards.map((c) => c.expression)).toEqual(["burning the midnight oil"]);
   });
 });
 

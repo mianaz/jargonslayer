@@ -30,12 +30,7 @@ vi.mock("@jargonslayer/core/detect/dictionary", () => ({
 
 import { detectApi, NoKeyError } from "../../llm/client";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
-import {
-  DetectionScheduler,
-  filterOversizedAiExpressions,
-  isOversizedAiExpression,
-  type DetectMode,
-} from "../scheduler";
+import { DetectionScheduler, type DetectMode } from "../scheduler";
 import { clearDiag, getDiagEntries } from "../../diag/log";
 
 const mockDetectApi = vi.mocked(detectApi);
@@ -593,129 +588,15 @@ describe("DetectionScheduler", () => {
 
 // ---------------------------------------------------------------
 // Fix: "ai detection is catching whole sentences rather than phrases"
-// (soccer-stream field report). Two layers tested here:
-//  1. isOversizedAiExpression/filterOversizedAiExpressions — pure,
-//     directly unit-tested boundary cases.
-//  2. Through the real scheduler — proves the filter is wired ONLY
-//     into the "llm" success path (dictionary hits are untouched) and
-//     that the detect-ai-oversize diag counter follows the same
-//     throttle posture as detect-dict-floor.
+// (soccer-stream field report). Pure boundary-case coverage for the
+// filter itself moved to spanQc.test.ts (v0.4.5 — the filter is now
+// shared with the import pipeline and the post-meeting sweep, see that
+// module's own header comment); what's left here proves the filter is
+// wired ONLY into the scheduler's "llm" success path (dictionary hits
+// are untouched) and that the detect-ai-oversize diag counter follows
+// the same throttle posture as detect-dict-floor — i.e. the scheduler-
+// level integration, "now via the shared function".
 // ---------------------------------------------------------------
-
-describe("isOversizedAiExpression — boundary cases", () => {
-  it("Latin: exactly 8 words is NOT oversized (the cap is 'exceeds 8', not '>=8')", () => {
-    expect(isOversizedAiExpression("one two three four five six seven eight")).toBe(false);
-  });
-
-  it("Latin: 9 words IS oversized", () => {
-    expect(isOversizedAiExpression("one two three four five six seven eight nine")).toBe(true);
-  });
-
-  it("Latin: exactly 64 characters (few long words) is NOT oversized", () => {
-    const expr = "a".repeat(64);
-    expect(expr.length).toBe(64);
-    expect(isOversizedAiExpression(expr)).toBe(false);
-  });
-
-  it("Latin: 65 characters IS oversized, even as a single 'word' with no spaces", () => {
-    const expr = "a".repeat(65);
-    expect(isOversizedAiExpression(expr)).toBe(true);
-  });
-
-  it("CJK: exactly 20 characters is NOT oversized", () => {
-    const expr = "把".repeat(20);
-    expect(expr.length).toBe(20);
-    expect(isOversizedAiExpression(expr)).toBe(false);
-  });
-
-  it("CJK: 21 characters IS oversized", () => {
-    const expr = "把".repeat(21);
-    expect(isOversizedAiExpression(expr)).toBe(true);
-  });
-
-  it("mixed CJK+Latin uses the stricter CJK cap (20 chars), not the Latin word/char caps", () => {
-    // 22 chars total, well under the 64-char/8-word Latin caps, but
-    // over the 20-char CJK cap once any CJK character is present.
-    const expr = "ARR 拉起来" + "把".repeat(15);
-    expect(expr.length).toBeGreaterThan(20);
-    expect(isOversizedAiExpression(expr)).toBe(true);
-  });
-
-  it("a whole sentence (the reported bug) is correctly flagged oversized", () => {
-    const wholeSentence =
-      "The referee made a controversial offside call in the final minute of the match";
-    expect(isOversizedAiExpression(wholeSentence)).toBe(true);
-  });
-
-  it("a genuine short phrase is not flagged", () => {
-    expect(isOversizedAiExpression("circle back")).toBe(false);
-    expect(isOversizedAiExpression("table this")).toBe(false);
-  });
-
-  it("trims surrounding whitespace before measuring (a boundary-adjacent value shouldn't flip on incidental padding)", () => {
-    const expr = `  ${"a".repeat(64)}  `;
-    expect(isOversizedAiExpression(expr)).toBe(false);
-  });
-});
-
-describe("filterOversizedAiExpressions — pure post-filter", () => {
-  it("drops only the oversized expressions, keeping short ones untouched", () => {
-    const res: DetectResponse = {
-      expressions: [
-        makeExpr("circle back"),
-        makeExpr("one two three four five six seven eight nine ten"),
-        makeExpr("table this"),
-      ],
-      terms: [],
-    };
-    const filtered = filterOversizedAiExpressions(res);
-    expect(filtered.expressions.map((e) => e.expression)).toEqual(["circle back", "table this"]);
-  });
-
-  it("dictionary/custom cards are never even seen by this function — 'AI expression cards only' is enforced by the SCHEDULER'S call site, not this function's own logic; this test documents that the function itself has no source-awareness, it just filters whatever DetectResponse it's given", () => {
-    // Calling it directly on a dictionary-shaped payload WOULD filter
-    // it too (proving the safety property lives in scheduler.ts only
-    // calling this for "llm" — see the scheduler-level test below).
-    const res: DetectResponse = {
-      expressions: [makeExpr("one two three four five six seven eight nine ten")],
-      terms: [],
-    };
-    expect(filterOversizedAiExpressions(res).expressions).toHaveLength(0);
-  });
-
-  it("terms always pass through untouched, regardless of length", () => {
-    const res: DetectResponse = {
-      expressions: [],
-      terms: [{ term: "a very long term that would be oversized if it were an expression", type: "other", gloss_en: "e", gloss_zh: "z" }],
-    };
-    const filtered = filterOversizedAiExpressions(res);
-    expect(filtered.terms).toEqual(res.terms);
-  });
-
-  it("returns the SAME object reference when nothing was dropped (cheap no-op path)", () => {
-    const res: DetectResponse = { expressions: [makeExpr("circle back")], terms: [] };
-    expect(filterOversizedAiExpressions(res)).toBe(res);
-  });
-
-  it("calls onDrop with the exact dropped count, and never calls it when nothing was dropped", () => {
-    const onDrop = vi.fn();
-    const res: DetectResponse = {
-      expressions: [
-        makeExpr("circle back"),
-        makeExpr("one two three four five six seven eight nine ten"),
-        makeExpr("another one two three four five six seven eight nine"),
-      ],
-      terms: [],
-    };
-    filterOversizedAiExpressions(res, onDrop);
-    expect(onDrop).toHaveBeenCalledTimes(1);
-    expect(onDrop).toHaveBeenCalledWith(2);
-
-    onDrop.mockClear();
-    filterOversizedAiExpressions({ expressions: [makeExpr("circle back")], terms: [] }, onDrop);
-    expect(onDrop).not.toHaveBeenCalled();
-  });
-});
 
 describe("DetectionScheduler — oversized-AI-expression post-filter wiring", () => {
   let settings: Settings;

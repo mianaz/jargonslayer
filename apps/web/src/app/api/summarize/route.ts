@@ -56,6 +56,16 @@ const BodySchema = z.object({
   // sweep stage only (see tasks/summarize.ts's runSweepStage). Shared
   // cap constant with /api/detect and /api/define (#48 s1 review item 9).
   profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
+  // v0.4.5 detect-span QC (item 6, F3 field fix) — the user's configured
+  // idiom-category length caps, threaded from client.ts's summarizeApi
+  // (server transport) so the sweep stage honors them instead of always
+  // falling back to tasks/summarize.ts's own DEFAULT_SPAN_QC_CAPS.
+  spanQcCaps: z
+    .object({
+      idiomMaxWords: z.number().int().positive(),
+      idiomMaxChars: z.number().int().positive(),
+    })
+    .optional(),
 }) satisfies z.ZodType<SummarizeRequest>;
 
 // Diagnostics (item 5) — see detect/route.ts's identical helper doc.
@@ -94,7 +104,8 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { segments, expressions, terms, model: requestedModel, lang, profile } = parsedBody.data;
+  const { segments, expressions, terms, model: requestedModel, lang, profile, spanQcCaps } =
+    parsedBody.data;
 
   if (
     segments.length > MAX_SEGMENTS ||
@@ -140,6 +151,7 @@ export async function POST(req: Request) {
         terms,
         lang,
         profile,
+        spanQcCaps,
       },
       callJson,
     );

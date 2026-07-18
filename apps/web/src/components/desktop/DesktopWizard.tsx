@@ -76,6 +76,12 @@ export interface DesktopWizardProps {
 
 const README_URL = "https://github.com/mianaz/jargonslayer#readme";
 
+// Exported (tech-debt ledger #4, 2026-07-17): DesktopWizard.render.
+// test.tsx imports these instead of re-pinning its own copy of the zh
+// button labels below (StepRowsScreen's own 返回重新选择/处理中… pair).
+export const RETURN_TO_CONSENT_LABEL = "返回重新选择";
+export const WIZARD_BUSY_LABEL = "处理中…";
+
 /** Human-readable byte size, one decimal place, GB above 1 else MB — the
  *  下载模型 row's own progress readout (S4 chunk 2's prewarm://progress
  *  is raw bytes; nothing else in this codebase already formats bytes
@@ -445,7 +451,7 @@ function StepRowsScreen({
                 }}
                 className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {returning ? "处理中…" : "返回重新选择"}
+                {returning ? WIZARD_BUSY_LABEL : RETURN_TO_CONSENT_LABEL}
               </button>
               <button
                 type="button"

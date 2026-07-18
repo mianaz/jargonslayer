@@ -21,7 +21,15 @@ import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
-import SettingsDialog from "../SettingsDialog";
+import SettingsDialog, { SETTINGS_CATEGORIES, type SettingsCategoryId } from "../SettingsDialog";
+
+// Copy constants (tech-debt ledger #4, 2026-07-17): derives an expected
+// nav-label array straight from SETTINGS_CATEGORIES instead of
+// re-pinning a second copy of the zh labels here — a reword in
+// SettingsDialog.tsx can't silently desync these assertions from it.
+function labelsOf(ids: SettingsCategoryId[]): string[] {
+  return ids.map((id) => SETTINGS_CATEGORIES.find((c) => c.id === id)!.label);
+}
 
 function deviantSettings(): Settings {
   // shouldAutoPromoteToAdvanced (settingsSections.ts) trips on ANY
@@ -43,6 +51,19 @@ async function flush() {
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
+}
+
+// React tracks an <input>'s value via a wrapped native setter — same
+// bypass SettingsDialog.desktop.test.tsx's own typeInto already
+// documents (a plain `input.value = x` + dispatchEvent("input") doesn't
+// reliably trip React's onChange).
+const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+  window.HTMLInputElement.prototype,
+  "value",
+)!.set!;
+function typeInto(input: HTMLInputElement, value: string) {
+  nativeInputValueSetter.call(input, value);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 describe("SettingsDialog — tag-blocker BLOCKER 1: auto-promote waits for hydration", () => {
@@ -437,7 +458,7 @@ describe("SettingsDialog — settings redesign: nav rail + page-per-section", ()
     // one simple row, so it's always listed too. The four advanced-only
     // whole sections (diarization/taskLlm/dataIntegration/
     // subscriptionDirect) are absent.
-    expect(buttons.map((b) => b.textContent)).toEqual(["转录引擎", "AI 检测", "显示"]);
+    expect(buttons.map((b) => b.textContent)).toEqual(labelsOf(["engine", "aiDetect", "display"]));
     expect(buttons[0].getAttribute("aria-current")).toBe("page");
     expect(buttons[1].getAttribute("aria-current")).toBeNull();
     expect(buttons[2].getAttribute("aria-current")).toBeNull();
@@ -450,14 +471,9 @@ describe("SettingsDialog — settings redesign: nav rail + page-per-section", ()
     });
     await flush();
 
-    expect(navButtons().map((b) => b.textContent)).toEqual([
-      "转录引擎",
-      "说话人分离",
-      "AI 检测",
-      "分任务模型（高级）",
-      "数据与联动",
-      "显示",
-    ]);
+    expect(navButtons().map((b) => b.textContent)).toEqual(
+      labelsOf(["engine", "diarization", "aiDetect", "taskLlm", "dataIntegration", "display"]),
+    );
   });
 
   it("clicking a nav entry moves aria-current and swaps the content pane to ONLY that category — the previous category's own fields unmount, not just hide", async () => {
@@ -776,6 +792,13 @@ describe("SettingsDialog — PROVIDER_PRESETS suggestedModels (field-test fix v0
     return input.value;
   }
 
+  function findBaseUrlInput(): HTMLInputElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "Base URL");
+    const input = label?.parentElement?.querySelector("input");
+    if (!input) throw new Error("Base URL input not found");
+    return input as HTMLInputElement;
+  }
+
   async function selectPreset(id: string): Promise<void> {
     const navButtons = Array.from(
       container!.querySelectorAll('nav[aria-label="设置分类"] button'),
@@ -815,6 +838,25 @@ describe("SettingsDialog — PROVIDER_PRESETS suggestedModels (field-test fix v0
 
     expect(modelInputValue("primary-detect-options")).toBe("deepseek/deepseek-v4-flash");
     expect(modelInputValue("primary-summary-options")).toBe("deepseek/deepseek-v4-pro");
+  });
+
+  // Tech-debt ledger item 4 (2026-07-17): suggestedModels ids verified
+  // against OpenAI's own current model listing (see PROVIDER_PRESETS'
+  // own doc comment on this entry for the gpt-5-mini/gpt-5.4 -> real
+  // gpt-5.6-luna/gpt-5.6-sol correction) — same suggestedModels posture
+  // as the anthropic/openrouter presets above, not a bare baseUrl switch.
+  it("selecting the openai preset switches provider/baseUrl to OpenAI's official endpoint and fills gpt-5.6-luna/gpt-5.6-sol", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await selectPreset("openai");
+
+    expect(findProviderSelect().value).toBe("openai");
+    expect(findBaseUrlInput().value).toBe("https://api.openai.com/v1");
+    expect(modelInputValue("primary-detect-options")).toBe("gpt-5.6-luna");
+    expect(modelInputValue("primary-summary-options")).toBe("gpt-5.6-sol");
   });
 });
 
@@ -966,5 +1008,171 @@ describe("SettingsDialog — 说话人分离 安装扩展 (v0.4 S5 chunk 3)", ()
     expect(container!.textContent).not.toContain("安装扩展（约");
     expect(container!.textContent).not.toContain("移除扩展");
     expect(container!.textContent).not.toContain("需先安装说话人分离扩展");
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.4.5 AI 检测 additions (design doc v045-ai-transparency-qc.md):
+// the idiom-cap controls (settings.detectIdiomMaxWords/
+// detectIdiomMaxChars, owner ruling: configurable, not a hardcoded
+// constant) and the AiStatusPanel mirror mounted right after 测试连接.
+// Both live in the aiDetectCredentials/aiDetectConfidence "advanced"
+// rows, so uiMode:"advanced" is seeded up front (same posture as the
+// PROVIDER_PRESETS suite above).
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — AI 检测: idiom-cap controls + AiStatusPanel mount (v0.4.5)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  async function openAiDetectCategory(): Promise<void> {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  function numberInputByLabel(label: string): HTMLInputElement {
+    const labelEl = Array.from(container!.querySelectorAll("label")).find(
+      (l) => l.textContent === label,
+    );
+    const input = labelEl?.parentElement?.querySelector('input[type="number"]');
+    if (!input) throw new Error(`number input for "${label}" not found`);
+    return input as HTMLInputElement;
+  }
+
+  it("renders 行话最大词数/行话最大字符数 seeded from the draft (DEFAULT_SETTINGS: 12 words / 90 chars)", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory();
+
+    expect(numberInputByLabel("行话最大词数").value).toBe("12");
+    expect(numberInputByLabel("行话最大字符数").value).toBe("90");
+  });
+
+  it("typing into either input patches draft.detectIdiomMaxWords/detectIdiomMaxChars via the same patch({...}) mechanism every other field uses", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory();
+
+    await act(async () => {
+      typeInto(numberInputByLabel("行话最大词数"), "20");
+    });
+    expect(numberInputByLabel("行话最大词数").value).toBe("20");
+
+    await act(async () => {
+      typeInto(numberInputByLabel("行话最大字符数"), "150");
+    });
+    expect(numberInputByLabel("行话最大字符数").value).toBe("150");
+
+    // Draft-only (unsaved) — mirrors every other field's own "commits
+    // on 保存" contract, not asserted again here (already covered by the
+    // tag-blocker HIGH 3 suite's own draft/store split above).
+    expect(useApp.getState().settings.detectIdiomMaxWords).toBe(DEFAULT_SETTINGS.detectIdiomMaxWords);
+  });
+
+  // F5 (Sol+Opus review, MAJOR/silent-failure): a blank/0/negative value
+  // in either idiom-cap input used to patch straight through
+  // (Number("")===0), and idiomMaxWords=0 silently drops EVERY idiom/
+  // slang span app-wide. The onChange handler now only patches a
+  // finite integer >= 1 — a rejected keystroke leaves the input showing
+  // the last-good draft value, same as any other clamped control.
+  it("rejects a blank value (input reverts to the last-good draft value, no patch)", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory();
+
+    await act(async () => {
+      typeInto(numberInputByLabel("行话最大词数"), "");
+    });
+    expect(numberInputByLabel("行话最大词数").value).toBe(String(DEFAULT_SETTINGS.detectIdiomMaxWords));
+  });
+
+  it("rejects a negative value", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory();
+
+    await act(async () => {
+      typeInto(numberInputByLabel("行话最大字符数"), "-5");
+    });
+    expect(numberInputByLabel("行话最大字符数").value).toBe(String(DEFAULT_SETTINGS.detectIdiomMaxChars));
+  });
+
+  it("rejects zero", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory();
+
+    await act(async () => {
+      typeInto(numberInputByLabel("行话最大词数"), "0");
+    });
+    expect(numberInputByLabel("行话最大词数").value).toBe(String(DEFAULT_SETTINGS.detectIdiomMaxWords));
+  });
+
+  it("truncates a fractional value to an integer", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory();
+
+    await act(async () => {
+      typeInto(numberInputByLabel("行话最大字符数"), "12.7");
+    });
+    expect(numberInputByLabel("行话最大字符数").value).toBe("12");
+  });
+
+  it("mounts AiStatusPanel (all 4 rows) right after 测试连接 in the aiDetectCredentials block", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory();
+
+    expect(container!.querySelector('[data-testid="ai-status-panel"]')).not.toBeNull();
+    for (const domain of ["detect", "define", "translate", "summary"]) {
+      expect(container!.querySelector(`[data-testid="ai-status-row-${domain}"]`)).not.toBeNull();
+    }
+
+    // Right after 测试连接: the 测试连接 button and the panel share the
+    // same aiDetectCredentials container.
+    const testConnBtn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.textContent === "测试连接",
+    );
+    if (!testConnBtn) throw new Error('button "测试连接" not found');
+    expect(
+      testConnBtn.parentElement?.querySelector('[data-testid="ai-status-panel"]'),
+    ).not.toBeNull();
   });
 });
