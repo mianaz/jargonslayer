@@ -91,4 +91,30 @@ describe("listenOsSpeechTranscript/listenOsSpeechStatus — iOS branch (S13 §2/
 
     expect(unregisterSpy).toHaveBeenCalledTimes(1);
   });
+
+  // Fix-round F6 (Sol, MEDIUM): unregister() returns a Promise, but
+  // UnlistenFn's contract is desktop's synchronous `() => void` — a
+  // rejected unregister() (e.g. a torn-down plugin) must be swallowed,
+  // not left as a fire-and-forget unhandled rejection.
+  it("the returned UnlistenFn swallows a rejected unregister() — stays synchronous void, no unhandled rejection", async () => {
+    const handle: PluginListenerHandle = {
+      unregister: () => Promise.reject(new Error("remove_listener failed")),
+    };
+    currentAddPluginListener = (async () => handle) as AddPluginListenerFn;
+
+    const onUnhandledRejection = vi.fn();
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      const unlisten = await listenOsSpeechStatus(vi.fn());
+      const result = unlisten();
+      expect(result).toBeUndefined(); // sync UnlistenFn contract, not a Promise
+
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
+  });
 });

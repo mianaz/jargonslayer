@@ -38,6 +38,40 @@ public enum OsSpeechStatusKind: String, Codable, Equatable {
   case deviceChanged = "device-changed"
   case crashed
   case ended
+
+  /// Mirrors JS's own `OSSPEECH_TERMINAL_STATUS_KINDS` (osSpeech.ts)
+  /// exactly — the session is OVER once any of these arrives. Backs
+  /// `OsSpeechTerminalCoercion.coerce` below (F-S1): only a TERMINAL
+  /// kind is ever rewritten to `.ended`, never a progress/informational
+  /// one like `.capturing`/`.assetDownloading`.
+  public var isTerminal: Bool {
+    switch self {
+    case .ended, .crashed, .permissionDenied, .unsupported, .unsupportedLocale, .deviceChanged, .assetFailed:
+      return true
+    case .starting, .capturing, .assetChecking, .assetDownloading, .assetInstalled, .localeResolved:
+      return false
+    }
+  }
+}
+
+/// F-S1(a) (S13 fix round, BLOCKER) — the JS stop() latch
+/// (osSpeech.ts's `STOP_ENDED_TIMEOUT_MS`, 4s) resolves ONLY on a
+/// literal `kind:"ended"` status; any OTHER terminal kind (crashed/
+/// asset-failed/permission-denied/...) racing in after the user's own
+/// explicit stop would otherwise force JS to burn its full 4s timeout
+/// even though the session actually finished promptly. Once
+/// `OsSpeechSession.requestExplicitStop()` has been called, the error
+/// (if any) is moot — the user asked to stop, so every SUBSEQUENT
+/// terminal emission for that session is coerced to `.ended` here,
+/// regardless of which path produced it. Pure/testable (no session
+/// state) — `OsSpeechSession.emitStatus` is the one real call site;
+/// OsSpeechCoreTests exercises this directly.
+public enum OsSpeechTerminalCoercion {
+  public static func coerce(kind: OsSpeechStatusKind, message: String?, explicitStopRequested: Bool) -> (kind: OsSpeechStatusKind, message: String?) {
+    guard explicitStopRequested, kind.isTerminal, kind != .ended else { return (kind, message) }
+    let note = "explicit stop requested; original kind: \(kind.rawValue)"
+    return (.ended, message.map { "\($0) (\(note))" } ?? note)
+  }
 }
 
 /// §2.5 R2 parity — every status payload names which lane produced it

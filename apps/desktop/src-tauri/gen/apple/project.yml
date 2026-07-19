@@ -53,6 +53,15 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: 1.0.0
         CFBundleVersion: "1.0.0"
+        # S13 review fix S4 (Sol HIGH, XcodeGen-reproduced): project.yml OWNS
+        # jargonslayer_iOS/Info.plist — keys absent here are DELETED on any
+        # XcodeGen regen. Missing NSMicrophoneUsageDescription = hard
+        # process-kill at first mic access. Keep in sync with
+        # ../../Info.ios.plist (config-dir source of truth) and the
+        # scripts/check-ios-plist.mjs pre-build guard (covers full
+        # `tauri ios init` re-runs, which regenerate THIS file too).
+        NSMicrophoneUsageDescription: JargonSlayer 需要麦克风来实时识别会议语音
+        NSSpeechRecognitionUsageDescription: JargonSlayer 使用设备端语音识别把会议内容转写为文字
     entitlements:
       path: jargonslayer_iOS/jargonslayer_iOS.entitlements
     scheme:

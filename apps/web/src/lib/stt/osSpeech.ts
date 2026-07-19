@@ -255,29 +255,37 @@ export class OsSpeechEngine implements STTEngine {
     // that branches desktop's macOS global events vs iOS's plugin-scoped
     // ones — this engine's own generation-guard/latch logic is unchanged
     // either way.
-    unlistenTranscript = await listenOsSpeechTranscript((event) => {
-      this.handleTranscript(myGeneration, event.payload);
-    });
-    this.unlistenTranscript = unlistenTranscript;
-    if (superseded()) {
-      await abandonStart();
-      return;
-    }
-
-    unlistenStatus = await listenOsSpeechStatus((event) => {
-      this.handleStatus(myGeneration, event.payload);
-    });
-    this.unlistenStatus = unlistenStatus;
-    if (superseded()) {
-      await abandonStart();
-      return;
-    }
-
-    // Q11: gathered fresh every start() (a glossary edit mid-session
-    // has no live effect — start-time one-shot, per the blueprint).
-    const contextualJson = buildContextualJson(useApp.getState().customEntries);
-
+    //
+    // Fix-round F6 (Sol, MEDIUM): both subscription awaits now share the
+    // SAME try as start_os_speech's own invoke() below — previously only
+    // the invoke() was guarded, so a rejected SECOND subscription (e.g.
+    // iOS's addPluginListener denied by the plugin ACL) skipped the catch
+    // entirely and leaked the FIRST (transcript) listener forever, since
+    // abandonStart() never ran. Scope-widening only — same two calls,
+    // same order, same superseded() checks in between.
     try {
+      unlistenTranscript = await listenOsSpeechTranscript((event) => {
+        this.handleTranscript(myGeneration, event.payload);
+      });
+      this.unlistenTranscript = unlistenTranscript;
+      if (superseded()) {
+        await abandonStart();
+        return;
+      }
+
+      unlistenStatus = await listenOsSpeechStatus((event) => {
+        this.handleStatus(myGeneration, event.payload);
+      });
+      this.unlistenStatus = unlistenStatus;
+      if (superseded()) {
+        await abandonStart();
+        return;
+      }
+
+      // Q11: gathered fresh every start() (a glossary edit mid-session
+      // has no live effect — start-time one-shot, per the blueprint).
+      const contextualJson = buildContextualJson(useApp.getState().customEntries);
+
       await invoke("start_os_speech", { locale: settings.language, contextualJson });
       helperStarted = true;
       this.running = true;

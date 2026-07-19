@@ -82,4 +82,58 @@ final class OsSpeechWireTests: XCTestCase {
     let object = try jsonObject(try JSONEncoder().encode(payload))
     XCTAssertEqual(object["reason"] as? String, "需要 iOS 26 或更高版本")
   }
+
+  /// F-S1(a) — `isTerminal` must field-exact match JS's own
+  /// `OSSPEECH_TERMINAL_STATUS_KINDS` (osSpeech.ts).
+  func testIsTerminalMatchesJsTerminalSet() {
+    let terminal: Set<OsSpeechStatusKind> = [.ended, .crashed, .permissionDenied, .unsupported, .unsupportedLocale, .deviceChanged, .assetFailed]
+    let nonTerminal: Set<OsSpeechStatusKind> = [.starting, .capturing, .assetChecking, .assetDownloading, .assetInstalled, .localeResolved]
+    XCTAssertEqual(terminal.union(nonTerminal).count, 13, "every kind accounted for exactly once")
+    for kind in terminal {
+      XCTAssertTrue(kind.isTerminal, "\(kind) should be terminal")
+    }
+    for kind in nonTerminal {
+      XCTAssertFalse(kind.isTerminal, "\(kind) should NOT be terminal")
+    }
+  }
+
+  /// F-S1(a) BLOCKER — the JS stop() latch resolves ONLY on a literal
+  /// `kind:"ended"`; once explicit stop has been requested, every OTHER
+  /// terminal kind must be coerced so JS's stop() call doesn't burn its
+  /// full 4s timeout.
+  func testCoerceRewritesTerminalKindToEndedWhenExplicitStopRequested() {
+    let result = OsSpeechTerminalCoercion.coerce(kind: .crashed, message: "boom", explicitStopRequested: true)
+    XCTAssertEqual(result.kind, .ended)
+    XCTAssertEqual(result.message, "boom (explicit stop requested; original kind: crashed)")
+  }
+
+  func testCoerceRewritesTerminalKindWithNoOriginalMessage() {
+    let result = OsSpeechTerminalCoercion.coerce(kind: .assetFailed, message: nil, explicitStopRequested: true)
+    XCTAssertEqual(result.kind, .ended)
+    XCTAssertEqual(result.message, "explicit stop requested; original kind: asset-failed")
+  }
+
+  /// A NON-terminal (progress/informational) kind must never be coerced
+  /// — only a terminal emission is ever rewritten.
+  func testCoerceLeavesNonTerminalKindUntouchedEvenWithExplicitStopRequested() {
+    let result = OsSpeechTerminalCoercion.coerce(kind: .capturing, message: nil, explicitStopRequested: true)
+    XCTAssertEqual(result.kind, .capturing)
+    XCTAssertNil(result.message)
+  }
+
+  /// Without an explicit stop, the true terminal kind is reported
+  /// unchanged (e.g. an unprompted crash must still say "crashed").
+  func testCoerceLeavesKindUntouchedWithoutExplicitStopRequested() {
+    let result = OsSpeechTerminalCoercion.coerce(kind: .crashed, message: "boom", explicitStopRequested: false)
+    XCTAssertEqual(result.kind, .crashed)
+    XCTAssertEqual(result.message, "boom")
+  }
+
+  /// Already `.ended` is left alone — no redundant "original kind: ended"
+  /// note tacked onto an already-correct terminal emission.
+  func testCoerceLeavesAlreadyEndedUntouched() {
+    let result = OsSpeechTerminalCoercion.coerce(kind: .ended, message: "clean stop", explicitStopRequested: true)
+    XCTAssertEqual(result.kind, .ended)
+    XCTAssertEqual(result.message, "clean stop")
+  }
 }

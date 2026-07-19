@@ -44,5 +44,7 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>JargonSlayer 需要录制系统音频以实时转录会议中对方的语音；音频仅发送到本机转录服务，不会离开这台电脑。</string>
 </dict>
 </plist>

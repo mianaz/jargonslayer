@@ -48,7 +48,19 @@ public final class OsSpeechSession: @unchecked Sendable {
   private var sink: ConverterSink?
   private var continuation: AsyncStream<AnalyzerInput>.Continuation?
 
-  private let pausedFlag = LockedFlag(false)
+  // F-S5 — set at the MOMENT this session actually installs the tap /
+  // activates the process-shared `AVAudioSession` (configureAudioSession/
+  // the tap-install call site in `run()`); `teardownAudio` undoes ONLY
+  // what got flagged. Plain `var`s, no lock: both are only ever touched
+  // from within `run()`'s own single Task, same posture as `sink`/
+  // `continuation` right above.
+  private var didInstallTap = false
+  private var didActivateAudioSession = false
+
+  // F-S3 — see `PauseGenerationBox`'s own doc comment (below) and
+  // `PauseGenerationFence.shouldDrop` (PauseGenerationFence.swift) for
+  // the pause-buffer-boundary race this closes.
+  private let pauseFence = PauseGenerationBox(false)
 
   // ---- "wait for stop" — one lock guards all of: has a terminal
   // outcome been decided, what kind/message it carries (first caller
@@ -61,6 +73,16 @@ public final class OsSpeechSession: @unchecked Sendable {
   private var pendingTerminalKind: OsSpeechStatusKind = .ended
   private var pendingTerminalMessage: String?
   private var stopContinuation: CheckedContinuation<Void, Never>?
+
+  // F-S1(a) — INDEPENDENT of `pendingTerminalKind`'s first-caller-wins
+  // value: tracks "was `requestExplicitStop()` EVER called", not "did it
+  // win the race to decide `pendingTerminalKind`". `emitStatus` checks
+  // this on every call so a terminal kind decided by some OTHER path
+  // (e.g. a converter/results-loop error that raced in first, or a
+  // guard-else return that never goes through `requestStop` at all) is
+  // still coerced to `.ended` for JS's stop-latch once the user has
+  // asked to stop — see OsSpeechTerminalCoercion's own doc comment.
+  private var explicitStopRequested = false
 
   private var interruptionObserver: NSObjectProtocol?
   private var routeChangeObserver: NSObjectProtocol?
@@ -77,11 +99,14 @@ public final class OsSpeechSession: @unchecked Sendable {
   // own first-write-wins guard; `setPaused` is a plain flag write). ----
 
   public func requestExplicitStop() {
+    stopLock.lock()
+    explicitStopRequested = true
+    stopLock.unlock()
     requestStop(kind: .ended)
   }
 
   public func setPaused(_ paused: Bool) {
-    pausedFlag.value = paused
+    pauseFence.setPaused(paused)
   }
 
   /// Runs one full transcribe session to completion. Never throws —
@@ -93,14 +118,25 @@ public final class OsSpeechSession: @unchecked Sendable {
     emitStatus(.starting)
 
     do {
-      guard await requestMicPermission() else {
-        emitStatus(.permissionDenied, message: "麦克风权限被拒绝")
-        return
-      }
+      // F-S1(b) — check `isStopRequested()` IMMEDIATELY after the mic-
+      // permission await resumes, BEFORE branching on granted/denied: an
+      // explicit stop that arrived while the system TCC prompt was still
+      // up must abort here regardless of which way the user answered
+      // that prompt (emitStatus's own F-S1(a) coercion is a backstop for
+      // every OTHER path, but this one gets the earliest possible check
+      // since a "denied" outcome would otherwise return before ever
+      // reaching the `isStopRequested()` check below it).
+      let micGranted = await requestMicPermission()
       if isStopRequested() {
         emitStatus(.ended)
         return
       }
+      guard micGranted else {
+        emitStatus(.permissionDenied, message: "麦克风权限被拒绝")
+        return
+      }
+      // (no separate isStopRequested() re-check here — nothing async ran
+      // between the check above and here, so it can't have gone stale)
 
       let resolvedLocale = try await OsSpeechLocale.resolve(bcp47: bcp47, source: .session, emit: emit)
       if isStopRequested() {
@@ -152,18 +188,24 @@ public final class OsSpeechSession: @unchecked Sendable {
       try configureAudioSession()
 
       let inputFormat = engine.inputNode.outputFormat(forBus: 0)
-      let sink = try ConverterSink(nativeFormat: inputFormat, targetFormat: targetFormat, continuation: continuation) { [weak self] error in
+      let sink = try ConverterSink(nativeFormat: inputFormat, targetFormat: targetFormat, continuation: continuation, pauseFence: pauseFence) { [weak self] error in
         self?.requestStop(kind: error.statusKind, message: error.message)
       }
       self.sink = sink
 
-      engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-        // Realtime-ish tap thread — Q3 parity: pause gates HERE (audio
-        // never reaches the converter/analyzer while paused), the
-        // analyzer itself stays alive.
-        guard let self, !self.pausedFlag.value else { return }
+      engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { buffer, _ in
+        // Realtime-ish tap thread — Q3 parity: pause gates audio (never
+        // reaches the converter/analyzer while paused), the analyzer
+        // itself stays alive. F-S3: the actual snapshot-then-recheck
+        // fence now lives inside `ConverterSink.receive` itself (right
+        // up to the moment it yields) rather than a single check here —
+        // see that method's own comments. `sink` (not `self`) is the
+        // only thing this closure needs — capturing it directly (a
+        // strong ref to `ConverterSink`, not `OsSpeechSession`) creates
+        // no retain cycle back to `self`.
         sink.receive(buffer)
       }
+      didInstallTap = true // F-S5 — flagged the instant installTap actually runs
       engine.prepare()
       try engine.start()
 
@@ -195,14 +237,7 @@ public final class OsSpeechSession: @unchecked Sendable {
 
       teardownAudio()
       continuation.finish()
-      do {
-        try await analyzer.finalizeAndFinishThroughEndOfInput()
-      } catch {
-        // Best-effort — the stream is ending either way (already
-        // finish()ed above); no dedicated log lane on iOS to mirror this
-        // to (unlike macOS's own TranscriptEvents.emitError fallback).
-      }
-      _ = await resultsTask.value // drain remaining finals
+      await Self.finalizeAndDrain(analyzer: analyzer, resultsTask: resultsTask)
 
       emitFinalStatus()
     } catch is OsSpeechAbort {
@@ -234,6 +269,13 @@ public final class OsSpeechSession: @unchecked Sendable {
   private func isStopRequested() -> Bool {
     stopLock.lock(); defer { stopLock.unlock() }
     return stopRequested
+  }
+
+  /// F-S1(a) — see `explicitStopRequested`'s own doc comment; read by
+  /// `emitStatus` on every call.
+  private func isExplicitStopRequested() -> Bool {
+    stopLock.lock(); defer { stopLock.unlock() }
+    return explicitStopRequested
   }
 
   /// First caller wins (message/kind alike) — every subsequent call is a
@@ -279,6 +321,44 @@ public final class OsSpeechSession: @unchecked Sendable {
     emitStatus(kind, message: message)
   }
 
+  /// F-S1(d) — best-effort finalize+drain, raced against a hard 2500ms
+  /// deadline: `finalizeAndFinishThroughEndOfInput()` and draining
+  /// `resultsTask` are NOT guaranteed to respect Swift's cooperative
+  /// cancellation promptly, so a `withTaskGroup` (which implicitly
+  /// awaits every child before returning, cancelled or not — no actual
+  /// "abandon and move on" escape hatch) can't enforce a hard deadline
+  /// here. Uses two plain UNSTRUCTURED `Task`s racing into the SAME
+  /// first-writer-wins checked-continuation idiom this file already uses
+  /// for `waitForStop()`; whichever finishes first resumes it and this
+  /// function returns immediately — the loser (when the deadline wins)
+  /// keeps running detached, best-effort, same posture the finalize
+  /// catch below already accepts. 2500ms keeps margin under the JS 4s
+  /// stop-latch timeout (`STOP_ENDED_TIMEOUT_MS`, osSpeech.ts) — mirrors
+  /// this repo's own macOS convention "JS 4s > Rust STOP_GRACE_PERIOD 3s"
+  /// (audiocap.rs/osspeech.rs), here as "JS 4s > Swift 2.5s drain
+  /// deadline".
+  private static func finalizeAndDrain(analyzer: SpeechAnalyzer, resultsTask: Task<Void, Never>) async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      let resumeOnce = ResumeOnceBox(continuation)
+      Task {
+        do {
+          try await analyzer.finalizeAndFinishThroughEndOfInput()
+        } catch {
+          // Best-effort — the stream is ending either way (already
+          // finish()ed before this was called); no dedicated log lane on
+          // iOS to mirror this to (unlike macOS's own
+          // TranscriptEvents.emitError fallback).
+        }
+        _ = await resultsTask.value // drain remaining finals
+        resumeOnce.resume()
+      }
+      Task {
+        try? await Task.sleep(nanoseconds: 2_500_000_000) // 2500ms deadline
+        resumeOnce.resume()
+      }
+    }
+  }
+
   // ---- AVAudioSession / engine lifecycle ----
 
   /// `.measurement` reduces system AGC/processing that hurts ASR quality
@@ -291,13 +371,26 @@ public final class OsSpeechSession: @unchecked Sendable {
     let session = AVAudioSession.sharedInstance()
     try session.setCategory(.record, mode: .measurement, options: [.duckOthers, .allowBluetoothHFP])
     try session.setActive(true)
+    didActivateAudioSession = true // F-S5 — only after setActive(true) actually succeeds
   }
 
+  /// F-S5 — undoes ONLY what THIS session actually did: a failure before
+  /// `configureAudioSession()`/the tap-install ever ran (e.g. an
+  /// unsupported locale, or a stop landing mid-asset-download) must not
+  /// deactivate the process-shared `AVAudioSession` — some other
+  /// component may depend on it staying active, and this session never
+  /// touched it in the first place.
   private func teardownAudio() {
-    engine.inputNode.removeTap(onBus: 0)
+    if didInstallTap {
+      engine.inputNode.removeTap(onBus: 0)
+      didInstallTap = false
+    }
     engine.stop()
     sink?.stop()
-    try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    if didActivateAudioSession {
+      try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+      didActivateAudioSession = false
+    }
   }
 
   /// AVAudioApplication (not the deprecated AVAudioSession
@@ -351,10 +444,21 @@ public final class OsSpeechSession: @unchecked Sendable {
 
   // ---- small helpers ----
 
+  /// F-S1(a) — the ONE terminal-emission choke point: every `emitStatus`
+  /// call (early-return guard-else branches, the bottom-of-`run()` catch
+  /// blocks, AND `emitFinalStatus()`'s own post-`waitForStop()` call)
+  /// routes through `OsSpeechTerminalCoercion.coerce`, so a terminal kind
+  /// decided by ANY path is force-rewritten to `.ended` once the user's
+  /// own explicit stop has been requested — see that function's own doc
+  /// comment.
   private func emitStatus(
     _ kind: OsSpeechStatusKind, message: String? = nil, progress: Double? = nil, resolvedLocale: String? = nil, supportedLocales: [String]? = nil
   ) {
-    emit(OsSpeechEvent.status, OsSpeechStatusPayload(kind: kind, source: .session, message: message, progress: progress, resolvedLocale: resolvedLocale, supportedLocales: supportedLocales))
+    let coerced = OsSpeechTerminalCoercion.coerce(kind: kind, message: message, explicitStopRequested: isExplicitStopRequested())
+    emit(
+      OsSpeechEvent.status,
+      OsSpeechStatusPayload(
+        kind: coerced.kind, source: .session, message: coerced.message, progress: progress, resolvedLocale: resolvedLocale, supportedLocales: supportedLocales))
   }
 
   /// Q11 v1: an optional JSON array of strings, capped/curated by the JS
@@ -407,18 +511,58 @@ public final class OsSpeechSession: @unchecked Sendable {
   }
 }
 
-/// Guards `OsSpeechSession.pausedFlag` — read on the realtime-ish
-/// AVAudioEngine tap callback thread, written from wherever
-/// `pauseTranscribe`/`resumeTranscribe` happens to run. `NSLock`, same
-/// posture as every other small cross-thread box in this package (and
-/// in the macOS pattern source's own `ResultsErrorBox`/`FatalErrorBox`).
-final class LockedFlag: @unchecked Sendable {
+/// F-S3 — guards `OsSpeechSession.pauseFence`'s (paused, generation)
+/// pair, read together on the realtime-ish AVAudioEngine tap callback
+/// thread (via `ConverterSink.receive`'s own two snapshots) and written
+/// from wherever `pauseTranscribe`/`resumeTranscribe` happens to run.
+/// ONE lock over BOTH fields (not two separate `LockedFlag`-style boxes)
+/// so a reader never observes a torn pair — see `PauseGenerationFence
+/// .shouldDrop`'s own doc comment (PauseGenerationFence.swift) for what
+/// the two fields feed. `generation` bumps on EVERY `setPaused` call —
+/// paused OR resumed alike, even if the value happens not to actually
+/// change — so a pause that lands and is undone again between two reads
+/// is still visible as "something changed" to a caller holding an older
+/// snapshot.
+final class PauseGenerationBox: @unchecked Sendable {
   private let lock = NSLock()
-  private var stored: Bool
-  init(_ initial: Bool) { stored = initial }
-  var value: Bool {
-    get { lock.lock(); defer { lock.unlock() }; return stored }
-    set { lock.lock(); defer { lock.unlock() }; stored = newValue }
+  private var paused: Bool
+  private var generation: UInt64 = 0
+
+  init(_ initial: Bool) { paused = initial }
+
+  func setPaused(_ newValue: Bool) {
+    lock.lock()
+    paused = newValue
+    generation += 1
+    lock.unlock()
+  }
+
+  /// Atomically reads both fields together — called at buffer-receipt
+  /// time AND again immediately before yield; see `ConverterSink
+  /// .receive`'s own two call sites.
+  func snapshot() -> (paused: Bool, generation: UInt64) {
+    lock.lock(); defer { lock.unlock() }
+    return (paused, generation)
+  }
+}
+
+/// F-S1(d) — resumes a `CheckedContinuation<Void, Never>` at most once;
+/// guards `OsSpeechSession.finalizeAndDrain`'s own two-racer (work vs
+/// deadline) unstructured Tasks from a double-resume trap. Same
+/// NSLock-guarded first-write-wins posture as `DownloadOutcomeBox`
+/// (OsSpeechAssetInstaller.swift) / `OsSpeechSession.stopContinuation`.
+final class ResumeOnceBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var resumed = false
+  private let continuation: CheckedContinuation<Void, Never>
+  init(_ continuation: CheckedContinuation<Void, Never>) { self.continuation = continuation }
+  func resume() {
+    lock.lock()
+    let alreadyResumed = resumed
+    resumed = true
+    lock.unlock()
+    guard !alreadyResumed else { return }
+    continuation.resume()
   }
 }
 
@@ -442,6 +586,7 @@ final class ConverterSink: @unchecked Sendable {
   private let converter: AVAudioConverter
   private let targetFormat: AVAudioFormat
   private let continuation: AsyncStream<AnalyzerInput>.Continuation
+  private let pauseFence: PauseGenerationBox
   private let onFatalError: (OsSpeechError) -> Void
   private let lock = NSLock()
   private var stopped = false
@@ -450,6 +595,7 @@ final class ConverterSink: @unchecked Sendable {
     nativeFormat: AVAudioFormat,
     targetFormat: AVAudioFormat,
     continuation: AsyncStream<AnalyzerInput>.Continuation,
+    pauseFence: PauseGenerationBox,
     onFatalError: @escaping (OsSpeechError) -> Void
   ) throws {
     guard let converter = AVAudioConverter(from: nativeFormat, to: targetFormat) else {
@@ -458,7 +604,15 @@ final class ConverterSink: @unchecked Sendable {
     self.converter = converter
     self.targetFormat = targetFormat
     self.continuation = continuation
+    self.pauseFence = pauseFence
     self.onFatalError = onFatalError
+    // F-S3 — deliberately NOT torn down/recreated on pause: `converter`
+    // is the ONE `AVAudioConverter` instance for this session's whole
+    // lifetime (carries resampler state across chunks, see `receive`'s
+    // own comment below). Resetting it across a pause would only save a
+    // few ms of stale resampler priming on the FIRST post-resume buffer
+    // — well below the noise floor for mic speech — at the cost of
+    // losing that carried state on every other buffer. Not worth it.
   }
 
   /// Called from the AVAudioEngine tap callback thread only (never
@@ -469,6 +623,12 @@ final class ConverterSink: @unchecked Sendable {
     let alreadyStopped = stopped
     lock.unlock()
     guard !alreadyStopped, buffer.frameLength > 0 else { return }
+
+    // F-S3 — snapshot pause state+generation the instant this buffer is
+    // admitted (cheap early exit: skip the conversion work below
+    // entirely rather than doing it only to drop the result).
+    let atReceipt = pauseFence.snapshot()
+    guard !atReceipt.paused else { return }
 
     let ratio = targetFormat.sampleRate / buffer.format.sampleRate
     let outputCapacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 16 // small safety pad
@@ -498,6 +658,14 @@ final class ConverterSink: @unchecked Sendable {
       return
     }
     guard outputBuffer.frameLength > 0 else { return } // legitimately nothing produced yet (priming) — not a failure
+
+    // F-S3 — re-check IMMEDIATELY before yield: a pause (or a pause+
+    // resume landing entirely within this buffer's own conversion
+    // window, which `atReceipt.paused == false` alone can't see) must
+    // still drop this buffer — see PauseGenerationFence's own doc
+    // comment.
+    let atYield = pauseFence.snapshot()
+    guard !PauseGenerationFence.shouldDrop(pausedAtYield: atYield.paused, snapshotGeneration: atReceipt.generation, currentGeneration: atYield.generation) else { return }
 
     continuation.yield(AnalyzerInput(buffer: outputBuffer))
   }

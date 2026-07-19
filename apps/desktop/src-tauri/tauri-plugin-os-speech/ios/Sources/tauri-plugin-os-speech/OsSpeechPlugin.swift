@@ -42,20 +42,38 @@ class OsSpeechPlugin: Plugin {
   // gate onto this class.
   private var controllerBox: Any?
 
-  // ponytail: lazy-init on `controllerBox` isn't lock-guarded, so two
-  // FIRST-EVER calls into this plugin landing at the exact same instant
-  // (before anything has touched `controller` yet) could each construct
-  // their own `OsSpeechController` — narrow window, benign worst case
-  // (a stray extra controller, no data corruption; each caller's own
-  // subsequent calls stay internally consistent against whichever
-  // instance they captured). Upgrade to an actor-isolated holder or an
-  // `NSLock` around this accessor if that race ever actually bites.
+  // F-S2 (S13 fix round, BLOCKER) — constructed EAGERLY, exactly once,
+  // here in `init()` (plugin construction/registration time — Tauri's
+  // iOS runtime constructs+registers one `OsSpeechPlugin` instance per
+  // app launch, tied to the same main-thread WKWebView/UIViewController
+  // bootstrap sequence). The PRIOR lazy-init-on-first-access shape had
+  // an unguarded read-then-write race: two first-ever calls landing at
+  // the same instant could each construct+store their OWN
+  // `OsSpeechController`, yielding two live `AVAudioEngine` sessions
+  // that could never both be reached by a single later `stop`. Eager,
+  // single-shot construction during `init()` removes the race
+  // structurally — there is no "first access" moment for two callers to
+  // contend over, since Swift guarantees `init()` completes before any
+  // other method can run against this instance.
+  override init() {
+    super.init()
+    if #available(iOS 26.0, *) {
+      controllerBox = OsSpeechController()
+    }
+  }
+
+  // Read-only: `init()` above is the ONLY writer (see `controllerBox`'s
+  // own doc comment for why the stored type is `Any?`, not
+  // `OsSpeechController?` directly). A nil/wrong-type box here would
+  // mean `init()` never ran, which Swift doesn't allow for a live
+  // instance — `preconditionFailure` documents that as unreachable
+  // rather than silently constructing a second controller.
   @available(iOS 26.0, *)
   private var controller: OsSpeechController {
-    if let existing = controllerBox as? OsSpeechController { return existing }
-    let created = OsSpeechController()
-    controllerBox = created
-    return created
+    guard let existing = controllerBox as? OsSpeechController else {
+      preconditionFailure("OsSpeechController must have been constructed eagerly in init()")
+    }
+    return existing
   }
 
   /// Wraps `Plugin.trigger(_:data:)` (throwing) into the plain closure
@@ -64,9 +82,27 @@ class OsSpeechPlugin: Plugin {
   /// emission problem take down the session" way macOS's own
   /// `TranscriptEvents.write`/`StatusEvents.emit` do (`try?
   /// FileHandle.standardError.write`).
+  ///
+  /// F-OM1 (S13 fix round, MEDIUM) — `trigger` is called from THIS
+  /// closure, which runs on whatever cooperative-pool thread the calling
+  /// `Task` (OsSpeechSession/OsSpeechPreinstall) happens to be on, while
+  /// `Plugin`'s own `listeners` dictionary (`.tauri/tauri-api/Sources/
+  /// Tauri/Plugin/Plugin.swift`) is mutated by `registerListener`/
+  /// `removeListener` arriving via IPC — an unsynchronized Dictionary
+  /// read+write is undefined behavior. Marshaling onto `DispatchQueue
+  /// .main` serializes every `trigger()` call this plugin ever makes
+  /// against every other one — this is the ONE emitter closure both
+  /// `startTranscribe` and `preinstall` hand out, so routing everything
+  /// through it keeps event ORDER total too: `DispatchQueue.main.async`
+  /// is FIFO per queue (order of enqueue), and since every emit from
+  /// every source funnels through this single path, no two emitted
+  /// events can ever be reordered relative to each other on the way to
+  /// JS.
   private func emitter() -> (String, any Encodable) -> Void {
     { [weak self] event, data in
-      try? self?.trigger(event, data: data)
+      DispatchQueue.main.async {
+        try? self?.trigger(event, data: data)
+      }
     }
   }
 

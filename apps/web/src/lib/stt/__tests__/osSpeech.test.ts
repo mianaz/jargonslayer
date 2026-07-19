@@ -802,6 +802,36 @@ describe("OsSpeechEngine", () => {
   });
 
   // ---------------------------------------------------------------
+  // fix-round F6 (Sol, MEDIUM) — a rejected SECOND (status) subscription
+  // must still run the abandon/cleanup path, not skip it and leak the
+  // FIRST (transcript) listener that already registered.
+  // ---------------------------------------------------------------
+
+  describe("start() subscription-failure cleanup (fix-round F6)", () => {
+    it("the status listen() rejecting tears down the already-registered transcript listener and settles in error state", async () => {
+      const unlistenTranscriptSpy = vi.fn();
+      const { calls } = wireFakes();
+      currentListen = (async (event: string) => {
+        if (event === "osspeech://transcript") return unlistenTranscriptSpy;
+        throw new Error("register_listener denied");
+      }) as ListenFn;
+
+      const engine = new OsSpeechEngine();
+      const onStatus = vi.fn();
+
+      await engine.start({ ...noopEvents(), onStatus } as unknown as STTEvents, OSSPEECH_SETTINGS);
+
+      // Pre-fix: the rejected listenOsSpeechStatus() await sat outside
+      // the try, so this never ran — the transcript PluginListener would
+      // stay registered forever.
+      expect(unlistenTranscriptSpy).toHaveBeenCalledTimes(1);
+      expect(onStatus).toHaveBeenCalledWith("error", "无法启动系统识别，请重试");
+      expect(calls.some((c) => c.cmd === "start_os_speech")).toBe(false);
+      expect(calls.some((c) => c.cmd === "stop_os_speech")).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------
   // pause() / resume()
   // ---------------------------------------------------------------
 

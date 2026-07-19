@@ -33,7 +33,17 @@ async function listenOsSpeech<T>(
   if (IS_IOS) {
     const addPluginListener = await getAddPluginListener();
     const listener = await addPluginListener<T>(OS_SPEECH_PLUGIN, iosEvent, (raw) => cb({ payload: raw }));
-    return () => listener.unregister();
+    // Fix-round F6 (Sol, MEDIUM): unregister() returns a Promise (see
+    // tauriApi.ts's own PluginListenerHandle), but UnlistenFn's contract
+    // is desktop's synchronous `() => void` (matches getListen()'s own
+    // return below) — kept sync deliberately rather than widened to
+    // `() => Promise<void>`, since a failed remove_listener is
+    // non-actionable at teardown time either way. The catch only exists
+    // to keep that rejection from becoming an unhandled-rejection crash
+    // surface.
+    return () => {
+      void listener.unregister().catch(() => {});
+    };
   }
   const listen = await getListen();
   return listen<T>(desktopEvent, cb);

@@ -163,6 +163,16 @@ pub fn run() {
             Ok(())
         });
 
+    // S13 review hardening (Opus finding 5): this "mobile" branch is
+    // really iOS-only — it names osspeech_ios (cfg(target_os = "ios"))
+    // and tauri_plugin_os_speech (an iOS-scoped Cargo target dep), so an
+    // Android build would die on missing symbols with a confusing error.
+    // Fail loudly and early instead.
+    #[cfg(all(mobile, not(target_os = "ios")))]
+    compile_error!(
+        "S13's mobile shell is iOS-only; add an Android lane (plugin dep + bridge module) before building for Android — see docs/design-explorations/s13-ios-blueprint.md"
+    );
+
     // S13 §D3/§2 + §6 F6 — mobile (iOS v1) shell: the os-speech plugin
     // (Lane B) is the only native-side lane; no single-instance (no
     // second-launch/DBus/mutex concept on iOS), no shell plugin (no

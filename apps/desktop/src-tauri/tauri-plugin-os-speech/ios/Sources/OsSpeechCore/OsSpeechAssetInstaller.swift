@@ -80,6 +80,13 @@ enum OsSpeechAssetInstaller {
   ) async throws {
     emit(OsSpeechEvent.status, OsSpeechStatusPayload(kind: .assetChecking, source: source))
     let status = await AssetInventory.status(forModules: [transcriber])
+    // F-S1(c) — the 200ms poll loop below covers its OWN wait, but these
+    // two awaits sit OUTSIDE that loop entirely: without a check here, a
+    // stop requested while either is in flight would only be noticed
+    // once the (possibly slow) download itself starts polling, or not at
+    // all if `status == .installed` short-circuits before ever reaching
+    // the loop.
+    if await shouldAbort() { throw OsSpeechAbort() }
     guard status != .installed else {
       emit(OsSpeechEvent.status, OsSpeechStatusPayload(kind: .assetInstalled, source: source))
       return
@@ -87,6 +94,7 @@ enum OsSpeechAssetInstaller {
     guard let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) else {
       throw OsSpeechError.assetUnavailable("AssetInventory.assetInstallationRequest(supporting:) returned nil for a non-installed module")
     }
+    if await shouldAbort() { throw OsSpeechAbort() }
 
     // `outcomeBox` (not `downloadTask.isCancelled`/`.value`) is what this
     // loop checks below — a plain `Task` has no non-blocking "have you
@@ -132,7 +140,7 @@ enum OsSpeechAssetInstaller {
 /// abortable). Written at most once, from the child Task's own body;
 /// read every ~200ms by the poll loop. `@unchecked Sendable` + `NSLock`:
 /// same posture as every other small cross-context box in this package
-/// (OsSpeechSession.swift's own `LockedFlag`).
+/// (OsSpeechSession.swift's own `PauseGenerationBox`/`ResumeOnceBox`).
 final class DownloadOutcomeBox: @unchecked Sendable {
   private let lock = NSLock()
   private var stored: Result<Void, Error>?
