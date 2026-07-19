@@ -951,6 +951,53 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
   });
 });
 
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §6): iOS's
+// ENGINE_OPTIONS is osspeech-only (engineOptions.ts) — the 3rd (isIos)
+// argument is additive, defaulting false, so every 2-arg call above
+// keeps compiling AND keeps working (isIos simply never coerces for
+// them) — same additive shape engineOptionGate's own osspeechCaps
+// argument already established.
+describe("applyPlatformEngineDefaults — S13 iOS osspeech-only coercion (3rd, isIos argument)", () => {
+  function withEngine(engine: Settings["engine"]): Settings {
+    return { ...DEFAULT_SETTINGS, engine };
+  }
+
+  it.each(["webspeech", "whisper", "tabaudio", "appaudio", "soniox"] as const)(
+    "iOS coerces a stored %s to osspeech (iOS v1's ENGINE_OPTIONS is osspeech-only)",
+    (engine) => {
+      const s = applyPlatformEngineDefaults(withEngine(engine), false, true);
+      expect(s.engine).toBe("osspeech");
+    },
+  );
+
+  it("iOS leaves a stored osspeech untouched", () => {
+    const s = applyPlatformEngineDefaults(withEngine("osspeech"), false, true);
+    expect(s.engine).toBe("osspeech");
+  });
+
+  it("iOS leaves a stored demo untouched (demo is a scripted preview, not a picker engine)", () => {
+    const s = applyPlatformEngineDefaults(withEngine("demo"), false, true);
+    expect(s.engine).toBe("demo");
+  });
+
+  it("iOS coercion is checked BEFORE isDesktop's own branches — isDesktop is always false alongside isIos:true in practice (D4), but a stored appaudio/osspeech must land on osspeech, not fall through to the !isDesktop web branches (which would otherwise coerce to tabaudio, an engine iOS never offers)", () => {
+    expect(applyPlatformEngineDefaults(withEngine("appaudio"), false, true).engine).toBe("osspeech");
+    expect(applyPlatformEngineDefaults(withEngine("osspeech"), false, true).engine).toBe("osspeech");
+  });
+
+  it("omitting the 3rd argument entirely (a caller not yet updated for S13) never applies iOS coercion — additive/backward-compatible", () => {
+    const s = applyPlatformEngineDefaults(withEngine("webspeech"), false);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("leaves other settings fields untouched across a real iOS coercion", () => {
+    const base = { ...withEngine("whisper"), language: "en-GB" };
+    const s = applyPlatformEngineDefaults(base, false, true);
+    expect(s.engine).toBe("osspeech");
+    expect(s.language).toBe("en-GB");
+  });
+});
+
 describe("migrateSettings — S9/D7 platform coercion composes with applyTierDefaults (platform runs first)", () => {
   // Ambient test env is a web build (IS_DESKTOP false, see
   // platform/desktop.ts) — migrateSettings itself always feeds the
