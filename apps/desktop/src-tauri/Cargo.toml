@@ -93,3 +93,13 @@ objc2-foundation = "0.3.2"
 # target gate the plugin's own setup docs recommend for `cargo add`.
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"
+
+# S13 (docs/design-explorations/s13-ios-blueprint.md, §6 F8, Lane B) —
+# the iOS native os-speech plugin (Rust src/ + ios/ SwiftPM package,
+# same crate this dep+lock addition lands with — cargo loads a path-dep's
+# manifest at resolution time even for a target that isn't currently
+# being built, so this addition has to land in the SAME lane/commit that
+# creates the crate, not before). lib.rs's `#[cfg(mobile)]` builder
+# branch (Lane A) is the only caller.
+[target.'cfg(target_os = "ios")'.dependencies]
+tauri-plugin-os-speech = { path = "tauri-plugin-os-speech" }
