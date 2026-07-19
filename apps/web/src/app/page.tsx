@@ -5,6 +5,7 @@ import { SidebarSimple } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { useMeeting } from "@/hooks/useMeeting";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS } from "@/lib/platform/ios";
 import DesktopBootstrap from "@/components/desktop/DesktopBootstrap";
 import Header from "@/components/Header";
 import StatusLine from "@/components/StatusLine";
@@ -21,6 +22,7 @@ import LookupPopover from "@/components/LookupPopover";
 import Toast from "@/components/Toast";
 import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
 import { checkAppUpdate } from "@/lib/desktop/updateCheck";
+import { initIos } from "@/lib/desktop/bootstrap";
 
 type RightTab = "cards" | "summary" | "glossary";
 
@@ -161,6 +163,15 @@ export default function Home() {
     // comment); the check here just skips the call outright on web
     // rather than relying on that internal guard alone.
     if (IS_DESKTOP) void checkAppUpdate();
+    // S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/D6) —
+    // iOS init: ONLY the LLM transport wiring (bootstrap.ts's own
+    // initIos() doc comment) — no wizard/update-check chrome, so unlike
+    // DesktopBootstrap below this needs no component of its own, the
+    // same "inline call in this mount effect" shape as checkAppUpdate()
+    // just above. initIos() is IS_IOS-guarded internally too (inert
+    // no-op on a non-iOS build); the check here just skips the call
+    // outright rather than relying on that internal guard alone.
+    if (IS_IOS) void initIos();
   }, [hydrate]);
 
   // Jump to the report tab the moment a summary lands.
