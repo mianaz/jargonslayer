@@ -47,8 +47,12 @@
     "source_display_text": "semi-supervised learning",
     "definition": "Training a model on data where some of the training examples have labels but others don't. One technique for semi-supervised learning is to infer labels for the unlabeled examples, and then to train on the inferred labels to create a new model. Semi-supervised learning can be useful if labels are expensive to obtain but unlabeled examples are plentiful.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"semi-supervised learning\" resolved to English Wikipedia article \"Weak supervision\" but it has no zh interwiki link"
+      "status": "ok",
+      "en_title_used": null,
+      "en_url": null,
+      "zh_wiki_title": "半监督学习",
+      "zh_wiki_url": "https://zh.wikipedia.org/wiki/%E5%8D%8A%E7%9B%91%E7%9D%A3%E5%AD%A6%E4%B9%A0",
+      "zh_extract_full": "半监督学习（英语：Semi-supervised learning）是机器学习的一个分支，它在训练时使用了少量的有标签数据（Labeled data）和大量的无标签数据（Unlabeled data）。半监督学习介于无监督学习（训练数据全部无标签）和有监督学习（训练数据全部有标签）之间。半监督学习旨在缓解训练数据中有标签数据有限的问题。 无监督学习适用的的问题往往有着大量的无标签样本，同时获得有标签样本成本较高。部分其它机器学习分支有着相同动机，但是遵从不同的假设和方法，例如主动学习和弱监督学习。将无标签样本和少量有标签样本同时使用时，会对学习的准确性产生极大改善。为特定问题获得有标签的数据通常需要熟练工（例如转录音频片段）或进行物理实验（例如确定蛋白质的三维结构，或者确定特定地点是否有油气）。由此，获得有标签样本的成本往往较高，获取大型的、完全标注的样本集是不可行的；同时，获取无标签的样本成本往往相对较低。此时，半监督学习具有较大的使用价值。半监督学习在机器学习和人类学习的建模方面也具有理论价值。 正式的来说，半监督学习假设有 l {\\displaystyle l} 个独立同分布的样本 x 1 , … , x l ∈ X {\\displaystyle x_{1},\\dots ,x_{l}\\in X} 及对应的标签 y 1 , … , y l ∈ Y {\\displaystyle y_{1},\\dots ,y_{l}\\in Y} ，和 u {\\displaystyle u} 个无标签的样本 x l + 1 , … , x l + u ∈ X {\\displaystyle x_{l+1},\\dots ,x_{l+u}\\in X} 。半监督学习结合这些样本来获得相比于放弃无标签样本进行有监督学习或放弃有标签样本进行无监督学习更好的分类性能。 半监督学习可以是推断学习或归纳学习。推断学习的目的是推断给定无标签样本 x l + 1 , … , x l + u {\\displaystyle x_{l+1},\\dots ,x_{l+u}} 的正确标签；归纳学习的目的是推断 X {\\displaystyle X} 到 Y {\\displaystyle Y} 的正确映射。 直观地说，学习问题可以看成一次考试，有标签样本是为了帮助学习，由老师解答的样题。推断学习中，未解决的问题是考试题目；归纳学习中，它们是会构成考试的练习题。 对整个输入空间进行推断学习没有必要（依据Vapnik准则，也是不够谨慎的）。然而在实践中，为推断学习和归纳学习设计的算法通常交替使用。"
     }
   },
   {
@@ -141,8 +145,8 @@
     "source_display_text": "pre-training",
     "definition": "The initial training of a model on a large dataset. Some pre-trained models are clumsy giants and must typically be refined through additional training. For example, ML experts might pre-train a large language model on a vast text dataset, such as all the English pages in Wikipedia. Following pre-training, the resulting model might be further refined through any of the following techniques:",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: pretraining (machine learning), pretraining, pre training, pretraining (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -165,8 +169,8 @@
     "source_display_text": "underfitting",
     "definition": "Producing a model with poor predictive ability because the model hasn't fully captured the complexity of the training data. Many problems can cause underfitting, including:",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -175,8 +179,8 @@
     "source_display_text": "generalization",
     "definition": "A model's ability to make correct predictions on new, previously unseen data. A model that can generalize is the opposite of a model that is overfitting.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -185,8 +189,8 @@
     "source_display_text": "cross-validation",
     "definition": "A mechanism for estimating how well a model would generalize to new data by testing the model against one or more non-overlapping data subsets withheld from the training set.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: cross-validation (machine learning), cross-validation, cross validation, cross-validation (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated override (zh-Wikipedia lead was truncated; Opus+Sol validated)"
     }
   },
   {
@@ -195,8 +199,8 @@
     "source_display_text": "validation set",
     "definition": "The subset of the dataset that performs initial evaluation against a trained model. Typically, you evaluate the trained model against the validation set several times before evaluating the model against the test set.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -205,8 +209,8 @@
     "source_display_text": "test set",
     "definition": "A subset of the dataset reserved for testing a trained model.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -215,8 +219,8 @@
     "source_display_text": "imbalanced dataset",
     "definition": "Synonym for class-imbalanced dataset.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: imbalanced dataset (machine learning), imbalanced dataset"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -225,8 +229,8 @@
     "source_display_text": "data augmentation",
     "definition": "Artificially boosting the range and number of training examples by transforming existing examples to create additional examples. For example, suppose images are one of your features, but your dataset doesn't contain enough image examples for the model to learn useful associations. Ideally, you'd add enough labeled images to your dataset to enable your model to train properly. If that's not possible, data augmentation can rotate, stretch, and reflect each image to produce many variants of the original picture, possibly yielding enough labeled data to enable excellent training.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -291,8 +295,8 @@
     "source_display_text": "dropout regularization",
     "definition": "A form of regularization useful in training neural networks. Dropout regularization removes a random selection of a fixed number of the units in a network layer for a single gradient step. The more units dropped out, the stronger the regularization. This is analogous to training the network to emulate an exponentially large ensemble of smaller networks. For full details, see Dropout: A Simple Way to Prevent Neural Networks from Overfitting.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: dropout (machine learning), dropout, regularization, dropout (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated override (zh-Wikipedia mis-attributed it to Google; Opus+Sol validated)"
     }
   },
   {
@@ -329,8 +333,8 @@
     "source_display_text": "stochastic gradient descent (SGD)",
     "definition": "A gradient descent algorithm in which the batch size is one. In other words, SGD trains on a single example chosen uniformly at random from a training set.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"stochastic gradient descent\" resolved to English Wikipedia article \"Stochastic gradient descent\" but it has no zh interwiki link"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -423,8 +427,8 @@
     "source_display_text": "batch normalization",
     "definition": "Normalizing the input or output of the activation functions in a hidden layer. Batch normalization can provide the following benefits:",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"batch normalization\" resolved to English Wikipedia article \"Batch normalization\" but it has no zh interwiki link"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -447,8 +451,8 @@
     "source_display_text": "batch size",
     "definition": "The number of examples in a batch. For instance, if the batch size is 100, then the model processes 100 examples per iteration.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: batch size (machine learning), batch size"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -457,8 +461,8 @@
     "source_display_text": "epoch",
     "definition": "A full training pass over the entire training set such that each example has been processed once.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -677,8 +681,8 @@
     "source_display_text": "clustering",
     "definition": "Grouping related examples, particularly during unsupervised learning. Once all the examples are grouped, a human can optionally supply meaning to each cluster.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: clustering (machine learning), clustering, clustering (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated override (zh-Wikipedia lead only listed application domains; Opus+Sol validated)"
     }
   },
   {
@@ -687,8 +691,8 @@
     "source_display_text": "ensemble",
     "definition": "A collection of models trained independently whose predictions are averaged or aggregated. In many cases, an ensemble produces better predictions than a single model. For example, a random forest is an ensemble built from multiple decision trees. Note that not all decision forests are ensembles.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: ensemble (machine learning), ensemble, ensemble (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored; zh 术语 集成学习)"
     }
   },
   {
@@ -739,8 +743,8 @@
     "source_display_text": "self-attention (also called self-attention layer)",
     "definition": "A neural network layer that transforms a sequence of embeddings (for example, token embeddings) into another sequence of embeddings. Each embedding in the output sequence is constructed by integrating information from the elements of the input sequence through an attention mechanism.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: self-attention (machine learning), self-attention, self attention also called self attention layer, self-attention (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -749,8 +753,8 @@
     "source_display_text": "embedding vector",
     "definition": "Broadly speaking, an array of floating-point numbers taken from any hidden layer that describe the inputs to that hidden layer. Often, an embedding vector is the array of floating-point numbers trained in an embedding layer. For example, suppose an embedding layer must learn an embedding vector for each of the 73,000 tree species on Earth. Perhaps the following array is the embedding vector for a baobab tree:",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"embedding (machine learning)\" resolved to English Wikipedia article \"Embedding (machine learning)\" but it has no zh interwiki link"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, Opus+Sol validated; not necessarily low-dimensional)"
     }
   },
   {
@@ -787,8 +791,8 @@
     "source_display_text": "encoder",
     "definition": "In general, any ML system that converts from a raw, sparse, or external representation into a more processed, denser, or more internal representation.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: encoder (machine learning), encoder, encoder (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -797,8 +801,8 @@
     "source_display_text": "decoder",
     "definition": "In general, any ML system that converts from a processed, dense, or internal representation to a more raw, sparse, or external representation.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: decoder (machine learning), decoder, decoder (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -835,8 +839,8 @@
     "source_display_text": "token",
     "definition": "In a language model, the atomic unit that the model is training on and making predictions on. A token is typically one of the following:",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: token (machine learning), token, token (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated override (zh-Wikipedia lead was circular; Opus validated)"
     }
   },
   {
@@ -901,8 +905,8 @@
     "source_display_text": "temperature",
     "definition": "A hyperparameter that controls the degree of randomness of a model's output. Higher temperatures result in more random output, while lower temperatures result in less random output.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -911,8 +915,8 @@
     "source_display_text": "perplexity",
     "definition": "One measure of how well a model is accomplishing its task. For example, suppose your task is to read the first few letters of a word a user is typing on a phone keyboard, and to offer a list of possible completion words. Perplexity, P, for this task is approximately the number of guesses you need to offer in order for your list to contain the actual word the user is trying to type.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"perplexity\" -> en:\"Perplexity\" -> zh:\"困惑度\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored; zh 术语 困惑度)"
     }
   },
   {
@@ -921,8 +925,8 @@
     "source_display_text": "precision",
     "definition": "A metric for classification models that answers the following question:",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: precision (machine learning), precision, precision (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -931,8 +935,8 @@
     "source_display_text": "recall",
     "definition": "A metric for classification models that answers the following question:",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: recall (machine learning), recall, recall (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -941,8 +945,8 @@
     "source_display_text": "accuracy",
     "definition": "The number of correct classification predictions divided by the total number of predictions. That is:",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -979,8 +983,8 @@
     "source_display_text": "AUC (Area under the ROC curve)",
     "definition": "A number between 0.0 and 1.0 representing a binary classification model's ability to separate positive classes from negative classes. The closer the AUC is to 1.0, the better the model's ability to separate classes from each other.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: AUC (machine learning), AUC, area under the roc curve, AUC (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -989,8 +993,8 @@
     "source_display_text": "mean average precision at k (mAP@k)",
     "definition": "The statistical mean of all average precision at k scores across a validation dataset. One use of mean average precision at k is to judge the quality of recommendations generated by a recommendation system.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: mAP@k (machine learning), mAP@k, mean average precision at k, mAP@k (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1013,8 +1017,8 @@
     "source_display_text": "false positive rate (FPR)",
     "definition": "The proportion of actual negative examples for which the model mistakenly predicted the positive class. The following formula calculates the false positive rate:",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"false positive rate\" resolved to English Wikipedia article \"False positive rate\" but it has no zh interwiki link"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1037,8 +1041,8 @@
     "source_display_text": "gini impurity",
     "definition": "A metric similar to entropy. Splitters use values derived from either gini impurity or entropy to compose conditions for classification decision trees. Information gain is derived from entropy. No universally accepted equivalent term for the metric derived from gini impurity exists; however, this unnamed metric is just as important as information gain.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1047,8 +1051,8 @@
     "source_display_text": "information gain",
     "definition": "In decision forests, the difference between a node's entropy and the weighted (by number of examples) sum of the entropy of its children nodes. A node's entropy is the entropy of the examples in that node.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1071,8 +1075,8 @@
     "source_display_text": "decision threshold",
     "definition": "Synonym for classification threshold.",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: decision threshold (machine learning), decision threshold"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1081,8 +1085,8 @@
     "source_display_text": "Bayesian neural network",
     "definition": "A probabilistic neural network that accounts for uncertainty in weights and outputs. A standard neural network regression model typically predicts a scalar value; for example, a standard model predicts a house price of 853,000. In contrast, a Bayesian neural network predicts a distribution of values; for example, a Bayesian model predicts a house price of 853,000 with a standard deviation of 67,200.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1147,8 +1151,8 @@
     "source_display_text": "outlier detection",
     "definition": "The process of identifying outliers in a training set.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"outlier detection\" -> en:\"Anomaly detection\" -> zh:\"异常检测\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored; zh 术语 异常检测)"
     }
   },
   {
@@ -1157,8 +1161,8 @@
     "source_display_text": "feature vector",
     "definition": "The array of feature values comprising an example. The feature vector is input during training and during inference. For example, the feature vector for a model with two discrete features might be:",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1181,8 +1185,8 @@
     "source_display_text": "inference",
     "definition": "In traditional machine learning, the process of making predictions by applying a trained model to unlabeled examples. See Supervised Learning in the Intro to ML course to learn more.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1191,8 +1195,8 @@
     "source_display_text": "quantization",
     "definition": "Overloaded term that could be used in any of the following ways:",
     "zh": {
-      "status": "flagged",
-      "reason": "no candidate resolved to a real (non-disambiguation) English Wikipedia article: quantization (machine learning), quantization, quantization (file format)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, Opus+Sol validated; overloaded term)"
     }
   },
   {
@@ -1215,8 +1219,8 @@
     "source_display_text": "oversampling",
     "definition": "Reusing the examples of a minority class in a class-imbalanced dataset in order to create a more balanced training set.",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, standard ML terminology)"
     }
   },
   {
@@ -1225,8 +1229,8 @@
     "source_display_text": "downsampling",
     "definition": "Overloaded term that can mean either of the following:",
     "zh": {
-      "status": "flagged",
-      "reason": "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, Opus+Sol validated; overloaded term)"
     }
   },
   {
@@ -1235,8 +1239,8 @@
     "source_display_text": "selection bias",
     "definition": "Errors in conclusions drawn from sampled data due to a selection process that generates systematic differences between samples observed in the data and those not observed. The following forms of selection bias exist:",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"selection bias\" resolved to English Wikipedia article \"Selection bias\" but it has no zh interwiki link"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, Opus+Sol validated; not only non-random sampling)"
     }
   },
   {

@@ -19,7 +19,7 @@
     "source_type": "glossary-inline",
     "en_wiki_title": "Null hypothesis",
     "en_wiki_url": "https://en.wikipedia.org/wiki/Null_hypothesis",
-    "definition_en": "The statement being tested in a test of statistical significance; usually a statement of 'no effect' or 'no difference'.[3] For example, in a test of whether light has an effect on sleep, the null hypothesis would be that light has no effect on sleep (i.e. sleep patterns are the same regardless of the lighting conditions). The null hypothesis is an expression of the expectation that the dependent variable will not change significantly as the independent variable is modified; statistical significance is measured and reported according to the degree to which this expectation is met. Contrast alternative hypothesis.",
+    "definition_en": "The statement being tested in a test of statistical significance; usually a statement of 'no effect' or 'no difference'. For example, in a test of whether light has an effect on sleep, the null hypothesis would be that light has no effect on sleep (i.e. sleep patterns are the same regardless of the lighting conditions). The null hypothesis is an expression of the expectation that the dependent variable will not change significantly as the independent variable is modified; statistical significance is measured and reported according to the degree to which this expectation is met. Contrast alternative hypothesis.",
     "zh": {
       "status": "ok",
       "zh_wiki_title": "零假设",
@@ -117,7 +117,7 @@
     "source_type": "linked-article-lead",
     "en_wiki_title": "Power (statistics)",
     "en_wiki_url": "https://en.wikipedia.org/wiki/Power_(statistics)",
-    "definition_en": "In frequentist statistics, power is the probability of detecting an effect (i.e.",
+    "definition_en": "In frequentist statistics, power is the probability of detecting an effect (i.e. rejecting the null hypothesis) given that some prespecified effect actually exists using a given test in a given context.",
     "zh": {
       "status": "ok",
       "zh_wiki_title": "檢定力",
@@ -131,7 +131,7 @@
     "source_type": "glossary-inline",
     "en_wiki_title": "Confidence interval",
     "en_wiki_url": "https://en.wikipedia.org/wiki/Confidence_interval",
-    "definition_en": "In inferential statistics, a range of plausible values for some unknown parameter, such as a population mean, defined as an interval with a lower bound and an upper bound.[2] The precise values of these bounds are calculated from a pre-determined confidence level, chosen by the researcher. The confidence level represents the frequency of intervals that, over the long run, capture the true value of the unknown parameter; i.e. 95% of confidence intervals computed at the 95% confidence level contain the true value, and likewise for other confidence levels. For example, based on a study of sleep habits among a random sample of 100 people, a researcher may estimate at the 95% confidence level that the overall population sleeps somewhere between 5 and 9 hours per night. There is a 95% chance that the true population mean falls within this interval, because 95% of random samples taken from this same population will yield 95% confidence intervals that contain the true mean.",
+    "definition_en": "In inferential statistics, a range of plausible values for some unknown parameter, such as a population mean, defined as an interval with a lower bound and an upper bound. The precise values of these bounds are calculated from a pre-determined confidence level, chosen by the researcher. The confidence level represents the frequency of intervals that, over the long run, capture the true value of the unknown parameter; i.e. 95% of confidence intervals computed at the 95% confidence level contain the true value, and likewise for other confidence levels. For example, based on a study of sleep habits among a random sample of 100 people, a researcher may estimate at the 95% confidence level that the overall population sleeps somewhere between 5 and 9 hours per night. There is a 95% chance that the true population mean falls within this interval, because 95% of random samples taken from this same population will yield 95% confidence intervals that contain the true mean.",
     "zh": {
       "status": "ok",
       "zh_wiki_title": "信賴區間",
@@ -145,10 +145,10 @@
     "source_type": "glossary-inline",
     "en_wiki_title": null,
     "en_wiki_url": null,
-    "definition_en": "A number indicating the probability that the confidence interval (range) captures the true population mean. For example, a confidence interval with a 95% confidence level has a 95% chance of capturing the population mean. Technically, this means that, if the experiment were repeated many times, 95% of the CIs computed at this level would contain the true population mean.[2]",
+    "definition_en": "A number indicating the probability that the confidence interval (range) captures the true population mean. For example, a confidence interval with a 95% confidence level has a 95% chance of capturing the population mean. Technically, this means that, if the experiment were repeated many times, 95% of the CIs computed at this level would contain the true population mean.",
     "zh": {
-      "status": "flagged",
-      "reason": "term has no dedicated Wikipedia article link on the glossary page"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, Opus+Sol validated)"
     }
   },
   {
@@ -509,8 +509,8 @@
     "en_wiki_url": "https://en.wikipedia.org/wiki/Interquartile_range",
     "definition_en": "A measure of the statistical dispersion or spread of a dataset, defined as the difference between the 25th and 75th percentiles of the data. To calculate the IQR, the dataset is divided into four rank-ordered even parts or quartiles, the boundaries between which, at the 25th, 50th, and 75th percentiles, are denoted Q 1, Q 2, and Q 3, respectively; the IQR = Q 3 − Q 1.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"Interquartile range\" -> en:\"Interquartile range\" -> zh:\"四分位距\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored; zh 术语 四分位距)"
     }
   },
   {
@@ -535,8 +535,8 @@
     "en_wiki_url": "https://en.wikipedia.org/wiki/Skewness",
     "definition_en": "A measure of the asymmetry of the probability distribution of a real-valued random variable about its mean. Roughly speaking, a distribution has positive skew (right-skewed) if the higher tail is longer, and negative skew (left-skewed) if the lower tail is longer. Perfectly symmetrical distributions always have zero skewness, though zero skewness does not necessarily imply a symmetrical distribution.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"Skewness\" -> en:\"Skewness\" -> zh:\"偏度\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored; zh 术语 偏度)"
     }
   },
   {
@@ -547,8 +547,8 @@
     "en_wiki_url": "https://en.wikipedia.org/wiki/Kurtosis",
     "definition_en": "A measure of the \"tailedness\" of the probability distribution of a real-valued random variable. There are different ways of quantifying, estimating, and interpreting kurtosis, but a common interpretation is that kurtosis represents the degree to which the shape of the distribution is influenced by infrequent extreme observations (outliers); in this case, higher kurtosis means more of the variance is due to infrequent extreme deviations, as opposed to frequent modestly sized deviations.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"Kurtosis\" -> en:\"Kurtosis\" -> zh:\"峰度\" had no usable definition after clamping (empty lead, or nothing left but the term-naming clause)"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated (hand-authored, Opus+Sol validated; tailedness not peakedness)"
     }
   },
   {
@@ -559,8 +559,8 @@
     "en_wiki_url": "https://en.wikipedia.org/wiki/Sample_mean_and_covariance",
     "definition_en": "The arithmetic mean of a sample of values drawn from a population, commonly denoted by x ¯ . An example is the average test score of a subset of 10 students from a class. On the assumption that the sample is representative of the larger population, the sample mean is often used as an estimator of the population mean, which in this example would be the average test score of all of the students in the class.",
     "zh": {
-      "status": "flagged",
-      "reason": "candidate \"Sample mean and covariance\" resolved to English Wikipedia article \"Sample mean and covariance\" but it has no zh interwiki link"
+      "status": "curated (hand-authored, domain-validated)",
+      "note": "curated override (zh-Wikipedia lead defined it as a vector; Opus+Sol validated)"
     }
   },
   {

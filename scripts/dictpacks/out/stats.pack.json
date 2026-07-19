@@ -2,20 +2,20 @@
   "id": "stats",
   "name": "统计学术语（Wikipedia 概率与统计学词汇表）",
   "description": "经典推断统计学常用术语，取自 Wikipedia《Glossary of probability and statistics》，填补 ml-stats 包（Google ML Glossary）缺失的传统统计学词汇（p 值、置信区间、假设检验等）。中文释义 来自对应中文维基百科条目导言（非机器翻译），未收录中文维基条目的术语暂缺中文释义，详见 provenance 文件。",
-  "version": "2026-07-18",
+  "version": "2026-07-19",
   "expressions": [],
   "terms": [
     {
       "term": "p-value",
       "type": "metric",
-      "gloss_en": "In null-hypothesis significance testing, the p-value is the probability of obtaining test results at least as extreme as the result actually observed, under the assumption that…",
+      "gloss_en": "In null-hypothesis significance testing, the p-value is the probability of obtaining test results at least as extreme as the result actually observed, under the assumption that the null hypothesis is correct.",
       "gloss_zh": "p值为假设检验中，假设零假设为真时，观测到至少与实际观测样本一样极端的样本的概率",
       "pack": "stats"
     },
     {
       "term": "null hypothesis",
       "type": "other",
-      "gloss_en": "The statement being tested in a test of statistical significance; usually a statement of 'no effect' or 'no difference'.[3] For example, in a test of whether light has an effect…",
+      "gloss_en": "The statement being tested in a test of statistical significance; usually a statement of 'no effect' or 'no difference'.",
       "gloss_zh": "在推论统计学中，零假设是做统计检验时的一类假设",
       "pack": "stats"
     },
@@ -51,7 +51,7 @@
       "term": "ANOVA",
       "type": "tech",
       "gloss_en": "Analysis of variance (ANOVA) is a family of statistical methods used to compare the means of two or more groups by analyzing variance.",
-      "gloss_zh": "方差分析为数据分析中常见的统计模型，主要为探讨连续型数据类型之因变量与类别型数据类型之自变量的关系…",
+      "gloss_zh": "方差分析为数据分析中常见的统计模型，主要为探讨连续型数据类型之因变量与类别型数据类型之自变量的关系，当自变项的因子中包含等于或超过三个类别情况下…",
       "pack": "stats"
     },
     {
@@ -64,29 +64,29 @@
     {
       "term": "statistical power",
       "type": "metric",
-      "gloss_en": "In frequentist statistics, power is the probability of detecting an effect (i.e.",
-      "gloss_zh": "统计功效，或称检验功效，是指假设检验中，当备择假设为真时正确地拒绝零假设的概率，即 power = Pr . 换言之…",
+      "gloss_en": "In frequentist statistics, power is the probability of detecting an effect (i.e. rejecting the null hypothesis) given that some prespecified effect actually exists using a given test in a given context.",
+      "gloss_zh": "统计功效，或称检验功效，是指假设检验中，当备择假设为真时正确地拒绝零假设的概率，即 power = Pr . 换言之，统计功效也可以看作是当备择假设为真时将其接受的概率",
       "pack": "stats"
     },
     {
       "term": "confidence interval",
       "type": "tech",
-      "gloss_en": "In inferential statistics, a range of plausible values for some unknown parameter, such as a population mean, defined as an interval with a lower bound and an upper bound.[2] The…",
+      "gloss_en": "In inferential statistics, a range of plausible values for some unknown parameter, such as a population mean, defined as an interval with a lower bound and an upper bound.",
       "gloss_zh": "在统计学中，一个概率样本的置信区间，是对产生这个样本的总体的参数分布中的某一个未知参数值，以区间形式给出的估计",
       "pack": "stats"
     },
     {
       "term": "confidence level",
       "type": "tech",
-      "gloss_en": "A number indicating the probability that the confidence interval (range) captures the true population mean. For example, a confidence interval with a 95% confidence level has a…",
-      "gloss_zh": "暂无中文释义",
+      "gloss_en": "A number indicating the probability that the confidence interval (range) captures the true population mean.",
+      "gloss_zh": "置信水平：用同一方法反复抽样时，所构造的置信区间包含真实总体参数的比例，如 95%。",
       "pack": "stats"
     },
     {
       "term": "estimator",
       "type": "tech",
-      "gloss_en": "A function of the known data that is used to estimate an unknown parameter; an estimate is the result of the actual application of the function to a particular set of data. For…",
-      "gloss_zh": "在统计学中，估计量，亦称推定量，是基于观测数据计算某一已知量之估计值的规则：因此，估计量…",
+      "gloss_en": "A function of the known data that is used to estimate an unknown parameter; an estimate is the result of the actual application of the function to a particular set of data.",
+      "gloss_zh": "在统计学中，估计量，亦称推定量，是基于观测数据计算某一已知量之估计值的规则：因此，估计量、被估量以及估计值是三个相互区别的概念",
       "pack": "stats"
     },
     {
@@ -99,7 +99,7 @@
     {
       "term": "likelihood function",
       "type": "tech",
-      "gloss_en": "A conditional probability function considered a function of its second argument with its first argument held fixed. For example, imagine pulling a numbered ball with a number k…",
+      "gloss_en": "A conditional probability function considered a function of its second argument with its first argument held fixed.",
       "gloss_zh": "在数理统计学中，似然函数是一种关于统计模型中的参数的函数，表示模型参数中的似然性",
       "pack": "stats"
     },
@@ -113,7 +113,7 @@
     {
       "term": "Bayesian inference",
       "type": "tech",
-      "gloss_en": "Bayesian inference ( BAY-zee-ən or BAY-zhən) is a method of statistical inference in which Bayes' theorem is used to calculate a probability of a hypothesis, given prior evidence,…",
+      "gloss_en": "Bayesian inference ( BAY-zee-ən or BAY-zhən) is a method of statistical inference in which Bayes' theorem is used to calculate a probability of a hypothesis, given prior evidence, and update it as more information becomes available.",
       "gloss_zh": "贝叶斯推断是推断统计的一种方法",
       "pack": "stats"
     },
@@ -141,8 +141,8 @@
     {
       "term": "binomial distribution",
       "type": "tech",
-      "gloss_en": "In probability theory and statistics, the binomial distribution with parameters n and p is the discrete probability distribution of the number of successes in a sequence of n…",
-      "gloss_zh": "在概率论和统计学中，二项分布是一种离散概率分布，描述在进行独立随机试验时，每次试验都有相同概率“成功”的情况下…",
+      "gloss_en": "In probability theory and statistics, the binomial distribution with parameters n and p is the discrete probability distribution of the number of successes in a sequence of n independent experiments, each asking a yes–no question, and each with its own Boolean-valued outcome:…",
+      "gloss_zh": "在概率论和统计学中，二项分布是一种离散概率分布，描述在进行独立随机试验时，每次试验都有相同概率“成功”的情况下，获得成功的总次数",
       "pack": "stats"
     },
     {
@@ -169,28 +169,28 @@
     {
       "term": "central limit theorem",
       "type": "other",
-      "gloss_en": "In probability theory, the central limit theorem (CLT) states that, under appropriate conditions, the distribution of a normalized version of the sample mean converges to a…",
+      "gloss_en": "In probability theory, the central limit theorem (CLT) states that, under appropriate conditions, the distribution of a normalized version of the sample mean converges to a standard normal distribution.",
       "gloss_zh": "中心极限定理是概率论中的一组定理",
       "pack": "stats"
     },
     {
       "term": "law of large numbers",
       "type": "other",
-      "gloss_en": "A theorem according to which the average of the results obtained from performing the same experiment a large number of times should be close to the experiment's expected value,…",
+      "gloss_en": "A theorem according to which the average of the results obtained from performing the same experiment a large number of times should be close to the experiment's expected value, and tends to become closer to the expected value as more trials are performed.",
       "gloss_zh": "在数学与统计学中，大数定律又称大数法则、大数律，是描述相当多次数重复实验的结果的定律",
       "pack": "stats"
     },
     {
       "term": "random variable",
       "type": "other",
-      "gloss_en": "A measurable function on a probability space, often real-valued. The distribution function of a random variable gives the probability of the different values of the variable. The…",
+      "gloss_en": "A measurable function on a probability space, often real-valued.",
       "gloss_zh": "随机变量是一种数学概念，用来表示随机试验结果的变量",
       "pack": "stats"
     },
     {
       "term": "mean",
       "type": "metric",
-      "gloss_en": "1. The expected value of a random variable.",
+      "gloss_en": "1.",
       "gloss_zh": "平均数是统计中的一个重要概念",
       "pack": "stats"
     },
@@ -211,7 +211,7 @@
     {
       "term": "standard deviation",
       "type": "metric",
-      "gloss_en": "The most commonly used measure of statistical dispersion. It is the square root of the variance, and is generally denoted with the lowercase Greek letter σ (sigma).",
+      "gloss_en": "The most commonly used measure of statistical dispersion.",
       "gloss_zh": "标准偏差又称标准差、中误差，在统计学中，是衡量一组变量值相对于其算术平均值变异程度的指标",
       "pack": "stats"
     },
@@ -219,105 +219,105 @@
       "term": "standard error",
       "type": "metric",
       "gloss_en": "The standard error (SE) of a statistic (usually an estimator of a parameter, like the average or mean) is the standard deviation of its sampling distribution.",
-      "gloss_zh": "标准误差，也称标准误，即样本平均数抽样分布的标准差，是描述对应的样本平均数抽样分布的离散程度及衡量对应样本平均数抽样误差…",
+      "gloss_zh": "标准误差，也称标准误，即样本平均数抽样分布的标准差，是描述对应的样本平均数抽样分布的离散程度及衡量对应样本平均数抽样误差大小的尺度",
       "pack": "stats"
     },
     {
       "term": "variance",
       "type": "metric",
-      "gloss_en": "A measure of its statistical dispersion of a random variable, indicating how far from the expected value its values typically are. The variance of random variable X is typically…",
-      "gloss_zh": "方差又称变异数、变方，在概率论及统计学中，描述的是一个随机变量的离散程度，即一组数字与其平均值之间的距离的度量…",
+      "gloss_en": "A measure of its statistical dispersion of a random variable, indicating how far from the expected value its values typically are.",
+      "gloss_zh": "方差又称变异数、变方，在概率论及统计学中，描述的是一个随机变量的离散程度，即一组数字与其平均值之间的距离的度量，是随机变量与其总体均值或样本均值的离差的平方的期望",
       "pack": "stats"
     },
     {
       "term": "expected value",
       "type": "metric",
-      "gloss_en": "The sum of the probabilities of each possible outcome of an experiment multiplied by their corresponding payoff or \"value\". Thus, it represents the average amount one \"expects\" to…",
+      "gloss_en": "The sum of the probabilities of each possible outcome of an experiment multiplied by their corresponding payoff or \"value\".",
       "gloss_zh": "在概率论和统计学中，一个离散性随机变量的期望是试验中每次可能的结果乘以其结果概率的总和",
       "pack": "stats"
     },
     {
       "term": "range (statistics)",
       "type": "metric",
-      "gloss_en": "The length of the smallest interval which contains all of the data in a dataset, calculated as the arithmetic difference between the largest and smallest values contained in the…",
+      "gloss_en": "The length of the smallest interval which contains all of the data in a dataset, calculated as the arithmetic difference between the largest and smallest values contained in the dataset and expressed in the same units used for the data.",
       "gloss_zh": "统计学中，全距，又称极差，是一组数值中最大值与最小值之间的差，单位与数值相同，是一种测量离散程度的方法",
       "pack": "stats"
     },
     {
       "term": "quartile",
       "type": "metric",
-      "gloss_en": "A type of quantile which divides a range of data points into four groups, termed quarters, of equal size. For any quartile-divided dataset, there are exactly three quartiles or…",
+      "gloss_en": "A type of quantile which divides a range of data points into four groups, termed quarters, of equal size.",
       "gloss_zh": "四分位数是统计学中分位数的一种，即把所有数值由小到大排列并分成四等份，处于三个分割点位置的数值就是四分位数",
       "pack": "stats"
     },
     {
       "term": "percentile",
       "type": "metric",
-      "gloss_en": "In statistics, a percentile or percentile score, also known as centile (often denoted as P k or Pk, for a given percentage k), is a score greater than a given percentage of all…",
-      "gloss_zh": "百分位数是统计学术语，若将一组数据从小到大排序，并计算相应的累计百分点，则某百分点所对应数据的值…",
+      "gloss_en": "In statistics, a percentile or percentile score, also known as centile (often denoted as P k or Pk, for a given percentage k), is a score greater than a given percentage of all scores (or data point value) in a sample.",
+      "gloss_zh": "百分位数是统计学术语，若将一组数据从小到大排序，并计算相应的累计百分点，则某百分点所对应数据的值，就称为这百分点的百分位数，以 P k 表示第 k 百分位数",
       "pack": "stats"
     },
     {
       "term": "interquartile range (IQR)",
       "type": "metric",
-      "gloss_en": "A measure of the statistical dispersion or spread of a dataset, defined as the difference between the 25th and 75th percentiles of the data. To calculate the IQR, the dataset is…",
-      "gloss_zh": "暂无中文释义",
+      "gloss_en": "A measure of the statistical dispersion or spread of a dataset, defined as the difference between the 25th and 75th percentiles of the data.",
+      "gloss_zh": "四分位距：数据第 75 与第 25 百分位数之差，衡量离散程度。",
       "pack": "stats"
     },
     {
       "term": "z-score",
       "type": "metric",
-      "gloss_en": "In statistics, the standard score or z-score is the number of standard deviations by which the value of a raw score (i.e., an observed value or data point) is above or below the…",
-      "gloss_zh": "标准分数在统计学中是一种无因次值，就是一种纯数字标记，是借由从单一分数中减去总体的平均值…",
+      "gloss_en": "In statistics, the standard score or z-score is the number of standard deviations by which the value of a raw score (i.e., an observed value or data point) is above or below the mean value of what is being observed or measured.",
+      "gloss_zh": "标准分数在统计学中是一种无因次值，就是一种纯数字标记，是借由从单一分数中减去总体的平均值，再依照总体的标准差分割成不同的差距，按照z值公式，各个样本在经过变换后，通常在正…",
       "pack": "stats"
     },
     {
       "term": "skewness",
       "type": "metric",
-      "gloss_en": "A measure of the asymmetry of the probability distribution of a real-valued random variable about its mean. Roughly speaking, a distribution has positive skew (right-skewed) if…",
-      "gloss_zh": "暂无中文释义",
+      "gloss_en": "A measure of the asymmetry of the probability distribution of a real-valued random variable about its mean.",
+      "gloss_zh": "偏度：衡量分布相对其均值的不对称程度。",
       "pack": "stats"
     },
     {
       "term": "kurtosis",
       "type": "metric",
-      "gloss_en": "A measure of the \"tailedness\" of the probability distribution of a real-valued random variable. There are different ways of quantifying, estimating, and interpreting kurtosis, but…",
-      "gloss_zh": "暂无中文释义",
+      "gloss_en": "A measure of the \"tailedness\" of the probability distribution of a real-valued random variable.",
+      "gloss_zh": "峰度：衡量概率分布尾部厚重程度的指标。",
       "pack": "stats"
     },
     {
       "term": "sample mean",
       "type": "metric",
-      "gloss_en": "The arithmetic mean of a sample of values drawn from a population, commonly denoted by x ¯ . An example is the average test score of a subset of 10 students from a class. On the…",
-      "gloss_zh": "暂无中文释义",
+      "gloss_en": "The arithmetic mean of a sample of values drawn from a population, commonly denoted by x ¯ .",
+      "gloss_zh": "样本均值：从总体中抽取的一组观测值的算术平均数，通常记作 x̄。",
       "pack": "stats"
     },
     {
       "term": "correlation",
       "type": "metric",
-      "gloss_en": "A numeric measure of the strength of a linear relationship between two random variables (one can use it to quantify, for example, how shoe size and height are correlated in the…",
+      "gloss_en": "A numeric measure of the strength of a linear relationship between two random variables (one can use it to quantify, for example, how shoe size and height are correlated in the population).",
       "gloss_zh": "相关又称相关性、关联，在概率论和统计学中，指一种随机变量或现象与另一种或几种之间变动伴随关系",
       "pack": "stats"
     },
     {
       "term": "covariance",
       "type": "metric",
-      "gloss_en": "Given two random variables X and Y, with expected values E ( X ) = μ and E ( Y ) = ν , the expected value of random variable ( X − μ ) ( Y − ν ) , written in statistical notation…",
+      "gloss_en": "Given two random variables X and Y, with expected values E ( X ) = μ and E ( Y ) = ν , the expected value of random variable ( X − μ ) ( Y − ν ) , written in statistical notation as cov ⁡ ( X , Y ) .",
       "gloss_zh": "在概率论与统计学中，协方差用于衡量随机变量间的相关程度",
       "pack": "stats"
     },
     {
       "term": "regression analysis",
       "type": "tech",
-      "gloss_en": "A data analysis or statistical model that employs a set of statistical methods which estimate the relationships between a dependent variable and one or more error-free independent…",
-      "gloss_zh": "回归分析是一种统计学上分析数据的方法，目的在于了解两个或多个变量间是否相关、相关方向与强度…",
+      "gloss_en": "A data analysis or statistical model that employs a set of statistical methods which estimate the relationships between a dependent variable and one or more error-free independent variables.",
+      "gloss_zh": "回归分析是一种统计学上分析数据的方法，目的在于了解两个或多个变量间是否相关、相关方向与强度，并建立数学模型以便观察特定变量来预测研究者感兴趣的变量",
       "pack": "stats"
     },
     {
       "term": "confounder",
       "type": "other",
-      "gloss_en": "A variable that influences both the dependent variable and the independent variable, causing a spurious association. The existence of hidden confounding variables is an important…",
-      "gloss_zh": "干扰因素，又称为干扰因子、干扰变量、混淆变量、共变因等，在统计学和因果关系中是指会同时影响自变量和因变量…",
+      "gloss_en": "A variable that influences both the dependent variable and the independent variable, causing a spurious association.",
+      "gloss_zh": "干扰因素，又称为干扰因子、干扰变量、混淆变量、共变因等，在统计学和因果关系中是指会同时影响自变量和因变量，导致出现伪关系的一种变量",
       "pack": "stats"
     },
     {
@@ -330,14 +330,14 @@
     {
       "term": "descriptive statistics",
       "type": "other",
-      "gloss_en": "A descriptive statistic (in the count noun sense) is a summary statistic that quantitatively describes or summarizes features from a collection of information, while descriptive…",
+      "gloss_en": "A descriptive statistic (in the count noun sense) is a summary statistic that quantitatively describes or summarizes features from a collection of information, while descriptive statistics (in the mass noun sense) is the process of using and analysing those statistics.",
       "gloss_zh": "敘述统计，是统计学中，来描绘或总结观察量的基本情况的统计总称",
       "pack": "stats"
     },
     {
       "term": "statistical inference",
       "type": "other",
-      "gloss_en": "Inference about a population based on a random sample drawn from that population or, more generally, about a random process from its observed behavior during a finite period of…",
+      "gloss_en": "Inference about a population based on a random sample drawn from that population or, more generally, about a random process from its observed behavior during a finite period of time.",
       "gloss_zh": "推断统计学，或称统计推断，指统计学中，研究如何根据样本数据去推断总体数量特征的方法",
       "pack": "stats"
     }
@@ -347,6 +347,6 @@
   "source": "Wikipedia: Glossary of probability and statistics (en.wikipedia.org)",
   "sourceUrl": "https://en.wikipedia.org/wiki/Glossary_of_probability_and_statistics",
   "citation": "Wikipedia contributors. Glossary of probability and statistics. Wikipedia, The Free Encyclopedia. https://en.wikipedia.org/wiki/Glossary_of_probability_and_statistics (CC BY-SA 4.0).",
-  "compiledAt": "2026-07-18",
+  "compiledAt": "2026-07-19",
   "glossZhNote": "gloss_zh sourced per-term from the corresponding Chinese Wikipedia article's lead paragraph (see enrich-zh.mjs) — real human-written CC BY-SA text, not a machine translation. Terms with no zh Wikipedia article keep the placeholder \"暂无中文释义\"; see provenance's per-term zh.status field."
 }

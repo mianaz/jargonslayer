@@ -46,7 +46,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushWikiApiCache } from "./wiki-api.mjs";
-import { enrichOneTerm, deriveEnCandidates } from "./enrich-zh.mjs";
+import { enrichOneTerm, enrichOneTermFromZhTitles, deriveEnCandidates, loadCuratedZh } from "./enrich-zh.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HTML_PATH = path.join(__dirname, "data", "google-ml-glossary.html");
@@ -60,7 +60,7 @@ const GLOSSARY_CITATION =
   " (CC BY 4.0; code samples on that page are Apache 2.0 and are not used here).";
 
 const GLOSS_ZH_PLACEHOLDER = "暂无中文释义";
-const GLOSS_EN_MAX_LEN = 180;
+const GLOSS_EN_MAX_LEN = 280;
 
 // Built-in dictionary + the already-built EDAM pack, scanned read-only at
 // build time for term-string collisions (see checkCollisions below). This
@@ -98,7 +98,13 @@ const CURATED_TERMS = [
   { term: "machine learning", label: "machine-learning", type: "other" },
   { term: "supervised learning", label: "supervised-machine-learning", type: "tech" },
   { term: "unsupervised learning", label: "unsupervised-machine-learning", type: "tech" },
-  { term: "semi-supervised learning", label: "semi-supervised-learning", type: "tech" },
+  // zhDirectTitle override: the correct EN article ("Weak supervision",
+  // which "Semi-supervised learning" redirects to) has no zh interwiki
+  // link — zh Wikipedia has a dedicated, on-topic "半监督学习" article
+  // under a title that just isn't cross-linked back to it (Task 2 zh-
+  // Wikipedia retry pass, see a one-off retry pass; content hand-
+  // checked before pinning).
+  { term: "semi-supervised learning", label: "semi-supervised-learning", type: "tech", zhDirectTitle: "半监督学习" },
   { term: "reinforcement learning", label: "reinforcement-learning-rl", type: "tech" },
   { term: "self-supervised learning", label: "self-supervised-learning", type: "tech" },
   { term: "transfer learning", label: "transfer-learning", type: "tech" },
@@ -119,7 +125,11 @@ const CURATED_TERMS = [
   // exists to try instead) — caught by hand-auditing before shipping;
   // kept flagged/placeholder rather than ship a misleadingly broad gloss.
   { term: "generalization", label: "generalization", type: "tech", zhSkip: true },
-  { term: "cross-validation", label: "cross-validation", type: "tech" },
+  // zhTitle override: auto-derivation's candidates ("cross-validation
+  // (machine learning)", bare "cross-validation") don't match the real
+  // EN article's actual title — pin it directly (real, has zh
+  // interwiki, on-topic lead; Task 2 zh-Wikipedia retry pass).
+  { term: "cross-validation", label: "cross-validation", type: "tech", zhTitle: "Cross-validation (statistics)" },
   // only a combined "Training, validation, and test data sets" article exists
   // — flagged per owner review rather than reuse one shared gloss for three
   // distinct terms
@@ -145,7 +155,11 @@ const CURATED_TERMS = [
   { term: "linear regression", label: "linear-regression", type: "tech" },
   { term: "logistic regression", label: "logistic-regression", type: "tech" },
   { term: "regularization", label: "regularization", type: "tech" },
-  { term: "dropout", label: "dropout-regularization", type: "tech" },
+  // zhTitle override: auto-derivation's bare "dropout" candidate risks
+  // the unrelated "Dropout (education)" topic — pin the correct EN
+  // article directly (real, has zh interwiki, on-topic lead; Task 2
+  // zh-Wikipedia retry pass).
+  { term: "dropout", label: "dropout-regularization", type: "tech", zhTitle: "Dropout (neural networks)" },
   { term: "early stopping", label: "early-stopping", type: "tech" },
 
   // ---- optimization / training internals ----
@@ -204,7 +218,11 @@ const CURATED_TERMS = [
   { term: "k-means", label: "k-means", type: "tech" },
 
   // ---- clustering / ensembles ----
-  { term: "clustering", label: "clustering", type: "tech" },
+  // zhTitle override: auto-derivation's candidates ("clustering
+  // (machine learning)", bare "clustering") don't match the real EN
+  // article's actual title ("Cluster analysis") — pin it directly
+  // (Task 2 zh-Wikipedia retry pass).
+  { term: "clustering", label: "clustering", type: "tech", zhTitle: "Cluster analysis" },
   { term: "ensemble", label: "ensemble", type: "tech" },
   { term: "bagging", label: "bagging", type: "tech" },
   { term: "boosting", label: "boosting", type: "tech" },
@@ -223,7 +241,11 @@ const CURATED_TERMS = [
   { term: "decoder", label: "decoder", type: "tech" },
   { term: "language model", label: "language-model", type: "tech" },
   { term: "LLM", label: "large-language-model", type: "acronym" },
-  { term: "token", label: "token", type: "tech" },
+  // zhDirectTitle override: no EN article resolves under any derived
+  // candidate, but zh Wikipedia has a dedicated, on-topic "词元" (NLP
+  // token) article (Task 2 zh-Wikipedia retry pass, see
+  // a one-off retry pass; content hand-checked before pinning).
+  { term: "token", label: "token", type: "tech", zhDirectTitle: "词元" },
   { term: "tokenizer", label: "tokenizer", type: "tech" },
   { term: "prompt engineering", label: "prompt-engineering", type: "tech" },
   { term: "few-shot prompting", label: "few-shot-prompting", type: "tech" },
@@ -376,11 +398,38 @@ function stripHtml(fragment) {
     .trim();
 }
 
-// Same truncation convention as build-edam-pack.mjs's firstChunk: cut at
-// the last whole word inside the length cap, append an ellipsis.
+// Abbreviations whose trailing "." is not a sentence boundary — this
+// source's prose routinely uses "e.g."/"i.e." mid-sentence (see
+// "fine-tuning"/"data augmentation" below).
+const SENTENCE_ABBREV_RE = /\b(?:e\.g|i\.e|vs|etc)\.$/i;
+
+// Index just past the first real sentence boundary in `text`, or -1 if
+// none exists — a "." / "!" / "?" only counts when followed by
+// whitespace-or-end (not glued to the next word) and isn't a decimal
+// point (digit on both sides) or a known abbreviation (above).
+function firstSentenceEnd(text) {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c !== "." && c !== "!" && c !== "?") continue;
+    const next = text[i + 1];
+    if (next !== undefined && next !== " ") continue;
+    if (c === "." && /[0-9]/.test(text[i - 1] || "") && /[0-9]/.test(next || "")) continue;
+    if (c === "." && SENTENCE_ABBREV_RE.test(text.slice(0, i + 1))) continue;
+    return i + 1;
+  }
+  return -1;
+}
+
+// Same truncation convention as build-edam-pack.mjs's firstChunk, but
+// clamped to the complete FIRST sentence rather than a raw character
+// count first (see firstSentenceEnd above) — only falls back to a
+// word-boundary cut + ellipsis when that single sentence itself still
+// exceeds maxLen.
 function truncate(text, maxLen) {
-  if (text.length <= maxLen) return text;
-  const cut = text.slice(0, maxLen);
+  const end = firstSentenceEnd(text);
+  const sentence = end === -1 ? text : text.slice(0, end);
+  if (sentence.length <= maxLen) return sentence;
+  const cut = sentence.slice(0, maxLen);
   const lastSpace = cut.lastIndexOf(" ");
   return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
 }
@@ -485,14 +534,25 @@ async function main() {
     // heuristic — see the CURATED_TERMS entries that set them.
     const zh = entry.zhSkip
       ? { ok: false, reason: "manually flagged: auto-resolved candidate(s) confirmed wrong-topic, no better EN article known" }
-      : await enrichOneTerm(entry.zhTitle ? [entry.zhTitle] : deriveEnCandidates(entry.term, entry.label));
-    if (!zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });
+      : entry.zhDirectTitle
+        ? await enrichOneTermFromZhTitles([entry.zhDirectTitle])
+        : await enrichOneTerm(entry.zhTitle ? [entry.zhTitle] : deriveEnCandidates(entry.term, entry.label));
+
+    // Task 1 (curated-zh.json): hand-authored, domain-validated (Opus +
+    // GPT-5.6-Sol accuracy review) zh glosses. Takes PRECEDENCE over the
+    // Wikipedia lookup above — several zh-Wikipedia leads were truncated,
+    // wrong-scoped or mis-attributed (e.g. dropout, cross-validation), so
+    // a reviewed curated gloss overrides the auto-extracted one. Terms
+    // absent from the map fall through to the Wikipedia gloss, then the
+    // placeholder.
+    const curated = (await loadCuratedZh())[entry.term] ?? null;
+    if (!curated && !zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });
 
     terms.push({
       term: entry.term,
       type: entry.type,
       gloss_en: truncate(found.definition, GLOSS_EN_MAX_LEN) || entry.term,
-      gloss_zh: zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
+      gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
       pack: "ml-stats",
     });
     provenance.push({
@@ -500,16 +560,18 @@ async function main() {
       source_id: found.id,
       source_display_text: found.displayText,
       definition: found.definition,
-      zh: zh.ok
-        ? {
-            status: "ok",
-            en_title_used: zh.en_title,
-            en_url: zh.en_url,
-            zh_wiki_title: zh.zh_title,
-            zh_wiki_url: zh.zh_url,
-            zh_extract_full: zh.zh_extract_full,
-          }
-        : { status: "flagged", reason: zh.reason },
+      zh: curated
+        ? { status: "curated (hand-authored, domain-validated)", note: curated.note }
+        : zh.ok
+          ? {
+              status: "ok",
+              en_title_used: zh.en_title,
+              en_url: zh.en_url,
+              zh_wiki_title: zh.zh_title,
+              zh_wiki_url: zh.zh_url,
+              zh_extract_full: zh.zh_extract_full,
+            }
+          : { status: "flagged", reason: zh.reason },
     });
   }
 

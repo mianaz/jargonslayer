@@ -52,7 +52,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveArticle, flushWikiApiCache, stripMathArtifacts } from "./wiki-api.mjs";
-import { enrichOneTerm } from "./enrich-zh.mjs";
+import { enrichOneTerm, enrichOneTermFromZhTitles, loadCuratedZh } from "./enrich-zh.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HTML_PATH = path.join(__dirname, "data", "wikipedia-stats-glossary.html");
@@ -67,7 +67,7 @@ const GLOSSARY_CITATION =
   " (CC BY-SA 4.0).";
 
 const GLOSS_ZH_PLACEHOLDER = "暂无中文释义";
-const GLOSS_EN_MAX_LEN = 180;
+const GLOSS_EN_MAX_LEN = 280;
 
 // Built-in dictionary + the two already-built packs, scanned read-only
 // at build time for term-string collisions (see checkCollisions below).
@@ -154,7 +154,13 @@ const CURATED_TERMS = [
   { term: "z-score", label: "standard_score", type: "metric" },
   { term: "skewness", label: "skewness", type: "metric" },
   { term: "kurtosis", label: "kurtosis", type: "metric" },
-  { term: "sample mean", label: "sample_mean", type: "metric" },
+  // zhDirectTitle override: this glossary's own linked EN article
+  // ("Sample mean and covariance") has no zh interwiki link — but zh
+  // Wikipedia has a dedicated, on-topic "样本均值" article under a title
+  // that just isn't cross-linked back to it (found via the Task 2 zh-
+  // Wikipedia retry pass, see a one-off retry pass; content hand-
+  // checked before pinning).
+  { term: "sample mean", label: "sample_mean", type: "metric", zhDirectTitle: "样本均值" },
 
   // ---- relationships / study design ----
   { term: "correlation", label: "correlation", type: "metric" },
@@ -217,6 +223,16 @@ const FIRST_LINK_RE = /<a\b[^>]*\btitle="([^"]+)"[^>]*>/;
 function stripHtml(fragment) {
   return stripMathArtifacts(
     fragment
+      // Parsoid wraps inline citation markers as <sup class="mw-ref
+      // reference">...[3]...</sup> — a plain tag strip below would
+      // leave the literal "[3]" glued right onto the end of the
+      // preceding sentence with no following space, which broke
+      // firstSentenceEnd's boundary detection below (a period glued to
+      // "[3]" doesn't look like "followed by whitespace-or-end").
+      // Caught by hand-checking "null hypothesis"/"confidence interval"
+      // before shipping — drop the whole citation marker instead of
+      // just its tags.
+      .replace(/<sup\b[^>]*\bclass="[^"]*\breference\b[^"]*"[^>]*>[\s\S]*?<\/sup>/g, "")
       .replace(/<[^>]+>/g, "")
       .replace(/&nbsp;/g, " ")
       .replace(/&amp;/g, "&")
@@ -229,9 +245,40 @@ function stripHtml(fragment) {
     .trim();
 }
 
+// Abbreviations whose trailing "." is not a sentence boundary — this
+// source's prose routinely uses "e.g."/"i.e." parenthetical asides
+// mid-sentence (see "confounder"/"null hypothesis" below).
+const SENTENCE_ABBREV_RE = /\b(?:e\.g|i\.e|vs|etc)\.$/i;
+
+// Index just past the first real sentence boundary in `text`, or -1 if
+// none exists. A "." / "!" / "?" only counts as a boundary when
+// followed by whitespace-or-end-of-string (glued punctuation like
+// "0.05" isn't one) and isn't a decimal point (digit on both sides) or
+// a known abbreviation (above).
+function firstSentenceEnd(text) {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c !== "." && c !== "!" && c !== "?") continue;
+    const next = text[i + 1];
+    if (next !== undefined && next !== " ") continue;
+    if (c === "." && /[0-9]/.test(text[i - 1] || "") && /[0-9]/.test(next || "")) continue;
+    if (c === "." && SENTENCE_ABBREV_RE.test(text.slice(0, i + 1))) continue;
+    return i + 1;
+  }
+  return -1;
+}
+
+// Clamp to the complete FIRST sentence (see firstSentenceEnd above) —
+// a gloss that's grammatically whole reads far better than one cut at
+// a raw character count. Only falls back to a word-boundary cut + "…"
+// when that single sentence itself still exceeds maxLen — rare once
+// GLOSS_EN_MAX_LEN is generous (checked by hand against every shipped
+// gloss before this fix).
 function truncate(text, maxLen) {
-  if (text.length <= maxLen) return text;
-  const cut = text.slice(0, maxLen);
+  const end = firstSentenceEnd(text);
+  const sentence = end === -1 ? text : text.slice(0, end);
+  if (sentence.length <= maxLen) return sentence;
+  const cut = sentence.slice(0, maxLen);
   const lastSpace = cut.lastIndexOf(" ");
   return (lastSpace > 0 ? cut.slice(0, lastSpace) : cut).trimEnd() + "…";
 }
@@ -255,11 +302,12 @@ function parseGlossary(html) {
 // Take just the first sentence of a Wikipedia lead extract (plain
 // text from the Action API, may run several sentences) — same
 // first-sentence convention enrich-zh.mjs uses for gloss_zh, applied
-// here to the EN lead-paragraph fallback for empty-<dd> entries.
+// here to the EN lead-paragraph fallback for empty-<dd> entries. Uses
+// the same guarded boundary detection as truncate() above.
 function firstSentence(rawText) {
   const text = stripMathArtifacts(rawText).replace(/\s+/g, " ").trim();
-  const m = text.match(/^[\s\S]*?[.!?](?:\s|$)/);
-  return (m ? m[0] : text).trim();
+  const end = firstSentenceEnd(text);
+  return (end === -1 ? text : text.slice(0, end)).trim();
 }
 
 // ---------------------------------------------------------------
@@ -358,19 +406,37 @@ async function main() {
       sourceType = "linked-article-lead";
     }
 
-    const zh = found.wikiTitle
-      ? await enrichOneTerm([found.wikiTitle])
-      : { ok: false, reason: "term has no dedicated Wikipedia article link on the glossary page" };
+    // zhDirectTitle/zhTitle: Task 2 zh-Wikipedia retry overrides (see
+    // a one-off retry pass) — a hand-checked direct zh title or a
+    // better EN title than this glossary's own linked article. Neither
+    // set for most entries, which keep using the glossary's own
+    // wikiTitle as before.
+    const zh = entry.zhDirectTitle
+      ? await enrichOneTermFromZhTitles([entry.zhDirectTitle])
+      : entry.zhTitle
+        ? await enrichOneTerm([entry.zhTitle])
+        : found.wikiTitle
+          ? await enrichOneTerm([found.wikiTitle])
+          : { ok: false, reason: "term has no dedicated Wikipedia article link on the glossary page" };
+
+    // Task 1 (curated-zh.json): hand-authored, domain-validated (Opus +
+    // GPT-5.6-Sol accuracy review) zh glosses. Takes PRECEDENCE over the
+    // Wikipedia lookup above: several zh-Wikipedia leads were truncated,
+    // wrong-scoped or mis-attributed (e.g. cross-validation, dropout,
+    // sample mean, PDB), so a reviewed curated gloss overrides the
+    // auto-extracted one. Terms absent from the map fall through to the
+    // Wikipedia gloss, then to the placeholder.
+    const curated = (await loadCuratedZh())[entry.term] ?? null;
 
     terms.push({
       term: entry.term,
       type: entry.type,
       gloss_en: truncate(gloss_en, GLOSS_EN_MAX_LEN) || entry.term,
-      gloss_zh: zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
+      gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
       pack: "stats",
     });
 
-    if (!zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });
+    if (!curated && !zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });
 
     provenance.push({
       term: entry.term,
@@ -381,14 +447,16 @@ async function main() {
         ? `https://en.wikipedia.org/wiki/${encodeURIComponent(found.wikiTitle.replace(/ /g, "_"))}`
         : null,
       definition_en: gloss_en,
-      zh: zh.ok
-        ? {
-            status: "ok",
-            zh_wiki_title: zh.zh_title,
-            zh_wiki_url: zh.zh_url,
-            zh_extract_full: zh.zh_extract_full,
-          }
-        : { status: "flagged", reason: zh.reason },
+      zh: curated
+        ? { status: "curated (hand-authored, domain-validated)", note: curated.note }
+        : zh.ok
+          ? {
+              status: "ok",
+              zh_wiki_title: zh.zh_title,
+              zh_wiki_url: zh.zh_url,
+              zh_extract_full: zh.zh_extract_full,
+            }
+          : { status: "flagged", reason: zh.reason },
     });
   }
 

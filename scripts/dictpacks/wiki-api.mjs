@@ -95,11 +95,16 @@ async function cachedGet(url) {
     await flushWikiApiCache();
   }
 
-  // Be a polite anonymous client — a short gap between real (non-cache-
-  // hit) requests, well under anything that would meaningfully slow a
+  // Be a polite anonymous client — a gap between real (non-cache-hit)
+  // requests, well under anything that would meaningfully slow a
   // ~100-term build, but enough to avoid tripping the rate limit again
-  // immediately after backing off from one.
-  await sleep(150);
+  // immediately after backing off from one. Raised from 150 to 300ms
+  // for the Task 2 zh-Wikipedia retry pass (scripts/dictpacks/
+  // a one-off retry pass), which fires many more candidate lookups
+  // per term than a normal build — a stricter floor here is strictly
+  // safer for every caller, not just that one, so it's kept as the one
+  // shared constant rather than a per-caller override.
+  await sleep(300);
   return json;
 }
 

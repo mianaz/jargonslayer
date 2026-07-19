@@ -24,6 +24,12 @@ export interface DictTermEntry {
   gloss_en: string;
   gloss_zh: string;
   pack: string; // theme pack id, see packs.ts
+  // A handful of compiled domain-pack terms are also everyday English
+  // words ("mean", "precision", "epoch"...). Flagged here so scanDictionary
+  // can keep them opt-in: they only match once the user has actively
+  // customized their pack selection (enabledPacks is an explicit list),
+  // never under the default all-on state. Set by gen-compiled-packs.mjs.
+  commonWord?: boolean;
 }
 
 // ---------------------------------------------------------------

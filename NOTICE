@@ -69,6 +69,47 @@ Face at first use of the Parakeet-v3 model; they are not bundled in the
 JargonSlayer DMG/app bundle.
 
 ================================================================================
+Bundled dictionary content — glossary term definitions (redistributed)
+================================================================================
+
+JargonSlayer's built-in dictionary includes English and Chinese term
+definitions ("glosses") compiled from the third-party glossaries below. Unlike
+the transcription/model components above, this text IS bundled inside the app
+(as data in @jargonslayer/core, generated from scripts/dictpacks/). Each
+source's license below is a content/attribution license governing that glossary
+text only; it does not affect JargonSlayer's own AGPL-3.0-only code license.
+Per-term provenance (source + license for every entry) is recorded in
+scripts/dictpacks/out/*.provenance.json. These glosses are MODIFICATIONS
+of the source text: definitions are excerpted (typically the first
+sentence) and may be truncated or lightly edited for length; some Chinese
+glosses are hand-authored rather than drawn from the sources above (each
+entry's provenance marks which).
+
+--- Statistics glossary (dictionary pack "stats") ---
+Source: Wikipedia — "Glossary of probability and statistics"
+  https://en.wikipedia.org/wiki/Glossary_of_probability_and_statistics
+  Chinese glosses: leads of the corresponding zh.wikipedia.org articles.
+License: CC BY-SA 4.0 — https://creativecommons.org/licenses/by-sa/4.0/
+  These glosses remain licensed CC BY-SA 4.0 (share-alike).
+
+--- Bioinformatics glossary (dictionary pack "bioinformatics-edam") ---
+Source: EDAM Ontology — https://edamontology.org
+  Ison, J. et al. "EDAM: an ontology of bioinformatics operations, types of
+  data, topics, and formats." Bioinformatics 29(10), 2013.
+License: CC BY-SA 4.0 — https://creativecommons.org/licenses/by-sa/4.0/
+  These glosses remain licensed CC BY-SA 4.0 (share-alike).
+
+--- Machine-learning glossary (dictionary pack "ml-stats") ---
+Source: Google — "Machine Learning Glossary"
+  https://developers.google.com/machine-learning/glossary
+License: CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/
+  (Code samples on that page are Apache 2.0 and are NOT used here.)
+
+Chinese glosses not drawn from the sources above are hand-authored for this
+project (marked as such in each entry's provenance) and are covered by the
+project's own AGPL-3.0-only terms.
+
+================================================================================
 
 For the full set of npm/Rust/Python dependencies and their licenses, see the
 respective lockfiles (package-lock.json, apps/desktop/src-tauri/Cargo.lock,

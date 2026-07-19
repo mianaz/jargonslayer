@@ -13,20 +13,52 @@
 //
 // If no candidate title resolves to a real (non-disambiguation) English
 // article, or that article has no zh interwiki link, or the zh article
-// has no extractable lead text: the term is FLAGGED and left for the
-// caller to keep its placeholder gloss_zh. Never invented, never
-// machine-translated as a fallback — see task brief.
+// has no extractable lead text: enrichOneTerm returns FLAGGED (no wiki
+// gloss). Each build script then resolves gloss_zh as curated-zh.json
+// (which takes PRECEDENCE, see loadCuratedZh below) -> the wiki gloss
+// when ok -> the placeholder. Never invented, never machine-translated
+// as a fallback — see task brief.
 //
 // All network access goes through wiki-api.mjs's cachedGet, so this
 // whole step is reproducible offline once data/wiki-api-cache.json is
 // populated (same --refresh convention as the rest of scripts/dictpacks).
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveArticle, fetchZhLanglink, wikiArticleUrl, stripMathArtifacts } from "./wiki-api.mjs";
 
-// Same clamp the app's own validator applies (apps/web/src/lib/detect/
-// remotePacks.ts MAX_ZH_LEN) — trimmed here at a clause boundary rather
-// than relying on the app's blunt mid-string slice.
-const MAX_ZH_LEN = 60;
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CURATED_ZH_PATH = path.join(__dirname, "data", "curated-zh.json");
+
+// Hand-authored, domain-validated (Opus + GPT-5.6-Sol) gloss_zh
+// overrides — term string -> { gloss_zh, note }. TAKES PRECEDENCE over
+// the zh-Wikipedia lookup in each build-*-pack.mjs's zh-resolution block
+// (curated -> wiki -> placeholder): several zh-Wikipedia leads were
+// truncated, wrong-scoped or mis-attributed, so a reviewed curated gloss
+// overrides the auto-extracted one; terms absent from the map fall
+// through to the wiki gloss, then the placeholder. Loaded once per
+// process and cached in-memory, same convention as wiki-api.mjs's cache.
+let curatedZhCache = null;
+export async function loadCuratedZh() {
+  if (curatedZhCache) return curatedZhCache;
+  curatedZhCache = JSON.parse(await readFile(CURATED_ZH_PATH, "utf-8"));
+  return curatedZhCache;
+}
+
+// Raised from 60 to 90 so a complete first sentence usually fits
+// without falling back to the "…" clamp below (see task brief: glosses
+// must be sentence-complete, not cut mid-clause). NOTE: this used to
+// mirror the app's own loader clamp (apps/web/src/lib/detect/
+// remotePacks.ts MAX_ZH_LEN, still 60) — that clamp is a blunt
+// mid-string slice with no ellipsis and no clause-boundary awareness.
+// These dictpacks aren't wired into that loader yet (see the build
+// scripts' own header comments), so this mismatch is currently inert,
+// but whoever integrates them must also raise remotePacks.ts's
+// MAX_ZH_LEN (or re-clamp before shipping) — otherwise the app's own
+// loader will silently re-truncate anything between 61-90 chars,
+// reintroducing this exact mid-sentence-cut bug one layer up.
+const MAX_ZH_LEN = 90;
 
 function normalizeWhitespace(s) {
   return s.replace(/\s+/g, " ").trim();
@@ -45,7 +77,7 @@ function normalizeWhitespace(s) {
 // result was a real-but-empty naming clause. Fix: strip every balanced
 // parenthetical aside FIRST, so the character budget measures actual
 // Chinese defining prose, not English/alt-name clutter — the aside
-// itself isn't worth the space in a 60-char excerpt anyway.
+// itself isn't worth the space in a 90-char excerpt anyway.
 function stripParentheticals(s) {
   return s.replace(/（[^（）]*）/g, "").replace(/\([^()]*\)/g, "").replace(/\s+/g, " ").trim();
 }
@@ -223,6 +255,59 @@ export async function enrichOneTerm(candidateEnTitles) {
       tried.length === 0
         ? "no candidate English Wikipedia title supplied"
         : `no candidate resolved to a real (non-disambiguation) English Wikipedia article: ${tried.join(", ")}`,
+  };
+}
+
+/**
+ * Task 2 (bounded zh-Wikipedia retry for placeholder terms, see
+ * a one-off retry pass): resolve a Chinese Wikipedia article DIRECTLY
+ * from a list of candidate zh titles, skipping the en->zh langlink hop
+ * enrichOneTerm above relies on. Needed for terms whose correct EN
+ * article genuinely has no zh interwiki link (enrichOneTerm's own
+ * failure reason for a good chunk of the 89 placeholder terms) — zh.
+ * wikipedia.org can still have an article under a title that just
+ * isn't cross-linked back to that EN page, a real (if uncommon)
+ * interwiki-linking gap. Candidates are the term's known standard zh
+ * translation(s), supplied by the caller — never guessed by this
+ * function itself. Same acceptance bar as enrichOneTerm: clampZhGloss's
+ * hasRealDefinition check, no separate/looser validation path.
+ *
+ * @param {string[]} candidateZhTitles
+ * @returns {Promise<
+ *   | { ok: true, gloss_zh: string, zh_title: string, zh_url: string,
+ *       en_title: null, en_url: null, zh_extract_full: string }
+ *   | { ok: false, reason: string }
+ * >}
+ */
+export async function enrichOneTermFromZhTitles(candidateZhTitles) {
+  const tried = [];
+  for (const candidate of candidateZhTitles.filter(Boolean)) {
+    if (tried.includes(candidate)) continue;
+    tried.push(candidate);
+
+    const zhArticle = await resolveArticle(candidate, { lang: "zh", withExtract: true });
+    if (!zhArticle || !zhArticle.extract) continue; // missing/disambiguation/no extract — try next candidate
+
+    const gloss_zh = clampZhGloss(zhArticle.extract);
+    if (!gloss_zh) continue; // resolved but no usable definition after clamping — try next candidate
+
+    return {
+      ok: true,
+      gloss_zh,
+      zh_title: zhArticle.title,
+      zh_url: wikiArticleUrl(zhArticle.title, "zh"),
+      en_title: null,
+      en_url: null,
+      zh_extract_full: normalizeWhitespace(zhArticle.extract),
+    };
+  }
+
+  return {
+    ok: false,
+    reason:
+      tried.length === 0
+        ? "no candidate zh Wikipedia title supplied"
+        : `no candidate zh title resolved to a usable definition: ${tried.join(", ")}`,
   };
 }
 

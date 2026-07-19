@@ -67,6 +67,21 @@ export const PACKS: DictPack[] = [
     name: "医药与生物科技",
     description: "新药研发、临床试验、监管申报相关的术语",
   },
+  {
+    id: "stats",
+    name: "统计学术语",
+    description: "假设检验、置信区间、p 值等经典推断统计术语",
+  },
+  {
+    id: "ml-stats",
+    name: "机器学习术语",
+    description: "模型训练、评估、深度学习相关的机器学习术语",
+  },
+  {
+    id: "bioinformatics-edam",
+    name: "生物信息学术语",
+    description: "测序、比对、组学分析等生物信息学操作与数据类型",
+  },
 ];
 
 /** null enabled-list = everything on. "core" (the base tables) is

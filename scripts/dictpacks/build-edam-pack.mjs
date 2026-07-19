@@ -28,7 +28,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { flushWikiApiCache } from "./wiki-api.mjs";
-import { enrichOneTerm, deriveEnCandidates } from "./enrich-zh.mjs";
+import { enrichOneTerm, enrichOneTermFromZhTitles, deriveEnCandidates, loadCuratedZh } from "./enrich-zh.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TSV_PATH = path.join(__dirname, "data", "EDAM.tsv");
@@ -41,7 +41,7 @@ const EDAM_CITATION =
   "Ison, J. et al. EDAM: an ontology of bioinformatics operations, types of data, topics, and formats. Bioinformatics 29(10), 2013.";
 
 const GLOSS_ZH_PLACEHOLDER = "暂无中文释义";
-const GLOSS_EN_MAX_LEN = 180;
+const GLOSS_EN_MAX_LEN = 280;
 
 // ---------------------------------------------------------------
 // Generic quoted-delimited parser (handles embedded newlines/quotes
@@ -120,7 +120,11 @@ function parseDelimited(text, delimiter = "\t") {
 // type  = TermType from packages/core/src/types.ts.
 const CURATED_TERMS = [
   // ---- file formats ----
-  { term: "FASTA", label: "FASTA", type: "acronym" },
+  // zhTitle override: auto-derivation's bare "FASTA" candidate lands on
+  // the original FASTA alignment algorithm/tool article, not the file
+  // format — pin the correct EN article directly (real, has zh
+  // interwiki, on-topic lead; Task 2 zh-Wikipedia retry pass).
+  { term: "FASTA", label: "FASTA", type: "acronym", zhTitle: "FASTA format" },
   { term: "FASTQ", label: "FASTQ", type: "acronym" },
   { term: "SAM", label: "SAM", type: "acronym" },
   { term: "BAM", label: "BAM", type: "acronym" },
@@ -129,7 +133,15 @@ const CURATED_TERMS = [
   { term: "GFF3", label: "GFF3", type: "acronym" },
   { term: "GTF", label: "GTF", type: "acronym" },
   { term: "BED", label: "BED", type: "acronym" },
-  { term: "PDB", label: "PDB", type: "acronym" },
+  // zhTitle override: no dedicated "PDB file format" article exists
+  // (EN or zh) distinct from the "Protein Data Bank" database article
+  // itself — pin that one directly (Task 2 zh-Wikipedia retry pass).
+  // NOTE: its lead describes the database/organization, not narrowly
+  // the file format this EDAM class is about — still the same
+  // real-world referent and on-topic, but broader scope than the
+  // English gloss's "format" framing; flagged for hand review in the
+  // task report rather than silently treated as a perfect match.
+  { term: "PDB", label: "PDB", type: "acronym", zhTitle: "Protein Data Bank" },
   { term: "mmCIF", label: "mmCIF", type: "acronym" },
   { term: "HDF5", label: "HDF5", type: "acronym" },
   { term: "MAF", label: "MAF", type: "acronym" },
@@ -185,7 +197,12 @@ const CURATED_TERMS = [
     type: "tech",
   },
   { term: "Homology modelling", label: "Protein modelling", type: "tech" },
-  { term: "Molecular docking", label: "Molecular docking", type: "tech" },
+  // zhDirectTitle override: the correct EN article ("Docking
+  // (molecular)") has no zh interwiki link — zh Wikipedia has a
+  // dedicated, on-topic "分子对接" article under a title that just isn't
+  // cross-linked back to it (Task 2 zh-Wikipedia retry pass, see
+  // a one-off retry pass; content hand-checked before pinning).
+  { term: "Molecular docking", label: "Molecular docking", type: "tech", zhDirectTitle: "分子对接" },
   {
     term: "Gene set enrichment analysis",
     label: "Gene-set enrichment analysis",
@@ -302,14 +319,38 @@ async function ensureTsv() {
 }
 
 // EDAM's Definitions column joins multiple definition/comment values
-// with "|" (BioPortal TSV export convention) — take the first one, not
-// "first sentence" (definitions are full of "e.g."/"i.e." abbreviations
-// that a period-based sentence splitter would wrongly cut on).
+// with "|" (BioPortal TSV export convention) — take the first one.
+// That first "|"-chunk is itself often multi-sentence prose, so it's
+// further clamped to its own complete FIRST sentence (see
+// firstSentenceEnd below), guarded against "e.g."/"i.e."/etc.
+// abbreviations so this is safe to do here, unlike a naive
+// period-based splitter.
+const SENTENCE_ABBREV_RE = /\b(?:e\.g|i\.e|vs|etc)\.$/i;
+
+// Index just past the first real sentence boundary in `text`, or -1 if
+// none exists — a "." / "!" / "?" only counts when followed by
+// whitespace-or-end (not glued to the next word) and isn't a decimal
+// point (digit on both sides) or a known abbreviation (above).
+function firstSentenceEnd(text) {
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c !== "." && c !== "!" && c !== "?") continue;
+    const next = text[i + 1];
+    if (next !== undefined && next !== " ") continue;
+    if (c === "." && /[0-9]/.test(text[i - 1] || "") && /[0-9]/.test(next || "")) continue;
+    if (c === "." && SENTENCE_ABBREV_RE.test(text.slice(0, i + 1))) continue;
+    return i + 1;
+  }
+  return -1;
+}
+
 function firstChunk(def, maxLen) {
   const first = def.split("|")[0].trim().replace(/\s+/g, " ");
   if (!first) return "";
-  if (first.length <= maxLen) return first;
-  const truncated = first.slice(0, maxLen);
+  const end = firstSentenceEnd(first);
+  const sentence = end === -1 ? first : first.slice(0, end);
+  if (sentence.length <= maxLen) return sentence;
+  const truncated = sentence.slice(0, maxLen);
   const lastSpace = truncated.lastIndexOf(" ");
   return (lastSpace > 0 ? truncated.slice(0, lastSpace) : truncated).trimEnd() + "…";
 }
@@ -368,14 +409,25 @@ async function main() {
     // similarity search" above) overrides the heuristic.
     const zh = entry.zhSkip
       ? { ok: false, reason: "manually flagged: auto-resolved candidate(s) confirmed wrong-topic/wrong-scope, no better EN article known" }
-      : await enrichOneTerm(entry.zhTitle ? [entry.zhTitle] : deriveEnCandidates(entry.term, entry.label));
-    if (!zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });
+      : entry.zhDirectTitle
+        ? await enrichOneTermFromZhTitles([entry.zhDirectTitle])
+        : await enrichOneTerm(entry.zhTitle ? [entry.zhTitle] : deriveEnCandidates(entry.term, entry.label));
+
+    // Task 1 (curated-zh.json): hand-authored, domain-validated (Opus +
+    // GPT-5.6-Sol accuracy review) zh glosses. Takes PRECEDENCE over the
+    // Wikipedia lookup above — several zh-Wikipedia leads were truncated,
+    // wrong-scoped or mis-attributed (e.g. PDB described the database, not
+    // the file format), so a reviewed curated gloss overrides the
+    // auto-extracted one. Terms absent from the map fall through to the
+    // Wikipedia gloss, then the placeholder.
+    const curated = (await loadCuratedZh())[entry.term] ?? null;
+    if (!curated && !zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });
 
     terms.push({
       term: entry.term,
       type: entry.type,
       gloss_en: firstChunk(definition, GLOSS_EN_MAX_LEN) || entry.term,
-      gloss_zh: zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
+      gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
       pack: "bioinformatics-edam",
     });
     provenance.push({
@@ -384,16 +436,18 @@ async function main() {
       edam_id: classId,
       definition,
       obsolete: false,
-      zh: zh.ok
-        ? {
-            status: "ok",
-            en_title_used: zh.en_title,
-            en_url: zh.en_url,
-            zh_wiki_title: zh.zh_title,
-            zh_wiki_url: zh.zh_url,
-            zh_extract_full: zh.zh_extract_full,
-          }
-        : { status: "flagged", reason: zh.reason },
+      zh: curated
+        ? { status: "curated (hand-authored, domain-validated)", note: curated.note }
+        : zh.ok
+          ? {
+              status: "ok",
+              en_title_used: zh.en_title,
+              en_url: zh.en_url,
+              zh_wiki_title: zh.zh_title,
+              zh_wiki_url: zh.zh_url,
+              zh_extract_full: zh.zh_extract_full,
+            }
+          : { status: "flagged", reason: zh.reason },
     });
   }
 
