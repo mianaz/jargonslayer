@@ -24,7 +24,21 @@ export interface SpeakerAssignRequest {
   // Present only for a single-segment request (a chip click / "+ 说话人"
   // affordance) — gates the following/unlock/rename-all extras, which
   // don't make sense for a bulk (selection-mode) assign.
-  single?: { currentSpeaker?: string; speakerLocked: boolean };
+  single?: {
+    currentSpeaker?: string;
+    speakerLocked: boolean;
+    // ITEM 7b fix (fix round, Opus sub-bar, lead-accepted): 跟随识别
+    // (unlock) only makes sense when there's an sttSpeaker to fall back
+    // TO — unlockSpeakerInSegments (store.ts) falls back to the
+    // segment's own unchanged `speaker` when sttSpeaker is absent
+    // ("nothing to follow back to", that function's own doc comment) —
+    // an unlock in that case just clears the lock and hides this latch
+    // mid-meeting without changing anything visible. Optional/falsy-
+    // default so an older/bulk single object still compiles and simply
+    // never shows the button, same posture speakerLocked's sibling
+    // fields already have.
+    hasSttSpeaker?: boolean;
+  };
   x: number;
   y: number;
 }
@@ -172,7 +186,7 @@ export default function SpeakerAssignPopover({
       >
         + 新建说话人
       </button>
-      {request.single?.speakerLocked && (
+      {request.single?.speakerLocked && request.single?.hasSttSpeaker && (
         <button
           type="button"
           data-testid="speaker-assign-unlock"

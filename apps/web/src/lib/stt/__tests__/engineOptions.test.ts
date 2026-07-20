@@ -82,16 +82,26 @@ describe("RETENTION_COPY — tri-state label+hint table", () => {
     expect(RETENTION_COPY["cloud-stored"]).toEqual({
       label: "云端·可能留存",
       hint: "云端 · 可能留存/需配置",
-      textClass: "text-lab-red",
+      textClass: "text-warn-soft",
       borderClass: "border-lab-red/30",
     });
   });
 
-  it("every state's textClass/borderClass share the same color token (no green border with amber text, etc.)", () => {
-    for (const copy of Object.values(RETENTION_COPY)) {
+  it("local/cloud-transient share one color token (no green border with amber text, etc.)", () => {
+    for (const key of ["local", "cloud-transient"] as const) {
+      const copy = RETENTION_COPY[key];
       const token = copy.textClass.replace("text-", "");
       expect(copy.borderClass).toBe(`border-${token}/30`);
     }
+  });
+
+  // ITEM 6 (fix round, Sol, LOW): DESIGN.md rule 3 — warn TEXT uses
+  // warn-soft; lab-red is reserved for small fills/borders, never body
+  // text — cloud-stored is the one INTENTIONAL exception to the "same
+  // token" rule above, escalating only the border.
+  it("cloud-stored intentionally pairs warn-soft text with a lab-red border (DESIGN.md rule 3)", () => {
+    expect(RETENTION_COPY["cloud-stored"].textClass).toBe("text-warn-soft");
+    expect(RETENTION_COPY["cloud-stored"].borderClass).toBe("border-lab-red/30");
   });
 });
 

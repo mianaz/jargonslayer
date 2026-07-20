@@ -6,6 +6,7 @@
 // failing, this dictionary is the whole detection story.
 
 import type {
+  CustomEntry,
   DetectedExpression,
   DetectedTerm,
   DetectResponse,
@@ -998,6 +999,47 @@ export function setEnabledPacks(packs: string[] | null): void {
   registeredEnabledPacks = packs;
 }
 
+// ---------------------------------------------------------------
+// Personal-glossary shadow lookup (pre-merge review Finding 2 fix) —
+// same injection-seam shape as registeredEnabledPacks immediately
+// above: core cannot import apps/web's pack-aware history/glossary.ts,
+// so apps/web REGISTERS a function into core instead, rather than core
+// reaching out for one.
+//
+// The mechanism found: scanDictionary's two shadow-check call sites
+// below used to call findEntryBySurface directly (a plain static
+// import from THIS package's own history/glossaryLookup.ts) to decide
+// whether a personal-glossary entry already owns a surface the built-in
+// dictionary is about to emit. That lookup reads glossaryLookup.ts's
+// RAW cache — every custom entry, regardless of which pack it's in or
+// whether that pack is enabled — so a custom entry sitting in a
+// DISABLED pack still shadowed the built-in dictionary's own version of
+// that surface even though the disabled entry itself never fires
+// (apps/web's glossary.ts scanCustomEntries is already pack-aware).
+// Net effect: the surface vanished from detection entirely.
+//
+// Fix: `shadowLookup` below defaults to the raw findEntryBySurface (so
+// a caller that never registers anything — a unit test, or this
+// package used standalone — keeps today's literal behavior), but
+// apps/web's glossary.ts overrides it at module load with an
+// ENABLED-PACK-FILTERED lookup (findEnabledEntryBySurface, mirroring
+// glossary.ts's own getCachedEntries() filtering) via
+// setGlossaryShadowLookup. findEntryBySurface ITSELF is UNCHANGED and
+// stays correct for its OTHER callers (SummaryPanel's "收藏本场卡片"
+// dedup, LookupPopover's "already in glossary" check) — a disabled
+// pack's entry is still a real duplicate for THOSE management/
+// duplicate-prevention purposes, so they keep consuming the raw lookup
+// directly rather than this registered one.
+// ---------------------------------------------------------------
+
+let shadowLookup: (surface: string) => CustomEntry | null = findEntryBySurface;
+
+export function setGlossaryShadowLookup(
+  fn: (surface: string) => CustomEntry | null,
+): void {
+  shadowLookup = fn;
+}
+
 /** Built-in + remote pack TERM entries (bare term string + pack id),
  *  filtered by isPackEnabled — the same universe scanDictionary's own
  *  term loop reads (minus personal-glossary shadowing, which doesn't
@@ -1097,8 +1139,9 @@ export function scanDictionary(
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     // A personal-glossary entry on this exact surface owns the word —
     // the custom scan (store.addFinal) already emits it as source
-    // "custom"; skip the dictionary's own version entirely.
-    if (findEntryBySurface(entry.expression)) continue;
+    // "custom"; skip the dictionary's own version entirely. Enabled-
+    // pack-filtered (Finding 2 fix) — see shadowLookup's own doc above.
+    if (shadowLookup(entry.expression)) continue;
     const candidates = [entry.expression, ...(entry.variants ?? [])];
     const regexes = candidates.map(buildExpressionRegex);
     let matched = false;
@@ -1133,8 +1176,9 @@ export function scanDictionary(
     // has actively customized their pack selection (enabledPacks is an
     // explicit list). Non-common terms are unaffected.
     if (entry.commonWord && enabledPacks === null) continue;
-    // Same personal-glossary shadowing as the expressions loop above.
-    if (findEntryBySurface(entry.term)) continue;
+    // Same personal-glossary shadowing as the expressions loop above
+    // (enabled-pack-filtered — Finding 2 fix).
+    if (shadowLookup(entry.term)) continue;
     // All-caps acronyms match case-sensitively (\bARR\b); mixed-case
     // terms (e.g. "Series B", "headcount") match case-insensitively.
     const isAllCaps = /^[A-Z0-9&]+$/.test(entry.term);

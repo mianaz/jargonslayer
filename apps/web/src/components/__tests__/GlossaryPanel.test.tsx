@@ -164,7 +164,10 @@ describe("GlossaryPanel — v0.5 Wave-1 Feature 8 pack UI smoke", () => {
     expect(glossary.deleteCustomPack).toHaveBeenCalledWith("p2", true);
   });
 
-  it("personal pack's management row never shows a delete affordance", async () => {
+  // ITEM 7a (fix round, Opus sub-bar, lead-accepted): personal is the
+  // fixed default glossary — the enable-toggle and rename affordance
+  // must not exist for it either (delete was already guarded).
+  it("personal pack's management row hides the enable-toggle, rename, AND delete (fixed pack, never disable-able)", async () => {
     render();
     await act(async () => {
       root!.render(<GlossaryPanel />);
@@ -174,7 +177,26 @@ describe("GlossaryPanel — v0.5 Wave-1 Feature 8 pack UI smoke", () => {
       findButton("个人词库")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(findButton("重命名")).not.toBeNull();
+    expect(container!.querySelector('[aria-label="启用词包 个人词库"]')).toBeNull();
+    expect(findButton("重命名")).toBeNull();
     expect(findButton("删除词包")).toBeNull();
+  });
+
+  it("a non-personal pack's management row still shows the enable-toggle and rename (only personal is fixed)", async () => {
+    const pack: CustomPack = { id: "p2", name: "Tech Terms", enabled: true, createdAt: 500 };
+    vi.mocked(glossary.getCustomPacks).mockReturnValue([personalPack(), pack]);
+    vi.mocked(glossary.loadCustomPacks).mockResolvedValue([personalPack(), pack]);
+
+    render();
+    await act(async () => {
+      root!.render(<GlossaryPanel />);
+    });
+
+    await act(async () => {
+      findButton("Tech Terms")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container!.querySelector('[aria-label="启用词包 Tech Terms"]')).not.toBeNull();
+    expect(findButton("重命名")).not.toBeNull();
   });
 });

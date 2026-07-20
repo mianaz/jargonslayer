@@ -10,6 +10,10 @@ import type { LearnRecord } from "@jargonslayer/core/learn/types";
 
 vi.mock("@jargonslayer/core/detect/dictionary", () => ({
   packTermsForBias: vi.fn(() => []),
+  // Pre-merge review Finding 2 fix: history/glossary.ts (imported below)
+  // registers a shadow lookup into this module at load time — a no-op
+  // stub keeps that call from throwing under this partial mock.
+  setGlossaryShadowLookup: vi.fn(),
 }));
 
 import { packTermsForBias } from "@jargonslayer/core/detect/dictionary";

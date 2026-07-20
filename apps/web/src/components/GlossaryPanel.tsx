@@ -555,47 +555,56 @@ export default function GlossaryPanel() {
 
         {selectedPack && (
           <div className="flex flex-wrap items-center gap-3 text-xs">
-            <label className="flex items-center gap-1.5 text-mut">
-              <ToggleSwitch
-                checked={selectedPack.enabled}
-                onChange={(checked) => void handleTogglePack(selectedPack.id, checked)}
-                ariaLabel={`启用词包 ${selectedPack.name}`}
-              />
-              启用
-            </label>
-            {renamingPackId === selectedPack.id ? (
-              <>
-                <input
-                  type="text"
-                  autoFocus
-                  value={renameDraft}
-                  onChange={(e) => setRenameDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") void handleRenamePack(selectedPack.id);
-                    if (e.key === "Escape") setRenamingPackId(null);
-                  }}
-                  className="w-28 border border-edge bg-panel px-2 py-1 text-xs text-fg focus:outline-none"
+            {/* ITEM 7a fix (fix round, Opus sub-bar, lead-accepted):
+               personal is the fixed default glossary — it must not be
+               silently disable-able (the enable-toggle) or renamable
+               (kept hidden here, mirroring the delete button's existing
+               `!== PERSONAL_PACK_ID` guard just below) — only its own
+               entries/creation flow are ever editable. */}
+            {selectedPack.id !== glossary.PERSONAL_PACK_ID && (
+              <label className="flex items-center gap-1.5 text-mut">
+                <ToggleSwitch
+                  checked={selectedPack.enabled}
+                  onChange={(checked) => void handleTogglePack(selectedPack.id, checked)}
+                  ariaLabel={`启用词包 ${selectedPack.name}`}
                 />
+                启用
+              </label>
+            )}
+            {selectedPack.id !== glossary.PERSONAL_PACK_ID &&
+              (renamingPackId === selectedPack.id ? (
+                <>
+                  <input
+                    type="text"
+                    autoFocus
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") void handleRenamePack(selectedPack.id);
+                      if (e.key === "Escape") setRenamingPackId(null);
+                    }}
+                    className="w-28 border border-edge bg-panel px-2 py-1 text-xs text-fg focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void handleRenamePack(selectedPack.id)}
+                    className="btn-tactile text-mut hover:text-fg"
+                  >
+                    保存
+                  </button>
+                </>
+              ) : (
                 <button
                   type="button"
-                  onClick={() => void handleRenamePack(selectedPack.id)}
+                  onClick={() => {
+                    setRenamingPackId(selectedPack.id);
+                    setRenameDraft(selectedPack.name);
+                  }}
                   className="btn-tactile text-mut hover:text-fg"
                 >
-                  保存
+                  重命名
                 </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setRenamingPackId(selectedPack.id);
-                  setRenameDraft(selectedPack.name);
-                }}
-                className="btn-tactile text-mut hover:text-fg"
-              >
-                重命名
-              </button>
-            )}
+              ))}
             {selectedPack.id !== glossary.PERSONAL_PACK_ID && (
               <button
                 type="button"

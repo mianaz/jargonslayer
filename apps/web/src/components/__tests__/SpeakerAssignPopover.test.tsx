@@ -110,7 +110,7 @@ describe("SpeakerAssignPopover", () => {
     expect(segments.find((s) => s.id === "s3")?.speaker).toBe("Alice");
   });
 
-  it("跟随识别 (unlock) is shown only when request.single.speakerLocked, and calls unlockSegmentSpeaker", async () => {
+  it("跟随识别 (unlock) is shown only when speakerLocked AND hasSttSpeaker, and calls unlockSegmentSpeaker", async () => {
     useApp.setState({
       segments: [seg({ id: "s1", speaker: "Alice", speakerLocked: true, sttSpeaker: "SPEAKER_1" })],
       speakerRoster: ["Alice"],
@@ -118,7 +118,7 @@ describe("SpeakerAssignPopover", () => {
     });
     await render({
       segmentIds: ["s1"],
-      single: { currentSpeaker: "Alice", speakerLocked: true },
+      single: { currentSpeaker: "Alice", speakerLocked: true, hasSttSpeaker: true },
       x: 0,
       y: 0,
     });
@@ -134,7 +134,31 @@ describe("SpeakerAssignPopover", () => {
 
   it("跟随识别 is absent when request.single.speakerLocked is false", async () => {
     useApp.setState({ segments: [seg({ id: "s1", speaker: "Alice" })], speakerRoster: ["Alice"] });
-    await render({ segmentIds: ["s1"], single: { currentSpeaker: "Alice", speakerLocked: false }, x: 0, y: 0 });
+    await render({
+      segmentIds: ["s1"],
+      single: { currentSpeaker: "Alice", speakerLocked: false, hasSttSpeaker: true },
+      x: 0,
+      y: 0,
+    });
+
+    expect(container!.querySelector('[data-testid="speaker-assign-unlock"]')).toBeNull();
+  });
+
+  // ITEM 7b (fix round, Opus sub-bar, lead-accepted): a locked segment
+  // with no sttSpeaker has nothing to follow back to — unlockSpeakerInSegments
+  // (store.ts) would just clear the lock without changing the displayed
+  // speaker, silently hiding the latch mid-meeting for no visible effect.
+  it("跟随识别 is absent when speakerLocked is true but the segment has no sttSpeaker to follow back to", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1", speaker: "Alice", speakerLocked: true })], // no sttSpeaker
+      speakerRoster: ["Alice"],
+    });
+    await render({
+      segmentIds: ["s1"],
+      single: { currentSpeaker: "Alice", speakerLocked: true, hasSttSpeaker: false },
+      x: 0,
+      y: 0,
+    });
 
     expect(container!.querySelector('[data-testid="speaker-assign-unlock"]')).toBeNull();
   });

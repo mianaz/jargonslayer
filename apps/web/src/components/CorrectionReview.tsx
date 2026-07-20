@@ -13,8 +13,13 @@ import { useApp } from "@/lib/store";
 import { correctApi, translateApi, NoKeyError, RateLimitApiError, UpstreamError } from "@/lib/llm/client";
 import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 import { buildMeetingLexicon } from "@/lib/stt/lexicon";
+import {
+  capLexiconChars,
+  chunkCorrectSegments,
+  CORRECT_MAX_LEXICON_CHARS,
+} from "@/lib/llm/tasks/correct";
 import { PREVIEW_TIER } from "@/lib/deployTier";
-import type { CorrectRequest, Settings } from "@jargonslayer/core/types";
+import type { Settings } from "@jargonslayer/core/types";
 
 export interface CorrectionReviewProps {
   open: boolean;
@@ -153,30 +158,58 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
     setRows(null);
     setCorrectionBusy(true);
     try {
-      const lexicon = buildMeetingLexicon({
-        customEntries,
-        enabledPacks: settings.enabledPacks,
-        learnset,
-      }).terms;
-      const body: CorrectRequest = {
-        segments: segments.map((s) => ({ id: s.id, text: s.text })),
-        // Whole-meeting single-shot batch (no chunking — see tasks/
-        // correct.ts): every segment is already IN the request, so
-        // there's no "outside" tail context left to disambiguate with.
-        context: "",
-        lexicon,
-        model: resolveTaskCreds(settings, "detect").model,
-      };
-      const res = await correctApi(body, settings);
+      // Finding 1 fix (pre-merge review): a whole meeting can far
+      // exceed one call's per-call caps (see tasks/correct.ts's own
+      // token-math comment) — cap the shared lexicon once up front
+      // (repeated verbatim in every window's request) and split the
+      // segments into sequential, bounded windows instead of the old
+      // one-shot whole-meeting call.
+      const lexicon = capLexiconChars(
+        buildMeetingLexicon({
+          customEntries,
+          enabledPacks: settings.enabledPacks,
+          learnset,
+        }).terms,
+        CORRECT_MAX_LEXICON_CHARS,
+      );
+      const model = resolveTaskCreds(settings, "detect").model;
+      const windows = chunkCorrectSegments(segments.map((s) => ({ id: s.id, text: s.text })));
       const sessionId = activeSessionId ?? "";
       const beforeById = new Map(segments.map((s) => [s.id, s.text]));
-      const built: ReviewRow[] = res.corrections
-        .map((c) => ({
+      const corrections = new Map<string, string>();
+      let succeededOnce = false;
+      let lastError: unknown = null;
+      // Sequential, not parallel (unlike tasks/summarize.ts's translate
+      // pool): each window = one correctApi() call (a route call on
+      // web, a direct provider call on desktop/iOS BYOK), so route.ts's
+      // existing per-IP 4/min + daily budget naturally account per
+      // chunk with no new rate-limiting code. Fail-soft per window: a
+      // failed window's segments are simply never added to
+      // `corrections` below, so they render as no change rather than
+      // aborting the whole review — UNLESS every single window failed,
+      // in which case this surfaces exactly like the old single-call
+      // path did (see the throw below).
+      for (const window of windows) {
+        try {
+          const res = await correctApi(
+            { segments: window.segments, context: window.context, lexicon, model },
+            settings,
+          );
+          succeededOnce = true;
+          for (const c of res.corrections) corrections.set(c.id, c.text);
+        } catch (err) {
+          lastError = err;
+          console.warn("[correction] window failed, its segments left unchanged", err);
+        }
+      }
+      if (!succeededOnce && lastError) throw lastError;
+      const built: ReviewRow[] = Array.from(corrections.entries())
+        .map(([id, text]) => ({
           sessionId,
           meetingGen,
-          id: c.id,
-          beforeText: beforeById.get(c.id) ?? "",
-          proposedText: c.text,
+          id,
+          beforeText: beforeById.get(id) ?? "",
+          proposedText: text,
           status: "pending" as const,
         }))
         // "compute changed CLIENT-side (trimmed inequality)" — only
@@ -198,7 +231,18 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
 
   /** A5: acceptance ONLY when the current session+text still match this
    *  row's own snapshot — otherwise mark it a conflict instead of
-   *  silently clobbering whatever the segment now holds. */
+   *  silently clobbering whatever the segment now holds.
+   *
+   *  Finding 3 fix (pre-merge review): that snapshot check alone
+   *  (session/gen/text) does NOT cover status — store.ts's
+   *  updateSegmentText has its own separate stopped-only tripwire and
+   *  used to return void, so a refused write (status flipped away from
+   *  "stopped" without the session/gen/text snapshot itself changing)
+   *  was silently indistinguishable from a successful one: the row
+   *  still got marked "accepted" and queued for retranslation even
+   *  though the segment's text never actually changed. updateSegmentText
+   *  now returns a boolean (true = mutation applied) — a false return
+   *  is treated exactly like the snapshot conflict above. */
   function acceptOne(row: ReviewRow): { text: string; hadTranslation: boolean } | null {
     const state = useApp.getState();
     const seg = state.segments.find((s) => s.id === row.id);
@@ -211,7 +255,10 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
       return null;
     }
     const hadTranslation = !!state.translations[row.id];
-    updateSegmentText(row.id, row.proposedText);
+    if (!updateSegmentText(row.id, row.proposedText)) {
+      setRows((prev) => prev && prev.map((r) => (r.id === row.id ? { ...r, status: "conflict" } : r)));
+      return null;
+    }
     setRows((prev) => prev && prev.map((r) => (r.id === row.id ? { ...r, status: "accepted" } : r)));
     return { text: row.proposedText, hadTranslation };
   }

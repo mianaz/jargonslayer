@@ -12,6 +12,7 @@ import {
   deriveRosterFromSegments,
   elapsedActiveMs,
   filterSuppressedLiveCards,
+  isModeLegalForPlatform,
   migrateSettings,
   modeForPersistedEngine,
   pauseIntervalsForSnapshot,
@@ -1497,8 +1498,9 @@ describe("updateSegmentText — committed-mutation tripwire (fix #A5)", () => {
 
   it("refuses the write and logs a warn diag entry (segment id + status, no text) when status !== 'stopped'", () => {
     useApp.setState({ status: "listening" });
-    useApp.getState().updateSegmentText("seg-1", "hacked live edit");
+    const applied = useApp.getState().updateSegmentText("seg-1", "hacked live edit");
 
+    expect(applied).toBe(false); // Finding 3 fix: refusal is now reported to the caller
     expect(useApp.getState().segments[0].text).toBe("original"); // refused
     const entries = getDiagEntries().filter((e) => e.tag === "stt-committed-mutation");
     expect(entries).toHaveLength(1);
@@ -1510,17 +1512,29 @@ describe("updateSegmentText — committed-mutation tripwire (fix #A5)", () => {
 
   it("refuses while 'paused' too — not only 'listening'/'connecting'", () => {
     useApp.setState({ status: "paused" });
-    useApp.getState().updateSegmentText("seg-1", "hacked during pause");
+    const applied = useApp.getState().updateSegmentText("seg-1", "hacked during pause");
 
+    expect(applied).toBe(false);
     expect(useApp.getState().segments[0].text).toBe("original");
     expect(getDiagEntries().filter((e) => e.tag === "stt-committed-mutation")).toHaveLength(1);
   });
 
   it("still allows the edit (no diag entry) once the session is actually stopped", () => {
-    useApp.getState().updateSegmentText("seg-1", "corrected text");
+    const applied = useApp.getState().updateSegmentText("seg-1", "corrected text");
 
+    expect(applied).toBe(true); // Finding 3 fix: success is now reported to the caller
     expect(useApp.getState().segments[0].text).toBe("corrected text");
     expect(getDiagEntries().filter((e) => e.tag === "stt-committed-mutation")).toHaveLength(0);
+  });
+
+  // Finding 3 fix (pre-merge review): the SECOND refusal branch (blank/
+  // whitespace-only text) had no return-value coverage at all before —
+  // it must ALSO report false, not just the status tripwire above.
+  it("refuses (returns false) a blank/whitespace-only text even while stopped, without mutating the segment", () => {
+    const applied = useApp.getState().updateSegmentText("seg-1", "   ");
+
+    expect(applied).toBe(false);
+    expect(useApp.getState().segments[0].text).toBe("original");
   });
 });
 
@@ -2081,10 +2095,62 @@ describe("modeForPersistedEngine — full migration matrix (every STTEngineKind 
   });
 });
 
+// Finding 4 fix (pre-merge review): isModeLegalForPlatform is the pure
+// predicate migrateSettings now ALSO consults (in addition to
+// isValidMode) before trusting a persisted `mode` string outright —
+// exercised directly (explicit `platform` argument), same "pure
+// function, explicit param" discipline as modeForPersistedEngine's own
+// matrix immediately above, for the identical reason (this test env's
+// IS_DESKTOP/IS_IOS are fixed web consts).
+describe("isModeLegalForPlatform — platform-legality matrix (Finding 4)", () => {
+  const MODES: Settings["mode"][] = ["system-audio", "tab", "mic", "import", "url"];
+  // [mode, legal on web, legal on desktop, legal on ios]
+  const MATRIX: [Settings["mode"], boolean, boolean, boolean][] = [
+    ["system-audio", false, true, false],
+    ["tab", true, false, false],
+    ["mic", true, true, true],
+    ["import", true, true, true],
+    ["url", true, true, true],
+  ];
+
+  it.each(MATRIX)("%s -> web:%s desktop:%s ios:%s", (mode, web, desktop, ios) => {
+    expect(isModeLegalForPlatform(mode, "web")).toBe(web);
+    expect(isModeLegalForPlatform(mode, "desktop")).toBe(desktop);
+    expect(isModeLegalForPlatform(mode, "ios")).toBe(ios);
+  });
+
+  it("every mode is legal on at least one platform (the matrix above is exhaustive over Settings['mode'])", () => {
+    for (const mode of MODES) {
+      expect(
+        isModeLegalForPlatform(mode, "web") ||
+          isModeLegalForPlatform(mode, "desktop") ||
+          isModeLegalForPlatform(mode, "ios"),
+      ).toBe(true);
+    }
+  });
+});
+
 describe("migrateSettings — mode back-derivation end-to-end (§5 A3, real web build)", () => {
   it("an explicit, VALID saved mode round-trips unchanged (wins over back-derivation)", () => {
     const s = migrateSettings({ mode: "tab", engine: "whisper" } as Partial<Settings>);
     expect(s.mode).toBe("tab"); // NOT back-derived from engine:"whisper" (which would be "mic")
+  });
+
+  // Finding 4 fix (pre-merge review, cross-platform-restore): a
+  // syntactically VALID mode that is nonetheless ILLEGAL on THIS
+  // platform (ambient test env = web, where "system-audio" is
+  // desktop-only) must NOT survive migration as a stale, unavailable
+  // intent — it re-derives from the (already platform-legal) engine
+  // exactly like the no-saved-mode path below.
+  it("a platform-ILLEGAL saved mode ('system-audio' restored on web) is re-derived from the engine, not blindly kept", () => {
+    const s = migrateSettings({ mode: "system-audio", engine: "tabaudio" } as Partial<Settings>);
+    expect(s.mode).not.toBe("system-audio");
+    expect(s.mode).toBe("tab"); // back-derived from tabaudio, web-legal
+  });
+
+  it("a platform-LEGAL saved mode ('tab' restored on web) still round-trips unchanged, even though 'system-audio' above does not", () => {
+    const s = migrateSettings({ mode: "tab", engine: "tabaudio" } as Partial<Settings>);
+    expect(s.mode).toBe("tab");
   });
 
   it("an absent saved mode is back-derived from the persisted engine", () => {

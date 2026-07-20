@@ -186,10 +186,16 @@ export const POSTURE_LABEL: Record<"local" | "cloud", string> = {
 // Header's badge carries it as its `title` tooltip. Colors keep the
 // established green=local/amber=cloud idiom (lab-green/warn-soft,
 // unchanged pixel-for-pixel from the pre-tri-state chips) and extend
-// honestly for cloud-stored with lab-red — the doc's own "red" column
-// (Deepgram default currently resolves to cloud-transient per D7's
+// honestly for cloud-stored — the doc's own "red" column (Deepgram
+// default currently resolves to cloud-transient per D7's
 // mip_opt_out=true, so no live engine occupies this row yet; the UI
-// must still be able to tell the truth the day one does).
+// must still be able to tell the truth the day one does). ITEM 6 fix
+// (fix round, Sol, LOW): cloud-stored's TEXT stays warn-soft, same as
+// cloud-transient — DESIGN.md rule 3 ("warn TEXT uses warn-soft; fills
+// use lab-red, small elements only") reserves lab-red for the escalated
+// BORDER, not the label color, so the stronger warning reads as a
+// bolder/redder outline around the same amber text rather than a
+// second, ungoverned red-text variant.
 export const RETENTION_COPY: Record<
   RetentionClass,
   { label: string; hint: string; textClass: string; borderClass: string }
@@ -209,7 +215,7 @@ export const RETENTION_COPY: Record<
   "cloud-stored": {
     label: "云端·可能留存",
     hint: "云端 · 可能留存/需配置",
-    textClass: "text-lab-red",
+    textClass: "text-warn-soft",
     borderClass: "border-lab-red/30",
   },
 };

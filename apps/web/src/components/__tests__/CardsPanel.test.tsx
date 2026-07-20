@@ -171,6 +171,44 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
       });
     });
 
+    // ITEM 5 (fix round, Sol, MEDIUM): 语境释义 (card.meaning) was
+    // displayed but had no editable counterpart — extends the above
+    // "ONLY the changed fields" pin to cover it alongside a second
+    // changed field, proving the multi-field diff still sends exactly
+    // what changed (not the whole draft).
+    it("保存 also covers 语境释义 (meaning) — still ONLY the changed fields when multiple change", async () => {
+      const updateCardSpy = vi.fn();
+      useApp.setState({
+        cards: [makeCard()],
+        terms: [],
+        status: "stopped",
+        updateCard: updateCardSpy,
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+
+      await act(async () => {
+        findButton("编辑")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await act(async () => {
+        typeInto(inputByLabel("语境释义"), "go back to this topic later");
+      });
+      await act(async () => {
+        typeInto(inputByLabel("直白说法"), "come back later");
+      });
+      await act(async () => {
+        findButton("保存")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+
+      expect(updateCardSpy).toHaveBeenCalledTimes(1);
+      expect(updateCardSpy).toHaveBeenCalledWith("c1", {
+        meaning: "go back to this topic later",
+        plain_english: "come back later",
+      });
+    });
+
     it("取消 discards the draft: no updateCard call, original text stays", async () => {
       const updateCardSpy = vi.fn();
       useApp.setState({

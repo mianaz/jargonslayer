@@ -18,7 +18,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "@/lib/store";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
-import ModeSelector from "../ModeSelector";
+import ModeSelector, { visibleModeTileKeys } from "../ModeSelector";
 
 function resetStore() {
   useApp.setState({ settings: { ...DEFAULT_SETTINGS, mode: "import" } });
@@ -140,5 +140,50 @@ describe("ModeSelector — web build, ambient test env", () => {
     useApp.setState({ settings: DEFAULT_SETTINGS });
     render();
     expect(container!.querySelector('[data-testid="mode-selector-hint"]')).toBeNull();
+  });
+});
+
+// ITEM 1 (fix round, Sol#3): visibleModeTileKeys as a pure function —
+// PREVIEW_TIER is an import-time const nothing in this repo mocks (see
+// engineOptions.test.ts's own header comment on the identical
+// constraint), so the preview-tier omission is pinned here via an
+// explicit `isPreview` param instead of a live render + a deployTier
+// mock the repo has no precedent for.
+describe("visibleModeTileKeys — ITEM 1: preview tier omits the tab tile (never disabled)", () => {
+  it("web, full tier: tab and url both present", () => {
+    const keys = visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: false });
+    expect(keys).toEqual(["tab", "mic", "import", "url"]);
+  });
+
+  it("web, preview tier: tab and url both ABSENT — never silently becomes a mic tile", () => {
+    const keys = visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: true });
+    expect(keys).not.toContain("tab");
+    expect(keys).not.toContain("url");
+    expect(keys).toEqual(["mic", "import"]);
+  });
+
+  it("desktop: system-audio present, tab never present regardless of tier (desktop never had a tab tile)", () => {
+    expect(visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: false })).toEqual([
+      "system-audio",
+      "mic",
+      "import",
+      "url",
+    ]);
+    expect(visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: true })).toEqual([
+      "system-audio",
+      "mic",
+      "import",
+    ]);
+  });
+
+  it("iOS: mic+import only regardless of tier (tab/url/system-audio never applicable)", () => {
+    expect(visibleModeTileKeys({ isDesktop: false, isIos: true, isPreview: false })).toEqual([
+      "mic",
+      "import",
+    ]);
+    expect(visibleModeTileKeys({ isDesktop: false, isIos: true, isPreview: true })).toEqual([
+      "mic",
+      "import",
+    ]);
   });
 });

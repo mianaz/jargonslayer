@@ -37,6 +37,7 @@ import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 import type { HubTab } from "./ImportHub";
 
 type CaptureMode = "system-audio" | "tab" | "mic";
+type ModeTileKey = CaptureMode | "import" | "url";
 
 const CAPTURE_MODE_LABEL: Record<CaptureMode, string> = {
   "system-audio": "本机会议声音",
@@ -49,6 +50,37 @@ interface ModeTile {
   label: string;
   selected: boolean;
   onClick: () => void;
+}
+
+export interface ModeTileVisibility {
+  isDesktop: boolean;
+  isIos: boolean;
+  isPreview: boolean;
+}
+
+/** Which tile KEYS render for a given platform/tier — pure and
+ *  explicitly parameterized (mirrors deriveEngineForMode's own
+ *  DeriveEnginePlatform pattern, engineOptions.ts) so this is directly
+ *  unit-testable without depending on the PREVIEW_TIER build-time const,
+ *  which no runtime vi.stubEnv/vi.mock can flip once this module has
+ *  already imported it (repo precedent — see engineOptions.test.ts's own
+ *  header comment; nothing in this repo mocks "@/lib/deployTier").
+ *
+ *  ITEM 1 fix (Sol#3): PREVIEW_TIER coerces BOTH tab-audio engines
+ *  (sidecar tabaudio + BYOK tabaudio-cloud — store.ts's applyTierDefaults)
+ *  down to webspeech, a MIC engine — a preview click on this tile used to
+ *  persist mode:"tab" alongside an engine that doesn't capture tab audio
+ *  at all (a lie: the tile silently became a microphone). Absent, not
+ *  disabled (blueprint posture) — same `!isPreview` guard the url tile
+ *  already had. */
+export function visibleModeTileKeys(v: ModeTileVisibility): ModeTileKey[] {
+  const keys: ModeTileKey[] = [];
+  if (v.isDesktop) keys.push("system-audio");
+  if (!v.isDesktop && !v.isIos && !v.isPreview) keys.push("tab");
+  keys.push("mic");
+  keys.push("import");
+  if (!v.isIos && !v.isPreview) keys.push("url");
+  return keys;
 }
 
 export interface ModeSelectorProps {
@@ -89,8 +121,17 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
     updateSettings({ mode, engine: deriveEngineForMode(mode, platform, settings) });
   };
 
+  // ITEM 1 fix: visibleModeTileKeys (above) is the single source for
+  // WHICH tiles exist on this platform/tier — the push order below is
+  // unchanged from before this fix, only each tile's presence gate now
+  // reads off that pure, testable function instead of an inline
+  // IS_DESKTOP/IS_IOS/PREVIEW_TIER expression.
+  const visibleTiles = new Set(
+    visibleModeTileKeys({ isDesktop: IS_DESKTOP, isIos: IS_IOS, isPreview: PREVIEW_TIER }),
+  );
+
   const tiles: ModeTile[] = [];
-  if (IS_DESKTOP) {
+  if (visibleTiles.has("system-audio")) {
     tiles.push({
       key: "system-audio",
       label: "听本机会议声音",
@@ -98,7 +139,7 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
       onClick: () => pickCapture("system-audio"),
     });
   }
-  if (!IS_DESKTOP && !IS_IOS) {
+  if (visibleTiles.has("tab")) {
     tiles.push({
       key: "tab",
       label: "听浏览器标签页",
@@ -125,7 +166,7 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
   // actually up) isn't knowable synchronously — ImportHub's own url tab
   // already explains that once opened (same posture deriveEngineForMode
   // takes for the "tab" mode's local-sidecar fallback).
-  if (!IS_IOS && !PREVIEW_TIER) {
+  if (visibleTiles.has("url")) {
     tiles.push({
       key: "url",
       label: "从链接导入",

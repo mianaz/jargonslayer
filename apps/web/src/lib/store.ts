@@ -531,7 +531,12 @@ interface AppState {
 
   // transcript editing (stopped/imported sessions)
   renameSpeaker: (from: string, to: string) => void;
-  updateSegmentText: (segmentId: string, text: string) => void;
+  // Finding 3 fix (pre-merge review): returns true when the mutation
+  // was actually applied, false when the stopped-only tripwire (or a
+  // blank/whitespace-only text) refused it — see the implementation's
+  // own doc. CorrectionReview.tsx is the one caller that acts on this;
+  // every other caller may ignore the return value unchanged.
+  updateSegmentText: (segmentId: string, text: string) => boolean;
   // v0.5 Wave-1 Feature 7 (inline card edit, docs/design-explorations/
   // v05-wave1-blueprint.md §1 Feature 7): patches editable fields by id
   // — expression/meaning/chinese_explanation/plain_english for a card,
@@ -912,6 +917,23 @@ export function modeForPersistedEngine(
   }
 }
 
+/** Finding 4 fix (pre-merge review): isValidMode above only proves a
+ *  persisted `mode` STRING is one of the 5 enum values — not that it's
+ *  legal on THIS platform. A web backup's mode:"tab" restored on
+ *  desktop (or "system-audio" restored on web/iOS) is syntactically
+ *  valid but names a capture intent this platform can never satisfy.
+ *  "mic" is legal everywhere (DEFAULT_SETTINGS' own comment); "import"/
+ *  "url" are the import-family modes and are ALWAYS fine to keep —
+ *  they're never tied to a capture engine's platform restrictions in
+ *  the first place (same modes modeForPersistedEngine above NEVER
+ *  derives except "import", but a persisted "url" surviving here is
+ *  still legitimate: A3's own "locked is FINE to keep" ruling). */
+export function isModeLegalForPlatform(mode: Settings["mode"], platform: ModePlatform): boolean {
+  if (mode === "tab") return platform === "web";
+  if (mode === "system-audio") return platform === "desktop";
+  return true;
+}
+
 /** Fold persisted settings over defaults, migrating legacy field
  *  shapes. #54: pre-v0.2.2 settings had dictionaryOnly (force
  *  offline) instead of aiDetect (opt into the LLM upgrade layer) —
@@ -943,8 +965,20 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // `hadSavedEngine`'s own "engine" in saved check for applyTierDefaults.
   // Runs LAST (after platform/tier coercion) so it derives `mode` from a
   // legal `engine`, per A3's own ordering requirement.
-  if (isValidMode(legacy.mode)) return openRouterSettings;
+  //
+  // Finding 4 fix (pre-merge review): hadSavedMode (isValidMode) alone
+  // used to be the whole gate — kept unchanged as the FIRST half of
+  // this check (a persisted mode must still be a syntactically real
+  // value to even consider keeping) — now ALSO requires the value be
+  // legal on THIS platform (isModeLegalForPlatform); when it isn't, a
+  // platform-illegal-but-syntactically-valid persisted mode falls
+  // through to the exact same back-derivation the no-saved-mode path
+  // below already uses, rather than surviving hydration as a stale,
+  // unavailable intent.
   const platform: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
+  if (isValidMode(legacy.mode) && isModeLegalForPlatform(legacy.mode, platform)) {
+    return openRouterSettings;
+  }
   return {
     ...openRouterSettings,
     mode: modeForPersistedEngine(legacy.engine, openRouterSettings.engine, platform),
@@ -1454,6 +1488,15 @@ export const useApp = create<AppState>((set, get) => ({
     // engine) may ever mutate already-committed text. Refuse the write
     // and log rather than silently accepting a call that shouldn't be
     // possible; PRIVACY: segment id + status only, never the text.
+    //
+    // Finding 3 fix (pre-merge review): returns a boolean (true =
+    // mutation applied) instead of void — CorrectionReview.tsx's own
+    // acceptance gate checks session/gen/text but NOT status, so a
+    // refused write here used to be silently indistinguishable from a
+    // successful one from that caller's point of view (the review row
+    // still got marked accepted + queued for retranslation). Callers
+    // that don't need the outcome (TranscriptPanel's inline edit) are
+    // unaffected — ignoring a non-void return is always legal.
     const status = get().status;
     if (status !== "stopped") {
       diagLog(
@@ -1462,10 +1505,10 @@ export const useApp = create<AppState>((set, get) => ({
         "refused to mutate committed transcript text outside a stopped session",
         `segmentId=${segmentId} status=${status}`,
       );
-      return;
+      return false;
     }
     const cleaned = text.trim();
-    if (!cleaned) return;
+    if (!cleaned) return false;
     set({
       segments: get().segments.map((s) =>
         s.id === segmentId ? { ...s, text: cleaned } : s,
@@ -1482,6 +1525,7 @@ export const useApp = create<AppState>((set, get) => ({
         () => get().meetingGen,
       );
     }
+    return true;
   },
 
   // v0.5 Wave-1 Feature 7 (inline card edit) — same committed-mutation

@@ -81,4 +81,28 @@ describe("TutorialOverlay — iOS engine picker (S13 §6 Sol F5)", () => {
 
     expect(useApp.getState().settings.engine).toBe("osspeech");
   });
+
+  // ITEM 4 (fix round, Opus#2): the picker used to write `engine` alone,
+  // leaving `mode` stuck on whatever it was before — contradicting
+  // ModeSelector, which reads `mode` to decide the selected tile.
+  // osspeech on iOS (mic-only v1) maps to mode:"mic" per
+  // modeForPersistedEngine's own iOS branch.
+  it("selecting the osspeech card ALSO writes settings.mode:mic (not left stale)", async () => {
+    await act(async () => {
+      root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
+    });
+    const nextButton = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === "下一步")!;
+    await act(async () => {
+      nextButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const osspeechCard = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("系统识别"),
+    )!;
+    await act(async () => {
+      osspeechCard.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.mode).toBe("mic");
+  });
 });

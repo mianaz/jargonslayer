@@ -39,6 +39,7 @@ import {
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import { probeSidecar, type SidecarProbeResult } from "@/lib/stt/sidecarHealth";
+import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
 import {
   appAudioLockReason,
   isAppAudioFloorLocked,
@@ -108,13 +109,16 @@ export interface SettingsDialogProps {
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine (see Header.tsx's 演示 button, the app's single demo entry
-// point). posture drives the 本地/云端 chip: local engines never send
-// audio off this machine; cloud engines do.
+// point). ITEM 2 fix (fix round, Sol#4 + Lane C flag): the retention
+// badge below each card is now derived per-render from
+// resolveEngineRetentionClass/RETENTION_COPY (lib/stt/engineOptions.ts)
+// instead of a hand-rolled `posture` field on this array — the SAME
+// tri-state source Header/StatusLine already read, so this dialog can
+// never disagree with what those surfaces show for the live engine.
 const ALL_ENGINE_CARDS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   hint: string;
-  posture: "local" | "cloud";
   disabled?: boolean;
   // #61 preview tier: needs the local sidecar — greyed there (same
   // lock as lib/stt/engineOptions.ts's ENGINE_OPTIONS.sidecarOnly;
@@ -139,13 +143,11 @@ const ALL_ENGINE_CARDS: {
     // our side (the local engines are: whisperSocket.ts acquires its
     // own stream with raw-capture constraints).
     hint: "由浏览器厂商云端识别（音频会离开设备）；扬声器外放拾音较弱，线上会议建议标签页音频或本地 Whisper",
-    posture: "cloud",
   },
   {
     value: "whisper",
     label: "本地 Whisper",
     hint: "音频只在本机处理，不出设备",
-    posture: "local",
     sidecarOnly: true,
   },
   // D7 desktop tabaudio replacement (docs/design-explorations/
@@ -166,14 +168,12 @@ const ALL_ENGINE_CARDS: {
         value: "appaudio",
         label: "系统/App 音频",
         hint: "会议中对方的声音，也含 Mac 播放的其他声音，不含你的麦克风",
-        posture: "local",
         sidecarOnly: true,
       }
     : {
         value: "tabaudio",
         label: "标签页音频",
         hint: "在本机转录标签页音频",
-        posture: "local",
         disabled: true,
         sidecarOnly: true,
       },
@@ -194,7 +194,6 @@ const ALL_ENGINE_CARDS: {
           value: "tabaudio-cloud" as const,
           label: "标签页音频·云端",
           hint: "需要 Soniox 或 Deepgram Key、浏览器分享标签页并勾选共享音频；选择 Deepgram 时仅支持英文",
-          posture: "cloud" as const,
           byokOnly: true,
         },
       ]
@@ -221,7 +220,6 @@ const ALL_ENGINE_CARDS: {
           // both Tauri shells — the OS-version tail must name the right
           // platform (IS_IOS is a build-time const, so this folds).
           hint: `无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 ${IS_IOS ? "iOS" : "macOS"} 26 或更高版本`,
-          posture: "local" as const,
         },
       ]
     : []),
@@ -232,7 +230,6 @@ const ALL_ENGINE_CARDS: {
     // opt-in, NOT claimed to beat local Whisper until Miana's zh-en
     // clip benchmark clears it.
     hint: "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
-    posture: "cloud",
     byokOnly: true,
   },
   // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
@@ -245,7 +242,6 @@ const ALL_ENGINE_CARDS: {
     value: "deepgram",
     label: "Deepgram 云端识别",
     hint: "BYOK 按量计费、音频经 Deepgram 云端、仅英文（中英混说请用 Soniox）",
-    posture: "cloud",
     byokOnly: true,
   },
 ];
@@ -266,11 +262,6 @@ const ENGINE_CARDS = IS_IOS
   : IS_DESKTOP
     ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
     : ALL_ENGINE_CARDS;
-
-const POSTURE_LABEL: Record<"local" | "cloud", string> = {
-  local: "本地",
-  cloud: "云端",
-};
 
 // S11 osspeech blueprint §Q5's 预下载模型 button (see its own JSX below):
 // exported (tech-debt ledger #4, 2026-07-17) so SettingsDialog.desktop.
@@ -664,6 +655,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
   const showToast = useApp((s) => s.showToast);
+  // ITEM 2 fix (fix round, Sol#4 + Lane C flag): the D7 webspeech
+  // on-device runtime overlay resolveEngineRetentionClass reads —
+  // exactly the same store field Header/StatusLine already read, so the
+  // 转录引擎 ENGINE_CARDS retention badge below can never disagree with
+  // what those surfaces show for the live engine.
+  const sttEngineMode = useApp((s) => s.sttEngineMode);
   // #62/tag-blocker 1: SettingsDialog is mounted unconditionally from
   // page.tsx, before store.hydrate() (async) resolves — so `settings`
   // starts out as DEFAULT_SETTINGS. Read `hydrated` so the auto-promote
@@ -1874,6 +1871,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
                 const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osSpeechCaps);
                 const floorLocked = appAudioLocked || osSpeechLocked;
+                // ITEM 2 fix: tri-state retention badge, sourced from the
+                // SAME resolver/copy table Header/StatusLine already use
+                // (lib/stt/engineOptions.ts) — replaces the old hand-rolled
+                // `posture`/POSTURE_LABEL pair this array used to carry.
+                const retention = RETENTION_COPY[resolveEngineRetentionClass(opt.value, sttEngineMode)];
                 return (
                   <button
                     key={opt.value}
@@ -1922,13 +1924,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           </span>
                         )}
                         <span
-                          className={`shrink-0 border px-1.5 py-0 text-[10px] ${
-                            opt.posture === "local"
-                              ? "border-lab-green/30 text-lab-green"
-                              : "border-warn-soft/30 text-warn-soft"
-                          }`}
+                          title={retention.hint}
+                          className={`shrink-0 border px-1.5 py-0 text-[10px] ${retention.borderClass} ${retention.textClass}`}
                         >
-                          {POSTURE_LABEL[opt.posture]}
+                          {retention.label}
                         </span>
                       </span>
                     </div>
@@ -2177,17 +2176,48 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            {/* 标签页音频·云端 key hint (v0.5 Wave-1 Feature 4, §5 A4):
-               unlike Soniox/Deepgram above, this card has no key input
-               of its own — it rides whichever provider
-               Settings.tabAudioCloudProvider currently resolves to
-               (default Soniox; a provider PICKER is a later lane's job,
-               §1 Feature 5 mode-first) — so this points at the matching
-               card above instead of duplicating its key field. */}
+            {/* 标签页音频·云端 provider picker (v0.5 Wave-1 Feature 4, §5
+               A4; ITEM 3 fix, fix round Opus#1): unlike Soniox/Deepgram
+               above, this card has no key input of its own — it rides
+               whichever provider Settings.tabAudioCloudProvider resolves
+               to. That field previously had NO UI writer anywhere in the
+               app (Deepgram tab-cloud was unreachable) and the old copy
+               ("点击上方对应卡片临时切换以填写") pointed at an inert
+               action — clicking the Soniox/Deepgram card switches
+               draft.engine AWAY from tabaudio-cloud, it doesn't "temporarily"
+               do anything. This select is the actual writer; the key
+               itself still lives on the matching Soniox/Deepgram card
+               above (this card intentionally has none of its own), so the
+               rewritten copy says that plainly instead of implying a
+               round-trip that isn't real. */}
             {draft.engine === "tabaudio-cloud" && (
-              <div className="text-xs leading-[1.7] text-mut2">
-                使用当前选择的 {draft.tabAudioCloudProvider === "deepgram" ? "Deepgram" : "Soniox"} API
-                Key——点击上方对应卡片临时切换以填写
+              <div className="space-y-2">
+                <div>
+                  <label className="text-xs text-mut">转录服务商</label>
+                  <select
+                    value={draft.tabAudioCloudProvider}
+                    disabled={PREVIEW_TIER}
+                    onChange={(e) =>
+                      patch({
+                        tabAudioCloudProvider: e.target.value as Settings["tabAudioCloudProvider"],
+                      })
+                    }
+                    className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="soniox">Soniox</option>
+                    <option value="deepgram">Deepgram（仅英文）</option>
+                  </select>
+                </div>
+                <div className="text-xs leading-[1.7] text-mut2">
+                  选择转录服务商；需在对应引擎卡片填写该服务商的 API Key——
+                  {draft.tabAudioCloudProvider === "deepgram"
+                    ? draft.deepgramKey
+                      ? "Deepgram Key 已配置"
+                      : "尚未配置 Deepgram API Key"
+                    : draft.sonioxKey
+                      ? "Soniox Key 已配置"
+                      : "尚未配置 Soniox API Key"}
+                </div>
               </div>
             )}
 

@@ -26,6 +26,11 @@ vi.mock("@jargonslayer/core/detect/dictionary", () => ({
   // crash, same "empty by default" posture scanDictionary's own mock
   // has.
   packTermsForBias: vi.fn(() => []),
+  // Pre-merge review Finding 2 fix: history/glossary.ts (transitively
+  // imported here via buildMeetingLexicon) registers a shadow lookup
+  // into this module at load time — a no-op stub keeps that call from
+  // throwing under this partial mock.
+  setGlossaryShadowLookup: vi.fn(),
 }));
 
 // importUrlAndTrack (#43 phase 2c) touches the same

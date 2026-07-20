@@ -304,6 +304,12 @@ function useFocusRing(
 
 interface CardDraft {
   expression: string;
+  // ITEM 5 fix (fix round, Sol, MEDIUM): the display view already showed
+  // card.meaning (below, ExpressionCardRow's expanded layout) with no
+  // editable counterpart — this closes that gap the same way the other
+  // three fields already work. Store already supports it (updateCard
+  // merges any Partial<ExpressionCard> patch by id).
+  meaning: string;
   chinese_explanation: string;
   plain_english: string;
 }
@@ -311,6 +317,7 @@ interface CardDraft {
 function draftFromCard(card: ExpressionCard): CardDraft {
   return {
     expression: card.expression,
+    meaning: card.meaning,
     chinese_explanation: card.chinese_explanation,
     plain_english: card.plain_english,
   };
@@ -518,7 +525,17 @@ function ExpressionCardRow({
       />
       {badgeRow}
 
-      <div className="mt-2 text-sm text-fg/90">{card.meaning}</div>
+      {editing ? (
+        <input
+          type="text"
+          aria-label="语境释义"
+          value={draft.meaning}
+          onChange={(e) => setDraft((d) => ({ ...d, meaning: e.target.value }))}
+          className="mt-2 w-full border border-edge bg-panel2 px-2 py-1 text-sm text-fg focus:outline-none"
+        />
+      ) : (
+        <div className="mt-2 text-sm text-fg/90">{card.meaning}</div>
+      )}
 
       {editing ? (
         <textarea

@@ -21,6 +21,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
+import { RETENTION_COPY } from "../../lib/stt/engineOptions";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import SettingsDialog, { SETTINGS_CATEGORIES, type SettingsCategoryId } from "../SettingsDialog";
 
@@ -826,7 +827,20 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: 标签页音频·云端 
     expect(card.textContent).toContain("仅支持英文");
   });
 
-  it("the provider-key hint is absent until the card is picked, then names the currently selected provider", async () => {
+  // ITEM 3 (fix round, Opus#1): tabAudioCloudProvider previously had NO
+  // UI writer anywhere in the app — Deepgram tab-cloud was unreachable —
+  // and the old copy ("点击上方对应卡片临时切换以填写") pointed at an
+  // inert action. Replaced with a real 2-option select + honest copy.
+  function findProviderSelect(): HTMLSelectElement {
+    const label = Array.from(container!.querySelectorAll("label")).find(
+      (l) => l.textContent === "转录服务商",
+    );
+    const select = label?.parentElement?.querySelector("select");
+    if (!select) throw new Error("转录服务商 select not found");
+    return select as HTMLSelectElement;
+  }
+
+  it("the provider select + honest copy are absent until the card is picked", async () => {
     useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
@@ -834,26 +848,116 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: 标签页音频·云端 
     await flush();
 
     expect(container!.textContent).not.toContain("点击上方对应卡片临时切换以填写");
+    expect(Array.from(container!.querySelectorAll("label")).some((l) => l.textContent === "转录服务商")).toBe(
+      false,
+    );
 
     await act(async () => {
       findButtonContaining("标签页音频·云端").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(container!.textContent).toContain("使用当前选择的 Soniox API");
-    expect(container!.textContent).toContain("点击上方对应卡片临时切换以填写");
+    expect(container!.textContent).toContain("选择转录服务商；需在对应引擎卡片填写该服务商的 API Key");
+    expect(container!.textContent).not.toContain("点击上方对应卡片临时切换以填写");
+    expect(findProviderSelect().value).toBe("soniox");
   });
 
-  it("switching tabAudioCloudProvider to deepgram updates the hint to name Deepgram", async () => {
-    useApp.setState({
-      settings: { ...DEFAULT_SETTINGS, engine: "tabaudio-cloud", tabAudioCloudProvider: "deepgram" },
-      hydrated: true,
-    });
+  it("the deepgram option is labeled 仅英文", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "tabaudio-cloud" }, hydrated: true });
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
     });
     await flush();
 
-    expect(container!.textContent).toContain("使用当前选择的 Deepgram API");
+    const select = findProviderSelect();
+    const deepgramOption = Array.from(select.options).find((o) => o.value === "deepgram");
+    expect(deepgramOption?.textContent).toContain("仅英文");
+  });
+
+  it("selecting deepgram in the provider select writes draft.tabAudioCloudProvider (saved on 保存)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "tabaudio-cloud" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    expect(useApp.getState().settings.tabAudioCloudProvider).toBe("soniox");
+
+    const select = findProviderSelect();
+    await act(async () => {
+      select.value = "deepgram";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(container!.textContent).toContain("尚未配置 Deepgram API Key");
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(useApp.getState().settings.tabAudioCloudProvider).toBe("deepgram");
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+});
+
+// ITEM 2 (fix round, Sol#4 + Lane C flag): 转录引擎 ENGINE_CARDS used to
+// hand-roll its own binary 本地/云端 posture pair — pins that the card
+// grid's retention badge now agrees, byte-for-byte, with RETENTION_COPY
+// (lib/stt/engineOptions.ts), the SAME table Header/StatusLine read.
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS: retention badge agrees with RETENTION_COPY (ITEM 2)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("浏览器识别 (webspeech, cloud-transient) shows RETENTION_COPY's 云端·不留存 label, not the old binary 云端", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const card = findButtonContaining("浏览器识别");
+    expect(card.textContent).toContain(RETENTION_COPY["cloud-transient"].label);
+    // The card's own hint copy legitimately contains "云端" as a
+    // substring ("由浏览器厂商云端识别…") — the badge itself must be the
+    // richer tri-state label, not just the old binary "云端" chip text.
+    const badge = Array.from(card.querySelectorAll("span")).find(
+      (s) => s.textContent === "云端",
+    );
+    expect(badge).toBeUndefined();
+  });
+
+  it("本地 Whisper (local) shows RETENTION_COPY's 本地 label", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const card = findButtonContaining("本地 Whisper");
+    expect(card.textContent).toContain(RETENTION_COPY.local.label);
   });
 });
 

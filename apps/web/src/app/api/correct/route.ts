@@ -4,28 +4,52 @@ import { NextResponse } from "next/server";
 import * as z from "zod";
 import { mapLlmError, pickModel, resolveLlmConfig, withFallback } from "@/lib/llm/anthropic";
 import { allowDailyBudget, allowRequest, clientIp } from "@/lib/llm/rateLimit";
-import { DEFAULT_CORRECT_MODEL, runCorrectTask } from "@/lib/llm/tasks/correct";
+import {
+  CORRECT_MAX_LEXICON_CHARS,
+  CORRECT_MAX_SEGMENTS_PER_CALL,
+  CORRECT_MAX_TOTAL_CHARS_PER_CALL,
+  DEFAULT_CORRECT_MODEL,
+  runCorrectTask,
+  totalLexiconChars,
+  totalSegmentChars,
+} from "@/lib/llm/tasks/correct";
 import { newRequestId } from "@/lib/diag/requestId";
 import type { ApiErrorBody, CorrectResponse } from "@jargonslayer/core/types";
 
 // Mirrors CorrectRequest (types.ts) — segment text cap matches
 // translate/route.ts's own SegmentSchema (a transcript segment is the
 // same one-utterance unit whether corrected live-adjacent or after the
-// fact). segments/lexicon caps are this route's own HTTP-input-
-// validation guard (see the summarize route's identical MAX_SEGMENTS
-// rationale) — a whole meeting's worth of segments, generously capped.
+// fact). Finding 1 fix (pre-merge review): segments/lexicon caps are
+// now the PER-CALL caps tasks/correct.ts single-sources (a whole
+// meeting no longer arrives as one HTTP body — CorrectionReview.tsx
+// chunks it into windows via chunkCorrectSegments and calls this route
+// once per window, sequentially — see that component's own comment).
+// The superRefine below adds the total-char-budget checks zod's own
+// per-field .max() can't express (sum across the array, not a single
+// field).
 const SegmentSchema = z.object({
   id: z.string(),
   text: z.string().min(1).max(1500),
 });
 
-const BodySchema = z.object({
-  segments: z.array(SegmentSchema).min(1).max(300),
-  context: z.string().max(4000),
-  lexicon: z.array(z.string().max(200)).max(500),
-  meetingTitle: z.string().max(200).optional(),
-  model: z.string().optional(),
-});
+const BodySchema = z
+  .object({
+    segments: z.array(SegmentSchema).min(1).max(CORRECT_MAX_SEGMENTS_PER_CALL),
+    context: z.string().max(4000),
+    lexicon: z.array(z.string().max(200)).max(500),
+    meetingTitle: z.string().max(200).optional(),
+    model: z.string().optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (totalSegmentChars(body.segments) > CORRECT_MAX_TOTAL_CHARS_PER_CALL) {
+      ctx.addIssue(
+        `segment text exceeds the ${CORRECT_MAX_TOTAL_CHARS_PER_CALL}-char-per-call cap`,
+      );
+    }
+    if (totalLexiconChars(body.lexicon) > CORRECT_MAX_LEXICON_CHARS) {
+      ctx.addIssue(`lexicon exceeds the ${CORRECT_MAX_LEXICON_CHARS}-char cap`);
+    }
+  });
 
 // Diagnostics (item 5) — see detect/route.ts's identical helper doc.
 function errorBody(body: ApiErrorBody, status: number) {

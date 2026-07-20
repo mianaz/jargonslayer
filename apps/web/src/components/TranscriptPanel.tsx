@@ -462,10 +462,16 @@ interface SegmentRowProps {
   // (listening/paused/stopped), a user action rather than an engine
   // mutation (see store.ts's own doc on assignSegmentsSpeaker etc.).
   speakerAssignable: boolean;
+  // ITEM 7b fix (fix round, Opus sub-bar, lead-accepted): threads
+  // whether this segment has an sttSpeaker to follow back to, so
+  // SpeakerAssignPopover can gate 跟随识别 on speakerLocked AND this —
+  // an unlock with no sttSpeaker has nothing to restore (see that
+  // component's own SpeakerAssignRequest.single.hasSttSpeaker doc).
   onAssignRequest: (
     segmentId: string,
     currentSpeaker: string | undefined,
     speakerLocked: boolean,
+    hasSttSpeaker: boolean,
     x: number,
     y: number,
   ) => void;
@@ -537,7 +543,14 @@ export const SegmentRow = memo(function SegmentRow({
               speakerAssignable
                 ? (e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
-                    onAssignRequest(seg.id, seg.speaker, !!seg.speakerLocked, rect.left, rect.bottom);
+                    onAssignRequest(
+                      seg.id,
+                      seg.speaker,
+                      !!seg.speakerLocked,
+                      !!seg.sttSpeaker,
+                      rect.left,
+                      rect.bottom,
+                    );
                   }
                 : undefined
             }
@@ -563,7 +576,7 @@ export const SegmentRow = memo(function SegmentRow({
               data-testid={`segment-add-speaker-${seg.id}`}
               onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect();
-                onAssignRequest(seg.id, undefined, false, rect.left, rect.bottom);
+                onAssignRequest(seg.id, undefined, false, !!seg.sttSpeaker, rect.left, rect.bottom);
               }}
               className="mt-0.5 inline-flex items-center whitespace-nowrap text-mut2 hover:text-fg"
             >
@@ -874,10 +887,16 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
       segmentId: string,
       currentSpeaker: string | undefined,
       speakerLocked: boolean,
+      hasSttSpeaker: boolean,
       x: number,
       y: number,
     ) => {
-      setAssignRequest({ segmentIds: [segmentId], single: { currentSpeaker, speakerLocked }, x, y });
+      setAssignRequest({
+        segmentIds: [segmentId],
+        single: { currentSpeaker, speakerLocked, hasSttSpeaker },
+        x,
+        y,
+      });
     },
     [],
   );

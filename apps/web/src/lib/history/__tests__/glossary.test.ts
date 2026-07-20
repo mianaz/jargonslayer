@@ -266,6 +266,55 @@ describe("glossary.ts", () => {
     });
   });
 
+  // Pre-merge review Finding 2 — integrated regression test: exercises
+  // the REAL registration wiring between this file's
+  // setGlossaryShadowLookup(findEnabledEntryBySurface) call (module
+  // load side effect, see the source's own comment) and core's
+  // scanDictionary, unlike detect/__tests__/dictionary.test.ts's own
+  // shadowing suite (which deliberately MOCKS ../../history/
+  // glossaryLookup to isolate scanDictionary from the real glossary).
+  describe("scanDictionary shadow lookup — enabled-pack-aware (Finding 2)", () => {
+    it("a custom entry in a DISABLED pack does NOT suppress the built-in dictionary's own version of that surface", async () => {
+      const glossary = await import("../glossary");
+      const { scanDictionary, setEnabledPacks } = await import("@jargonslayer/core/detect/dictionary");
+      setEnabledPacks(null);
+
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await glossary.setCustomPackEnabled(pack.id, false);
+      await glossary.upsertCustomEntry(
+        makeEntry({ id: "a", packId: pack.id, headword: "circle back" }),
+      );
+
+      // Sanity check: the disabled entry itself never fires (existing
+      // A7 behavior, unaffected by this fix).
+      expect(glossary.scanCustomEntries("Let's circle back on this.").expressions).toHaveLength(0);
+
+      // The regression: the built-in "circle back" entry must still be
+      // detected — before this fix it silently vanished (shadowed by
+      // the disabled custom entry's RAW, pack-unaware lookup).
+      const res = scanDictionary("Let's circle back on this tomorrow.");
+      expect(res.expressions.some((e) => e.expression === "circle back")).toBe(true);
+    });
+
+    it("a custom entry in an ENABLED pack still shadows the built-in dictionary's version, exactly as before this fix", async () => {
+      const glossary = await import("../glossary");
+      const { scanDictionary, setEnabledPacks } = await import("@jargonslayer/core/detect/dictionary");
+      setEnabledPacks(null);
+
+      await glossary.upsertCustomEntry(
+        makeEntry({ id: "a", packId: "personal", headword: "circle back" }),
+      );
+
+      const res = scanDictionary("Let's circle back on this tomorrow.");
+      expect(res.expressions.some((e) => e.expression === "circle back")).toBe(false);
+      // The custom scan is the one that owns it instead.
+      expect(
+        glossary.scanCustomEntries("Let's circle back on this tomorrow.").expressions[0]?.expression,
+      ).toBe("circle back");
+    });
+  });
+
   describe("loadCustomPacks — personal auto-create + packId normalization (A7)", () => {
     it("auto-creates the 'personal' pack when none is persisted yet", async () => {
       const glossary = await import("../glossary");

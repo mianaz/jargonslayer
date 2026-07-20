@@ -33,6 +33,7 @@ import {
   getCachedEntries as getRawCachedEntries,
   setCachedEntries,
 } from "@jargonslayer/core/history/glossaryLookup";
+import { setGlossaryShadowLookup } from "@jargonslayer/core/detect/dictionary";
 
 export { findEntryBySurface };
 
@@ -273,6 +274,33 @@ export async function upsertCustomPack(pack: CustomPack): Promise<CustomPack[]> 
 export function getCachedEntries(): CustomEntry[] {
   return getRawCachedEntries().filter((e) => isCustomPackEnabled(e.packId));
 }
+
+// Pre-merge review Finding 2 fix: enabled-pack-filtered surface lookup,
+// mirroring getCachedEntries' own filtering immediately above (raw
+// findEntryBySurface from core's glossaryLookup.ts consults the RAW,
+// pack-unaware cache instead). Registered into core/detect/dictionary.ts
+// below (module load, see setGlossaryShadowLookup's own doc) so
+// scanDictionary's personal-glossary shadow check stops letting a
+// DISABLED pack's custom entry suppress the built-in dictionary's own
+// version of that surface. findEntryBySurface itself stays unfiltered
+// and unchanged — SummaryPanel/LookupPopover's duplicate-prevention
+// checks still want "is this surface a duplicate ANYWHERE in the
+// glossary", disabled pack or not.
+export function findEnabledEntryBySurface(text: string): CustomEntry | null {
+  const needle = text.trim().toLowerCase();
+  if (!needle) return null;
+  for (const e of getCachedEntries()) {
+    if (customEntrySurfaces(e).some((s) => s.toLowerCase() === needle)) return e;
+  }
+  return null;
+}
+
+// Registered once at module load — findEnabledEntryBySurface reads
+// getCachedEntries()/isCustomPackEnabled() LIVE at call time (not a
+// snapshot), so a single registration of the function reference is
+// enough; no need to re-register on every pack-toggle/entry mutation
+// the way setCachedEntries/setCachedPacks below re-push DATA snapshots.
+setGlossaryShadowLookup(findEnabledEntryBySurface);
 
 // ---------------------------------------------------------------
 // Live matching — same word-boundary + trailing-inflection approach

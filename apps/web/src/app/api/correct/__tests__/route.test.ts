@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../route";
 import { allowDailyBudget, resetRateLimiter } from "@/lib/llm/rateLimit";
+import {
+  CORRECT_MAX_LEXICON_CHARS,
+  CORRECT_MAX_SEGMENTS_PER_CALL,
+  CORRECT_MAX_TOTAL_CHARS_PER_CALL,
+} from "@/lib/llm/tasks/correct";
 
 function makeRequest(body: unknown, headers: Record<string, string> = {}): Request {
   return new Request("http://localhost/api/correct", {
@@ -27,15 +32,74 @@ describe("POST /api/correct — request validation", () => {
     expect(json.code).toBe("bad_request");
   });
 
-  it("rejects over 300 segments with 400 bad_request", async () => {
-    const res = await POST(makeRequest({ ...baseBody, segments: makeSegments(301, 1) }));
+  // Finding 1 fix (pre-merge review): the route's segment-count cap is
+  // now the PER-CALL cap tasks/correct.ts single-sources (a whole
+  // meeting no longer arrives as one HTTP body — see CorrectionReview.
+  // tsx's own chunking comment) — was 300 (whole-meeting) before.
+  it("rejects over CORRECT_MAX_SEGMENTS_PER_CALL segments with 400 bad_request", async () => {
+    const res = await POST(
+      makeRequest({ ...baseBody, segments: makeSegments(CORRECT_MAX_SEGMENTS_PER_CALL + 1, 1) }),
+    );
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.code).toBe("bad_request");
   });
 
-  it("accepts exactly 300 segments (NOT rejected by the batch-size guard)", async () => {
-    const res = await POST(makeRequest({ ...baseBody, segments: makeSegments(300, 1) }));
+  it("accepts exactly CORRECT_MAX_SEGMENTS_PER_CALL segments (NOT rejected by the batch-size guard)", async () => {
+    const res = await POST(
+      makeRequest({ ...baseBody, segments: makeSegments(CORRECT_MAX_SEGMENTS_PER_CALL, 1) }),
+    );
+    expect(res.status).not.toBe(400);
+  });
+
+  // Finding 1c — total-char-budget refinement (zod .superRefine, since
+  // no single field's .max() can express a sum across the array).
+  // textLen stays <= 1500 (SegmentSchema's own per-segment cap) on
+  // every case below, so these isolate the NEW sum-across-the-array
+  // check rather than incidentally tripping the pre-existing per-field
+  // one.
+  it("rejects a body whose total segment text exceeds CORRECT_MAX_TOTAL_CHARS_PER_CALL with 400 bad_request", async () => {
+    // 20 * 1300 = 26,000 > 24,000, each segment (1300) well under 1500.
+    const res = await POST(makeRequest({ ...baseBody, segments: makeSegments(20, 1300) }));
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.code).toBe("bad_request");
+  });
+
+  it("accepts a body whose total segment text is exactly at CORRECT_MAX_TOTAL_CHARS_PER_CALL (NOT rejected by the char-budget guard)", async () => {
+    // 16 * 1500 = 24,000 exactly.
+    const textLen = CORRECT_MAX_TOTAL_CHARS_PER_CALL / 16;
+    const res = await POST(makeRequest({ ...baseBody, segments: makeSegments(16, textLen) }));
+    expect(res.status).not.toBe(400);
+  });
+
+  // lexicon term length stays <= 200 (the existing per-term cap) on
+  // every case below, same isolation rationale as above.
+  it("rejects a lexicon whose total characters exceed CORRECT_MAX_LEXICON_CHARS with 400 bad_request, even under the 500-term array cap", async () => {
+    // 21 terms * 200 = 4,200 > 4,000.
+    const res = await POST(
+      makeRequest({
+        ...baseBody,
+        segments: makeSegments(1, 5),
+        lexicon: Array.from({ length: 21 }, () => "x".repeat(200)),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.code).toBe("bad_request");
+  });
+
+  it("accepts a lexicon at exactly CORRECT_MAX_LEXICON_CHARS total characters", async () => {
+    // 20 terms * 200 = 4,000 exactly.
+    const termLen = 200;
+    const termCount = CORRECT_MAX_LEXICON_CHARS / termLen;
+    const res = await POST(
+      makeRequest({
+        ...baseBody,
+        segments: makeSegments(1, 5),
+        lexicon: Array.from({ length: termCount }, () => "x".repeat(termLen)),
+      }),
+    );
     expect(res.status).not.toBe(400);
   });
 

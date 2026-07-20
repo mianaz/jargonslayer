@@ -41,8 +41,8 @@ vi.mock("@/lib/llm/client", () => ({
 }));
 
 import { useApp } from "@/lib/store";
-import { DEFAULT_SETTINGS, type Settings, type TranscriptSegment } from "@jargonslayer/core/types";
-import { NoKeyError } from "@/lib/llm/client";
+import { DEFAULT_SETTINGS, type CorrectRequest, type Settings, type TranscriptSegment } from "@jargonslayer/core/types";
+import { NoKeyError, UpstreamError } from "@/lib/llm/client";
 import CorrectionReview from "../CorrectionReview";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
@@ -145,6 +145,65 @@ describe("CorrectionReview", () => {
     await openReview();
 
     expect(container!.textContent).toContain("未发现需要校正的内容");
+  });
+
+  // ---------------- chunking — long meetings split into windows (Finding 1) ----------------
+
+  it("chunks a long meeting into multiple windows (each ≤ the per-call segment cap) and merges corrections by id", async () => {
+    // 90 segments, short text -> the 40-segment COUNT cap (not the char
+    // cap) closes each window: [0..39], [40..79], [80..89] = 3 windows.
+    const segs = Array.from({ length: 90 }, (_, i) => seg({ id: `s${i}`, text: `orig-${i}` }));
+    useApp.setState({
+      segments: segs,
+      status: "stopped",
+      settings: makeSettings(),
+      activeSessionId: "sess-1",
+    });
+    mockCorrectApi.mockImplementation(async (body: CorrectRequest) => ({
+      corrections: body.segments.map((s) => ({ id: s.id, text: `fixed-${s.id}` })),
+    }));
+
+    await openReview();
+
+    expect(mockCorrectApi).toHaveBeenCalledTimes(3);
+    for (const call of mockCorrectApi.mock.calls) {
+      const body = call[0] as CorrectRequest;
+      expect(body.segments.length).toBeLessThanOrEqual(40);
+    }
+    // A row from each window landed, correctly merged by id.
+    expect(container!.querySelector('[data-testid="correction-row-s0"]')).toBeTruthy();
+    expect(container!.querySelector('[data-testid="correction-row-s39"]')).toBeTruthy();
+    expect(container!.querySelector('[data-testid="correction-row-s40"]')).toBeTruthy();
+    expect(container!.querySelector('[data-testid="correction-row-s89"]')).toBeTruthy();
+  });
+
+  it("a failed middle window leaves its segments unchanged while the other windows' corrections still apply", async () => {
+    const segs = Array.from({ length: 90 }, (_, i) => seg({ id: `s${i}`, text: `orig-${i}` }));
+    useApp.setState({
+      segments: segs,
+      status: "stopped",
+      settings: makeSettings(),
+      activeSessionId: "sess-1",
+    });
+    let callCount = 0;
+    mockCorrectApi.mockImplementation(async (body: CorrectRequest) => {
+      callCount += 1;
+      if (callCount === 2) throw new UpstreamError("模型请求失败");
+      return { corrections: body.segments.map((s) => ({ id: s.id, text: `fixed-${s.id}` })) };
+    });
+
+    await openReview();
+
+    expect(mockCorrectApi).toHaveBeenCalledTimes(3);
+    // Window 1 (s0..s39) and window 3 (s80..s89) applied.
+    expect(container!.querySelector('[data-testid="correction-row-s0"]')).toBeTruthy();
+    expect(container!.querySelector('[data-testid="correction-row-s89"]')).toBeTruthy();
+    // Window 2 (s40..s79) failed -> its segments show no row (unchanged),
+    // and the failure did NOT block the other windows or the whole review.
+    expect(container!.querySelector('[data-testid="correction-row-s40"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="correction-row-s79"]')).toBeNull();
+    expect(useApp.getState().segments.find((s) => s.id === "s40")?.text).toBe("orig-40");
+    expect(container!.textContent).not.toContain("AI 校正失败");
   });
 
   // ---------------- accept / ignore / accept-all ----------------
@@ -259,6 +318,35 @@ describe("CorrectionReview", () => {
     expect(container!.querySelector('[data-testid="correction-row-s1"]')?.getAttribute("data-status")).toBe(
       "conflict",
     );
+  });
+
+  // Finding 3 fix (pre-merge review): acceptOne's own snapshot check
+  // (session/gen/text) does NOT cover status — store.ts's
+  // updateSegmentText has a SEPARATE stopped-only tripwire. Flip status
+  // away from "stopped" WITHOUT touching session/gen/segment text, so
+  // the snapshot check alone sees no conflict — only updateSegmentText's
+  // now-boolean return catches this.
+  it("acceptance is refused with a conflict marker when updateSegmentText itself refuses (status flips away from 'stopped' without changing session/gen/text)", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1", text: "original" })],
+      status: "stopped",
+      settings: makeSettings(),
+      activeSessionId: "sess-1",
+      meetingGen: 1,
+    });
+    mockCorrectApi.mockResolvedValue({ corrections: [{ id: "s1", text: "proposed-fix" }] });
+    await openReview();
+
+    useApp.setState({ status: "listening" });
+
+    const acceptBtn = container!.querySelector('[data-testid="correction-accept-s1"]') as HTMLButtonElement;
+    await act(async () => acceptBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    // The refused write must survive untouched — never silently marked accepted.
+    expect(useApp.getState().segments.find((s) => s.id === "s1")?.text).toBe("original");
+    const row = container!.querySelector('[data-testid="correction-row-s1"]');
+    expect(row?.getAttribute("data-status")).toBe("conflict");
+    expect(row?.textContent).toContain("内容已变化");
   });
 
   // ---------------- one-shot batch retranslate of accepted rows ----------------
