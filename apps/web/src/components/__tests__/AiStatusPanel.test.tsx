@@ -14,6 +14,7 @@ import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import AiStatusPanel, {
   AI_STATUS_ERROR_KIND_LABEL,
   AI_STATUS_ZERO_CONFIG_BANNER,
+  describeErrorKind,
   describeRouting,
 } from "../AiStatusPanel";
 
@@ -150,6 +151,27 @@ describe("AiStatusPanel", () => {
     expect(text).toContain(AI_STATUS_ERROR_KIND_LABEL.upstream);
   });
 
+  // S14.1 field fix (item 4): the short kind label alone ("限流") didn't
+  // tell the owner WHY — a plain-language explanation line now rides
+  // alongside it, per-row, sourced from the SAME lastErrorKind telemetry
+  // already being recorded (no new state).
+  it("the failure explanation line renders alongside the existing kind label, keyed to the failing row", async () => {
+    recordLlmCall("translate", { kind: "ratelimit" });
+    render();
+    await act(async () => {
+      root!.render(<AiStatusPanel />);
+    });
+
+    const explanation = container!.querySelector(
+      '[data-testid="ai-status-error-translate"]',
+    );
+    expect(explanation).not.toBeNull();
+    expect(explanation!.textContent).toContain(AI_STATUS_ERROR_KIND_LABEL.ratelimit);
+    expect(explanation!.textContent).toContain(describeErrorKind("ratelimit"));
+    // A row that never failed has no explanation line at all.
+    expect(container!.querySelector('[data-testid="ai-status-error-detect"]')).toBeNull();
+  });
+
   it("zero-config banner shows the full/desktop keyless copy when apiKey is empty (ambient test env is not preview tier)", async () => {
     useApp.setState((s) => ({ settings: { ...s.settings, apiKey: "" } }));
     render();
@@ -232,5 +254,36 @@ describe("AiStatusPanel — describeRouting is tier-aware", () => {
 
   it("a present apiKey always wins regardless of tier -> 自带 Key", () => {
     expect(describeRouting("sk-real")).toBe("自带 Key");
+  });
+});
+
+// S14.1 field fix (item 4): describeErrorKind's ratelimit branch is
+// tier-aware for the same reason describeRouting is (a preview user
+// hit OUR OWN proxy's budget; a BYOK user hit their OWN provider's) —
+// same vi.resetModules + dynamic-reimport technique as the describe
+// block directly above, reused verbatim rather than re-derived.
+describe("AiStatusPanel — describeErrorKind is tier-aware for ratelimit", () => {
+  const originalTier = process.env.NEXT_PUBLIC_DEPLOY_TIER;
+
+  afterEach(() => {
+    if (originalTier === undefined) delete process.env.NEXT_PUBLIC_DEPLOY_TIER;
+    else process.env.NEXT_PUBLIC_DEPLOY_TIER = originalTier;
+    vi.resetModules();
+  });
+
+  it("nokey and upstream explanations are tier-independent", () => {
+    expect(describeErrorKind("nokey")).toBe("未配置 API Key，已回退到词典检测");
+    expect(describeErrorKind("upstream")).toBe("上游服务请求失败，请稍后重试");
+  });
+
+  it("full/desktop tier (this file's own ordinary static import, ambient env): ratelimit blames the provider, not 体验版", () => {
+    expect(describeErrorKind("ratelimit")).toBe("请求过于频繁，请检查该服务商的 API 额度");
+  });
+
+  it("preview tier (dynamic re-import under NEXT_PUBLIC_DEPLOY_TIER=preview): ratelimit blames the shared preview budget", async () => {
+    process.env.NEXT_PUBLIC_DEPLOY_TIER = "preview";
+    vi.resetModules();
+    const mod = await import("../AiStatusPanel");
+    expect(mod.describeErrorKind("ratelimit")).toBe("请求过于频繁（体验版限流）");
   });
 });

@@ -17,6 +17,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  ClipboardText,
   ClockCounterClockwise,
   GearSix,
   GraduationCap,
@@ -38,6 +39,7 @@ import { ENGINE_OPTIONS, RETENTION_COPY, resolveEngineRetentionClass } from "@/l
 import { selectRunningCount, useTasks } from "@/lib/tasks/registry";
 import { useUpdateCheck } from "@/lib/desktop/updateCheck";
 import { useCaptionPip } from "@/lib/captionWindow";
+import { copyDiagnosticReport } from "@/lib/diag/report";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -341,10 +343,23 @@ function HamburgerMenu({
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
   const newMeeting = useApp((s) => s.newMeeting);
+  const showToast = useApp((s) => s.showToast);
   // Includes "paused": starting the demo begins a NEW meeting, which
   // would silently clobber a paused one the user intends to resume.
   const meetingActive =
     status === "connecting" || status === "listening" || status === "paused";
+
+  // S14.1 field fix (item 7b): the pre-existing 复制诊断信息 affordance
+  // (SettingsDialog.tsx's own 诊断信息 block) is gated behind 高级
+  // uiMode AND buried a category deep — not a quick reach mid field-
+  // test. This is the SAME buildDiagnosticReport bundle, same
+  // clipboard helper (lib/diag/report.ts's copyDiagnosticReport,
+  // already shared by Toast.tsx's ref-carrying-toast action and that
+  // Settings block), just reachable from every uiMode in two taps.
+  const handleCopyDiagnostics = async () => {
+    const ok = await copyDiagnosticReport(useApp.getState().settings);
+    showToast(ok ? "诊断信息已复制到剪贴板" : "复制失败，请检查浏览器剪贴板权限");
+  };
 
   // 悬浮字幕 (S14): desktop toggles the store's captionMode (page.tsx
   // swaps its whole layout for FloatingCaption + shrinks this window —
@@ -495,6 +510,19 @@ function HamburgerMenu({
           >
             <Question size={16} weight="regular" />
             帮助
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            data-testid="btn-copy-diagnostics"
+            onClick={() => {
+              setOpen(false);
+              void handleCopyDiagnostics();
+            }}
+            className={itemCls}
+          >
+            <ClipboardText size={16} weight="regular" />
+            复制诊断信息
           </button>
 
           {activeSessionId && status === "stopped" && (

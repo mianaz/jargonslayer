@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 import { PencilSimple, Play } from "@phosphor-icons/react";
-import { useApp } from "../lib/store";
+import { useApp, type LookupRequest } from "../lib/store";
 import {
   buildHighlightMatcher,
   MAX_HIGHLIGHT_PER_KIND,
@@ -35,6 +35,12 @@ const HOVER_LEAVE_DELAY_MS = 200;
 // transition to null (a final just landed) always commits immediately,
 // never throttled, so there's no stale interim flash after a final.
 export const INTERIM_THROTTLE_MS = 125;
+// S14.1 field fix (item 3, mobile selection lookup): how long the
+// touch action-bar waits after the LAST selectionchange event before
+// re-reading the selection — iOS fires a burst of these while the
+// native grab-handles are being dragged, so a bare (undebounced)
+// listener would re-render/re-measure on every intermediate frame.
+export const TOUCH_LOOKUP_DEBOUNCE_MS = 400;
 
 // v0.2.1 transcript-only display settings (Settings → 显示): numeric
 // multipliers for the --ts-scale / --ts-leading custom properties
@@ -724,6 +730,46 @@ export function InterimLine({ onGrow }: { onGrow?: () => void }) {
   );
 }
 
+// Selection -> LookupRequest (S14.1 field fix, item 3): shared by the
+// desktop mouseup handler AND the touch action-bar debounced
+// selectionchange handler below, so the two entry points can never
+// silently drift on the length/context-walk rules — same length
+// bounds and `data-segment-text` context-walk the original mouseup-only
+// version always had. `container` is whatever DOM node the selection
+// must live inside (the transcript scroll container) — returns null
+// for every case that should be a silent no-op (nothing selected,
+// selection collapsed, too short/long, or anchored outside the
+// transcript).
+function selectionLookupRequest(container: HTMLElement): LookupRequest | null {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed) return null;
+
+  const text = selection.toString().trim();
+  if (text.length < 2 || text.length > 120) return null;
+
+  const anchorNode = selection.anchorNode;
+  if (!anchorNode || !container.contains(anchorNode)) return null;
+
+  // Find the enclosing segment row to recover full-sentence context.
+  let el: HTMLElement | null =
+    anchorNode.nodeType === Node.ELEMENT_NODE
+      ? (anchorNode as HTMLElement)
+      : anchorNode.parentElement;
+  let contextText = text;
+  while (el && el !== container) {
+    if (el.dataset.segmentText) {
+      contextText = el.dataset.segmentText;
+      break;
+    }
+    el = el.parentElement;
+  }
+
+  const range = selection.getRangeAt(0);
+  const rect = range.getBoundingClientRect();
+
+  return { text, contextText, x: rect.left, y: rect.bottom };
+}
+
 export interface TranscriptPanelProps {
   // Empty-state demo CTA (E2E feedback): optional so every existing
   // render-test call site (`<TranscriptPanel />`, no props) keeps
@@ -1139,39 +1185,60 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
     if (e.detail >= 2 || editingSegmentId) return;
     const container = containerRef.current;
     if (!container) return;
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) return;
-
-    const text = selection.toString().trim();
-    if (text.length < 2 || text.length > 120) return;
-
-    const anchorNode = selection.anchorNode;
-    if (!anchorNode || !container.contains(anchorNode)) return;
-
-    // Find the enclosing segment row to recover full-sentence context.
-    let el: HTMLElement | null =
-      anchorNode.nodeType === Node.ELEMENT_NODE
-        ? (anchorNode as HTMLElement)
-        : anchorNode.parentElement;
-    let contextText = text;
-    while (el && el !== container) {
-      if (el.dataset.segmentText) {
-        contextText = el.dataset.segmentText;
-        break;
-      }
-      el = el.parentElement;
-    }
-
-    const range = selection.getRangeAt(0);
-    const rect = range.getBoundingClientRect();
-
-    setLookup({
-      text,
-      contextText,
-      x: rect.left,
-      y: rect.bottom,
-    });
+    const req = selectionLookupRequest(container);
+    if (req) setLookup(req);
   };
+
+  // S14.1 field fix (item 3): mobile Safari's own text-selection
+  // callout (Copy/Look Up/…) owns mouseup-equivalent gestures on touch
+  // — there's no reliable, non-fighting way to pop LookupPopover
+  // straight off a touch selection the way handleMouseUp does for a
+  // mouse. Instead: watch document-level selectionchange (debounced —
+  // it fires repeatedly while the native grab-handles are dragged) and,
+  // once a selection settles inside this transcript on a coarse
+  // (touch) pointer, surface a small fixed action bar above StatusLine
+  // that runs the exact same selectionLookupRequest → setLookup flow
+  // handleMouseUp uses. Desktop (fine pointer) never sets isCoarsePointer
+  // true, so this whole path — listener, state, bar — stays inert
+  // there; the mouse path above is untouched.
+  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
+  const [touchSelection, setTouchSelection] = useState<LookupRequest | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const mq = window.matchMedia("(pointer: coarse)");
+    const apply = () => setIsCoarsePointer(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    if (!isCoarsePointer) {
+      setTouchSelection(null);
+      return;
+    }
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const onSelectionChange = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = null;
+        const container = containerRef.current;
+        // No editingSegmentId gate here (unlike handleMouseUp): a
+        // touch selection made while a segment is mid-edit would be
+        // inside the edit <textarea>, not this scroll container, so
+        // selectionLookupRequest's own contains() check already
+        // excludes it.
+        setTouchSelection(container ? selectionLookupRequest(container) : null);
+      }, TOUCH_LOOKUP_DEBOUNCE_MS);
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      document.removeEventListener("selectionchange", onSelectionChange);
+    };
+  }, [isCoarsePointer]);
 
   return (
     <div
@@ -1212,8 +1279,18 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
 
       <div
         ref={containerRef}
+        // S14.1 field fix (iPhone Safari, ~390px): the 1st segment's
+        // 1st line rendered partially covered by the h-14 fixed page
+        // Header above (page.tsx) — this container otherwise starts
+        // its content flush at scrollTop:0 with zero clearance, so
+        // anything (a mobile-Safari sticky/flex rendering quirk) that
+        // makes Header paint over the top edge hides it. pt-14 matches
+        // Header's own h-14 exactly (only ever spends space once, at
+        // the very top of the whole list — scrolls away immediately
+        // after); scroll-pt-14 gives the same clearance to any future
+        // scrollIntoView/anchor jump landing near the top.
         data-testid="transcript-scroll"
-        className="scroll-thin flex-1 overflow-y-auto"
+        className="scroll-thin flex-1 overflow-y-auto pt-14 scroll-pt-14"
         onScroll={handleScroll}
         onMouseUp={handleMouseUp}
       >
@@ -1333,6 +1410,32 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
       )}
 
       <CorrectionReview open={correctionOpen} onClose={() => setCorrectionOpen(false)} />
+
+{/* S14.1 field fix (item 3): touch-only selection action bar —
+          see the selectionchange effect above. `fixed` (not `absolute`
+          like the ↓ 回到底部 button above) since it must sit above
+          StatusLine (page.tsx, outside this component's own box, h-7 —
+          bottom-7 matches it exactly), not just the bottom of this
+          panel's own possibly-mid-page box on mobile. */}
+      {touchSelection && (
+        <div
+          data-testid="touch-lookup-bar"
+          className="fixed inset-x-0 bottom-7 z-40 flex justify-center border-t border-edge bg-panel2 px-3 py-2"
+        >
+          <button
+            type="button"
+            data-testid="btn-touch-lookup"
+            onClick={() => {
+              setLookup(touchSelection);
+              setTouchSelection(null);
+            }}
+            className="btn-terminal flex items-center gap-1.5 bg-act px-4 py-1.5 font-mono text-xs font-semibold text-ink hover:bg-act/85"
+          >
+            解释所选
+          </button>
+        </div>
+      )}
+
     </div>
   );
 }

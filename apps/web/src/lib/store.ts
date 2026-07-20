@@ -441,7 +441,16 @@ interface AppState {
 
   // ---- actions ----
   hydrate: () => Promise<void>;
-  updateSettings: (patch: Partial<Settings>) => void;
+  // `opts.persist` (S14.1 field fix, default true): useMeeting.ts's
+  // startDemo passes `{ persist: false }` when setting engine:"demo" —
+  // a live demo session is entirely in-memory (settings.engine is read
+  // live by attachEngine/addFinal for the duration of that one tab
+  // session) and never needs to survive a reload, so writing it to
+  // storage only risks stranding a returning user on a start button
+  // that silently replays the demo (see applyTierDefaults' own doc for
+  // the exact field report this closes). Every other call site omits
+  // `opts` and persists exactly as before.
+  updateSettings: (patch: Partial<Settings>, opts?: { persist?: boolean }) => void;
 
   setStatus: (status: MeetingStatus, detail?: string | null) => void;
   setSttEngineMode: (mode: OnDeviceMode | null) => void;
@@ -653,50 +662,42 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *  without depending on the PREVIEW_TIER build-time env const (tests
  *  pass `isPreview` directly; migrateSettings below is the only real
  *  caller, feeding it the actual PREVIEW_TIER). Two independent
- *  coercions, both no-ops when `isPreview` is false (full tier
+ *  coercion groups, both no-ops when `isPreview` is false (full tier
  *  unaffected):
  *   1. A saved engine of "whisper"/"tabaudio" (sidecar-only, greyed in
  *      preview — see Header.tsx's ENGINE_OPTIONS) OR "soniox"/"deepgram"
  *      (BYOK cloud, same preview lock via ENGINE_OPTIONS' byokOnly —
- *      v0.4 S4 blueprint decision E / v0.4.7 Lane D) is coerced to
- *      "webspeech" so a returning preview user's start button still does
- *      real transcription instead of silently trying a disabled engine.
- *      "appaudio" joins this list too (S9/D7) — structurally, not
- *      because it's ever actually reachable here: appaudio is
- *      desktop-only, and the preview tier is a hosted WEB build, so
- *      applyPlatformEngineDefaults above would already have coerced any
- *      stored "appaudio" away to "tabaudio" before this function ever
- *      sees it on a real preview build (migrateSettings runs both,
- *      platform first) — same "extend the engine-legality function even
- *      though this exact build can't reach it" posture soniox's own
- *      listing here already set as precedent. "osspeech" (S11, v0.4.3)
- *      joins for the IDENTICAL structural-only reason — also
- *      desktop/Tauri-only, so applyPlatformEngineDefaults would already
- *      have coerced any stored "osspeech" away to "tabaudio" on a real
- *      (web) preview build before this function ever sees it.
- *      "deepgram" (v0.4.7 Lane D) needs no such structural caveat: it IS
- *      reachable here — deepgram lives on both web and desktop (doc §5),
- *      so applyPlatformEngineDefaults never coerces it away first.
- *   2. True first run only — `hadSavedEngine` is false — is coerced
- *      from the default "demo" to "webspeech" so the start button does
- *      real transcription out of the box, without a trip to Settings.
- *      `demo` stays reachable via the ≡ menu at any time (see
- *      useMeeting.ts's startDemo, which persists engine:"demo" itself)
- *      — this coercion only fires when there was NO saved engine key
- *      at all, never when a returning user's own saved value happens
- *      to equal "demo" (e.g. they last quit mid-demo).
- *
- *  v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.
- *  md §1 Feature 4 + §5 A4): "tabaudio-cloud" joins list 1 above,
- *  byokOnly same as soniox/deepgram (needs a BYOK key preview doesn't
- *  collect) — reachable here on a real preview build (tabaudio-cloud is
- *  web-only for v0.5, and preview is a hosted web build, so
- *  applyPlatformEngineDefaults never coerces it away first, unlike
- *  appaudio/osspeech's purely structural listing above). */
+ *      v0.4 S4 blueprint decision E / v0.4.7 Lane D) OR "tabaudio-cloud"
+ *      (v0.5 Wave-1 F4 + §5 A4: byokOnly, web-only, genuinely reachable
+ *      on a hosted preview build) is coerced to "webspeech" so a
+ *      returning preview user's start button still does real
+ *      transcription instead of silently trying a disabled engine.
+ *      "appaudio" joins structurally, not because it's reachable:
+ *      desktop-only, so applyPlatformEngineDefaults above already
+ *      coerced any stored "appaudio" away before this function sees it
+ *      on a real preview build (migrateSettings runs both, platform
+ *      first) — same "extend the engine-legality function even though
+ *      this exact build can't reach it" posture soniox's listing set as
+ *      precedent. "osspeech" (S11) joins for the IDENTICAL
+ *      structural-only reason.
+ *   2. "demo" (S14.1 field fix — real owner report on the hosted
+ *      preview): UNCONDITIONALLY coerced now, regardless of
+ *      `_hadSavedEngine`. It used to coerce only on a true first run,
+ *      on the theory that a returning user's persisted engine:"demo"
+ *      meant "they last quit mid-demo". In the field that theory broke:
+ *      ≡ 演示 persisted engine:"demo" the moment it ran, and nothing
+ *      ever coerced it back — a returning preview user's 开始监听
+ *      silently replayed the demo forever after. Fixed at the root in
+ *      useMeeting.ts's startDemo (S14.1): it no longer persists
+ *      engine:"demo" at all — this coercion only ever fires on a STALE
+ *      pre-fix value or a hand-edited settings blob, safe to always
+ *      redirect. `_hadSavedEngine` is kept in the signature
+ *      (migrateSettings still feeds it; other call sites pass it) but
+ *      is no longer read here. */
 export function applyTierDefaults(
   settings: Settings,
   isPreview: boolean,
-  hadSavedEngine: boolean,
+  _hadSavedEngine: boolean,
 ): Settings {
   if (!isPreview) return settings;
   if (
@@ -706,11 +707,9 @@ export function applyTierDefaults(
     settings.engine === "appaudio" ||
     settings.engine === "osspeech" ||
     settings.engine === "soniox" ||
-    settings.engine === "deepgram"
+    settings.engine === "deepgram" ||
+    settings.engine === "demo"
   ) {
-    return { ...settings, engine: "webspeech" };
-  }
-  if (!hadSavedEngine && settings.engine === "demo") {
     return { ...settings, engine: "webspeech" };
   }
   return settings;
@@ -1145,10 +1144,12 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
-  updateSettings: (patch) => {
+  updateSettings: (patch, opts) => {
     const settings = { ...get().settings, ...patch };
     set({ settings });
-    void storage.saveSettings(settings);
+    if (opts?.persist !== false) {
+      void storage.saveSettings(settings);
+    }
     // Display settings (v0.2.1): live-apply a theme change immediately
     // (rather than waiting for a reload) and mirror themeId/fontSize
     // to localStorage so the FOUC script can read them synchronously

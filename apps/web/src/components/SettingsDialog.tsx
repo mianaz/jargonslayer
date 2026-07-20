@@ -1895,9 +1895,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         : "border-edge text-fg hover:bg-panel3"
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">{opt.label}</span>
-                      <span className="flex shrink-0 items-center gap-1.5">
+                    {/* S14.1 field fix (item 5): at 375-390px this row
+                       had no wrap/shrink escape hatch — a long label
+                       (Soniox 云端识别, 系统识别 · 开箱即用) plus a
+                       shrink-0 badge cluster (up to 3 on preview tier:
+                       本地版功能 + 实验 + 本地/云端) simply overflowed the
+                       card's own border ("本地 box outside the bigger
+                       box"). flex-wrap lets the badge cluster drop to
+                       its own line INSIDE the card instead of spilling
+                       past it; min-w-0 on the label lets IT shrink/wrap
+                       too rather than forcing the row wider than the
+                       card. gap-y-1 only matters once wrapped. */}
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                      <span className="min-w-0 font-medium">{opt.label}</span>
+                      <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         {previewLocked && <PreviewLockedBadge />}
                         {/* 实验 tag (v0.4 S4): every byokOnly engine is,
                            by definition, opt-in experimental until its

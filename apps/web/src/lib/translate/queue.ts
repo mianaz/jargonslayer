@@ -14,6 +14,7 @@
 import { NoKeyError, RateLimitApiError } from "../llm/client";
 import { SystemTranslatorUnavailableError, type TranslationProvider } from "./providers";
 import type { Settings, TranscriptSegment } from "@jargonslayer/core/types";
+import { diagLog } from "../diag/log";
 
 export interface TranslateQueueOptions {
   getSettings: () => Settings;
@@ -36,8 +37,27 @@ export interface TranslateQueueOptions {
 // Tunables — see IMPLEMENT step 5 in the feature spec for rationale.
 // ---------------------------------------------------------------
 
-const DEBOUNCE_MS = 1500;
-const BATCH_MAX = 6;
+// S14.1 field fix (item 8b, real owner report): "翻译 does not appear
+// per-chunk/segment — it appears all in one go for all segments in a
+// period of time." Root cause is two tunables compounding: DEBOUNCE_MS
+// delays even the FIRST flush of a quiet period, and — the bigger
+// contributor — tryFlush() only ever has ONE batch in flight
+// (`inflight`, see below); every segment finalized while an LLM
+// round-trip is pending (multiple seconds, routinely longer than the
+// old debounce) just piles up in `pending` and ships as one big batch
+// the moment the previous one clears, instead of trickling in. Not
+// redesigning the single-inflight queue itself (a provider-injection
+// refactor is coming in another lane) — just shrinking both knobs so
+// each wave is smaller/sooner: DEBOUNCE_MS 1500->800 (less wait before
+// the FIRST flush of any quiet period), BATCH_MAX 6->3 (a busy-talk
+// backlog now ships in 2 waves of <=3 instead of 1 wave of <=6, so the
+// first few translations land roughly one LLM round-trip sooner).
+// Request count roughly doubles ONLY during a genuine sustained-talk
+// backlog (bounded, not exploding — the common case, one segment
+// arriving well after the previous batch cleared, is still exactly
+// one request either way).
+const DEBOUNCE_MS = 800;
+const BATCH_MAX = 3;
 const MAX_TEXT_CHARS = 1500;
 const RATE_LIMIT_PAUSE_MS = 30_000;
 const ERROR_COOLDOWN_MS = 5_000;
@@ -58,6 +78,27 @@ const SYSTEM_UNAVAILABLE_PAUSE_MS = 60_000;
 // failures (~2.5min at the 30s pause above) gives up on that one
 // batch (segments stay English-only) so the queue can move on.
 const MAX_CONSECUTIVE_RATE_LIMITS = 5;
+// S14.1 field fix (item 8a, real owner report): "翻译 missing some
+// middle parts if we pause-restart-pause." pushSegment/onFinal have no
+// status gate and nothing resets `pending` on pause (verified by
+// reading useMeeting.ts's pause()/resume() — a soft OR teardown pause
+// either keeps this same queue instance alive untouched, or its
+// engine.stop() flushes the in-flight tail through the SAME onFinal ->
+// pushSegment path as any other final) — so a segment is never
+// SKIPPED at enqueue time around a pause/resume boundary. The actual
+// gap: this used to be a Set (each item got exactly ONE retry, ever,
+// for the whole meeting — see the old failedOnce doc below, kept
+// verbatim in git history) — a single transient failure (mobile
+// Safari backgrounding a paused tab routinely stalls/aborts an
+// in-flight fetch, which is disproportionately likely to be happening
+// right around a pause) burned that one retry and left the segment
+// silently, PERMANENTLY English-only for the rest of the meeting, with
+// only a console.warn no phone field session could ever see. Retries
+// are now counted per-segment (retryCount, below) up to this cap
+// instead — a segment stays eligible across however many
+// debounce/cooldown cycles it takes, which naturally spans a
+// pause/resume with no separate "resume" hook needed.
+const MAX_RETRIES_PER_SEGMENT = 3;
 
 interface PendingItem {
   id: string;
@@ -89,11 +130,12 @@ export class TranslateQueue {
   // meeting too — same one-shot rationale as noKeyToastShown.
   private systemUnavailableToastShown = false;
   private consecutiveRateLimits = 0; // reset on any successful batch
-  // Segment ids that already burned their one generic-error retry —
-  // a transient 5xx (the flaky-endpoint case, e.g. upstream 502s)
-  // used to drop a whole 6-segment batch permanently; now each item
-  // gets exactly one second chance before staying English-only.
-  private failedOnce = new Set<string>();
+  // Per-segment generic-error retry attempts so far (S14.1 field fix,
+  // item 8a — see MAX_RETRIES_PER_SEGMENT's own doc above for why this
+  // replaced a one-shot Set). Not cleared on success for an id that
+  // never actually retried (the common case) — only ever read/written
+  // for an id that has failed at least once, so this stays small.
+  private retryCount = new Map<string, number>();
 
   constructor(private opts: TranslateQueueOptions) {}
 
@@ -290,6 +332,16 @@ export class TranslateQueue {
         // than reorder-block indefinitely. Still pause 30s so whatever
         // batch runs next doesn't fire immediately into the same 429.
         this.consecutiveRateLimits = 0;
+        // S14.1 field fix (item 8a): this drop used to be silent —
+        // diagLog so a field run's timeline shows which/how many
+        // segments this was (same "make a silent failure visible"
+        // motivation as webSpeech.ts's own item 7a additions).
+        diagLog(
+          "warn",
+          "translate-queue",
+          "gave up on a batch after repeated rate-limit failures — staying English-only",
+          `count=${batch.items.length} consecutiveRateLimits=${MAX_CONSECUTIVE_RATE_LIMITS}`,
+        );
         this.pauseFor(RATE_LIMIT_PAUSE_MS);
         return;
       }
@@ -301,18 +353,34 @@ export class TranslateQueue {
       return;
     }
 
-    // Any other error: re-queue each item ONCE (transient 5xx / flaky
-    // endpoint should not silently strip translations from six
-    // segments at a time); an item that fails its retry too is dropped
-    // for good (stays English-only). The cooldown still spaces the
-    // retry so a down endpoint isn't hammered on every debounce tick.
-    const retriable = batch.items.filter((it) => !this.failedOnce.has(it.id));
-    for (const it of retriable) this.failedOnce.add(it.id);
+    // Any other error: re-queue each item up to MAX_RETRIES_PER_SEGMENT
+    // times (see that constant's own doc — S14.1 item 8a) instead of
+    // the old one-shot Set; an item that exhausts every attempt is
+    // still dropped (unbounded retries would let one poisoned segment
+    // loop forever) but now diagLog's the drop instead of only a
+    // console.warn no mobile field session could ever see. The
+    // cooldown still spaces the retry so a down endpoint isn't
+    // hammered on every debounce tick.
+    const retriable = batch.items.filter(
+      (it) => (this.retryCount.get(it.id) ?? 0) < MAX_RETRIES_PER_SEGMENT,
+    );
+    const exhaustedCount = batch.items.length - retriable.length;
+    for (const it of retriable) {
+      this.retryCount.set(it.id, (this.retryCount.get(it.id) ?? 0) + 1);
+    }
     if (retriable.length > 0) {
       this.pending = [...retriable, ...this.pending];
     }
+    if (exhaustedCount > 0) {
+      diagLog(
+        "warn",
+        "translate-queue",
+        "segment(s) gave up on translation after repeated errors — staying English-only",
+        `count=${exhaustedCount} maxRetries=${MAX_RETRIES_PER_SEGMENT}`,
+      );
+    }
     console.warn(
-      `[TranslateQueue] batch error — retrying ${retriable.length}/${batch.items.length} once`,
+      `[TranslateQueue] batch error — retrying ${retriable.length}/${batch.items.length}`,
       err,
     );
     this.pauseFor(ERROR_COOLDOWN_MS);

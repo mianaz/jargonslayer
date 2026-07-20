@@ -188,7 +188,23 @@ function AiStatusChip() {
         <div
           role="dialog"
           data-testid="statusline-ai-status-popover"
-          className="absolute bottom-[calc(100%+4px)] left-0 z-30 w-72 border border-edge bg-panel2 p-3 shadow-lg"
+          // S14.1 field fix (item 4): the ORIGINAL absolute/left-0/w-72
+          // anchors the popover to THIS chip's own left edge — fine on
+          // desktop, but the chip sits well right of the viewport's own
+          // left edge (mode chip + detect toggle precede it), so a
+          // fixed 288px-wide box extending further right from there
+          // overflowed a 390px phone screen and got cropped by the
+          // page's own overflow-hidden root (no way to scroll to the
+          // clipped part). Below sm: `fixed` + small viewport-relative
+          // margins (inset-x-2) instead — anchored to the VIEWPORT, not
+          // this chip's arbitrary x-position, so it can never overflow
+          // regardless of where the chip renders; max-h-[60vh] +
+          // overflow-y-auto give it internal scroll if the 4 rows (esp.
+          // with a failure explanation line, see AiStatusPanel.tsx)
+          // are taller than the space above the bar. sm+ (tablet/
+          // desktop, where this was never reported broken): reverts to
+          // the exact original chip-anchored box, untouched.
+          className="scroll-thin fixed inset-x-2 bottom-8 z-30 max-h-[60vh] overflow-y-auto border border-edge bg-panel2 p-3 shadow-lg sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+4px)] sm:left-0 sm:w-72 sm:max-h-none sm:overflow-visible"
         >
           <AiStatusPanel />
         </div>

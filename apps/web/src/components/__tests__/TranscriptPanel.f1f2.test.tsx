@@ -45,6 +45,21 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
 
   beforeEach(() => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no matchMedia — S14.1's touch-selection effect (merged
+    // from dev after this suite was authored) checks `(pointer: coarse)`
+    // on every TranscriptPanel mount; same stub convention as
+    // TranscriptPanel.render.test.tsx / StatusLine.test.tsx, defaulting
+    // to a fine/mouse pointer since nothing here exercises touch.
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
