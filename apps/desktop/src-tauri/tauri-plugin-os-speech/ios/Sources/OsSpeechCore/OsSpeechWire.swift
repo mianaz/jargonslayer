@@ -187,4 +187,9 @@ public enum OsSpeechEvent {
 /// value both `capabilities().reason` and the command `Err` carry).
 public enum OsSpeechFloor {
   public static let unsupportedReason = "需要 iOS 26 或更高版本"
+  // S13.1 spike finding: past-the-floor but SpeechTranscriber definitively
+  // unavailable (Simulator; hypothetical unsupported hardware) — the
+  // start/preinstall runtime re-check rejects with this instead of
+  // resolving into a silently stuck session.
+  public static let transcriberUnavailableReason = "此设备的系统语音识别不可用"
 }

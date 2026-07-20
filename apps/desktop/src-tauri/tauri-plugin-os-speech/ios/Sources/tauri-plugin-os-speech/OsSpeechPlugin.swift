@@ -111,6 +111,16 @@ class OsSpeechPlugin: Plugin {
       invoke.reject(OsSpeechFloor.unsupportedReason)
       return
     }
+    // S13.1 spike finding: the version floor alone left a hole — a device
+    // (or the Simulator) past the floor but with SpeechTranscriber
+    // definitively unavailable would get a resolved start and a silently
+    // stuck session. Same fail-closed rule as capabilities() (D9:
+    // definitive-false refuses; "UI gating is not a boundary" — this is
+    // the runtime re-check for callers that bypass the locked UI option).
+    guard SpeechTranscriber.isAvailable else {
+      invoke.reject(OsSpeechFloor.transcriberUnavailableReason)
+      return
+    }
     let args = try invoke.parseArgs(StartArgs.self)
     let emit = emitter()
     // `beginSession` is actor-isolated — implicitly async from this
@@ -204,6 +214,12 @@ class OsSpeechPlugin: Plugin {
   @objc public func preinstall(_ invoke: Invoke) throws {
     guard #available(iOS 26.0, *) else {
       invoke.reject(OsSpeechFloor.unsupportedReason)
+      return
+    }
+    // Same S13.1 runtime re-check as startTranscribe — a definitive
+    // transcriber-unavailable preinstall would download nothing useful.
+    guard SpeechTranscriber.isAvailable else {
+      invoke.reject(OsSpeechFloor.transcriberUnavailableReason)
       return
     }
     let args = try invoke.parseArgs(PreinstallArgs.self)

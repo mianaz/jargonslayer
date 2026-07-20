@@ -51,8 +51,13 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        CFBundleShortVersionString: 1.0.0
-        CFBundleVersion: "1.0.0"
+        # S13.1: keep in sync with the app version (web/desktop/core
+        # package.json + Cargo.toml — 0.4.6 at branch time). tauri ios init
+        # regenerates this file to 1.0.0; that same regen also drops the
+        # privacy keys below, which scripts/check-ios-plist.mjs catches, so
+        # a stale regen can't ship silently. Release-train step: bump here.
+        CFBundleShortVersionString: 0.4.6
+        CFBundleVersion: "0.4.6"
         # S13 review fix S4 (Sol HIGH, XcodeGen-reproduced): project.yml OWNS
         # jargonslayer_iOS/Info.plist — keys absent here are DELETED on any
         # XcodeGen regen. Missing NSMicrophoneUsageDescription = hard

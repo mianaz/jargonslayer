@@ -2389,6 +2389,24 @@ let cachedIosPromise: Promise<void> | null = null;
 async function bootstrapIos(): Promise<void> {
   const tauriFetch = await getTauriFetch();
   setTransport(tauriFetch);
+
+  // S13.1 (docs/design-explorations/s13-ios-blueprint.md) — spike
+  // harness gate: `spike_flags` echoes this launch's own argv
+  // (devspike_ios.rs), armed only by `xcrun simctl launch … --spike-
+  // osspeech`. The dynamic import keeps iosSpike.ts's own
+  // createEngine/osSpeech pull out of every ordinary iOS build/boot —
+  // best-effort try/catch so a spike-harness failure can never break a
+  // real launch.
+  try {
+    const invoke = await getInvoke();
+    const flags = await invoke<string[]>("spike_flags");
+    if (flags.includes("--spike-osspeech")) {
+      const { runIosSpike } = await import("./iosSpike");
+      await runIosSpike();
+    }
+  } catch {
+    // best-effort — see this block's own comment above.
+  }
 }
 
 /** Call once during iOS app init (app/page.tsx, mounted under IS_IOS —

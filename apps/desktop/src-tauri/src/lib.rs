@@ -39,6 +39,12 @@ mod osspeech;
 // command bridge (§D2).
 #[cfg(target_os = "ios")]
 mod osspeech_ios;
+// S13.1 (docs/design-explorations/s13-ios-blueprint.md) — the iOS
+// simulator spike harness (spike_flags/spike_report), armed by the
+// `--spike-osspeech` launch arg — see devspike_ios.rs's own header
+// comment. Same inclusion posture as osspeech_ios above.
+#[cfg(target_os = "ios")]
+mod devspike_ios;
 #[cfg(desktop)]
 mod paths;
 #[cfg(desktop)]
@@ -195,6 +201,8 @@ pub fn run() {
             osspeech_ios::resume_os_speech,
             osspeech_ios::os_speech_capabilities,
             osspeech_ios::preinstall_os_speech,
+            devspike_ios::spike_flags,
+            devspike_ios::spike_report,
         ]);
 
     let app = builder
