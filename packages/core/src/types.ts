@@ -408,7 +408,10 @@ export interface SummaryResult {
 // API error body shared by routes: { error: string, code?: "no_key" | ... }
 export interface ApiErrorBody {
   error: string;
-  code?: "no_key" | "bad_request" | "upstream" | "rate_limit";
+  // "preview_budget": the hosted preview's monthly Soniox spend cap is
+  // exhausted — client should fall back to browser 识别 (see
+  // /api/soniox/token + lib/stt/soniox.ts's mint path).
+  code?: "no_key" | "bad_request" | "upstream" | "rate_limit" | "preview_budget";
   // Diagnostics (server-side chain): a short id stamped on every 4xx/
   // 5xx response by the three routes below — see
   // lib/diag/requestId.ts. The client (llm/client.ts) folds it into
