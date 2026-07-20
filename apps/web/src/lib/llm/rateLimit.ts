@@ -20,7 +20,7 @@
 // is an API route — verified 2026-07-20, and a client-bundle import
 // would fail the build loudly rather than silently.)
 
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -190,11 +190,12 @@ const SONIOX_MONTHLY_USD = (() => {
 })();
 
 // floor(10 / 31 / (600/3600 × 0.12)) = 16 mints/day at the defaults —
-// ≈$9.92/mo worst case. Always ≥1 so a tiny monthly budget still
-// serves one trial a day rather than bricking the lane.
-const SONIOX_MINT_DAILY_TOTAL = Math.max(
-  1,
-  Math.floor(SONIOX_MONTHLY_USD / 31 / ((SONIOX_SESSION_SECONDS / 3600) * SONIOX_RT_USD_PER_HOUR)),
+// ≈$9.92/mo worst case. NO floor-of-1 (Sol re-verify, L finding): a
+// monthly budget too small to fund even one session per day derives to
+// 0 and the lane simply refuses every mint — honest, unlike rounding
+// the owner's ceiling UP past what they configured.
+const SONIOX_MINT_DAILY_TOTAL = Math.floor(
+  SONIOX_MONTHLY_USD / 31 / ((SONIOX_SESSION_SECONDS / 3600) * SONIOX_RT_USD_PER_HOUR),
 );
 
 const SONIOX_MINT_DAILY_PER_IP = (() => {
@@ -225,19 +226,29 @@ function sonioxLedgerPath(): string {
   );
 }
 
-function loadSonioxLedger(): SonioxLedger {
+/** null = the ledger EXISTS but can't be trusted (unreadable or
+ *  corrupt) — callers must fail the mint closed rather than re-grant
+ *  a full day off a wiped count (Sol re-verify 2026-07-20, M finding:
+ *  fresh-on-corrupt turned any partial write into restart amnesia).
+ *  Only ENOENT (genuinely no file yet — first mint ever, or a test's
+ *  scratch path) starts a fresh empty ledger. */
+function loadSonioxLedger(): SonioxLedger | null {
+  let raw: string;
   try {
-    const parsed = JSON.parse(readFileSync(sonioxLedgerPath(), "utf8")) as SonioxLedger;
+    raw = readFileSync(sonioxLedgerPath(), "utf8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return { days: {} };
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as SonioxLedger;
     if (parsed && typeof parsed === "object" && parsed.days && typeof parsed.days === "object") {
       return parsed;
     }
   } catch {
-    // Missing file (first mint ever) or a corrupt one (crash mid-write)
-    // — start fresh. A corrupt file forfeits at most one day's counts,
-    // and the alternative (refusing every mint until someone ssh-es in)
-    // punishes users for a filesystem hiccup.
+    // fall through — corrupt
   }
-  return { days: {} };
+  return null;
 }
 
 /** True when the ledger write landed. A ledger that cannot be
@@ -254,7 +265,13 @@ function saveSonioxLedger(ledger: SonioxLedger, dayStart: number): boolean {
     const path = sonioxLedgerPath();
     const dir = dirname(path);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(path, JSON.stringify(ledger));
+    // Atomic replace (write-temp + rename) so a crash mid-write leaves
+    // the PREVIOUS ledger intact instead of a truncated file — paired
+    // with loadSonioxLedger's fail-closed-on-corrupt, a torn write can
+    // now only ever cost availability, never budget.
+    const tmp = `${path}.tmp`;
+    writeFileSync(tmp, JSON.stringify(ledger));
+    renameSync(tmp, path);
     return true;
   } catch {
     return false;
@@ -271,6 +288,7 @@ function saveSonioxLedger(ledger: SonioxLedger, dayStart: number): boolean {
 export function allowSonioxMint(ip: string, now: number = Date.now()): boolean {
   const dayStart = utcDayStart(now);
   const ledger = loadSonioxLedger();
+  if (ledger === null) return false; // corrupt/unreadable — fail closed
   const day = (ledger.days[String(dayStart)] ??= { total: 0, perIp: {} });
   const ipCount = day.perIp[ip] ?? 0;
 
@@ -295,6 +313,7 @@ export function allowSonioxMint(ip: string, now: number = Date.now()): boolean {
 export function refundSonioxMint(ip: string, now: number = Date.now()): void {
   const dayStart = utcDayStart(now);
   const ledger = loadSonioxLedger();
+  if (ledger === null) return; // corrupt — nothing trustworthy to refund into
   const day = ledger.days[String(dayStart)];
   if (!day) return;
   day.total = Math.max(0, day.total - 1);

@@ -125,6 +125,49 @@ describe("POST /api/soniox/token", () => {
     expect((await res.json()).code).toBe("upstream");
   });
 
+  it("a reservation that fails upstream AFTER UTC midnight refunds its OWN day, leaving the new day's budget whole (route threads mintedAt)", async () => {
+    vi.useFakeTimers();
+    try {
+      const DAY_MS = 86_400_000;
+      const nearMidnight = 30 * DAY_MS - 500; // 23:59:59.5 UTC of day 29
+      vi.setSystemTime(nearMidnight);
+
+      // Upstream hangs across midnight, then fails — the refund must
+      // land on day 29's entry, not debit day 30's.
+      global.fetch = vi.fn().mockImplementation(async () => {
+        vi.setSystemTime(30 * DAY_MS + 500); // now day 30
+        throw new Error("down");
+      });
+      expect((await POST(makeRequest("6.6.6.6"))).status).toBe(502);
+
+      // Day 30: this IP still has its FULL per-IP allowance of 3 —
+      // without the mintedAt threading, the midnight refund would have
+      // pre-credited day 30 to -1/…, or (worse shape) debited a slot.
+      global.fetch = vi.fn().mockImplementation(() => Promise.resolve(mintedResponse()));
+      vi.setSystemTime(30 * DAY_MS + 61_000); // clear the burst window
+      expect((await POST(makeRequest("6.6.6.6"))).status).toBe(200);
+      vi.setSystemTime(30 * DAY_MS + 122_000);
+      expect((await POST(makeRequest("6.6.6.6"))).status).toBe(200);
+      vi.setSystemTime(30 * DAY_MS + 183_000);
+      expect((await POST(makeRequest("6.6.6.6"))).status).toBe(200);
+      vi.setSystemTime(30 * DAY_MS + 244_000);
+      const fourth = await POST(makeRequest("6.6.6.6"));
+      expect(fourth.status).toBe(429);
+      expect((await fourth.json()).code).toBe("preview_budget");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("fails CLOSED (preview_budget) when the ledger file is corrupt rather than re-granting a fresh day", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(scratchDir, "ledger.json"), "{ torn wri");
+    global.fetch = vi.fn().mockImplementation(() => Promise.resolve(mintedResponse()));
+    const res = await POST(makeRequest("13.13.13.13"));
+    expect(res.status).toBe(429);
+    expect((await res.json()).code).toBe("preview_budget");
+  });
+
   it("burst-limits the 3rd rapid call from one IP with rate_limit (not preview_budget)", async () => {
     global.fetch = vi.fn().mockImplementation(() => Promise.resolve(mintedResponse()));
     expect((await POST(makeRequest("7.7.7.7"))).status).toBe(200);

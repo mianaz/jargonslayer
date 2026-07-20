@@ -75,7 +75,13 @@ export async function POST(req: Request) {
 
   // The money ceiling. Exhaustion is expected, not an error condition —
   // the client falls back to browser 识别 on this specific code.
-  if (!allowSonioxMint(ip)) {
+  // `mintedAt` is captured ONCE and passed to the reservation AND every
+  // refund below (Sol re-verify, L finding: defaulted timestamps let a
+  // midnight-straddling upstream failure refund into the WRONG day —
+  // the ledger refunds by reservation day, but only if the route
+  // actually hands it the reservation's own instant).
+  const mintedAt = Date.now();
+  if (!allowSonioxMint(ip, mintedAt)) {
     return errorBody(
       { error: "预览版 Soniox 体验额度已达上限，请改用浏览器识别或自备密钥", code: "preview_budget" },
       429,
@@ -101,14 +107,14 @@ export async function POST(req: Request) {
       }),
     });
   } catch {
-    refundSonioxMint(ip);
+    refundSonioxMint(ip, mintedAt);
     return errorBody({ error: "无法连接 Soniox", code: "upstream" }, 502);
   }
 
   if (!upstream.ok) {
     // Never forward Soniox's body — it could echo account detail. The
     // server key is not in scope of the response either way.
-    refundSonioxMint(ip);
+    refundSonioxMint(ip, mintedAt);
     return errorBody({ error: "Soniox 临时密钥签发失败", code: "upstream" }, 502);
   }
 
@@ -116,12 +122,12 @@ export async function POST(req: Request) {
   try {
     minted = await upstream.json();
   } catch {
-    refundSonioxMint(ip);
+    refundSonioxMint(ip, mintedAt);
     return errorBody({ error: "Soniox 返回了非法响应", code: "upstream" }, 502);
   }
 
   if (typeof minted.api_key !== "string" || !minted.api_key) {
-    refundSonioxMint(ip);
+    refundSonioxMint(ip, mintedAt);
     return errorBody({ error: "Soniox 未返回临时密钥", code: "upstream" }, 502);
   }
 
