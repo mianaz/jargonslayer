@@ -22,6 +22,7 @@ import {
   GraduationCap,
   List,
   ListChecks,
+  PictureInPicture,
   Play,
   Question,
   Shield,
@@ -32,9 +33,11 @@ import { elapsedActiveMs, useApp } from "@/lib/store";
 import type { MeetingStatus, Settings, STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS } from "@/lib/platform/ios";
 import { ENGINE_OPTIONS, POSTURE_LABEL } from "@/lib/stt/engineOptions";
 import { selectRunningCount, useTasks } from "@/lib/tasks/registry";
 import { useUpdateCheck } from "@/lib/desktop/updateCheck";
+import { useCaptionPip } from "@/lib/captionWindow";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -337,6 +340,21 @@ function HamburgerMenu({
   const meetingActive =
     status === "connecting" || status === "listening" || status === "paused";
 
+  // 悬浮字幕 (S14): desktop toggles the store's captionMode (page.tsx
+  // swaps its whole layout for FloatingCaption + shrinks this window —
+  // see lib/captionWindow.ts's desktop-host doc); web opens/closes a
+  // Document Picture-in-Picture window via the SAME hook (portal
+  // rendered below, outside the dropdown so the PiP keeps rendering
+  // after the menu itself closes). Hidden entirely when neither host
+  // applies: iOS (no second-webview/PiP story in v1), or a web browser
+  // without the PiP API (captionPip.supported stays false there —
+  // Safari/Firefox/mobile).
+  const captionMode = useApp((s) => s.captionMode);
+  const setCaptionMode = useApp((s) => s.setCaptionMode);
+  const captionPip = useCaptionPip();
+  const showCaptionItem = IS_DESKTOP || (!IS_IOS && captionPip.supported);
+  const captionOpen = IS_DESKTOP ? captionMode : captionPip.open;
+
   useEffect(() => {
     if (!open) return;
     const handleKey = (e: KeyboardEvent) => {
@@ -427,6 +445,25 @@ function HamburgerMenu({
               学习中心
             </Link>
           )}
+          {showCaptionItem && (
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-caption"
+              onClick={() => {
+                setOpen(false);
+                if (IS_DESKTOP) {
+                  setCaptionMode(!captionMode);
+                } else {
+                  captionPip.toggle();
+                }
+              }}
+              className={itemCls}
+            >
+              <PictureInPicture size={16} weight="regular" />
+              {captionOpen ? "关闭悬浮字幕" : "悬浮字幕"}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -470,6 +507,13 @@ function HamburgerMenu({
           )}
         </div>
       )}
+
+      {/* Rendered outside the `open` dropdown block so the PiP window
+          keeps showing FloatingCaption after the ≡ menu itself closes —
+          see captionPip's own doc comment above. Null (no-op) whenever
+          no PiP window is open, and always null on desktop/iOS (that
+          hook's `supported` never flips true there). */}
+      {captionPip.portal}
     </div>
   );
 }

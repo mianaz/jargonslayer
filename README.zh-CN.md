@@ -31,7 +31,8 @@
 ## 获取方式
 
 - **macOS 桌面端**（Apple Silicon，推荐）— 从 [Releases](https://github.com/mianaz/jargonslayer/releases/latest) 下载 DMG。首次启动的引导向导会把本地 Whisper 安装到应用自身目录（未经同意不会下载任何文件；删除目录即为干净卸载）。**系统/App 音频**（macOS 14.4+）可直接转录 Zoom、Teams、微信等原生应用中的会议音频，无需虚拟音频设备。
-- **Web 应用** — [在线体验托管版](https://apps.bioinfospace.com/jargonslayer)（内置演示 AI key，有频率限制），也可自行部署：`npm install && npm run build && npm start`，需要 Node 20+。详见[文档](https://mianaz.github.io/jargonslayer/docs/)。
+- **Web 应用** — [在线体验托管版](https://apps.bioinfospace.com/jargonslayer)（内置演示 AI key，有频率限制），也可自行部署：`npm install && npm run build && npm start`，需要 Node 20+。详见[文档](https://mianaz.github.io/jargonslayer/docs/)。手机浏览器也可直接使用。
+- **iOS 测试版** — TestFlight 受邀测试，可[通过网站联系](https://mianaz.github.io/jargonslayer/)获取邀请；系统本机语音识别，需 iOS 26+。
 - **Chrome 扩展（JargonSlayer Lite）** — 侧边栏实时字幕 + 术语卡片；从 [Releases](https://github.com/mianaz/jargonslayer/releases) 下载 zip 后以开发者模式加载（Web Store 上架审核中）。
 
 ## 功能

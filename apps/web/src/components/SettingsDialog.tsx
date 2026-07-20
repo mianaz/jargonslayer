@@ -9,6 +9,16 @@ import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
 import { resolveTaskCreds, type ResolvedTaskCreds } from "@/lib/llm/taskConfig";
+import { useLlmTelemetry } from "@/lib/llm/telemetry";
+import {
+  credsMatch,
+  deriveKeyStatus,
+  domainUsesOwnKey,
+  llmKeyEvidence,
+  primaryTelemetryDomains,
+  TASK_DOMAIN_TELEMETRY,
+  type KeyStatus,
+} from "@/lib/settings/keyStatus";
 import { packCounts, setEnabledPacks } from "@jargonslayer/core/detect/dictionary";
 import { getAllPacks } from "@jargonslayer/core/detect/packs";
 import {
@@ -74,6 +84,7 @@ import ToggleSwitch from "@/components/ToggleSwitch";
 import ModelPicker from "@/components/desktop/ModelPicker";
 import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 import CredentialFields, {
+  KeyStatusChip,
   presetIdFor,
   type ProviderPreset,
   type ProviderPresetId,
@@ -533,6 +544,7 @@ function TaskDomainBlock({
   primary,
   onChange,
   disabled,
+  apiKeyStatus,
 }: {
   domain: LlmTaskDomain;
   label: string;
@@ -542,6 +554,9 @@ function TaskDomainBlock({
   primary: Settings;
   onChange: (next: TaskLlmConfig | undefined) => void;
   disabled: boolean;
+  /** S14 credential-health chip for this override's own API Key row —
+   *  see CredentialFields' identical prop doc comment. */
+  apiKeyStatus?: KeyStatus;
 }) {
   const enabled = !!config?.enabled;
   const resolved = resolveTaskCreds(primary, domain);
@@ -579,6 +594,7 @@ function TaskDomainBlock({
             onBaseUrlChange={(baseUrl) => patchConfig({ baseUrl })}
             onApiKeyChange={(apiKey) => patchConfig({ apiKey })}
             apiKeyPlaceholder="留空则用主配置的 Key"
+            apiKeyStatus={apiKeyStatus}
             presets={PROVIDER_PRESETS}
             disabled={disabled}
             models={[
@@ -634,6 +650,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
   const [testingConnection, setTestingConnection] = useState(false);
+  // S14 credential-health chips: live telemetry read (same "must
+  // re-render the moment a call resolves, not just at open time"
+  // justification as AiStatusPanel's own useLlmTelemetry() call) +
+  // the last 测试连接 outcome, which can UPGRADE a chip to 正常 even when
+  // the matching telemetry entry alone would read 异常 — see
+  // keyStatus.ts's llmKeyEvidence doc comment for why (RateLimitApiError
+  // is "key's fine" to testConnection but a recorded failure to
+  // telemetry). undefined = never run this dialog-open.
+  const telemetry = useLlmTelemetry();
+  const [testConnectionOk, setTestConnectionOk] = useState<boolean | undefined>(undefined);
   // Desktop OAuth branch (S10 field-fix, Chunk A wave-2 wiring): mirrors
   // OnboardingByokStep.tsx's own connecting/oauthHint pair — this
   // dialog's OAuth button lives inside the shared CredentialFields
@@ -939,6 +965,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // summaryModel to the first allowed option as soon as the dialog
       // (re)opens — see coercePreviewModels' own doc comment.
       setDraft(coercePreviewModels(settings));
+      // FINDING 5 (S14 fix round): a 测试连接 result from a PREVIOUS
+      // dialog-open must never survive into a fresh one — the freshly
+      // re-seeded draft above may no longer be what was last tested.
+      // The detect-creds effect just below additionally covers the
+      // WITHIN-this-open case (editing the key while the dialog stays
+      // open).
+      setTestConnectionOk(undefined);
       setCheckedPacks(
         new Set(settings.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
       );
@@ -989,6 +1022,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // Only reset the draft when the dialog is (re)opened.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // FINDING 5 (S14 fix round): 测试连接 (handleTestConnection below)
+  // always probes resolveTaskCreds(draft, "detect")'s CURRENT
+  // credential (client.ts's testConnection -> detectApi ->
+  // resolveTaskCreds(settings, "detect")) — its cached ok/fail result
+  // must not keep describing a credential the draft has since moved
+  // away from. Keyed on the resolved TRIPLE's own primitive fields,
+  // not the object reference resolveTaskCreds returns fresh every
+  // render, so this only fires when provider/baseUrl/apiKey actually
+  // change — covers a direct edit to the primary fields AND an edit to
+  // an enabled detect taskLlm override (both feed resolveTaskCreds).
+  const detectCredsForTestReset = resolveTaskCreds(draft, "detect");
+  useEffect(() => {
+    setTestConnectionOk(undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    detectCredsForTestReset.provider,
+    detectCredsForTestReset.baseUrl,
+    detectCredsForTestReset.apiKey,
+  ]);
 
   // 转录引擎 sidecar status line: probes GET /health whenever this
   // section becomes relevant — the dialog opens with the draft engine
@@ -1344,6 +1397,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setTestingConnection(true);
     try {
       const res = await testConnection(draft);
+      setTestConnectionOk(res.ok);
       showToast(res.message);
     } finally {
       setTestingConnection(false);
@@ -1958,7 +2012,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                coercion. */}
             {draft.engine === "soniox" && (
               <div>
-                <label className="text-xs text-mut">Soniox API Key</label>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs text-mut">Soniox API Key</label>
+                  {/* S14: no probe exists for Soniox (no telemetry, no
+                     health check) — deriveKeyStatus with no evidence arg
+                     can only ever resolve 未配置/已配置, never 正常/异常,
+                     so this never fakes a status the app can't back up. */}
+                  {!PREVIEW_TIER && <KeyStatusChip status={deriveKeyStatus(draft.sonioxKey)} />}
+                </div>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     type={showSonioxKey ? "text" : "password"}
@@ -1985,6 +2046,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="mt-1 text-xs text-mut2">
                   按量计费；Key 随会话直接发给 Soniox 云端（wss://stt-rt.soniox.com），不经我们的服务器
                 </div>
+                {!PREVIEW_TIER && !draft.sonioxKey && (
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    前往{" "}
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://console.soniox.com")}
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      console.soniox.com
+                    </button>{" "}
+                    控制台创建 API Key
+                  </div>
+                )}
               </div>
             )}
 
@@ -2312,7 +2386,29 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             )}
 
             <div>
-              <label className="text-xs text-mut">HF Token</label>
+              <div className="flex items-center justify-between gap-2">
+                <label className="text-xs text-mut">HF Token</label>
+                {/* S14: reuses 转录引擎's own sidecarStatus probe
+                   (handleCheckSidecarStatus, set on dialog-open for a
+                   sidecar-backed engine and by its own 重新检测 button) —
+                   diarize:true only once the sidecar has confirmed
+                   pyannote import + token presence; no separate probe of
+                   our own. FINDING 5 (S14 fix round): diarize:false is
+                   NOT treated as failure evidence — it's equally what a
+                   sidecar with pyannote simply not installed reports,
+                   not proof the TOKEN is bad, so only hasSuccess is ever
+                   passed. diarize stays undefined until that OTHER
+                   section's probe has actually run this dialog-open, so
+                   this reads 已配置 (never 异常) until diarize:true is
+                   actually observed. */}
+                {!PREVIEW_TIER && (
+                  <KeyStatusChip
+                    status={deriveKeyStatus(draft.hfToken, {
+                      hasSuccess: sidecarStatus?.diarize === true,
+                    })}
+                  />
+                )}
+              </div>
               <div className="mt-1 flex items-center gap-2">
                 <input
                   type={showHfToken ? "text" : "password"}
@@ -2479,6 +2575,31 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   onApiKeyChange={(apiKey) => patch({ apiKey })}
                   apiKeyPlaceholder="sk-…"
                   apiKeyHint="仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                  apiKeyStatus={
+                    PREVIEW_TIER
+                      ? undefined
+                      : deriveKeyStatus(
+                          draft.apiKey,
+                          // FINDING 5 (S14 fix round): telemetry/
+                          // testConnection describe calls made against
+                          // the SAVED settings' primary credential —
+                          // gate evidence on the draft's own primary
+                          // provider/baseUrl/apiKey still matching what's
+                          // actually saved (credsMatch), so editing away
+                          // from a tested/saved key caps this chip at
+                          // 已配置 instead of keeping the OLD key's 正常/
+                          // 异常.
+                          credsMatch(
+                            { provider: draft.provider, baseUrl: draft.baseUrl, apiKey: draft.apiKey },
+                            { provider: settings.provider, baseUrl: settings.baseUrl, apiKey: settings.apiKey },
+                          )
+                            ? llmKeyEvidence(
+                                primaryTelemetryDomains(draft).map((d) => telemetry[d]),
+                                domainUsesOwnKey(draft, "detect") ? undefined : testConnectionOk,
+                              )
+                            : undefined,
+                        )
+                  }
                   presets={PROVIDER_PRESETS}
                   disabled={PREVIEW_TIER}
                   onConnectOpenRouter={() => void handleConnectOpenRouter()}
@@ -2995,6 +3116,35 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     primary={draft}
                     onChange={(next) => handleTaskLlmChange(meta.domain, next)}
                     disabled={PREVIEW_TIER}
+                    // S14: only "detect" is ever what 测试连接 actually
+                    // probes (client.ts's testConnection always resolves
+                    // the "detect" domain's CURRENT credentials) — so its
+                    // testConnectionOk only feeds THIS chip when detect
+                    // currently owns its own key, never translate/summary.
+                    // FINDING 5 (S14 fix round): evidence is additionally
+                    // gated on the draft's resolveTaskCreds-resolved
+                    // triple for this domain still matching the SAVED
+                    // settings' own resolveTaskCreds resolution — same
+                    // "telemetry can only describe what's saved" rule as
+                    // the primary chip above, folded through the same
+                    // inheritance resolveTaskCreds already applies (so a
+                    // domain that currently inherits the primary key is
+                    // compared on the primary triple too, not just an
+                    // own-key edit).
+                    apiKeyStatus={deriveKeyStatus(
+                      draft.taskLlm?.[meta.domain]?.apiKey ?? "",
+                      credsMatch(
+                        resolveTaskCreds(draft, meta.domain),
+                        resolveTaskCreds(settings, meta.domain),
+                      )
+                        ? llmKeyEvidence(
+                            TASK_DOMAIN_TELEMETRY[meta.domain].map((d) => telemetry[d]),
+                            meta.domain === "detect" && domainUsesOwnKey(draft, "detect")
+                              ? testConnectionOk
+                              : undefined,
+                          )
+                        : undefined,
+                    )}
                   />
                 ))}
               </div>
@@ -3247,6 +3397,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   )}
                 </div>
               )}
+            </div>
+
+            {/* S14: understated cross-platform availability note — no
+               button, no emphasis. This dialog has no dedicated 关于/
+               版本 area today, so it sits beside 诊断信息 (the closest
+               existing "about this build" cluster). */}
+            <div className="border-t border-edge pt-3 text-xs leading-[1.7] text-mut2">
+              iOS 测试版已上线 TestFlight（受邀测试，联系作者获取邀请）；手机浏览器也可直接使用网页版。
             </div>
           </section>
           )}

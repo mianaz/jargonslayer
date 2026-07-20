@@ -477,3 +477,65 @@ describe("HamburgerMenu — btn-review gating (E2E batch item 3)", () => {
     expect(item!.getAttribute("aria-disabled")).toBe("true");
   });
 });
+
+// S14 floating caption, web host — menu-entry visibility is driven by
+// captionWindow.ts's own supportsDocumentPip(window) helper (unit-
+// tested directly in lib/__tests__/captionWindow.test.ts), not by
+// actually launching a PiP window here: jsdom has no Document
+// Picture-in-Picture API at all, so `window` genuinely lacks
+// `documentPictureInPicture` in this test environment — the SAME
+// absent path a real Safari/Firefox/mobile browser hits. This covers
+// the resulting UI behavior end to end (helper -> hidden menu item),
+// without ever calling requestWindow() itself. IS_DESKTOP's own
+// (always-shown) branch is covered separately in
+// Header.caption.desktop.test.tsx (module-scope import-time const,
+// needs its own vi.mock'd file — same split SettingsDialog.desktop.
+// test.tsx/engineOptions.desktop.test.ts already established).
+describe("HamburgerMenu — btn-caption (S14 悬浮字幕), web host", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+  });
+
+  it("hidden on a plain web build without the Document Picture-in-Picture API (jsdom's own real absence)", async () => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+          onOpenTaskCenter={noop}
+        />,
+      );
+    });
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="btn-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container!.querySelector('[data-testid="btn-caption"]')).toBeNull();
+  });
+});

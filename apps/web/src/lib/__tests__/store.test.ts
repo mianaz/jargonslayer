@@ -1838,3 +1838,28 @@ describe("addCustomEntry — glossary-save lazy SRS enrollment (#48 step 2)", ()
     expect(useApp.getState().learnset["expression:circle back"]).toBeUndefined();
   });
 });
+
+// S14 floating caption — captionMode is a plain, non-persisted UI flag
+// (same posture as focusMode, see the AppState field's own doc
+// comment): Header.tsx's ≡ menu writes it on a desktop build, page.tsx
+// reads it to swap its whole layout for FloatingCaption. No storage.
+// saveSettings involvement to verify here (unlike `settings.*` fields)
+// — it's plain zustand state, so the setter itself is the whole
+// contract.
+describe("setCaptionMode — non-persisted UI flag (S14)", () => {
+  afterEach(() => {
+    useApp.setState({ captionMode: false });
+  });
+
+  it("defaults to false", () => {
+    expect(useApp.getState().captionMode).toBe(false);
+  });
+
+  it("toggles true/false via the setter", () => {
+    useApp.getState().setCaptionMode(true);
+    expect(useApp.getState().captionMode).toBe(true);
+
+    useApp.getState().setCaptionMode(false);
+    expect(useApp.getState().captionMode).toBe(false);
+  });
+});

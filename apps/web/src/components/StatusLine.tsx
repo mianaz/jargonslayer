@@ -269,8 +269,6 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
       : (ENGINE_OPTIONS.find((o) => o.value === engine)?.posture ?? "cloud");
   const privacyLabel =
     posture === "local" ? "音频在本地处理" : "音频将经过浏览器厂商云端识别";
-  const privacyLabelShort =
-    posture === "local" ? "音频在本地处理" : "音频将经厂商云端";
   // Sidecar-down hint (owner ask 2026-07-11): the selected engine needs
   // the local sidecar, nothing is currently running (an active meeting
   // already proves the engine works — never override a live/paused
@@ -342,15 +340,20 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
       )}
       <span className="text-mut2">|</span>
       <AiStatusChip />
-      <span className="text-mut2">|</span>
+      {/* S14 mobile-preview field-fix: at 375px this segment's own
+          neighbors (mode chip, detect toggle, AI status chip, engine
+          dropdown) already eat past the viewport width on their own,
+          leaving no room for the privacy sentence to truncate into —
+          hidden below sm (its preceding "|" separator too, so none
+          dangles on its own), unchanged at sm+. */}
+      <span className="hidden text-mut2 sm:inline">|</span>
       <span
         title={sidecarDownHint}
-        className={`min-w-0 truncate px-2 sm:px-3 ${
+        className={`hidden min-w-0 truncate px-2 sm:inline sm:px-3 ${
           posture === "local" ? "text-lab-green" : "text-warn-soft"
         }`}
       >
         <span className="hidden sm:inline">{privacyLabel}</span>
-        <span className="sm:hidden">{privacyLabelShort}</span>
       </span>
       {/* Engine dropdown (S10 field-fix wave 2, EngineDropdown above):
           right here, between the privacy segment and the latency chip,

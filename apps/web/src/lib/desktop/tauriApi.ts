@@ -111,6 +111,7 @@ let channelFactoryPromise: Promise<ChannelFactory> | null = null;
 let openerPromise: Promise<OpenExternalFn> | null = null;
 let appVersionPromise: Promise<string> | null = null;
 let addPluginListenerPromise: Promise<AddPluginListenerFn> | null = null;
+let mainWindowPromise: Promise<MainWindowApi> | null = null;
 
 /** Lazily imports `@tauri-apps/api/core` and resolves its `invoke`.
  *  Throws SYNCHRONOUSLY (before the import() is ever reached) outside a
@@ -236,6 +237,108 @@ export function getAddPluginListener(): Promise<AddPluginListenerFn> {
   return addPluginListenerPromise;
 }
 
+/** Physical-pixel window rect — matches `@tauri-apps/api/window`'s own
+ *  `outerPosition()`/`outerSize()` (PhysicalPosition/PhysicalSize)
+ *  shape closely enough for this file's one consumer (S14 —
+ *  captionWindow.ts's desktop-host caption-mode enter/exit): trimmed
+ *  to the four numbers that caller actually records and restores. */
+export interface WindowRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Matches the handful of `@tauri-apps/api/window`'s `Window` instance
+ *  methods (plus the module-level `currentMonitor()`) that
+ *  captionWindow.ts's desktop caption-mode enter/exit actually calls —
+ *  same "close enough" contract as every other interface in this file.
+ *  Bundled as one object (unlike the one-getter-per-capability shape
+ *  above) because every method shares the SAME lazily-resolved
+ *  `Window` instance and captionWindow.ts is the one caller, always
+ *  using the whole set together — mirrors PcmChannel's own
+ *  "object of related methods" shape more than InvokeFn's bare
+ *  function one. */
+export interface MainWindowApi {
+  /** Physical pixels — outerPosition() + innerSize() combined (one
+   *  round trip) — records the pre-caption-mode rect. innerSize(), NOT
+   *  outerSize(): setRect() below restores via setSize(), which Tauri
+   *  treats as the window's INNER (client-area) size — pairing THAT
+   *  restore with an outerSize() (chrome-inclusive) reading grew the
+   *  window by the title-bar height on every caption-mode cycle (S14
+   *  fix-round finding 2). Both innerSize()/outerPosition() are already
+   *  Physical* types, same as setRect()'s restore below — no scale
+   *  math either way. v1 ceiling (accepted, not fixed here): a
+   *  maximized/fullscreen window, or one that already had always-on-top
+   *  set before caption mode, doesn't round-trip through this rect —
+   *  getRect()/setRect() only ever see/restore plain windowed
+   *  geometry. */
+  getRect(): Promise<WindowRect>;
+  /** Physical pixels — restores a rect captured by getRect(). */
+  setRect(rect: WindowRect): Promise<void>;
+  /** Logical pixels (DPI-independent) — the caption-mode strip size. */
+  setLogicalSize(width: number, height: number): Promise<void>;
+  /** Logical pixels — best-effort reposition near the top-right corner
+   *  of whichever monitor the window is currently on. A no-op (never
+   *  throws) when the runtime reports no monitor info (currentMonitor()
+   *  resolving null) — a caption strip that resized but didn't move is
+   *  a far softer failure than crashing caption-mode entry over it. */
+  moveToTopRight(logicalWidth: number, marginLogical?: number): Promise<void>;
+  setAlwaysOnTop(alwaysOnTop: boolean): Promise<void>;
+}
+
+/** Lazily imports `@tauri-apps/api/window` (which itself re-exports
+ *  LogicalSize/LogicalPosition/PhysicalSize/PhysicalPosition — no
+ *  separate `@tauri-apps/api/dpi` import needed) and resolves a
+ *  MainWindowApi wrapping `getCurrentWindow()`. captionWindow.ts's
+ *  desktop enter/exit (S14) is the one caller. Requires capabilities/
+ *  default.json's core:window:allow-set-size / allow-set-position /
+ *  allow-set-always-on-top grants — outer-position/outer-size/
+ *  current-monitor are already covered by core:default's own
+ *  core:window:default set (verified against gen/schemas/
+ *  desktop-schema.json's own reference — see that capabilities file's
+ *  own comment for the exact grants this adds and why). */
+export function getMainWindow(): Promise<MainWindowApi> {
+  if (!TAURI_BUILD) {
+    throw new Error(
+      "tauriApi.getMainWindow: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
+    );
+  }
+  if (!mainWindowPromise) {
+    mainWindowPromise = import("@tauri-apps/api/window").then((mod) => {
+      const win = mod.getCurrentWindow();
+      return {
+        async getRect() {
+          const [pos, size] = await Promise.all([win.outerPosition(), win.innerSize()]);
+          return { x: pos.x, y: pos.y, width: size.width, height: size.height };
+        },
+        async setRect(rect: WindowRect) {
+          await win.setSize(new mod.PhysicalSize(rect.width, rect.height));
+          await win.setPosition(new mod.PhysicalPosition(rect.x, rect.y));
+        },
+        async setLogicalSize(width: number, height: number) {
+          await win.setSize(new mod.LogicalSize(width, height));
+        },
+        async moveToTopRight(logicalWidth: number, marginLogical = 24) {
+          const monitor = await mod.currentMonitor();
+          if (!monitor) return;
+          const sf = monitor.scaleFactor;
+          const areaX = monitor.workArea.position.x / sf;
+          const areaY = monitor.workArea.position.y / sf;
+          const areaWidth = monitor.workArea.size.width / sf;
+          await win.setPosition(
+            new mod.LogicalPosition(areaX + areaWidth - logicalWidth - marginLogical, areaY + marginLogical),
+          );
+        },
+        async setAlwaysOnTop(alwaysOnTop: boolean) {
+          await win.setAlwaysOnTop(alwaysOnTop);
+        },
+      };
+    });
+  }
+  return mainWindowPromise;
+}
+
 /** Test-only reset — clears the memoized import promises. Mirrors
  *  llmTransport.ts's resetTransport / client.ts's
  *  resetSubscriptionToastLatch convention for module-level state that
@@ -250,4 +353,5 @@ export function resetTauriApiCache(): void {
   openerPromise = null;
   appVersionPromise = null;
   addPluginListenerPromise = null;
+  mainWindowPromise = null;
 }

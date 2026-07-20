@@ -215,15 +215,16 @@ function makeEngineHarness(vadFactory?: () => VadHandle) {
   const finals: { text: string; startedAt?: number }[] = [];
   const notices: string[] = [];
   const engineModes: OnDeviceMode[] = [];
+  const statuses: { status: string; detail?: string }[] = [];
   const events: STTEvents = {
     onInterim: () => undefined,
     onFinal: (text, opts) => finals.push({ text, startedAt: opts?.startedAt }),
-    onStatus: () => undefined,
+    onStatus: (status, detail) => statuses.push({ status, detail }),
     onNotice: (msg) => notices.push(msg),
     onEngineMode: (mode) => engineModes.push(mode),
   };
   const engine = new WebSpeechEngine(vadFactory);
-  return { engine, events, finals, notices, engineModes };
+  return { engine, events, finals, notices, engineModes, statuses };
 }
 
 describe("WebSpeechEngine — engine-level", () => {
@@ -594,6 +595,60 @@ describe("WebSpeechEngine — engine-level", () => {
 
       // A DIFFERENT language is a fresh cache entry.
       expect(ManualSpeechRecognition.availableCalls).toHaveLength(2);
+    });
+  });
+
+  // ---- S14 mobile-preview follow-up: two new copy paths guiding a
+  // phone-browser user without live mic/key support toward what still
+  // works — a keyless 导入 upload, or (iOS Safari) the actual system
+  // setting service-not-allowed usually means. ----
+
+  describe("unsupported browser (no SpeechRecognition constructor)", () => {
+    it("mentions the keyless 导入 upload path alongside the existing Chrome/Edge guidance", async () => {
+      const { engine, events, statuses } = makeEngineHarness();
+      uninstallManualSpeechRecognition(); // simulate a browser with neither ctor at all
+
+      await engine.start(events, { language: "zh-CN" } as Settings);
+
+      expect(statuses).toEqual([
+        {
+          status: "error",
+          detail:
+            "当前浏览器不支持语音识别，请使用 Chrome/Edge，或切换到本地 Whisper / 演示模式，也可点击「导入」上传音频/文稿，无需麦克风与 API Key，任何浏览器都能用",
+        },
+      ]);
+      await engine.stop();
+    });
+  });
+
+  describe("service-not-allowed error (iOS Safari: Siri 与听写 disabled)", () => {
+    it("adds the iOS Siri 与听写 hint on top of the existing mic-permission guidance", async () => {
+      const { engine, events, statuses } = makeEngineHarness();
+      await engine.start(events, { language: "zh-CN" } as Settings);
+      const rec = ManualSpeechRecognition.instances[0];
+
+      rec.onerror?.({ error: "service-not-allowed" });
+
+      expect(statuses.at(-1)).toEqual({
+        status: "error",
+        detail:
+          "麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问，若在 iPhone/iPad 上，请在 系统设置→Siri 与听写 中开启听写",
+      });
+      await engine.stop();
+    });
+
+    it("plain not-allowed keeps the original message — classification unchanged, only service-not-allowed gets the iOS hint", async () => {
+      const { engine, events, statuses } = makeEngineHarness();
+      await engine.start(events, { language: "zh-CN" } as Settings);
+      const rec = ManualSpeechRecognition.instances[0];
+
+      rec.onerror?.({ error: "not-allowed" });
+
+      expect(statuses.at(-1)).toEqual({
+        status: "error",
+        detail: "麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问",
+      });
+      await engine.stop();
     });
   });
 });
