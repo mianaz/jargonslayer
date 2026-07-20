@@ -22,10 +22,11 @@
 // touches tauriApi/osspeech://status directly.
 
 import { useEffect, useState } from "react";
-import { getInvoke, getListen, type InvokeFn } from "./tauriApi";
-import { IS_DESKTOP } from "../platform/desktop";
+import { getInvoke, type InvokeFn } from "./tauriApi";
+import { IS_TAURI } from "../platform/ios";
 import { trackOsSpeechAsset, type OsSpeechAssetKind } from "./jobsBridge";
-import { OSSPEECH_TERMINAL_STATUS_KINDS, type OsSpeechStatusKind, type OsSpeechStatusPayload } from "../stt/osSpeech";
+import { OSSPEECH_TERMINAL_STATUS_KINDS, type OsSpeechStatusKind } from "../stt/osSpeech";
+import { listenOsSpeechStatus } from "../stt/osSpeechTransport";
 
 // {supported, reason, locales, installedLocales} camelCase — §2.4's
 // exact os_speech_capabilities() wire shape.
@@ -91,16 +92,17 @@ export async function probeOsSpeechCapabilitiesWith(invoke: InvokeFn): Promise<O
   }
 }
 
-/** Single-flight cached probe of os_speech_capabilities. IS_DESKTOP-
- *  guarded — resolves the fail-open shape immediately outside a desktop
- *  build, never calling getInvoke() there (which would otherwise throw
- *  SYNCHRONOUSLY per tauriApi.ts's own "throws outside a desktop build"
- *  contract). Safe to call from multiple sites/renders — a resolved
- *  cache short-circuits immediately, and a call made while a probe is
- *  already in flight shares that SAME in-flight promise. */
+/** Single-flight cached probe of os_speech_capabilities. IS_TAURI-guarded
+ *  (S13 blueprint §6, widened from IS_DESKTOP — the probe/invoke names
+ *  are identical on iOS, D2) — resolves the fail-open shape immediately
+ *  outside a Tauri build, never calling getInvoke() there (which would
+ *  otherwise throw SYNCHRONOUSLY per tauriApi.ts's own "throws outside a
+ *  Tauri build" contract). Safe to call from multiple sites/renders — a
+ *  resolved cache short-circuits immediately, and a call made while a
+ *  probe is already in flight shares that SAME in-flight promise. */
 export function probeOsSpeechCaps(): Promise<OsSpeechCapabilities> {
   if (cached) return Promise.resolve(cached);
-  if (!IS_DESKTOP) return Promise.resolve(FAIL_OPEN);
+  if (!IS_TAURI) return Promise.resolve(FAIL_OPEN);
   if (!inFlight) {
     inFlight = getInvoke()
       .then((invoke) => probeOsSpeechCapabilitiesWith(invoke))
@@ -172,10 +174,15 @@ function isAssetKind(kind: OsSpeechStatusKind): kind is OsSpeechAssetKind {
  *  preinstall can't leave this Promise hanging forever; a busy/
  *  single-flight rejection from the invoke() call itself surfaces
  *  straight through. Worker D imports this one function — no other
- *  osspeech wiring needed on that side. */
+ *  osspeech wiring needed on that side.
+ *
+ *  S13 (blueprint §6 Sol F2, BLOCKER): this was osspeechCaps.ts's own
+ *  THIRD "osspeech://status" subscription (alongside osSpeech.ts's own
+ *  two) — on iOS the macOS global event it used to listen for would
+ *  never arrive (plugin events are plugin-scoped), so this now goes
+ *  through the SAME osSpeechTransport.ts shim osSpeech.ts uses. */
 export async function preinstallOsSpeech(locale: string): Promise<void> {
   const invoke = await getInvoke();
-  const listen = await getListen();
   const tracker = trackOsSpeechAsset();
 
   let settled = false;
@@ -186,7 +193,7 @@ export async function preinstallOsSpeech(locale: string): Promise<void> {
     rejectDone = reject;
   });
 
-  const unlisten = await listen<OsSpeechStatusPayload>("osspeech://status", (event) => {
+  const unlisten = await listenOsSpeechStatus((event) => {
     const { kind, progress, message } = event.payload;
     if (isAssetKind(kind)) tracker.handle(kind, progress, message);
 

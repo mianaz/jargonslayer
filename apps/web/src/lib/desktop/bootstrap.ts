@@ -2366,3 +2366,72 @@ export function initDesktop(): Promise<DesktopBootstrapHandle> {
 export function resetDesktopBootstrap(): void {
   cachedHandlePromise = null;
 }
+
+// ---------------------------------------------------------------
+// initIos() — S13 (docs/design-explorations/s13-ios-blueprint.md, §6
+// D4/D6) — the iOS init path. ONLY the LLM transport wiring
+// (setTransport(tauri-plugin-http fetch), byte-identical to
+// bootstrapDesktop's own step ① above) — none of initDesktop's
+// sidecar/uv/wizard machinery: v1 iOS ships no uv/server/provision
+// modules at all (blueprint D3 — those Rust modules are `#[cfg(desktop)]`-
+// gated out of the iOS binary entirely), so there is nothing here for a
+// DesktopBootstrapHandle/DesktopWizard to drive. A separate function
+// rather than parameterizing bootstrapDesktop itself: that function's
+// entire body (app_paths, the provision machine, the drive loop, every
+// DesktopBootstrapHandle method) is desktop-only surface with no iOS
+// analog, so branching it in place would be a far larger diff than a
+// second, much smaller entry point that shares only the two things iOS
+// actually needs (getTauriFetch/setTransport, already imported above).
+// ---------------------------------------------------------------
+
+let cachedIosPromise: Promise<void> | null = null;
+
+async function bootstrapIos(): Promise<void> {
+  const tauriFetch = await getTauriFetch();
+  setTransport(tauriFetch);
+
+  // S13.1 (docs/design-explorations/s13-ios-blueprint.md) — spike
+  // harness gate: `spike_flags` echoes this launch's own argv
+  // (devspike_ios.rs), armed only by `xcrun simctl launch … --spike-
+  // osspeech`. The dynamic import keeps iosSpike.ts's own
+  // createEngine/osSpeech pull out of every ordinary iOS build/boot —
+  // best-effort try/catch so a spike-harness failure can never break a
+  // real launch.
+  try {
+    const invoke = await getInvoke();
+    const flags = await invoke<string[]>("spike_flags");
+    if (flags.includes("--spike-osspeech")) {
+      const { runIosSpike } = await import("./iosSpike");
+      await runIosSpike();
+    }
+  } catch {
+    // best-effort — see this block's own comment above.
+  }
+}
+
+/** Call once during iOS app init (app/page.tsx, mounted under IS_IOS —
+ *  see that file's own header comment). Idempotent: every call after the
+ *  first returns the SAME cached promise, never re-runs setTransport
+ *  again — mirrors initDesktop()'s own caching shape exactly.
+ *
+ *  Guards on a DIRECT `process.env.NEXT_PUBLIC_IOS === "1"` literal
+ *  here, same rationale as initDesktop()'s own doc comment above (NOT
+ *  the re-exported `IS_IOS` const — a re-exported const imported across
+ *  a module boundary isn't reliably pruned by webpack/Terser's
+ *  dead-branch elimination the same way a direct literal at the call
+ *  site is): this makes `bootstrapIos` (and therefore its own
+ *  getTauriFetch()/`import("@tauri-apps/plugin-http")` call) provably
+ *  uncalled in an ordinary web OR macOS-desktop build, so it tree-shakes
+ *  out entirely. */
+export function initIos(): Promise<void> {
+  if (!cachedIosPromise) {
+    cachedIosPromise = process.env.NEXT_PUBLIC_IOS === "1" ? bootstrapIos() : Promise.resolve();
+  }
+  return cachedIosPromise;
+}
+
+/** Test-only reset — clears the cached iOS init promise. Mirrors
+ *  resetDesktopBootstrap() immediately above. */
+export function resetIosBootstrap(): void {
+  cachedIosPromise = null;
+}

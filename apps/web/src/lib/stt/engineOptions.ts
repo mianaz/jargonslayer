@@ -37,6 +37,7 @@
 import { useEffect, useState } from "react";
 import type { STTEngineKind } from "@jargonslayer/core/types";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS } from "@/lib/platform/ios";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 import {
   appAudioLockReason,
@@ -88,13 +89,27 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   { value: "soniox", label: "Soniox 云端识别", posture: "cloud", byokOnly: true },
 ];
 
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D): iOS
+// v1 = mic-only, single native engine — osspeech ONLY (label byte-
+// identical to the desktop entry above, Miana-veto #2: the two surfaces
+// must never say this engine's name differently). No webspeech/whisper/
+// tabaudio/appaudio/soniox/mlx on iOS v1 (Soniox deferred, blueprint D7)
+// — none has an iOS capture path in v1's scope.
+const IOS_ENGINE_OPTIONS: EngineOption[] = [
+  { value: "osspeech", label: "系统识别 · 开箱即用", posture: "local" },
+];
+
 /** PINNED CONTRACT (S10 blueprint wave 2): StatusLine's engine dropdown
  *  and Header's EnginePostureChip both consume this exact list — see
  *  this module's own header comment for the desktop webspeech drop /
- *  D7 tabaudio->appaudio swap it already bakes in. */
-export const ENGINE_OPTIONS: EngineOption[] = IS_DESKTOP
-  ? ALL_ENGINE_OPTIONS.filter((o) => o.value !== "webspeech")
-  : ALL_ENGINE_OPTIONS;
+ *  D7 tabaudio->appaudio swap it already bakes in. IS_IOS branches FIRST
+ *  (S13) — ALL_ENGINE_OPTIONS/the desktop-vs-web filter below it stay
+ *  byte-identical to pre-S13. */
+export const ENGINE_OPTIONS: EngineOption[] = IS_IOS
+  ? IOS_ENGINE_OPTIONS
+  : IS_DESKTOP
+    ? ALL_ENGINE_OPTIONS.filter((o) => o.value !== "webspeech")
+    : ALL_ENGINE_OPTIONS;
 
 // v0.4 S4: renamed from PREVIEW_SIDECAR_TITLE — now covers TWO
 // distinct preview-lock reasons (sidecarOnly: needs the local sidecar;

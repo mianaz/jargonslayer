@@ -11,6 +11,7 @@ import { useApp } from "@/lib/store";
 import type { STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS } from "@/lib/platform/ios";
 
 export interface TutorialOverlayProps {
   open: boolean;
@@ -60,6 +61,13 @@ const STEP_COUNT = 5;
 // tabaudio exactly as before (D7 pinned decision: browser behavior
 // stays byte-identical). IS_DESKTOP is a build-time const, resolved
 // once at module load.
+//
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 Sol F5): this
+// overlay mounts unconditionally from app/page.tsx (no IS_DESKTOP-style
+// wizard supersedes it on a Tauri shell — verified: it's iOS's own
+// first-run onboarding too), so IS_IOS branches FIRST to the one iOS v1
+// engine — osspeech, label byte-identical to engineOptions.ts's own
+// ENGINE_OPTIONS entry (Miana-veto #2).
 // ---------------------------------------------------------------
 
 const ENGINE_OPTIONS: {
@@ -67,33 +75,42 @@ const ENGINE_OPTIONS: {
   label: string;
   hint: string;
   posture: "local" | "cloud";
-}[] = [
-  {
-    value: "webspeech",
-    label: "浏览器识别",
-    hint: "零配置，Chrome/Edge 最佳，开箱即用",
-    posture: "cloud",
-  },
-  {
-    value: "whisper",
-    label: "本地 Whisper",
-    hint: "隐私保护最强，需启动本地 Whisper",
-    posture: "local",
-  },
-  IS_DESKTOP
-    ? {
-        value: "appaudio",
-        label: "系统/App 音频",
-        hint: "转录对方与其他声音，非你的麦克风",
-        posture: "local",
-      }
-    : {
-        value: "tabaudio",
-        label: "标签页音频",
-        hint: "共享标签页，听懂对方声音",
+}[] = IS_IOS
+  ? [
+      {
+        value: "osspeech",
+        label: "系统识别 · 开箱即用",
+        hint: "无需下载模型，音频不离开设备，开箱即用",
         posture: "local",
       },
-];
+    ]
+  : [
+      {
+        value: "webspeech",
+        label: "浏览器识别",
+        hint: "零配置，Chrome/Edge 最佳，开箱即用",
+        posture: "cloud",
+      },
+      {
+        value: "whisper",
+        label: "本地 Whisper",
+        hint: "隐私保护最强，需启动本地 Whisper",
+        posture: "local",
+      },
+      IS_DESKTOP
+        ? {
+            value: "appaudio",
+            label: "系统/App 音频",
+            hint: "转录对方与其他声音，非你的麦克风",
+            posture: "local",
+          }
+        : {
+            value: "tabaudio",
+            label: "标签页音频",
+            hint: "共享标签页，听懂对方声音",
+            posture: "local",
+          },
+    ];
 
 const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",

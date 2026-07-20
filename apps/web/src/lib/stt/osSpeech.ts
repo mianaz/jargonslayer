@@ -37,10 +37,12 @@
 
 import type { CustomEntry, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { customEntrySurfaces } from "@jargonslayer/core/types";
-import { getInvoke, getListen, type UnlistenFn } from "../desktop/tauriApi";
+import { getInvoke, type UnlistenFn } from "../desktop/tauriApi";
 import { trackOsSpeechAsset, type OsSpeechAssetTracker } from "../desktop/jobsBridge";
 import { diagLog } from "../diag/log";
 import { useApp } from "../store";
+import { IS_IOS } from "../platform/ios";
+import { listenOsSpeechStatus, listenOsSpeechTranscript } from "./osSpeechTransport";
 
 export type OsSpeechStatusKind =
   | "starting"
@@ -247,35 +249,43 @@ export class OsSpeechEngine implements STTEngine {
       await abandonStart();
       return;
     }
-    const listen = await getListen();
-    if (superseded()) {
-      await abandonStart();
-      return;
-    }
 
-    unlistenTranscript = await listen<OsSpeechTranscriptPayload>("osspeech://transcript", (event) => {
-      this.handleTranscript(myGeneration, event.payload);
-    });
-    this.unlistenTranscript = unlistenTranscript;
-    if (superseded()) {
-      await abandonStart();
-      return;
-    }
-
-    unlistenStatus = await listen<OsSpeechStatusPayload>("osspeech://status", (event) => {
-      this.handleStatus(myGeneration, event.payload);
-    });
-    this.unlistenStatus = unlistenStatus;
-    if (superseded()) {
-      await abandonStart();
-      return;
-    }
-
-    // Q11: gathered fresh every start() (a glossary edit mid-session
-    // has no live effect — start-time one-shot, per the blueprint).
-    const contextualJson = buildContextualJson(useApp.getState().customEntries);
-
+    // S13 (docs/design-explorations/s13-ios-blueprint.md, §2/§6 D2): both
+    // subscriptions go through osSpeechTransport.ts's shim, the ONE place
+    // that branches desktop's macOS global events vs iOS's plugin-scoped
+    // ones — this engine's own generation-guard/latch logic is unchanged
+    // either way.
+    //
+    // Fix-round F6 (Sol, MEDIUM): both subscription awaits now share the
+    // SAME try as start_os_speech's own invoke() below — previously only
+    // the invoke() was guarded, so a rejected SECOND subscription (e.g.
+    // iOS's addPluginListener denied by the plugin ACL) skipped the catch
+    // entirely and leaked the FIRST (transcript) listener forever, since
+    // abandonStart() never ran. Scope-widening only — same two calls,
+    // same order, same superseded() checks in between.
     try {
+      unlistenTranscript = await listenOsSpeechTranscript((event) => {
+        this.handleTranscript(myGeneration, event.payload);
+      });
+      this.unlistenTranscript = unlistenTranscript;
+      if (superseded()) {
+        await abandonStart();
+        return;
+      }
+
+      unlistenStatus = await listenOsSpeechStatus((event) => {
+        this.handleStatus(myGeneration, event.payload);
+      });
+      this.unlistenStatus = unlistenStatus;
+      if (superseded()) {
+        await abandonStart();
+        return;
+      }
+
+      // Q11: gathered fresh every start() (a glossary edit mid-session
+      // has no live effect — start-time one-shot, per the blueprint).
+      const contextualJson = buildContextualJson(useApp.getState().customEntries);
+
       await invoke("start_os_speech", { locale: settings.language, contextualJson });
       helperStarted = true;
       this.running = true;
@@ -404,16 +414,23 @@ export class OsSpeechEngine implements STTEngine {
         events.onStatus("listening");
         break;
       case "permission-denied":
+        // F7 (S13 blueprint §6): iOS has no 屏幕与系统音频录制 pane at
+        // all — mic permission lives at 设置 → 隐私与安全性 → 麦克风
+        // instead. macOS copy stays byte-identical.
         events.onStatus(
           "error",
-          "JargonSlayer 没有系统音频录制权限，请前往 系统设置 → 隐私与安全性 → 屏幕与系统音频录制 开启后重试",
+          IS_IOS
+            ? "JargonSlayer 没有麦克风权限，请前往 设置 → 隐私与安全性 → 麦克风 开启后重试"
+            : "JargonSlayer 没有系统音频录制权限，请前往 系统设置 → 隐私与安全性 → 屏幕与系统音频录制 开启后重试",
         );
         break;
       case "device-changed":
         events.onStatus("error", "录音设备发生变化，系统识别已停止，请重新开始");
         break;
       case "unsupported":
-        events.onStatus("error", "系统识别需要 macOS 26 或更高版本");
+        // F7: iOS floor is iOS 26, not macOS 26. macOS copy stays
+        // byte-identical.
+        events.onStatus("error", IS_IOS ? "系统识别需要 iOS 26 或更高版本" : "系统识别需要 macOS 26 或更高版本");
         break;
       case "unsupported-locale":
         events.onStatus("error", unsupportedLocaleMessage(payload));

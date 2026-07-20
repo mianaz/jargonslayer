@@ -36,10 +36,21 @@
 //      respond immediately instead of blocking on the whole build.
 //   3. The normal try/finally, for every other exit path (success,
 //      `next build` failing on its own, an unexpected throw).
+// S13 (docs/design-explorations/s13-ios-blueprint.md §D5/F4) — iOS static
+// export hits the exact same app/api-under-output:"export" wall as desktop
+// (see the header above), so this wrapper is parameterized by BUILD_TARGET
+// instead of forking a second script: default "desktop" is byte-identical
+// to pre-S13 behavior; "ios" runs the same strip/build/restore flow but
+// forwards BUILD_TARGET=ios to the child build so next.config.mjs emits
+// NEXT_PUBLIC_IOS instead of NEXT_PUBLIC_DESKTOP (Lane C). Any other/unset
+// value falls back to "desktop" rather than propagating an unrecognized
+// target string into the child env.
 import { existsSync, renameSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+const buildTarget = process.env.BUILD_TARGET === "ios" ? "ios" : "desktop";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const appDir = join(root, "apps", "web", "src", "app");
@@ -92,7 +103,10 @@ function runBuild() {
       stdio: "inherit",
       env: {
         ...process.env,
-        BUILD_TARGET: "desktop",
+        BUILD_TARGET: buildTarget,
+        // Same client-side callProvider transport on both targets — neither
+        // has an /api/* to fall back to (see next.config.mjs's dual-target
+        // hook comment).
         NEXT_PUBLIC_LLM_TRANSPORT: "client",
       },
     });
@@ -134,7 +148,9 @@ process.once("SIGTERM", () => onSignal("SIGTERM"));
 
 try {
   renameSync(apiDir, disabledDir);
-  console.log("[build-desktop] apps/web/src/app/api -> _api_disabled (temporary, restored after this build)");
+  console.log(
+    `[build-desktop] apps/web/src/app/api -> _api_disabled (temporary, restored after this build) [BUILD_TARGET=${buildTarget}]`
+  );
 
   const { code, signal } = await runBuild();
   if (shuttingDownSignal) {

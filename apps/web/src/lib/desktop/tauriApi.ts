@@ -1,11 +1,12 @@
 // v0.4 S3 chunk 5 (docs/design-explorations/s3-tauri-uv-blueprint.md,
 // §Chunk 5) — the ONLY module in this app that ever imports
 // `@tauri-apps/*`. Every import below is a DYNAMIC import() gated by a
-// LITERAL `process.env.NEXT_PUBLIC_DESKTOP === "1"` check living in
-// THIS SAME MODULE, directly beside each import() call — deliberately
-// NOT the imported `IS_DESKTOP` re-export (src/lib/platform/
-// desktop.ts). Per src/lib/agent/localHost.ts's own
-// SUBSCRIPTION_DIRECT_BUILT comment: webpack/Terser's DefinePlugin +
+// LITERAL `process.env.NEXT_PUBLIC_DESKTOP === "1" ||
+// process.env.NEXT_PUBLIC_IOS === "1"` check living in THIS SAME
+// MODULE, directly beside each import() call — deliberately NOT the
+// imported `IS_TAURI`/`IS_DESKTOP` re-exports (src/lib/platform/
+// ios.ts, src/lib/platform/desktop.ts). Per src/lib/agent/localHost.ts's
+// own SUBSCRIPTION_DIRECT_BUILT comment: webpack/Terser's DefinePlugin +
 // ConstPlugin dead-branch elimination reliably prunes a DIRECT
 // `process.env.NEXT_PUBLIC_X === "1"` literal at the call site, but
 // does NOT always achieve the same for a re-exported const imported
@@ -13,11 +14,19 @@
 // the ordinary web bundle is this file's entire reason to exist
 // (verified by chunk 5's tree-shake grep — see task report), so this is
 // the one spot where that stronger guarantee is worth the small
-// duplication against IS_DESKTOP's own definition — mirrors
+// duplication against IS_DESKTOP/IS_TAURI's own definitions — mirrors
 // SettingsDialog.tsx's own choice to read process.env.NEXT_PUBLIC_X
-// directly for the same reason. `IS_DESKTOP` itself stays the right
-// import everywhere else (provisionRunner.ts, bootstrap.ts) since those
-// files never write an `import()` of their own.
+// directly for the same reason. `IS_DESKTOP`/`IS_TAURI` themselves stay
+// the right import everywhere else (provisionRunner.ts, bootstrap.ts)
+// since those files never write an `import()` of their own.
+//
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4, normative)
+// — TAURI_BUILD widens this gate from "macOS desktop build" to "any
+// Tauri shell build" (macOS desktop OR iOS): BOTH env-var checks stay
+// inline literals for the exact same reason as above, so a pure web
+// build (neither var set) still folds the whole expression to `false`
+// at build time and every `@tauri-apps/*` import() below tree-shakes
+// out of that bundle entirely.
 //
 // Callers never import `@tauri-apps/*` themselves — they take
 // invoke/listen/fetch as plain injected function values (see
@@ -25,7 +34,7 @@
 // unit tests exercise them with fakes and import zero Tauri, the same
 // contract chunk 4's provisionMachine.ts/uvCommands.ts already
 // established for the pure layer.
-const DESKTOP_BUILD = process.env.NEXT_PUBLIC_DESKTOP === "1";
+const TAURI_BUILD = process.env.NEXT_PUBLIC_DESKTOP === "1" || process.env.NEXT_PUBLIC_IOS === "1";
 
 /** Matches `@tauri-apps/api/core`'s `invoke` signature closely enough
  *  for every command this app calls: Tauri auto-camelCases each Rust
@@ -78,20 +87,40 @@ export type ChannelFactory = (onmessage: (data: ArrayBuffer) => void) => PcmChan
  *  link opens via the system's own default handler. */
 export type OpenExternalFn = (url: string) => Promise<void>;
 
+/** Matches `@tauri-apps/api/core`'s `PluginListener` closely enough for
+ *  this app's one consumer (S13 blueprint §2 — stt/osSpeechTransport.ts's
+ *  iOS event-transport shim, Lane D) — trimmed to the one thing that
+ *  caller does with it: call `unregister()` to implement the shim's own
+ *  `UnlistenFn` return, same "close enough" contract as PcmChannel/
+ *  InvokeFn/ListenFn above. */
+export interface PluginListenerHandle {
+  unregister(): Promise<void>;
+}
+
+/** Matches `@tauri-apps/api/core`'s `addPluginListener` signature. */
+export type AddPluginListenerFn = <T>(
+  plugin: string,
+  event: string,
+  cb: (payload: T) => void,
+) => Promise<PluginListenerHandle>;
+
 let invokePromise: Promise<InvokeFn> | null = null;
 let listenPromise: Promise<ListenFn> | null = null;
 let tauriFetchPromise: Promise<TauriFetchFn> | null = null;
 let channelFactoryPromise: Promise<ChannelFactory> | null = null;
 let openerPromise: Promise<OpenExternalFn> | null = null;
 let appVersionPromise: Promise<string> | null = null;
+let addPluginListenerPromise: Promise<AddPluginListenerFn> | null = null;
 
 /** Lazily imports `@tauri-apps/api/core` and resolves its `invoke`.
  *  Throws SYNCHRONOUSLY (before the import() is ever reached) outside a
- *  desktop build — see this file's header comment for why the guard
+ *  Tauri build — see this file's header comment for why the guard
  *  must sit right here, not behind a shared helper call. */
 export function getInvoke(): Promise<InvokeFn> {
-  if (!DESKTOP_BUILD) {
-    throw new Error("tauriApi.getInvoke: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")");
+  if (!TAURI_BUILD) {
+    throw new Error(
+      "tauriApi.getInvoke: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
+    );
   }
   if (!invokePromise) {
     invokePromise = import("@tauri-apps/api/core").then((mod) => mod.invoke as InvokeFn);
@@ -104,8 +133,10 @@ export function getInvoke(): Promise<InvokeFn> {
  *  both emit it, see apps/desktop/src-tauri/src/uv.rs's emit_uv_log)
  *  goes through this. */
 export function getListen(): Promise<ListenFn> {
-  if (!DESKTOP_BUILD) {
-    throw new Error("tauriApi.getListen: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")");
+  if (!TAURI_BUILD) {
+    throw new Error(
+      "tauriApi.getListen: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
+    );
   }
   if (!listenPromise) {
     listenPromise = import("@tauri-apps/api/event").then((mod) => mod.listen as unknown as ListenFn);
@@ -117,8 +148,10 @@ export function getListen(): Promise<ListenFn> {
  *  the S3 registration target for llmTransport.ts's `setTransport()`
  *  (see bootstrap.ts's initDesktop). */
 export function getTauriFetch(): Promise<TauriFetchFn> {
-  if (!DESKTOP_BUILD) {
-    throw new Error("tauriApi.getTauriFetch: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")");
+  if (!TAURI_BUILD) {
+    throw new Error(
+      "tauriApi.getTauriFetch: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
+    );
   }
   if (!tauriFetchPromise) {
     tauriFetchPromise = import("@tauri-apps/plugin-http").then((mod) => mod.fetch as TauriFetchFn);
@@ -129,9 +162,9 @@ export function getTauriFetch(): Promise<TauriFetchFn> {
 /** Lazily imports `@tauri-apps/api/core` and resolves a `ChannelFactory`
  *  — see PcmChannel/ChannelFactory's own doc comments above. */
 export function getChannelFactory(): Promise<ChannelFactory> {
-  if (!DESKTOP_BUILD) {
+  if (!TAURI_BUILD) {
     throw new Error(
-      "tauriApi.getChannelFactory: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")",
+      "tauriApi.getChannelFactory: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
     );
   }
   if (!channelFactoryPromise) {
@@ -150,8 +183,10 @@ export function getChannelFactory(): Promise<ChannelFactory> {
  *  huggingface.co — extended only via a future audit finding, never
  *  widened here). */
 export function getOpener(): Promise<OpenExternalFn> {
-  if (!DESKTOP_BUILD) {
-    throw new Error("tauriApi.getOpener: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")");
+  if (!TAURI_BUILD) {
+    throw new Error(
+      "tauriApi.getOpener: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
+    );
   }
   if (!openerPromise) {
     openerPromise = import("@tauri-apps/plugin-opener").then((mod) => (url: string) => mod.openUrl(url));
@@ -167,8 +202,10 @@ export function getOpener(): Promise<OpenExternalFn> {
  *  function itself. S10 field-fix Chunk A's `lib/desktop/updateCheck.ts`
  *  (semver compare against the GitHub releases feed) is the one caller. */
 export function getAppVersion(): Promise<string> {
-  if (!DESKTOP_BUILD) {
-    throw new Error("tauriApi.getAppVersion: unavailable outside a desktop build (NEXT_PUBLIC_DESKTOP !== \"1\")");
+  if (!TAURI_BUILD) {
+    throw new Error(
+      "tauriApi.getAppVersion: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
+    );
   }
   if (!appVersionPromise) {
     appVersionPromise = import("@tauri-apps/api/app").then((mod) => mod.getVersion());
@@ -176,12 +213,35 @@ export function getAppVersion(): Promise<string> {
   return appVersionPromise;
 }
 
+/** Lazily imports `@tauri-apps/api/core` and resolves its
+ *  `addPluginListener` — S13 blueprint §2/§6's iOS event-transport shim
+ *  (stt/osSpeechTransport.ts, Lane D) is the one caller: macOS keeps
+ *  using getListen()'s existing `osspeech://…` global-event path, iOS
+ *  has no such path (Swift `trigger()` delivers to plugin-scoped
+ *  listeners only) and subscribes via this getter instead
+ *  (`addPluginListener("os-speech", "transcript"|"status", cb)`). Cross-
+ *  lane pinned contract (blueprint §6): exported under exactly this
+ *  name. */
+export function getAddPluginListener(): Promise<AddPluginListenerFn> {
+  if (!TAURI_BUILD) {
+    throw new Error(
+      "tauriApi.getAddPluginListener: unavailable outside a Tauri build (NEXT_PUBLIC_DESKTOP !== \"1\" && NEXT_PUBLIC_IOS !== \"1\")",
+    );
+  }
+  if (!addPluginListenerPromise) {
+    addPluginListenerPromise = import("@tauri-apps/api/core").then(
+      (mod) => mod.addPluginListener as unknown as AddPluginListenerFn,
+    );
+  }
+  return addPluginListenerPromise;
+}
+
 /** Test-only reset — clears the memoized import promises. Mirrors
  *  llmTransport.ts's resetTransport / client.ts's
  *  resetSubscriptionToastLatch convention for module-level state that
  *  must never leak between independent `it()` blocks (relevant if a
- *  future test stubs NEXT_PUBLIC_DESKTOP + `vi.resetModules()`s this
- *  file mid-suite). */
+ *  future test stubs NEXT_PUBLIC_DESKTOP/NEXT_PUBLIC_IOS +
+ *  `vi.resetModules()`s this file mid-suite). */
 export function resetTauriApiCache(): void {
   invokePromise = null;
   listenPromise = null;
@@ -189,4 +249,5 @@ export function resetTauriApiCache(): void {
   channelFactoryPromise = null;
   openerPromise = null;
   appVersionPromise = null;
+  addPluginListenerPromise = null;
 }

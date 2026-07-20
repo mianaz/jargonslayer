@@ -8,23 +8,65 @@
 // exclusivity check should run before anything else does real work (it
 // also means we never get a chance to double-provision from two
 // concurrently-running instances, blueprint §Critical details).
+//
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §D3) — none of the
+// modules below are needed on iOS v1 (mic-only 系统识别 via a native
+// plugin, no sidecar/uv/provisioning/app-audio-tap/oauth). Gated
+// `#[cfg(desktop)]` rather than deleted so the macOS build stays exactly
+// as it was; `run()` itself splits into a `#[cfg(desktop)]` builder chain
+// (byte-identical to the pre-S13 chain) and a `#[cfg(mobile)]` one below.
+#[cfg(desktop)]
 mod audiocap;
+#[cfg(desktop)]
 mod audiocap_batch;
+#[cfg(desktop)]
 mod audiocap_framing;
+#[cfg(desktop)]
 mod audiocap_pipeline;
+#[cfg(desktop)]
 mod audiocap_resample;
+#[cfg(desktop)]
 mod diskspace;
+#[cfg(desktop)]
 mod mlxcaps;
+#[cfg(desktop)]
 mod oauth;
+#[cfg(desktop)]
 mod osspeech;
+// S13 §D1/§2 — Lane B's bridge commands (run_mobile_plugin call sites into
+// the tauri-plugin-os-speech crate); same six invoke names as desktop's
+// osspeech module above, kept wire-identical per the blueprint's app-
+// command bridge (§D2).
+#[cfg(target_os = "ios")]
+mod osspeech_ios;
+// S13.1 (docs/design-explorations/s13-ios-blueprint.md) — the iOS
+// simulator spike harness (spike_flags/spike_report), armed by the
+// `--spike-osspeech` launch arg — see devspike_ios.rs's own header
+// comment. Same inclusion posture as osspeech_ios above.
+#[cfg(target_os = "ios")]
+mod devspike_ios;
+#[cfg(desktop)]
 mod paths;
+#[cfg(desktop)]
 mod provision;
+#[cfg(desktop)]
 mod server;
+#[cfg(desktop)]
 mod uv;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    // S13 §D3 — required fix: tauri-plugin-single-instance is Cargo-gated
+    // to cfg(any(macos, windows, linux)) (see Cargo.toml), so its crate is
+    // absent on iOS; the old unconditional `.plugin(single_instance::init(
+    // ...))` here was the iOS build-breaker Sol's live aarch64-apple-ios
+    // compile stopped on (blueprint §6, D3's own prediction). Splitting
+    // into two cfg-gated builder chains — rather than cfg-gating individual
+    // `.plugin()`/`.manage()` calls inline — keeps the desktop chain's
+    // lines byte-identical to the pre-S13 version (same order, same
+    // comments), so macOS behavior is provably unchanged.
+    #[cfg(desktop)]
+    let builder = tauri::Builder::default()
         // Single-instance publishes its exclusivity lock (a named
         // mutex/DBus service/equivalent, platform-dependent) as soon as
         // this plugin initializes — registering it first means a second
@@ -125,10 +167,49 @@ pub fn run() {
             // comment.
             audiocap::sweep_orphans_best_effort(app.handle());
             Ok(())
-        })
+        });
+
+    // S13 review hardening (Opus finding 5): this "mobile" branch is
+    // really iOS-only — it names osspeech_ios (cfg(target_os = "ios"))
+    // and tauri_plugin_os_speech (an iOS-scoped Cargo target dep), so an
+    // Android build would die on missing symbols with a confusing error.
+    // Fail loudly and early instead.
+    #[cfg(all(mobile, not(target_os = "ios")))]
+    compile_error!(
+        "S13's mobile shell is iOS-only; add an Android lane (plugin dep + bridge module) before building for Android — see docs/design-explorations/s13-ios-blueprint.md"
+    );
+
+    // S13 §D3/§2 + §6 F6 — mobile (iOS v1) shell: the os-speech plugin
+    // (Lane B) is the only native-side lane; no single-instance (no
+    // second-launch/DBus/mutex concept on iOS), no shell plugin (no
+    // sidecar on mobile — D3's shell-plugin note), no `.manage()` state
+    // (the plugin crate owns its own session state, blueprint §3 Lane B)
+    // and no `.setup()`/exit hooks (nothing to spike/sweep/kill on iOS).
+    // http stays registered here too (unconditional Cargo dep, full iOS
+    // support per D3) for the client-side BYOK LLM transport; opener is
+    // registered here per §6 F6 (iOS-supported, openExternal.ts routes
+    // through IS_TAURI) and granted via capabilities/ios.json.
+    #[cfg(mobile)]
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_os_speech::init())
+        .invoke_handler(tauri::generate_handler![
+            osspeech_ios::start_os_speech,
+            osspeech_ios::stop_os_speech,
+            osspeech_ios::pause_os_speech,
+            osspeech_ios::resume_os_speech,
+            osspeech_ios::os_speech_capabilities,
+            osspeech_ios::preinstall_os_speech,
+            devspike_ios::spike_flags,
+            devspike_ios::spike_report,
+        ]);
+
+    let app = builder
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
+    #[cfg(desktop)]
     app.run(|app_handle, event| {
         // Best-effort orphan-prevention on a graceful exit — see
         // server::kill_held_child_on_exit's own doc comment for the
@@ -151,4 +232,11 @@ pub fn run() {
             osspeech::kill_held_session_on_exit(app_handle);
         }
     });
+
+    // S13 §D3 — mobile v1 has no exit-cleanup child processes to reap
+    // (no sidecar, no app-audio-tap, no osspeech CLI helper — the plugin
+    // owns its own AVAudioEngine/SpeechAnalyzer lifecycle in-process), so
+    // this is a plain run with no RunEvent handling.
+    #[cfg(mobile)]
+    app.run(|_app_handle, _event| {});
 }

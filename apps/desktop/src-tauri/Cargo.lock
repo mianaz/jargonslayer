@@ -1863,6 +1863,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-http",
  "tauri-plugin-opener",
+ "tauri-plugin-os-speech",
  "tauri-plugin-shell",
  "tauri-plugin-single-instance",
  "url",
@@ -3953,6 +3954,16 @@ dependencies = [
  "url",
  "windows",
  "zbus",
+]
+
+[[package]]
+name = "tauri-plugin-os-speech"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

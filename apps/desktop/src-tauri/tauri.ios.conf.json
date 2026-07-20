@@ -1,0 +1,13 @@
+{
+  "build": {
+    "beforeDevCommand": "BUILD_TARGET=ios NEXT_PUBLIC_LLM_TRANSPORT=client npm run dev -w apps/web --prefix ../..",
+    "beforeBuildCommand": "npm run build:ios --prefix ../.."
+  },
+  "bundle": {
+    "externalBin": [],
+    "resources": null,
+    "iOS": {
+      "minimumSystemVersion": "26.0"
+    }
+  }
+}

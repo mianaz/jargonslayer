@@ -23,8 +23,10 @@ import {
   bootstrapDesktop,
   chooseOsSpeechEngine,
   initDesktop,
+  initIos,
   redactHomePath,
   resetDesktopBootstrap,
+  resetIosBootstrap,
   type BootstrapDeps,
   type DesktopBootstrapHandle,
   type DesktopBootstrapState,
@@ -1036,6 +1038,36 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
     expect(p2).not.toBe(p1); // proves the cache was actually rebuilt, not just re-read
     const [h1, h2] = await Promise.all([p1, p2]);
     expect(h1).toEqual(h2); // same NOT_DESKTOP shape either way
+  });
+});
+
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/D6) — initIos's
+// own idempotency/NEXT_PUBLIC_IOS-guard wrapper, tested in the test env's
+// default (NEXT_PUBLIC_IOS unset) state — mirrors initDesktop's own
+// coverage immediately above exactly (same shape, same rationale: it
+// never needs to touch a real `@tauri-apps/*` package outside an iOS
+// build).
+describe("initIos — idempotency + NEXT_PUBLIC_IOS guard", () => {
+  afterEach(() => {
+    resetIosBootstrap();
+  });
+
+  it("outside an iOS build (NEXT_PUBLIC_IOS unset in the test env), resolves without touching getTauriFetch/setTransport", async () => {
+    await expect(initIos()).resolves.toBeUndefined();
+  });
+
+  it("is idempotent: two calls return the exact same cached promise", () => {
+    const p1 = initIos();
+    const p2 = initIos();
+    expect(p1).toBe(p2);
+  });
+
+  it("resetIosBootstrap() clears the cache — the next call is a genuinely NEW promise", async () => {
+    const p1 = initIos();
+    await p1;
+    resetIosBootstrap();
+    const p2 = initIos();
+    expect(p2).not.toBe(p1); // proves the cache was actually rebuilt, not just re-read
   });
 });
 

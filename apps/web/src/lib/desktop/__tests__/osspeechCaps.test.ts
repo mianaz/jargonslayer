@@ -111,6 +111,17 @@ function makeFakeListen(): {
   return { listen, emit, activeCount };
 }
 
+/** Drains enough microtask ticks for preinstallOsSpeech's own
+ *  getInvoke()/listenOsSpeechStatus() await chain to settle before a test
+ *  inspects `calls`/`activeCount`. S13: preinstallOsSpeech now resolves
+ *  its listener through osSpeechTransport.ts's shim (an extra async
+ *  layer over the old direct getListen() call), so a fixed small tick
+ *  count is fragile — this drains generously rather than re-counting
+ *  hops by hand. */
+async function flush(ticks = 10): Promise<void> {
+  for (let i = 0; i < ticks; i++) await Promise.resolve();
+}
+
 describe("probeOsSpeechCapabilitiesWith — pure core (no IS_DESKTOP coupling)", () => {
   beforeEach(() => resetOsSpeechCapsCache());
   afterEach(() => resetOsSpeechCapsCache());
@@ -257,9 +268,7 @@ describe("preinstallOsSpeech — §A2 6th Rust command, single-flighted", () => 
     currentListen = listen;
 
     const p = preinstallOsSpeech("zh-CN");
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flush();
 
     expect(calls).toEqual([{ cmd: "preinstall_os_speech", args: { locale: "zh-CN" } }]);
     expect(activeCount("osspeech://status")).toBe(1);
@@ -296,9 +305,7 @@ describe("preinstallOsSpeech — §A2 6th Rust command, single-flighted", () => 
     currentListen = listen;
 
     const p = preinstallOsSpeech("zh-CN");
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flush();
 
     emit("osspeech://status", { kind: "asset-failed", message: "network unreachable" });
 
@@ -312,9 +319,7 @@ describe("preinstallOsSpeech — §A2 6th Rust command, single-flighted", () => 
     currentListen = listen;
 
     const p = preinstallOsSpeech("zh-Yue");
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flush();
 
     emit("osspeech://status", { kind: "unsupported-locale", message: "zh-Yue" });
 
@@ -328,9 +333,7 @@ describe("preinstallOsSpeech — §A2 6th Rust command, single-flighted", () => 
     currentListen = listen;
 
     const p = preinstallOsSpeech("zh-CN");
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flush();
 
     emit("osspeech://status", { kind: "asset-checking" });
 
@@ -364,9 +367,7 @@ describe("preinstallOsSpeech — §A2 6th Rust command, single-flighted", () => 
     currentListen = listen;
 
     const p = preinstallOsSpeech("zh-CN");
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await flush();
 
     expect(calls).toEqual([{ cmd: "preinstall_os_speech", args: { locale: "zh-CN" } }]);
 

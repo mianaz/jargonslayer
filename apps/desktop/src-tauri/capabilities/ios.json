@@ -1,0 +1,29 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "ios",
+  "description": "Capability for the iOS build (S13, docs/design-explorations/s13-ios-blueprint.md, §D3/§2/§6 F3/F6) — core defaults + BYOK-provider HTTP access mirrored from capabilities/default.json (still apply on iOS, §5 owner-gate 5), opener:allow-open-url for openExternal.ts's IS_TAURI path (§6 F6), and the os-speech plugin's listener permissions so addPluginListener()/unregister() (plugin:os-speech|register_listener / |remove_listener, §2) aren't silently denied. platforms scopes this OUT of desktop builds (tauri-build's own validate_capabilities skips a capability entirely when the current target isn't in its platforms list — verified against tauri-build 2.6.3's acl.rs), so it has zero effect on the macOS build capabilities/default.json already covers.",
+  "windows": ["main"],
+  "platforms": ["iOS"],
+  "permissions": [
+    "core:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        { "url": "https://**" },
+        { "url": "http://localhost:*" },
+        { "url": "http://127.0.0.1:*" }
+      ]
+    },
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "https://openrouter.ai/**" },
+        { "url": "https://github.com/**" },
+        { "url": "https://huggingface.co/**" }
+      ]
+    },
+    "os-speech:default",
+    "os-speech:allow-register-listener",
+    "os-speech:allow-remove-listener"
+  ]
+}

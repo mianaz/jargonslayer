@@ -51,6 +51,7 @@ import type {
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS, IS_TAURI } from "@/lib/platform/ios";
 import { openExternal } from "@/lib/platform/openExternal";
 import { getInvoke } from "@/lib/desktop/tauriApi";
 import { initDesktop } from "@/lib/desktop/bootstrap";
@@ -163,21 +164,27 @@ const ALL_ENGINE_CARDS: {
         sidecarOnly: true,
       },
   // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
-  // Zero-Install 系统识别 (SpeechAnalyzer): desktop-only, NOT sidecarOnly
-  // (needs no local Whisper sidecar at all — that's the whole point),
-  // so it's structurally unaffected by the #61 preview-tier lock. Label
-  // matches lib/stt/engineOptions.ts's own ENGINE_OPTIONS entry verbatim
+  // Zero-Install 系统识别 (SpeechAnalyzer): NOT sidecarOnly (needs no
+  // local Whisper sidecar at all — that's the whole point), so it's
+  // structurally unaffected by the #61 preview-tier lock. Label matches
+  // lib/stt/engineOptions.ts's own ENGINE_OPTIONS entry verbatim
   // (Miana-veto #2) — the two surfaces must never say this engine's name
   // differently. Floor-gated below like appaudio's own macOS-14.4 floor
   // (isOsSpeechFloorLocked/osSpeechLockReason, macOS 26 via
   // os_speech_capabilities) — shown-but-disabled below the floor, never
-  // hidden.
-  ...(IS_DESKTOP
+  // hidden. S13 (docs/design-explorations/s13-ios-blueprint.md, §6):
+  // IS_TAURI, not IS_DESKTOP — this engine also exists on iOS (same
+  // invoke names, D2), where it's the ONLY card ENGINE_CARDS keeps (see
+  // that const below).
+  ...(IS_TAURI
     ? [
         {
           value: "osspeech" as const,
           label: "系统识别 · 开箱即用",
-          hint: "无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 macOS 26 或更高版本",
+          // S13 lead fix (Lane D report flag #1): the card is shared by
+          // both Tauri shells — the OS-version tail must name the right
+          // platform (IS_IOS is a build-time const, so this folds).
+          hint: `无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 ${IS_IOS ? "iOS" : "macOS"} 26 或更高版本`,
           posture: "local" as const,
         },
       ]
@@ -202,10 +209,14 @@ const ALL_ENGINE_CARDS: {
 // condition, same drop) rather than importing that module directly —
 // this card grid's richer per-card `hint` copy keeps the two arrays
 // from cleanly sharing one data shape (see that module's own header
-// comment), so the semantics are mirrored here instead of forked.
-const ENGINE_CARDS = IS_DESKTOP
-  ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
-  : ALL_ENGINE_CARDS;
+// comment), so the semantics are mirrored here instead of forked. S13
+// (§6 Sol F5, BLOCKER): iOS keeps the osspeech card ONLY — same
+// osspeech-only matrix engineOptions.ts's own IS_IOS branch pins.
+const ENGINE_CARDS = IS_IOS
+  ? ALL_ENGINE_CARDS.filter((c) => c.value === "osspeech")
+  : IS_DESKTOP
+    ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
+    : ALL_ENGINE_CARDS;
 
 const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",
@@ -2186,8 +2197,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {/* v0.4.4 field ruling (finding round 2, item 1): the row only
                governs the webspeech engine, which desktop builds filter out
                entirely (ENGINE_CARDS above) — rendering a 「仅浏览器识别引擎
-               生效」 toggle in an app with no such engine was pure noise. */}
-            {!IS_DESKTOP && (
+               生效」 toggle in an app with no such engine was pure noise. S13
+               (§6 Sol F5): !IS_TAURI, not !IS_DESKTOP — webspeech doesn't
+               exist on iOS either (ENGINE_CARDS above drops it there too,
+               same as desktop). */}
+            {!IS_TAURI && (
               <label className="flex items-center justify-between gap-3 py-1">
                 <div>
                   <div className="text-sm text-fg">设备端识别（推荐）</div>

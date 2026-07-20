@@ -35,6 +35,7 @@ import { getBuiltinTheme } from "./theme/themes";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
 import { PREVIEW_TIER } from "./deployTier";
 import { IS_DESKTOP } from "./platform/desktop";
+import { IS_IOS } from "./platform/ios";
 import { diagLog } from "./diag/log";
 import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
 import { remapOpenRouterModelDefaults } from "./oauth/openrouterModelDefaults";
@@ -411,8 +412,27 @@ interface AppState {
  *  equivalent), the identical D6 rationale appaudio's own web-side
  *  coercion already documents above. No OS-version coercion here either
  *  (Q8): the macOS-26 floor is an engineOptions.ts option-gate + a
- *  start_os_speech runtime re-check, not a platform swap. */
-export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean): Settings {
+ *  start_os_speech runtime re-check, not a platform swap.
+ *
+ *  S13 (docs/design-explorations/s13-ios-blueprint.md, §6): iOS v1's
+ *  ENGINE_OPTIONS is osspeech-only (engineOptions.ts) — a persisted
+ *  engine from any OTHER platform (a full-tier backup restored on an
+ *  iOS device, or a device that was on an earlier build before this
+ *  engine existed) is coerced to osspeech, the one iOS default, rather
+ *  than surviving as an orphaned picker value. Checked FIRST and returns
+ *  early: isDesktop is always false on an iOS build (D4 — IS_DESKTOP
+ *  means exactly "macOS desktop shell"), so without this early return
+ *  a stored "appaudio"/"osspeech" would otherwise fall into the `
+ *  !isDesktop` web-coercion branches below and land on tabaudio, an
+ *  engine iOS never offers either. No reverse (iOS -> other platform)
+ *  coercion is needed: osspeech already exists on desktop, and web's own
+ *  osspeech->tabaudio coercion above already covers a stored osspeech
+ *  landing on a web build. */
+export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean, isIos = false): Settings {
+  if (isIos) {
+    if (settings.engine === "osspeech" || settings.engine === "demo") return settings;
+    return { ...settings, engine: "osspeech" };
+  }
   if (isDesktop && settings.engine === "tabaudio") {
     return { ...settings, engine: "appaudio" };
   }
@@ -624,7 +644,7 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // S9/D7 platform coercion runs FIRST — see applyPlatformEngineDefaults'
   // own doc for why (an engine value must be legal for THIS platform
   // before preview-tier legality is even meaningful to ask about).
-  const platformSettings = applyPlatformEngineDefaults(settings, IS_DESKTOP);
+  const platformSettings = applyPlatformEngineDefaults(settings, IS_DESKTOP, IS_IOS);
   // Preview tier (#61) — see applyTierDefaults' own doc for the two
   // coercions and why "first run" is `saved`'s own engine key, not the
   // post-fold value (a returning user's persisted engine:"demo", from

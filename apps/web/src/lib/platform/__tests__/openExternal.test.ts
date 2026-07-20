@@ -9,12 +9,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { openExternal, openExternalWith } from "../openExternal";
 import type { OpenExternalFn } from "../../desktop/tauriApi";
 
-describe("openExternalWith — pure core (explicit isDesktop + injected opener)", () => {
+describe("openExternalWith — pure core (explicit isTauri + injected opener)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it("desktop: resolves the opener factory and calls it with the url, never touches window.open", async () => {
+  it("Tauri (desktop or iOS): resolves the opener factory and calls it with the url, never touches window.open", async () => {
     const open = vi.fn<OpenExternalFn>().mockResolvedValue(undefined);
     const openerFactory = vi.fn().mockResolvedValue(open);
     const windowOpenSpy = vi.spyOn(window, "open").mockReturnValue(null);
@@ -54,16 +54,17 @@ describe("openExternalWith — pure core (explicit isDesktop + injected opener)"
   });
 });
 
-describe("openExternal — real IS_DESKTOP/getOpener wrapper", () => {
+describe("openExternal — real IS_TAURI/getOpener wrapper", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  // Ambient test env is a web build (IS_DESKTOP false, see
-  // platform/desktop.ts) — same documented limitation as store.test.ts's
-  // migrateSettings describe block: only the web branch is exercisable
-  // through the real IS_DESKTOP const here, the desktop branch is
-  // already fully covered above via openExternalWith's explicit boolean.
+  // Ambient test env is a web build (IS_TAURI false — neither
+  // NEXT_PUBLIC_DESKTOP nor NEXT_PUBLIC_IOS is set, see platform/ios.ts)
+  // — same documented limitation as store.test.ts's migrateSettings
+  // describe block: only the web branch is exercisable through the real
+  // IS_TAURI const here, the Tauri branch is already fully covered above
+  // via openExternalWith's explicit boolean.
   it("in the ambient (web) test env, falls back to window.open", async () => {
     const windowOpenSpy = vi.spyOn(window, "open").mockReturnValue(null);
 
