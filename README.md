@@ -31,7 +31,8 @@ It sits beside your English meetings and turns **business slang, idioms, metapho
 ## Get it
 
 - **macOS desktop app** (Apple Silicon, recommended) — download the DMG from [Releases](https://github.com/mianaz/jargonslayer/releases/latest). The first-run wizard installs local Whisper into the app's own directory (nothing downloads without consent; deleting the directory is a clean uninstall). **System/app audio** (macOS 14.4+) transcribes meetings running in native apps — Zoom, Teams, WeChat — directly, with no virtual audio device.
-- **Web app** — [try the hosted preview](https://apps.bioinfospace.com/jargonslayer) (built-in demo AI key, rate-limited), or self-host: `npm install && npm run build && npm start` with Node 20+. Details in the [docs](https://mianaz.github.io/jargonslayer/docs/).
+- **Web app** — [try the hosted preview](https://apps.bioinfospace.com/jargonslayer) (built-in demo AI key, rate-limited), or self-host: `npm install && npm run build && npm start` with Node 20+. Details in the [docs](https://mianaz.github.io/jargonslayer/docs/). Works in mobile browsers too.
+- **iOS (beta)** — available via TestFlight on request ([get in touch](https://mianaz.github.io/jargonslayer/)); on-device system speech recognition, iOS 26+.
 - **Chrome extension (JargonSlayer Lite)** — live captions and jargon cards in a side panel; grab the zip from [Releases](https://github.com/mianaz/jargonslayer/releases) and load it unpacked (Web Store listing pending).
 
 ## Features

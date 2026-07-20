@@ -14,6 +14,7 @@ import { useState } from "react";
 import { Eye, EyeSlash } from "@phosphor-icons/react";
 import type { LlmProvider } from "@jargonslayer/core/types";
 import { useProviderModels } from "@/hooks/useProviderModels";
+import { KEY_STATUS_LABEL, type KeyStatus } from "@/lib/settings/keyStatus";
 
 export type ProviderPresetId =
   | "anthropic"
@@ -31,6 +32,36 @@ export interface ProviderPreset {
   provider: LlmProvider;
   baseUrl: string; // "" for custom — user fills it in
   modelHint?: string;
+}
+
+// S14 credential-health chip text color per KeyStatus — PreviewLockedBadge's
+// own square-corner/muted-border framing (border-edge, px-1.5 py-0.5,
+// text-[10px]), just swapping its fixed text-mut2 for a status-keyed
+// color: muted grey (unconfigured) -> dim (configured) -> lab-green
+// (active) -> red (error), matching this app's existing color idiom for
+// those states (e.g. AiStatusPanel's own 上次失败 line uses the same
+// text-warn-soft for "real error").
+const KEY_STATUS_CHIP_CLASS: Record<KeyStatus, string> = {
+  unconfigured: "text-mut2",
+  configured: "text-mut",
+  active: "text-lab-green",
+  error: "text-warn-soft",
+};
+
+/** Shared credential-row status chip (S14) — this file's own API Key
+ *  row below AND SettingsDialog's hand-rolled hfToken/sonioxKey rows
+ *  (which don't go through CredentialFields at all) both render this,
+ *  so every credential row in Settings shares one visual + one copy
+ *  source (keyStatus.ts's KEY_STATUS_LABEL). */
+export function KeyStatusChip({ status }: { status: KeyStatus }) {
+  return (
+    <span
+      data-testid="key-status-chip"
+      className={`border border-edge px-1.5 py-0.5 text-[10px] whitespace-nowrap ${KEY_STATUS_CHIP_CLASS[status]}`}
+    >
+      {KEY_STATUS_LABEL[status]}
+    </span>
+  );
 }
 
 /** Reverse-match a provider/baseUrl pair to a preset id for the
@@ -77,6 +108,12 @@ export interface CredentialFieldsProps {
   onBaseUrlChange: (baseUrl: string) => void;
   onApiKeyChange: (apiKey: string) => void;
   apiKeyPlaceholder: string;
+  /** S14 credential-health chip (未配置/已配置/正常/异常) rendered next to
+   *  the "API Key" label — undefined renders no chip at all. The
+   *  caller owns the PREVIEW_TIER gate itself (a preview-tier row's
+   *  chip would describe the SERVER key, not the user's) by simply
+   *  passing undefined there; this component stays tier-agnostic. */
+  apiKeyStatus?: KeyStatus;
   /** Small caption under the Key field — callers differ (primary:
    *  storage/transmission disclosure; #56 domain block: none, since
    *  Q5's placeholder text already carries the "blank = inherit"
@@ -116,6 +153,7 @@ export default function CredentialFields({
   onApiKeyChange,
   apiKeyPlaceholder,
   apiKeyHint,
+  apiKeyStatus,
   models,
   presets,
   disabled,
@@ -174,7 +212,10 @@ export default function CredentialFields({
       )}
 
       <div>
-        <label className="text-xs text-mut">API Key</label>
+        <div className="flex items-center justify-between gap-2">
+          <label className="text-xs text-mut">API Key</label>
+          {apiKeyStatus && <KeyStatusChip status={apiKeyStatus} />}
+        </div>
         <div className="mt-1 flex items-center gap-2">
           <input
             type={showKey ? "text" : "password"}

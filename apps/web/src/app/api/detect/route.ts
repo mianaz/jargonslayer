@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import * as z from "zod";
 import { mapLlmError, pickModel, resolveLlmConfig, withFallback } from "@/lib/llm/anthropic";
-import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
+import { allowDailyBudget, allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { DEFAULT_DETECT_MODEL, runDetectTask } from "@/lib/llm/tasks/detect";
 import { PROFILE_HINT_MAX_CHARS } from "@jargonslayer/core/llm/profileHint";
 import { newRequestId } from "@/lib/diag/requestId";
@@ -56,6 +56,14 @@ export async function POST(req: Request) {
   // every few seconds, so this is the most generous of the three).
   if (cfg.isServerKey && !allowRequest(`detect:${clientIp(req)}`, 20)) {
     return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
+  }
+  // Global daily budget (distributed-IP/slow-burn spend the per-IP
+  // limiter above can't see) — see rateLimit.ts's allowDailyBudget doc.
+  if (cfg.isServerKey && !allowDailyBudget("detect")) {
+    return errorBody(
+      { error: "体验版今日 AI 额度已用完，请明日再试，或使用本地版 / 自备 API Key", code: "rate_limit" },
+      429,
+    );
   }
 
   try {

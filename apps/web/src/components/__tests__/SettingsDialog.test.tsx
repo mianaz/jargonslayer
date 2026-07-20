@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
+import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import SettingsDialog, { SETTINGS_CATEGORIES, type SettingsCategoryId } from "../SettingsDialog";
 
@@ -1174,5 +1175,117 @@ describe("SettingsDialog — AI 检测: idiom-cap controls + AiStatusPanel mount
     expect(
       testConnBtn.parentElement?.querySelector('[data-testid="ai-status-panel"]'),
     ).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------
+// S14: credential-health status chips (未配置/已配置/正常/异常) next to
+// each credential row. Minimal render coverage only — every status/
+// evidence-attribution rule is unit tested directly against
+// lib/settings/keyStatus.ts (deriveKeyStatus/llmKeyEvidence/
+// domainUsesOwnKey/primaryTelemetryDomains).
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — S14 credential-health chips", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", apiKey: "sk-real-key" },
+      hydrated: true,
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    resetLlmTelemetry();
+  });
+
+  it("renders a 已配置 chip next to the primary API Key row once apiKey is set with no telemetry evidence yet", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const chips = Array.from(container!.querySelectorAll('[data-testid="key-status-chip"]'));
+    expect(chips.length).toBeGreaterThan(0);
+    expect(chips.some((c) => c.textContent === "已配置")).toBe(true);
+  });
+
+  it("renders no chip at all for the empty primary key (未配置 is still shown, just via deriveKeyStatus's own unconfigured branch)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", apiKey: "" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const chips = Array.from(container!.querySelectorAll('[data-testid="key-status-chip"]'));
+    expect(chips.some((c) => c.textContent === "未配置")).toBe(true);
+  });
+
+  // FINDING 5 (S14 fix round): stale evidence attribution — test key A,
+  // paste key B must not let B's chip immediately inherit A's 正常. The
+  // saved settings' apiKey ("sk-real-key", seeded by beforeEach above)
+  // matches the draft at open time, so the mocked telemetry success
+  // legitimately backs 正常 first; editing the draft key away from the
+  // saved value must cap the chip back at 已配置 (credsMatch no longer
+  // holds), even though the telemetry success is still sitting there.
+  it("editing the draft key after a saved-key success drops the chip from 正常 to 已配置", async () => {
+    recordLlmCall("detect", "ok");
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const apiKeyInput = container!.querySelector('input[placeholder="sk-…"]') as HTMLInputElement | null;
+    if (!apiKeyInput) throw new Error("primary API Key input not found");
+
+    let chips = Array.from(container!.querySelectorAll('[data-testid="key-status-chip"]'));
+    expect(chips.some((c) => c.textContent === "正常")).toBe(true);
+
+    await act(async () => {
+      typeInto(apiKeyInput, "sk-different-draft-key");
+    });
+
+    chips = Array.from(container!.querySelectorAll('[data-testid="key-status-chip"]'));
+    expect(chips.some((c) => c.textContent === "已配置")).toBe(true);
+    expect(chips.some((c) => c.textContent === "正常")).toBe(false);
+    expect(chips.some((c) => c.textContent === "异常")).toBe(false);
   });
 });

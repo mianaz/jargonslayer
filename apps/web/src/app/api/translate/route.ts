@@ -3,7 +3,7 @@ export const runtime = "nodejs";
 import { NextResponse } from "next/server";
 import * as z from "zod";
 import { mapLlmError, pickModel, resolveLlmConfig, withFallback } from "@/lib/llm/anthropic";
-import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
+import { allowDailyBudget, allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "@/lib/llm/tasks/translate";
 import type { ApiErrorBody, TranslateResponse } from "@jargonslayer/core/types";
 
@@ -59,6 +59,14 @@ export async function POST(req: Request) {
   // leaves headroom for two tabs.
   if (cfg.isServerKey && !allowRequest(`translate:${clientIp(req)}`, 30)) {
     return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
+  }
+  // Global daily budget (distributed-IP/slow-burn spend the per-IP
+  // limiter above can't see) — see rateLimit.ts's allowDailyBudget doc.
+  if (cfg.isServerKey && !allowDailyBudget("translate")) {
+    return errorBody(
+      { error: "体验版今日 AI 额度已用完，请明日再试，或使用本地版 / 自备 API Key", code: "rate_limit" },
+      429,
+    );
   }
 
   try {

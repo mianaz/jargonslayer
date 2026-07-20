@@ -252,6 +252,15 @@ interface AppState {
   // ui
   toast: ToastState;
   focusMode: boolean; // 专注模式：折叠右栏，hover 看高亮释义
+  // Floating caption (S14): desktop-only "shrink the main window into a
+  // caption strip" mode — page.tsx swaps its ENTIRE layout for
+  // FloatingCaption while this is true (see that component + lib/
+  // captionWindow.ts's own docs). Web's own floating caption is a
+  // Document Picture-in-Picture window instead (lib/captionWindow.ts),
+  // which never touches this flag — it doesn't change THIS window's
+  // layout at all. Non-persisted, same posture as focusMode above (an
+  // ergonomic session toggle, not a Settings field).
+  captionMode: boolean;
 
   // Sidecar status (owner ask 2026-07-11: "I cannot see in the GUI if
   // the local side got set up at all"): last known GET /health result
@@ -373,6 +382,7 @@ interface AppState {
   showToast: (toast: Exclude<ToastState, null>) => void;
   clearToast: () => void;
   setFocusMode: (v: boolean) => void;
+  setCaptionMode: (v: boolean) => void;
   setSidecarUp: (up: boolean | null) => void;
 }
 
@@ -745,6 +755,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   toast: null,
   focusMode: false,
+  captionMode: false,
   sidecarUp: null,
 
   subscriptionKillCheckSettled: false,
@@ -1416,6 +1427,7 @@ export const useApp = create<AppState>((set, get) => ({
   showToast: (toast) => set({ toast }),
   clearToast: () => set({ toast: null }),
   setFocusMode: (focusMode) => set({ focusMode }),
+  setCaptionMode: (captionMode) => set({ captionMode }),
   setSidecarUp: (sidecarUp) => set({ sidecarUp }),
 }));
 

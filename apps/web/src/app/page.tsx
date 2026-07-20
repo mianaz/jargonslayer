@@ -20,9 +20,11 @@ import SettingsDialog from "@/components/SettingsDialog";
 import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverlay";
 import LookupPopover from "@/components/LookupPopover";
 import Toast from "@/components/Toast";
+import FloatingCaption from "@/components/FloatingCaption";
 import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
 import { checkAppUpdate } from "@/lib/desktop/updateCheck";
 import { initIos } from "@/lib/desktop/bootstrap";
+import { enterDesktopCaptionMode, exitDesktopCaptionMode } from "@/lib/captionWindow";
 
 type RightTab = "cards" | "summary" | "glossary";
 
@@ -66,6 +68,8 @@ export default function Home() {
   const segments = useApp((s) => s.segments);
   const focusMode = useApp((s) => s.focusMode);
   const setFocusMode = useApp((s) => s.setFocusMode);
+  const captionMode = useApp((s) => s.captionMode);
+  const setCaptionMode = useApp((s) => s.setCaptionMode);
 
   const [tab, setTab] = useState<RightTab>("cards");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -181,7 +185,41 @@ export default function Home() {
     prevSummary.current = summary;
   }, [summary]);
 
+  // S14 floating caption, desktop host: captionMode is a plain store
+  // flag (Header.tsx's ≡ menu writes it) — this effect is what actually
+  // drives the OS window on a real transition, mirroring prevSummary's
+  // own "compare against the previous value" shape just above (skips
+  // the mount-time firing, which would otherwise call
+  // exitDesktopCaptionMode() once on every launch since captionMode
+  // always starts false). enterDesktopCaptionMode()/exitDesktopCaptionMode()
+  // are fire-and-forget (void promises, no rect round-trip through this
+  // effect) — captionWindow.ts's own module-level queue+generation
+  // serialization is what keeps a pending enter from landing after an
+  // exit (S14 fix-round findings 1+3).
+  const prevCaptionMode = useRef(captionMode);
+  useEffect(() => {
+    if (IS_DESKTOP && prevCaptionMode.current !== captionMode) {
+      if (captionMode) {
+        void enterDesktopCaptionMode();
+      } else {
+        void exitDesktopCaptionMode();
+      }
+    }
+    prevCaptionMode.current = captionMode;
+  }, [captionMode]);
+
   const summaryReady = status === "stopped" && segments.length > 0;
+
+  // Caption mode (desktop only, set via Header's ≡ menu): replace the
+  // ENTIRE normal layout with the shared floating-caption view — the
+  // effect above has already shrunk this window into a caption strip
+  // by the time this can even be true (captionMode only flips on
+  // IS_DESKTOP builds — see Header.tsx's own gate). Its ✕ close button
+  // is this mode's only exit affordance; onClose flips the store flag
+  // back, which the effect above observes and restores the window.
+  if (captionMode) {
+    return <FloatingCaption onClose={() => setCaptionMode(false)} />;
+  }
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">

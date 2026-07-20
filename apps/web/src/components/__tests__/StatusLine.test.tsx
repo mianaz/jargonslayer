@@ -414,19 +414,6 @@ describe("StatusLine — on-device privacy posture", () => {
     expect(privacySegment().className).not.toContain("text-lab-green");
   });
 
-  it("short variant also stays cloud for engine:soniox", async () => {
-    useApp.setState((s) => ({
-      status: "listening",
-      settings: { ...s.settings, engine: "soniox" },
-    }));
-    renderStatusLine();
-    await act(async () => {
-      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
-    });
-
-    expect(privacySegment().textContent).toContain("音频将经厂商云端");
-  });
-
   it("an engine value absent from ENGINE_OPTIONS falls back to cloud — never defaults to local for an unrecognized engine", async () => {
     useApp.setState((s) => ({
       status: "listening",

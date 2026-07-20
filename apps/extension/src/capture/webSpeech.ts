@@ -362,9 +362,14 @@ export class WebSpeechEngine implements STTEngine {
 
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) {
+      // Keyless-path hint (S14 mobile-preview follow-up): a browser
+      // with no SpeechRecognition at all (most non-Chromium mobile
+      // browsers) still has a fully working way in — 导入 accepts an
+      // audio/transcript upload with no mic and no API key, in any
+      // browser.
       events.onStatus(
         "error",
-        "当前浏览器不支持语音识别，请使用 Chrome/Edge，或切换到本地 Whisper / 演示模式",
+        "当前浏览器不支持语音识别，请使用 Chrome/Edge，或切换到本地 Whisper / 演示模式，也可点击「导入」上传音频/文稿，无需麦克风与 API Key，任何浏览器都能用",
       );
       return;
     }
@@ -482,10 +487,20 @@ export class WebSpeechEngine implements STTEngine {
         // Benign — recognizer will restart via onend.
         return;
       case "not-allowed":
-      case "service-not-allowed":
         this.events.onStatus(
           "error",
           "麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问",
+        );
+        return;
+      case "service-not-allowed":
+        // iOS Safari (2026-07 S14 mobile-preview follow-up): this
+        // error code is what iOS reports both for a denied mic AND for
+        // Siri 与听写 being switched off system-wide — the base
+        // mic-permission guidance alone sends an iPhone/iPad user
+        // chasing the wrong setting, so it gets the extra hint too.
+        this.events.onStatus(
+          "error",
+          "麦克风权限被拒绝，请在浏览器地址栏允许麦克风访问，若在 iPhone/iPad 上，请在 系统设置→Siri 与听写 中开启听写",
         );
         return;
       case "network":

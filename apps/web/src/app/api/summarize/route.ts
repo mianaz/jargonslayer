@@ -4,7 +4,7 @@ export const maxDuration = 300;
 import { NextResponse } from "next/server";
 import * as z from "zod";
 import { callJson, mapLlmError, pickModel, resolveLlmConfig } from "@/lib/llm/anthropic";
-import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
+import { allowDailyBudget, allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import {
   DEFAULT_SUMMARIZE_MODEL,
   MAX_SEGMENTS,
@@ -125,6 +125,14 @@ export async function POST(req: Request) {
   // calls (summary + chunked translation + sweep), so keep this tight.
   if (cfg.isServerKey && !allowRequest(`summarize:${clientIp(req)}`, 4)) {
     return errorBody({ error: "请求过于频繁，请稍后重试", code: "rate_limit" }, 429);
+  }
+  // Global daily budget (distributed-IP/slow-burn spend the per-IP
+  // limiter above can't see) — see rateLimit.ts's allowDailyBudget doc.
+  if (cfg.isServerKey && !allowDailyBudget("summarize")) {
+    return errorBody(
+      { error: "体验版今日 AI 额度已用完，请明日再试，或使用本地版 / 自备 API Key", code: "rate_limit" },
+      429,
+    );
   }
 
   // pickModel (#61): client model honored only inside the server-side

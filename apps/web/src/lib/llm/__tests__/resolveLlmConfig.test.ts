@@ -5,7 +5,7 @@ import {
   resolveLlmConfig,
   type ResolvedLlmConfig,
 } from "../anthropic";
-import { allowRequest, clientIp, resetRateLimiter } from "../rateLimit";
+import { allowDailyBudget, allowRequest, clientIp, resetRateLimiter } from "../rateLimit";
 import { DetectResponseSchema } from "../anthropic";
 
 const SERVER_ENV = {
@@ -249,6 +249,55 @@ describe("rateLimit", () => {
       ),
     ).toBe("1.1.1.1");
     expect(clientIp(new Request("http://x/"))).toBe("unknown");
+  });
+});
+
+describe("allowDailyBudget — global daily spend budget", () => {
+  beforeEach(() => resetRateLimiter());
+
+  // Mid-day UTC, arbitrary — avoids day-boundary edge cases except in
+  // the rollover test below, which constructs its own boundary time.
+  const t0 = Date.UTC(2026, 0, 1, 12, 0, 0);
+
+  it("exhausting one task's own cap (define: 400) blocks that task but not others, until the shared total cap", () => {
+    for (let i = 0; i < 400; i++) {
+      expect(allowDailyBudget("define", t0 + i)).toBe(true);
+    }
+    expect(allowDailyBudget("define", t0 + 400)).toBe(false);
+    // A different task only shares the TOTAL bucket (400/3000 so far)
+    // — define's own exhausted cap doesn't touch it.
+    expect(allowDailyBudget("detect", t0 + 401)).toBe(true);
+  });
+
+  it("the shared total cap (default 3000) blocks every task once reached, even one nowhere near its own per-task cap", () => {
+    for (let i = 0; i < 1500; i++) {
+      expect(allowDailyBudget("detect", t0 + i)).toBe(true);
+    }
+    for (let i = 0; i < 1500; i++) {
+      expect(allowDailyBudget("translate", t0 + i)).toBe(true);
+    }
+    // Total is now exactly 3000 (detect's + translate's own caps sum
+    // to it) — define (own cap 400, still at 0) is blocked purely by
+    // the shared total.
+    expect(allowDailyBudget("define", t0)).toBe(false);
+  });
+
+  it("resets at UTC day rollover, not 24h after the first hit", () => {
+    for (let i = 0; i < 100; i++) {
+      expect(allowDailyBudget("summarize", t0 + i)).toBe(true);
+    }
+    expect(allowDailyBudget("summarize", t0 + 100)).toBe(false);
+    const nextUtcMidnight = t0 - (t0 % 86_400_000) + 86_400_000;
+    expect(allowDailyBudget("summarize", nextUtcMidnight)).toBe(true);
+  });
+
+  it("resetRateLimiter clears the daily budget state too", () => {
+    for (let i = 0; i < 100; i++) {
+      expect(allowDailyBudget("summarize", t0 + i)).toBe(true);
+    }
+    expect(allowDailyBudget("summarize", t0 + 100)).toBe(false);
+    resetRateLimiter();
+    expect(allowDailyBudget("summarize", t0 + 100)).toBe(true);
   });
 });
 
