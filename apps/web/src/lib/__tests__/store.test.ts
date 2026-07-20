@@ -1,18 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  addSpeakerToRosterList,
   aliasesAfterRename,
   applyOpenRouterModelDefaults,
   applyPlatformEngineDefaults,
   applySpeakerUpdateToSegments,
   applyTierDefaults,
+  assignSpeakerFollowingInSegments,
+  assignSpeakerToSegments,
   currentSessionSnapshot,
+  deriveRosterFromSegments,
   elapsedActiveMs,
   filterSuppressedLiveCards,
   migrateSettings,
+  modeForPersistedEngine,
   pauseIntervalsForSnapshot,
+  renameRosterSpeakerList,
   renameSpeakerInSegments,
   scheduleSessionSave,
   shouldApplySpeakerUpdate,
+  SPEAKER_ROSTER_CAP,
+  unlockSpeakerInSegments,
   useApp,
 } from "../store";
 import {
@@ -21,6 +29,7 @@ import {
   type DetectResponse,
   type MeetingSession,
   type Settings,
+  type STTEngineKind,
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
@@ -129,6 +138,284 @@ describe("applySpeakerUpdateToSegments — realtime speaker diarization (beta)",
     );
     expect(afterSecond[0].sttSpeaker).toBe("SPEAKER_3");
     expect(afterSecond[0].speaker).toBe("SPEAKER_3");
+  });
+});
+
+describe("applySpeakerUpdateToSegments — §5 A2 manual-assignment guard (locked segments)", () => {
+  it("a LOCKED segment's sttSpeaker still updates, but its display speaker does not", () => {
+    const segments = [
+      makeSegment({ id: "a", sttSeg: 0, speaker: "Alice", speakerLocked: true }),
+    ];
+    const result = applySpeakerUpdateToSegments(
+      segments,
+      [{ segId: 0, speaker: "SPEAKER_1" }],
+      {},
+    );
+    expect(result[0].sttSpeaker).toBe("SPEAKER_1"); // raw truth always updates
+    expect(result[0].speaker).toBe("Alice"); // display stays manual
+    expect(result[0].speakerLocked).toBe(true); // lock itself is untouched here (only unlock clears it)
+  });
+
+  it("a locked segment's display stays manual even when an alias exists for the incoming stable id", () => {
+    const segments = [
+      makeSegment({ id: "a", sttSeg: 0, speaker: "Alice", speakerLocked: true }),
+    ];
+    const result = applySpeakerUpdateToSegments(
+      segments,
+      [{ segId: 0, speaker: "SPEAKER_1" }],
+      { SPEAKER_1: "Bob" }, // an alias exists, but the lock still wins
+    );
+    expect(result[0].sttSpeaker).toBe("SPEAKER_1");
+    expect(result[0].speaker).toBe("Alice");
+  });
+
+  it("an UNLOCKED segment (speakerLocked absent) behaves exactly as before — display updates", () => {
+    const segments = [makeSegment({ id: "a", sttSeg: 0, speaker: "stale" })];
+    const result = applySpeakerUpdateToSegments(
+      segments,
+      [{ segId: 0, speaker: "SPEAKER_1" }],
+      {},
+    );
+    expect(result[0].speaker).toBe("SPEAKER_1");
+  });
+
+  it("an UNLOCKED segment (speakerLocked explicitly false) also updates its display", () => {
+    const segments = [
+      makeSegment({ id: "a", sttSeg: 0, speaker: "stale", speakerLocked: false }),
+    ];
+    const result = applySpeakerUpdateToSegments(
+      segments,
+      [{ segId: 0, speaker: "SPEAKER_1" }],
+      {},
+    );
+    expect(result[0].speaker).toBe("SPEAKER_1");
+  });
+
+  it("mixed batch: locked segments keep their display, unlocked segments update, in the SAME call", () => {
+    const segments = [
+      makeSegment({ id: "locked", sttSeg: 0, speaker: "Alice", speakerLocked: true }),
+      makeSegment({ id: "unlocked", sttSeg: 1, speaker: "stale" }),
+    ];
+    const result = applySpeakerUpdateToSegments(
+      segments,
+      [
+        { segId: 0, speaker: "SPEAKER_1" },
+        { segId: 1, speaker: "SPEAKER_2" },
+      ],
+      {},
+    );
+    expect(result[0].speaker).toBe("Alice");
+    expect(result[0].sttSpeaker).toBe("SPEAKER_1");
+    expect(result[1].speaker).toBe("SPEAKER_2");
+    expect(result[1].sttSpeaker).toBe("SPEAKER_2");
+  });
+});
+
+describe("unlockSpeakerInSegments — 跟随识别 (§5 A2)", () => {
+  it("clears speakerLocked and recomputes display from aliases[sttSpeaker]", () => {
+    const segments = [
+      makeSegment({ id: "a", sttSpeaker: "SPEAKER_1", speaker: "Alice", speakerLocked: true }),
+    ];
+    const result = unlockSpeakerInSegments(segments, "a", { SPEAKER_1: "Bob" });
+    expect(result[0].speakerLocked).toBe(false);
+    expect(result[0].speaker).toBe("Bob");
+  });
+
+  it("falls back to the raw sttSpeaker itself when unaliased", () => {
+    const segments = [
+      makeSegment({ id: "a", sttSpeaker: "SPEAKER_1", speaker: "Alice", speakerLocked: true }),
+    ];
+    const result = unlockSpeakerInSegments(segments, "a", {});
+    expect(result[0].speaker).toBe("SPEAKER_1");
+  });
+
+  it("keeps the PRIOR display speaker when the segment has no sttSpeaker at all (nothing to follow back to)", () => {
+    const segments = [makeSegment({ id: "a", speaker: "Alice", speakerLocked: true })]; // no sttSpeaker
+    const result = unlockSpeakerInSegments(segments, "a", { SPEAKER_1: "Bob" });
+    expect(result[0].speaker).toBe("Alice");
+    expect(result[0].speakerLocked).toBe(false);
+  });
+
+  it("leaves other segments untouched", () => {
+    const segments = [
+      makeSegment({ id: "a", speaker: "Alice", speakerLocked: true }),
+      makeSegment({ id: "b", speaker: "Carol", speakerLocked: true }),
+    ];
+    const result = unlockSpeakerInSegments(segments, "a", {});
+    expect(result[1]).toEqual(segments[1]);
+  });
+
+  it("is a no-op for an unknown segmentId", () => {
+    const segments = [makeSegment({ id: "a", speaker: "Alice", speakerLocked: true })];
+    const result = unlockSpeakerInSegments(segments, "missing", {});
+    expect(result[0]).toEqual(segments[0]);
+  });
+});
+
+describe("assignSpeakerToSegments — bulk per-segment assignment", () => {
+  it("sets speaker + speakerLocked:true on every segment whose id is in segmentIds", () => {
+    const segments = [
+      makeSegment({ id: "a" }),
+      makeSegment({ id: "b" }),
+      makeSegment({ id: "c" }),
+    ];
+    const result = assignSpeakerToSegments(segments, ["a", "c"], "Alice");
+    expect(result[0]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+    expect(result[1]).toEqual(segments[1]); // untouched
+    expect(result[2]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+  });
+
+  it("single assign (one-element array) works identically to bulk", () => {
+    const segments = [makeSegment({ id: "a" })];
+    const result = assignSpeakerToSegments(segments, ["a"], "Alice");
+    expect(result[0]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+  });
+
+  it("overwrites an existing (even locked) assignment — explicit bulk action wins", () => {
+    const segments = [makeSegment({ id: "a", speaker: "Old", speakerLocked: true })];
+    const result = assignSpeakerToSegments(segments, ["a"], "New");
+    expect(result[0].speaker).toBe("New");
+    expect(result[0].speakerLocked).toBe(true);
+  });
+});
+
+describe("assignSpeakerFollowingInSegments — 应用到本句及之后 (exact range)", () => {
+  it("assigns the target segment AND every segment after it, by arrival order", () => {
+    const segments = [
+      makeSegment({ id: "a", index: 0 }),
+      makeSegment({ id: "b", index: 1 }),
+      makeSegment({ id: "c", index: 2 }),
+    ];
+    const result = assignSpeakerFollowingInSegments(segments, "b", "Alice");
+    expect(result[0]).toEqual(segments[0]); // BEFORE the target: untouched
+    expect(result[1]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+    expect(result[2]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+  });
+
+  it("assigning the FIRST segment assigns the entire array", () => {
+    const segments = [
+      makeSegment({ id: "a", index: 0 }),
+      makeSegment({ id: "b", index: 1 }),
+    ];
+    const result = assignSpeakerFollowingInSegments(segments, "a", "Alice");
+    expect(result.every((s) => s.speaker === "Alice" && s.speakerLocked)).toBe(true);
+  });
+
+  it("assigning the LAST segment assigns ONLY that one segment", () => {
+    const segments = [
+      makeSegment({ id: "a", index: 0 }),
+      makeSegment({ id: "b", index: 1 }),
+    ];
+    const result = assignSpeakerFollowingInSegments(segments, "b", "Alice");
+    expect(result[0]).toEqual(segments[0]);
+    expect(result[1]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+  });
+
+  it("is a no-op for an unknown segmentId", () => {
+    const segments = [makeSegment({ id: "a" })];
+    const result = assignSpeakerFollowingInSegments(segments, "missing", "Alice");
+    expect(result).toBe(segments); // same reference — untouched
+  });
+});
+
+describe("addSpeakerToRosterList — roster invariants (§5 A1: trimmed-unique, 200 cap)", () => {
+  it("auto-numbers 说话人 1 on an empty roster when name is omitted", () => {
+    const { roster, name } = addSpeakerToRosterList([]);
+    expect(name).toBe("说话人 1");
+    expect(roster).toEqual(["说话人 1"]);
+  });
+
+  it("auto-numbering skips an already-taken name (说话人 1 taken -> next is 说话人 2)", () => {
+    const { roster, name } = addSpeakerToRosterList(["说话人 1"]);
+    expect(name).toBe("说话人 2");
+    expect(roster).toEqual(["说话人 1", "说话人 2"]);
+  });
+
+  it("auto-numbering skips a GAP correctly — smallest untaken N, not just highest+1", () => {
+    const { name } = addSpeakerToRosterList(["说话人 1", "说话人 3"]);
+    expect(name).toBe("说话人 2");
+  });
+
+  it("auto-numbering also skips a name a user free-typed that happens to match the pattern", () => {
+    const { name } = addSpeakerToRosterList(["说话人 1", "说话人 2"]);
+    expect(name).toBe("说话人 3");
+  });
+
+  it("trims a provided name before adding", () => {
+    const { roster, name } = addSpeakerToRosterList([], "  Alice  ");
+    expect(name).toBe("Alice");
+    expect(roster).toEqual(["Alice"]);
+  });
+
+  it("a blank/whitespace-only provided name falls back to auto-numbering", () => {
+    const { name } = addSpeakerToRosterList([], "   ");
+    expect(name).toBe("说话人 1");
+  });
+
+  it("does not add a duplicate — a name already in the roster is a no-op on the roster, but the resolved name is still returned", () => {
+    const { roster, name } = addSpeakerToRosterList(["Alice"], "Alice");
+    expect(name).toBe("Alice");
+    expect(roster).toEqual(["Alice"]); // unchanged, not duplicated
+  });
+
+  it("cap: refuses to grow past SPEAKER_ROSTER_CAP, but still returns the resolved name", () => {
+    const full = Array.from({ length: SPEAKER_ROSTER_CAP }, (_, i) => `说话人 ${i + 1}`);
+    const { roster, name } = addSpeakerToRosterList(full, "One More");
+    expect(roster).toHaveLength(SPEAKER_ROSTER_CAP);
+    expect(roster).toBe(full); // unchanged reference — refused, not silently truncated
+    expect(name).toBe("One More");
+  });
+
+  it("two consecutive omitted-name calls each get distinct auto-numbers", () => {
+    const first = addSpeakerToRosterList([]);
+    const second = addSpeakerToRosterList(first.roster);
+    expect(first.name).toBe("说话人 1");
+    expect(second.name).toBe("说话人 2");
+    expect(second.roster).toEqual(["说话人 1", "说话人 2"]);
+  });
+});
+
+describe("renameRosterSpeakerList", () => {
+  it("renames the matching entry, trimming the new name", () => {
+    const result = renameRosterSpeakerList(["说话人 1", "说话人 2"], "说话人 1", "  Alice  ");
+    expect(result).toEqual(["Alice", "说话人 2"]);
+  });
+
+  it("refuses (returns null) a blank result", () => {
+    expect(renameRosterSpeakerList(["Alice"], "Alice", "   ")).toBeNull();
+  });
+
+  it("refuses (returns null) a no-op rename (from === cleaned)", () => {
+    expect(renameRosterSpeakerList(["Alice"], "Alice", "Alice")).toBeNull();
+  });
+
+  it("refuses (returns null) a collision with a DIFFERENT existing entry", () => {
+    expect(renameRosterSpeakerList(["Alice", "Bob"], "Alice", "Bob")).toBeNull();
+  });
+
+  it("leaves other entries untouched on a successful rename", () => {
+    const result = renameRosterSpeakerList(["Alice", "Bob", "Carol"], "Bob", "Robert");
+    expect(result).toEqual(["Alice", "Robert", "Carol"]);
+  });
+});
+
+describe("deriveRosterFromSegments — legacy-session roster fallback (§5 A2)", () => {
+  it("collects unique non-empty speaker values, first-seen order", () => {
+    const segments = [
+      makeSegment({ id: "a", speaker: "Alice" }),
+      makeSegment({ id: "b", speaker: "Bob" }),
+      makeSegment({ id: "c", speaker: "Alice" }), // repeat
+    ];
+    expect(deriveRosterFromSegments(segments)).toEqual(["Alice", "Bob"]);
+  });
+
+  it("excludes segments with no speaker", () => {
+    const segments = [makeSegment({ id: "a" }), makeSegment({ id: "b", speaker: "Alice" })];
+    expect(deriveRosterFromSegments(segments)).toEqual(["Alice"]);
+  });
+
+  it("an empty segments array derives an empty roster", () => {
+    expect(deriveRosterFromSegments([])).toEqual([]);
   });
 });
 
@@ -359,6 +646,483 @@ describe("applySpeakerUpdate (store action) — post-stop diarization linger re-
     expect(useApp.getState().segments[0].speaker).toBeUndefined(); // untouched
     await vi.advanceTimersByTimeAsync(1500);
     expect(saveSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("addFinal — v0.5 Wave-1 Feature 1 live latch", () => {
+  beforeEach(() => {
+    useApp.setState({
+      segments: [],
+      activeSpeaker: null,
+      // Isolates this from personal-glossary detection entirely — see
+      // this describe block's own header note above on why that's safe
+      // either way (this file never seeds the glossary cache).
+      settings: { ...DEFAULT_SETTINGS, autoDetect: false },
+    });
+  });
+
+  it("a speaker-less final gets the latched roster name stamped and marked locked", () => {
+    useApp.getState().setActiveSpeaker("Alice");
+    const seg = useApp.getState().addFinal("hello");
+    expect(seg.speaker).toBe("Alice");
+    expect(seg.speakerLocked).toBe(true);
+  });
+
+  it("no latch set: a speaker-less final is unaffected — today's behavior, byte-identical", () => {
+    const seg = useApp.getState().addFinal("hello");
+    expect(seg.speaker).toBeUndefined();
+    expect(seg.speakerLocked).toBeUndefined();
+  });
+
+  it("a final that already arrives with an engine-reported speaker (opts.speaker) is NEVER touched by the latch, even when one is set", () => {
+    useApp.getState().setActiveSpeaker("Alice");
+    const seg = useApp.getState().addFinal("hello", { speaker: "SPEAKER_1" });
+    expect(seg.speaker).toBe("SPEAKER_1");
+    expect(seg.speakerLocked).toBeUndefined();
+  });
+
+  it("switching the latch changes which name the NEXT final gets — earlier finals are untouched", () => {
+    useApp.getState().setActiveSpeaker("Alice");
+    const first = useApp.getState().addFinal("one");
+    useApp.getState().setActiveSpeaker("Bob");
+    const second = useApp.getState().addFinal("two");
+    expect(first.speaker).toBe("Alice");
+    expect(second.speaker).toBe("Bob");
+  });
+
+  it("clearing the latch (setActiveSpeaker(null)) stops stamping subsequent finals", () => {
+    useApp.getState().setActiveSpeaker("Alice");
+    useApp.getState().addFinal("one");
+    useApp.getState().setActiveSpeaker(null);
+    const second = useApp.getState().addFinal("two");
+    expect(second.speaker).toBeUndefined();
+    expect(second.speakerLocked).toBeUndefined();
+  });
+});
+
+describe("speaker roster + assignment store actions (v0.5 Wave-1 Feature 1) — available at any status, post-stop re-save", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useApp.setState({
+      status: "listening",
+      meetingGen: 1,
+      segments: [
+        makeSegment({ id: "a", index: 0 }),
+        makeSegment({ id: "b", index: 1 }),
+      ],
+      speakerAliases: {},
+      speakerRoster: [],
+      activeSpeaker: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("addSpeakerToRoster adds and returns the resolved (auto-numbered) name", () => {
+    const name = useApp.getState().addSpeakerToRoster();
+    expect(name).toBe("说话人 1");
+    expect(useApp.getState().speakerRoster).toEqual(["说话人 1"]);
+  });
+
+  it("addSpeakerToRoster with a name trims and adds it", () => {
+    const name = useApp.getState().addSpeakerToRoster("  Alice  ");
+    expect(name).toBe("Alice");
+    expect(useApp.getState().speakerRoster).toEqual(["Alice"]);
+  });
+
+  it("renameRosterSpeaker updates the roster AND delegates to renameSpeaker (segments + aliases rewrite)", () => {
+    useApp.setState({
+      speakerRoster: ["SPEAKER_1"],
+      segments: [makeSegment({ id: "a", speaker: "SPEAKER_1" })],
+    });
+    useApp.getState().renameRosterSpeaker("SPEAKER_1", "Alice");
+    expect(useApp.getState().speakerRoster).toEqual(["Alice"]);
+    expect(useApp.getState().segments[0].speaker).toBe("Alice"); // renameSpeaker's own rewrite
+  });
+
+  it("renameRosterSpeaker is a no-op (roster AND segments untouched) on a collision", () => {
+    useApp.setState({
+      speakerRoster: ["Alice", "Bob"],
+      segments: [makeSegment({ id: "a", speaker: "Alice" })],
+    });
+    useApp.getState().renameRosterSpeaker("Alice", "Bob");
+    expect(useApp.getState().speakerRoster).toEqual(["Alice", "Bob"]);
+    expect(useApp.getState().segments[0].speaker).toBe("Alice");
+  });
+
+  it("assignSegmentsSpeaker (bulk) sets speaker + speakerLocked on the given ids, WHILE status is 'listening' (not gated to stopped)", () => {
+    useApp.getState().assignSegmentsSpeaker(["a", "b"], "Alice");
+    const s = useApp.getState();
+    expect(s.status).toBe("listening"); // never touched
+    expect(s.segments[0]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+    expect(s.segments[1]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+  });
+
+  it("assignSegmentsSpeaker single assign = a one-element array", () => {
+    useApp.getState().assignSegmentsSpeaker(["a"], "Alice");
+    expect(useApp.getState().segments[0].speaker).toBe("Alice");
+    expect(useApp.getState().segments[1].speaker).toBeUndefined();
+  });
+
+  it("assignSpeakerFollowing assigns from segmentId through the end", () => {
+    useApp.setState({
+      segments: [
+        makeSegment({ id: "a", index: 0 }),
+        makeSegment({ id: "b", index: 1 }),
+        makeSegment({ id: "c", index: 2 }),
+      ],
+    });
+    useApp.getState().assignSpeakerFollowing("b", "Alice");
+    const s = useApp.getState().segments;
+    expect(s[0].speaker).toBeUndefined();
+    expect(s[1].speaker).toBe("Alice");
+    expect(s[2].speaker).toBe("Alice");
+  });
+
+  it("setActiveSpeaker sets and clears the live latch", () => {
+    useApp.getState().setActiveSpeaker("Alice");
+    expect(useApp.getState().activeSpeaker).toBe("Alice");
+    useApp.getState().setActiveSpeaker(null);
+    expect(useApp.getState().activeSpeaker).toBeNull();
+  });
+
+  it("unlockSegmentSpeaker (跟随识别) clears the lock and recomputes display from the alias map", () => {
+    useApp.setState({
+      segments: [
+        makeSegment({ id: "a", sttSpeaker: "SPEAKER_1", speaker: "Alice", speakerLocked: true }),
+      ],
+      speakerAliases: { SPEAKER_1: "Bob" },
+    });
+    useApp.getState().unlockSegmentSpeaker("a");
+    const s = useApp.getState().segments[0];
+    expect(s.speakerLocked).toBe(false);
+    expect(s.speaker).toBe("Bob");
+  });
+
+  it("assignSegmentsSpeaker schedules a debounced post-stop re-save when the meeting has already ended", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({ status: "stopped", activeSessionId: null });
+
+    useApp.getState().assignSegmentsSpeaker(["a"], "Alice");
+    expect(saveSpy).not.toHaveBeenCalled(); // debounced, not immediate
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.segments[0].speaker).toBe("Alice");
+  });
+
+  it("does NOT schedule a re-save while the meeting is still live", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    useApp.getState().assignSegmentsSpeaker(["a"], "Alice");
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("addSpeakerToRoster ALSO schedules a post-stop re-save — a bare add with no assignment yet must still survive (speakerRoster is always-persisted)", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({ status: "stopped", activeSessionId: null });
+
+    useApp.getState().addSpeakerToRoster("Alice");
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.speakerRoster).toEqual(["Alice"]);
+  });
+});
+
+describe("beginMeeting / loadSession / newMeeting reset the roster + latch + correctionBusy (v0.5 Wave-1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("beginMeeting resets speakerRoster/activeSpeaker/correctionBusy for a fresh meeting", () => {
+    useApp.setState({
+      speakerRoster: ["Alice"],
+      activeSpeaker: "Alice",
+      correctionBusy: true,
+    });
+    useApp.getState().beginMeeting();
+    const s = useApp.getState();
+    expect(s.speakerRoster).toEqual([]);
+    expect(s.activeSpeaker).toBeNull();
+    expect(s.correctionBusy).toBe(false);
+  });
+
+  it("newMeeting resets the same three fields", () => {
+    useApp.setState({
+      speakerRoster: ["Alice"],
+      activeSpeaker: "Alice",
+      correctionBusy: true,
+    });
+    useApp.getState().newMeeting();
+    const s = useApp.getState();
+    expect(s.speakerRoster).toEqual([]);
+    expect(s.activeSpeaker).toBeNull();
+    expect(s.correctionBusy).toBe(false);
+  });
+
+  it("loadSession resets activeSpeaker/correctionBusy and restores speakerRoster from the session", async () => {
+    const session: MeetingSession = {
+      id: "sess-1",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1" })],
+      cards: [],
+      terms: [],
+      speakerRoster: ["Alice", "Bob"],
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(session);
+    useApp.setState({ activeSpeaker: "Carol", correctionBusy: true });
+
+    await useApp.getState().loadSession("sess-1");
+
+    const s = useApp.getState();
+    expect(s.speakerRoster).toEqual(["Alice", "Bob"]);
+    expect(s.activeSpeaker).toBeNull();
+    expect(s.correctionBusy).toBe(false);
+  });
+
+  it("loadSession derives the roster from unique segment.speaker values for a LEGACY session (no speakerRoster key at all)", async () => {
+    const session: MeetingSession = {
+      id: "sess-legacy",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [
+        makeSegment({ id: "s1", speaker: "SPEAKER_1" }),
+        makeSegment({ id: "s2", speaker: "SPEAKER_2" }),
+        makeSegment({ id: "s3", speaker: "SPEAKER_1" }),
+      ],
+      cards: [],
+      terms: [],
+      // no speakerRoster key — legacy data, saved before this feature existed
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(session);
+
+    await useApp.getState().loadSession("sess-legacy");
+
+    expect(useApp.getState().speakerRoster).toEqual(["SPEAKER_1", "SPEAKER_2"]);
+  });
+
+  it("loadSession does NOT re-derive a roster for a NEW session whose roster is genuinely empty — presence (even []) wins over the legacy fallback", async () => {
+    const session: MeetingSession = {
+      id: "sess-new-empty",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1", speaker: "SPEAKER_1" })], // has a diarized speaker...
+      cards: [],
+      terms: [],
+      speakerRoster: [], // ...but the roster itself was saved genuinely empty
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(session);
+
+    await useApp.getState().loadSession("sess-new-empty");
+
+    expect(useApp.getState().speakerRoster).toEqual([]); // NOT derived from segments
+  });
+});
+
+describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.5 Wave-1 Feature 1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("saveCurrentSession always persists speakerRoster, even [] for a meeting that never touched it", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      speakerRoster: [],
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.speakerRoster).toEqual([]);
+  });
+
+  it("saveCurrentSession persists the exact live roster", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      speakerRoster: ["Alice", "Bob"],
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.speakerRoster).toEqual(["Alice", "Bob"]);
+  });
+
+  it("currentSessionSnapshot includes the live roster", () => {
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      speakerRoster: ["Alice"],
+    });
+    expect(currentSessionSnapshot()?.speakerRoster).toEqual(["Alice"]);
+  });
+
+  it("round-trip: save then load returns the exact same roster", async () => {
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    let stored: MeetingSession | undefined;
+    vi.spyOn(storageModule, "saveSession").mockImplementation(async (session) => {
+      stored = session;
+    });
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      speakerRoster: ["Alice", "Bob"],
+      activeSessionId: null,
+    });
+    await useApp.getState().saveCurrentSession();
+    expect(stored).toBeDefined();
+
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(stored!);
+    await useApp.getState().loadSession(stored!.id);
+
+    expect(useApp.getState().speakerRoster).toEqual(["Alice", "Bob"]);
+  });
+});
+
+describe("updateCard / updateTerm — v0.5 Wave-1 Feature 7 inline card edit (committed-mutation tripwire + post-stop re-save)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    clearDiag();
+    useApp.setState({
+      cards: [
+        {
+          ...makeDetection().expressions[0],
+          id: "c1",
+          normKey: "circle back",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+        },
+      ],
+      terms: [
+        {
+          id: "t1",
+          normKey: "ARR",
+          firstSeenAt: 9000,
+          lastSeenAt: 9000,
+          count: 1,
+          source: "dictionary",
+          term: "ARR",
+          type: "metric",
+          gloss_en: "Annual Recurring Revenue",
+          gloss_zh: "年度经常性收入",
+        },
+      ],
+      segments: [makeSegment({ id: "seg-1" })],
+      status: "stopped",
+      meetingGen: 1,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("updateCard refuses the write and logs a warn diag entry when status !== 'stopped'", () => {
+    useApp.setState({ status: "listening" });
+    useApp.getState().updateCard("c1", { meaning: "hacked" });
+
+    expect(useApp.getState().cards[0].meaning).toBe("return to this topic"); // refused
+    const entries = getDiagEntries().filter((e) => e.tag === "stt-committed-mutation");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].level).toBe("warn");
+    expect(entries[0].detail).toBe("cardId=c1 status=listening");
+  });
+
+  it("updateCard patches the matching card by id, leaving others untouched, once stopped", () => {
+    useApp.getState().updateCard("c1", {
+      expression: "loop back",
+      meaning: "revisit",
+      chinese_explanation: "回头",
+      plain_english: "come back to it",
+    });
+    const card = useApp.getState().cards[0];
+    expect(card.expression).toBe("loop back");
+    expect(card.meaning).toBe("revisit");
+    expect(card.chinese_explanation).toBe("回头");
+    expect(card.plain_english).toBe("come back to it");
+    expect(card.id).toBe("c1"); // identity preserved
+  });
+
+  it("updateCard on an unknown id is a no-op", () => {
+    useApp.getState().updateCard("missing", { meaning: "x" });
+    expect(useApp.getState().cards[0].meaning).toBe("return to this topic");
+  });
+
+  it("updateTerm refuses the write outside 'stopped'", () => {
+    useApp.setState({ status: "paused" });
+    useApp.getState().updateTerm("t1", { gloss_en: "hacked" });
+    expect(useApp.getState().terms[0].gloss_en).toBe("Annual Recurring Revenue");
+    expect(getDiagEntries().filter((e) => e.tag === "stt-committed-mutation")).toHaveLength(1);
+  });
+
+  it("updateTerm patches the matching term by id, once stopped", () => {
+    useApp.getState().updateTerm("t1", {
+      term: "NRR",
+      gloss_en: "Net Recurring Revenue",
+      gloss_zh: "净经常性收入",
+    });
+    const term = useApp.getState().terms[0];
+    expect(term.term).toBe("NRR");
+    expect(term.gloss_en).toBe("Net Recurring Revenue");
+    expect(term.gloss_zh).toBe("净经常性收入");
+    expect(term.id).toBe("t1");
+  });
+
+  it("updateCard schedules a debounced post-stop re-save", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({ activeSessionId: null });
+
+    useApp.getState().updateCard("c1", { meaning: "revisit" });
+    expect(saveSpy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.cards[0].meaning).toBe("revisit");
+  });
+});
+
+describe("setCorrectionBusy — v0.5 Wave-1 Feature 2", () => {
+  afterEach(() => {
+    useApp.setState({ correctionBusy: false });
+  });
+
+  it("defaults to false", () => {
+    expect(useApp.getState().correctionBusy).toBe(false);
+  });
+
+  it("toggles true/false via the setter", () => {
+    useApp.getState().setCorrectionBusy(true);
+    expect(useApp.getState().correctionBusy).toBe(true);
+    useApp.getState().setCorrectionBusy(false);
+    expect(useApp.getState().correctionBusy).toBe(false);
   });
 });
 
@@ -823,6 +1587,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
   it("full tier (isPreview:false) never coerces, regardless of engine or hadSavedEngine", () => {
     expect(applyTierDefaults(withEngine("whisper"), false, true).engine).toBe("whisper");
     expect(applyTierDefaults(withEngine("tabaudio"), false, true).engine).toBe("tabaudio");
+    expect(applyTierDefaults(withEngine("tabaudio-cloud"), false, true).engine).toBe("tabaudio-cloud");
     expect(applyTierDefaults(withEngine("appaudio"), false, true).engine).toBe("appaudio");
     expect(applyTierDefaults(withEngine("osspeech"), false, true).engine).toBe("osspeech");
     expect(applyTierDefaults(withEngine("soniox"), false, true).engine).toBe("soniox");
@@ -837,6 +1602,11 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
 
   it("preview tier coerces a saved sidecar-only engine (tabaudio) to webspeech", () => {
     const s = applyTierDefaults(withEngine("tabaudio"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier coerces a saved BYOK cloud engine (tabaudio-cloud) to webspeech — v0.5 Wave-1 F4 / §5 A4, reachable here (web-only for v0.5, so applyPlatformEngineDefaults never coerces it away first, unlike appaudio/osspeech's structural-only listing)", () => {
+    const s = applyTierDefaults(withEngine("tabaudio-cloud"), true, true);
     expect(s.engine).toBe("webspeech");
   });
 
@@ -912,6 +1682,11 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
     expect(s.engine).toBe("appaudio");
   });
 
+  it("desktop coerces a stored tabaudio-cloud to appaudio too — v0.5 Wave-1 F4 / §5 A4, same D7 rationale as tabaudio itself (WKWebView has no tab-share picker, cloud backend or not; tabaudio-cloud is web-only for v0.5)", () => {
+    const s = applyPlatformEngineDefaults(withEngine("tabaudio-cloud"), true);
+    expect(s.engine).toBe("appaudio");
+  });
+
   it("web coerces a stored appaudio to tabaudio (appaudio is Tauri-only, D6)", () => {
     const s = applyPlatformEngineDefaults(withEngine("appaudio"), false);
     expect(s.engine).toBe("tabaudio");
@@ -943,8 +1718,16 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
     }
   });
 
-  it("web leaves every other engine untouched, including tabaudio itself", () => {
-    for (const engine of ["webspeech", "whisper", "tabaudio", "soniox", "deepgram", "demo"] as const) {
+  it("web leaves every other engine untouched, including tabaudio and tabaudio-cloud themselves", () => {
+    for (const engine of [
+      "webspeech",
+      "whisper",
+      "tabaudio",
+      "tabaudio-cloud",
+      "soniox",
+      "deepgram",
+      "demo",
+    ] as const) {
       expect(applyPlatformEngineDefaults(withEngine(engine), false).engine).toBe(engine);
     }
   });
@@ -968,13 +1751,12 @@ describe("applyPlatformEngineDefaults — S13 iOS osspeech-only coercion (3rd, i
     return { ...DEFAULT_SETTINGS, engine };
   }
 
-  it.each(["webspeech", "whisper", "tabaudio", "appaudio", "soniox", "deepgram"] as const)(
-    "iOS coerces a stored %s to osspeech (iOS v1's ENGINE_OPTIONS is osspeech-only)",
-    (engine) => {
-      const s = applyPlatformEngineDefaults(withEngine(engine), false, true);
-      expect(s.engine).toBe("osspeech");
-    },
-  );
+  it.each(
+    ["webspeech", "whisper", "tabaudio", "tabaudio-cloud", "appaudio", "soniox", "deepgram"] as const,
+  )("iOS coerces a stored %s to osspeech (iOS v1's ENGINE_OPTIONS is osspeech-only)", (engine) => {
+    const s = applyPlatformEngineDefaults(withEngine(engine), false, true);
+    expect(s.engine).toBe("osspeech");
+  });
 
   it("iOS leaves a stored osspeech untouched", () => {
     const s = applyPlatformEngineDefaults(withEngine("osspeech"), false, true);
@@ -1157,6 +1939,131 @@ describe("migrateSettings — field-test fix composes the OpenRouter model remap
     } as Partial<Settings>);
     expect(s.detectModel).toBe("claude-haiku-4-5");
     expect(s.summaryModel).toBe("claude-sonnet-5");
+  });
+});
+
+// v0.5 Wave-1 Feature 5 / §5 A3 (BLOCKER) — total, platform-aware `mode`
+// back-derivation from a persisted `engine`. modeForPersistedEngine is
+// exercised directly (explicit `platform` argument) rather than only
+// through the real migrateSettings, mirroring applyPlatformEngineDefaults/
+// applyTierDefaults' own established "pure function, explicit param"
+// test discipline immediately above — this test env's IS_DESKTOP/IS_IOS
+// are fixed (web) import-time consts, so desktop/iOS can't be exercised
+// through the real migrateSettings at all.
+describe("modeForPersistedEngine — full migration matrix (every STTEngineKind × web/desktop/ios)", () => {
+  // [legacyEngine, expected mode on web, on desktop, on iOS] — computed
+  // by actually running the SAME pipeline migrateSettings composes
+  // (applyPlatformEngineDefaults -> applyTierDefaults -> the mapper),
+  // full tier (isPreview:false) so only the platform coercion (not the
+  // preview lock) is in play, matching a full-tier returning user.
+  const MATRIX: [STTEngineKind, Settings["mode"], Settings["mode"], Settings["mode"]][] = [
+    ["demo", "mic", "mic", "mic"],
+    ["webspeech", "mic", "mic", "mic"],
+    ["whisper", "mic", "mic", "mic"],
+    ["tabaudio", "tab", "system-audio", "mic"],
+    ["tabaudio-cloud", "tab", "system-audio", "mic"],
+    ["soniox", "mic", "mic", "mic"],
+    ["deepgram", "mic", "mic", "mic"],
+    ["appaudio", "tab", "system-audio", "mic"],
+    ["osspeech", "tab", "system-audio", "mic"],
+    ["import", "import", "import", "import"],
+    ["browser-whisper", "import", "import", "import"],
+  ];
+
+  function deriveMode(
+    legacyEngine: STTEngineKind,
+    isDesktop: boolean,
+    isIos: boolean,
+  ): Settings["mode"] {
+    const platformSettings = applyPlatformEngineDefaults(
+      { ...DEFAULT_SETTINGS, engine: legacyEngine },
+      isDesktop,
+      isIos,
+    );
+    const tierSettings = applyTierDefaults(platformSettings, false, true);
+    const platform = isIos ? "ios" : isDesktop ? "desktop" : "web";
+    return modeForPersistedEngine(legacyEngine, tierSettings.engine, platform);
+  }
+
+  it.each(MATRIX)("%s -> web:%s desktop:%s ios:%s", (engine, web, desktop, ios) => {
+    expect(deriveMode(engine, false, false)).toBe(web);
+    expect(deriveMode(engine, true, false)).toBe(desktop);
+    expect(deriveMode(engine, false, true)).toBe(ios);
+  });
+
+  it("NEVER derives 'url' for any legacy engine on any platform", () => {
+    for (const [engine] of MATRIX) {
+      for (const [isDesktop, isIos] of [
+        [false, false],
+        [true, false],
+        [false, true],
+      ] as const) {
+        expect(deriveMode(engine, isDesktop, isIos)).not.toBe("url");
+      }
+    }
+  });
+
+  // A3: "Parakeet is a whisperModel value, not a kind — test asserts
+  // whisper+Parakeet -> mic". whisperModel must never influence mode
+  // derivation — only the engine KIND does.
+  it("whisper + Parakeet model still derives mic (whisperModel is not a kind)", () => {
+    const platformSettings = applyPlatformEngineDefaults(
+      { ...DEFAULT_SETTINGS, engine: "whisper", whisperModel: "parakeet-tdt-0.6b-v3" },
+      false,
+      false,
+    );
+    const tierSettings = applyTierDefaults(platformSettings, false, true);
+    expect(modeForPersistedEngine("whisper", tierSettings.engine, "web")).toBe("mic");
+  });
+
+  it("an unrecognized/future engine value falls back to 'mic' (platform default), never crashes", () => {
+    const garbage = "some-future-engine" as STTEngineKind;
+    expect(modeForPersistedEngine(undefined, garbage, "web")).toBe("mic");
+    expect(modeForPersistedEngine(undefined, garbage, "desktop")).toBe("mic");
+    expect(modeForPersistedEngine(undefined, garbage, "ios")).toBe("mic");
+  });
+
+  it("a fresh install (no raw engine at all) derives from whatever DEFAULT_SETTINGS.engine legally resolves to", () => {
+    expect(modeForPersistedEngine(undefined, DEFAULT_SETTINGS.engine, "web")).toBe("mic");
+  });
+});
+
+describe("migrateSettings — mode back-derivation end-to-end (§5 A3, real web build)", () => {
+  it("an explicit, VALID saved mode round-trips unchanged (wins over back-derivation)", () => {
+    const s = migrateSettings({ mode: "tab", engine: "whisper" } as Partial<Settings>);
+    expect(s.mode).toBe("tab"); // NOT back-derived from engine:"whisper" (which would be "mic")
+  });
+
+  it("an absent saved mode is back-derived from the persisted engine", () => {
+    const s = migrateSettings({ engine: "tabaudio" } as Partial<Settings>);
+    expect(s.mode).toBe("tab");
+  });
+
+  it("an INVALID/garbage saved mode string is treated as absent, not blindly trusted (runtime-validated)", () => {
+    const s = migrateSettings({ mode: "not-a-real-mode", engine: "whisper" } as never);
+    expect(s.mode).toBe("mic"); // back-derived, the garbage string never survives
+  });
+
+  it("mode is NEVER derived as 'url', even for a raw engine value that maps oddly", () => {
+    const s = migrateSettings({ engine: "import" } as Partial<Settings>);
+    expect(s.mode).toBe("import");
+    expect(s.mode).not.toBe("url");
+  });
+
+  it("a fresh install (null saved) gets a derived mode, not left undefined", () => {
+    expect(migrateSettings(null).mode).toBe("mic");
+    expect(migrateSettings(undefined).mode).toBe("mic");
+  });
+
+  it("mode back-derivation runs AFTER platform/tier coercion — a web build with a raw appaudio derives mode from its web-legal substitute (tabaudio)", () => {
+    const s = migrateSettings({ engine: "appaudio" } as Partial<Settings>);
+    expect(s.engine).toBe("tabaudio"); // platform coercion (existing behavior)
+    expect(s.mode).toBe("tab"); // derived from the COERCED (legal) engine
+  });
+
+  it("import/browser-whisper derive mode from the RAW engine, unaffected by other folds", () => {
+    expect(migrateSettings({ engine: "import" } as Partial<Settings>).mode).toBe("import");
+    expect(migrateSettings({ engine: "browser-whisper" } as Partial<Settings>).mode).toBe("import");
   });
 });
 
@@ -1677,6 +2584,7 @@ function makeCustomEntry(overrides: Partial<CustomEntry> = {}): CustomEntry {
   return {
     id: "entry-1",
     kind: "expression",
+    packId: "personal",
     headword: "circle back",
     variants: [],
     chinese_explanation: "回头再聊",

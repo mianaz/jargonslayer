@@ -35,6 +35,10 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   // same key from whichever lane owns that copy; sync if the actual
   // copy differs.
   deepgram: "Deepgram 云端识别",
+  // v0.5 Wave-1 Foundation (F4 tab-audio-cloud kind, not yet a
+  // selectable engine — see STTEngineKind's own doc comment): same
+  // placeholder-pending-sync posture as "deepgram" immediately above.
+  "tabaudio-cloud": "标签页音频·云端",
   import: "导入",
   "browser-whisper": IS_DESKTOP ? "内置 Whisper" : "浏览器 Whisper",
 };

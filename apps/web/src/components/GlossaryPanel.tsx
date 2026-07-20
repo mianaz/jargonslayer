@@ -306,6 +306,7 @@ export default function GlossaryPanel() {
     const entry: CustomEntry = {
       id: newId(),
       kind: createDraft.kind,
+      packId: "personal",
       headword: createDraft.headword.trim(),
       variants: [],
       chinese_explanation: createDraft.chinese_explanation.trim(),

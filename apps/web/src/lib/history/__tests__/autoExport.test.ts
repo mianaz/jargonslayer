@@ -35,6 +35,7 @@ function makeEntry(overrides: Partial<CustomEntry> = {}): CustomEntry {
   return {
     id: "e1",
     kind: "expression",
+    packId: "personal",
     headword: "circle back",
     variants: [],
     chinese_explanation: "回头再聊",

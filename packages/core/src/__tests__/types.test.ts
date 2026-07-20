@@ -15,6 +15,7 @@ function makeCustomEntry(overrides: Partial<CustomEntry> = {}): CustomEntry {
   return {
     id: "e1",
     kind: "expression",
+    packId: "personal",
     headword: "circle back",
     variants: ["circling back", "circle back"], // deliberate duplicate + trim-worthy input below
     chinese_explanation: "回头再聊",
@@ -114,6 +115,7 @@ describe("cardToCustomEntry — field mapping", () => {
     const entry = cardToCustomEntry(card);
 
     expect(entry.kind).toBe("expression");
+    expect(entry.packId).toBe("personal"); // v0.5 Wave-1 Feature 8 default
     expect(entry.headword).toBe("circle back");
     expect(entry.variants).toEqual([]);
     expect(entry.chinese_explanation).toBe("回头再聊");
@@ -150,6 +152,7 @@ describe("termToCustomEntry — field mapping", () => {
     const entry = termToCustomEntry(term);
 
     expect(entry.kind).toBe("term");
+    expect(entry.packId).toBe("personal"); // v0.5 Wave-1 Feature 8 default
     expect(entry.headword).toBe("ARR");
     expect(entry.variants).toEqual([]);
     expect(entry.chinese_explanation).toBe("年度经常性收入"); // <- gloss_zh

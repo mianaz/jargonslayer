@@ -44,6 +44,16 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // above (ENGINE_CARDS/ENGINE_OPTIONS byokOnly + store.ts
       // applyTierDefaults coercion + key field disabled).
       return new DeepgramEngine();
+    case "tabaudio-cloud":
+      // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
+      // blueprint.md §1 Feature 4) — the kind lands with the Foundation
+      // (F0a) so migration/coercion can be total; the actual engine
+      // (lib/stt/tabAudioCloud.ts) is a later lane's job. Unreachable
+      // from the UI until that lane wires ENGINE_CARDS/ENGINE_OPTIONS +
+      // replaces this throw with a real engine, same "kind exists before
+      // its engine does" posture "import"/"browser-whisper" below have
+      // always had.
+      throw new Error('createEngine: "tabaudio-cloud" is not wired yet (v0.5 Wave-1 Feature 4)');
     case "import":
       // "import" (#43) is never a live capture engine — imported
       // sessions are built fully offline by importText.ts and never

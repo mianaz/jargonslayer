@@ -163,4 +163,22 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     biasSupport: "keyterms", // D1: paid add-on, opt-in only — see deepgramTransport.ts
     byokOnly: true,
   },
+  // v0.5 Wave-1 Foundation (F4 tab-audio-cloud, docs/design-
+  // explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4): STATIC
+  // placeholder row only — required because ENGINE_CAPABILITIES is
+  // Record<LiveEngineKind, …> and "tabaudio-cloud" widened that union
+  // (see this file's own header comment on that discipline). retention/
+  // bias here match the DEFAULT provider (Settings.tabAudioCloudProvider
+  // "soniox"); A4's own resolveEngineCapability(kind, settings) runtime
+  // overlay — not yet built — is what actually resolves biasSupport
+  // per-provider (soniox→context / deepgram→keyterms), mirroring how
+  // resolveWebspeechRetentionClass overlays webspeech above. Not yet a
+  // selectable engine (see the kind's own STTEngineKind doc comment).
+  "tabaudio-cloud": {
+    kind: "tabaudio-cloud",
+    label: "标签页音频·云端",
+    retentionClass: "cloud-transient",
+    biasSupport: "context",
+    byokOnly: true,
+  },
 };

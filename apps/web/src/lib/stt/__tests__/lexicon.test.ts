@@ -27,6 +27,7 @@ function glossaryEntry(headword: string, variants: string[] = []): CustomEntry {
   return {
     id: headword,
     kind: "term",
+    packId: "personal",
     headword,
     variants,
     chinese_explanation: "",

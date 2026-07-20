@@ -231,6 +231,7 @@ export default function LookupPopover() {
     const entry: CustomEntry = {
       id: newId(),
       kind: draft.kind,
+      packId: "personal",
       headword: draft.headword.trim() || lookup.text,
       variants: draft.variants,
       chinese_explanation: draft.chinese_explanation.trim(),
