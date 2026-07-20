@@ -354,7 +354,7 @@
       <h3>完整主题列表</h3>
       <ul>
         <li>模式选择与部署层级：在线体验、本地 Web、PWA、macOS 桌面版、Chrome 插件。</li>
-        <li>转录路径：浏览器识别、本地 Whisper、标签页音频、演示、文稿导入、浏览器 Whisper 导入；桌面版的引擎清单不一样（麦克风 · 本地 Whisper、系统/App 音频），见「桌面版」。</li>
+        <li>转录路径：浏览器识别、本地 Whisper、标签页音频（本地/云端）、Soniox、Deepgram、演示、文稿导入、浏览器 Whisper 导入；桌面版的引擎清单不一样（麦克风 · 本地 Whisper、系统/App 音频），见「桌面版」。</li>
         <li>线上会议音频捕获：麦克风、标签页音频、虚拟声卡、loopback，或（桌面版）系统/App 音频。</li>
         <li>桌面版专属：系统/App 音频权限流程、首次引导（BYOK OAuth/粘贴、说话人分离 token）、后台任务中心、更新检查。</li>
         <li>检测行为：词典底座、LLM 升级、置信度阈值、去重、个人词典优先级。</li>
@@ -401,7 +401,7 @@ npm run dev
       <div class="cards">
         <div class="card">
           <h3>1. 开始监听</h3>
-          <p>选择转录引擎并点击 <code>开始监听</code>。最终转录片段会进入正文区域；未定稿的中间结果会以更弱的样式显示。</p>
+          <p>先选「收听方式」（用麦克风 / 浏览器标签页 / 系统·App 音频 / 导入——会前的模式卡片，引擎自动匹配），再点 <code>开始监听</code>。最终转录片段会进入正文区域；未定稿的中间结果会以更弱的样式显示。</p>
         </div>
         <div class="card">
           <h3>2. 阅读卡片</h3>
@@ -431,10 +431,12 @@ npm run dev
           <tr><td><strong>浏览器识别</strong></td><td>无需配置，推荐 Chrome/Edge</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商的语音服务（云端）</td><td>日常低敏会议</td></tr>
           <tr><td><strong>本地 Whisper</strong></td><td>Python sidecar（手动安装）</td><td>本机 <code>127.0.0.1</code></td><td>隐私敏感、离线、稳定转录</td></tr>
           <tr><td><strong>标签页音频</strong></td><td>同一个本地 sidecar</td><td>本机</td><td>捕获线上会议中对方的声音</td></tr>
-          <tr><td><strong>Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>中英夹杂实时场景；通过内部基准测试前保持「实验」标记</td></tr>
+          <tr><td><strong>Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>中英夹杂实时场景；通过内部基准测试前保持「实验」标记；在线体验另有限量试用，见下方说明</td></tr>
+          <tr><td><strong>Deepgram</strong></td><td>Deepgram API Key（自备）</td><td>云端处理（Deepgram，你自己的 Key）</td><td>纯英文会议，追求云端识别质量</td></tr>
         </tbody>
       </table>
       <div class="callout info"><strong>线上会议注意：</strong>麦克风通常只听得到你自己。Zoom、Teams、Meet 等场景如果要听到对方声音，可使用标签页音频；或在 macOS 用 BlackHole、Windows 用 VB-Cable 把系统音频路由成输入，再配合本地 Whisper。</div>
+      <div class="callout info"><strong>在线体验的限量试用：</strong>预览部署内置一个 Soniox 云端识别的限量试用——不需要自己的 API Key，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得用完即止；音频经 Soniox 云端转写，不落盘留存。标签页音频也跟着在线体验一起回归，走的是同一份试用额度，不再要求本地 sidecar。自托管/本地部署的 Soniox 仍然是 BYOK，不受这个限额影响。</div>
 
       <h3>桌面版（macOS）</h3>
       <table>
@@ -567,6 +569,7 @@ python whisper_server.py --model small</code></pre>
         <li>在应用中打开 <code>我的词典</code>。</li>
         <li>手动添加条目，或选中转录文本后点击 <code>加入我的词典</code>。</li>
         <li>个人词典会参与后续会议检测，并优先于内置词典。</li>
+        <li>可以拆成多个自定义命名词包，各自开关，按会议场景勾选启用。</li>
         <li>需要独立复习流程时，可导出为 Anki TSV。</li>
       </ol>
       <h3>内置词典包</h3>
@@ -592,7 +595,8 @@ python whisper_server.py --model small</code></pre>
       <h3>单次会议导出</h3>
       <ul>
         <li>Markdown 报告，可选 Obsidian/Dataview frontmatter。</li>
-        <li>Anki TSV 学习卡片。</li>
+        <li>docx 导出，下载即是可编辑的 Word 文档。</li>
+        <li>Anki TSV 学习卡片，或用 AnkiConnect 一键同步进本地 Anki（自动去重）。</li>
         <li>带 <code>schemaVersion: 1</code> 的完整会议 JSON。</li>
         <li>复制纪要到剪贴板。</li>
         <li>Cornell 笔记可导出 PNG 或 Markdown。</li>
@@ -615,6 +619,9 @@ python whisper_server.py --model small</code></pre>
           <tr><td>系统识别（桌面版，macOS 26+）</td><td>仅本机——音频在捕获它的进程内直接转成文字，不经过任何本机通道</td></tr>
           <tr><td>英文加速 Parakeet（桌面版，Apple 芯片）</td><td>仅本机——和本地 Whisper 一样音频不出本机；模型本身首次使用时从 Hugging Face 下载一次</td></tr>
           <tr><td>浏览器识别音频</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商语音服务</td></tr>
+          <tr><td>音频（Soniox 引擎，自备 Key，实验）</td><td>云端即时处理不留存——用你自己的 Key 经 WSS 直连 Soniox 实时接口</td></tr>
+          <tr><td>音频（在线体验：Soniox 限量试用 / 标签页音频）</td><td>云端即时处理不留存——无需 Key；每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得</td></tr>
+          <tr><td>音频（Deepgram 引擎，自备 Key，英文）</td><td>云端处理——用你自己的 Key，转写在 Deepgram 云端完成</td></tr>
           <tr><td>音频/视频文件导入</td><td>浏览器内转录；文件不上传</td></tr>
           <tr><td>在线体验 AI 文本</td><td>项目服务器内存中转，再到 OpenRouter，带 <code>data_collection=allow</code></td></tr>
           <tr><td>BYOK AI 文本</td><td>你配置的模型提供商端点</td></tr>
@@ -909,7 +916,7 @@ npm run build</code></pre>
         <thead><tr><th>能力</th><th>Chrome 插件（Lite）</th><th>在线体验（预览）</th><th>本地 Web / 桌面版</th></tr></thead>
         <tbody>
           <tr><td>词典检测（即时、离线）</td><td>✓</td><td>✓</td><td>✓</td></tr>
-          <tr><td>实时转录</td><td>Web Speech（仅麦克风）</td><td>Web Speech</td><td>Web Speech · 本地 Whisper · 标签页音频 · 系统/App 音频（桌面版）· Soniox（BYOK，实验）</td></tr>
+          <tr><td>实时转录</td><td>Web Speech（仅麦克风）</td><td>Web Speech · Soniox 限量试用（免 Key）· 标签页音频（同一试用额度）</td><td>Web Speech · 本地 Whisper · 标签页音频 · 系统/App 音频（桌面版）· Soniox（BYOK，实验）· Deepgram（BYOK）</td></tr>
           <tr><td>AI 检测/翻译/纪要</td><td>—</td><td>✓ 内置体验 Key（限流）</td><td>✓ 自备 Key（BYOK）</td></tr>
           <tr><td>导入文本/音频/视频</td><td>—</td><td>✓</td><td>✓</td></tr>
           <tr><td>说话人分离</td><td>—</td><td>展示但需要本地 sidecar</td><td>✓</td></tr>
@@ -941,7 +948,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
 
     <section id="roadmap">
       <h2>路线图</h2>
-      <p>v0.3.0 的全部计划项已上线：学习循环（#48）、统一导入与任务中心（#58）、简单/高级设置（#62）、四套新主题（#52）。v0.4 目前已上线：</p>
+      <p>v0.3.0 的全部计划项已上线：学习循环（#48）、统一导入与任务中心（#58）、简单/高级设置（#62）、四套新主题（#52）。v0.4 的全部计划项已上线：</p>
       <ol>
         <li><strong>桌面应用（Tauri，macOS）：</strong>应用自己托管本地 Whisper——安装向导、模型可选可换、说话人分离扩展一键安装；macOS 26+ 另有零安装的「系统识别」引擎（v0.4.3）。签名并公证的 DMG 在 releases 页面。</li>
         <li><strong>设备端浏览器识别：</strong>Chrome 139+ 优先本地识别，云端自动兜底。</li>
@@ -952,8 +959,20 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Chrome 插件（Lite）：</strong>MV3 侧边栏，含实时麦克风捕获、内置词典、设备端翻译。</li>
         <li><strong>后台任务中心、引擎下拉菜单、首次引导、更新检查（桌面版）：</strong>四项都在「<a href="#desktop-app">桌面版</a>」里有完整说明。</li>
       </ol>
+      <p>v0.5 目前已上线：</p>
+      <ol>
+        <li><strong>模式优先 UI：</strong>会前先选「怎么听」（麦克风 / 标签页音频 / 系统/App 音频 / 导入文件）而不是先挑引擎，应用按平台和配置自动匹配对应引擎；新手引导同步重写。</li>
+        <li><strong>说话人工具：</strong>单句/批量指定说话人、「应用到本句及之后」、实时「当前说话人」标记；手动指定的句子会被锁定，不会被后续自动说话人分离覆盖。</li>
+        <li><strong>AI 转写修订（审阅制）：</strong>会后一键通读转录、挑出识别错误，逐段列出原文与修正建议，接受才生效；接受后自动重新翻译。</li>
+        <li><strong>崩溃恢复：</strong>会议实时写自动草稿，页面刷新或浏览器崩溃后，历史里一键「恢复到历史记录」。</li>
+        <li><strong>划词解释后台生成：</strong>选中文本的解释在后台完成、自动并入卡片列表，关掉弹窗也不会丢。</li>
+        <li><strong>导出与联动：</strong>新增 docx 导出；AnkiConnect 一键把生词卡同步进本地 Anki（自动去重）；个人词典可拆成多个自定义命名词包。</li>
+        <li><strong>翻译引擎可选：</strong>双语字幕和全文翻译默认用 LLM，Chrome 138+ 可切到浏览器内置的本地翻译（免 Key）。</li>
+        <li><strong>Deepgram 云端识别（BYOK，英文）：</strong>新增一个纯英文场景的云端识别引擎选项。</li>
+        <li><strong>在线体验的限量试用：</strong>内置 Soniox 云端识别限量试用（免 Key，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得）；标签页音频回归在线体验，走同一试用额度。</li>
+      </ol>
       <p><strong>待完成：</strong>Chrome 插件的网上应用店上架审核——完成之前，手动加载是唯一的安装方式。</p>
-      <p>暂缓项：浏览器端 Whisper 实时流、免费翻译层、划词联网搜索。</p>
+      <p>暂缓项：浏览器端 Whisper 实时流、划词联网搜索。</p>
     </section>
 
     <div class="footer">

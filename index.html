@@ -704,6 +704,14 @@
 
     <div class="feat-list">
 
+      <div class="feat c-red reveal">
+        <div class="feat-key">mode-first setup (v0.5.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>模式优先的会前选择</b>：开会前先选「怎么听」——麦克风、标签页音频、系统/App 音频，还是导入文件——而不是先挑转录引擎；应用照这个选择和当前平台自动配好对应引擎，新手引导也按这个顺序重新走了一遍。</span>
+          <span class="lang-en"><b>Mode-first setup</b>: before a meeting, choose how you're listening — microphone, tab audio, system/app audio, or an imported file — instead of picking an engine directly; the app matches the right engine and its configuration to that choice and your platform, and onboarding now follows the same order.</span>
+        </div>
+      </div>
+
       <div class="feat c-green reveal">
         <div class="feat-key">real-time transcription</div>
         <div class="feat-body">
@@ -752,6 +760,14 @@
         </div>
       </div>
 
+      <div class="feat c-cyan reveal">
+        <div class="feat-key">translation engine choice (v0.5.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>翻译引擎可选</b>：双语字幕和全文翻译默认用 LLM；Chrome 138+ 可以在设置里切到浏览器内置的本地翻译，翻译完全在这台机器上跑，不用配 API Key，代价是措辞不如 LLM 精细。</span>
+          <span class="lang-en"><b>Translation engine choice</b>: bilingual subtitles and full-transcript translation default to the LLM; on Chrome 138+ you can switch to the browser's built-in on-device translator in Settings instead — it runs entirely on this machine, no API key required, at the cost of some phrasing nuance versus the LLM.</span>
+        </div>
+      </div>
+
       <div class="feat c-purple reveal">
         <div class="feat-key">import anything</div>
         <div class="feat-body">
@@ -763,16 +779,16 @@
       <div class="feat c-orange reveal">
         <div class="feat-key">expression detection</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>实时表达检测</b>：LLM 结合前后语境判断，只解释"字面意思 ≠ 实际意思"的表达，专有名词/缩写单独成术语条。内置词典（650+ 条、14 个主题包，含医药生物科技、统计学、机器学习、生物信息学）是始终在线的即时底层——命中立刻出卡，AI 再就地升级解释；关掉 AI 就是纯离线模式，还能从 GitHub 安装社区词典包。解释语言可切中文或英文。</span>
-          <span class="lang-en"><b>Real-time expression detection</b>: an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether <i>table this</i> means shelving a topic or furniture); proper nouns get separate term cards. A built-in dictionary (650+ entries, 14 topic packs incl. pharma/biotech, statistics, ML and bioinformatics) is the always-on instant layer — hits render immediately and the AI upgrades them in place; with AI off it works fully offline. Community packs install from GitHub.</span>
+          <span class="lang-zh"><b>实时表达检测</b>：LLM 结合前后语境判断，只解释"字面意思 ≠ 实际意思"的表达，专有名词/缩写单独成术语条。内置词典（650+ 条、14 个主题包，含医药生物科技、统计学、机器学习、生物信息学）是始终在线的即时底层——命中立刻出卡，AI 再就地升级解释；关掉 AI 就是纯离线模式，还能从 GitHub 安装社区词典包，也能自己建多个自定义命名词包分开管理。解释语言可切中文或英文。</span>
+          <span class="lang-en"><b>Real-time expression detection</b>: an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether <i>table this</i> means shelving a topic or furniture); proper nouns get separate term cards. A built-in dictionary (650+ entries, 14 topic packs incl. pharma/biotech, statistics, ML and bioinformatics) is the always-on instant layer — hits render immediately and the AI upgrades them in place; with AI off it works fully offline. Community packs install from GitHub, and you can also create your own named custom packs to keep topics separate.</span>
         </div>
       </div>
 
       <div class="feat c-cyan reveal">
         <div class="feat-key">card experience</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>卡片体验</b>：表达/术语共享同一块状样式，分类色左边条区分；重复出现只计数不刷屏；转录内高亮表达可点定位；选中任意文字即席查询并可一键收进「我的词典」。</span>
-          <span class="lang-en"><b>Card experience</b>: expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup and one-click save to your glossary.</span>
+          <span class="lang-zh"><b>卡片体验</b>：表达/术语共享同一块状样式，分类色左边条区分；重复出现只计数不刷屏；转录内高亮表达可点定位；选中任意文字即席查询——解释在后台生成，关掉弹窗也不会丢，做完自动并入卡片列表，可一键收进「我的词典」。</span>
+          <span class="lang-en"><b>Card experience</b>: expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup — it keeps generating in the background even after you close the popup, lands in the card list when done, and one-click saves to your glossary.</span>
         </div>
       </div>
 
@@ -792,11 +808,27 @@
         </div>
       </div>
 
+      <div class="feat c-orange reveal">
+        <div class="feat-key">speaker assignment (v0.5.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>说话人工具</b>：给某一句手动指定说话人，或批量选中多句一起改；单句操作里有「应用到本句及之后」，一路改到底不用逐句点；实时监听时侧边跟着一个「当前说话人」标记。手动指定过的句子会被锁定，后续的自动说话人分离更新不会覆盖它。</span>
+          <span class="lang-en"><b>Speaker tools</b>: assign a speaker to one line, or select several to batch-assign; a per-line "apply to this and following" carries a change forward without clicking every line, and a "current speaker" tag tracks along in the sidebar while you listen. Once you assign a speaker manually, that line is locked — later automatic diarization updates won't overwrite it.</span>
+        </div>
+      </div>
+
       <div class="feat c-yellow reveal">
         <div class="feat-key">post-meeting artifacts</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>会后产物</b>：双语纪要（主题/要点/决定/行动项）、逐段对照全文、学习卡片、康奈尔笔记（正文高亮 + 右栏批注 + 小结，可导出 PNG/Markdown）；另有 Markdown / Anki TSV / JSON 导出与自动落盘、webhook。</span>
-          <span class="lang-en"><b>Post-meeting artifacts</b>: bilingual summary (topic / key points / decisions / action items), paragraph-aligned translation, study cards, and a Cornell-note sheet (highlighted body + margin annotations, exportable as PNG or Markdown); plus Markdown / Anki TSV / JSON export, auto-save to a folder, and a webhook.</span>
+          <span class="lang-zh"><b>会后产物</b>：双语纪要（主题/要点/决定/行动项）、逐段对照全文、学习卡片、康奈尔笔记（正文高亮 + 右栏批注 + 小结，可导出 PNG/Markdown）；另有 Markdown / docx / Anki TSV / JSON 导出与自动落盘、webhook；AnkiConnect 还能一键把生词卡直接同步进本地 Anki，自动去重。</span>
+          <span class="lang-en"><b>Post-meeting artifacts</b>: bilingual summary (topic / key points / decisions / action items), paragraph-aligned translation, study cards, and a Cornell-note sheet (highlighted body + margin annotations, exportable as PNG or Markdown); plus Markdown / docx / Anki TSV / JSON export, auto-save to a folder, and a webhook; AnkiConnect can also sync new cards straight into your local Anki in one click, with dedup.</span>
+        </div>
+      </div>
+
+      <div class="feat c-green reveal">
+        <div class="feat-key">AI transcript correction (v0.5.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>AI 转写修订（审阅制）</b>：会后一键让 AI 通读整场转录、挑出识别错误，逐段列出原文与修正建议，你逐条确认——点「接受」才会真的改文本，AI 不会替你悄悄改；接受的片段如果开着双语字幕，会自动重新翻译。</span>
+          <span class="lang-en"><b>AI transcript correction (reviewed)</b>: one click after the meeting has the AI read the whole transcript and flag recognition errors, listing the original text and a suggested fix segment by segment for you to confirm — nothing changes until you click accept, the AI never edits silently; accepted segments with bilingual subtitles on get re-translated automatically.</span>
         </div>
       </div>
 
@@ -813,6 +845,14 @@
         <div class="feat-body">
           <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek / Qwen / OpenRouter / Ollama）；OpenRouter 支持一键 OAuth 生成 Key，Poe 订阅有内置预设。Key 存本机浏览器，调用时经本应用接口内存转发（不落盘）；也可用环境变量让 Key 完全不进浏览器。</span>
           <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); OpenRouter OAuth can provision a key in one click, and Poe has a built-in preset. A UI-entered key lives in your browser and is relayed in memory through this app's API routes, never persisted; env keys skip browser storage entirely.</span>
+        </div>
+      </div>
+
+      <div class="feat c-purple reveal">
+        <div class="feat-key">crash recovery (v0.5.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>崩溃恢复</b>：会议进行中转录会实时写自动草稿；页面刷新、标签页被关、浏览器崩溃后重新打开，历史里会出现一条「恢复到历史记录」提示，一键找回崩溃前的全部内容，不再因为一次意外丢掉整场会议。</span>
+          <span class="lang-en"><b>Crash recovery</b>: while a meeting runs, the transcript is saved to an auto-draft in real time; after a page refresh, a closed tab, or a browser crash, history shows a 「恢复到历史记录」 prompt that restores everything up to that point in one click — a meeting no longer disappears because of an accident.</span>
         </div>
       </div>
 
@@ -934,6 +974,14 @@
             </td>
             <td class="dest-col"><span class="dot cloud"></span>
               <span class="lang-zh">用你自己的 Key 经 WSS 直连 Soniox 实时接口，适用其隐私条款</span><span class="lang-en">Directly to Soniox's realtime API over WSS under your own key; Soniox's privacy terms apply</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">音频（体验版：Soniox 试用 / 标签页音频）</span><span class="lang-en">Audio (preview tier: Soniox trial / tab audio)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">无需 API Key；每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得；音频经 Soniox 云端转写，不留存</span><span class="lang-en">No API key needed; up to 3 clips per person per day, ~10 min max per clip, shared quota on a first-come basis; audio is transcribed by Soniox's cloud service and not retained</span>
             </td>
           </tr>
           <tr>

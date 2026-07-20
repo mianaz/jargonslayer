@@ -427,7 +427,7 @@ npm run dev
       <div class="cards">
         <div class="card">
           <h3>1. Listen</h3>
-          <p>Pick a transcription engine and click <code>开始监听</code>. Final transcript segments appear in the transcript panel; interim text appears in a lighter style while speech is still being recognized.</p>
+          <p>Pick how you want to listen (mic / browser tab / system audio / import — the mode tiles shown before a meeting; the engine matches automatically) and click <code>开始监听</code>. Final transcript segments appear in the transcript panel; interim text appears in a lighter style while speech is still being recognized.</p>
         </div>
         <div class="card">
           <h3>2. Read Cards</h3>
@@ -457,10 +457,12 @@ npm run dev
           <tr><td><strong>Browser recognition</strong></td><td>None, Chrome/Edge recommended</td><td>On-device on Chrome 139+ when a language pack is available (local); otherwise the browser vendor's speech service (cloud)</td><td>Everyday low-friction meetings</td></tr>
           <tr><td><strong>Local Whisper</strong></td><td>Python sidecar (manual install)</td><td>Local machine via <code>127.0.0.1</code></td><td>Sensitive meetings and offline use</td></tr>
           <tr><td><strong>Tab audio</strong></td><td>Same local sidecar</td><td>Local machine</td><td>Capturing the other side of an online meeting</td></tr>
-          <tr><td><strong>Soniox (experimental)</strong></td><td>Soniox API key (BYOK)</td><td>Soniox realtime API, direct WSS under your key (cloud)</td><td>Live code-switched zh-en; stays 实验 until it clears the in-house benchmark</td></tr>
+          <tr><td><strong>Soniox (experimental)</strong></td><td>Soniox API key (BYOK)</td><td>Soniox realtime API, direct WSS under your key (cloud)</td><td>Live code-switched zh-en; stays 实验 until it clears the in-house benchmark; the hosted preview also offers a limited trial — see below</td></tr>
+          <tr><td><strong>Deepgram</strong></td><td>Deepgram API key (BYOK)</td><td>Cloud processing (Deepgram, under your key)</td><td>English-only meetings prioritizing cloud recognition quality</td></tr>
         </tbody>
       </table>
       <div class="callout info"><strong>Online meetings:</strong> your microphone only captures you. For Zoom, Teams, or Meet, use tab audio where available, or route system audio through a virtual device such as BlackHole on macOS or VB-Cable on Windows and use local Whisper.</div>
+      <div class="callout info"><strong>Hosted preview's limited trial:</strong> the preview deployment includes a limited Soniox cloud-recognition trial — no API key required, up to 3 clips per person per day, about 10 minutes max per clip, on a shared first-come quota until it runs out; audio is transcribed by Soniox's cloud and is not retained. Tab audio is also back in the hosted preview, riding the same trial quota and no longer requiring a local sidecar. Self-hosted/local-tier Soniox remains BYOK and is unaffected by this limit.</div>
 
       <h3>Desktop app (macOS)</h3>
       <table>
@@ -593,6 +595,7 @@ python whisper_server.py --model small</code></pre>
         <li>Open <code>我的词典</code> from the app.</li>
         <li>Add entries manually or select transcript text and choose <code>加入我的词典</code>.</li>
         <li>Saved entries participate in future detection and shadow built-in dictionary matches.</li>
+        <li>Split entries across multiple named custom packs, each toggled on or off per meeting.</li>
         <li>Export glossary entries to Anki TSV when you want a separate review workflow.</li>
       </ol>
       <h3>Built-in Packs</h3>
@@ -618,7 +621,8 @@ python whisper_server.py --model small</code></pre>
       <h3>Session Exports</h3>
       <ul>
         <li>Markdown report, optionally with frontmatter for Obsidian/Dataview.</li>
-        <li>Anki TSV for study cards.</li>
+        <li>docx export, ready to open as an editable Word file.</li>
+        <li>Anki TSV for study cards, or one-click sync into your local Anki via AnkiConnect (with dedup).</li>
         <li>Full session JSON with <code>schemaVersion: 1</code>.</li>
         <li>Copy-to-clipboard summary.</li>
         <li>Cornell note export as PNG or Markdown.</li>
@@ -641,6 +645,9 @@ python whisper_server.py --model small</code></pre>
           <tr><td>Audio, 系统识别 System Speech (desktop, macOS 26+)</td><td>Local machine only — transcribed inside the very process that captures it; audio crosses no channel, not even a local one</td></tr>
           <tr><td>Audio, 英文加速 Parakeet (desktop, Apple Silicon)</td><td>Local machine only — same fully-local posture as local Whisper; the model itself is downloaded once from Hugging Face on first use</td></tr>
           <tr><td>Audio, browser recognition</td><td>On-device (local) on Chrome 139+ when a language pack is available; otherwise the browser vendor's speech service</td></tr>
+          <tr><td>Audio (Soniox engine, BYOK, experimental)</td><td>Cloud, processed in real time, not retained — direct WSS to the Soniox realtime API under your own key</td></tr>
+          <tr><td>Audio (hosted preview: Soniox limited trial / tab audio)</td><td>Cloud, processed in real time, not retained — no key required; up to 3 clips per person per day, ~10 min max per clip, shared first-come quota</td></tr>
+          <tr><td>Audio (Deepgram engine, BYOK, English)</td><td>Cloud processing — under your own key, transcribed on Deepgram's cloud</td></tr>
           <tr><td>Audio/video file imports</td><td>Browser-local transcription; files are not uploaded</td></tr>
           <tr><td>Preview AI text</td><td>Project server memory only, then OpenRouter with <code>data_collection=allow</code></td></tr>
           <tr><td>BYOK AI text</td><td>The provider endpoint configured by the user</td></tr>
@@ -935,7 +942,7 @@ npm run build</code></pre>
         <thead><tr><th>Capability</th><th>Chrome extension (Lite)</th><th>Preview (hosted)</th><th>Local web / Desktop</th></tr></thead>
         <tbody>
           <tr><td>Dictionary detection (instant, offline)</td><td>✓</td><td>✓</td><td>✓</td></tr>
-          <tr><td>Live transcription</td><td>Web Speech (mic only)</td><td>Web Speech</td><td>Web Speech · local Whisper · tab audio · system/app audio (desktop) · Soniox (BYOK, experimental)</td></tr>
+          <tr><td>Live transcription</td><td>Web Speech (mic only)</td><td>Web Speech · Soniox limited trial (no key) · tab audio (same trial quota)</td><td>Web Speech · local Whisper · tab audio · system/app audio (desktop) · Soniox (BYOK, experimental) · Deepgram (BYOK)</td></tr>
           <tr><td>AI detection / translation / summary</td><td>—</td><td>✓ built-in demo key (rate-limited)</td><td>✓ your own key (BYOK)</td></tr>
           <tr><td>Import text / audio / video</td><td>—</td><td>✓</td><td>✓</td></tr>
           <tr><td>Speaker diarization</td><td>—</td><td>shown, needs local sidecar</td><td>✓</td></tr>
@@ -967,7 +974,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
 
     <section id="roadmap">
       <h2>Roadmap</h2>
-      <p>v0.3.0 shipped its full slate: the learning loop (#48), the unified import hub + task center (#58), simple/advanced settings (#62), and four new themes (#52). v0.4 has since shipped:</p>
+      <p>v0.3.0 shipped its full slate: the learning loop (#48), the unified import hub + task center (#58), simple/advanced settings (#62), and four new themes (#52). v0.4 shipped its full slate:</p>
       <ol>
         <li><strong>Desktop app (Tauri, macOS):</strong> self-managed local Whisper — consent-gated wizard, model picker + live model switching, one-click diarization add-on. Signed, notarized DMG on releases.</li>
         <li><strong>On-device browser recognition:</strong> Chrome 139+ prefers local speech recognition, automatic cloud fallback.</li>
@@ -978,8 +985,20 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Chrome extension (Lite):</strong> MV3 side panel with live mic capture, the built-in dictionary, and on-device translation.</li>
         <li><strong>Background task center, engine dropdown, first-run onboarding, update check (desktop):</strong> see <a href="#desktop-app">Desktop App</a> for all four.</li>
       </ol>
+      <p>v0.5 has since shipped:</p>
+      <ol>
+        <li><strong>Mode-first UI:</strong> before a meeting, pick how you're listening (microphone / tab audio / system-app audio / an imported file) instead of an engine directly; the app matches the right engine to your platform and configuration automatically, and onboarding was rewritten to match.</li>
+        <li><strong>Speaker tools:</strong> per-line or batch speaker assignment, "apply to this and following," and a live "current speaker" tag; manually assigned lines are locked and survive later automatic diarization updates.</li>
+        <li><strong>AI transcript correction (reviewed):</strong> one click after the meeting has the AI read the transcript and flag recognition errors, listing the original and a suggested fix segment by segment — nothing changes until you accept it, and accepted segments re-translate automatically.</li>
+        <li><strong>Crash recovery:</strong> the meeting is auto-drafted in real time; after a page refresh or a browser crash, history offers a one-click 「恢复到历史记录」 restore.</li>
+        <li><strong>Background term lookup:</strong> a selection lookup's explanation keeps generating in the background and lands in the card list even if you close the popup.</li>
+        <li><strong>Exports and integrations:</strong> a new docx export; AnkiConnect syncs new cards into your local Anki in one click with dedup; the personal glossary can split into multiple named custom packs.</li>
+        <li><strong>Translation engine choice:</strong> bilingual subtitles and full-transcript translation default to the LLM; Chrome 138+ can switch to the browser's built-in on-device translator instead (no key required).</li>
+        <li><strong>Deepgram cloud recognition (BYOK, English):</strong> a new cloud STT engine option for English-only meetings.</li>
+        <li><strong>Hosted preview's limited trial:</strong> a built-in Soniox cloud-recognition trial (no key, up to 3 clips per person per day, ~10 minutes max per clip, shared first-come quota); tab audio is back in the hosted preview on the same trial quota.</li>
+      </ol>
       <p><strong>Pending:</strong> Chrome Web Store submission for the extension (load-unpacked is the only install path until then).</p>
-      <p>Parked items include browser-Whisper realtime streaming, a free translation tier, and select-to-web-search.</p>
+      <p>Parked items include browser-Whisper realtime streaming and select-to-web-search.</p>
     </section>
 
     <div class="footer">
