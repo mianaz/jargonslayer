@@ -660,7 +660,16 @@ export default function CardsPanel() {
       {filtered.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="scroll-thin flex-1 space-y-2 overflow-y-auto px-3 pb-3 pt-2">
+        // S14.1 field fix (item 9): the old pb-3 (12px) let the last
+        // card render right up to — and, at phone width, behind —
+        // StatusLine (page.tsx, h-7 = 28px, a separate sibling BELOW
+        // this whole tab panel, not part of its own box). pb matches
+        // that height, plus env(safe-area-inset-bottom) for an iOS
+        // home-indicator inset WHENEVER this app's viewport opts into
+        // viewport-fit=cover (it doesn't today — see layout.tsx's own
+        // `viewport` export — so that term is currently just 0, a
+        // forward-compatible no-op, not the active part of this fix).
+        <div className="scroll-thin flex-1 space-y-2 overflow-y-auto px-3 pb-[calc(1.75rem+env(safe-area-inset-bottom))] pt-2">
           {filtered.map((item) => {
             const expanded = resolveExpanded(
               item.id,

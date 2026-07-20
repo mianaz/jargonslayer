@@ -59,6 +59,27 @@ export const AI_STATUS_ERROR_KIND_LABEL: Record<LlmTelemetryErrorKind, string> =
   upstream: "请求失败",
 };
 
+/** S14.1 field fix (item 4): "上次失败：限流" alone told the owner
+ *  WHICH of the 4 rows failed but not WHY in plain language — she
+ *  could see the fail count tick up with no way to inspect it further.
+ *  One short zh sentence per kind, appended after the existing short
+ *  label (kept, not replaced — AI_STATUS_ERROR_KIND_LABEL is still the
+ *  at-a-glance word). ratelimit is tier-aware, mirroring describeRouting
+ *  above: on preview it's OUR OWN server-side proxy's budget limiter
+ *  (PREVIEW_TIER, same const already imported here); on full/BYOK tier
+ *  it's the user's OWN provider throttling their key — telling a BYOK
+ *  user "体验版限流" would be flatly wrong. */
+export function describeErrorKind(kind: LlmTelemetryErrorKind): string {
+  switch (kind) {
+    case "nokey":
+      return "未配置 API Key，已回退到词典检测";
+    case "ratelimit":
+      return PREVIEW_TIER ? "请求过于频繁（体验版限流）" : "请求过于频繁，请检查该服务商的 API 额度";
+    case "upstream":
+      return "上游服务请求失败，请稍后重试";
+  }
+}
+
 export const AI_STATUS_ZERO_CONFIG_BANNER = {
   preview: "由服务端代理，无需填写 Key",
   keyless: "未配置 API Key：检测将回退至词典检测，翻译 / 报告不可用",
@@ -170,8 +191,12 @@ export default function AiStatusPanel() {
               <span>QC 丢弃 {stat.qcDropped}</span>
             </div>
             {stat.lastStatus === "fail" && stat.lastErrorKind && (
-              <div className="mt-0.5 text-warn-soft">
-                上次失败：{AI_STATUS_ERROR_KIND_LABEL[stat.lastErrorKind]}
+              <div
+                data-testid={`ai-status-error-${row.telemetryDomain}`}
+                className="mt-0.5 text-warn-soft"
+              >
+                上次失败：{AI_STATUS_ERROR_KIND_LABEL[stat.lastErrorKind]} ——{" "}
+                {describeErrorKind(stat.lastErrorKind)}
               </div>
             )}
           </div>

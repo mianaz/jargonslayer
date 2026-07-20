@@ -21,7 +21,7 @@
 // progress UI once an import is confirmed.
 
 import { useEffect, useRef, useState } from "react";
-import { FileAudio, FileText, LinkSimple } from "@phosphor-icons/react";
+import { FileAudio, FileText, LinkSimple, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { PREVIEW_TIER } from "@/lib/deployTier";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
@@ -305,9 +305,38 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      // S14.1 field fix (item 6): backdrop-click dismissal — mirrors
+      // SettingsDialog.tsx's own identical onMouseDown pattern
+      // (mousedown, not click, + target===currentTarget, so a drag
+      // that starts inside the panel and ends on the backdrop doesn't
+      // close it). This dialog previously had none at all; on the 文件
+      // tab's pre-staging state (no file picked yet) there was also no
+      // footer, so Escape (unreachable on iOS Safari — no physical/
+      // onscreen key) was the ONLY way out.
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
       <div className="scroll-thin max-h-[85vh] w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-5">
-        <div className="mb-4 text-lg font-semibold text-fg">导入</div>
+        <div className="mb-4 flex items-center justify-between gap-2">
+          <span className="text-lg font-semibold text-fg">导入</span>
+          {/* S14.1 field fix (item 6): visible 关闭 affordance — the
+             文件 tab's pre-staging state has no footer at all (import
+             only fires from 开始导入 once a file is staged), so this is
+             the only always-present close control on that state. Same
+             icon/size/testid-free markup as HistoryDrawer.tsx/
+             TaskCenterDrawer.tsx's own header X. */}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
+          >
+            <X size={18} weight="regular" />
+          </button>
+        </div>
 
         <div className="mb-4 flex items-center gap-1 border-b border-edge">
           {TABS.map(({ key, label, icon: Icon }) => (

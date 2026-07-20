@@ -187,3 +187,85 @@ describe("ImportHub — 文稿 completion toast renders every unique warning, no
     expect(toastMsg).toContain("等 3 条提示");
   });
 });
+
+// S14.1 field fix (item 6): the dialog previously had no backdrop-click
+// dismissal and no visible 关闭 affordance — on the 文件 tab's
+// pre-staging state (no file picked yet, tested by this file's default
+// mount below) there's no footer either, so this was the ONLY state
+// with truly zero mouse/touch-reachable way out (Escape existed, but
+// is unreachable on iOS Safari). Reuses this file's own module-level
+// mocks (@/lib/store, @/lib/stt/upload) — none of these tests reach
+// the import pipeline.
+describe("ImportHub — dismissal (S14.1 item 6)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+  });
+
+  it("clicking the backdrop itself (target === currentTarget) closes the dialog", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<ImportHub open={true} onClose={onClose} />);
+    });
+
+    const backdrop = container!.firstElementChild as HTMLElement;
+    await act(async () => {
+      backdrop.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("mousedown that lands INSIDE the panel does not close (a drag ending on the backdrop must not either)", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<ImportHub open={true} onClose={onClose} />);
+    });
+
+    // "导入" heading text lives inside the panel, not the backdrop —
+    // dispatching there means target !== currentTarget on the backdrop.
+    const heading = Array.from(container!.querySelectorAll("span")).find(
+      (s) => s.textContent === "导入",
+    ) as HTMLElement;
+    await act(async () => {
+      heading.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("the header X button is present even in the 文件 tab's empty (pre-staging) state, and closes on click", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<ImportHub open={true} onClose={onClose} />);
+    });
+
+    // Empty state: no file staged yet, so the footer's own 取消 button
+    // (only rendered once stagedFiles.length > 0) is absent — the X is
+    // the only affordance.
+    expect(
+      Array.from(container!.querySelectorAll("button")).some((b) => b.textContent === "取消"),
+    ).toBe(false);
+
+    const closeBtn = container!.querySelector('button[aria-label="关闭"]') as HTMLButtonElement;
+    expect(closeBtn).toBeTruthy();
+
+    await act(async () => {
+      closeBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
