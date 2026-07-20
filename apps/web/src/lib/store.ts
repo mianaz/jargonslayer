@@ -23,6 +23,7 @@ import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
 import type { DetectMode } from "./detect/scheduler";
 import type { OnDeviceMode } from "./stt/onDeviceSpeech";
 import * as storage from "./history/storage";
+import * as liveDraft from "./history/liveDraft";
 import * as glossary from "./history/glossary";
 import * as learnset from "./learn/store";
 import { filterSuppressed } from "./learn/suppress";
@@ -66,10 +67,36 @@ export function scheduleSessionSave(
 }
 
 export interface LookupRequest {
+  // Stable per-selection id, minted once in TranscriptPanel's
+  // selectionLookupRequest (background 划词 card generation, v0.5
+  // closeout) — keys the background pipeline's progress state
+  // (lib/tasks/selectionLookup.ts's useSelectionLookup) so the detect/
+  // dictionary pipeline can run to completion independent of this
+  // popover's own open/closed lifecycle. See LookupPopover.tsx's header
+  // comment for the bug this fixes (closing the popover used to discard
+  // an in-flight ~20s AI result).
+  id: string;
   text: string; // selected text
   contextText: string; // surrounding segment text, for disambiguation
   x: number; // viewport coords for the popover
   y: number;
+}
+
+// lib/llm/client.ts already imports `useApp` FROM this file (its own
+// header comment) — a static import here of anything that reaches
+// detectApi (lib/tasks/selectionLookup.ts -> llm/client.ts) would close
+// a real cycle back into store.ts. A dynamic import resolves after this
+// module has already finished its own top-level evaluation, so there's
+// no cycle in practice; mirrors lib/desktop/bootstrap.ts's/lib/oauth/
+// openrouterDesktop.ts's own `await import("../store")` idiom for
+// exactly this class of problem, just applied in the opposite
+// direction (keeping llm/client.ts's own sizeable graph — provider
+// clients, subscription-direct, telemetry — out of THIS file's static
+// graph instead). runSelectionLookup itself never throws (see that
+// module's own doc), so this fire-and-forget is safe.
+async function triggerSelectionLookup(req: LookupRequest, settings: Settings): Promise<void> {
+  const { runSelectionLookup } = await import("./tasks/selectionLookup");
+  void runSelectionLookup(req, settings);
 }
 
 export interface ToastAction {
@@ -551,9 +578,32 @@ interface AppState {
   ) => void;
   updateTerm: (id: string, patch: Partial<Pick<TermCard, "term" | "gloss_en" | "gloss_zh">>) => void;
 
+  // H1 fix (Sol adversarial review): null now ALSO covers "the
+  // underlying storage.saveSession write failed" (previously null only
+  // ever meant "no segments to save") — this action shows its own
+  // 保存失败 toast and skips clearing the live draft on that path, so no
+  // caller needs to branch on WHY it came back null; every existing
+  // caller (useMeeting.ts's doStop/runStopFlow, SummaryPanel.tsx) may
+  // still treat a non-null id as "saved" and null as "nothing to do".
   saveCurrentSession: () => Promise<string | null>;
   loadSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
+  // Crash/refresh recovery (v0.5 closeout — lib/history/liveDraft.ts's
+  // own header comment has the full write policy/multi-tab caveat).
+  // Materializes a RecoveryBanner-recovered draft snapshot via the SAME
+  // storage.saveSession/listSessions pair saveCurrentSession uses below,
+  // so the session appears in 历史 exactly like any normally-ended
+  // meeting — deliberately NOT routed through the live segments/cards
+  // slice (unlike saveCurrentSession), since the draft may belong to a
+  // different meeting than whatever is (or isn't) currently live in this
+  // tab (see RecoveryBanner's "new meeting keeps the draft" contract).
+  // `draftId` is the SAME id RecoveryBanner loaded this snapshot under
+  // (liveDraft.ts's deriveDraftId) — passed straight through to
+  // liveDraft.clearDraft's compare-and-delete on success. H1 fix:
+  // returns whether the underlying save actually landed — RecoveryBanner
+  // only dismisses itself on true; on false the draft (and banner) stay
+  // put and this shows its own 恢复失败 toast.
+  restoreLiveDraft: (snapshot: MeetingSession, draftId: string) => Promise<boolean>;
   newMeeting: () => void;
 
   addCustomEntry: (entry: CustomEntry) => Promise<void>;
@@ -705,14 +755,25 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *  "soniox" is carved OUT of group 1's coercion (survives instead of
  *  falling to webspeech) when `sonioxPreviewLane` is true, since a
  *  preview user can now actually run it on a server-minted key (see
- *  stt/soniox.ts's SonioxEngine.start). Every OTHER byokOnly/sidecarOnly
- *  engine in group 1 (deepgram included) keeps coercing exactly as
- *  before — the lane is soniox-specific, not a blanket preview unlock.
- *  Defaults to the real build-time const so every existing call site
- *  (this function has two: migrateSettings below, and engineOptions.
- *  ts's deriveEngineForMode) keeps compiling and behaving unchanged
- *  without passing a 4th argument; tests drive it explicitly instead
- *  (see store.test.ts) since the pure-function contract is otherwise
+ *  stt/soniox.ts's SonioxEngine.start). "tabaudio-cloud" joins the SAME
+ *  carve-out, UNCONDITIONALLY on the stored tabAudioCloudProvider —
+ *  tabAudioCloud.ts's own start() always forces the identical
+ *  minted-Soniox path on this lane (effectiveProvider), regardless of
+ *  whether the persisted provider is "soniox" or a stale "deepgram" (no
+ *  trial exists for Deepgram — see that file's own INVARIANT comment),
+ *  so a persisted "deepgram" pick must not be re-coerced away here
+ *  either; the RUNTIME override, not this coercion, is what makes a
+ *  stale deepgram pick harmless. "tabaudio" (the local-sidecar engine,
+ *  no cloud/mint path at all) is NOT part of this carve-out and keeps
+ *  coercing exactly as before. Every OTHER byokOnly/sidecarOnly engine
+ *  in group 1 (deepgram included) also keeps coercing exactly as
+ *  before — the lane is a two-engine carve-out for the ONE lane-funded
+ *  mechanism, not a blanket preview unlock. Defaults to the real
+ *  build-time const so every existing call site (this function has
+ *  two: migrateSettings below, and engineOptions.ts's
+ *  deriveEngineForMode) keeps compiling and behaving unchanged without
+ *  passing a 4th argument; tests drive it explicitly instead (see
+ *  store.test.ts) since the pure-function contract is otherwise
  *  identical to isPreview/_hadSavedEngine above. */
 export function applyTierDefaults(
   settings: Settings,
@@ -721,7 +782,9 @@ export function applyTierDefaults(
   sonioxPreviewLane: boolean = SONIOX_PREVIEW_LANE,
 ): Settings {
   if (!isPreview) return settings;
-  if (settings.engine === "soniox" && sonioxPreviewLane) return settings;
+  if (sonioxPreviewLane && (settings.engine === "soniox" || settings.engine === "tabaudio-cloud")) {
+    return settings;
+  }
   if (
     settings.engine === "whisper" ||
     settings.engine === "tabaudio" ||
@@ -1147,15 +1210,13 @@ export const useApp = create<AppState>((set, get) => ({
     if (typeof document !== "undefined") {
       document.documentElement.dataset.fs = settings.fontSize;
     }
-    // Ask the browser not to evict IndexedDB under storage pressure
-    // (Safari's 7-day eviction, Chrome quota GC). Best-effort.
-    try {
-      if (typeof navigator !== "undefined" && navigator.storage?.persist) {
-        void navigator.storage.persist();
-      }
-    } catch {
-      // non-fatal
-    }
+    // Storage-durability request (navigator.storage.persist, asking the
+    // browser not to evict IndexedDB under pressure — Safari's 7-day
+    // eviction, Chrome quota GC) used to fire here at boot; moved to
+    // useMeeting.ts's start() (first meeting start of a page load) —
+    // Firefox actually prompts for this permission, and a prompt at
+    // boot, before the user has done anything, is hostile. See that
+    // call site's own comment.
 
     // Subscription-direct (v0.2.2, experimental) kill-switch layer 3:
     // an emergency remote hide for already-shipped builds — see
@@ -1468,7 +1529,18 @@ export const useApp = create<AppState>((set, get) => ({
   setDetectBusy: (detectBusy) => set({ detectBusy }),
   setDetectMode: (detectMode) => set({ detectMode }),
   setFocusCard: (focusCardId) => set({ focusCardId }),
-  setLookup: (lookup) => set({ lookup }),
+  // Background 划词 card generation (v0.5 closeout): setLookup is the
+  // single trigger for the selection-lookup pipeline — every UI call
+  // site (TranscriptPanel's mouse + touch paths) just calls this, so
+  // the pipeline can never be duplicated or forgotten at some future
+  // third call site. Fire-and-forget: from here on the pipeline owns
+  // its own progress/task-registry/toast lifecycle independent of
+  // whatever this popover does next (close/reselect/navigate away) —
+  // see lib/tasks/selectionLookup.ts's own header.
+  setLookup: (lookup) => {
+    set({ lookup });
+    if (lookup) void triggerSelectionLookup(lookup, get().settings);
+  },
 
   setSummary: (summary) => set({ summary }),
   setSummarizing: (summarizing) => set({ summarizing }),
@@ -1631,9 +1703,36 @@ export const useApp = create<AppState>((set, get) => ({
       // pauseIntervalsForSnapshot's own doc above.
       pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
     };
-    await storage.saveSession(session);
+    // H1 fix (Sol adversarial review): storage.saveSession now reports
+    // whether the write actually landed — a failed local save must
+    // neither clear the only recovery copy (the live draft) nor claim
+    // success. On failure: show the failure toast and stop, leaving the
+    // draft/activeSessionId/sessions list exactly as they were (a later
+    // post-stop top-up re-save — see scheduleSessionSave's call sites
+    // below — gets another chance).
+    const saved = await storage.saveSession(session);
+    if (!saved) {
+      get().showToast("保存失败，会议草稿已保留");
+      return null;
+    }
     const metas = await storage.listSessions();
     set({ sessions: metas, activeSessionId: session.id });
+    // Crash/refresh recovery (v0.5 closeout): a meeting that ends
+    // normally (this is the ONLY function that ever reaches "stopped"
+    // persistence — every call site is gated on status==="stopped", see
+    // useMeeting.ts's doStop/runStopFlow and this file's own post-stop
+    // top-up re-saves) must never leave a stale liveDraft behind ONCE
+    // it's actually safely persisted elsewhere (the `saved` check just
+    // above). `draftId` (H3 fix) is THIS meeting's own identity —
+    // liveDraft.clearDraft's compare-and-delete no-ops when nothing was
+    // ever drafted under it (e.g. a short meeting the periodic interval
+    // never got to write) OR when the disk now holds a DIFFERENT
+    // (newer) meeting's still-unresolved draft. Awaited, like the
+    // storage.* calls just above — this is local IndexedDB bookkeeping,
+    // not one of the optional external integrations below that
+    // deliberately fire-and-forget.
+    const draftId = liveDraft.deriveDraftId(s.meetingGen, startedAt);
+    await liveDraft.clearDraft(draftId);
     // Agent-native output layer (both no-op unless configured).
     const { autoExport, exportFrontmatter, webhookUrl } = s.settings;
     if (autoExport) {
@@ -1725,6 +1824,35 @@ export const useApp = create<AppState>((set, get) => ({
       patch.activeSessionId = null;
     }
     set(patch);
+  },
+
+  // Crash/refresh recovery (v0.5 closeout) — see this action's own
+  // AppState doc comment above for why this bypasses the live
+  // segments/cards slice entirely: `snapshot` is whatever RecoveryBanner
+  // loaded from IndexedDB, not necessarily anything related to this
+  // tab's current live meeting (or lack thereof).
+  restoreLiveDraft: async (snapshot, draftId) => {
+    // H4 fix (Sol adversarial review): currentSessionSnapshot()'s own
+    // `id` is "unsaved" for every live-draft snapshot (activeSessionId
+    // is always null while a meeting is draftable — see that
+    // function's own doc comment), so reusing it here would let a
+    // SECOND crash recovery overwrite the FIRST recovered session
+    // (storage.saveSession keys by id). Always mint a fresh identity
+    // for the materialized session rather than ever trusting the
+    // incoming one.
+    const session: MeetingSession = { ...snapshot, id: newId() };
+    // H1 fix: same "don't clear the only copy / don't claim success on
+    // a failed write" posture as saveCurrentSession above.
+    const saved = await storage.saveSession(session);
+    if (!saved) {
+      get().showToast("恢复失败，请重试");
+      return false;
+    }
+    const metas = await storage.listSessions();
+    set({ sessions: metas });
+    await liveDraft.clearDraft(draftId);
+    get().showToast("已恢复，可在历史记录中查看");
+    return true;
   },
 
   addCustomEntry: async (entry) => {

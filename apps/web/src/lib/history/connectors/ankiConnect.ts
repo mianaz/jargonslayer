@@ -46,6 +46,54 @@ export class AnkiConnectApiError extends Error {
   }
 }
 
+/** ankiInvoke's own round trip exceeded `timeoutMs` with no response —
+ *  M3 fix (Sol review 2026-07-20, v0.5 closeout): a hung AnkiConnect
+ *  round trip (dead process, stuck localhost socket) used to leave
+ *  ankiInvoke's own returned promise pending FOREVER — deliverSessionNotes'
+ *  per-session queue below awaits exactly that promise, so an unbounded
+ *  hang here starved every later save for that session permanently.
+ *  Named (rather than a bare DOMException) so a caller/log can tell
+ *  this apart from a real AnkiConnectApiError or network rejection. */
+export class AnkiInvokeTimeoutError extends Error {
+  constructor(action: string, timeoutMs: number) {
+    super(`AnkiConnect "${action}" 超时（${timeoutMs}ms 未响应）`);
+    this.name = "AnkiInvokeTimeoutError";
+  }
+}
+
+// M3 default round-trip ceiling: every ankiInvoke call is now bounded —
+// testAndAuthorize's own foreground probe still passes its tighter
+// AUTH_PROBE_TIMEOUT_MS (5000ms) explicitly below; every other caller
+// (deliverSessionNotesImpl's canAddNotes/addNotes, previously fully
+// unbounded) gets this ceiling for free via ankiInvoke's own default
+// parameter.
+const DEFAULT_ANKI_INVOKE_TIMEOUT_MS = 30000;
+
+/** Settles no later than `timeoutMs` after being created, regardless of
+ *  whether `promise` itself ever does — see AnkiInvokeTimeoutError's
+ *  own doc above for why ankiInvoke needs this on top of the fetch's
+ *  own AbortSignal.timeout (belt and braces: a transport that doesn't
+ *  honor AbortSignal — unclear for Tauri's own fetch shim — would
+ *  otherwise still hang this function's returned promise forever
+ *  despite the signal). Always clears its own timer the instant
+ *  `promise` settles either way, so a normal (fast) call never leaves a
+ *  live timer behind. */
+function raceWithTimeout<T>(promise: Promise<T>, timeoutMs: number, action: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new AnkiInvokeTimeoutError(action, timeoutMs)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 /** The ordinary browser fetch, arrow-wrapped so a detached reference is
  *  always safely re-invocable — mirrors llmTransport.ts's own default
  *  transport (`(...args) => fetch(...args)`), the exact same "may be
@@ -75,33 +123,38 @@ async function resolveFetch(): Promise<typeof fetch> {
 /** POST {action, version: 6, params?} to a local AnkiConnect instance
  *  and unwrap its {result, error} envelope — throws AnkiConnectApiError
  *  when `error` is non-null, AnkiIosUnsupportedError on iOS (checked
- *  before any network attempt), or lets the underlying fetch rejection
- *  propagate (connection refused / browser-blocked / timeout — see
- *  testAndAuthorize for how the foreground flow classifies those).
- *  `timeoutMs` is an optional extra beyond the three-argument contract
- *  callers normally use — testAndAuthorize's foreground probe is the
- *  one caller that needs a bounded wait. */
+ *  before any network attempt), AnkiInvokeTimeoutError when no response
+ *  lands within `timeoutMs` (M3: every call is now bounded, defaulting
+ *  to DEFAULT_ANKI_INVOKE_TIMEOUT_MS — not just the ones that pass an
+ *  explicit value), or lets the underlying fetch rejection propagate
+ *  (connection refused / browser-blocked — see testAndAuthorize for how
+ *  the foreground flow classifies those). `timeoutMs` stays a caller
+ *  override — testAndAuthorize's foreground probe passes its own
+ *  tighter AUTH_PROBE_TIMEOUT_MS below. */
 export async function ankiInvoke<T = unknown>(
   port: number,
   action: string,
   params?: Record<string, unknown>,
-  timeoutMs?: number,
+  timeoutMs: number = DEFAULT_ANKI_INVOKE_TIMEOUT_MS,
 ): Promise<T> {
   if (IS_IOS) throw new AnkiIosUnsupportedError();
   const fetchImpl = await resolveFetch();
   const body: Record<string, unknown> = { action, version: 6 };
   if (params !== undefined) body.params = params;
-  const res = await fetchImpl(`http://127.0.0.1:${port}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    signal: timeoutMs !== undefined ? AbortSignal.timeout(timeoutMs) : undefined,
-  });
-  const envelope = (await res.json()) as { result: T; error: string | null };
-  if (envelope.error !== null) {
-    throw new AnkiConnectApiError(envelope.error);
-  }
-  return envelope.result;
+  const call = (async (): Promise<T> => {
+    const res = await fetchImpl(`http://127.0.0.1:${port}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const envelope = (await res.json()) as { result: T; error: string | null };
+    if (envelope.error !== null) {
+      throw new AnkiConnectApiError(envelope.error);
+    }
+    return envelope.result;
+  })();
+  return raceWithTimeout(call, timeoutMs, action);
 }
 
 // ---------------------------------------------------------------
@@ -291,7 +344,7 @@ export interface AnkiDeliveryResult {
  *  Never throws — mirrors autoExport.ts's postWebhook/
  *  exportSessionToFolder fire-and-forget contract, since this is
  *  designed to run from the same post-save path. */
-export async function deliverSessionNotes(
+async function deliverSessionNotesImpl(
   session: MeetingSession,
   cfg: AnkiConnectDeliveryConfig,
   ledger: AnkiDeliveryLedger,
@@ -338,4 +391,118 @@ export async function deliverSessionNotes(
   }
 
   return { sent, skipped: total - sent };
+}
+
+// ---------------------------------------------------------------
+// deliverSessionNotes — per-session in-flight serialization (Sol review
+// follow-up, v0.5 Wave-1: "anki per-session delivery serialization") +
+// bounded coalescing (M3, Sol review 2026-07-20, v0.5 closeout).
+// ---------------------------------------------------------------
+
+// Race window the serialization half closes: deliverSessionNotesImpl's
+// candidates loop above reads ledger.hasSent for every card FIRST; the
+// matching ledger.markSent write only happens much later, after the
+// addNotes network round trip resolves. The ledger is idempotent ACROSS
+// separate, sequential saves, but two overlapping deliverSessionNotes
+// calls for the SAME session (rapid double-save, or a save landing
+// while a slow AnkiConnect roundtrip is still in flight) both run that
+// read phase before either has written anything — both see "not sent"
+// and both send, duplicating notes despite the ledger. Chaining a
+// session's calls one after another closes the window: a queued call's
+// own ledger read cannot start until the call ahead of it has fully
+// settled (reads AND writes). Keyed per session id (not one global
+// lock) so unrelated sessions are never made to wait on each other.
+//
+// M3 fix: the chain alone was UNBOUNDED — with ankiInvoke previously
+// having no timeout, one hung round trip plus repeated post-stop
+// re-saves (deliverSessionNotesImpl's own doc: "a stopped session
+// re-saves many times") grew this chain forever, each link's closure
+// retaining a full MeetingSession snapshot. ankiInvoke is now bounded
+// regardless (see its own DEFAULT_ANKI_INVOKE_TIMEOUT_MS above), AND at
+// most ONE delivery is ever QUEUED (not yet running) per session at a
+// time: a call arriving while one is already queued overwrites that
+// queued snapshot in place (`pendingDeliveries` below) instead of
+// adding a new chain link — latest wins. The link that's already IN
+// FLIGHT (dequeued, actually running deliverSessionNotesImpl) is never
+// touched; it always runs to completion. Every coalesced caller (the
+// ones whose snapshot got overwritten before its turn came) shares the
+// ONE delivery that actually executes in its place — nobody ever awaits
+// a network round trip that was superseded before it started.
+const sessionQueues = new Map<string, Promise<void>>();
+
+interface PendingDelivery {
+  session: MeetingSession;
+  cfg: AnkiConnectDeliveryConfig;
+  ledger: AnkiDeliveryLedger;
+  // One waiter per coalesced caller — all resolved/rejected together
+  // once THIS slot's delivery (whichever snapshot is current when its
+  // turn comes) actually settles.
+  waiters: Array<{
+    resolve: (result: AnkiDeliveryResult) => void;
+    reject: (err: unknown) => void;
+  }>;
+}
+
+const pendingDeliveries = new Map<string, PendingDelivery>();
+
+/** Runs whatever snapshot is CURRENTLY queued for `sessionId` (may have
+ *  been overwritten several times since it was first queued — see
+ *  PendingDelivery's own doc above) and settles every coalesced waiter
+ *  with the same outcome. Dequeues itself FIRST, before awaiting
+ *  anything, so a caller arriving once this is under way correctly
+ *  starts a NEW queued slot rather than mutating one that's already
+ *  running. */
+async function runPendingDelivery(sessionId: string): Promise<void> {
+  const pending = pendingDeliveries.get(sessionId);
+  pendingDeliveries.delete(sessionId);
+  if (!pending) return;
+  try {
+    const result = await deliverSessionNotesImpl(pending.session, pending.cfg, pending.ledger);
+    for (const waiter of pending.waiters) waiter.resolve(result);
+  } catch (err) {
+    for (const waiter of pending.waiters) waiter.reject(err);
+  }
+}
+
+/** Runs deliverSessionNotesImpl only after any in-flight delivery for
+ *  the same session has settled — see the race-window comment above.
+ *  A rejected prior delivery is swallowed before chaining off it
+ *  (`.catch(() => undefined)`) so one failed call can never poison the
+ *  chain for every later delivery of that session; the promise returned
+ *  to THIS call's own caller still rejects normally when its own run
+ *  fails (runPendingDelivery's own try/catch routes that rejection to
+ *  this call's waiter, never by throwing back into the chain). The
+ *  queue entry clears itself once settled (re-checked by identity
+ *  first, in case a newer call already replaced it), so this map never
+ *  leaks/grows for the life of the tab.
+ *
+ *  M3 coalescing (see the section header comment above): a call that
+ *  finds one already queued for this session just adds itself as a
+ *  waiter on that SAME slot (after overwriting the slot's snapshot) —
+ *  it never extends sessionQueues itself. Only the first caller to find
+ *  nothing queued does that. */
+export async function deliverSessionNotes(
+  session: MeetingSession,
+  cfg: AnkiConnectDeliveryConfig,
+  ledger: AnkiDeliveryLedger,
+): Promise<AnkiDeliveryResult> {
+  const { id: sessionId } = session;
+  return new Promise<AnkiDeliveryResult>((resolve, reject) => {
+    const waiter = { resolve, reject };
+    const existing = pendingDeliveries.get(sessionId);
+    if (existing) {
+      existing.session = session;
+      existing.cfg = cfg;
+      existing.ledger = ledger;
+      existing.waiters.push(waiter);
+      return;
+    }
+    pendingDeliveries.set(sessionId, { session, cfg, ledger, waiters: [waiter] });
+    const prior = sessionQueues.get(sessionId) ?? Promise.resolve();
+    const chained = prior.catch(() => undefined).then(() => runPendingDelivery(sessionId));
+    sessionQueues.set(sessionId, chained);
+    chained.then(() => {
+      if (sessionQueues.get(sessionId) === chained) sessionQueues.delete(sessionId);
+    });
+  });
 }

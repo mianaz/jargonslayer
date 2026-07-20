@@ -1,6 +1,6 @@
 [package]
 name = "jargonslayer"
-version = "0.4.6"
+version = "0.5.0"
 description = "JargonSlayer desktop shell"
 authors = ["Miana Zeng"]
 license = "AGPL-3.0-only"

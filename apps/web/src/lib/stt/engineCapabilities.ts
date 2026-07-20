@@ -43,6 +43,7 @@
 // cloud-transient in OUR integration once Lane D adds it).
 
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
+import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "../deployTier";
 
 // Live capture engines only — excludes "demo" (scripted preview, not a
 // peer engine) and the two file-ingest paths "import"/"browser-whisper"
@@ -220,11 +221,27 @@ const TAB_AUDIO_CLOUD_PROVIDER_LABEL: Record<TabAudioCloudProvider, string> = {
  *  disambiguating provider suffix to `label` (e.g. "标签页音频·云端（Soniox）").
  *  Not yet consumed by any live UI — engineOptions.ts/StatusLine wire
  *  this up in a later lane (§5's own "L3 tail" sequencing note) —
- *  exported+tested now so that wiring is a pure call-site change. */
+ *  exported+tested now so that wiring is a pure call-site change.
+ *
+ *  M2 fix (Sol review 2026-07-20, v0.5 closeout): now lane-aware —
+ *  mirrors tabAudioCloud.ts's own effectiveProvider computation
+ *  EXACTLY (`SONIOX_PREVIEW_LANE && PREVIEW_TIER ? "soniox" : …`).
+ *  ModeSelector.tsx's "已选…引擎：Y" hint is this function's one live
+ *  consumer today — on the Soniox preview lane, TabAudioCloudEngine.
+ *  start() always forces the minted-Soniox path regardless of
+ *  Settings.tabAudioCloudProvider (a restored/persisted "deepgram" must
+ *  not re-create a dead tab tile there — see that engine's own header
+ *  comment), so any surface resolving this card's LABEL must agree:
+ *  showing "…（Deepgram）" while the engine actually runs Soniox would
+ *  be a lie the user has no way to act on. A structural no-op off the
+ *  lane (both consts default false outside a preview-tier build with
+ *  the trial flag on), so this changes nothing for a full-tier/plain-
+ *  preview build. */
 export function resolveEngineCapability(kind: LiveEngineKind, settings: Settings): EngineCapability {
   const base = ENGINE_CAPABILITIES[kind];
   if (kind !== "tabaudio-cloud") return base;
-  const provider = resolveTabAudioCloudProvider(settings);
+  const provider =
+    SONIOX_PREVIEW_LANE && PREVIEW_TIER ? "soniox" : resolveTabAudioCloudProvider(settings);
   return {
     ...base,
     biasSupport: provider === "deepgram" ? "keyterms" : "context",

@@ -131,10 +131,15 @@ export async function POST(req: Request) {
     return errorBody({ error: "Soniox 未返回临时密钥", code: "upstream" }, 502);
   }
 
-  // Only the temp key (session-capped, single-use, short-lived) and its
-  // expiry leave here. No-store so no proxy/browser cache retains it.
+  // Only the temp key (session-capped, single-use, short-lived), its
+  // expiry, and the session cap itself leave here. No-store so no
+  // proxy/browser cache retains it. session_seconds (v0.5 closeout,
+  // owner ask "trial limits CLEARLY noticed"): lets the client quote
+  // the REAL server-enforced cap in its one-shot session-start notice
+  // (useMeeting.ts) instead of hardcoding a number that could drift
+  // from this deploy's own JARGONSLAYER_SONIOX_SESSION_SECONDS.
   return NextResponse.json(
-    { api_key: minted.api_key, expires_at: minted.expires_at ?? null },
+    { api_key: minted.api_key, expires_at: minted.expires_at ?? null, session_seconds: SONIOX_SESSION_SECONDS },
     { headers: { "cache-control": "no-store" } },
   );
 }

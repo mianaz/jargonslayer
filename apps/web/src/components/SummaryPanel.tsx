@@ -180,8 +180,13 @@ function GenerateCta() {
         settings,
       );
       setSummary(res);
-      await saveCurrentSession();
-      showToast("报告已生成并保存");
+      // saveCurrentSession returns null when the underlying history
+      // write failed (H1, v0.5 closeout — it shows its own 保存失败
+      // toast and keeps the crash-recovery draft); an unconditional
+      // success toast here would overwrite that failure with a false
+      // "已保存" claim — same fix shape as useMeeting.ts's doStop.
+      const savedId = await saveCurrentSession();
+      if (savedId !== null) showToast("报告已生成并保存");
     } catch (err) {
       if (err instanceof NoKeyError) {
         showToast("需要 API Key（右上角设置）才能生成报告");

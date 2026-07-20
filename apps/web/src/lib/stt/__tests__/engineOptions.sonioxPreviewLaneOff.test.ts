@@ -24,8 +24,19 @@ describe("engineOptionGate — soniox preview lane OFF (preview tier, trial flag
     retentionClass: "cloud-transient",
     byokOnly: true,
   };
+  const tabAudioCloud: EngineOption = {
+    value: "tabaudio-cloud",
+    label: "标签页音频·云端",
+    posture: "cloud",
+    retentionClass: "cloud-transient",
+    byokOnly: true,
+  };
 
   it("soniox stays locked exactly like every other byokOnly engine — the trial flag, not the tier alone, gates the unlock", () => {
     expect(engineOptionGate(soniox, null)).toEqual({ disabled: true, title: PREVIEW_LOCKED_TITLE });
+  });
+
+  it("tabaudio-cloud also stays locked — its own carve-out is equally gated on the trial flag, not the tier alone", () => {
+    expect(engineOptionGate(tabAudioCloud, null)).toEqual({ disabled: true, title: PREVIEW_LOCKED_TITLE });
   });
 });

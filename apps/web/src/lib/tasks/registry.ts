@@ -41,6 +41,14 @@ import { diagLog } from "../diag/log";
 // ProvisionStep). This prelude only reserves the kind (no writer yet);
 // worker A2's provisionMachine.ts/bootstrap.ts wiring is what actually
 // starts a task of this kind — also desktop-only.
+//
+// v0.5 closeout (background 划词 card generation) — "selection-lookup"
+// joins the same list: lib/tasks/selectionLookup.ts's runSelectionLookup
+// is its only writer, web AND desktop (the ~20s AI detect on a
+// manually-selected transcript phrase is identical on either platform).
+// Registered only for the AI-detect path — the synchronous
+// dictionary-only path never starts a task of this kind (see that
+// file's own doc).
 export type TaskKind =
   | "import-audio"
   | "import-video"
@@ -49,7 +57,8 @@ export type TaskKind =
   | "model-download"
   | "diar-install"
   | "os-speech-asset"
-  | "mlx-install";
+  | "mlx-install"
+  | "selection-lookup";
 export type TaskStatus = "running" | "done" | "error";
 
 export interface TaskState {

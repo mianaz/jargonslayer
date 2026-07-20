@@ -26,6 +26,7 @@ import {
 } from "../store";
 import {
   DEFAULT_SETTINGS,
+  sessionToMeta,
   type CustomEntry,
   type DetectResponse,
   type MeetingSession,
@@ -36,6 +37,7 @@ import {
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
 import * as learnsetModule from "../learn/store";
 import * as storageModule from "../history/storage";
+import * as liveDraftModule from "../history/liveDraft";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
 import { clearDiag, getDiagEntries } from "../diag/log";
 import { segmentElapsedMs } from "../segmentElapsed";
@@ -592,7 +594,7 @@ describe("applySpeakerUpdate (store action) — post-stop diarization linger re-
   });
 
   it("a late update arriving after doStop (status already 'stopped') re-persists — the saved session gains the labels", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     useApp.setState({
       status: "stopped",
@@ -615,7 +617,7 @@ describe("applySpeakerUpdate (store action) — post-stop diarization linger re-
   });
 
   it("does not schedule a re-save while the meeting is still live (status !== 'stopped')", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     useApp.setState({
       status: "listening",
       meetingGen: 5,
@@ -634,7 +636,7 @@ describe("applySpeakerUpdate (store action) — post-stop diarization linger re-
   // that lingers (see wsTransport.ts's POST_STOP_LINGER_MS) past the
   // point a NEW meeting has already started must never land on it.
   it("rejects a lingering update whose gen belongs to a previous meeting — no state change and no re-save scheduled", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     useApp.setState({
       status: "stopped",
       meetingGen: 6, // a NEW meeting already started (bumped past the old engine session's gen)
@@ -804,7 +806,7 @@ describe("speaker roster + assignment store actions (v0.5 Wave-1 Feature 1) — 
   });
 
   it("assignSegmentsSpeaker schedules a debounced post-stop re-save when the meeting has already ended", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     useApp.setState({ status: "stopped", activeSessionId: null });
 
@@ -818,14 +820,14 @@ describe("speaker roster + assignment store actions (v0.5 Wave-1 Feature 1) — 
   });
 
   it("does NOT schedule a re-save while the meeting is still live", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     useApp.getState().assignSegmentsSpeaker(["a"], "Alice");
     await vi.advanceTimersByTimeAsync(1500);
     expect(saveSpy).not.toHaveBeenCalled();
   });
 
   it("addSpeakerToRoster ALSO schedules a post-stop re-save — a bare add with no assignment yet must still survive (speakerRoster is always-persisted)", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     useApp.setState({ status: "stopped", activeSessionId: null });
 
@@ -941,7 +943,7 @@ describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.
   });
 
   it("saveCurrentSession always persists speakerRoster, even [] for a meeting that never touched it", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     useApp.setState({
       segments: [makeSegment({ id: "s1" })],
@@ -957,7 +959,7 @@ describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.
   });
 
   it("saveCurrentSession persists the exact live roster", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     useApp.setState({
       segments: [makeSegment({ id: "s1" })],
@@ -986,6 +988,7 @@ describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.
     let stored: MeetingSession | undefined;
     vi.spyOn(storageModule, "saveSession").mockImplementation(async (session) => {
       stored = session;
+      return true;
     });
     useApp.setState({
       segments: [makeSegment({ id: "s1" })],
@@ -1000,6 +1003,211 @@ describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.
     await useApp.getState().loadSession(stored!.id);
 
     expect(useApp.getState().speakerRoster).toEqual(["Alice", "Bob"]);
+  });
+});
+
+describe("saveCurrentSession clears the live draft (crash/refresh recovery, v0.5 closeout)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("clears the liveDraft on every normal save — a meeting that ends normally must never leave a draft behind", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    const clearSpy = vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("H3 fix (Sol adversarial review): clears using THIS meeting's own draftId (deriveDraftId(meetingGen, startedAt))", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    const clearSpy = vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      meetingGen: 4,
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    expect(clearSpy).toHaveBeenCalledWith(liveDraftModule.deriveDraftId(4, 1000));
+  });
+
+  describe("H1 fix — a failed underlying save keeps the draft and reports failure honestly", () => {
+    it("resolves null, shows 保存失败 toast, and does NOT clear the draft (or touch sessions/activeSessionId) when storage.saveSession fails", async () => {
+      vi.spyOn(storageModule, "saveSession").mockResolvedValue(false);
+      const clearSpy = vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+      const listSpy = vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+      useApp.setState({
+        segments: [makeSegment({ id: "s1" })],
+        startedAt: 1000,
+        activeSessionId: null,
+        sessions: [],
+      });
+
+      const id = await useApp.getState().saveCurrentSession();
+
+      expect(id).toBeNull();
+      expect(useApp.getState().toast).toBe("保存失败，会议草稿已保留");
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(listSpy).not.toHaveBeenCalled();
+      expect(useApp.getState().activeSessionId).toBeNull();
+    });
+  });
+});
+
+describe("restoreLiveDraft — materializes a RecoveryBanner draft into history (v0.5 closeout)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeDraftSession(overrides: Partial<MeetingSession> = {}): MeetingSession {
+    return {
+      id: "draft-1",
+      title: "会议 2026-07-01 09:00",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "webspeech",
+      segments: [makeSegment({ id: "d1" })],
+      cards: [],
+      terms: [],
+      speakerRoster: [],
+      ...overrides,
+    };
+  }
+
+  it("the draft snapshot is a session the history layer's own sessionToMeta accepts (session-shape check, mirrors storage.test.ts)", () => {
+    expect(sessionToMeta(makeDraftSession())).toMatchObject({
+      id: "draft-1",
+      startedAt: 1000,
+      endedAt: 2000,
+      segmentCount: 1,
+      cardCount: 0,
+      termCount: 0,
+      hasSummary: false,
+    });
+  });
+
+  it("H4 fix (Sol adversarial review): saves the snapshot's CONTENT under a FRESH id — never reuses the incoming one (every live-draft snapshot's own id is the shared 'unsaved' fallback, see currentSessionSnapshot)", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    const snapshot = makeDraftSession();
+
+    await useApp.getState().restoreLiveDraft(snapshot, "gen1:1000");
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved).toMatchObject({ ...snapshot, id: expect.any(String) });
+    expect(saved.id).not.toBe(snapshot.id);
+  });
+
+  it("H4 fix: two separate recoveries mint DISTINCT ids — a second crash-recovery does not overwrite the first recovered session in storage", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    // Both drafts carry the SAME "unsaved" id, exactly like every
+    // never-saved live draft does (currentSessionSnapshot's own
+    // fallback) — the fix must not trust that shared incoming id.
+    await useApp.getState().restoreLiveDraft(makeDraftSession({ id: "unsaved" }), "gen1:1000");
+    await useApp.getState().restoreLiveDraft(makeDraftSession({ id: "unsaved" }), "gen2:2000");
+
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    const firstId = (saveSpy.mock.calls[0][0] as MeetingSession).id;
+    const secondId = (saveSpy.mock.calls[1][0] as MeetingSession).id;
+    expect(firstId).not.toBe(secondId);
+  });
+
+  it("refreshes the sessions list from storage so the restored meeting shows up in 历史 immediately", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    const metas = [
+      {
+        id: "draft-1",
+        title: "t",
+        startedAt: 1000,
+        endedAt: 2000,
+        segmentCount: 1,
+        cardCount: 0,
+        termCount: 0,
+        hasSummary: false,
+      },
+    ];
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue(metas);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    await useApp.getState().restoreLiveDraft(makeDraftSession(), "gen1:1000");
+
+    expect(useApp.getState().sessions).toEqual(metas);
+  });
+
+  it("clears the draft, passing through the SAME draftId it was given, once materialized (H3 fix)", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    const clearSpy = vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    await useApp.getState().restoreLiveDraft(makeDraftSession(), "gen1:1000");
+
+    expect(clearSpy).toHaveBeenCalledWith("gen1:1000");
+  });
+
+  it("shows the recovery toast and resolves true on success (H1 fix)", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    const ok = await useApp.getState().restoreLiveDraft(makeDraftSession(), "gen1:1000");
+
+    expect(ok).toBe(true);
+    expect(useApp.getState().toast).toBe("已恢复，可在历史记录中查看");
+  });
+
+  it("does NOT touch the live segments/cards/activeSessionId/status/meetingGen — the draft may belong to a DIFFERENT (older) meeting than the one currently LIVE in this tab (new-meeting-while-banner scenario)", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    const liveSegments = [makeSegment({ id: "live-only" })];
+    // A brand-new meeting is genuinely LIVE right now — not just "viewing
+    // a different saved session" — while an OLDER crashed meeting's
+    // draft is what's being restored.
+    useApp.setState({
+      status: "listening",
+      meetingGen: 7,
+      segments: liveSegments,
+      activeSessionId: null,
+      cards: [],
+    });
+
+    await useApp.getState().restoreLiveDraft(makeDraftSession({ id: "totally-different-draft" }), "gen1:1000");
+
+    expect(useApp.getState().segments).toBe(liveSegments);
+    expect(useApp.getState().activeSessionId).toBeNull();
+    expect(useApp.getState().status).toBe("listening");
+    expect(useApp.getState().meetingGen).toBe(7);
+  });
+
+  describe("H1 fix — a failed underlying save keeps the draft and reports failure honestly", () => {
+    it("resolves false, shows 恢复失败 toast, and does NOT clear the draft (or touch the sessions list) when storage.saveSession fails", async () => {
+      vi.spyOn(storageModule, "saveSession").mockResolvedValue(false);
+      const clearSpy = vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+      const listSpy = vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+
+      const ok = await useApp.getState().restoreLiveDraft(makeDraftSession(), "gen1:1000");
+
+      expect(ok).toBe(false);
+      expect(useApp.getState().toast).toBe("恢复失败，请重试");
+      expect(clearSpy).not.toHaveBeenCalled();
+      expect(listSpy).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -1096,7 +1304,7 @@ describe("updateCard / updateTerm — v0.5 Wave-1 Feature 7 inline card edit (co
   });
 
   it("updateCard schedules a debounced post-stop re-save", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     useApp.setState({ activeSessionId: null });
 
@@ -1291,7 +1499,7 @@ describe("saveCurrentSession / loadSession / currentSessionSnapshot — elapsed-
   });
 
   it("saveCurrentSession always persists pauseIntervals, even [] for a never-paused meeting — presence (even empty) distinguishes 'known: zero pauses' from a legacy session's absence", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     useApp.setState({
       segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
@@ -1309,7 +1517,7 @@ describe("saveCurrentSession / loadSession / currentSessionSnapshot — elapsed-
   });
 
   it("saveCurrentSession persists the exact pauseIntervals recorded during the meeting", async () => {
-    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
     vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
     const pauseIntervals = [{ start: 1200, end: 1500 }];
     useApp.setState({
@@ -1351,7 +1559,7 @@ describe("saveCurrentSession / loadSession / currentSessionSnapshot — elapsed-
     });
 
     it("saveCurrentSession (End-from-paused) appends a closing interval ending at save time, without mutating live pauseIntervals/pauseStartedAt", async () => {
-      const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+      const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
       vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
       useApp.setState({
         segments: [makeSegment({ id: "s1", startedAt: 1000, endedAt: 1100 })],
@@ -1717,6 +1925,22 @@ describe("applyTierDefaults — soniox preview lane (4th param)", () => {
 
   it("deepgram keeps coercing to webspeech even when the (soniox-only) lane is on", () => {
     expect(applyTierDefaults(withEngine("deepgram"), true, true, true).engine).toBe("webspeech");
+  });
+
+  // v0.5 closeout: tabaudio-cloud joins the SAME carve-out — its own
+  // start() always forces the minted-Soniox path on this lane
+  // (tabAudioCloud.ts's effectiveProvider), so a stale/persisted
+  // provider choice is harmless and the engine survives unconditionally.
+  it("tabaudio-cloud SURVIVES coercion when the lane is on", () => {
+    expect(applyTierDefaults(withEngine("tabaudio-cloud"), true, true, true).engine).toBe("tabaudio-cloud");
+  });
+
+  it("tabaudio-cloud is still coerced to webspeech when the lane is off (today's behavior, explicit false)", () => {
+    expect(applyTierDefaults(withEngine("tabaudio-cloud"), true, true, false).engine).toBe("webspeech");
+  });
+
+  it("tabaudio (local-sidecar, no mint path at all) keeps coercing to webspeech even when the lane is on — the carve-out is soniox/tabaudio-cloud-specific", () => {
+    expect(applyTierDefaults(withEngine("tabaudio"), true, true, true).engine).toBe("webspeech");
   });
 });
 

@@ -198,7 +198,15 @@ const ALL_ENGINE_CARDS: {
         {
           value: "tabaudio-cloud" as const,
           label: "标签页音频·云端",
-          hint: "需要 Soniox 或 Deepgram Key、浏览器分享标签页并勾选共享音频；选择 Deepgram 时仅支持英文",
+          // Soniox preview lane (SONIOX_PREVIEW_LANE): same trial-copy
+          // swap as the Soniox card's own hint above — this card's
+          // start() always forces the identical minted-Soniox path on
+          // the lane (tabAudioCloud.ts's effectiveProvider), so it gets
+          // the same honest trial notice instead of the BYOK/Deepgram
+          // copy that would otherwise still name a key nobody needs.
+          hint: SONIOX_PREVIEW_LANE
+            ? "预览体验：无需密钥，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得；标签页音频经 Soniox 云端转写（不留存）"
+            : "需要 Soniox 或 Deepgram Key、浏览器分享标签页并勾选共享音频；选择 Deepgram 时仅支持英文",
           byokOnly: true,
         },
       ]
@@ -243,7 +251,7 @@ const ALL_ENGINE_CARDS: {
     // description of the mechanism) — the render block below is what
     // actually carves the preview LOCK out for this one card.
     hint: SONIOX_PREVIEW_LANE
-      ? "预览体验：无需密钥，每日限量，单次最长 10 分钟；音频经 Soniox 云端转写（不留存）"
+      ? "预览体验：无需密钥，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得；音频经 Soniox 云端转写（不留存）"
       : "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
     byokOnly: true,
   },
@@ -554,6 +562,32 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Restored-backup honesty notice (Sol review 2026-07-20, L finding;
+ *  extended to the tab-cloud card too — M2 fix, v0.5 closeout): a
+ *  backup restored WITH keys can leave a real sonioxKey in preview
+ *  storage, and BYOK-wins routing (stt/soniox.ts / tabAudioCloud.ts's
+ *  own effectiveProvider) will then bill the USER's account on either
+ *  the Soniox OR the 标签页音频·云端 card while that card's own hint
+ *  above still advertises the server-funded trial. The input itself
+ *  stays disabled on preview (posture: preview never COLLECTS keys),
+ *  so this notice + explicit clear is the only exit — a shared
+ *  component so the copy/behavior can never drift between the two
+ *  cards. */
+function SonioxKeyRestoredNotice({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="mt-1 text-xs leading-[1.7] text-warn-soft">
+      检测到已保存的 Soniox Key：会话将直接使用你自己的 Key 并按你的账户计费，而非上方的预览体验。
+      <button
+        type="button"
+        onClick={onClear}
+        className="ml-1 underline decoration-[rgb(var(--warn-soft-rgb)/0.4)]"
+      >
+        清除已保存的 Key（改用预览体验）
+      </button>
+    </div>
+  );
+}
+
 // #56 分任务模型（高级）: display metadata for the three domain blocks,
 // in the design's exact order/labels (Q5). "detect" covers define too
 // (LlmTaskDomain deliberately excludes a separate "define" domain —
@@ -720,6 +754,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [connectingOpenRouter, setConnectingOpenRouter] = useState(false);
   const [openRouterOauthHint, setOpenRouterOauthHint] = useState<string | null>(null);
   const [exportFolderName, setExportFolderName] = useState<string | null>(null);
+  // Storage durability + visibility (v0.5 closeout item 4): read-only,
+  // feature-detected navigator.storage.estimate() snapshot — re-read on
+  // every dialog open (see the `open`-gated effect below), same "snapshot
+  // on open" posture as exportFolderName/diagEntries. null covers both
+  // "not resolved yet" and "unsupported" alike — no separate loading
+  // state; the line below simply doesn't render until this resolves.
+  const [storageEstimate, setStorageEstimate] = useState<{ usageMb: number; quotaGb: number } | null>(
+    null,
+  );
   // 全量备份/恢复 (#57): 「不包含 API Key」defaults to CHECKED (safe
   // default — a backup file is meant to be shareable/storable without
   // automatically also being a key leak). restorePreview holds the
@@ -1056,6 +1099,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         }
       });
       setDiagEntries(getDiagEntries());
+      // Storage durability + visibility (v0.5 closeout item 4) — reset
+      // then re-fetch, same shape as sidecarStatus's own open-gated probe
+      // just below (a stale PREVIOUS open's numbers must not flash
+      // before the fresh estimate resolves).
+      setStorageEstimate(null);
+      if (typeof navigator !== "undefined" && navigator.storage?.estimate) {
+        void navigator.storage.estimate().then((est) => {
+          if (est.usage == null || est.quota == null) return;
+          setStorageEstimate({ usageMb: est.usage / 1024 ** 2, quotaGb: est.quota / 1024 ** 3 });
+        });
+      }
       // 订阅直连（实验性）: kill-switch layer 2 — never even probes when
       // this build didn't set NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT
       // (the section itself doesn't render either — see below). Reads
@@ -1867,17 +1921,33 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // joins sidecarOnly in the preview lock — see
                 // ENGINE_CARDS' own byokOnly doc comment above.
                 // Soniox preview lane (SONIOX_PREVIEW_LANE): carved OUT
-                // of the lock for THIS card only — it now runs on a
+                // of the lock for THIS card — it now runs on a
                 // server-minted key (stt/soniox.ts's SonioxEngine.
                 // start), so it's left selectable with the trial `hint`
                 // already swapped in above, instead of the generic
-                // 「本地版功能」 lock. Every other byokOnly/sidecarOnly
-                // card (deepgram included) keeps locking exactly as
-                // before — mirrors engineOptionGate's own soniox-only
-                // carve-out (lib/stt/engineOptions.ts).
-                const sonioxPreviewUnlocked = SONIOX_PREVIEW_LANE && opt.value === "soniox";
+                // 「本地版功能」 lock. tabaudio-cloud joins the SAME
+                // carve-out (v0.5 closeout): its own start() always
+                // forces the identical minted-Soniox path on this lane
+                // (tabAudioCloud.ts's effectiveProvider), so it is
+                // equally real to leave selectable, with its own trial
+                // `hint` swapped in above too. Every other byokOnly/
+                // sidecarOnly card (deepgram included) keeps locking
+                // exactly as before — mirrors engineOptionGate's own
+                // soniox+tabaudio-cloud carve-out (lib/stt/engineOptions.
+                // ts).
+                const sonioxPreviewUnlocked =
+                  SONIOX_PREVIEW_LANE && (opt.value === "soniox" || opt.value === "tabaudio-cloud");
                 const previewLocked =
                   PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly) && !sonioxPreviewUnlocked;
+                // M2 fix (Sol review 2026-07-20, v0.5 closeout): both
+                // cards' own `hint` above promises the shared trial
+                // UNCONDITIONALLY on this lane — a restored/typed
+                // sonioxKey means BYOK-wins routing (stt/soniox.ts /
+                // tabAudioCloud.ts's effectiveProvider) actually bills
+                // the user's own account instead, so the card must say
+                // that plainly rather than keep advertising the
+                // keyless trial once a real key is present.
+                const sonioxKeyBillsUser = sonioxPreviewUnlocked && !!draft.sonioxKey;
                 // S9.4, D6 (F9): 系统/App 音频's own macOS-floor gate —
                 // "shown-but-disabled below floor", never hidden (see
                 // ENGINE_CARDS' own appaudio doc comment above for why
@@ -1958,7 +2028,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       </span>
                     </div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      {opt.hint}
+                      {sonioxKeyBillsUser ? "已检测到你的 Soniox Key，将按你的账户计费" : opt.hint}
                     </div>
                   </button>
                 );
@@ -2124,25 +2194,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="mt-1 text-xs text-mut2">
                   按量计费；Key 随会话直接发给 Soniox 云端（wss://stt-rt.soniox.com），不经我们的服务器
                 </div>
-                {/* Restored-backup honesty (Sol review 2026-07-20, L
-                   finding): a backup restored WITH keys can leave a real
-                   sonioxKey in preview storage, and BYOK-wins routing
-                   (stt/soniox.ts) will then bill the USER's account
-                   while the engine card above still advertises the
-                   server-funded trial. The input itself stays disabled
-                   on preview (posture: preview never COLLECTS keys),
-                   so this notice + explicit clear is the only exit. */}
+                {/* Restored-backup honesty — see SonioxKeyRestoredNotice's
+                   own doc comment above for the scenario. */}
                 {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && (
-                  <div className="mt-1 text-xs leading-[1.7] text-warn-soft">
-                    检测到已保存的 Soniox Key：会话将直接使用你自己的 Key 并按你的账户计费，而非上方的预览体验。
-                    <button
-                      type="button"
-                      onClick={() => patch({ sonioxKey: "" })}
-                      className="ml-1 underline decoration-[rgb(var(--warn-soft-rgb)/0.4)]"
-                    >
-                      清除已保存的 Key（改用预览体验）
-                    </button>
-                  </div>
+                  <SonioxKeyRestoredNotice onClear={() => patch({ sonioxKey: "" })} />
                 )}
                 {!PREVIEW_TIER && !draft.sonioxKey && (
                   <div className="mt-1 text-xs leading-[1.7] text-mut2">
@@ -2240,9 +2295,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <div className="space-y-2">
                 <div>
                   <label className="text-xs text-mut">转录服务商</label>
+                  {/* Soniox preview lane (SONIOX_PREVIEW_LANE): the
+                     INVARIANT is enforced at the engine (tabAudioCloud.
+                     ts's own effectiveProvider always forces soniox on
+                     this lane), so the select mirrors that here rather
+                     than fully disabling like the plain-preview lock
+                     below — it's genuinely live on the trial, just fixed
+                     on Soniox; Deepgram is disabled+titled exactly like
+                     every other 「本地版功能」-locked control in this
+                     dialog (no server trial exists for it). */}
                   <select
-                    value={draft.tabAudioCloudProvider}
-                    disabled={PREVIEW_TIER}
+                    value={PREVIEW_TIER && SONIOX_PREVIEW_LANE ? "soniox" : draft.tabAudioCloudProvider}
+                    disabled={PREVIEW_TIER && !SONIOX_PREVIEW_LANE}
                     onChange={(e) =>
                       patch({
                         tabAudioCloudProvider: e.target.value as Settings["tabAudioCloudProvider"],
@@ -2251,19 +2315,49 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="soniox">Soniox</option>
-                    <option value="deepgram">Deepgram（仅英文）</option>
+                    <option
+                      value="deepgram"
+                      disabled={PREVIEW_TIER && SONIOX_PREVIEW_LANE}
+                      title={PREVIEW_TIER && SONIOX_PREVIEW_LANE ? "本地版功能：体验版暂未开放" : undefined}
+                    >
+                      Deepgram（仅英文）
+                    </option>
                   </select>
                 </div>
                 <div className="text-xs leading-[1.7] text-mut2">
-                  选择转录服务商；需在对应引擎卡片填写该服务商的 API Key——
-                  {draft.tabAudioCloudProvider === "deepgram"
-                    ? draft.deepgramKey
-                      ? "Deepgram Key 已配置"
-                      : "尚未配置 Deepgram API Key"
-                    : draft.sonioxKey
-                      ? "Soniox Key 已配置"
-                      : "尚未配置 Soniox API Key"}
+                  {PREVIEW_TIER && SONIOX_PREVIEW_LANE ? (
+                    draft.sonioxKey ? (
+                      // M2 fix (Sol review, v0.5 closeout): a restored/
+                      // typed key means BYOK-wins routing actually bills
+                      // the user, not the trial — this line sat directly
+                      // below the select promising "无需自备 Key"
+                      // unconditionally, which would otherwise flatly
+                      // contradict the notice just below it once a key
+                      // is present.
+                      "已检测到你的 Soniox Key，将按你的账户计费"
+                    ) : (
+                      "预览体验固定使用 Soniox 云端转写，无需自备 Key"
+                    )
+                  ) : (
+                    <>
+                      选择转录服务商；需在对应引擎卡片填写该服务商的 API Key——
+                      {draft.tabAudioCloudProvider === "deepgram"
+                        ? draft.deepgramKey
+                          ? "Deepgram Key 已配置"
+                          : "尚未配置 Deepgram API Key"
+                        : draft.sonioxKey
+                          ? "Soniox Key 已配置"
+                          : "尚未配置 Soniox API Key"}
+                    </>
+                  )}
                 </div>
+                {/* Restored-backup honesty — same notice + condition as
+                   the Soniox card above (this card rides the SAME
+                   sonioxKey on this lane — see the select's own doc
+                   comment). */}
+                {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && (
+                  <SonioxKeyRestoredNotice onClear={() => patch({ sonioxKey: "" })} />
+                )}
               </div>
             )}
 
@@ -3459,6 +3553,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                not a single click. */}
             <div className="space-y-2 border-t border-edge pt-3">
               <div className="text-xs text-mut">全量备份</div>
+
+              {/* Storage durability + visibility (v0.5 closeout item 4):
+                 read-only navigator.storage.estimate() line — feature-
+                 detected, no loading state (renders nothing until the
+                 effect above resolves). Sits next to 全量备份 since both
+                 are "how much of my meeting history/data is here" data
+                 concerns. */}
+              {storageEstimate && (
+                <div className="text-xs text-mut2">
+                  本地存储：已用 {storageEstimate.usageMb.toFixed(1)} MB / 配额约{" "}
+                  {storageEstimate.quotaGb.toFixed(1)} GB
+                </div>
+              )}
 
               <label className="flex items-center justify-between gap-3 py-1">
                 <div>

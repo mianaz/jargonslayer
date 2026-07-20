@@ -4,7 +4,7 @@
 // the detection scheduler. Owns the lifecycle of both per meeting.
 
 import { useCallback, useEffect, useRef } from "react";
-import { useApp } from "../lib/store";
+import { useApp, currentSessionSnapshot } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
@@ -12,12 +12,25 @@ import { langPairFromSettings, resolveTranslationProvider } from "../lib/transla
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
+import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
+import { getPreviewSessionSeconds } from "../lib/stt/soniox";
+import * as liveDraft from "../lib/history/liveDraft";
 import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
 // finalized segments to catch up when the toggle flips OFF->ON
 // mid-meeting (see the backfill effect below).
 const BILINGUAL_BACKFILL_COUNT = 5;
+
+// Storage durability (v0.5 closeout item 4): navigator.storage.persist()
+// asks the browser not to evict IndexedDB under pressure. Requested once
+// per PAGE LOAD (not per meeting, and never at app boot — see this
+// module-level flag's own read site in start() below for why boot is the
+// wrong moment). Module-level, not a ref: this hook is mounted once for
+// the app's whole lifetime (page.tsx), so this is equivalent in practice,
+// but a plain module flag says "once ever this load" more directly than
+// a ref would.
+let storagePersistRequested = false;
 
 /** Diagnostics choke-point wiring (item 2/3): every onError-shaped
  *  callback below (DetectionScheduler, TranslateQueue, STT engine
@@ -95,6 +108,35 @@ export function useMeeting(): UseMeetingResult {
   // again on a within-meeting reconnect".
   const diarReadyToastedRef = useRef(false);
 
+  // Preview-lane trial notice (v0.5 closeout, owner ask: "the trial's
+  // limits CLEARLY noticed"): one-shot per meeting start, same reset
+  // seam as diarReadyToastedRef immediately above — no existing
+  // "first listening" hook point exists in this file to piggy-back on
+  // (diarReadyToastedRef covers a DIFFERENT event, onDiarStatus
+  // "ready"), so this is a new ref styled identically. Unlike
+  // diarReadyToastedRef, this ALSO covers a teardown-RESUME: soniox/
+  // tabaudio-cloud have no soft pause (see either engine's own "No
+  // pause/resume" header note), so resuming from a pause reattaches a
+  // FRESH engine instance that fires onStatus("listening") again — this
+  // ref is only reset in start(), never in resume(), so that re-fire is
+  // deliberately suppressed (one notice per MEETING, not per attach).
+  const previewMintNoticeRef = useRef(false);
+
+  // Live draft persistence (v0.5 closeout item 1 — see
+  // lib/history/liveDraft.ts's own header comment for the write policy).
+  // Last-written dirty signature (M1 fix, Sol adversarial review:
+  // replaces the old segments/cards-count throttle pair with
+  // liveDraft.computeDraftSignature's field-separated string) — null
+  // means "this meeting hasn't written a draft yet". Reset in start() (same
+  // seam as diarReadyToastedRef/previewMintNoticeRef above) so a
+  // brand-new meeting's first tick isn't compared against the PREVIOUS
+  // meeting's last-known signature.
+  const lastDraftSignatureRef = useRef<string | null>(null);
+  // Draft-write single-flight (Sol round-3 H) — a ref so it survives
+  // the [status, engine] effect re-running mid-write; see the tick's
+  // own comment below.
+  const draftWritingRef = useRef(false);
+
   // Engine-creation/wiring block (pause/resume, B3): extracted out of
   // start() so resume() can reattach a FRESH engine instance to the
   // SAME meeting (same scheduler/translateQueue, same sessionGen)
@@ -118,7 +160,14 @@ export function useMeeting(): UseMeetingResult {
     engineRef.current = engine;
     let attachFailed = false;
 
-    const runStopFlow = async () => {
+    // Returns whether it's safe for a caller to show a "your meeting was
+    // saved" toast (H1 fix, Sol adversarial review): true when there was
+    // nothing to save OR saveCurrentSession's write succeeded; false
+    // only when there WAS something to save and it failed —
+    // saveCurrentSession already shows its own 保存失败 toast in that
+    // case, so callers must not show a contradicting success toast on
+    // top of it.
+    const runStopFlow = async (): Promise<boolean> => {
       await engine.stop();
       // Stop-drain belt (STT protocol v2): the drain final's own
       // onFinal already clears interim when one arrives, but a stop
@@ -135,8 +184,10 @@ export function useMeeting(): UseMeetingResult {
       // POST_STOP_LINGER_MS) are both re-saved by the store's post-stop
       // debounced save (store.ts's applyDetection/applySpeakerUpdate).
       if (segCount > 0) {
-        await useApp.getState().saveCurrentSession();
+        const savedId = await useApp.getState().saveCurrentSession();
+        return savedId !== null;
       }
+      return true;
     };
 
     const events: STTEvents = {
@@ -224,6 +275,28 @@ export function useMeeting(): UseMeetingResult {
             return;
           }
           useApp.getState().setStatus(status, status === "connecting" ? detail : undefined);
+          // Preview-lane trial notice (v0.5 closeout item 3): fires
+          // once per meeting start, only for a session actually riding
+          // the server-minted credential — soniox OR tabaudio-cloud
+          // (tabAudioCloud.ts's own effectiveProvider forces the same
+          // path on this lane, so its BYOK check is the SAME
+          // settings.sonioxKey, never deepgramKey) — with no BYOK
+          // sonioxKey of the user's own.
+          if (
+            status === "listening" &&
+            !previewMintNoticeRef.current &&
+            SONIOX_PREVIEW_LANE &&
+            !settings.sonioxKey &&
+            (engine.kind === "soniox" || engine.kind === "tabaudio-cloud")
+          ) {
+            previewMintNoticeRef.current = true;
+            const s = getPreviewSessionSeconds() ?? 600;
+            useApp
+              .getState()
+              .showToast(
+                `预览体验：本段最长 ${Math.round(s / 60)} 分钟（每日限量），音频经 Soniox 云端转写、不留存`,
+              );
+          }
         } else if (status === "error") {
           attachFailed = true;
           // F6: set BEFORE runStopFlow's first await — see
@@ -258,8 +331,13 @@ export function useMeeting(): UseMeetingResult {
                 : "共享已结束，会议已保存到历史记录"
               : "演示结束，打开右侧「纪要」标签生成会后报告试试";
           void runStopFlow()
-            .then(() => {
-              useApp.getState().showToast(endToast);
+            .then((savedOk) => {
+              // H1 fix (Sol adversarial review): don't claim "已保存到
+              // 历史记录" over a save that saveCurrentSession itself
+              // just reported (and toasted) as failed — that toast
+              // already told the user their draft is intact; this one
+              // would silently overwrite it with a false success claim.
+              if (savedOk) useApp.getState().showToast(endToast);
             })
             .finally(() => {
               terminalTeardownRef.current = false;
@@ -316,8 +394,14 @@ export function useMeeting(): UseMeetingResult {
     useApp.getState().setStatus("stopped");
 
     if (useApp.getState().segments.length > 0) {
-      await useApp.getState().saveCurrentSession();
-      useApp.getState().showToast("会议已保存到历史记录");
+      const savedId = await useApp.getState().saveCurrentSession();
+      // H1 fix (Sol adversarial review): only claim "已保存到历史记录"
+      // when it actually was — saveCurrentSession already shows its own
+      // 保存失败 toast (and keeps the draft) when the underlying write
+      // fails.
+      if (savedId) {
+        useApp.getState().showToast("会议已保存到历史记录");
+      }
     }
   }, []);
 
@@ -343,6 +427,27 @@ export function useMeeting(): UseMeetingResult {
     if (status === "listening" || status === "connecting") return;
 
     diarReadyToastedRef.current = false;
+    previewMintNoticeRef.current = false;
+    // Live draft persistence: fresh signature state for the new meeting
+    // — see lastDraftSignatureRef's own doc comment above for why this
+    // reset matters (not just tidiness).
+    lastDraftSignatureRef.current = null;
+    // Storage durability (v0.5 closeout item 4): first meeting start of
+    // this page load only (not app boot — see storagePersistRequested's
+    // own doc comment above), fire-and-forget, feature-detected. Fires
+    // for a demo start too — this is general IndexedDB-eviction
+    // protection (settings/history/glossary/learnset), unrelated to
+    // whether THIS particular meeting ever drafts anything.
+    if (!storagePersistRequested) {
+      storagePersistRequested = true;
+      try {
+        if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+          void navigator.storage.persist();
+        }
+      } catch {
+        // non-fatal
+      }
+    }
     // S10 field-fix #6: a fresh session must never show a stale EMA
     // reading carried over from the previous one (lib/stt/latencyStats.
     // ts's own resetLagStats doc comment) — same per-session-start seam
@@ -524,6 +629,53 @@ export function useMeeting(): UseMeetingResult {
     };
   }, []);
 
+  // Live draft persistence (v0.5 closeout item 1): best-effort flush on
+  // the visibility/pagehide path. `visibilitychange`→hidden fires first
+  // (covers backgrounding without an actual unload); `pagehide` fires on
+  // most real navigations/tab closes. M1 field fix (Sol adversarial
+  // review): NEITHER is reliable against an iOS-Safari force-kill of a
+  // backgrounded tab — WebKit bug 199854 means no pagehide (and no
+  // visibilitychange) is guaranteed to fire at all on that path — so
+  // this is a best-effort head start, not the actual safety net; the
+  // periodic interval effect below is what actually bounds data loss
+  // (at most one DRAFT_WRITE_INTERVAL_MS's worth), since it runs
+  // independent of whether the page ever gets a chance to unload
+  // cleanly. Bypasses the dirty-signature check entirely — this is the
+  // last chance, not a routine tick — but still updates
+  // lastDraftSignatureRef afterward so the interval effect below
+  // doesn't immediately redo the same write once its next tick fires.
+  // Mount-once: this hook lives for the whole page load (page.tsx), the
+  // same lifetime `now` vs. "first meeting start of a page load" above
+  // assumes. Reads useApp.getState() fresh rather than closing over the
+  // reactive `status`/`segments` below — no stale-closure risk despite
+  // the empty deps array.
+  useEffect(() => {
+    const flush = () => {
+      const { status, settings, meetingGen, startedAt } = useApp.getState();
+      if (!liveDraft.isDraftableMeeting(status, settings.engine)) return;
+      const snapshot = currentSessionSnapshot();
+      if (!snapshot) return;
+      const signature = liveDraft.computeDraftSignature(snapshot);
+      const draftId = liveDraft.deriveDraftId(meetingGen, startedAt);
+      // Same landed-only bookkeeping as the interval tick above — a
+      // flush that buffer-skipped/failed must not suppress the next
+      // tick's retry. (The page may be dying, in which case the .then
+      // never runs — equally fine: nothing left to suppress.)
+      void liveDraft.writeDraft(draftId, snapshot).then((landed) => {
+        if (landed) lastDraftSignatureRef.current = signature;
+      });
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   // Live bilingual transcript (#42): flipping the toggle OFF->ON
   // mid-meeting shouldn't leave the just-elapsed minute untranslated —
   // catch up the most recent finalized segments that don't have one
@@ -571,6 +723,75 @@ export function useMeeting(): UseMeetingResult {
       lastText.set(seg.id, seg.text);
     }
   }, [segments, meetingGen]);
+
+  // Live draft persistence (v0.5 closeout item 1, M1 field fix — Sol
+  // adversarial review) — the routine (non-pagehide) write path: an
+  // INTERVAL loop, not a segments/cards-count-reactive effect. The old
+  // reactive effect had no trailing edge — a translation, speaker
+  // reassignment, or term-only change inside one write window never
+  // changed the segments/cards ARRAY REFERENCE this effect keyed on, so
+  // it was never persisted until a segment/card count eventually changed
+  // too. liveDraft.computeDraftSignature folds in exactly those
+  // dimensions (see its own doc), so a plain tick-to-tick comparison
+  // catches them all without naming every reactive slice as a
+  // dependency. Owned by the SAME effect that sees start/stop (deps:
+  // `status`, `engine`) — the interval only ever runs while the meeting
+  // is actually draftable, and restarts cleanly (via the cleanup below)
+  // whenever either changes.
+  const engine = useApp((s) => s.settings.engine);
+  useEffect(() => {
+    if (!liveDraft.isDraftableMeeting(status, engine)) return;
+    // Async now (writeDraft's landed/skipped verdict gates the dirty
+    // bookkeeping). Single-flight lives in draftWritingRef — a REF, not
+    // an effect-local flag (Sol round-3 H): status/engine transitions
+    // re-run this effect, and an effect-local `writing` would reset to
+    // false while the previous incarnation's write is still pending,
+    // letting a second write overlap it. The landed callback re-derives
+    // the draftId against CURRENT state before marking clean — a stale
+    // write landing after a meeting transition must not stamp the NEW
+    // meeting's (start()-reset-to-null) signature slot with the OLD
+    // meeting's signature.
+    const tick = () => {
+      if (draftWritingRef.current) return;
+      // Fresh read (not the closed-over `status`/`engine` above) — this
+      // callback can fire in the brief window before a status/engine
+      // change has re-run this effect (see attachEngine's own handlers
+      // for the same fresh-read posture elsewhere in this file).
+      const state = useApp.getState();
+      if (!liveDraft.isDraftableMeeting(state.status, state.settings.engine)) return;
+      const snapshot = currentSessionSnapshot();
+      if (!snapshot) return;
+      const signature = liveDraft.computeDraftSignature(snapshot);
+      if (signature === lastDraftSignatureRef.current) return;
+      const draftId = liveDraft.deriveDraftId(state.meetingGen, state.startedAt);
+      draftWritingRef.current = true;
+      void liveDraft
+        .writeDraft(draftId, snapshot)
+        .then((landed) => {
+          // Mark clean ONLY on a landed write for the SAME meeting (Sol
+          // re-verify HIGH + round-3 H): a buffer-skip/IDB failure must
+          // leave the signature dirty so the NEXT tick retries, and a
+          // slow write resolving after a meeting transition must not
+          // write into the new meeting's bookkeeping.
+          const now = useApp.getState();
+          const stillSameMeeting =
+            liveDraft.deriveDraftId(now.meetingGen, now.startedAt) === draftId;
+          if (landed && stillSameMeeting) lastDraftSignatureRef.current = signature;
+        })
+        .finally(() => {
+          draftWritingRef.current = false;
+        });
+    };
+    // One immediate tick so a brand-new meeting's first draft isn't a
+    // full interval away — under a pure setInterval, a crash inside
+    // the first DRAFT_WRITE_INTERVAL_MS lost everything said in it
+    // (W1 design note, lead-accepted). tick() itself no-ops until the
+    // meeting is draftable and something exists to snapshot, so firing
+    // it eagerly here is free on the idle path.
+    tick();
+    const id = setInterval(tick, liveDraft.DRAFT_WRITE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [status, engine]);
 
   return { start, pause, resume, stop, startDemo };
 }

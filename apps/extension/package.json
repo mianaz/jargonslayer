@@ -1,6 +1,6 @@
 {
   "name": "@jargonslayer/extension",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Chrome MV3 side-panel extension — Plugin Lite: dictionary + Translator API core loop (PLAN-v0.4 S6). Paste English text, get zh explanations from @jargonslayer/core plus on-device translation when Chrome's Translator API is available.",

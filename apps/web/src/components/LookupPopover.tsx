@@ -1,25 +1,28 @@
 "use client";
 
 // Selection-triggered explanation popover: user selects text in the
-// transcript, this auto-runs detection (AI or dictionary) on it and
-// feeds any hits into the shared session card stream. Also offers a
-// footer action to save the selected phrase into the personal
-// glossary (AI-defined preview, or a blank hand-filled form).
+// transcript, which kicks off detection (AI or dictionary) on it and
+// feeds any hits into the shared session card stream. Display-only as
+// of v0.5 closeout (background 划词 card generation) — the detect/
+// dictionary pipeline itself runs in lib/tasks/selectionLookup.ts,
+// triggered by store.ts's setLookup and detached from this component's
+// own lifecycle, so closing this popover early no longer discards an
+// in-flight ~20s AI result. This component just renders whatever that
+// pipeline has written for the current request id. Also offers a
+// footer action to save the selected phrase into the personal glossary
+// (AI-defined preview, or a blank hand-filled form) — that flow stays
+// entirely component-local (user-initiated inside an open popover, no
+// background need).
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
-import { detectApi, defineApi, NoKeyError } from "@/lib/llm/client";
+import { defineApi, NoKeyError } from "@/lib/llm/client";
 import { resolveTaskCreds } from "@/lib/llm/taskConfig";
-import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { useSelectionLookup } from "@/lib/tasks/selectionLookup";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { newId } from "@jargonslayer/core/types";
-import type {
-  CustomEntry,
-  CustomEntryKind,
-  DetectResponse,
-  DetectionSource,
-} from "@jargonslayer/core/types";
+import type { CustomEntry, CustomEntryKind } from "@jargonslayer/core/types";
 
 const KIND_LABELS: Record<CustomEntryKind, string> = {
   expression: "表达",
@@ -56,95 +59,39 @@ export default function LookupPopover() {
   const lookup = useApp((s) => s.lookup);
   const setLookup = useApp((s) => s.setLookup);
   const settings = useApp((s) => s.settings);
-  const applyDetection = useApp((s) => s.applyDetection);
   const addCustomEntry = useApp((s) => s.addCustomEntry);
   const showToast = useApp((s) => s.showToast);
   const customEntries = useApp((s) => s.customEntries);
 
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<DetectResponse | null>(null);
-  const [dictFallback, setDictFallback] = useState(false);
 
   // "Add to my glossary" flow.
   const [glossaryLoading, setGlossaryLoading] = useState(false);
   const [draft, setDraft] = useState<GlossaryDraft | null>(null);
 
-  // Run detection whenever a fresh lookup request comes in.
-  useEffect(() => {
-    if (!lookup) {
-      setResult(null);
-      setError(null);
-      setDictFallback(false);
-      setDraft(null);
-      setGlossaryLoading(false);
-      return;
-    }
+  // Display-only (background 划词 card generation, v0.5 closeout): the
+  // detect/dictionary pipeline itself now lives in
+  // lib/tasks/selectionLookup.ts, triggered by store.ts's setLookup and
+  // detached from this component's lifecycle entirely — closing this
+  // popover no longer cancels/discards an in-flight result (see that
+  // module's own header for the bug this fixes). This just reads
+  // whatever the pipeline has written for the CURRENT request id; no
+  // entry yet reads the same as still loading.
+  const progress = useSelectionLookup((s) => (lookup ? s.byId[lookup.id] : undefined));
+  const loading = !progress || progress.status === "loading";
+  const error = progress?.status === "error" ? progress.error : null;
+  const result = progress?.status === "done" ? progress.result : null;
+  const dictFallback = progress?.status === "done" && progress.dictFallback;
 
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setDictFallback(false);
+  // The glossary-draft flow is unrelated to detect progress above (and
+  // stays component-local, per design — see handleAddToGlossary below)
+  // but must still reset per fresh lookup / on close, exactly like
+  // before this pipeline was extracted.
+  useEffect(() => {
     setDraft(null);
     setGlossaryLoading(false);
-
-    const run = async () => {
-      const source: DetectionSource = settings.aiDetect ? "llm" : "dictionary";
-      try {
-        let res: DetectResponse;
-        if (!settings.aiDetect) {
-          res = scanDictionary(lookup.text);
-        } else {
-          res = await detectApi(
-            {
-              context: lookup.contextText,
-              new_text: lookup.text,
-              model: resolveTaskCreds(settings, "detect").model,
-            },
-            settings,
-          );
-        }
-        if (cancelled) return;
-        // #48 s1 review item 12c: `res` here is shown to the user
-        // as-is — a manually-selected phrase always gets explained in
-        // THIS popover, even if its learnKey is suppressed. Only
-        // applyDetection (below) re-filters against the learn-set
-        // before anything becomes a live card, so a suppressed term
-        // stays suppressed (no live card reappears) while the user can
-        // still deliberately look it up on demand. By design in v1 —
-        // "known" only means "stop pushing it at me automatically."
-        setResult(res);
-        if (res.expressions.length > 0 || res.terms.length > 0) {
-          applyDetection(res, source);
-        }
-      } catch (err) {
-        if (cancelled) return;
-        if (err instanceof NoKeyError) {
-          const dictRes = scanDictionary(lookup.text);
-          setResult(dictRes);
-          setDictFallback(true);
-          if (dictRes.expressions.length > 0 || dictRes.terms.length > 0) {
-            applyDetection(dictRes, "dictionary");
-          }
-        } else {
-          const message = err instanceof Error ? err.message : "查询失败";
-          setError(message);
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    };
-
-    void run();
-    return () => {
-      cancelled = true;
-    };
-    // Re-run only when the lookup request identity changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lookup]);
+  }, [lookup?.id]);
 
   // Clamp position to viewport.
   useLayoutEffect(() => {

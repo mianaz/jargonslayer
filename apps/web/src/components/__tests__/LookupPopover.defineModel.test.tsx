@@ -34,12 +34,22 @@ vi.mock("@/lib/history/glossary", () => ({
 }));
 
 import { useApp } from "@/lib/store";
+import { useSelectionLookup } from "@/lib/tasks/selectionLookup";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import LookupPopover from "../LookupPopover";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return { ...DEFAULT_SETTINGS, ...overrides };
 }
+
+// Fixed id (background 划词 card generation, v0.5 closeout): this suite
+// sets `lookup` directly via useApp.setState (bypassing the setLookup
+// action, which is what actually triggers the pipeline) — LookupPopover
+// is display-only now, so its rendering also needs a matching
+// useSelectionLookup "done" entry seeded below, independent of whether
+// any pipeline ever ran for this id. This test is about the glossary
+// footer (component-local, unaffected by that pipeline either way).
+const LOOKUP_ID = "test-lookup-1";
 
 describe("LookupPopover — 加入我的词典 forwards the resolved detect-domain model to defineApi", () => {
   let container: HTMLDivElement | null = null;
@@ -63,7 +73,16 @@ describe("LookupPopover — 加入我的词典 forwards the resolved detect-doma
         detectModel: "deepseek-chat",
       }),
       customEntries: [],
-      lookup: { text: "circle back", contextText: "let's circle back on this", x: 10, y: 10 },
+      lookup: {
+        id: LOOKUP_ID,
+        text: "circle back",
+        contextText: "let's circle back on this",
+        x: 10,
+        y: 10,
+      },
+    });
+    useSelectionLookup.setState({
+      byId: { [LOOKUP_ID]: { status: "done", result: { expressions: [], terms: [] }, dictFallback: false } },
     });
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -76,6 +95,7 @@ describe("LookupPopover — 加入我的词典 forwards the resolved detect-doma
     container = null;
     root = null;
     useApp.setState({ lookup: null });
+    useSelectionLookup.setState({ byId: {} });
   });
 
   async function flush(): Promise<void> {

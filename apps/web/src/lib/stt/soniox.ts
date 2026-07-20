@@ -27,6 +27,23 @@ import { SonioxTransport } from "./sonioxTransport";
 // on an unparseable failure" posture.
 const SONIOX_PREVIEW_UNAVAILABLE = "Soniox 预览体验暂不可用";
 
+// Session-seconds cache (v0.5 closeout, owner ask "trial limits
+// CLEARLY noticed"): a successful mintPreviewToken response carries the
+// route's own session_seconds (route.ts's SONIOX_SESSION_SECONDS) —
+// cached here at module scope so useMeeting.ts's one-shot session-start
+// notice can quote the REAL server-enforced cap instead of hardcoding
+// 600s. Never reset on purpose: this is a per-DEPLOY constant, not a
+// per-mint one, so an earlier successful mint's cached value is still
+// correct for every later mint this same page load.
+let cachedPreviewSessionSeconds: number | null = null;
+
+/** useMeeting.ts's session-start notice reads this (falling back to
+ *  600 itself when no mint has succeeded yet this page load — see that
+ *  call site). */
+export function getPreviewSessionSeconds(): number | null {
+  return cachedPreviewSessionSeconds;
+}
+
 /** Preview lane (hosted Soniox trial, SONIOX_PREVIEW_LANE): mints a
  *  temp key off the owner's server credential via POST /api/soniox/
  *  token (single_use, ~10-min server-capped session — see that route's
@@ -34,7 +51,10 @@ const SONIOX_PREVIEW_UNAVAILABLE = "Soniox 预览体验暂不可用";
  *  SonioxTransportCallbacks.mintToken's shape (`(key: string) =>
  *  Promise<string>`) even though `key` itself is unused here — this
  *  path is only ever wired up when there IS no BYOK sonioxKey (see
- *  start() below), so there is nothing in `key` to mint FROM.
+ *  start() below), so there is nothing in `key` to mint FROM. Exported
+ *  (v0.5 closeout): tabAudioCloud.ts's own start() wires this SAME
+ *  function into its own preview-lane keyless path instead of
+ *  hand-rolling a second copy.
  *
  *  On a non-OK response, throws an Error whose message is the server's
  *  own ApiErrorBody.error string when present — already user-readable
@@ -44,7 +64,7 @@ const SONIOX_PREVIEW_UNAVAILABLE = "Soniox 预览体验暂不可用";
  *  message to onStatus("error") verbatim rather than a generic
  *  fallback (scrubApiKey's own S4 review finding 2 guard still applies
  *  underneath — there's no BYOK key in scope here to redact anyway). */
-async function mintPreviewToken(_key: string): Promise<string> {
+export async function mintPreviewToken(_key: string): Promise<string> {
   let res: Response;
   try {
     res = await fetch(withBase("/api/soniox/token"), { method: "POST" });
@@ -60,14 +80,17 @@ async function mintPreviewToken(_key: string): Promise<string> {
     }
     throw new Error(body?.error || SONIOX_PREVIEW_UNAVAILABLE);
   }
-  let json: { api_key?: unknown };
+  let json: { api_key?: unknown; session_seconds?: unknown };
   try {
-    json = (await res.json()) as { api_key?: unknown };
+    json = (await res.json()) as { api_key?: unknown; session_seconds?: unknown };
   } catch {
     throw new Error(SONIOX_PREVIEW_UNAVAILABLE);
   }
   if (typeof json.api_key !== "string" || !json.api_key) {
     throw new Error(SONIOX_PREVIEW_UNAVAILABLE);
+  }
+  if (typeof json.session_seconds === "number" && json.session_seconds > 0) {
+    cachedPreviewSessionSeconds = json.session_seconds;
   }
   return json.api_key;
 }

@@ -21,6 +21,7 @@ import SettingsDialog from "@/components/SettingsDialog";
 import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverlay";
 import LookupPopover from "@/components/LookupPopover";
 import Toast from "@/components/Toast";
+import RecoveryBanner from "@/components/RecoveryBanner";
 import FloatingCaption from "@/components/FloatingCaption";
 import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
 import { checkAppUpdate } from "@/lib/desktop/updateCheck";
@@ -243,6 +244,7 @@ export default function Home() {
         onOpenImport={() => setImportHubOpen(true)}
         onOpenTaskCenter={() => setTaskCenterOpen(true)}
       />
+      <RecoveryBanner />
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="relative min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">

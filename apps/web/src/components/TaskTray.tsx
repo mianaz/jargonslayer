@@ -25,6 +25,7 @@ export const KIND_LABEL: Record<TaskState["kind"], string> = {
   "diar-install": "安装说话人分离",
   "os-speech-asset": "下载系统识别模型",
   "mlx-install": "安装 MLX 运行环境",
+  "selection-lookup": "解释所选",
 };
 
 export interface TaskTrayProps {
