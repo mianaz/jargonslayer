@@ -124,15 +124,14 @@ export function useMeeting(): UseMeetingResult {
 
   // Live draft persistence (v0.5 closeout item 1 — see
   // lib/history/liveDraft.ts's own header comment for the write policy).
-  // Throttle state for shouldWriteDraft's pure decision fn; both null
-  // means "this meeting hasn't written a draft yet". Reset in start()
-  // (same seam as diarReadyToastedRef/previewMintNoticeRef above) so a
-  // brand-new meeting's first segment isn't blocked by the PREVIOUS
-  // meeting's throttle timestamp — without this, a crash in the first
-  // few seconds of meeting 2 could lose everything if meeting 1 happened
-  // to write its own last draft less than 10s earlier.
-  const lastDraftWriteAtRef = useRef<number | null>(null);
-  const lastDraftCountsRef = useRef<liveDraft.DraftCounts | null>(null);
+  // Last-written dirty signature (M1 fix, Sol adversarial review:
+  // replaces the old segments/cards-count throttle pair with
+  // liveDraft.computeDraftSignature's single cheap number) — null means
+  // "this meeting hasn't written a draft yet". Reset in start() (same
+  // seam as diarReadyToastedRef/previewMintNoticeRef above) so a
+  // brand-new meeting's first tick isn't compared against the PREVIOUS
+  // meeting's last-known signature.
+  const lastDraftSignatureRef = useRef<number | null>(null);
 
   // Engine-creation/wiring block (pause/resume, B3): extracted out of
   // start() so resume() can reattach a FRESH engine instance to the
@@ -157,7 +156,14 @@ export function useMeeting(): UseMeetingResult {
     engineRef.current = engine;
     let attachFailed = false;
 
-    const runStopFlow = async () => {
+    // Returns whether it's safe for a caller to show a "your meeting was
+    // saved" toast (H1 fix, Sol adversarial review): true when there was
+    // nothing to save OR saveCurrentSession's write succeeded; false
+    // only when there WAS something to save and it failed —
+    // saveCurrentSession already shows its own 保存失败 toast in that
+    // case, so callers must not show a contradicting success toast on
+    // top of it.
+    const runStopFlow = async (): Promise<boolean> => {
       await engine.stop();
       // Stop-drain belt (STT protocol v2): the drain final's own
       // onFinal already clears interim when one arrives, but a stop
@@ -174,8 +180,10 @@ export function useMeeting(): UseMeetingResult {
       // POST_STOP_LINGER_MS) are both re-saved by the store's post-stop
       // debounced save (store.ts's applyDetection/applySpeakerUpdate).
       if (segCount > 0) {
-        await useApp.getState().saveCurrentSession();
+        const savedId = await useApp.getState().saveCurrentSession();
+        return savedId !== null;
       }
+      return true;
     };
 
     const events: STTEvents = {
@@ -319,8 +327,13 @@ export function useMeeting(): UseMeetingResult {
                 : "共享已结束，会议已保存到历史记录"
               : "演示结束，打开右侧「纪要」标签生成会后报告试试";
           void runStopFlow()
-            .then(() => {
-              useApp.getState().showToast(endToast);
+            .then((savedOk) => {
+              // H1 fix (Sol adversarial review): don't claim "已保存到
+              // 历史记录" over a save that saveCurrentSession itself
+              // just reported (and toasted) as failed — that toast
+              // already told the user their draft is intact; this one
+              // would silently overwrite it with a false success claim.
+              if (savedOk) useApp.getState().showToast(endToast);
             })
             .finally(() => {
               terminalTeardownRef.current = false;
@@ -377,8 +390,14 @@ export function useMeeting(): UseMeetingResult {
     useApp.getState().setStatus("stopped");
 
     if (useApp.getState().segments.length > 0) {
-      await useApp.getState().saveCurrentSession();
-      useApp.getState().showToast("会议已保存到历史记录");
+      const savedId = await useApp.getState().saveCurrentSession();
+      // H1 fix (Sol adversarial review): only claim "已保存到历史记录"
+      // when it actually was — saveCurrentSession already shows its own
+      // 保存失败 toast (and keeps the draft) when the underlying write
+      // fails.
+      if (savedId) {
+        useApp.getState().showToast("会议已保存到历史记录");
+      }
     }
   }, []);
 
@@ -405,11 +424,10 @@ export function useMeeting(): UseMeetingResult {
 
     diarReadyToastedRef.current = false;
     previewMintNoticeRef.current = false;
-    // Live draft persistence: fresh throttle state for the new meeting —
-    // see lastDraftWriteAtRef's own doc comment above for why this reset
-    // matters (not just tidiness).
-    lastDraftWriteAtRef.current = null;
-    lastDraftCountsRef.current = null;
+    // Live draft persistence: fresh signature state for the new meeting
+    // — see lastDraftSignatureRef's own doc comment above for why this
+    // reset matters (not just tidiness).
+    lastDraftSignatureRef.current = null;
     // Storage durability (v0.5 closeout item 4): first meeting start of
     // this page load only (not app boot — see storagePersistRequested's
     // own doc comment above), fire-and-forget, feature-detected. Fires
@@ -607,15 +625,21 @@ export function useMeeting(): UseMeetingResult {
     };
   }, []);
 
-  // Live draft persistence (v0.5 closeout item 1): immediate best-effort
-  // flush on the iOS-Safari kill path. `pagehide` is the reliable signal
-  // there (the tab can be gone by the time a debounced/throttled write
-  // would otherwise have fired); `visibilitychange`→hidden is the belt
-  // (fires earlier, and covers backgrounding without an actual unload).
-  // Bypasses shouldWriteDraft's throttle entirely — this is the last
-  // chance, not a routine tick — but still updates the throttle refs
-  // afterward so the periodic effect below doesn't immediately redo the
-  // same write if the page returns to visible without navigating away.
+  // Live draft persistence (v0.5 closeout item 1): best-effort flush on
+  // the visibility/pagehide path. `visibilitychange`→hidden fires first
+  // (covers backgrounding without an actual unload); `pagehide` fires on
+  // most real navigations/tab closes. M1 field fix (Sol adversarial
+  // review): NEITHER is reliable against an iOS-Safari force-kill of a
+  // backgrounded tab — WebKit bug 199854 means no pagehide (and no
+  // visibilitychange) is guaranteed to fire at all on that path — so
+  // this is a best-effort head start, not the actual safety net; the
+  // periodic interval effect below is what actually bounds data loss
+  // (at most one DRAFT_WRITE_INTERVAL_MS's worth), since it runs
+  // independent of whether the page ever gets a chance to unload
+  // cleanly. Bypasses the dirty-signature check entirely — this is the
+  // last chance, not a routine tick — but still updates
+  // lastDraftSignatureRef afterward so the interval effect below
+  // doesn't immediately redo the same write once its next tick fires.
   // Mount-once: this hook lives for the whole page load (page.tsx), the
   // same lifetime `now` vs. "first meeting start of a page load" above
   // assumes. Reads useApp.getState() fresh rather than closing over the
@@ -623,16 +647,13 @@ export function useMeeting(): UseMeetingResult {
   // the empty deps array.
   useEffect(() => {
     const flush = () => {
-      const { status, settings } = useApp.getState();
+      const { status, settings, meetingGen, startedAt } = useApp.getState();
       if (!liveDraft.isDraftableMeeting(status, settings.engine)) return;
       const snapshot = currentSessionSnapshot();
       if (!snapshot) return;
-      lastDraftWriteAtRef.current = Date.now();
-      lastDraftCountsRef.current = {
-        segments: snapshot.segments.length,
-        cards: snapshot.cards.length,
-      };
-      void liveDraft.writeDraft(snapshot);
+      lastDraftSignatureRef.current = liveDraft.computeDraftSignature(snapshot);
+      const draftId = liveDraft.deriveDraftId(meetingGen, startedAt);
+      void liveDraft.writeDraft(draftId, snapshot);
     };
     const onVisibility = () => {
       if (document.visibilityState === "hidden") flush();
@@ -693,35 +714,48 @@ export function useMeeting(): UseMeetingResult {
     }
   }, [segments, meetingGen]);
 
-  // Live draft persistence (v0.5 closeout item 1) — the routine (non-
-  // pagehide) write path. Reacts to the same `segments`/`status`
-  // reactive values already declared above (plus `cards`/`engine`,
-  // reactive here too) rather than a setInterval poll: this hook already
-  // re-renders exactly when a segment/card is added, translated, or
-  // detected, so there is no meaningful update this effect could miss by
-  // being change-driven instead of timer-driven. shouldWriteDraft's own
-  // throttle is what actually bounds the write RATE to <= 1/10s.
-  const cards = useApp((s) => s.cards);
+  // Live draft persistence (v0.5 closeout item 1, M1 field fix — Sol
+  // adversarial review) — the routine (non-pagehide) write path: an
+  // INTERVAL loop, not a segments/cards-count-reactive effect. The old
+  // reactive effect had no trailing edge — a translation, speaker
+  // reassignment, or term-only change inside one write window never
+  // changed the segments/cards ARRAY REFERENCE this effect keyed on, so
+  // it was never persisted until a segment/card count eventually changed
+  // too. liveDraft.computeDraftSignature folds in exactly those
+  // dimensions (see its own doc), so a plain tick-to-tick comparison
+  // catches them all without naming every reactive slice as a
+  // dependency. Owned by the SAME effect that sees start/stop (deps:
+  // `status`, `engine`) — the interval only ever runs while the meeting
+  // is actually draftable, and restarts cleanly (via the cleanup below)
+  // whenever either changes.
   const engine = useApp((s) => s.settings.engine);
   useEffect(() => {
     if (!liveDraft.isDraftableMeeting(status, engine)) return;
-    const counts: liveDraft.DraftCounts = { segments: segments.length, cards: cards.length };
-    if (
-      !liveDraft.shouldWriteDraft(
-        Date.now(),
-        lastDraftWriteAtRef.current,
-        lastDraftCountsRef.current,
-        counts,
-      )
-    ) {
-      return;
-    }
-    const snapshot = currentSessionSnapshot();
-    if (!snapshot) return;
-    lastDraftWriteAtRef.current = Date.now();
-    lastDraftCountsRef.current = counts;
-    void liveDraft.writeDraft(snapshot);
-  }, [segments, cards, status, engine]);
+    const tick = () => {
+      // Fresh read (not the closed-over `status`/`engine` above) — this
+      // callback can fire in the brief window before a status/engine
+      // change has re-run this effect (see attachEngine's own handlers
+      // for the same fresh-read posture elsewhere in this file).
+      const state = useApp.getState();
+      if (!liveDraft.isDraftableMeeting(state.status, state.settings.engine)) return;
+      const snapshot = currentSessionSnapshot();
+      if (!snapshot) return;
+      const signature = liveDraft.computeDraftSignature(snapshot);
+      if (signature === lastDraftSignatureRef.current) return;
+      lastDraftSignatureRef.current = signature;
+      const draftId = liveDraft.deriveDraftId(state.meetingGen, state.startedAt);
+      void liveDraft.writeDraft(draftId, snapshot);
+    };
+    // One immediate tick so a brand-new meeting's first draft isn't a
+    // full interval away — under a pure setInterval, a crash inside
+    // the first DRAFT_WRITE_INTERVAL_MS lost everything said in it
+    // (W1 design note, lead-accepted). tick() itself no-ops until the
+    // meeting is draftable and something exists to snapshot, so firing
+    // it eagerly here is free on the idle path.
+    tick();
+    const id = setInterval(tick, liveDraft.DRAFT_WRITE_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [status, engine]);
 
   return { start, pause, resume, stop, startDemo };
 }

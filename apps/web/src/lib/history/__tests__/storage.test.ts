@@ -42,10 +42,10 @@ describe("storage.ts", () => {
   });
 
   describe("saveSession upserts index", () => {
-    it("saveSession writes the full session and adds a SessionMeta to the index", async () => {
+    it("saveSession writes the full session and adds a SessionMeta to the index, resolving true", async () => {
       const storage = await import("../storage");
       const session = makeSession();
-      await storage.saveSession(session);
+      await expect(storage.saveSession(session)).resolves.toBe(true);
 
       const stored = await storage.getSession("s1");
       expect(stored).toEqual(session);
@@ -74,11 +74,19 @@ describe("storage.ts", () => {
       expect(list[0].title).toBe("Updated title");
     });
 
-    it("saveSession is a no-op when indexedDB is unavailable", async () => {
+    it("saveSession is a no-op AND resolves false when indexedDB is unavailable (Sol adversarial-review fix H1)", async () => {
       delete (globalThis as { indexedDB?: unknown }).indexedDB;
       const storage = await import("../storage");
-      await storage.saveSession(makeSession());
+      await expect(storage.saveSession(makeSession())).resolves.toBe(false);
       expect(memStore.size).toBe(0);
+    });
+
+    it("saveSession resolves false when the underlying write throws, without silently claiming success (H1 fix)", async () => {
+      const storage = await import("../storage");
+      const { set } = await import("idb-keyval");
+      vi.mocked(set).mockRejectedValueOnce(new Error("write failed"));
+
+      await expect(storage.saveSession(makeSession())).resolves.toBe(false);
     });
   });
 

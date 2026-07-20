@@ -16,6 +16,7 @@ vi.mock("idb-keyval", () => ({
 import {
   AnkiConnectApiError,
   AnkiIosUnsupportedError,
+  AnkiInvokeTimeoutError,
   ankiInvoke,
   ankiLedger,
   buildAnkiNotePayload,
@@ -148,6 +149,23 @@ describe("ankiInvoke", () => {
     }) as unknown as typeof fetch;
 
     await expect(ankiInvoke(8765, "version")).rejects.toThrow("Failed to fetch");
+  });
+});
+
+// M3 (Sol review 2026-07-20, v0.5 closeout): a hung round trip used to
+// leave ankiInvoke's own returned promise pending forever — no timeout
+// existed unless a caller explicitly passed one (only testAndAuthorize's
+// own foreground probe did). A short custom timeoutMs here keeps this
+// test fast while exercising the REAL mechanism (raceWithTimeout),
+// unlike testAndAuthorize's own tests below, which simulate an already-
+// fired timeout by throwing synchronously from the mock.
+describe("ankiInvoke — round-trip timeout (M3)", () => {
+  it("a hung round trip rejects with AnkiInvokeTimeoutError instead of hanging forever", async () => {
+    global.fetch = vi.fn(() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+
+    await expect(ankiInvoke(8765, "version", undefined, 20)).rejects.toBeInstanceOf(
+      AnkiInvokeTimeoutError,
+    );
   });
 });
 
@@ -535,6 +553,106 @@ describe("deliverSessionNotes — per-session in-flight serialization", () => {
     const second = await deliverSessionNotes(session, cfg, flakyLedger);
     expect(second).toEqual({ sent: 1, skipped: 0 });
     expect(realLedger.sentKeys.size).toBe(1);
+  });
+});
+
+// M3 (Sol review 2026-07-20, v0.5 closeout): the chain above was
+// UNBOUNDED — a hung ankiInvoke plus repeated post-stop re-saves grew a
+// new link per call, each retaining a full session snapshot. At most
+// ONE delivery may now be QUEUED (not yet running) per session at a
+// time — a call arriving while one is already queued overwrites that
+// queued snapshot instead of chaining another.
+describe("deliverSessionNotes — bounded coalescing (M3)", () => {
+  it("a hung first delivery + 3 rapid re-saves for the same session collapse into exactly ONE more delivery, using the LAST snapshot, once the hang resolves", async () => {
+    const calls: AnkiCall[] = [];
+    let addNotesCallCount = 0;
+    let releaseAddNotes: () => void = () => {};
+    const addNotesStarted = new Promise<void>((resolveStarted) => {
+      global.fetch = vi.fn(async (_url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body) as AnkiCall;
+        calls.push(body);
+        if (body.action === "canAddNotes") {
+          const notes = (body.params as { notes: unknown[] }).notes;
+          return { json: async () => ({ result: notes.map(() => true), error: null }) } as Response;
+        }
+        // addNotes: only the FIRST call (session-1's own) hangs — every
+        // later (coalesced) call resolves immediately.
+        addNotesCallCount++;
+        if (addNotesCallCount === 1) {
+          resolveStarted();
+          await new Promise<void>((resolve) => {
+            releaseAddNotes = resolve;
+          });
+        }
+        const notes = (body.params as { notes: Array<{ fields: { Front: string } }> }).notes;
+        return { json: async () => ({ result: notes.map((_, i) => 100 + i), error: null }) } as Response;
+      }) as unknown as typeof fetch;
+    });
+    const ledger = makeFakeLedger();
+    const cfg = { deckName: "JargonSlayer", port: 8765 };
+
+    const first = deliverSessionNotes(makeSession({ id: "s1" }, [makeCard({ front: "call-1" })]), cfg, ledger);
+    await addNotesStarted;
+
+    // 3 rapid re-saves while the first is still hung — none of these
+    // may add a second/third/fourth link to the chain.
+    const second = deliverSessionNotes(makeSession({ id: "s1" }, [makeCard({ front: "call-2" })]), cfg, ledger);
+    const third = deliverSessionNotes(makeSession({ id: "s1" }, [makeCard({ front: "call-3" })]), cfg, ledger);
+    const fourth = deliverSessionNotes(makeSession({ id: "s1" }, [makeCard({ front: "call-4" })]), cfg, ledger);
+
+    releaseAddNotes();
+    const [firstResult, secondResult, thirdResult, fourthResult] = await Promise.all([
+      first,
+      second,
+      third,
+      fourth,
+    ]);
+
+    expect(firstResult).toEqual({ sent: 1, skipped: 0 });
+    // The 3 coalesced callers all share the ONE delivery that actually ran.
+    expect(secondResult).toEqual(fourthResult);
+    expect(thirdResult).toEqual(fourthResult);
+    expect(fourthResult).toEqual({ sent: 1, skipped: 0 });
+
+    const addNotesCalls = calls.filter((c) => c.action === "addNotes");
+    expect(addNotesCalls).toHaveLength(2); // call-1's own hung one + exactly ONE more
+    const secondFronts = (
+      addNotesCalls[1].params as { notes: Array<{ fields: { Front: string } }> }
+    ).notes.map((n) => n.fields.Front);
+    expect(secondFronts).toEqual(["call-4"]); // the LAST snapshot, not call-2/call-3
+  });
+
+  it("a first delivery whose addNotes round trip times out does not poison the per-session chain — a later delivery for the same session still runs", async () => {
+    let addNotesCallCount = 0;
+    global.fetch = vi.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body) as AnkiCall;
+      if (body.action === "canAddNotes") {
+        const notes = (body.params as { notes: unknown[] }).notes;
+        return { json: async () => ({ result: notes.map(() => true), error: null }) } as Response;
+      }
+      addNotesCallCount++;
+      if (addNotesCallCount === 1) {
+        // Simulates ankiInvoke's own round-trip timeout (M3, see the
+        // "ankiInvoke — round-trip timeout" describe block above for
+        // the real mechanism) actually firing during the first
+        // delivery's addNotes call — this test is only about what
+        // happens one level up, in deliverSessionNotes' own chain.
+        throw new AnkiInvokeTimeoutError("addNotes", 30000);
+      }
+      const notes = (body.params as { notes: Array<{ fields: { Front: string } }> }).notes;
+      return { json: async () => ({ result: notes.map((_, i) => 100 + i), error: null }) } as Response;
+    }) as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+    const cfg = { deckName: "JargonSlayer", port: 8765 };
+
+    const first = await deliverSessionNotes(makeSession({ id: "s1" }, [makeCard({ front: "call-1" })]), cfg, ledger);
+    // fail-soft (module-wide posture, deliverSessionNotesImpl's own
+    // addNotes try/catch): a timed-out addNotes never rejects
+    // deliverSessionNotes itself.
+    expect(first).toEqual({ sent: 0, skipped: 1 });
+
+    const second = await deliverSessionNotes(makeSession({ id: "s1" }, [makeCard({ front: "call-2" })]), cfg, ledger);
+    expect(second).toEqual({ sent: 1, skipped: 0 });
   });
 });
 

@@ -88,16 +88,28 @@ async function readIndex(): Promise<SessionMeta[]> {
   }
 }
 
-export async function saveSession(s: MeetingSession): Promise<void> {
-  if (!hasIndexedDb()) return;
+// Returns whether the session actually landed (Sol adversarial-review
+// finding H1): true only when BOTH the session body write AND the
+// index write completed — false on a missing IndexedDB or ANY thrown
+// error, so a caller (saveCurrentSession/restoreLiveDraft in store.ts)
+// can tell "persisted" apart from "silently did nothing" instead of
+// unconditionally clearing the live draft and reporting success over a
+// failed write. Every OTHER caller (importText.ts/importAudio.ts/
+// upload.ts/autoExport.ts's restoreFullBackup) still compiles
+// unchanged if it never reads the return value — see store.ts's own
+// two callers for the ones that now do.
+export async function saveSession(s: MeetingSession): Promise<boolean> {
+  if (!hasIndexedDb()) return false;
   try {
     await set(sessionKey(s.id), s);
     const idx = await readIndex();
     const meta = sessionToMeta(s);
     const next = [meta, ...idx.filter((m) => m.id !== s.id)];
     await set(SESSIONS_INDEX_KEY, next);
+    return true;
   } catch (err) {
     console.warn("[storage] saveSession failed", err);
+    return false;
   }
 }
 

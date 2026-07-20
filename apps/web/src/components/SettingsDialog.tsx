@@ -562,6 +562,32 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** Restored-backup honesty notice (Sol review 2026-07-20, L finding;
+ *  extended to the tab-cloud card too — M2 fix, v0.5 closeout): a
+ *  backup restored WITH keys can leave a real sonioxKey in preview
+ *  storage, and BYOK-wins routing (stt/soniox.ts / tabAudioCloud.ts's
+ *  own effectiveProvider) will then bill the USER's account on either
+ *  the Soniox OR the 标签页音频·云端 card while that card's own hint
+ *  above still advertises the server-funded trial. The input itself
+ *  stays disabled on preview (posture: preview never COLLECTS keys),
+ *  so this notice + explicit clear is the only exit — a shared
+ *  component so the copy/behavior can never drift between the two
+ *  cards. */
+function SonioxKeyRestoredNotice({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="mt-1 text-xs leading-[1.7] text-warn-soft">
+      检测到已保存的 Soniox Key：会话将直接使用你自己的 Key 并按你的账户计费，而非上方的预览体验。
+      <button
+        type="button"
+        onClick={onClear}
+        className="ml-1 underline decoration-[rgb(var(--warn-soft-rgb)/0.4)]"
+      >
+        清除已保存的 Key（改用预览体验）
+      </button>
+    </div>
+  );
+}
+
 // #56 分任务模型（高级）: display metadata for the three domain blocks,
 // in the design's exact order/labels (Q5). "detect" covers define too
 // (LlmTaskDomain deliberately excludes a separate "define" domain —
@@ -1913,6 +1939,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   SONIOX_PREVIEW_LANE && (opt.value === "soniox" || opt.value === "tabaudio-cloud");
                 const previewLocked =
                   PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly) && !sonioxPreviewUnlocked;
+                // M2 fix (Sol review 2026-07-20, v0.5 closeout): both
+                // cards' own `hint` above promises the shared trial
+                // UNCONDITIONALLY on this lane — a restored/typed
+                // sonioxKey means BYOK-wins routing (stt/soniox.ts /
+                // tabAudioCloud.ts's effectiveProvider) actually bills
+                // the user's own account instead, so the card must say
+                // that plainly rather than keep advertising the
+                // keyless trial once a real key is present.
+                const sonioxKeyBillsUser = sonioxPreviewUnlocked && !!draft.sonioxKey;
                 // S9.4, D6 (F9): 系统/App 音频's own macOS-floor gate —
                 // "shown-but-disabled below floor", never hidden (see
                 // ENGINE_CARDS' own appaudio doc comment above for why
@@ -1993,7 +2028,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       </span>
                     </div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      {opt.hint}
+                      {sonioxKeyBillsUser ? "已检测到你的 Soniox Key，将按你的账户计费" : opt.hint}
                     </div>
                   </button>
                 );
@@ -2159,25 +2194,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="mt-1 text-xs text-mut2">
                   按量计费；Key 随会话直接发给 Soniox 云端（wss://stt-rt.soniox.com），不经我们的服务器
                 </div>
-                {/* Restored-backup honesty (Sol review 2026-07-20, L
-                   finding): a backup restored WITH keys can leave a real
-                   sonioxKey in preview storage, and BYOK-wins routing
-                   (stt/soniox.ts) will then bill the USER's account
-                   while the engine card above still advertises the
-                   server-funded trial. The input itself stays disabled
-                   on preview (posture: preview never COLLECTS keys),
-                   so this notice + explicit clear is the only exit. */}
+                {/* Restored-backup honesty — see SonioxKeyRestoredNotice's
+                   own doc comment above for the scenario. */}
                 {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && (
-                  <div className="mt-1 text-xs leading-[1.7] text-warn-soft">
-                    检测到已保存的 Soniox Key：会话将直接使用你自己的 Key 并按你的账户计费，而非上方的预览体验。
-                    <button
-                      type="button"
-                      onClick={() => patch({ sonioxKey: "" })}
-                      className="ml-1 underline decoration-[rgb(var(--warn-soft-rgb)/0.4)]"
-                    >
-                      清除已保存的 Key（改用预览体验）
-                    </button>
-                  </div>
+                  <SonioxKeyRestoredNotice onClear={() => patch({ sonioxKey: "" })} />
                 )}
                 {!PREVIEW_TIER && !draft.sonioxKey && (
                   <div className="mt-1 text-xs leading-[1.7] text-mut2">
@@ -2306,7 +2326,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 <div className="text-xs leading-[1.7] text-mut2">
                   {PREVIEW_TIER && SONIOX_PREVIEW_LANE ? (
-                    "预览体验固定使用 Soniox 云端转写，无需自备 Key"
+                    draft.sonioxKey ? (
+                      // M2 fix (Sol review, v0.5 closeout): a restored/
+                      // typed key means BYOK-wins routing actually bills
+                      // the user, not the trial — this line sat directly
+                      // below the select promising "无需自备 Key"
+                      // unconditionally, which would otherwise flatly
+                      // contradict the notice just below it once a key
+                      // is present.
+                      "已检测到你的 Soniox Key，将按你的账户计费"
+                    ) : (
+                      "预览体验固定使用 Soniox 云端转写，无需自备 Key"
+                    )
                   ) : (
                     <>
                       选择转录服务商；需在对应引擎卡片填写该服务商的 API Key——
@@ -2320,6 +2351,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     </>
                   )}
                 </div>
+                {/* Restored-backup honesty — same notice + condition as
+                   the Soniox card above (this card rides the SAME
+                   sonioxKey on this lane — see the select's own doc
+                   comment). */}
+                {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && (
+                  <SonioxKeyRestoredNotice onClear={() => patch({ sonioxKey: "" })} />
+                )}
               </div>
             )}
 

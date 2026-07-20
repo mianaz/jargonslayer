@@ -578,6 +578,13 @@ interface AppState {
   ) => void;
   updateTerm: (id: string, patch: Partial<Pick<TermCard, "term" | "gloss_en" | "gloss_zh">>) => void;
 
+  // H1 fix (Sol adversarial review): null now ALSO covers "the
+  // underlying storage.saveSession write failed" (previously null only
+  // ever meant "no segments to save") — this action shows its own
+  // 保存失败 toast and skips clearing the live draft on that path, so no
+  // caller needs to branch on WHY it came back null; every existing
+  // caller (useMeeting.ts's doStop/runStopFlow, SummaryPanel.tsx) may
+  // still treat a non-null id as "saved" and null as "nothing to do".
   saveCurrentSession: () => Promise<string | null>;
   loadSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -590,7 +597,13 @@ interface AppState {
   // slice (unlike saveCurrentSession), since the draft may belong to a
   // different meeting than whatever is (or isn't) currently live in this
   // tab (see RecoveryBanner's "new meeting keeps the draft" contract).
-  restoreLiveDraft: (snapshot: MeetingSession) => Promise<void>;
+  // `draftId` is the SAME id RecoveryBanner loaded this snapshot under
+  // (liveDraft.ts's deriveDraftId) — passed straight through to
+  // liveDraft.clearDraft's compare-and-delete on success. H1 fix:
+  // returns whether the underlying save actually landed — RecoveryBanner
+  // only dismisses itself on true; on false the draft (and banner) stay
+  // put and this shows its own 恢复失败 toast.
+  restoreLiveDraft: (snapshot: MeetingSession, draftId: string) => Promise<boolean>;
   newMeeting: () => void;
 
   addCustomEntry: (entry: CustomEntry) => Promise<void>;
@@ -1690,20 +1703,36 @@ export const useApp = create<AppState>((set, get) => ({
       // pauseIntervalsForSnapshot's own doc above.
       pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
     };
-    await storage.saveSession(session);
+    // H1 fix (Sol adversarial review): storage.saveSession now reports
+    // whether the write actually landed — a failed local save must
+    // neither clear the only recovery copy (the live draft) nor claim
+    // success. On failure: show the failure toast and stop, leaving the
+    // draft/activeSessionId/sessions list exactly as they were (a later
+    // post-stop top-up re-save — see scheduleSessionSave's call sites
+    // below — gets another chance).
+    const saved = await storage.saveSession(session);
+    if (!saved) {
+      get().showToast("保存失败，会议草稿已保留");
+      return null;
+    }
     const metas = await storage.listSessions();
     set({ sessions: metas, activeSessionId: session.id });
     // Crash/refresh recovery (v0.5 closeout): a meeting that ends
     // normally (this is the ONLY function that ever reaches "stopped"
     // persistence — every call site is gated on status==="stopped", see
     // useMeeting.ts's doStop/runStopFlow and this file's own post-stop
-    // top-up re-saves) must never leave a stale liveDraft behind. A
-    // no-op when nothing was ever drafted (e.g. a short meeting the
-    // 10s/changed-guard throttle never got to write). Awaited, like the
+    // top-up re-saves) must never leave a stale liveDraft behind ONCE
+    // it's actually safely persisted elsewhere (the `saved` check just
+    // above). `draftId` (H3 fix) is THIS meeting's own identity —
+    // liveDraft.clearDraft's compare-and-delete no-ops when nothing was
+    // ever drafted under it (e.g. a short meeting the periodic interval
+    // never got to write) OR when the disk now holds a DIFFERENT
+    // (newer) meeting's still-unresolved draft. Awaited, like the
     // storage.* calls just above — this is local IndexedDB bookkeeping,
     // not one of the optional external integrations below that
     // deliberately fire-and-forget.
-    await liveDraft.clearDraft();
+    const draftId = liveDraft.deriveDraftId(s.meetingGen, startedAt);
+    await liveDraft.clearDraft(draftId);
     // Agent-native output layer (both no-op unless configured).
     const { autoExport, exportFrontmatter, webhookUrl } = s.settings;
     if (autoExport) {
@@ -1802,12 +1831,28 @@ export const useApp = create<AppState>((set, get) => ({
   // segments/cards slice entirely: `snapshot` is whatever RecoveryBanner
   // loaded from IndexedDB, not necessarily anything related to this
   // tab's current live meeting (or lack thereof).
-  restoreLiveDraft: async (snapshot) => {
-    await storage.saveSession(snapshot);
+  restoreLiveDraft: async (snapshot, draftId) => {
+    // H4 fix (Sol adversarial review): currentSessionSnapshot()'s own
+    // `id` is "unsaved" for every live-draft snapshot (activeSessionId
+    // is always null while a meeting is draftable — see that
+    // function's own doc comment), so reusing it here would let a
+    // SECOND crash recovery overwrite the FIRST recovered session
+    // (storage.saveSession keys by id). Always mint a fresh identity
+    // for the materialized session rather than ever trusting the
+    // incoming one.
+    const session: MeetingSession = { ...snapshot, id: newId() };
+    // H1 fix: same "don't clear the only copy / don't claim success on
+    // a failed write" posture as saveCurrentSession above.
+    const saved = await storage.saveSession(session);
+    if (!saved) {
+      get().showToast("恢复失败，请重试");
+      return false;
+    }
     const metas = await storage.listSessions();
     set({ sessions: metas });
-    await liveDraft.clearDraft();
+    await liveDraft.clearDraft(draftId);
     get().showToast("已恢复，可在历史记录中查看");
+    return true;
   },
 
   addCustomEntry: async (entry) => {
