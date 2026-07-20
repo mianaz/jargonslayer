@@ -704,6 +704,21 @@ describe("StatusLine — engine dropdown", () => {
     expect(placeholder!.disabled).toBe(true);
     expect(placeholder!.textContent).toBe(ENGINE_SELECT_PLACEHOLDER);
   });
+
+  // v0.5 Wave-1 Feature 5 (mode-first UI): this dropdown is reframed as
+  // a power-user override — ModeSelector.tsx's tiles are the primary
+  // way to pick a capture path now. Mechanics stay unchanged (asserted
+  // above/elsewhere in this describe block); only the closed control's
+  // own tooltip is new.
+  it("carries an 引擎覆盖 title hint when the selected option isn't otherwise locked", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(select().title).toBe("引擎覆盖（模式自动选择的引擎可在此覆盖）");
+  });
 });
 
 // ---------------------------------------------------------------

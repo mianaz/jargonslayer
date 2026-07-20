@@ -82,9 +82,17 @@ function speakerCount(parsed: ParsedTranscript): number {
 export interface ImportHubProps {
   open: boolean;
   onClose: () => void;
+  // v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
+  // v05-wave1-blueprint.md §1 Feature 5): ModeSelector's 导入/链接 tiles
+  // open this SAME dialog instance (page.tsx owns the open-state) but
+  // want a specific starting tab instead of always landing on 文件.
+  // Optional/additive — every existing caller (Header's 导入 pill,
+  // HistoryDrawer's own 导入 button) keeps opening on 文件 unchanged.
+  initialTab?: HubTab;
 }
 
-type HubTab = "file" | "text" | "url";
+// Exported for ModeSelector.tsx/page.tsx (the initialTab prop above).
+export type HubTab = "file" | "text" | "url";
 
 const TABS: { key: HubTab; label: string; icon: typeof FileAudio }[] = [
   { key: "file", label: "文件", icon: FileAudio },
@@ -92,7 +100,7 @@ const TABS: { key: HubTab; label: string; icon: typeof FileAudio }[] = [
   { key: "url", label: "链接", icon: LinkSimple },
 ];
 
-export default function ImportHub({ open, onClose }: ImportHubProps) {
+export default function ImportHub({ open, onClose, initialTab }: ImportHubProps) {
   const settings = useApp((s) => s.settings);
   const loadSession = useApp((s) => s.loadSession);
   const showToast = useApp((s) => s.showToast);
@@ -137,6 +145,9 @@ export default function ImportHub({ open, onClose }: ImportHubProps) {
       if (debounceRef.current) clearTimeout(debounceRef.current);
       return;
     }
+    // ModeSelector's 导入/链接 tiles (initialTab) — every other caller
+    // leaves this undefined, so the tab stays "file" exactly as before.
+    setTab(initialTab ?? "file");
     if (PREVIEW_TIER) return;
     setDiarizationHealth(undefined);
     let cancelled = false;

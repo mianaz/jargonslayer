@@ -35,7 +35,7 @@
 // once at module load, not per render.
 
 import { useEffect, useState } from "react";
-import type { STTEngineKind } from "@jargonslayer/core/types";
+import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { PREVIEW_TIER } from "@/lib/deployTier";
@@ -48,6 +48,7 @@ import {
   type AudiocapCapabilities,
 } from "@/lib/desktop/audiocapCaps";
 import {
+  getOsSpeechCapsSnapshot,
   isOsSpeechFloorLocked,
   osSpeechLockReason,
   type OsSpeechCapabilities,
@@ -60,6 +61,13 @@ import {
   type RetentionClass,
 } from "./engineCapabilities";
 import type { OnDeviceMode } from "./onDeviceSpeech";
+// v0.5 Wave-1 Feature 5 (mode-first UI, §5 A3/A4): deriveEngineForMode's
+// own "always run the result through applyPlatformEngineDefaults+
+// applyTierDefaults semantics" sanitize pass reuses those two pure,
+// already-tested store.ts coercions verbatim rather than re-deriving
+// platform/tier legality here — store.ts does not import this module
+// (grepped), so this is a one-directional, non-circular edge.
+import { applyPlatformEngineDefaults, applyTierDefaults } from "@/lib/store";
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine, so it has exactly one affordance: the ≡ menu's 演示 item.
@@ -280,4 +288,130 @@ export function useAudiocapCaps(): AudiocapCapabilities | null {
     return unsubscribe;
   }, []);
   return caps;
+}
+
+// ---------------------------------------------------------------
+// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
+// v05-wave1-blueprint.md §1 Feature 5 + §5 A3/A4) — L8's own seam:
+// ModeSelector.tsx (components/) calls deriveEngineForMode on a tile
+// click to resolve WHICH engine a chosen mode should actually run, then
+// writes both `mode` and the derived `engine` together via
+// updateSettings (see Settings.mode's own doc comment, types.ts, for
+// the mode/engine divergence contract this deliberately preserves —
+// StatusLine's EngineDropdown keeps writing `engine` alone, unrelated
+// to this function).
+// ---------------------------------------------------------------
+
+/** Platform flags this function needs — an EXPLICIT parameter (not the
+ *  module-scope IS_DESKTOP/IS_IOS consts every other platform-filtered
+ *  export in this file reads directly) so it's directly unit-testable
+ *  across all three shells from one test file, no vi.mock+resetModules
+ *  gymnastics required — mirrors modeForPersistedEngine's own `platform`
+ *  parameter (store.ts). */
+export interface DeriveEnginePlatform {
+  isDesktop: boolean;
+  isIos: boolean;
+}
+
+/** §1 F5's mode→engine table + §5 A4, as a pure(-ish) function: given
+ *  the mode a ModeSelector tile just picked (or a mode already
+ *  persisted from before), returns the engine that mode should run WITH
+ *  on this platform/settings.
+ *
+ *  - "import"/"url" open ImportHub (page.tsx) rather than starting a
+ *    live engine — `settings.engine` passes through UNCHANGED (§1 F5:
+ *    "engine unchanged").
+ *  - "system-audio" (desktop only in the real tile set, §3 Q2): osspeech
+ *    when the shared macOS-26 floor probe (osspeechCaps.ts) says so,
+ *    else appaudio (S9's CoreAudio tap) — reads the SAME single-flight
+ *    cache engineOptionGate already consults (getOsSpeechCapsSnapshot)
+ *    rather than re-probing; a not-yet-resolved (null) snapshot fails
+ *    OPEN to osspeech, mirroring isOsSpeechFloorLocked's own D6 policy
+ *    ("runtime commands re-check support — UI gating is not a
+ *    boundary") — the conservative, precedent-consistent choice rather
+ *    than a new one invented here. A caller reaching this branch off
+ *    desktop (never happens from the real tile set — absent, not
+ *    disabled) degrades to a working mic default rather than a
+ *    platform-nonsensical one; the sanitize pass below still runs.
+ *  - "tab" (web only in the real tile set): A4's key-gated rule —
+ *    tabaudio-cloud when Settings.tabAudioCloudProvider's MATCHING BYOK
+ *    key is present, else the local-sidecar tabaudio (never silently
+ *    swaps to the OTHER provider's key). Whether the sidecar itself is
+ *    actually reachable (`whisperUrl`) isn't knowable synchronously from
+ *    a pure function — deliberately not attempted, same "let the surface
+ *    explain" posture ImportHub's own url tab already takes for an
+ *    analogous unknowable-synchronously case.
+ *  - "mic": iOS is osspeech unconditionally (v1's only engine). Desktop
+ *    is osspeech-if-floor else whisper (deliberately never appaudio —
+ *    that is SYSTEM audio, not a mic substitute; mirrors store.ts's own
+ *    desktop webspeech->whisper coercion precedent). Web defaults to
+ *    webspeech (zero-config) UNLESS a BYOK cloud key already exists AND
+ *    the CURRENT settings.engine is already whisper/soniox/deepgram —
+ *    then that existing choice is respected rather than clobbered on
+ *    every mic-tile click.
+ *
+ *  Sanitize pass (L8 task spec: "always run the result through
+ *  applyPlatformEngineDefaults+applyTierDefaults semantics"): every
+ *  candidate above is run through those exact two store.ts coercions
+ *  before returning — belt-and-suspenders against a derivation mistake
+ *  above AND the one thing this function genuinely cannot decide for
+ *  itself from its own inputs, preview-tier (byokOnly/sidecarOnly)
+ *  legality, which those two pure, already-unit-tested functions already
+ *  own. NOTE (verified by reading store.ts): `updateSettings` itself
+ *  does NOT re-run migrateSettings/these coercions on every write — it
+ *  is a plain merge+persist — so this function, not the later store
+ *  write, is what actually guarantees the returned engine is legal. */
+export function deriveEngineForMode(
+  mode: Settings["mode"],
+  platform: DeriveEnginePlatform,
+  settings: Settings,
+): STTEngineKind {
+  if (mode === "import" || mode === "url") return settings.engine;
+
+  const { isDesktop, isIos } = platform;
+  const osspeechFloorMet = !isOsSpeechFloorLocked("osspeech", getOsSpeechCapsSnapshot());
+
+  let candidate: STTEngineKind;
+  if (mode === "system-audio") {
+    candidate = isDesktop
+      ? osspeechFloorMet
+        ? "osspeech"
+        : "appaudio"
+      : isIos
+        ? "osspeech" // unreachable via the real tile set (iOS has no system-audio mode)
+        : "webspeech"; // unreachable via the real tile set (web has no system-audio capture)
+  } else if (mode === "tab") {
+    const providerKeyPresent =
+      settings.tabAudioCloudProvider === "deepgram" ? !!settings.deepgramKey : !!settings.sonioxKey;
+    candidate = providerKeyPresent ? "tabaudio-cloud" : "tabaudio";
+  } else {
+    // mode === "mic"
+    if (isIos) {
+      candidate = "osspeech";
+    } else if (isDesktop) {
+      candidate = osspeechFloorMet ? "osspeech" : "whisper";
+    } else {
+      // whisper is respected UNCONDITIONALLY (local sidecar, needs no
+      // key — a local-first user's deliberate choice must survive a
+      // mic-tile click); soniox/deepgram are respected only when their
+      // OWN matching key exists (L8 review fix — the first draft's flat
+      // hasCloudKey && compatible gate reset keyless whisper users to
+      // webspeech).
+      const cloudKeyFor =
+        settings.engine === "soniox"
+          ? !!settings.sonioxKey
+          : settings.engine === "deepgram"
+            ? !!settings.deepgramKey
+            : false;
+      candidate =
+        settings.engine === "whisper" || cloudKeyFor ? settings.engine : "webspeech";
+    }
+  }
+
+  const candidateSettings: Settings = { ...settings, engine: candidate };
+  const platformSanitized = applyPlatformEngineDefaults(candidateSettings, isDesktop, isIos);
+  // `true`: applyTierDefaults' own 3rd param is unread post-S14.1 (see
+  // its doc comment in store.ts) — kept `true` for signature-intent
+  // clarity only ("yes, there is a real candidate engine to sanitize").
+  return applyTierDefaults(platformSanitized, PREVIEW_TIER, true).engine;
 }

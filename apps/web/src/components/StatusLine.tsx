@@ -62,6 +62,20 @@ const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
 // only ever visible while the dropdown is actually open; the closed
 // control needs its own tooltip for a locked selection to be
 // explorable at all.
+//
+// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
+// v05-wave1-blueprint.md §1 Feature 5): this dropdown is now reframed
+// as a POWER-USER OVERRIDE — ModeSelector.tsx's tiles are the primary,
+// mode-first way to pick a capture path, and they derive+write `engine`
+// automatically. This control's own mechanics stay fully unchanged: it
+// still writes `settings.engine` directly on change and never touches
+// `settings.mode` (mode/engine may legitimately diverge — see
+// Settings.mode's own doc comment, types.ts) — only the title hint
+// below is new, so a user hovering the closed control (when no
+// lock reason applies) understands what this control now IS relative
+// to ModeSelector.
+const ENGINE_OVERRIDE_HINT = "引擎覆盖（模式自动选择的引擎可在此覆盖）";
+
 function EngineDropdown() {
   const engine = useApp((s) => s.settings.engine);
   const status = useApp((s) => s.status);
@@ -81,7 +95,7 @@ function EngineDropdown() {
       aria-label="转录引擎"
       data-testid="statusline-engine-select"
       disabled={disabled}
-      title={selectedGate?.title}
+      title={selectedGate?.title ?? ENGINE_OVERRIDE_HINT}
       value={engine === "demo" || engine === "import" ? "" : engine}
       onChange={(e) => {
         const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";

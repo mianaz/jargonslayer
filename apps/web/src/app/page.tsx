@@ -15,7 +15,8 @@ import SummaryPanel from "@/components/SummaryPanel";
 import GlossaryPanel from "@/components/GlossaryPanel";
 import HistoryDrawer from "@/components/HistoryDrawer";
 import TaskCenterDrawer from "@/components/TaskCenterDrawer";
-import ImportHub from "@/components/ImportHub";
+import ImportHub, { type HubTab } from "@/components/ImportHub";
+import ModeSelector from "@/components/ModeSelector";
 import SettingsDialog from "@/components/SettingsDialog";
 import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverlay";
 import LookupPopover from "@/components/LookupPopover";
@@ -87,6 +88,13 @@ export default function Home() {
   // open even if the drawer behind it closes, instead of unmounting
   // with it.
   const [importHubOpen, setImportHubOpen] = useState(false);
+  // v0.5 Wave-1 Feature 5 (mode-first UI): ModeSelector's 导入/链接
+  // tiles want ImportHub to open on a SPECIFIC tab; every other opener
+  // (Header's 导入 pill, HistoryDrawer's own button) leaves this
+  // undefined, so ImportHub's own default ("file") is unchanged. Reset
+  // to undefined on close so a later GENERIC open never inherits a
+  // stale tile-requested tab.
+  const [importInitialTab, setImportInitialTab] = useState<HubTab | undefined>(undefined);
 
   // Mobile bottom-panel resize state. null = never dragged on this
   // device → the default content-driven max-h-[55vh] behavior. Only
@@ -237,8 +245,21 @@ export default function Home() {
       />
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
-        <section className="min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">
+        <section className="relative min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">
           <TranscriptPanel onDemo={() => void startDemo()} />
+          {/* v0.5 Wave-1 Feature 5 (mode-first UI): overlays TranscriptPanel's
+              OWN (untouched) idle/empty-state block on the exact same gate
+              its isEmpty check uses — replaces the old "选择下方引擎" copy
+              with mode-first tiles without editing that owned file. */}
+          {status === "idle" && segments.length === 0 && (
+            <ModeSelector
+              onOpenImport={(tab) => {
+                setImportInitialTab(tab);
+                setImportHubOpen(true);
+              }}
+              onDemo={() => void startDemo()}
+            />
+          )}
         </section>
 
         {!focusMode && (
@@ -330,7 +351,14 @@ export default function Home() {
         onOpenImport={() => setImportHubOpen(true)}
       />
       <TaskCenterDrawer open={taskCenterOpen} onClose={() => setTaskCenterOpen(false)} />
-      <ImportHub open={importHubOpen} onClose={() => setImportHubOpen(false)} />
+      <ImportHub
+        open={importHubOpen}
+        onClose={() => {
+          setImportHubOpen(false);
+          setImportInitialTab(undefined);
+        }}
+        initialTab={importInitialTab}
+      />
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <TutorialOverlay
         open={helpOpen}

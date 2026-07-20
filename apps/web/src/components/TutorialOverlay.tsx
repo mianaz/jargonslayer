@@ -68,6 +68,16 @@ const STEP_COUNT = 5;
 // first-run onboarding too), so IS_IOS branches FIRST to the one iOS v1
 // engine — osspeech, label byte-identical to engineOptions.ts's own
 // ENGINE_OPTIONS entry (Miana-veto #2).
+//
+// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
+// v05-wave1-blueprint.md §1 Feature 5, L8 task spec: "speak intent/mode,
+// not engine names"): `label` copy only — reworded to lead with the
+// SAME mode nouns ModeSelector.tsx's own tiles use (麦克风/本机会议声音/
+// 浏览器标签页), dropping the one literal engine BRAND name this array
+// had ("本地 Whisper" -> "本地识别", mirroring its 系统识别/浏览器识别
+// siblings' existing naming pattern). Values/hint/posture/onClick
+// mechanics below are UNCHANGED — this step still writes settings.engine
+// directly, same as before; only the words changed.
 // ---------------------------------------------------------------
 
 const ENGINE_OPTIONS: {
@@ -79,7 +89,7 @@ const ENGINE_OPTIONS: {
   ? [
       {
         value: "osspeech",
-        label: "系统识别 · 开箱即用",
+        label: "麦克风 · 系统识别",
         hint: "无需下载模型，音频不离开设备，开箱即用",
         posture: "local",
       },
@@ -87,26 +97,26 @@ const ENGINE_OPTIONS: {
   : [
       {
         value: "webspeech",
-        label: "浏览器识别",
+        label: "麦克风 · 浏览器识别",
         hint: "零配置，Chrome/Edge 最佳，开箱即用",
         posture: "cloud",
       },
       {
         value: "whisper",
-        label: "本地 Whisper",
+        label: "麦克风 · 本地识别",
         hint: "隐私保护最强，需启动本地 Whisper",
         posture: "local",
       },
       IS_DESKTOP
         ? {
             value: "appaudio",
-            label: "系统/App 音频",
+            label: "本机会议声音",
             hint: "转录对方与其他声音，非你的麦克风",
             posture: "local",
           }
         : {
             value: "tabaudio",
-            label: "标签页音频",
+            label: "浏览器标签页",
             hint: "共享标签页，听懂对方声音",
             posture: "local",
           },
@@ -124,7 +134,7 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
   return (
     <div>
       <div className="text-lg font-medium text-fg">
-        选择转录引擎
+        选择你的收听方式
       </div>
 
       <button
