@@ -82,6 +82,28 @@ describe("buildSonioxConfig", () => {
     const config = await buildSonioxConfig(DEFAULT_SETTINGS);
     expect(config).not.toHaveProperty("enable_speaker_diarization");
   });
+
+  // ---------------------------------------------------------------
+  // v0.4.7 Lane B (glossary -> recognizer bias, D8/doc §3): context.
+  // terms ONLY (no translation_terms/general/text yet).
+  // ---------------------------------------------------------------
+
+  it("omits context entirely when no lexicon is provided", async () => {
+    const config = await buildSonioxConfig(DEFAULT_SETTINGS);
+    expect(config).not.toHaveProperty("context");
+  });
+
+  it("omits context when the lexicon projects to nothing (empty terms)", async () => {
+    const config = await buildSonioxConfig(DEFAULT_SETTINGS, { lexicon: { terms: [] } });
+    expect(config).not.toHaveProperty("context");
+  });
+
+  it("a provided lexicon reaches context.terms, priority order preserved (a prefix, never reordered — unlike whisper's initial_prompt)", async () => {
+    const config = await buildSonioxConfig(DEFAULT_SETTINGS, {
+      lexicon: { terms: ["scRNA-seq", "UMAP"] },
+    });
+    expect(config.context).toEqual({ terms: ["scRNA-seq", "UMAP"] });
+  });
 });
 
 // ---------------------------------------------------------------

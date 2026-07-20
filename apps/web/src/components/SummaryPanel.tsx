@@ -13,8 +13,10 @@ import {
   buildMarkdownReport,
   buildSessionJson,
   copyToClipboard,
+  downloadBlob,
   downloadFile,
 } from "@/lib/history/export";
+import { buildDocxReport } from "@/lib/history/docx";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { cardToCustomEntry, termToCustomEntry } from "@jargonslayer/core/types";
 import CornellNote from "./CornellNote";
@@ -22,6 +24,7 @@ import CornellNote from "./CornellNote";
 function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const cards = useApp((s) => s.cards);
   const showToast = useApp((s) => s.showToast);
+  const [docxBusy, setDocxBusy] = useState(false);
 
   const handleExport = (kind: "md" | "tsv" | "json") => {
     const session = currentSessionSnapshot();
@@ -54,6 +57,25 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
     showToast(ok ? "已复制到剪贴板" : "复制失败");
   };
 
+  // buildDocxReport dynamically imports "docx" (kept out of the
+  // initial bundle — v05-wave1-blueprint.md §1 Feature 3), so this is
+  // the one export action worth a busy state: the click can take a
+  // moment on first use (chunk fetch) before the Blob is ready.
+  const handleExportDocx = async () => {
+    const session = currentSessionSnapshot();
+    if (!session) return;
+    setDocxBusy(true);
+    try {
+      const blob = await buildDocxReport(session);
+      downloadBlob(`${session.title}.docx`, blob);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "导出 .docx 失败";
+      showToast(message);
+    } finally {
+      setDocxBusy(false);
+    }
+  };
+
   const handleCollect = async () => {
     const { cards: liveCards, terms: liveTerms, addCustomEntry } = useApp.getState();
     let added = 0;
@@ -78,6 +100,14 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
         className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出报告 .md
+      </button>
+      <button
+        type="button"
+        onClick={() => void handleExportDocx()}
+        disabled={docxBusy}
+        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {docxBusy ? "生成中…" : "导出 .docx"}
       </button>
       <button
         type="button"

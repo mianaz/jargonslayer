@@ -465,24 +465,27 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *  coercions, both no-ops when `isPreview` is false (full tier
  *  unaffected):
  *   1. A saved engine of "whisper"/"tabaudio" (sidecar-only, greyed in
- *      preview — see Header.tsx's ENGINE_OPTIONS) OR "soniox" (BYOK
- *      cloud, same preview lock via ENGINE_OPTIONS' byokOnly — v0.4 S4
- *      blueprint decision E) is coerced to "webspeech" so a returning
- *      preview user's start button still does real transcription
- *      instead of silently trying a disabled engine. "appaudio" joins
- *      this list too (S9/D7) — structurally, not because it's ever
- *      actually reachable here: appaudio is desktop-only, and the
- *      preview tier is a hosted WEB build, so applyPlatformEngineDefaults
- *      above would already have coerced any stored "appaudio" away to
- *      "tabaudio" before this function ever sees it on a real preview
- *      build (migrateSettings runs both, platform first) — same
- *      "extend the engine-legality function even though this exact
- *      build can't reach it" posture soniox's own listing here already
- *      set as precedent. "osspeech" (S11, v0.4.3) joins for the
- *      IDENTICAL structural-only reason — also desktop/Tauri-only, so
- *      applyPlatformEngineDefaults would already have coerced any
- *      stored "osspeech" away to "tabaudio" on a real (web) preview
- *      build before this function ever sees it.
+ *      preview — see Header.tsx's ENGINE_OPTIONS) OR "soniox"/"deepgram"
+ *      (BYOK cloud, same preview lock via ENGINE_OPTIONS' byokOnly —
+ *      v0.4 S4 blueprint decision E / v0.4.7 Lane D) is coerced to
+ *      "webspeech" so a returning preview user's start button still does
+ *      real transcription instead of silently trying a disabled engine.
+ *      "appaudio" joins this list too (S9/D7) — structurally, not
+ *      because it's ever actually reachable here: appaudio is
+ *      desktop-only, and the preview tier is a hosted WEB build, so
+ *      applyPlatformEngineDefaults above would already have coerced any
+ *      stored "appaudio" away to "tabaudio" before this function ever
+ *      sees it on a real preview build (migrateSettings runs both,
+ *      platform first) — same "extend the engine-legality function even
+ *      though this exact build can't reach it" posture soniox's own
+ *      listing here already set as precedent. "osspeech" (S11, v0.4.3)
+ *      joins for the IDENTICAL structural-only reason — also
+ *      desktop/Tauri-only, so applyPlatformEngineDefaults would already
+ *      have coerced any stored "osspeech" away to "tabaudio" on a real
+ *      (web) preview build before this function ever sees it.
+ *      "deepgram" (v0.4.7 Lane D) needs no such structural caveat: it IS
+ *      reachable here — deepgram lives on both web and desktop (doc §5),
+ *      so applyPlatformEngineDefaults never coerces it away first.
  *   2. True first run only — `hadSavedEngine` is false — is coerced
  *      from the default "demo" to "webspeech" so the start button does
  *      real transcription out of the box, without a trip to Settings.
@@ -502,7 +505,8 @@ export function applyTierDefaults(
     settings.engine === "tabaudio" ||
     settings.engine === "appaudio" ||
     settings.engine === "osspeech" ||
-    settings.engine === "soniox"
+    settings.engine === "soniox" ||
+    settings.engine === "deepgram"
   ) {
     return { ...settings, engine: "webspeech" };
   }

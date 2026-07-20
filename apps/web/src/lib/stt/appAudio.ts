@@ -49,7 +49,14 @@
 // start() has superseded it — a late chunk/status from a dying session
 // can never cross into a later one on the SAME engine instance.
 
-import { newId, type STTEngine, type STTEngineKind, type STTEvents, type Settings } from "@jargonslayer/core/types";
+import {
+  newId,
+  type MeetingLexicon,
+  type STTEngine,
+  type STTEngineKind,
+  type STTEvents,
+  type Settings,
+} from "@jargonslayer/core/types";
 import { WsTransport } from "./wsTransport";
 import { getChannelFactory, getInvoke, getListen, type UnlistenFn } from "../desktop/tauriApi";
 import { diagLog } from "../diag/log";
@@ -197,7 +204,7 @@ export class AppAudioEngine implements STTEngine {
   private channelMessageCount = 0;
   private channelByteTotal = 0;
 
-  async start(events: STTEvents, settings: Settings): Promise<void> {
+  async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
     diagLog("info", "stt-appaudio", "系统音频引擎启动请求");
     this.events = events;
     this.stopping = false;
@@ -317,6 +324,7 @@ export class AppAudioEngine implements STTEngine {
     transport = new WsTransport({
       events,
       settings,
+      lexicon,
       connectFailureMessage: (url) =>
         `系统音频捕获需要本地 Whisper（见 README），无法连接 ${url}`,
     });

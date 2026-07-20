@@ -826,6 +826,7 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(applyTierDefaults(withEngine("appaudio"), false, true).engine).toBe("appaudio");
     expect(applyTierDefaults(withEngine("osspeech"), false, true).engine).toBe("osspeech");
     expect(applyTierDefaults(withEngine("soniox"), false, true).engine).toBe("soniox");
+    expect(applyTierDefaults(withEngine("deepgram"), false, true).engine).toBe("deepgram");
     expect(applyTierDefaults(withEngine("demo"), false, false).engine).toBe("demo");
   });
 
@@ -846,6 +847,11 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
 
   it("preview tier coerces a saved BYOK cloud engine (soniox) to webspeech — v0.4 S4 blueprint decision E / risk 4, same lock as whisper/tabaudio/appaudio", () => {
     const s = applyTierDefaults(withEngine("soniox"), true, true);
+    expect(s.engine).toBe("webspeech");
+  });
+
+  it("preview tier coerces a saved BYOK cloud engine (deepgram) to webspeech — v0.4.7 Lane D, same lock as soniox", () => {
+    const s = applyTierDefaults(withEngine("deepgram"), true, true);
     expect(s.engine).toBe("webspeech");
   });
 
@@ -932,13 +938,13 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
   });
 
   it("desktop leaves every other engine untouched, including appaudio and osspeech themselves", () => {
-    for (const engine of ["whisper", "appaudio", "osspeech", "soniox", "demo"] as const) {
+    for (const engine of ["whisper", "appaudio", "osspeech", "soniox", "deepgram", "demo"] as const) {
       expect(applyPlatformEngineDefaults(withEngine(engine), true).engine).toBe(engine);
     }
   });
 
   it("web leaves every other engine untouched, including tabaudio itself", () => {
-    for (const engine of ["webspeech", "whisper", "tabaudio", "soniox", "demo"] as const) {
+    for (const engine of ["webspeech", "whisper", "tabaudio", "soniox", "deepgram", "demo"] as const) {
       expect(applyPlatformEngineDefaults(withEngine(engine), false).engine).toBe(engine);
     }
   });
@@ -962,7 +968,7 @@ describe("applyPlatformEngineDefaults — S13 iOS osspeech-only coercion (3rd, i
     return { ...DEFAULT_SETTINGS, engine };
   }
 
-  it.each(["webspeech", "whisper", "tabaudio", "appaudio", "soniox"] as const)(
+  it.each(["webspeech", "whisper", "tabaudio", "appaudio", "soniox", "deepgram"] as const)(
     "iOS coerces a stored %s to osspeech (iOS v1's ENGINE_OPTIONS is osspeech-only)",
     (engine) => {
       const s = applyPlatformEngineDefaults(withEngine(engine), false, true);

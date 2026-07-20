@@ -133,15 +133,18 @@ def make_server(emit_partials: bool = False, stub_text: str = "text") -> Whisper
     """A WhisperServer with no real faster-whisper model — `_transcribe`
     is monkey-patched on the INSTANCE (bypasses the descriptor
     protocol, so the replacement is called with exactly (audio,
-    language), no implicit self) to a deterministic stub, per this
-    task's spec: 'stubbed _transcribe, no model download'."""
+    language, initial_prompt), no implicit self) to a deterministic
+    stub, per this task's spec: 'stubbed _transcribe, no model
+    download'. `initial_prompt` (v0.4.7 Lane B) defaults to None so
+    every call site that omits it (state.initial_prompt unset) still
+    calls this stub validly."""
     server = WhisperServer(
         model=None,
         default_language="en",
         emit_partials=emit_partials,
         save_audio_path=None,
     )
-    server._transcribe = lambda audio, language: stub_text  # type: ignore[method-assign]
+    server._transcribe = lambda audio, language, initial_prompt=None: stub_text  # type: ignore[method-assign]
     return server
 
 
@@ -579,6 +582,80 @@ async def test_config_message_sets_partials_override() -> None:
 
 
 # =================================================================
+# initial_prompt (v0.4.7 Lane B, glossary -> recognizer bias):
+# config.initial_prompt sets a per-connection biasing hint threaded
+# into every faster-whisper transcribe() call on this connection (both
+# partial and final) — mirrors config.partials's own override wiring
+# above, plus a second test proving the value actually reaches
+# self.model.transcribe() (not just ConnectionState).
+# =================================================================
+
+
+async def test_config_message_sets_initial_prompt() -> None:
+    server = make_server()
+    ws = FakeWs()
+    state = ConnectionState(language="en")
+    check("initial_prompt starts unset (None)", state.initial_prompt is None)
+
+    await server._handle_text(
+        ws, state, json.dumps({"type": "config", "initial_prompt": "scRNA-seq, UMAP"})
+    )
+    check("config initial_prompt sets state.initial_prompt", state.initial_prompt == "scRNA-seq, UMAP")
+
+    await server._handle_text(ws, state, json.dumps({"type": "config"}))
+    check(
+        "config with no initial_prompt key leaves a prior value untouched",
+        state.initial_prompt == "scRNA-seq, UMAP",
+    )
+
+    await server._handle_text(ws, state, json.dumps({"type": "config", "initial_prompt": ""}))
+    check(
+        "config initial_prompt: an empty string does not clear a prior value (mirrors language's own isinstance+truthy gate)",
+        state.initial_prompt == "scRNA-seq, UMAP",
+    )
+
+
+class _FakeTranscribeModel:
+    """Records the kwargs of every transcribe() call — unlike
+    make_server()'s own `_transcribe` stub (which replaces the whole
+    method), this fakes the underlying MODEL itself so _transcribe's
+    real body (this test's actual subject) still runs, proving
+    initial_prompt reaches self.model.transcribe(...) rather than just
+    landing on ConnectionState."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def transcribe(self, audio, **kwargs):
+        self.calls.append(kwargs)
+
+        class _Seg:
+            text = "stubbed"
+
+        class _Info:
+            pass
+
+        return [_Seg()], _Info()
+
+
+def test_transcribe_forwards_initial_prompt_to_the_model() -> None:
+    model = _FakeTranscribeModel()
+    server = WhisperServer(model=model, default_language="en", emit_partials=False, save_audio_path=None)
+
+    server._transcribe(speech_frame(), "en", initial_prompt="scRNA-seq, UMAP")
+    check(
+        "_transcribe forwards a provided initial_prompt to model.transcribe()",
+        model.calls[-1].get("initial_prompt") == "scRNA-seq, UMAP",
+    )
+
+    server._transcribe(speech_frame(), "en")
+    check(
+        "_transcribe defaults initial_prompt to None when the caller omits it (no connection ever set one)",
+        model.calls[-1].get("initial_prompt") is None,
+    )
+
+
+# =================================================================
 # partial single-flight + finals-priority
 # =================================================================
 
@@ -586,7 +663,7 @@ async def test_config_message_sets_partials_override() -> None:
 async def test_partial_single_flight_skip() -> None:
     calls: list[int] = []
 
-    def stub(audio: np.ndarray, language: str) -> str:
+    def stub(audio: np.ndarray, language: str, initial_prompt: Optional[str] = None) -> str:
         calls.append(1)
         return "partial text"
 
@@ -610,7 +687,7 @@ async def test_partial_single_flight_skip() -> None:
 async def test_partial_skipped_while_finalize_queue_nonempty() -> None:
     calls: list[int] = []
 
-    def stub(audio: np.ndarray, language: str) -> str:
+    def stub(audio: np.ndarray, language: str, initial_prompt: Optional[str] = None) -> str:
         calls.append(1)
         return "partial text"
 
@@ -642,7 +719,7 @@ async def test_partial_skipped_while_finalize_queue_nonempty() -> None:
 async def test_seg_id_monotonic_with_empty_gap() -> None:
     texts = iter(["hello", "", "world"])  # the 2nd segment transcribes to empty
 
-    def stub(audio: np.ndarray, language: str) -> str:
+    def stub(audio: np.ndarray, language: str, initial_prompt: Optional[str] = None) -> str:
         return next(texts)
 
     server = make_server()
@@ -675,7 +752,7 @@ async def test_finalize_queue_preserves_send_order() -> None:
     texts = [f"seg-{i}" for i in range(5)]
     remaining = iter(texts)
 
-    def stub(audio: np.ndarray, language: str) -> str:
+    def stub(audio: np.ndarray, language: str, initial_prompt: Optional[str] = None) -> str:
         return next(remaining)
 
     server = make_server()
@@ -714,7 +791,7 @@ async def test_finalize_queue_preserves_send_order() -> None:
 
 
 async def test_partial_carries_lag_ms() -> None:
-    def slow_stub(audio: np.ndarray, language: str) -> str:
+    def slow_stub(audio: np.ndarray, language: str, initial_prompt: Optional[str] = None) -> str:
         time.sleep(0.02)
         return "partial text"
 
@@ -737,7 +814,7 @@ async def test_partial_carries_lag_ms() -> None:
 
 
 async def test_final_carries_lag_ms() -> None:
-    def slow_stub(audio: np.ndarray, language: str) -> str:
+    def slow_stub(audio: np.ndarray, language: str, initial_prompt: Optional[str] = None) -> str:
         time.sleep(0.02)
         return "final text"
 
@@ -1038,6 +1115,7 @@ ASYNC_TESTS = [
     test_stop_waits_for_an_in_flight_pass_before_running_the_final_one,
     test_flush_finalizes_without_ack_and_stays_alive,
     test_config_message_sets_partials_override,
+    test_config_message_sets_initial_prompt,
     test_partial_single_flight_skip,
     test_partial_skipped_while_finalize_queue_nonempty,
     test_seg_id_monotonic_with_empty_gap,
@@ -1056,6 +1134,7 @@ async def run_async_tests() -> None:
 
 
 test_partials_override_both_directions()
+test_transcribe_forwards_initial_prompt_to_the_model()
 test_diarization_probe_not_installed()
 test_diarization_probe_installed_no_token()
 test_diarization_probe_installed_with_token()

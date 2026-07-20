@@ -10,17 +10,28 @@ vi.mock("../remotePacksRegistry", () => ({
 }));
 
 import { findEntryBySurface } from "../../history/glossaryLookup";
-import { scanDictionary } from "../dictionary";
+import { getLoadedRemotePacks } from "../remotePacksRegistry";
+import type { LoadedRemotePack } from "../remotePacksRegistry";
+import { packTermsForBias, scanDictionary, setEnabledPacks } from "../dictionary";
 
 const mockFindEntryBySurface = vi.mocked(findEntryBySurface);
+const mockGetLoadedRemotePacks = vi.mocked(getLoadedRemotePacks);
 
 beforeEach(() => {
   mockFindEntryBySurface.mockReset();
   mockFindEntryBySurface.mockReturnValue(null);
+  mockGetLoadedRemotePacks.mockReset();
+  mockGetLoadedRemotePacks.mockReturnValue([]);
 });
 
 afterEach(() => {
   vi.clearAllMocks();
+  // packTermsForBias's own tests below call setEnabledPacks() to
+  // exercise its default-param registry read — real module state,
+  // untouched by clearAllMocks(), so it must be restored explicitly or
+  // it would leak into scanDictionary's OWN default-enabledPacks tests
+  // above (which rely on the "null = every pack on" default).
+  setEnabledPacks(null);
 });
 
 describe("scanDictionary — base entry matching, word boundary", () => {
@@ -208,5 +219,83 @@ describe("scanDictionary — empty input", () => {
   it("returns empty expressions/terms for empty or whitespace-only text", () => {
     expect(scanDictionary("")).toEqual({ expressions: [], terms: [] });
     expect(scanDictionary("   ")).toEqual({ expressions: [], terms: [] });
+  });
+});
+
+// ---------------------------------------------------------------
+// packTermsForBias (v0.4.7 Lane B, glossary -> recognizer bias) — the
+// SAME built-in-table + remote-pack universe scanDictionary's own term
+// loop reads, minus personal-glossary shadowing (irrelevant to a bias
+// hint). Filtered down to each test's own injected remote-pack
+// fixture (tagged with a pack id the real built-in tables never use)
+// so assertions don't depend on the real dictionary's exact term
+// count/content.
+// ---------------------------------------------------------------
+
+describe("packTermsForBias", () => {
+  // Mirrors LoadedRemotePack's own doc comment ("entries have `pack`
+  // forced to the manifest's own id") — the real loader (apps/web's
+  // remotePacks.ts) normalizes this before populating the registry;
+  // this fixture builder does the same forcing so hand-written term
+  // literals below don't have to repeat the pack id themselves.
+  function remotePack(id: string, terms: Omit<LoadedRemotePack["terms"][number], "pack">[]): LoadedRemotePack {
+    return {
+      id,
+      name: id,
+      version: 1,
+      expressions: [],
+      terms: terms.map((t) => ({ ...t, pack: id })),
+    };
+  }
+
+  it("includes remote-pack terms alongside the built-in tables, tagged with their own pack id", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_remote_pack__", [{ term: "gene-x", type: "other", gloss_en: "", gloss_zh: "" }]),
+    ]);
+    const result = packTermsForBias(null);
+    expect(result).toContainEqual({ term: "gene-x", pack: "__test_remote_pack__" });
+  });
+
+  it("expressions are never included — bias is term-only (doc §3, terms-not-idioms rationale)", () => {
+    // No expression fixture to check against directly (packTermsForBias's
+    // own return shape has no expression field at all) — this pins the
+    // CONTRACT: the function signature only ever returns {term, pack}.
+    mockGetLoadedRemotePacks.mockReturnValue([]);
+    const result = packTermsForBias(null);
+    expect(result.every((e) => typeof e.term === "string" && typeof e.pack === "string")).toBe(true);
+  });
+
+  it("isPackEnabled filtering: an explicit enabledPacks list excludes a pack not on it", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_pack_a__", [{ term: "a-term", type: "other", gloss_en: "", gloss_zh: "" }]),
+      remotePack("__test_pack_b__", [{ term: "b-term", type: "other", gloss_en: "", gloss_zh: "" }]),
+    ]);
+    const result = packTermsForBias(["__test_pack_a__"]);
+    expect(result.some((e) => e.pack === "__test_pack_a__")).toBe(true);
+    expect(result.some((e) => e.pack === "__test_pack_b__")).toBe(false);
+  });
+
+  it("commonWord terms are excluded under the default all-on state (enabledPacks: null) — same guard scanDictionary applies", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_common_pack__", [
+        { term: "common-word", type: "other", gloss_en: "", gloss_zh: "", commonWord: true },
+      ]),
+    ]);
+    expect(packTermsForBias(null).some((e) => e.term === "common-word")).toBe(false);
+    // Once the user has actively customized their pack selection
+    // (an explicit list, even one that names this exact pack), the
+    // commonWord guard lifts — mirrors scanDictionary's own rule.
+    expect(packTermsForBias(["__test_common_pack__"]).some((e) => e.term === "common-word")).toBe(true);
+  });
+
+  it("defaults to the module-level registry (setEnabledPacks) when called with no argument", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_pack_a__", [{ term: "a-term", type: "other", gloss_en: "", gloss_zh: "" }]),
+      remotePack("__test_pack_b__", [{ term: "b-term", type: "other", gloss_en: "", gloss_zh: "" }]),
+    ]);
+    setEnabledPacks(["__test_pack_a__"]);
+    const result = packTermsForBias();
+    expect(result.some((e) => e.pack === "__test_pack_a__")).toBe(true);
+    expect(result.some((e) => e.pack === "__test_pack_b__")).toBe(false);
   });
 });

@@ -147,4 +147,20 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     biasSupport: "context",
     byokOnly: true,
   },
+  // v0.4.7 Lane D (docs/design-explorations/stt-provider-wiring-2026-07.md
+  // §5/§9) — second cloud engine, English-only (no `languages`/`biasSupport`
+  // field distinguishes this from soniox's zh-en scope: D5 cut `languages`
+  // from the contract entirely, so the English-only story lives in
+  // SettingsDialog.tsx's card copy instead).
+  deepgram: {
+    kind: "deepgram",
+    label: "Deepgram 云端识别",
+    // mip_opt_out sent UNCONDITIONALLY (D7) — this is what makes the
+    // integration honestly cloud-transient rather than cloud-stored (the
+    // doc's own §5 flagged this as a self-contradiction until D7
+    // resolved it).
+    retentionClass: "cloud-transient",
+    biasSupport: "keyterms", // D1: paid add-on, opt-in only — see deepgramTransport.ts
+    byokOnly: true,
+  },
 };

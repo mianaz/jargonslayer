@@ -539,3 +539,99 @@ describe("HamburgerMenu — btn-caption (S14 悬浮字幕), web host", () => {
     expect(container!.querySelector('[data-testid="btn-caption"]')).toBeNull();
   });
 });
+
+// v0.4.7 Lane C — tri-state privacy label (docs/design-explorations/
+// stt-provider-wiring-2026-07.md §4/§9 D5-D7 + Lane C addendum, Opus
+// C5): EnginePostureChip's own wiring onto RETENTION_COPY[
+// resolveEngineRetentionClass(...)] — engineOptions.test.ts already
+// pins the resolver/table logic in isolation; this pins that the DOM
+// actually reflects it (label text, hint title, color class), plus the
+// one behavior that's Header-specific (demo renders no chip at all,
+// unlike StatusLine which always renders with demo forced local).
+describe("Header — EnginePostureChip (v0.4.7 Lane C tri-state)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", sttEngineMode: null });
+  });
+
+  async function renderHeader() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+          onOpenTaskCenter={noop}
+        />,
+      );
+    });
+  }
+
+  it("engine:soniox renders the cloud-transient chip — short label, doc §4 hint as title, amber color", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "soniox" }, status: "idle" });
+    await renderHeader();
+
+    const chip = container!.querySelector('span[title="云端 · 处理后不留存"]');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toBe("云端·不留存");
+    expect(chip!.className).toContain("text-warn-soft");
+    expect(chip!.className).toContain("border-warn-soft/30");
+  });
+
+  it("engine:webspeech + sttEngineMode:'on-device' narrows to the local chip (D7 runtime overlay) — same resolver StatusLine's privacy segment uses", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "webspeech" },
+      status: "listening",
+      sttEngineMode: "on-device",
+    });
+    await renderHeader();
+
+    const chip = container!.querySelector('span[title="本地处理 · 音频不出设备"]');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toBe("本地");
+    expect(chip!.className).toContain("text-lab-green");
+  });
+
+  it("engine:webspeech + sttEngineMode:'cloud' stays at the cloud-transient default (no false-local claim)", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "webspeech" },
+      status: "listening",
+      sttEngineMode: "cloud",
+    });
+    await renderHeader();
+
+    const chip = container!.querySelector('span[title="云端 · 处理后不留存"]');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toBe("云端·不留存");
+  });
+
+  it("engine:demo renders no chip at all (no audio exists — same early-out as before, ENGINE_OPTIONS excludes demo)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "demo" }, status: "idle" });
+    await renderHeader();
+
+    expect(container!.querySelector('span[title="本地处理 · 音频不出设备"]')).toBeNull();
+    expect(container!.querySelector('span[title="云端 · 处理后不留存"]')).toBeNull();
+  });
+});

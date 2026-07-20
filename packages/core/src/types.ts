@@ -32,6 +32,14 @@ export type STTEngineKind =
   // whisper/tabaudio's triple gate (ENGINE_CARDS/Header previewLocked +
   // store.ts applyTierDefaults coercion + key field disabled).
   | "soniox"
+  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+  // Lane D): Deepgram Nova-3 cloud STT — second cloud engine, same BYOK
+  // triple gate as soniox above (ENGINE_CARDS byokOnly + store.ts
+  // applyTierDefaults coercion + key field disabled). English-only in
+  // v0.4.7 (Nova-3's language=multi has no Chinese — soniox stays the
+  // zh-en code-switching engine); lights up web + desktop from the one
+  // browser-WS adapter (deepgramTransport.ts), no iOS v1 capture path.
+  | "deepgram"
   // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D7):
   // desktop-only native app/system audio capture via a CoreAudio
   // process tap (apps/desktop/src-tauri's audiocap helper) — the
@@ -118,9 +126,29 @@ export interface STTEvents {
   onEngineMode?: (mode: "on-device" | "cloud") => void;
 }
 
+// v0.4.7 Lane B (glossary -> recognizer bias, docs/design-explorations/
+// stt-provider-wiring-2026-07.md §3/D3/D8): ONE tiered, deduped,
+// priority-ordered (highest priority first) term list, built ONCE per
+// engine.start() call at the meeting-start callsite
+// (apps/web/src/hooks/useMeeting.ts's attachEngine) and passed
+// explicitly — D8: adapters never read the store for this themselves.
+// Purely structural (no zh strings) so it can live in core alongside
+// STTEngine; the actual builder (glossary + packs + suppressed-
+// learn-set tiering, D3) and every per-adapter projection/cap live in
+// apps/web/src/lib/stt/lexicon.ts (D6 placement — core carries no zh
+// strings/business logic; desktop/iOS both wrap the same apps/web
+// bundle, so that placement already reaches every surface).
+export interface MeetingLexicon {
+  terms: string[];
+}
+
 export interface STTEngine {
   readonly kind: STTEngineKind;
-  start(events: STTEvents, settings: Settings): Promise<void>;
+  // `lexicon` (v0.4.7 Lane B, D8): optional so engines that don't
+  // consume bias (webspeech: biasSupport "none"; demo) need not
+  // declare/read a 3rd param at all — TS structurally allows an
+  // implementation with fewer parameters than the interface declares.
+  start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void>;
   stop(): Promise<void>;
   // Soft pause/resume (STT protocol v2, B4 pause matrix): OPTIONAL —
   // only engines that can keep their capture/transport alive through a
@@ -454,6 +482,16 @@ export interface Settings {
   // (→ hasSonioxKey), but history/autoExport.ts's stripKeyMaterial is a
   // HAND-LISTED strip — sonioxKey must be added there (S4 chunk 6).
   sonioxKey: string;
+  // v0.4.7 (stt-provider-wiring-2026-07.md, Lane D): Deepgram BYOK API
+  // key for the "deepgram" cloud engine; "" = engine unavailable. Sent
+  // ONLY via deepgramTransport.ts's WebSocket Sec-WebSocket-Protocol
+  // handshake to api.deepgram.com (never a URL param, never a JSON
+  // message body — see that file's own header for the verified wire
+  // shape). diag/report.ts's SECRET_KEY_RE catches the name
+  // automatically (→ hasDeepgramKey), but history/autoExport.ts's
+  // stripKeyMaterial is a HAND-LISTED strip — deepgramKey is added there
+  // too, mirroring sonioxKey's own precedent immediately above.
+  deepgramKey: string;
   // Realtime speaker diarization (beta, whisper/tabaudio only): labels
   // live transcript segments with SPEAKER_1/2/… as the meeting
   // progresses, via the sidecar's ws-side pyannote pass (see
@@ -618,6 +656,7 @@ export const DEFAULT_SETTINGS: Settings = {
   enabledPacks: null,
   hfToken: "",
   sonioxKey: "",
+  deepgramKey: "",
   realtimeDiarize: false,
   partials: true,
   preferOnDeviceSpeech: true,

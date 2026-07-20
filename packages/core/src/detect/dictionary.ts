@@ -998,6 +998,32 @@ export function setEnabledPacks(packs: string[] | null): void {
   registeredEnabledPacks = packs;
 }
 
+/** Built-in + remote pack TERM entries (bare term string + pack id),
+ *  filtered by isPackEnabled — the same universe scanDictionary's own
+ *  term loop reads (minus personal-glossary shadowing, which doesn't
+ *  apply here — this list feeds a BIAS hint, not the detector). The
+ *  commonWord/enabledPacks===null guard is kept for the same reason
+ *  scanDictionary applies it: a bias hint toward an everyday English
+ *  word ("mean", "precision"...) is at best inert and at worst nudges
+ *  the decoder the wrong way on ordinary speech. Expressions are NOT
+ *  included — recognizer bias earns its keep on exact jargon/acronym
+ *  recall; idiom phrasing is already well-modeled by the decoder's own
+ *  LM (v0.4.7 Lane B, docs/design-explorations/stt-provider-wiring-
+ *  2026-07.md §3/D3 — apps/web's lexicon.ts is the one consumer). */
+export function packTermsForBias(
+  enabledPacks: string[] | null = registeredEnabledPacks,
+): { term: string; pack: string }[] {
+  const remotePacks = getLoadedRemotePacks();
+  const remoteTerms: TermEntry[] = remotePacks.flatMap((p) => p.terms);
+  const result: { term: string; pack: string }[] = [];
+  for (const entry of [...TERM_DICTIONARY, ...remoteTerms]) {
+    if (!isPackEnabled(entry.pack, enabledPacks)) continue;
+    if (entry.commonWord && enabledPacks === null) continue;
+    result.push({ term: entry.term, pack: entry.pack });
+  }
+  return result;
+}
+
 // ---------------------------------------------------------------
 // Matching helpers
 // ---------------------------------------------------------------

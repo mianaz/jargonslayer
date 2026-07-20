@@ -8,6 +8,7 @@ import { AppAudioEngine } from "./appAudio";
 import { OsSpeechEngine } from "./osSpeech";
 import { DemoEngine } from "./demo";
 import { SonioxEngine } from "./soniox";
+import { DeepgramEngine } from "./deepgram";
 
 export function createEngine(kind: STTEngineKind): STTEngine {
   switch (kind) {
@@ -37,6 +38,12 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // byokOnly-gated), same preview-tier coercion path as every
       // other engine.
       return new SonioxEngine();
+    case "deepgram":
+      // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+      // Lane D) — second BYOK cloud engine, same triple gate as soniox
+      // above (ENGINE_CARDS/ENGINE_OPTIONS byokOnly + store.ts
+      // applyTierDefaults coercion + key field disabled).
+      return new DeepgramEngine();
     case "import":
       // "import" (#43) is never a live capture engine — imported
       // sessions are built fully offline by importText.ts and never

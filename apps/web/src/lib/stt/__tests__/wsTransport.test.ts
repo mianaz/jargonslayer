@@ -84,6 +84,51 @@ describe("WsTransport — protocol v2", () => {
   });
 
   // ---------------------------------------------------------------
+  // v0.4.7 Lane B (glossary -> recognizer bias, D8): config gains
+  // initial_prompt when a lexicon is provided — whisper/tabaudio/
+  // appaudio all ride this SAME shared transport, so one test here
+  // covers all three sidecar-backed engines.
+  // ---------------------------------------------------------------
+
+  it("omits initial_prompt from the config message when no lexicon is provided", async () => {
+    const transport = new WsTransport({
+      events,
+      settings: { ...DEFAULT_SETTINGS },
+      connectFailureMessage: (url) => `failed: ${url}`,
+    });
+    const ws = await attachAndOpen(transport);
+    const config = JSON.parse(ws.sent[0] as string);
+    expect(config).not.toHaveProperty("initial_prompt");
+  });
+
+  it("omits initial_prompt when the lexicon projects to nothing (empty terms)", async () => {
+    const transport = new WsTransport({
+      events,
+      settings: { ...DEFAULT_SETTINGS },
+      connectFailureMessage: (url) => `failed: ${url}`,
+      lexicon: { terms: [] },
+    });
+    const ws = await attachAndOpen(transport);
+    const config = JSON.parse(ws.sent[0] as string);
+    expect(config).not.toHaveProperty("initial_prompt");
+  });
+
+  it("a provided lexicon reaches the config message as initial_prompt, highest-priority term LAST (D3 END-priority)", async () => {
+    const transport = new WsTransport({
+      events,
+      settings: { ...DEFAULT_SETTINGS },
+      connectFailureMessage: (url) => `failed: ${url}`,
+      lexicon: { terms: ["scRNA-seq", "UMAP"] },
+    });
+    const ws = await attachAndOpen(transport);
+    const config = JSON.parse(ws.sent[0] as string);
+    // "scRNA-seq" is the higher-priority term (lexicon.terms[0]) — it
+    // must land LAST so faster-whisper's own last-223-tokens
+    // truncation keeps it (see lexicon.ts's projectForInitialPrompt).
+    expect(config.initial_prompt).toBe("UMAP, scRNA-seq");
+  });
+
+  // ---------------------------------------------------------------
   // stop() drain-ack wait
   // ---------------------------------------------------------------
 

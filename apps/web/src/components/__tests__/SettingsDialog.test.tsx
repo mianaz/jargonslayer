@@ -693,6 +693,90 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: Soniox (v0.4 S4 chunk 6)
   });
 });
 
+// ---------------------------------------------------------------
+// Deepgram engine card + BYOK key field (v0.4.7 stt-provider-wiring,
+// Lane D). Mirrors the Soniox describe block immediately above
+// field-for-field — same PREVIEW_TIER/IS_DESKTOP import-time-const
+// limitation, same reason previewLocked gating itself isn't exercised
+// here.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS: Deepgram (v0.4.7 Lane D)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("renders the Deepgram card with its 实验 tag and honest English-only scope copy", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const card = findButtonContaining("Deepgram 云端识别");
+    expect(card.textContent).toContain("实验");
+    expect(card.textContent).toContain("BYOK 按量计费");
+    expect(card.textContent).toContain("仅英文");
+    expect(card.textContent).toContain("Soniox");
+  });
+
+  it("the Deepgram API Key field is absent until the Deepgram card is picked (engine-conditional, mirrors Soniox's own posture)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.querySelector('input[placeholder="粘贴你的 Deepgram API Key"]')).toBeNull();
+
+    await act(async () => {
+      findButtonContaining("Deepgram 云端识别").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container!.querySelector('input[placeholder="粘贴你的 Deepgram API Key"]')).not.toBeNull();
+  });
+
+  it("switching off Deepgram hides the key field again", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "deepgram" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const input = container!.querySelector(
+      'input[placeholder="粘贴你的 Deepgram API Key"]',
+    ) as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+
+    await act(async () => {
+      findButtonContaining("浏览器识别").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('input[placeholder="粘贴你的 Deepgram API Key"]')).toBeNull();
+  });
+});
+
 describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox Key (v0.4 S4 chunk 6)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
@@ -713,7 +797,7 @@ describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox
     resetStore();
   });
 
-  it("「不包含 API Key」hint enumerates Soniox Key alongside HF Token/Webhook/连接码 — matches stripKeyMaterial's own hand-listed fields (autoExport.ts)", async () => {
+  it("「不包含 API Key」hint enumerates Soniox Key/Deepgram Key alongside HF Token/Webhook/连接码 — matches stripKeyMaterial's own hand-listed fields (autoExport.ts)", async () => {
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
     });
@@ -730,6 +814,7 @@ describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox
     });
 
     expect(container!.textContent).toContain("Soniox Key");
+    expect(container!.textContent).toContain("Deepgram Key");
   });
 });
 

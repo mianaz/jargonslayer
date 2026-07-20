@@ -10,6 +10,7 @@ import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
+import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
@@ -266,7 +267,29 @@ export function useMeeting(): UseMeetingResult {
       },
     };
 
-    await engine.start(events, settings);
+    // v0.4.7 Lane B (glossary -> recognizer bias, docs/design-
+    // explorations/stt-provider-wiring-2026-07.md §3, D8): ONE lexicon
+    // snapshot, built HERE (read via existing store selectors, same
+    // moment `settings` above was read) and passed explicitly into
+    // engine.start() — adapters never read the store for this
+    // themselves anymore (Q11's osSpeech.ts direct read migrated onto
+    // this same seam). Every real engine.start() invocation goes
+    // through this ONE attachEngine() call site (fresh start() AND
+    // resume()'s teardown-reattach), so a mid-meeting reattach always
+    // gets a freshly-built snapshot too — same "start-time one-shot"
+    // semantics Q11 already had, just generalized.
+    //
+    // D1 extension point: bias is default-ON, unconditional, for every
+    // free/local mechanism (doc D1) — a future 术语偏置 Settings toggle
+    // would gate this whole build+pass step right here (e.g. `settings
+    // .termBiasEnabled === false ? undefined : buildMeetingLexicon(...)`)
+    // rather than inside any individual adapter.
+    const lexicon = buildMeetingLexicon({
+      customEntries: useApp.getState().customEntries,
+      enabledPacks: settings.enabledPacks,
+      learnset: useApp.getState().learnset,
+    });
+    await engine.start(events, settings, lexicon);
     return !attachFailed;
   }, []);
 

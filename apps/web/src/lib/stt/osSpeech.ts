@@ -35,14 +35,13 @@
 // directly), re-checked after every awaited acquisition — see
 // appAudio.ts's own F2 finding for why this matters.
 
-import type { CustomEntry, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
-import { customEntrySurfaces } from "@jargonslayer/core/types";
+import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { getInvoke, type UnlistenFn } from "../desktop/tauriApi";
 import { trackOsSpeechAsset, type OsSpeechAssetTracker } from "../desktop/jobsBridge";
 import { diagLog } from "../diag/log";
-import { useApp } from "../store";
 import { IS_IOS } from "../platform/ios";
 import { listenOsSpeechStatus, listenOsSpeechTranscript } from "./osSpeechTransport";
+import { projectForOsSpeechContextualJson } from "./lexicon";
 
 export type OsSpeechStatusKind =
   | "starting"
@@ -109,48 +108,6 @@ export const OSSPEECH_TERMINAL_STATUS_KINDS = new Set<OsSpeechStatusKind>([
 // see that file's own doc comment for the full invariant).
 const STOP_ENDED_TIMEOUT_MS = 4000;
 
-// Q11 (v1 scope, blueprint §1): contextualStrings biasing from the
-// personal glossary's headwords+variants ONLY (dictionary packs
-// deferred to v0.4.4). BOTH caps are enforced independently on every
-// candidate term — a glossary heavy on CJK entries can blow past ~8KB
-// of encoded JSON well under 100 terms, so term-count alone isn't a
-// sufficient bound.
-const MAX_CONTEXTUAL_TERMS = 100;
-const MAX_CONTEXTUAL_BYTES = 8 * 1024;
-
-/** Builds the `contextualJson` wire value for start_os_speech from the
- *  personal glossary (customEntrySurfaces already gives headword+variants,
- *  deduped per entry — this dedupes ACROSS entries too). Pure so it's
- *  unit-testable without the store/useApp — start() below is the one
- *  real caller, feeding it useApp.getState().customEntries. Empty (no
- *  entries, or nothing left after dedup) -> null, the wire's own "no
- *  bias" value. */
-export function buildContextualJson(entries: CustomEntry[]): string | null {
-  const seen = new Set<string>();
-  const candidates: string[] = [];
-  for (const entry of entries) {
-    for (const surface of customEntrySurfaces(entry)) {
-      if (seen.has(surface)) continue;
-      seen.add(surface);
-      candidates.push(surface);
-    }
-  }
-
-  const encoder = new TextEncoder();
-  const terms: string[] = [];
-  let bytes = 2; // "[" + "]"
-  for (const surface of candidates) {
-    if (terms.length >= MAX_CONTEXTUAL_TERMS) break;
-    // +1 for the joining comma once this wouldn't be the first element.
-    const extra = encoder.encode(JSON.stringify(surface)).length + (terms.length > 0 ? 1 : 0);
-    if (bytes + extra > MAX_CONTEXTUAL_BYTES) break;
-    terms.push(surface);
-    bytes += extra;
-  }
-
-  return terms.length > 0 ? JSON.stringify(terms) : null;
-}
-
 function unsupportedLocaleMessage(payload: OsSpeechStatusPayload): string {
   const requested = payload.message ? `（${payload.message}）` : "";
   const supported = payload.supportedLocales?.length
@@ -206,7 +163,7 @@ export class OsSpeechEngine implements STTEngine {
   private sessionStartEpoch: number | null = null;
   private finalCount = 0;
 
-  async start(events: STTEvents, settings: Settings): Promise<void> {
+  async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
     diagLog("info", "stt-osspeech", "系统识别引擎启动请求");
     this.events = events;
     this.stopping = false;
@@ -282,9 +239,14 @@ export class OsSpeechEngine implements STTEngine {
         return;
       }
 
-      // Q11: gathered fresh every start() (a glossary edit mid-session
-      // has no live effect — start-time one-shot, per the blueprint).
-      const contextualJson = buildContextualJson(useApp.getState().customEntries);
+      // Q11, generalized (v0.4.7 Lane B, D8): `lexicon` is the ONE
+      // snapshot useMeeting.ts's attachEngine already built fresh for
+      // THIS start() call (glossary headwords/variants + enabled packs
+      // + suppressed learn-set terms, tiered — see lexicon.ts) — no
+      // store read here at all anymore, matching every other engine
+      // this lane touched. `?? { terms: [] }` only guards a caller
+      // (e.g. a test) that omits the optional 3rd param entirely.
+      const contextualJson = projectForOsSpeechContextualJson(lexicon ?? { terms: [] });
 
       await invoke("start_os_speech", { locale: settings.language, contextualJson });
       helperStarted = true;

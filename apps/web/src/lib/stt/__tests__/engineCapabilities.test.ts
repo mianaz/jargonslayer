@@ -66,6 +66,17 @@ describe("ENGINE_CAPABILITIES — D5 contract shape", () => {
     });
   });
 
+  it("deepgram (v0.4.7 Lane D): one full example entry, exact shape (byokOnly cloud-transient — mip_opt_out sent unconditionally per D7 — keyterms bias)", () => {
+    const deepgram: EngineCapability = ENGINE_CAPABILITIES.deepgram;
+    expect(deepgram).toEqual({
+      kind: "deepgram",
+      label: "Deepgram 云端识别",
+      retentionClass: "cloud-transient",
+      biasSupport: "keyterms",
+      byokOnly: true,
+    });
+  });
+
   it("appaudio/osspeech carry their declarative osFloor tag (macos144/macos26) — inert metadata only, engineOptionGate does not read it (D5: array-subsumption REJECTED)", () => {
     expect(ENGINE_CAPABILITIES.appaudio.osFloor).toBe("macos144");
     expect(ENGINE_CAPABILITIES.osspeech.osFloor).toBe("macos26");

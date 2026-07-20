@@ -9,27 +9,133 @@
 // gate, which needs no build-time const at all.
 
 import { describe, expect, it } from "vitest";
-import { ENGINE_OPTIONS, PREVIEW_LOCKED_TITLE, engineOptionGate, type EngineOption } from "../engineOptions";
+import type { STTEngineKind } from "@jargonslayer/core/types";
+import {
+  ENGINE_OPTIONS,
+  PREVIEW_LOCKED_TITLE,
+  RETENTION_COPY,
+  engineOptionGate,
+  resolveEngineRetentionClass,
+  type EngineOption,
+} from "../engineOptions";
 
 describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
-  it("keeps webspeech (web never drops it) and tabaudio (D7: desktop-only swaps to appaudio)", () => {
+  it("keeps webspeech (web never drops it) and tabaudio (D7: desktop-only swaps to appaudio), and lists deepgram alongside soniox (v0.4.7 Lane D: web + desktop, no iOS v1)", () => {
     const values = ENGINE_OPTIONS.map((o) => o.value);
-    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox"]);
+    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox", "deepgram"]);
   });
 
-  it("every option carries a zh label and a local/cloud posture", () => {
+  it("every option carries a zh label, a local/cloud posture, and a matching retentionClass", () => {
     for (const opt of ENGINE_OPTIONS) {
       expect(opt.label.length).toBeGreaterThan(0);
       expect(["local", "cloud"]).toContain(opt.posture);
+      expect(["local", "cloud-transient", "cloud-stored"]).toContain(opt.retentionClass);
+      // posture is DERIVED from retentionClass (engineCapabilities.ts's
+      // derivePosture) — the two must never disagree on local-vs-cloud.
+      expect(opt.posture).toBe(opt.retentionClass === "local" ? "local" : "cloud");
     }
   });
 });
 
+// v0.4.7 Lane C — tri-state privacy label (docs/design-explorations/
+// stt-provider-wiring-2026-07.md §4, §9 D5-D7 + Lane C addendum).
+// RETENTION_COPY pins the three states' label+hint+color byte-for-byte;
+// resolveEngineRetentionClass pins the D7 runtime narrowing (webspeech
+// on-device) — the ONE function StatusLine's privacy segment and
+// Header's EnginePostureChip both call, so they can never disagree.
+// No live engine occupies cloud-stored yet (Deepgram resolves to
+// cloud-transient per D7's unconditional mip_opt_out=true) — pinned
+// directly here since no ENGINE_OPTIONS entry can reach it through
+// StatusLine/Header's own rendering path.
+describe("RETENTION_COPY — tri-state label+hint table", () => {
+  it("all three states carry a non-empty label/hint and the green/amber/red color idiom, doc §4 wording verbatim", () => {
+    expect(RETENTION_COPY.local).toEqual({
+      label: "本地",
+      hint: "本地处理 · 音频不出设备",
+      textClass: "text-lab-green",
+      borderClass: "border-lab-green/30",
+    });
+    expect(RETENTION_COPY["cloud-transient"]).toEqual({
+      label: "云端·不留存",
+      hint: "云端 · 处理后不留存",
+      textClass: "text-warn-soft",
+      borderClass: "border-warn-soft/30",
+    });
+    expect(RETENTION_COPY["cloud-stored"]).toEqual({
+      label: "云端·可能留存",
+      hint: "云端 · 可能留存/需配置",
+      textClass: "text-lab-red",
+      borderClass: "border-lab-red/30",
+    });
+  });
+
+  it("every state's textClass/borderClass share the same color token (no green border with amber text, etc.)", () => {
+    for (const copy of Object.values(RETENTION_COPY)) {
+      const token = copy.textClass.replace("text-", "");
+      expect(copy.borderClass).toBe(`border-${token}/30`);
+    }
+  });
+});
+
+describe("resolveEngineRetentionClass — D7 runtime resolution", () => {
+  it("demo is hard-pinned local regardless of sttEngineMode (no audio exists at all)", () => {
+    expect(resolveEngineRetentionClass("demo", null)).toBe("local");
+    expect(resolveEngineRetentionClass("demo", "cloud")).toBe("local");
+  });
+
+  it("an engine absent from ENGINE_OPTIONS (e.g. import, or a future unrecognized value) falls back to cloud-transient — never local", () => {
+    expect(resolveEngineRetentionClass("import", null)).toBe("cloud-transient");
+    expect(resolveEngineRetentionClass("future-engine" as unknown as STTEngineKind, null)).toBe(
+      "cloud-transient",
+    );
+  });
+
+  it("a local static engine (whisper) ignores sttEngineMode entirely", () => {
+    expect(resolveEngineRetentionClass("whisper", "on-device")).toBe("local");
+    expect(resolveEngineRetentionClass("whisper", null)).toBe("local");
+  });
+
+  it("a cloud static engine (soniox) ignores sttEngineMode too — the on-device overlay is webspeech-only", () => {
+    expect(resolveEngineRetentionClass("soniox", "on-device")).toBe("cloud-transient");
+  });
+
+  it("webspeech + sttEngineMode:'on-device' narrows the cloud-transient static default to local", () => {
+    expect(resolveEngineRetentionClass("webspeech", "on-device")).toBe("local");
+  });
+
+  it("webspeech + sttEngineMode:'cloud' or null stays at the cloud-transient static default", () => {
+    expect(resolveEngineRetentionClass("webspeech", "cloud")).toBe("cloud-transient");
+    expect(resolveEngineRetentionClass("webspeech", null)).toBe("cloud-transient");
+  });
+});
+
 describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
-  const whisper: EngineOption = { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true };
-  const appaudio: EngineOption = { value: "appaudio", label: "系统/App 音频", posture: "local", sidecarOnly: true };
-  const osspeech: EngineOption = { value: "osspeech", label: "系统识别 · 开箱即用", posture: "local" };
-  const webspeech: EngineOption = { value: "webspeech", label: "浏览器识别", posture: "cloud" };
+  const whisper: EngineOption = {
+    value: "whisper",
+    label: "本地 Whisper",
+    posture: "local",
+    retentionClass: "local",
+    sidecarOnly: true,
+  };
+  const appaudio: EngineOption = {
+    value: "appaudio",
+    label: "系统/App 音频",
+    posture: "local",
+    retentionClass: "local",
+    sidecarOnly: true,
+  };
+  const osspeech: EngineOption = {
+    value: "osspeech",
+    label: "系统识别 · 开箱即用",
+    posture: "local",
+    retentionClass: "local",
+  };
+  const webspeech: EngineOption = {
+    value: "webspeech",
+    label: "浏览器识别",
+    posture: "cloud",
+    retentionClass: "cloud-transient",
+  };
 
   it("full tier (PREVIEW_TIER false here), caps not yet resolved: never locked", () => {
     expect(engineOptionGate(whisper, null)).toEqual({ disabled: false, title: undefined });

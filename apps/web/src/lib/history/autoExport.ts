@@ -248,6 +248,9 @@ function stripKeyMaterial(settings: Settings): Settings {
     // strip as the other BYOK/pairing fields here (types.ts's own
     // sonioxKey doc comment points back at this exact line).
     sonioxKey: "",
+    // v0.4.7 (Lane D): Deepgram BYOK key — same hand-listed strip,
+    // mirroring sonioxKey's own precedent immediately above.
+    deepgramKey: "",
     agentToken: "",
     // Webhook URLs routinely embed capability tokens in the path
     // (n8n/飞书 style) — credential-like, stripped with the rest

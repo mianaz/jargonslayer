@@ -210,6 +210,19 @@ const ALL_ENGINE_CARDS: {
     posture: "cloud",
     byokOnly: true,
   },
+  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+  // Lane D) — second cloud engine, same BYOK/byokOnly posture as soniox
+  // above. Honest about scope: Nova-3's own `language=multi` mode has no
+  // Chinese (doc §9 Lane D wire spec), so this is single-language
+  // English-only in v0.4.7 — soniox stays the zh-en code-switching
+  // engine; the hint must not market this one for zh-en.
+  {
+    value: "deepgram",
+    label: "Deepgram 云端识别",
+    hint: "BYOK 按量计费、音频经 Deepgram 云端、仅英文（中英混说请用 Soniox）",
+    posture: "cloud",
+    byokOnly: true,
+  },
 ];
 
 // S10 field-fix #1: desktop drops the webspeech card entirely —
@@ -768,6 +781,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
   // field itself only renders when draft.engine === "soniox".
   const [showSonioxKey, setShowSonioxKey] = useState(false);
+  // Deepgram API Key masked-input toggle (v0.4.7 Lane D) — same idiom,
+  // scoped to 转录引擎 since the field itself only renders when
+  // draft.engine === "deepgram".
+  const [showDeepgramKey, setShowDeepgramKey] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -2062,6 +2079,68 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
+            {/* Deepgram API Key (v0.4.7 Lane D, docs/design-explorations/
+               stt-provider-wiring-2026-07.md §5/§9): engine-conditional,
+               mirrors the Soniox API Key block immediately above field-
+               for-field (same hand-rolled masked-input pattern, same S14
+               no-probe KeyStatusChip honesty, same preview-tier gate 3 of
+               3 alongside ENGINE_CARDS' byokOnly lock above and store.ts
+               applyTierDefaults' coercion). The key never rides a URL
+               param or a JSON message body — it rides the WebSocket
+               handshake's Sec-WebSocket-Protocol (see deepgramTransport.
+               ts's own header for the verified wire shape). */}
+            {draft.engine === "deepgram" && (
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs text-mut">Deepgram API Key</label>
+                  {/* S14: no probe exists for Deepgram either (same
+                     no-telemetry posture as Soniox above) — deriveKeyStatus
+                     with no evidence arg can only ever resolve 未配置/已配置,
+                     never 正常/异常. */}
+                  {!PREVIEW_TIER && <KeyStatusChip status={deriveKeyStatus(draft.deepgramKey)} />}
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type={showDeepgramKey ? "text" : "password"}
+                    value={draft.deepgramKey}
+                    disabled={PREVIEW_TIER}
+                    onChange={(e) => patch({ deepgramKey: e.target.value })}
+                    placeholder="粘贴你的 Deepgram API Key"
+                    className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    disabled={PREVIEW_TIER}
+                    onClick={() => setShowDeepgramKey((v) => !v)}
+                    aria-label={showDeepgramKey ? "隐藏" : "显示"}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {showDeepgramKey ? (
+                      <EyeSlash size={18} weight="regular" />
+                    ) : (
+                      <Eye size={18} weight="regular" />
+                    )}
+                  </button>
+                </div>
+                <div className="mt-1 text-xs text-mut2">
+                  按量计费；Key 随 WebSocket 握手直接发给 Deepgram 云端（wss://api.deepgram.com），不经我们的服务器；仅英文，中英混说请用 Soniox
+                </div>
+                {!PREVIEW_TIER && !draft.deepgramKey && (
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    前往{" "}
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://console.deepgram.com")}
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      console.deepgram.com
+                    </button>{" "}
+                    控制台创建 API Key
+                  </div>
+                )}
+              </div>
+            )}
+
             <div>
               <label className="text-xs text-mut">麦克风</label>
               <select
@@ -3236,7 +3315,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
                     取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Soniox Key /
-                    Webhook / 连接码），请妥善保管
+                    Deepgram Key / Webhook / 连接码），请妥善保管
                   </div>
                 </div>
                 <ToggleSwitch

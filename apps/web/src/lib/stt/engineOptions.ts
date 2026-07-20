@@ -52,7 +52,14 @@ import {
   osSpeechLockReason,
   type OsSpeechCapabilities,
 } from "@/lib/desktop/osspeechCaps";
-import { derivePosture, ENGINE_CAPABILITIES, type LiveEngineKind } from "./engineCapabilities";
+import {
+  derivePosture,
+  ENGINE_CAPABILITIES,
+  resolveWebspeechRetentionClass,
+  type LiveEngineKind,
+  type RetentionClass,
+} from "./engineCapabilities";
+import type { OnDeviceMode } from "./onDeviceSpeech";
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine, so it has exactly one affordance: the ≡ menu's 演示 item.
@@ -75,6 +82,12 @@ export interface EngineOption {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   posture: "local" | "cloud";
+  // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): the richer
+  // axis StatusLine/Header now read instead of the coarse posture above.
+  // Always populated by toEngineOption below — posture stays alongside
+  // it unchanged (TutorialOverlay.tsx/SettingsDialog.tsx's own separate
+  // POSTURE_LABEL copies still read it; out of this lane's scope).
+  retentionClass: RetentionClass;
   sidecarOnly?: boolean;
   byokOnly?: boolean;
 }
@@ -85,6 +98,7 @@ function toEngineOption(kind: LiveEngineKind): EngineOption {
     value: cap.kind,
     label: cap.label,
     posture: derivePosture(cap.retentionClass),
+    retentionClass: cap.retentionClass,
     sidecarOnly: cap.sidecarOnly,
     byokOnly: cap.byokOnly,
   };
@@ -102,6 +116,11 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   // structurally unaffected by the #61 preview-tier lock.
   ...(IS_DESKTOP ? [toEngineOption("osspeech")] : []),
   toEngineOption("soniox"),
+  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+  // Lane D) — second BYOK cloud engine, web + desktop only (no iOS v1
+  // capture path — see engineCapabilities.ts's own doc comment); same
+  // byokOnly preview-tier lock as soniox above.
+  toEngineOption("deepgram"),
 ];
 
 // S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D): iOS
@@ -136,6 +155,69 @@ export const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",
   cloud: "云端",
 };
+
+// v0.4.7 Lane C — tri-state privacy label (docs/design-explorations/
+// stt-provider-wiring-2026-07.md §4, D6: zh copy lives in apps/web,
+// packages/core carries zero zh strings). Upgrades the binary
+// 本地/云端 chip: Soniox (cloud-transient, no-retention default) and a
+// future cloud-stored engine used to collapse into the same amber
+// "云端" — a privacy-positioned tool should never say that. `label` is
+// the compact chip form (Header's EnginePostureChip); `hint` is the
+// doc §4 wording verbatim (WHERE audio goes + what the vendor
+// retains) — StatusLine's wider privacy segment shows it directly,
+// Header's badge carries it as its `title` tooltip. Colors keep the
+// established green=local/amber=cloud idiom (lab-green/warn-soft,
+// unchanged pixel-for-pixel from the pre-tri-state chips) and extend
+// honestly for cloud-stored with lab-red — the doc's own "red" column
+// (Deepgram default currently resolves to cloud-transient per D7's
+// mip_opt_out=true, so no live engine occupies this row yet; the UI
+// must still be able to tell the truth the day one does).
+export const RETENTION_COPY: Record<
+  RetentionClass,
+  { label: string; hint: string; textClass: string; borderClass: string }
+> = {
+  local: {
+    label: "本地",
+    hint: "本地处理 · 音频不出设备",
+    textClass: "text-lab-green",
+    borderClass: "border-lab-green/30",
+  },
+  "cloud-transient": {
+    label: "云端·不留存",
+    hint: "云端 · 处理后不留存",
+    textClass: "text-warn-soft",
+    borderClass: "border-warn-soft/30",
+  },
+  "cloud-stored": {
+    label: "云端·可能留存",
+    hint: "云端 · 可能留存/需配置",
+    textClass: "text-lab-red",
+    borderClass: "border-lab-red/30",
+  },
+};
+
+/** D7 two-layer truth (doc §9 D7 + Lane C addendum, Opus C5): the ONE
+ *  place StatusLine's privacy segment and Header's EnginePostureChip
+ *  both resolve the ACTIVE retentionClass for the selected engine, so
+ *  the two surfaces can never disagree (the addendum's own failure
+ *  mode: "two coexisting privacy labels that can disagree"). Mirrors
+ *  StatusLine's pre-tri-state posture derivation byte-for-byte: demo
+ *  has no audio at all (S10 field-fix #2's lead adjudication — hard-
+ *  pinned local), an engine absent from ENGINE_OPTIONS (import/
+ *  browser-whisper, or any future value) never defaults to local, and
+ *  webspeech alone narrows via the D7 runtime overlay
+ *  (resolveWebspeechRetentionClass, engineCapabilities.ts) using the
+ *  live onEngineMode signal (store.sttEngineMode). */
+export function resolveEngineRetentionClass(
+  engine: STTEngineKind,
+  sttEngineMode: OnDeviceMode | null,
+): RetentionClass {
+  if (engine === "demo") return "local";
+  const fallback = ENGINE_OPTIONS.find((o) => o.value === engine)?.retentionClass ?? "cloud-transient";
+  return engine === "webspeech"
+    ? resolveWebspeechRetentionClass(fallback, sttEngineMode ?? undefined)
+    : fallback;
+}
 
 export interface EngineOptionGate {
   disabled: boolean;

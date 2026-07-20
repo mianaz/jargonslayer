@@ -2,18 +2,18 @@
 // — mirrors appAudio.test.ts's own testing posture: invoke/listen are
 // faked via fakeTauri.ts with the whole tauriApi.ts module mocked out
 // (osSpeech.ts imports zero `@tauri-apps/*` itself, same "ONLY module"
-// contract). Additionally mocks "../../store" (useApp.getState().
-// customEntries, the contextual-gathering source — see jobsBridge.
-// test.ts's own identical mocking posture and its rationale: the real
-// store's module graph pulls in IndexedDB-backed history/glossary
-// modules that have no business running under these tests) and
+// contract). v0.4.7 Lane B (glossary -> recognizer bias, D8): start()'s
+// contextual-gathering source is now the `lexicon` param tests pass
+// directly (no store mock needed at all anymore — osSpeech.ts no
+// longer touches useApp/the store for this, see lexicon.test.ts for
+// the shared builder/projection's own coverage). Also mocks
 // "../../desktop/jobsBridge" (trackOsSpeechAsset — its OWN task-row
 // bookkeeping is jobsBridge.ts's own test responsibility; this file
 // only asserts that the ENGINE forwards the right kind/progress/message
 // to whatever tracker trackOsSpeechAsset() hands back).
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DEFAULT_SETTINGS, type CustomEntry, type STTEvents } from "@jargonslayer/core/types";
+import { DEFAULT_SETTINGS, type MeetingLexicon, type STTEvents } from "@jargonslayer/core/types";
 import { makeFakeInvoke, makeFakeListen, type FakeInvokeCall } from "./fakeTauri";
 import { deferred } from "./fakeMedia";
 import type { InvokeFn, ListenFn, UnlistenFn } from "../../desktop/tauriApi";
@@ -30,11 +30,6 @@ vi.mock("../../desktop/tauriApi", () => ({
   getListen: () => Promise.resolve(currentListen),
 }));
 
-let mockCustomEntries: CustomEntry[] = [];
-vi.mock("../../store", () => ({
-  useApp: { getState: () => ({ customEntries: mockCustomEntries }) },
-}));
-
 interface FakeAssetTracker {
   handle: ReturnType<typeof vi.fn>;
   settle: ReturnType<typeof vi.fn>;
@@ -48,7 +43,7 @@ vi.mock("../../desktop/jobsBridge", () => ({
   },
 }));
 
-import { buildContextualJson, OsSpeechEngine } from "../osSpeech";
+import { OsSpeechEngine } from "../osSpeech";
 import { createEngine } from "../index";
 
 // Mirrors osSpeech.ts's own (unexported) STOP_ENDED_TIMEOUT_MS.
@@ -113,7 +108,6 @@ async function stopViaEnded(engine: OsSpeechEngine, emit: (event: string, payloa
 
 describe("OsSpeechEngine", () => {
   beforeEach(() => {
-    mockCustomEntries = [];
     assetTrackers = [];
     clearDiag();
   });
@@ -179,33 +173,21 @@ describe("OsSpeechEngine", () => {
   });
 
   // ---------------------------------------------------------------
-  // contextual gathering wired into start_os_speech (Q11)
+  // contextual gathering wired into start_os_speech (Q11, generalized
+  // v0.4.7 Lane B onto the shared lexicon.ts builder — D8: start()
+  // takes the ALREADY-BUILT lexicon directly, no store read of any
+  // kind. Tier/cap coverage for the projection itself lives in
+  // lexicon.test.ts; these tests only pin that osSpeech.ts's start()
+  // actually threads its `lexicon` param into contextualJson.)
   // ---------------------------------------------------------------
 
   describe("contextual gathering wiring", () => {
-    function entry(headword: string, variants: string[] = []): CustomEntry {
-      const now = Date.now();
-      return {
-        id: headword,
-        kind: "term",
-        headword,
-        variants,
-        chinese_explanation: "",
-        example: "",
-        context: "",
-        note: "",
-        createdAt: now,
-        updatedAt: now,
-        source: "manual",
-      };
-    }
-
-    it("forwards settings.language as locale and the glossary as contextualJson", async () => {
-      mockCustomEntries = [entry("木桶效应", ["barrel effect"])];
+    it("forwards settings.language as locale and the lexicon as contextualJson", async () => {
       const { calls } = wireFakes();
       const engine = new OsSpeechEngine();
+      const lexicon: MeetingLexicon = { terms: ["木桶效应", "barrel effect"] };
 
-      await engine.start(noopEvents(), { ...OSSPEECH_SETTINGS, language: "zh-CN" });
+      await engine.start(noopEvents(), { ...OSSPEECH_SETTINGS, language: "zh-CN" }, lexicon);
 
       const startCall = calls.find((c) => c.cmd === "start_os_speech");
       expect(startCall?.args).toEqual({
@@ -214,8 +196,17 @@ describe("OsSpeechEngine", () => {
       });
     });
 
-    it("passes contextualJson: null when the glossary is empty", async () => {
-      mockCustomEntries = [];
+    it("passes contextualJson: null when the lexicon is empty", async () => {
+      const { calls } = wireFakes();
+      const engine = new OsSpeechEngine();
+
+      await engine.start(noopEvents(), OSSPEECH_SETTINGS, { terms: [] });
+
+      const startCall = calls.find((c) => c.cmd === "start_os_speech");
+      expect(startCall?.args?.contextualJson).toBeNull();
+    });
+
+    it("passes contextualJson: null when start() is called with no lexicon arg at all (defensive default)", async () => {
       const { calls } = wireFakes();
       const engine = new OsSpeechEngine();
 
@@ -916,61 +907,5 @@ describe("OsSpeechEngine", () => {
       expect.stringContaining("starting"),
       expect.stringContaining("capturing"),
     ]);
-  });
-});
-
-describe("buildContextualJson — Q11 glossary contextual biasing", () => {
-  function entry(headword: string, variants: string[] = []): CustomEntry {
-    const now = Date.now();
-    return {
-      id: headword,
-      kind: "term",
-      headword,
-      variants,
-      chinese_explanation: "",
-      example: "",
-      context: "",
-      note: "",
-      createdAt: now,
-      updatedAt: now,
-      source: "manual",
-    };
-  }
-
-  it("returns null for an empty glossary", () => {
-    expect(buildContextualJson([])).toBeNull();
-  });
-
-  it("collects headword + variants from every entry, in order", () => {
-    const result = buildContextualJson([entry("木桶效应", ["barrel effect", "短板效应"])]);
-    expect(JSON.parse(result!)).toEqual(["木桶效应", "barrel effect", "短板效应"]);
-  });
-
-  it("dedupes identical surfaces across DIFFERENT entries", () => {
-    const result = buildContextualJson([entry("A", ["shared"]), entry("B", ["shared"])]);
-    expect(JSON.parse(result!)).toEqual(["A", "shared", "B"]);
-  });
-
-  it("both expression and term kind entries contribute surfaces identically", () => {
-    const expr: CustomEntry = { ...entry("idiom-x"), kind: "expression" };
-    expect(JSON.parse(buildContextualJson([expr])!)).toEqual(["idiom-x"]);
-  });
-
-  it("caps at 100 terms even when the glossary has more, keeping the FIRST 100 in order", () => {
-    const entries = Array.from({ length: 150 }, (_, i) => entry(`term-${i}`));
-    const terms = JSON.parse(buildContextualJson(entries)!);
-    expect(terms).toHaveLength(100);
-    expect(terms[0]).toBe("term-0");
-    expect(terms[99]).toBe("term-99");
-  });
-
-  it("caps at ~8KB of UTF-8-encoded JSON even under the 100-term cap (CJK-heavy glossary)", () => {
-    const longWord = "测".repeat(170); // ~510 UTF-8 bytes/term — well under 100 terms hits 8KB first
-    const entries = Array.from({ length: 50 }, (_, i) => entry(`${longWord}${i}`));
-    const result = buildContextualJson(entries)!;
-    const terms = JSON.parse(result);
-
-    expect(terms.length).toBeLessThan(50);
-    expect(new TextEncoder().encode(result).length).toBeLessThanOrEqual(8 * 1024);
   });
 });

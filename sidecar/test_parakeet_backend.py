@@ -1128,12 +1128,79 @@ def test_transcribe_job_faster_whisper_path_unaffected_by_parakeet_branch() -> N
         ],
     )
     check(
-        "transcribe_job faster-whisper path: the SAME kwargs (beam_size=1, vad_filter=True, word_timestamps=False) are still passed",
-        model.calls[0][1] == {"language": "en", "beam_size": 1, "vad_filter": True, "word_timestamps": False},
+        "transcribe_job faster-whisper path: the SAME kwargs (beam_size=1, vad_filter=True, word_timestamps=False) are still passed, plus initial_prompt (v0.4.7 Lane B — defaults None when the caller omits it)",
+        model.calls[0][1]
+        == {
+            "language": "en",
+            "beam_size": 1,
+            "vad_filter": True,
+            "word_timestamps": False,
+            "initial_prompt": None,
+        },
     )
     check("transcribe_job faster-whisper path: progress reaches the DIARIZE_HOLD_PROGRESS ceiling at the last segment", (
         abs(jm.jobs[job_id]["progress"] - DIARIZE_HOLD_PROGRESS) < 1e-9
     ))
+
+
+# =================================================================
+# initial_prompt (v0.4.7 Lane B, glossary -> recognizer bias): reaches
+# the faster-whisper model.transcribe() call; explicit no-op on the
+# parakeet arm (ParakeetMlxBackend.transcribe_file has no such param
+# at all — never even attempted, not a client-side/JS-side gate).
+# =================================================================
+
+
+def test_transcribe_job_forwards_initial_prompt_to_the_model() -> None:
+    class FakeSeg:
+        def __init__(self, start: float, end: float, text: str) -> None:
+            self.start, self.end, self.text = start, end, text
+
+    class FakeInfo:
+        duration = 1.0
+
+    class FakeFasterWhisperModel:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def transcribe(self, file_path: str, **kwargs):
+            self.calls.append(kwargs)
+            return iter([FakeSeg(0.0, 1.0, "hi")]), FakeInfo()
+
+    model = FakeFasterWhisperModel()
+    jm = JobManager(model=model, model_name="small", default_language="en", hf_token=None)
+    job = new_job(False)
+    job_id = job["id"]
+    jm.jobs[job_id] = job
+
+    jm._transcribe_job(job_id, "/tmp/f.wav", "en", initial_prompt="scRNA-seq, UMAP")
+
+    check(
+        "transcribe_job: a provided initial_prompt reaches model.transcribe()",
+        model.calls[0].get("initial_prompt") == "scRNA-seq, UMAP",
+    )
+
+
+def test_transcribe_job_parakeet_never_receives_initial_prompt() -> None:
+    backend = ParakeetMlxBackend(PARAKEET_MODEL)
+    calls: list[tuple[str, str]] = []
+
+    def fake_transcribe_file(file_path: str, language: str):
+        calls.append((file_path, language))
+        return ([{"start": 0.0, "end": 1.0, "text": "hi"}], 1.0)
+
+    backend.transcribe_file = fake_transcribe_file  # type: ignore[method-assign]
+    jm = JobManager(model=backend, model_name=PARAKEET_MODEL, default_language="en", hf_token=None)
+    job = new_job(False)
+    job_id = job["id"]
+    jm.jobs[job_id] = job
+
+    jm._transcribe_job(job_id, "/tmp/fake.wav", "en", initial_prompt="scRNA-seq, UMAP")
+
+    check(
+        "transcribe_job parakeet dispatch: initial_prompt is silently dropped (transcribe_file's own signature has no such param) — the explicit no-op the doc requires",
+        calls == [("/tmp/fake.wav", "en")],
+    )
 
 
 # =================================================================
@@ -1527,6 +1594,8 @@ test_transcribe_file_empty_sentences_returns_empty_segments_and_zero_duration()
 test_try_acquire_stream_and_release()
 test_transcribe_job_dispatches_to_parakeet_backend()
 test_transcribe_job_faster_whisper_path_unaffected_by_parakeet_branch()
+test_transcribe_job_forwards_initial_prompt_to_the_model()
+test_transcribe_job_parakeet_never_receives_initial_prompt()
 test_fb4_job_admission_blocked_by_live_ws_session()
 test_fb4_start_url_job_blocked_too()
 test_fb4_faster_whisper_jobs_unaffected()

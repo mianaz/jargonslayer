@@ -274,13 +274,15 @@ describe("StatusLine — sidecar-down tooltip", () => {
 
 // ---------------------------------------------------------------
 // On-device Web Speech privacy posture (docs/research/
-// stt-live-engines-2026-07.md item #1): the privacy segment shows the
-// same green "音频在本地处理" posture whisper/tabaudio use whenever the
-// ACTIVE webspeech session reported on-device mode
+// stt-live-engines-2026-07.md item #1; upgraded to the v0.4.7 Lane C
+// tri-state retention label, docs/design-explorations/
+// stt-provider-wiring-2026-07.md §4/§9 D5-D7): the privacy segment
+// shows the same green "本地处理 · 音频不出设备" hint whisper/tabaudio use
+// whenever the ACTIVE webspeech session reported on-device mode
 // (store.sttEngineMode, written by useMeeting.ts's onEngineMode
-// handler) — instead of the default amber cloud warning webspeech
-// otherwise always shows (ENGINE_OPTIONS's webspeech entry is
-// posture:'cloud').
+// handler) — instead of the default amber "云端 · 处理后不留存"
+// cloud-transient hint webspeech otherwise always shows (ENGINE_
+// OPTIONS's webspeech entry is retentionClass:'cloud-transient').
 // ---------------------------------------------------------------
 
 describe("StatusLine — on-device privacy posture", () => {
@@ -341,12 +343,12 @@ describe("StatusLine — on-device privacy posture", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频在本地处理");
+    expect(privacySegment().textContent).toContain("本地处理 · 音频不出设备");
     expect(privacySegment().className).toContain("text-lab-green");
     expect(privacySegment().className).not.toContain("text-warn-soft");
   });
 
-  it("stays amber cloud when engine:webspeech and sttEngineMode:'cloud' (decided/fell back to cloud)", async () => {
+  it("stays cloud-transient when engine:webspeech and sttEngineMode:'cloud' (decided/fell back to cloud)", async () => {
     useApp.setState((s) => ({
       status: "listening",
       sttEngineMode: "cloud",
@@ -357,11 +359,11 @@ describe("StatusLine — on-device privacy posture", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().textContent).toContain("云端 · 处理后不留存");
     expect(privacySegment().className).toContain("text-warn-soft");
   });
 
-  it("stays amber cloud when engine:webspeech and sttEngineMode:null (no session has reported yet)", async () => {
+  it("stays cloud-transient when engine:webspeech and sttEngineMode:null (no session has reported yet)", async () => {
     useApp.setState((s) => ({
       status: "connecting",
       sttEngineMode: null,
@@ -372,7 +374,7 @@ describe("StatusLine — on-device privacy posture", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().textContent).toContain("云端 · 处理后不留存");
     expect(privacySegment().className).toContain("text-warn-soft");
   });
 
@@ -387,19 +389,19 @@ describe("StatusLine — on-device privacy posture", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    // Still green (whisper's own posture is local) — but via
+    // Still green (whisper's own retentionClass is local) — but via
     // ENGINE_OPTIONS, not the stale on-device flag; the point is this
     // doesn't crash/misbehave for a non-webspeech engine.
-    expect(privacySegment().textContent).toContain("音频在本地处理");
+    expect(privacySegment().textContent).toContain("本地处理 · 音频不出设备");
     expect(privacySegment().className).toContain("text-lab-green");
   });
 
-  // S10 field-fix #2 (HIGH, adversarial review): posture now derives
-  // from ENGINE_OPTIONS (lib/stt/engineOptions.ts) instead of a
-  // second, drifted-out-of-sync local map — soniox is posture:"cloud"
-  // there and must render the amber cloud sentence, never the green
-  // local one.
-  it("shows the amber cloud posture for engine:soniox (a CLOUD engine, not local)", async () => {
+  // S10 field-fix #2 (HIGH, adversarial review); upgraded to tri-state
+  // (Lane C): posture derives from ENGINE_OPTIONS (lib/stt/
+  // engineOptions.ts) instead of a second, drifted-out-of-sync local
+  // map — soniox is retentionClass:"cloud-transient" there and must
+  // render the amber cloud-transient hint, never the green local one.
+  it("shows the cloud-transient posture for engine:soniox (a CLOUD engine, not local)", async () => {
     useApp.setState((s) => ({
       status: "listening",
       settings: { ...s.settings, engine: "soniox" },
@@ -409,12 +411,12 @@ describe("StatusLine — on-device privacy posture", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().textContent).toContain("云端 · 处理后不留存");
     expect(privacySegment().className).toContain("text-warn-soft");
     expect(privacySegment().className).not.toContain("text-lab-green");
   });
 
-  it("an engine value absent from ENGINE_OPTIONS falls back to cloud — never defaults to local for an unrecognized engine", async () => {
+  it("an engine value absent from ENGINE_OPTIONS falls back to cloud-transient — never defaults to local for an unrecognized engine", async () => {
     useApp.setState((s) => ({
       status: "listening",
       settings: {
@@ -427,16 +429,17 @@ describe("StatusLine — on-device privacy posture", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频将经过浏览器厂商云端识别");
+    expect(privacySegment().textContent).toContain("云端 · 处理后不留存");
     expect(privacySegment().className).toContain("text-warn-soft");
     expect(privacySegment().className).not.toContain("text-lab-green");
   });
 
   // Lead adjudication on F2's flagged side effect: "demo" is the
-  // scripted preview — no audio exists at all, so the amber cloud
-  // warning would be a false claim in the OTHER direction. It keeps
-  // the green local posture the old ENGINE_POSTURE map always gave it
-  // (see StatusLine.tsx's posture derivation comment).
+  // scripted preview — no audio exists at all, so the cloud warning
+  // would be a false claim in the OTHER direction. It keeps the green
+  // local posture the old ENGINE_POSTURE map always gave it (see
+  // resolveEngineRetentionClass's own doc comment, lib/stt/
+  // engineOptions.ts).
   it("demo (scripted preview, no audio at all) keeps the green local posture", async () => {
     useApp.setState((s) => ({
       status: "listening",
@@ -450,9 +453,16 @@ describe("StatusLine — on-device privacy posture", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(privacySegment().textContent).toContain("音频在本地处理");
+    expect(privacySegment().textContent).toContain("本地处理 · 音频不出设备");
     expect(privacySegment().className).toContain("text-lab-green");
   });
+
+  // v0.4.7 Lane C: cloud-stored is pinned directly at the data level
+  // (RETENTION_COPY / resolveEngineRetentionClass, engineOptions.test.
+  // ts) — no live ENGINE_OPTIONS entry resolves to it yet (Deepgram
+  // lands as cloud-transient per D7's unconditional mip_opt_out=true),
+  // so this component can't be driven into that state through real
+  // props/store today. Add a DOM-level case here once an engine does.
 });
 
 // ---------------------------------------------------------------
@@ -631,7 +641,7 @@ describe("StatusLine — engine dropdown", () => {
     return el as HTMLSelectElement;
   }
 
-  it("lists every ENGINE_OPTIONS value (web build: webspeech/whisper/tabaudio/soniox, D7 keeps tabaudio)", async () => {
+  it("lists every ENGINE_OPTIONS value (web build: webspeech/whisper/tabaudio/soniox/deepgram, D7 keeps tabaudio; deepgram v0.4.7 Lane D)", async () => {
     useApp.setState((s) => ({ settings: { ...s.settings, engine: "whisper" } }));
     renderStatusLine();
     await act(async () => {
@@ -641,7 +651,7 @@ describe("StatusLine — engine dropdown", () => {
     const values = Array.from(select().querySelectorAll("option"))
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
-    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox"]);
+    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox", "deepgram"]);
   });
 
   it("changing the value writes settings.engine (same store write as the old mobile <select>)", async () => {

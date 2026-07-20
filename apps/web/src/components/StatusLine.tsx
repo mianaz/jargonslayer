@@ -10,7 +10,13 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
-import { ENGINE_OPTIONS, engineOptionGate, useAudiocapCaps } from "@/lib/stt/engineOptions";
+import {
+  ENGINE_OPTIONS,
+  RETENTION_COPY,
+  engineOptionGate,
+  resolveEngineRetentionClass,
+  useAudiocapCaps,
+} from "@/lib/stt/engineOptions";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
 import { isEngineControlBusy } from "@/components/Header";
 import PixelDragon from "@/components/PixelDragon";
@@ -241,34 +247,20 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
             ? "--CONN--"
             : "--IDLE--";
 
-  // On-device Web Speech (Chrome 139+, `processLocally` — see
-  // docs/research/stt-live-engines-2026-07.md item #1): when the
-  // ACTIVE webspeech session reported "on-device" (store.sttEngineMode,
-  // written by useMeeting.ts's onEngineMode handler), audio never
-  // leaves this machine either — same green posture as whisper/
-  // tabaudio, reusing their exact copy/token below verbatim rather
-  // than adding a third label. Guarded on engine==="webspeech" too
-  // (belt-and-suspenders against a stale value briefly surviving an
-  // engine switch — sttEngineMode is only ever set by the webspeech
-  // engine and reset at the start of every new meeting).
-  // S10 field-fix #2 (HIGH, adversarial review): posture derives from
-  // ENGINE_OPTIONS (the same option metadata the dropdown below and
-  // Header's EnginePostureChip already read — one definition, not a
-  // second map that can drift out of sync, which is exactly how a
-  // CLOUD engine (soniox) used to render the green local sentence via
-  // a stale ?? "local" fallback here). An engine absent from
-  // ENGINE_OPTIONS (import/browser-whisper, or any future value) must
-  // never be assumed local — falls back to "cloud". One deliberate
-  // exception (lead adjudication on the F2 fix's flagged side effect):
-  // "demo" is the scripted preview — no audio exists at all, so the
-  // amber cloud warning would be a false claim in the OTHER direction;
-  // it keeps the local posture the old map always gave it.
-  const posture: "local" | "cloud" =
-    engine === "demo" || (engine === "webspeech" && sttEngineMode === "on-device")
-      ? "local"
-      : (ENGINE_OPTIONS.find((o) => o.value === engine)?.posture ?? "cloud");
-  const privacyLabel =
-    posture === "local" ? "音频在本地处理" : "音频将经过浏览器厂商云端识别";
+  // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): posture's
+  // richer replacement. resolveEngineRetentionClass (lib/stt/
+  // engineOptions.ts) is the ONE shared place StatusLine and Header's
+  // EnginePostureChip both resolve this, so the two surfaces can never
+  // disagree — it already folds in everything this used to compute
+  // inline: "demo" hard-pinned local (no audio exists at all — the
+  // amber cloud warning would be a false claim in the OTHER direction),
+  // an engine absent from ENGINE_OPTIONS never assumed local, and the
+  // on-device Web Speech runtime overlay (Chrome 139+ `processLocally`,
+  // store.sttEngineMode written by useMeeting.ts's onEngineMode
+  // handler — belt-and-suspenders guarded on engine==="webspeech" so a
+  // stale value can't survive an engine switch).
+  const retentionClass = resolveEngineRetentionClass(engine, sttEngineMode);
+  const privacyCopy = RETENTION_COPY[retentionClass];
   // Sidecar-down hint (owner ask 2026-07-11): the selected engine needs
   // the local sidecar, nothing is currently running (an active meeting
   // already proves the engine works — never override a live/paused
@@ -349,11 +341,9 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
       <span className="hidden text-mut2 sm:inline">|</span>
       <span
         title={sidecarDownHint}
-        className={`hidden min-w-0 truncate px-2 sm:inline sm:px-3 ${
-          posture === "local" ? "text-lab-green" : "text-warn-soft"
-        }`}
+        className={`hidden min-w-0 truncate px-2 sm:inline sm:px-3 ${privacyCopy.textClass}`}
       >
-        <span className="hidden sm:inline">{privacyLabel}</span>
+        <span className="hidden sm:inline">{privacyCopy.hint}</span>
       </span>
       {/* Engine dropdown (S10 field-fix wave 2, EngineDropdown above):
           right here, between the privacy segment and the latency chip,
