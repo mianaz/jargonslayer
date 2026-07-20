@@ -52,7 +52,7 @@ describe("liveDraft.ts", () => {
       const session = makeSession({ startedAt: 12_345 });
 
       await liveDraft.writeDraft("gen1:12345", session);
-      const loaded = await liveDraft.loadDraft();
+      const loaded = (await liveDraft.loadDraft()).draft;
 
       expect(loaded?.draftId).toBe("gen1:12345");
       expect(loaded?.snapshot).toEqual(session);
@@ -62,7 +62,7 @@ describe("liveDraft.ts", () => {
 
     it("loadDraft returns null when nothing was ever written", async () => {
       const liveDraft = await import("../liveDraft");
-      expect(await liveDraft.loadDraft()).toBeNull();
+      expect((await liveDraft.loadDraft()).draft).toBeNull();
     });
 
     it("clearDraft removes an existing draft when the draftId matches (Sol adversarial-review fix: compare-and-delete)", async () => {
@@ -71,7 +71,7 @@ describe("liveDraft.ts", () => {
 
       await liveDraft.clearDraft("gen1:1000");
 
-      expect(await liveDraft.loadDraft()).toBeNull();
+      expect((await liveDraft.loadDraft()).draft).toBeNull();
     });
 
     it("clearDraft no-ops when the draftId does NOT match — the stored draft survives untouched", async () => {
@@ -81,7 +81,7 @@ describe("liveDraft.ts", () => {
 
       await liveDraft.clearDraft("gen2:9999");
 
-      const loaded = await liveDraft.loadDraft();
+      const loaded = (await liveDraft.loadDraft()).draft;
       expect(loaded?.draftId).toBe("gen1:1000");
       expect(loaded?.snapshot).toEqual(session);
     });
@@ -96,7 +96,7 @@ describe("liveDraft.ts", () => {
       const liveDraft = await import("../liveDraft");
 
       await liveDraft.writeDraft("gen1:1000", makeSession());
-      expect(await liveDraft.loadDraft()).toBeNull();
+      expect((await liveDraft.loadDraft()).draft).toBeNull();
       await expect(liveDraft.clearDraft("gen1:1000")).resolves.toBeUndefined();
       expect(memStore.size).toBe(0);
     });
@@ -113,7 +113,7 @@ describe("liveDraft.ts", () => {
       await liveDraft.writeDraft("gen1:1000", makeSession({ id: "first" }));
       await liveDraft.writeDraft("gen1:1000", makeSession({ id: "second" }));
 
-      const loaded = await liveDraft.loadDraft();
+      const loaded = (await liveDraft.loadDraft()).draft;
       expect(loaded?.snapshot.id).toBe("second");
     });
 
@@ -123,7 +123,7 @@ describe("liveDraft.ts", () => {
 
       await liveDraft.writeDraft("gen2:2000", makeSession({ id: "new-meeting" }));
 
-      const loaded = await liveDraft.loadDraft();
+      const loaded = (await liveDraft.loadDraft()).draft;
       expect(loaded?.draftId).toBe("gen1:1000");
       expect(loaded?.snapshot.id).toBe("old-meeting");
     });
@@ -150,7 +150,7 @@ describe("liveDraft.ts", () => {
 
       await liveDraft.writeDraft("gen2:2000", makeSession({ id: "new-meeting" }));
 
-      const loaded = await liveDraft.loadDraft();
+      const loaded = (await liveDraft.loadDraft()).draft;
       expect(loaded?.draftId).toBe("gen2:2000");
       expect(loaded?.snapshot.id).toBe("new-meeting");
     });
@@ -204,7 +204,7 @@ describe("liveDraft.ts", () => {
   });
 
   describe("computeDraftSignature — cheap dirty signature (M1 fix, replaces shouldWriteDraft)", () => {
-    it("emits a FIELD-SEPARATED string (Sol re-verify M fix: additive sums had ordinary collisions)", async () => {
+    it("emits counts + a content hash, stable for identical snapshots (Sol rounds 2+3: count/sum signatures kept colliding — the hash is over the actual mutable content)", async () => {
       const liveDraft = await import("../liveDraft");
       const session = makeSession({
         segments: [
@@ -215,10 +215,30 @@ describe("liveDraft.ts", () => {
         terms: [],
         translations: { a: "你好" },
       });
-      // segments.length=2 | total text chars ("hi"+"there team")=12 |
-      // translated keys=1 | translated chars ("你好")=2 | cards=1 |
-      // terms=0 | speakerAssigned=1 | roster (absent → "")
-      expect(liveDraft.computeDraftSignature(session)).toBe("2|12|1|2|1|0|1|");
+      const sig = liveDraft.computeDraftSignature(session);
+      // Shape: segs|cards|terms|hash — counts human-readable, hash opaque.
+      expect(sig).toMatch(/^2\|1\|0\|-?\d+$/);
+      // Deterministic: identical snapshot → identical signature.
+      expect(liveDraft.computeDraftSignature(structuredClone(session))).toBe(sig);
+    });
+
+    it("changes on an EQUAL-LENGTH text edit and an equal-length speaker swap (Sol round-3 M — the classes aggregate char counts missed)", async () => {
+      const liveDraft = await import("../liveDraft");
+      const base = makeSession({
+        segments: [
+          { id: "a", index: 0, startedAt: 0, endedAt: 1, text: "their idea", engine: "webspeech", speaker: "Ann" },
+        ],
+        translations: { a: "你好" },
+      });
+      const editedSameLen = structuredClone(base);
+      editedSameLen.segments[0].text = "there idea"; // same length
+      const swappedSpeaker = structuredClone(base);
+      swappedSpeaker.segments[0].speaker = "Bob"; // same length as Ann
+      const retransSameLen = structuredClone(base);
+      retransSameLen.translations = { a: "妳好" }; // same length as 你好
+      expect(liveDraft.computeDraftSignature(editedSameLen)).not.toBe(liveDraft.computeDraftSignature(base));
+      expect(liveDraft.computeDraftSignature(swappedSpeaker)).not.toBe(liveDraft.computeDraftSignature(base));
+      expect(liveDraft.computeDraftSignature(retransSameLen)).not.toBe(liveDraft.computeDraftSignature(base));
     });
 
     it("does NOT collide when a new segment is one char shorter than the old tail (the exact Sol re-verify counterexample to the additive sum)", async () => {

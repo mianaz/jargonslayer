@@ -132,6 +132,10 @@ export function useMeeting(): UseMeetingResult {
   // brand-new meeting's first tick isn't compared against the PREVIOUS
   // meeting's last-known signature.
   const lastDraftSignatureRef = useRef<string | null>(null);
+  // Draft-write single-flight (Sol round-3 H) — a ref so it survives
+  // the [status, engine] effect re-running mid-write; see the tick's
+  // own comment below.
+  const draftWritingRef = useRef(false);
 
   // Engine-creation/wiring block (pause/resume, B3): extracted out of
   // start() so resume() can reattach a FRESH engine instance to the
@@ -738,12 +742,17 @@ export function useMeeting(): UseMeetingResult {
   useEffect(() => {
     if (!liveDraft.isDraftableMeeting(status, engine)) return;
     // Async now (writeDraft's landed/skipped verdict gates the dirty
-    // bookkeeping) — `writing` single-flights overlapping interval
-    // firings so a slow IndexedDB write can't interleave with the next
-    // tick's read of lastDraftSignatureRef.
-    let writing = false;
+    // bookkeeping). Single-flight lives in draftWritingRef — a REF, not
+    // an effect-local flag (Sol round-3 H): status/engine transitions
+    // re-run this effect, and an effect-local `writing` would reset to
+    // false while the previous incarnation's write is still pending,
+    // letting a second write overlap it. The landed callback re-derives
+    // the draftId against CURRENT state before marking clean — a stale
+    // write landing after a meeting transition must not stamp the NEW
+    // meeting's (start()-reset-to-null) signature slot with the OLD
+    // meeting's signature.
     const tick = () => {
-      if (writing) return;
+      if (draftWritingRef.current) return;
       // Fresh read (not the closed-over `status`/`engine` above) — this
       // callback can fire in the brief window before a status/engine
       // change has re-run this effect (see attachEngine's own handlers
@@ -755,19 +764,22 @@ export function useMeeting(): UseMeetingResult {
       const signature = liveDraft.computeDraftSignature(snapshot);
       if (signature === lastDraftSignatureRef.current) return;
       const draftId = liveDraft.deriveDraftId(state.meetingGen, state.startedAt);
-      writing = true;
+      draftWritingRef.current = true;
       void liveDraft
         .writeDraft(draftId, snapshot)
         .then((landed) => {
-          // Mark clean ONLY on a landed write (Sol re-verify HIGH): a
-          // buffer-skip (foreign unresolved draft) or an IDB failure
-          // must leave the signature dirty so the NEXT tick retries —
-          // otherwise a quiescent meeting stays undrafted forever
-          // (nothing changes, signature never differs again).
-          if (landed) lastDraftSignatureRef.current = signature;
+          // Mark clean ONLY on a landed write for the SAME meeting (Sol
+          // re-verify HIGH + round-3 H): a buffer-skip/IDB failure must
+          // leave the signature dirty so the NEXT tick retries, and a
+          // slow write resolving after a meeting transition must not
+          // write into the new meeting's bookkeeping.
+          const now = useApp.getState();
+          const stillSameMeeting =
+            liveDraft.deriveDraftId(now.meetingGen, now.startedAt) === draftId;
+          if (landed && stillSameMeeting) lastDraftSignatureRef.current = signature;
         })
         .finally(() => {
-          writing = false;
+          draftWritingRef.current = false;
         });
     };
     // One immediate tick so a brand-new meeting's first draft isn't a

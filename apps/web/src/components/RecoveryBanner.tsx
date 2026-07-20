@@ -73,8 +73,14 @@ export default function RecoveryBanner() {
   useEffect(() => {
     if (!hydrated) return;
     let stale = false;
-    void liveDraft.loadDraft().then((d) => {
+    void liveDraft.loadDraft().then(({ ok, draft: d }) => {
       if (stale) return;
+      // A FAILED read keeps whatever we last knew (Sol round-3 M):
+      // treating a transient IndexedDB error as "no draft" would hide
+      // a valid banner while the on-disk draft keeps buffer-skipping
+      // the live meeting's writes — the next meetingGen change (or
+      // action-time re-check) re-reads disk anyway.
+      if (!ok) return;
       if (!d || d.snapshot.segments.length === 0) {
         setDraft(null);
         return;
@@ -104,7 +110,10 @@ export default function RecoveryBanner() {
     busyRef.current = true;
     setBusy(true);
     try {
-      const fresh = await liveDraft.loadDraft();
+      const { ok: readOk, draft: fresh } = await liveDraft.loadDraft();
+      // Failed READ: keep the banner as-is (Sol round-3 M) — nothing
+      // was proven absent; the user can simply retry the click.
+      if (!readOk) return;
       if (!fresh || fresh.draftId !== shown.draftId) {
         setDraft(null);
         return;
@@ -125,7 +134,9 @@ export default function RecoveryBanner() {
     busyRef.current = true;
     setBusy(true);
     try {
-      const fresh = await liveDraft.loadDraft();
+      const { ok: readOk, draft: fresh } = await liveDraft.loadDraft();
+      // Failed READ: keep the banner (same rationale as handleRestore).
+      if (!readOk) return;
       if (fresh && fresh.draftId === shown.draftId) {
         await liveDraft.clearDraft(shown.draftId);
       }

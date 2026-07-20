@@ -131,7 +131,7 @@ describe("RecoveryBanner", () => {
   }
 
   it("renders nothing before hydrate() settles, even if a draft would resolve", async () => {
-    loadDraftMock.mockResolvedValue(makeDraft());
+    loadDraftMock.mockResolvedValue({ ok: true, draft: makeDraft() });
     render();
     await act(async () => {
       root!.render(<RecoveryBanner />);
@@ -142,21 +142,42 @@ describe("RecoveryBanner", () => {
   });
 
   it("renders nothing when no draft exists", async () => {
-    loadDraftMock.mockResolvedValue(null);
+    loadDraftMock.mockResolvedValue({ ok: true, draft: null });
     await renderAndHydrate();
 
     expect(banner()).toBeNull();
   });
 
   it("renders nothing when the draft's transcript is empty", async () => {
-    loadDraftMock.mockResolvedValue(makeDraft([]));
+    loadDraftMock.mockResolvedValue({ ok: true, draft: makeDraft([]) });
     await renderAndHydrate();
 
     expect(banner()).toBeNull();
   });
 
+  it("a FAILED draft read keeps the last-known banner instead of hiding it (Sol round-3 M: transient IDB error ≠ confirmed absence)", async () => {
+    const { useApp } = await import("@/lib/store");
+    // First read (hydrate) finds the draft; the meetingGen-change
+    // re-sync then FAILS — the banner must survive on last-known truth,
+    // since the on-disk draft (still there) keeps buffer-skipping the
+    // live meeting's writes and needs to stay resolvable.
+    loadDraftMock
+      .mockResolvedValueOnce({ ok: true, draft: makeDraft() })
+      .mockResolvedValueOnce({ ok: false, draft: null });
+    await renderAndHydrate();
+    expect(banner()).not.toBeNull();
+
+    await act(async () => {
+      useApp.setState((s) => ({ meetingGen: s.meetingGen + 1 }));
+    });
+    await flush();
+
+    expect(loadDraftMock).toHaveBeenCalledTimes(2);
+    expect(banner()).not.toBeNull();
+  });
+
   it("renders the banner (date/time + segment count + both actions) when a non-empty draft exists", async () => {
-    loadDraftMock.mockResolvedValue(makeDraft());
+    loadDraftMock.mockResolvedValue({ ok: true, draft: makeDraft() });
     await renderAndHydrate();
 
     const el = banner();
@@ -170,7 +191,7 @@ describe("RecoveryBanner", () => {
 
   it("恢复到历史记录 re-checks the draft, calls restoreLiveDraft with the fresh snapshot + draftId, then hides the banner on success", async () => {
     const draft = makeDraft();
-    loadDraftMock.mockResolvedValue(draft);
+    loadDraftMock.mockResolvedValue({ ok: true, draft: draft });
     const restoreSpy = vi.fn().mockResolvedValue(true);
     useApp.setState({ restoreLiveDraft: restoreSpy });
     await renderAndHydrate();
@@ -186,7 +207,7 @@ describe("RecoveryBanner", () => {
 
   it("恢复到历史记录 keeps the banner visible when restoreLiveDraft reports failure (H1 fix: don't dismiss over a failed save)", async () => {
     const draft = makeDraft();
-    loadDraftMock.mockResolvedValue(draft);
+    loadDraftMock.mockResolvedValue({ ok: true, draft: draft });
     const restoreSpy = vi.fn().mockResolvedValue(false);
     useApp.setState({ restoreLiveDraft: restoreSpy });
     await renderAndHydrate();
@@ -204,7 +225,7 @@ describe("RecoveryBanner", () => {
 
   it("丢弃 re-checks the draft, clears it by draftId, and hides the banner, without ever calling restoreLiveDraft", async () => {
     const draft = makeDraft();
-    loadDraftMock.mockResolvedValue(draft);
+    loadDraftMock.mockResolvedValue({ ok: true, draft: draft });
     const restoreSpy = vi.fn().mockResolvedValue(true);
     useApp.setState({ restoreLiveDraft: restoreSpy });
     await renderAndHydrate();
@@ -225,7 +246,7 @@ describe("RecoveryBanner", () => {
     // SECOND loadDraft (handleRestore's own re-check) resolves null —
     // as if some other path (e.g. the meeting ended normally and
     // cleared its own draft) already resolved it in the meantime.
-    loadDraftMock.mockResolvedValueOnce(draft).mockResolvedValueOnce(null);
+    loadDraftMock.mockResolvedValueOnce({ ok: true, draft: draft }).mockResolvedValueOnce({ ok: true, draft: null });
     const restoreSpy = vi.fn().mockResolvedValue(true);
     useApp.setState({ restoreLiveDraft: restoreSpy });
     await renderAndHydrate();
@@ -241,7 +262,7 @@ describe("RecoveryBanner", () => {
 
   it("double-click on 恢复到历史记录 only materializes ONCE (double-click guard, Sol adversarial-review fix)", async () => {
     const draft = makeDraft();
-    loadDraftMock.mockResolvedValue(draft);
+    loadDraftMock.mockResolvedValue({ ok: true, draft: draft });
     let resolveRestore: (v: boolean) => void = () => {};
     const restoreSpy = vi.fn(
       () =>
@@ -271,7 +292,7 @@ describe("RecoveryBanner", () => {
   });
 
   it("STAYS VISIBLE once a new meeting starts (H3 fix, Sol adversarial review — replaces the old one-way hide latch): the loaded draft belongs to a DIFFERENT (older) meeting than the one now live", async () => {
-    loadDraftMock.mockResolvedValue(makeDraft());
+    loadDraftMock.mockResolvedValue({ ok: true, draft: makeDraft() });
     await renderAndHydrate();
     expect(banner()).not.toBeNull();
 
