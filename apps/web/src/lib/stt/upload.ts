@@ -11,6 +11,7 @@ import {
   newId,
   type DetectResponse,
   type ExpressionCard,
+  type MeetingLexicon,
   type MeetingSession,
   type Settings,
   type STTEngineKind,
@@ -20,7 +21,8 @@ import {
 import { detectApi, NoKeyError, RateLimitApiError, taskHeaders } from "../llm/client";
 import { resolveTaskCreds } from "../llm/taskConfig";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
-import { scanCustomEntries } from "../history/glossary";
+import { getCachedEntries, scanCustomEntries } from "../history/glossary";
+import { getCachedLearnset } from "../learn/store";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
 import { filterDetectSpans } from "../detect/spanQc";
 import { recordLlmQcDrop } from "../llm/telemetry";
@@ -28,6 +30,27 @@ import { diagLog } from "../diag/log";
 import * as storage from "../history/storage";
 import { useApp } from "../store";
 import { withBase } from "../basePath";
+import { buildMeetingLexicon, projectForInitialPrompt } from "./lexicon";
+
+// v0.4.7 Lane B (glossary -> recognizer bias, doc §3): uploadRecording/
+// ingestUrl below are their own "meeting start" — ONE snapshot built
+// per call, satisfying D8 the same way useMeeting.ts's attachEngine
+// does for a live session. Reads the already-loaded module-level
+// CACHES (getCachedEntries/getCachedLearnset) rather than the zustand
+// store: this file's own runDetectionPipeline already reaches the
+// personal glossary the same way (scanCustomEntries, imported above),
+// and unlike useMeeting.ts's live-session callsite, an upload/import
+// job runs with no React tree mounted to justify touching useApp —
+// these caches are the SAME underlying data (store.ts's own
+// customEntries/learnset fields are themselves populated from/kept in
+// step with these exact caches at hydrate time).
+function currentUploadLexicon(settings: Settings): MeetingLexicon {
+  return buildMeetingLexicon({
+    customEntries: getCachedEntries(),
+    enabledPacks: settings.enabledPacks,
+    learnset: getCachedLearnset(),
+  });
+}
 
 const BATCH_CHARS = 1200;
 const CONTEXT_TAIL_CHARS = 800;
@@ -103,6 +126,13 @@ export async function uploadRecording(
   )}`;
   if (settings.hfToken) {
     url += `&diarize=${diarize ? "1" : "0"}&hf_token=${encodeURIComponent(settings.hfToken)}`;
+  }
+  // v0.4.7 Lane B: same faster-whisper sidecar biasing mechanism as
+  // the live whisper/tabaudio/appaudio engines (wsTransport.ts) — D1
+  // default-on, no settings gate.
+  const initialPrompt = projectForInitialPrompt(currentUploadLexicon(settings));
+  if (initialPrompt) {
+    url += `&initial_prompt=${encodeURIComponent(initialPrompt)}`;
   }
 
   const res = await fetch(url, {
@@ -739,6 +769,12 @@ export async function ingestUrl(
   if (settings.hfToken) {
     body.diarize = diarize;
     body.hf_token = settings.hfToken;
+  }
+  // v0.4.7 Lane B: same gating as uploadRecording's own initial_prompt
+  // above — D1 default-on, no settings gate.
+  const initialPrompt = projectForInitialPrompt(currentUploadLexicon(settings));
+  if (initialPrompt) {
+    body.initial_prompt = initialPrompt;
   }
 
   const res = await fetch(`${base}/ingest-url`, {

@@ -20,6 +20,7 @@
 
 import * as z from "zod";
 import type {
+  CorrectResponse,
   DefineResult,
   DetectedExpression,
   DetectedTerm,
@@ -116,6 +117,21 @@ export const TranslateSegmentsSchema = z.object({
     }),
   ),
 }) satisfies z.ZodType<TranslateResponse>;
+
+// AI transcript correction (v0.5 Wave-1 Feature 2, §5 A5) — id-keyed,
+// mirrors TranslateSegmentsSchema's shape exactly. This schema is shape
+// validation ONLY (id: string, text: string); rejecting a blank/
+// duplicate id and filtering to requested ids is the task module's job
+// (tasks/correct.ts's postFilter, mirroring translate's own postFilter
+// placement) — a single malformed row must never sink the whole batch.
+export const CorrectResponseSchema = z.object({
+  corrections: z.array(
+    z.object({
+      id: z.string(),
+      text: z.string(),
+    }),
+  ),
+}) satisfies z.ZodType<CorrectResponse>;
 
 // "define this" (on-demand personal-dictionary entry) — moved here
 // (was inline in app/api/define/route.ts) so tasks/define.ts's shared

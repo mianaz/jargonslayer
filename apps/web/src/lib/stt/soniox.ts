@@ -9,7 +9,7 @@
 // (useMeeting's teardown-pause fallback already covers any engine that
 // doesn't implement the optional STTEngine.pause/resume methods).
 
-import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
+import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { SonioxTransport } from "./sonioxTransport";
 
 export class SonioxEngine implements STTEngine {
@@ -19,7 +19,7 @@ export class SonioxEngine implements STTEngine {
   private stream: MediaStream | null = null;
   private stopping = false;
 
-  async start(events: STTEvents, settings: Settings): Promise<void> {
+  async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
     this.stopping = false;
 
     let stream: MediaStream;
@@ -42,7 +42,7 @@ export class SonioxEngine implements STTEngine {
     }
     this.stream = stream;
 
-    const transport = new SonioxTransport({ events, settings });
+    const transport = new SonioxTransport({ events, settings, lexicon });
     this.transport = transport;
 
     try {

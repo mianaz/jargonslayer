@@ -3,6 +3,8 @@
 
 import type {
   ApiErrorBody,
+  CorrectRequest,
+  CorrectResponse,
   DefineRequest,
   DefineResult,
   DetectRequest,
@@ -49,6 +51,7 @@ import {
 import { DEFAULT_DETECT_MODEL, runDetectTask } from "./tasks/detect";
 import { DEFAULT_DEFINE_MODEL, runDefineTask } from "./tasks/define";
 import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "./tasks/translate";
+import { DEFAULT_CORRECT_MODEL, runCorrectTask } from "./tasks/correct";
 import {
   DEFAULT_SUMMARIZE_MODEL,
   MAX_SEGMENTS,
@@ -943,6 +946,111 @@ async function translateViaClient(
       network: "翻译请求失败，请检查网络连接",
     });
   }
+}
+
+// ---------------------------------------------------------------
+// AI transcript correction (v0.5 Wave-1 Feature 2, batch/review-gated
+// — docs/design-explorations/v05-wave1-blueprint.md §1 Feature 2 + §5
+// A5). Isomorphic like translate above: correctViaNext (server route)
+// and correctViaClient (desktop/iOS, which strip app/api) both funnel
+// through the SAME tasks/correct.ts module. §5 A5: "correction rides
+// the detect-domain config" — resolveTaskCreds(settings, "detect"),
+// same domain define already rides (see AiStatusPanel.tsx's own "与检测
+// 共用配置" precedent) — no dedicated "correct" LlmTaskDomain/LlmCallKind
+// is added anywhere; this is a routing choice only, not a new domain.
+// No subscription-direct pre-branch (that's detect/define-only, see
+// this file's own header comment on that branch's scope) and no
+// telemetry wrap (out of this lane's scope — would need a new
+// LlmTelemetryDomain member in telemetry.ts).
+// ---------------------------------------------------------------
+
+/** Existing Next.js-routed correction call (BYOK / shared-key / …).
+ *  Mirrors detectViaNext/defineViaNext's shape — see correctApi below
+ *  for the useClientTransport() branch. */
+async function correctViaNext(
+  body: CorrectRequest,
+  settings: Settings,
+): Promise<CorrectResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  const ctx: RequestErrorContext = { tag: "llm-correct", provider: ctxProvider(creds), model: body.model ?? creds.model };
+  let res: Response;
+  try {
+    res = await fetch(withBase("/api/correct"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...taskHeaders(settings, "detect"),
+      },
+      body: JSON.stringify({
+        ...body,
+        model: body.model ?? creds.model,
+      } satisfies CorrectRequest),
+      // Batch, review-gated, whole-meeting correction — generous
+      // budget, same order as summarize's async report generation
+      // (300s maxDuration route-side) rather than a live low-latency
+      // path like detect/translate.
+      signal: AbortSignal.timeout(120000),
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      diagLog("error", ctx.tag, "校正请求超时，请稍后重试", errorDetail(ctx));
+      throw new UpstreamError("校正请求超时，请稍后重试");
+    }
+    diagLog("error", ctx.tag, "校正请求失败，请检查网络连接", errorDetail(ctx));
+    throw new UpstreamError("校正请求失败，请检查网络连接");
+  }
+
+  if (!res.ok) {
+    await throwForStatus(res, ctx);
+  }
+
+  return (await res.json()) as CorrectResponse;
+}
+
+/** Client-side callProvider correction call (v0.4 S2 pattern) — used
+ *  instead of correctViaNext above when useClientTransport() is on
+ *  (desktop/iOS, which strip app/api — see A5). */
+async function correctViaClient(
+  body: CorrectRequest,
+  settings: Settings,
+): Promise<CorrectResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  // creds.provider directly, never ctxProvider(creds) — see
+  // summarizeViaClient's comment on why the "server" label doesn't
+  // apply to this BYOK-only path.
+  const ctx: RequestErrorContext = { tag: "llm-correct", provider: creds.provider, model: body.model ?? creds.model };
+  requireApiKey(creds.apiKey, ctx);
+  const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
+    return callProviderDirect({ ...opts, timeoutMs: 120000 });
+  };
+
+  try {
+    return await runCorrectTask(
+      {
+        apiKey: creds.apiKey,
+        model: body.model ?? DEFAULT_CORRECT_MODEL,
+        provider: creds.provider,
+        baseUrl: creds.baseUrl,
+        segments: body.segments,
+        context: body.context,
+        lexicon: body.lexicon,
+        meetingTitle: body.meetingTitle,
+      },
+      call,
+    );
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "校正请求超时，请稍后重试",
+      network: "校正请求失败，请检查网络连接",
+    });
+  }
+}
+
+export async function correctApi(
+  body: CorrectRequest,
+  settings: Settings,
+): Promise<CorrectResponse> {
+  return useClientTransport() ? correctViaClient(body, settings) : correctViaNext(body, settings);
 }
 
 /** Probe the configured provider/key/baseUrl with a trivial detect

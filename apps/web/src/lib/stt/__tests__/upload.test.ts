@@ -19,6 +19,18 @@ vi.mock("../../llm/client", () => ({
 
 vi.mock("@jargonslayer/core/detect/dictionary", () => ({
   scanDictionary: vi.fn(() => ({ expressions: [], terms: [] })),
+  // v0.4.7 Lane B (glossary -> recognizer bias): uploadRecording/
+  // ingestUrl's own currentUploadLexicon() now calls this too (via
+  // buildMeetingLexicon) — no packs/remote registry to isolate here,
+  // this suite only cares that the request-building tests below don't
+  // crash, same "empty by default" posture scanDictionary's own mock
+  // has.
+  packTermsForBias: vi.fn(() => []),
+  // Pre-merge review Finding 2 fix: history/glossary.ts (transitively
+  // imported here via buildMeetingLexicon) registers a shadow lookup
+  // into this module at load time — a no-op stub keeps that call from
+  // throwing under this partial mock.
+  setGlossaryShadowLookup: vi.fn(),
 }));
 
 // importUrlAndTrack (#43 phase 2c) touches the same

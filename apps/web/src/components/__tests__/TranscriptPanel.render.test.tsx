@@ -361,8 +361,12 @@ describe("TranscriptPanel InterimLine throttle correctness", () => {
       root!.render(<TranscriptPanel />);
     });
 
+    // v0.5 Wave-1 Feature 1: TranscriptPanel's header bar (selection
+    // mode / live latch / AI 校正) is now ALSO a direct child div, so
+    // the scroll container needs its own stable selector instead of
+    // the old positional "first div child" assumption.
     const scrollEl = container!.querySelector(
-      '[data-testid="transcript-panel"] > div',
+      '[data-testid="transcript-scroll"]',
     ) as HTMLDivElement;
     expect(scrollEl).toBeTruthy();
     Object.defineProperty(scrollEl, "scrollHeight", {
@@ -680,7 +684,10 @@ describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => 
     });
 
     selectSubstring();
-    const scrollEl = container!.querySelector('[data-testid="transcript-panel"] > div')!;
+    // Merge fix (v047 × S14.1): the panel's first child div is now the
+    // L1 header bar, not the scroll container — target the stable
+    // data-testid L1 added for exactly this fragility class.
+    const scrollEl = container!.querySelector('[data-testid="transcript-scroll"]')!;
     await act(async () => {
       scrollEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, detail: 1 }));
     });

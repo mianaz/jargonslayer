@@ -17,8 +17,12 @@ import {
   type HighlightHit,
 } from "../lib/highlight";
 import { formatElapsedClock, segmentElapsedMs } from "../lib/segmentElapsed";
+import { resolveTaskCreds } from "../lib/llm/taskConfig";
+import { PREVIEW_TIER } from "../lib/deployTier";
 import type { ExpressionCard, TermCard, TranscriptSegment } from "@jargonslayer/core/types";
 import HoverGlossCard, { type GlossItem } from "./HoverGlossCard";
+import SpeakerAssignPopover, { type SpeakerAssignRequest } from "./SpeakerAssignPopover";
+import CorrectionReview from "./CorrectionReview";
 
 // Exported (not just module-private) so the render-split regression
 // tests (TranscriptPanel.render.test.tsx) can drive exact boundary
@@ -360,6 +364,50 @@ function SegmentEditTextarea({
   );
 }
 
+/** v0.5 Wave-1 Feature 1 (live latch, §1 F1 item 4): a compact picker —
+ *  a native <select> (rung 4: platform feature over a custom popover)
+ *  covers "pick a roster name" / "+ 新建" / "关闭" in one accessible,
+ *  mobile-friendly control. Only rendered by the parent while
+ *  status==="listening" && no diarized speakers are present. */
+function ActiveSpeakerLatch() {
+  const activeSpeaker = useApp((s) => s.activeSpeaker);
+  const speakerRoster = useApp((s) => s.speakerRoster);
+  const setActiveSpeaker = useApp((s) => s.setActiveSpeaker);
+  const addSpeakerToRoster = useApp((s) => s.addSpeakerToRoster);
+
+  const OFF_VALUE = "";
+  const NEW_VALUE = "__new__";
+
+  return (
+    <div className="flex items-center gap-1.5 font-mono text-xs">
+      <span className="text-mut2">当前说话人</span>
+      <select
+        data-testid="active-speaker-latch"
+        value={activeSpeaker ?? OFF_VALUE}
+        onChange={(e) => {
+          const v = e.target.value;
+          if (v === NEW_VALUE) {
+            setActiveSpeaker(addSpeakerToRoster());
+          } else if (v === OFF_VALUE) {
+            setActiveSpeaker(null);
+          } else {
+            setActiveSpeaker(v);
+          }
+        }}
+        className="min-h-10 border border-edge2 bg-panel px-1.5 text-xs text-fg"
+      >
+        <option value={OFF_VALUE}>关闭</option>
+        {speakerRoster.map((name) => (
+          <option key={name} value={name}>
+            {name}
+          </option>
+        ))}
+        <option value={NEW_VALUE}>+ 新建…</option>
+      </select>
+    </div>
+  );
+}
+
 // ---- render split (stt-vad-supervisor.md): a live interim tick used
 // to re-render the WHOLE segment list (every row's highlight regex
 // re-scanning its text on every partial). SegmentRow is memoized with
@@ -395,7 +443,6 @@ interface SegmentRowProps {
   editValue: string;
   matcher: ReturnType<typeof buildHighlightMatcher>;
   translation: string | undefined;
-  speakerCount: number;
   // Elapsed-time fix: precomputed by the parent (TranscriptPanel) so
   // this memoized row never needs `startedAt`/`pauseIntervals` as
   // props of their own — both are plain strings, so React.memo's
@@ -404,11 +451,34 @@ interface SegmentRowProps {
   // own segmentTimeLabels memo).
   elapsedLabel: string;
   absoluteTitle: string;
+  // v0.5 Wave-1 Feature 1 (selection mode, §1 F1 item 2): component-
+  // local (never touches the store) — see the parent's own selectedIds
+  // Set<string> state.
+  selectMode: boolean;
+  selected: boolean;
+  onToggleSelect: (segId: string) => void;
+  // Feature 1 item 1/3: chip/"+ 说话人" -> SpeakerAssignPopover.
+  // Deliberately NOT `editable` — available whenever a session exists
+  // (listening/paused/stopped), a user action rather than an engine
+  // mutation (see store.ts's own doc on assignSegmentsSpeaker etc.).
+  speakerAssignable: boolean;
+  // ITEM 7b fix (fix round, Opus sub-bar, lead-accepted): threads
+  // whether this segment has an sttSpeaker to follow back to, so
+  // SpeakerAssignPopover can gate 跟随识别 on speakerLocked AND this —
+  // an unlock with no sttSpeaker has nothing to restore (see that
+  // component's own SpeakerAssignRequest.single.hasSttSpeaker doc).
+  onAssignRequest: (
+    segmentId: string,
+    currentSpeaker: string | undefined,
+    speakerLocked: boolean,
+    hasSttSpeaker: boolean,
+    x: number,
+    y: number,
+  ) => void;
   onStartEdit: (segId: string, text: string) => void;
   onChangeEditValue: (v: string) => void;
   onSaveEdit: () => void;
   onCancelEdit: () => void;
-  onRenameRequest: (speaker: string, segmentCount: number, x: number, y: number) => void;
   onHitClick: (hit: HighlightHit, rect: DOMRect) => void;
   onHitEnter: (hit: HighlightHit, rect: DOMRect) => void;
   onHitLeave: () => void;
@@ -421,14 +491,17 @@ export const SegmentRow = memo(function SegmentRow({
   editValue,
   matcher,
   translation,
-  speakerCount,
   elapsedLabel,
   absoluteTitle,
+  selectMode,
+  selected,
+  onToggleSelect,
+  speakerAssignable,
+  onAssignRequest,
   onStartEdit,
   onChangeEditValue,
   onSaveEdit,
   onCancelEdit,
-  onRenameRequest,
   onHitClick,
   onHitEnter,
   onHitLeave,
@@ -438,9 +511,23 @@ export const SegmentRow = memo(function SegmentRow({
 
   return (
     <div
-      className="fade-up grid grid-cols-[64px_1fr] gap-3 border-b border-edge/60 px-4 py-3"
+      className={`fade-up grid gap-3 border-b border-edge/60 px-4 py-3 ${
+        selectMode ? "grid-cols-[40px_64px_1fr]" : "grid-cols-[64px_1fr]"
+      }`}
       data-segment-text={seg.text}
     >
+      {selectMode && (
+        <div className="flex min-h-10 min-w-10 items-start justify-center pt-1">
+          <input
+            type="checkbox"
+            data-testid={`segment-select-${seg.id}`}
+            aria-label="选择该段"
+            checked={selected}
+            onChange={() => onToggleSelect(seg.id)}
+            className="h-5 w-5 accent-lab-cyan"
+          />
+        </div>
+      )}
       <div className="select-none pt-0.5 font-mono text-[11px] leading-[1.6] text-mut2">
         {palette && (
           <span className={`block text-sm font-bold ${palette.text}`}>
@@ -450,24 +537,31 @@ export const SegmentRow = memo(function SegmentRow({
         <span className="block whitespace-nowrap" title={absoluteTitle}>
           {elapsedLabel}
         </span>
-        {seg.speaker && palette && (
+        {seg.speaker && palette ? (
           <span
             onClick={
-              editable
+              speakerAssignable
                 ? (e) => {
                     const rect = e.currentTarget.getBoundingClientRect();
-                    onRenameRequest(seg.speaker!, speakerCount, rect.left, rect.bottom);
+                    onAssignRequest(
+                      seg.id,
+                      seg.speaker,
+                      !!seg.speakerLocked,
+                      !!seg.sttSpeaker,
+                      rect.left,
+                      rect.bottom,
+                    );
                   }
                 : undefined
             }
             className={`group/chip mt-0.5 inline-flex items-center gap-1 ${palette.text} ${
-              editable
+              speakerAssignable
                 ? "cursor-pointer hover:underline hover:decoration-dotted hover:underline-offset-2"
                 : ""
             }`}
           >
             {seg.speaker}
-            {editable && (
+            {speakerAssignable && (
               <PencilSimple
                 size={9}
                 weight="regular"
@@ -475,6 +569,20 @@ export const SegmentRow = memo(function SegmentRow({
               />
             )}
           </span>
+        ) : (
+          speakerAssignable && (
+            <button
+              type="button"
+              data-testid={`segment-add-speaker-${seg.id}`}
+              onClick={(e) => {
+                const rect = e.currentTarget.getBoundingClientRect();
+                onAssignRequest(seg.id, undefined, false, !!seg.sttSpeaker, rect.left, rect.bottom);
+              }}
+              className="mt-0.5 inline-flex items-center whitespace-nowrap text-mut2 hover:text-fg"
+            >
+              + 说话人
+            </button>
+          )
         )}
       </div>
       {isEditing ? (
@@ -722,6 +830,22 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
   // recorded (finished / imported / loaded from history). No editing
   // affordances while live listening.
   const editable = status === "stopped";
+  // v0.5 Wave-1 Feature 1 (§1 F1's own "UX shape"): speaker assignment
+  // is a USER action, not an engine mutation — available whenever a
+  // session exists (listening/paused/stopped), unlike `editable` above
+  // (text edit stays stopped-only, untouched).
+  const assignable = status === "listening" || status === "paused" || status === "stopped";
+  const correctionBusy = useApp((s) => s.correctionBusy);
+  // v0.5 Wave-1 Feature 2: "AI configured" — same signal AiStatusPanel's
+  // own zero-config banner uses (resolved per-domain credentials, not
+  // just the raw settings.apiKey field, so a taskLlm override or the
+  // preview tier's server-proxied key both count). Computed INSIDE the
+  // selector (cheap, boolean-only) so an unrelated settings change
+  // (theme, font size, …) never re-renders this panel — only an actual
+  // flip of the resolved boolean does.
+  const aiConfigured = useApp(
+    (s) => PREVIEW_TIER || !!resolveTaskCreds(s.settings, "detect").apiKey,
+  );
 
   const containerRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
@@ -730,6 +854,70 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
   const [renameRequest, setRenameRequest] = useState<RenameRequest | null>(
     null,
   );
+
+  // v0.5 Wave-1 Feature 1 (selection mode, §1 F1 item 2) — component-
+  // local, never persisted, never touches the store directly (bulk
+  // assign goes through the SAME SpeakerAssignPopover as a per-segment
+  // chip click — see handleBulkAssignClick below).
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const toggleSelectMode = useCallback(() => {
+    setSelectMode((v) => !v);
+    setSelectedIds(new Set());
+  }, []);
+
+  const handleToggleSelect = useCallback((segId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(segId)) next.delete(segId);
+      else next.add(segId);
+      return next;
+    });
+  }, []);
+
+  // v0.5 Wave-1 Feature 1 (speaker assignment popover, §1 F1 items 1/3)
+  // — replaces the old direct chip -> SpeakerRenamePopover trigger;
+  // "重命名该说话人的所有发言" still reaches SpeakerRenamePopover, just via
+  // handleAssignRenameAll below instead of a direct chip click.
+  const [assignRequest, setAssignRequest] = useState<SpeakerAssignRequest | null>(null);
+
+  const handleAssignRequest = useCallback(
+    (
+      segmentId: string,
+      currentSpeaker: string | undefined,
+      speakerLocked: boolean,
+      hasSttSpeaker: boolean,
+      x: number,
+      y: number,
+    ) => {
+      setAssignRequest({
+        segmentIds: [segmentId],
+        single: { currentSpeaker, speakerLocked, hasSttSpeaker },
+        x,
+        y,
+      });
+    },
+    [],
+  );
+
+  const handleBulkAssignClick = useCallback(
+    (x: number, y: number) => {
+      setAssignRequest({ segmentIds: [...selectedIds], x, y });
+    },
+    [selectedIds],
+  );
+
+  // Selection mode exits automatically once its bulk assign actually
+  // lands (SpeakerAssignPopover's onAssigned) — never for the
+  // per-segment chip flow, which never passes this prop.
+  const handleBulkAssigned = useCallback(() => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }, []);
+
+  // v0.5 Wave-1 Feature 2 (AI 校正 header button).
+  const [correctionOpen, setCorrectionOpen] = useState(false);
 
   // Segment text correction: one segment editable at a time; starting
   // another discards the previous unsaved edit. Mirrored into refs so
@@ -840,6 +1028,20 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
     return map;
   }, [segments]);
 
+  // v0.5 Wave-1 Feature 1 (live latch visibility, §1 F1 item 4): "no
+  // diarized speakers present" = no segment currently displays an
+  // ENGINE-provided (non-manual) speaker — a manually-assigned/latched
+  // segment always carries speakerLocked:true (see store.ts), so it's
+  // excluded here regardless of which engine originally produced the
+  // meeting (demo/soniox/deepgram label at finalize time; whisper/
+  // tabaudio's realtime diarization labels asynchronously via
+  // speaker_update) — this one check covers all of them uniformly.
+  const hasDiarizedSpeakers = useMemo(
+    () => segments.some((s) => s.speaker && !s.speakerLocked),
+    [segments],
+  );
+  const showLatch = status === "listening" && !hasDiarizedSpeakers;
+
   // Focus-mode hover gloss: one card at a time, hover shows it after a
   // short delay, click pins it. Timers via refs so re-entering a span
   // before the leave-timeout fires cancels the pending hide.
@@ -934,15 +1136,17 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
     [focusMode, setFocusCard, resolveGlossItem],
   );
 
-  // Speaker-rename popover: SegmentRow reports its own speaker +
-  // segment count rather than closing over `speakerCounts` (a Map
-  // that gets a new reference on every segments change) so this
-  // handler stays stable regardless.
-  const handleRenameRequest = useCallback(
-    (speaker: string, segmentCount: number, x: number, y: number) => {
-      setRenameRequest({ speaker, segmentCount, x, y });
+  // v0.5 Wave-1 Feature 1: "重命名该说话人的所有发言" inside
+  // SpeakerAssignPopover hands off to the EXISTING rename-all popover —
+  // this is the bridge, closing over `speakerCounts` (unlike the old
+  // direct chip->rename trigger, SpeakerAssignPopover only reports the
+  // speaker name, not a count, so it's resolved here instead).
+  const handleAssignRenameAll = useCallback(
+    (speaker: string, x: number, y: number) => {
+      setAssignRequest(null);
+      setRenameRequest({ speaker, segmentCount: speakerCounts.get(speaker) ?? 1, x, y });
     },
-    [],
+    [speakerCounts],
   );
 
   // Escape unpins the gloss card.
@@ -1061,6 +1265,37 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
       data-testid="transcript-panel"
       style={transcriptStyle}
     >
+      {(showLatch || segments.length > 0) && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-panel2 px-3 py-2">
+          {showLatch && <ActiveSpeakerLatch />}
+          <div className="ml-auto flex items-center gap-2">
+            {segments.length > 0 && (
+              <button
+                type="button"
+                data-testid="btn-select-mode"
+                onClick={toggleSelectMode}
+                className={`btn-tactile min-h-10 border px-3 font-mono text-xs ${
+                  selectMode ? "border-act bg-act/10 text-act" : "border-edge2 text-fg hover:bg-panel3"
+                }`}
+              >
+                {selectMode ? "退出选择" : "选择"}
+              </button>
+            )}
+            {aiConfigured && status === "stopped" && segments.length > 0 && (
+              <button
+                type="button"
+                data-testid="btn-ai-correct"
+                disabled={correctionBusy}
+                onClick={() => setCorrectionOpen(true)}
+                className="btn-tactile min-h-10 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {correctionBusy ? "校正中…" : "AI 校正"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div
         ref={containerRef}
         // S14.1 field fix (iPhone Safari, ~390px): the 1st segment's
@@ -1074,6 +1309,7 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
         // full header-height pad left a large void above segment 1,
         // visually confirmed at 375px); scroll-pt-2 keeps the same
         // small clearance for any future scrollIntoView/anchor jump.
+        data-testid="transcript-scroll"
         className="scroll-thin flex-1 overflow-y-auto pt-2 scroll-pt-2"
         onScroll={handleScroll}
         onMouseUp={handleMouseUp}
@@ -1112,14 +1348,17 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
                 editValue={editingSegmentId === seg.id ? editValue : ""}
                 matcher={matcher}
                 translation={translations[seg.id]}
-                speakerCount={seg.speaker ? speakerCounts.get(seg.speaker) ?? 1 : 0}
                 elapsedLabel={segmentTimeLabels[i]?.elapsed ?? ""}
                 absoluteTitle={segmentTimeLabels[i]?.absolute ?? ""}
+                selectMode={selectMode}
+                selected={selectedIds.has(seg.id)}
+                onToggleSelect={handleToggleSelect}
+                speakerAssignable={assignable}
+                onAssignRequest={handleAssignRequest}
                 onStartEdit={startEditingSegment}
                 onChangeEditValue={setEditValue}
                 onSaveEdit={saveEditingSegment}
                 onCancelEdit={cancelEditingSegment}
-                onRenameRequest={handleRenameRequest}
                 onHitClick={handleHitClick}
                 onHitEnter={handleHitEnter}
                 onHitLeave={handleHitLeave}
@@ -1131,11 +1370,31 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
         )}
       </div>
 
+      {selectMode && (
+        <div className="flex shrink-0 items-center gap-3 border-t border-edge bg-panel2 px-3 py-2">
+          <span className="font-mono text-xs text-mut2">已选 {selectedIds.size}</span>
+          <button
+            type="button"
+            data-testid="btn-bulk-assign"
+            disabled={selectedIds.size === 0}
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              handleBulkAssignClick(rect.left, rect.top);
+            }}
+            className="btn-terminal min-h-10 bg-act px-3 font-mono text-xs font-medium text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            指派给…
+          </button>
+        </div>
+      )}
+
       {!stickToBottom && !isEmpty && (
         <button
           type="button"
           onClick={scrollToBottom}
-          className="absolute bottom-3 left-1/2 -translate-x-1/2 border border-edge bg-panel2 px-3 py-1 font-mono text-xs text-fg shadow-xl"
+          className={`absolute left-1/2 -translate-x-1/2 border border-edge bg-panel2 px-3 py-1 font-mono text-xs text-fg shadow-xl ${
+            selectMode ? "bottom-16" : "bottom-3"
+          }`}
         >
           ↓ 回到底部
         </button>
@@ -1161,7 +1420,18 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
         />
       )}
 
-      {/* S14.1 field fix (item 3): touch-only selection action bar —
+      {assignRequest && (
+        <SpeakerAssignPopover
+          request={assignRequest}
+          onClose={() => setAssignRequest(null)}
+          onRenameAll={handleAssignRenameAll}
+          onAssigned={selectMode ? handleBulkAssigned : undefined}
+        />
+      )}
+
+      <CorrectionReview open={correctionOpen} onClose={() => setCorrectionOpen(false)} />
+
+{/* S14.1 field fix (item 3): touch-only selection action bar —
           see the selectionchange effect above. `fixed` (not `absolute`
           like the ↓ 回到底部 button above) since it must sit above
           StatusLine (page.tsx, outside this component's own box, h-7 —
@@ -1185,6 +1455,7 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
           </button>
         </div>
       )}
+
     </div>
   );
 }

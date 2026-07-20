@@ -8,6 +8,8 @@ import { AppAudioEngine } from "./appAudio";
 import { OsSpeechEngine } from "./osSpeech";
 import { DemoEngine } from "./demo";
 import { SonioxEngine } from "./soniox";
+import { DeepgramEngine } from "./deepgram";
+import { TabAudioCloudEngine } from "./tabAudioCloud";
 
 export function createEngine(kind: STTEngineKind): STTEngine {
   switch (kind) {
@@ -37,6 +39,22 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // byokOnly-gated), same preview-tier coercion path as every
       // other engine.
       return new SonioxEngine();
+    case "deepgram":
+      // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+      // Lane D) — second BYOK cloud engine, same triple gate as soniox
+      // above (ENGINE_CARDS/ENGINE_OPTIONS byokOnly + store.ts
+      // applyTierDefaults coercion + key field disabled).
+      return new DeepgramEngine();
+    case "tabaudio-cloud":
+      // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
+      // blueprint.md §1 Feature 4 + §5 A4) — getDisplayMedia capture
+      // routed into a BYOK cloud transport (Soniox/Deepgram, see
+      // Settings.tabAudioCloudProvider) instead of the local sidecar.
+      // Live opt-in engine as of this lane: reachable via ENGINE_CARDS
+      // (SettingsDialog.tsx) and ENGINE_OPTIONS (engineOptions.ts,
+      // byokOnly + web-only gated), same preview-tier coercion path as
+      // soniox/deepgram above.
+      return new TabAudioCloudEngine();
     case "import":
       // "import" (#43) is never a live capture engine — imported
       // sessions are built fully offline by importText.ts and never

@@ -39,6 +39,7 @@ import {
 } from "@/lib/history/autoExport";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import { probeSidecar, type SidecarProbeResult } from "@/lib/stt/sidecarHealth";
+import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
 import {
   appAudioLockReason,
   isAppAudioFloorLocked,
@@ -81,6 +82,9 @@ import { clearDiag, getDiagEntries, type DiagEntry } from "@/lib/diag/log";
 import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
+import TranslationEngineRow from "@/components/settings/TranslationEngineRow";
+import AnkiConnectSection from "@/components/settings/AnkiConnectSection";
+import { langPairFromSettings } from "@/lib/translate/providers";
 import ModelPicker from "@/components/desktop/ModelPicker";
 import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 import CredentialFields, {
@@ -105,13 +109,16 @@ export interface SettingsDialogProps {
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine (see Header.tsx's 演示 button, the app's single demo entry
-// point). posture drives the 本地/云端 chip: local engines never send
-// audio off this machine; cloud engines do.
+// point). ITEM 2 fix (fix round, Sol#4 + Lane C flag): the retention
+// badge below each card is now derived per-render from
+// resolveEngineRetentionClass/RETENTION_COPY (lib/stt/engineOptions.ts)
+// instead of a hand-rolled `posture` field on this array — the SAME
+// tri-state source Header/StatusLine already read, so this dialog can
+// never disagree with what those surfaces show for the live engine.
 const ALL_ENGINE_CARDS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   hint: string;
-  posture: "local" | "cloud";
   disabled?: boolean;
   // #61 preview tier: needs the local sidecar — greyed there (same
   // lock as lib/stt/engineOptions.ts's ENGINE_OPTIONS.sidecarOnly;
@@ -136,13 +143,11 @@ const ALL_ENGINE_CARDS: {
     // our side (the local engines are: whisperSocket.ts acquires its
     // own stream with raw-capture constraints).
     hint: "由浏览器厂商云端识别（音频会离开设备）；扬声器外放拾音较弱，线上会议建议标签页音频或本地 Whisper",
-    posture: "cloud",
   },
   {
     value: "whisper",
     label: "本地 Whisper",
     hint: "音频只在本机处理，不出设备",
-    posture: "local",
     sidecarOnly: true,
   },
   // D7 desktop tabaudio replacement (docs/design-explorations/
@@ -163,17 +168,36 @@ const ALL_ENGINE_CARDS: {
         value: "appaudio",
         label: "系统/App 音频",
         hint: "会议中对方的声音，也含 Mac 播放的其他声音，不含你的麦克风",
-        posture: "local",
         sidecarOnly: true,
       }
     : {
         value: "tabaudio",
         label: "标签页音频",
         hint: "在本机转录标签页音频",
-        posture: "local",
         disabled: true,
         sidecarOnly: true,
       },
+  // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
+  // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
+  // A4): web-only, same `!IS_DESKTOP` guard lib/stt/engineOptions.ts's
+  // own ENGINE_OPTIONS entry uses (desktop already has sidecar+appaudio
+  // in the slot above; store.ts's applyPlatformEngineDefaults coerces a
+  // persisted value away there — the IS_IOS filter on ENGINE_CARDS below
+  // drops it on iOS too, so no separate guard is needed for that). BYOK,
+  // same preview lock/实验 tag as Soniox/Deepgram above — the actual
+  // provider (Settings.tabAudioCloudProvider, default Soniox) picks
+  // which key this card needs; see the hint block below the Deepgram key
+  // field (this card has no key input of its own).
+  ...(!IS_DESKTOP
+    ? [
+        {
+          value: "tabaudio-cloud" as const,
+          label: "标签页音频·云端",
+          hint: "需要 Soniox 或 Deepgram Key、浏览器分享标签页并勾选共享音频；选择 Deepgram 时仅支持英文",
+          byokOnly: true,
+        },
+      ]
+    : []),
   // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
   // Zero-Install 系统识别 (SpeechAnalyzer): NOT sidecarOnly (needs no
   // local Whisper sidecar at all — that's the whole point), so it's
@@ -196,7 +220,6 @@ const ALL_ENGINE_CARDS: {
           // both Tauri shells — the OS-version tail must name the right
           // platform (IS_IOS is a build-time const, so this folds).
           hint: `无需下载模型、无需 Python，音频不离开本机；不支持说话人分离，需要 ${IS_IOS ? "iOS" : "macOS"} 26 或更高版本`,
-          posture: "local" as const,
         },
       ]
     : []),
@@ -207,7 +230,18 @@ const ALL_ENGINE_CARDS: {
     // opt-in, NOT claimed to beat local Whisper until Miana's zh-en
     // clip benchmark clears it.
     hint: "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
-    posture: "cloud",
+    byokOnly: true,
+  },
+  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+  // Lane D) — second cloud engine, same BYOK/byokOnly posture as soniox
+  // above. Honest about scope: Nova-3's own `language=multi` mode has no
+  // Chinese (doc §9 Lane D wire spec), so this is single-language
+  // English-only in v0.4.7 — soniox stays the zh-en code-switching
+  // engine; the hint must not market this one for zh-en.
+  {
+    value: "deepgram",
+    label: "Deepgram 云端识别",
+    hint: "BYOK 按量计费、音频经 Deepgram 云端、仅英文（中英混说请用 Soniox）",
     byokOnly: true,
   },
 ];
@@ -228,11 +262,6 @@ const ENGINE_CARDS = IS_IOS
   : IS_DESKTOP
     ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
     : ALL_ENGINE_CARDS;
-
-const POSTURE_LABEL: Record<"local" | "cloud", string> = {
-  local: "本地",
-  cloud: "云端",
-};
 
 // S11 osspeech blueprint §Q5's 预下载模型 button (see its own JSX below):
 // exported (tech-debt ledger #4, 2026-07-17) so SettingsDialog.desktop.
@@ -626,6 +655,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
   const showToast = useApp((s) => s.showToast);
+  // ITEM 2 fix (fix round, Sol#4 + Lane C flag): the D7 webspeech
+  // on-device runtime overlay resolveEngineRetentionClass reads —
+  // exactly the same store field Header/StatusLine already read, so the
+  // 转录引擎 ENGINE_CARDS retention badge below can never disagree with
+  // what those surfaces show for the live engine.
+  const sttEngineMode = useApp((s) => s.sttEngineMode);
   // #62/tag-blocker 1: SettingsDialog is mounted unconditionally from
   // page.tsx, before store.hydrate() (async) resolves — so `settings`
   // starts out as DEFAULT_SETTINGS. Read `hydrated` so the auto-promote
@@ -768,6 +803,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // show/hide idiom as showHfToken above, scoped to 转录引擎 since the
   // field itself only renders when draft.engine === "soniox".
   const [showSonioxKey, setShowSonioxKey] = useState(false);
+  // Deepgram API Key masked-input toggle (v0.4.7 Lane D) — same idiom,
+  // scoped to 转录引擎 since the field itself only renders when
+  // draft.engine === "deepgram".
+  const [showDeepgramKey, setShowDeepgramKey] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -1832,6 +1871,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
                 const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osSpeechCaps);
                 const floorLocked = appAudioLocked || osSpeechLocked;
+                // ITEM 2 fix: tri-state retention badge, sourced from the
+                // SAME resolver/copy table Header/StatusLine already use
+                // (lib/stt/engineOptions.ts) — replaces the old hand-rolled
+                // `posture`/POSTURE_LABEL pair this array used to carry.
+                const retention = RETENTION_COPY[resolveEngineRetentionClass(opt.value, sttEngineMode)];
                 return (
                   <button
                     key={opt.value}
@@ -1880,13 +1924,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                           </span>
                         )}
                         <span
-                          className={`shrink-0 border px-1.5 py-0 text-[10px] ${
-                            opt.posture === "local"
-                              ? "border-lab-green/30 text-lab-green"
-                              : "border-warn-soft/30 text-warn-soft"
-                          }`}
+                          title={retention.hint}
+                          className={`shrink-0 border px-1.5 py-0 text-[10px] ${retention.borderClass} ${retention.textClass}`}
                         >
-                          {POSTURE_LABEL[opt.posture]}
+                          {retention.label}
                         </span>
                       </span>
                     </div>
@@ -2070,6 +2111,113 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     控制台创建 API Key
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Deepgram API Key (v0.4.7 Lane D, docs/design-explorations/
+               stt-provider-wiring-2026-07.md §5/§9): engine-conditional,
+               mirrors the Soniox API Key block immediately above field-
+               for-field (same hand-rolled masked-input pattern, same S14
+               no-probe KeyStatusChip honesty, same preview-tier gate 3 of
+               3 alongside ENGINE_CARDS' byokOnly lock above and store.ts
+               applyTierDefaults' coercion). The key never rides a URL
+               param or a JSON message body — it rides the WebSocket
+               handshake's Sec-WebSocket-Protocol (see deepgramTransport.
+               ts's own header for the verified wire shape). */}
+            {draft.engine === "deepgram" && (
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs text-mut">Deepgram API Key</label>
+                  {/* S14: no probe exists for Deepgram either (same
+                     no-telemetry posture as Soniox above) — deriveKeyStatus
+                     with no evidence arg can only ever resolve 未配置/已配置,
+                     never 正常/异常. */}
+                  {!PREVIEW_TIER && <KeyStatusChip status={deriveKeyStatus(draft.deepgramKey)} />}
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type={showDeepgramKey ? "text" : "password"}
+                    value={draft.deepgramKey}
+                    disabled={PREVIEW_TIER}
+                    onChange={(e) => patch({ deepgramKey: e.target.value })}
+                    placeholder="粘贴你的 Deepgram API Key"
+                    className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    disabled={PREVIEW_TIER}
+                    onClick={() => setShowDeepgramKey((v) => !v)}
+                    aria-label={showDeepgramKey ? "隐藏" : "显示"}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {showDeepgramKey ? (
+                      <EyeSlash size={18} weight="regular" />
+                    ) : (
+                      <Eye size={18} weight="regular" />
+                    )}
+                  </button>
+                </div>
+                <div className="mt-1 text-xs text-mut2">
+                  按量计费；Key 随 WebSocket 握手直接发给 Deepgram 云端（wss://api.deepgram.com），不经我们的服务器；仅英文，中英混说请用 Soniox
+                </div>
+                {!PREVIEW_TIER && !draft.deepgramKey && (
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    前往{" "}
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://console.deepgram.com")}
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      console.deepgram.com
+                    </button>{" "}
+                    控制台创建 API Key
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 标签页音频·云端 provider picker (v0.5 Wave-1 Feature 4, §5
+               A4; ITEM 3 fix, fix round Opus#1): unlike Soniox/Deepgram
+               above, this card has no key input of its own — it rides
+               whichever provider Settings.tabAudioCloudProvider resolves
+               to. That field previously had NO UI writer anywhere in the
+               app (Deepgram tab-cloud was unreachable) and the old copy
+               ("点击上方对应卡片临时切换以填写") pointed at an inert
+               action — clicking the Soniox/Deepgram card switches
+               draft.engine AWAY from tabaudio-cloud, it doesn't "temporarily"
+               do anything. This select is the actual writer; the key
+               itself still lives on the matching Soniox/Deepgram card
+               above (this card intentionally has none of its own), so the
+               rewritten copy says that plainly instead of implying a
+               round-trip that isn't real. */}
+            {draft.engine === "tabaudio-cloud" && (
+              <div className="space-y-2">
+                <div>
+                  <label className="text-xs text-mut">转录服务商</label>
+                  <select
+                    value={draft.tabAudioCloudProvider}
+                    disabled={PREVIEW_TIER}
+                    onChange={(e) =>
+                      patch({
+                        tabAudioCloudProvider: e.target.value as Settings["tabAudioCloudProvider"],
+                      })
+                    }
+                    className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="soniox">Soniox</option>
+                    <option value="deepgram">Deepgram（仅英文）</option>
+                  </select>
+                </div>
+                <div className="text-xs leading-[1.7] text-mut2">
+                  选择转录服务商；需在对应引擎卡片填写该服务商的 API Key——
+                  {draft.tabAudioCloudProvider === "deepgram"
+                    ? draft.deepgramKey
+                      ? "Deepgram Key 已配置"
+                      : "尚未配置 Deepgram API Key"
+                    : draft.sonioxKey
+                      ? "Soniox Key 已配置"
+                      : "尚未配置 Soniox API Key"}
+                </div>
               </div>
             )}
 
@@ -2838,6 +2986,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
 
+            {/* v0.5 F6 (L4 lane subcomponent, lead-inserted per blueprint
+               §2's SettingsDialog serialization rule): 翻译引擎 selector —
+               LLM (default) vs Chrome 内置系统翻译 (web-only, on-device). */}
+            <div data-ui-level="aiDetectTranslateEngine">
+              <TranslationEngineRow
+                value={draft.translateEngine}
+                onChange={(v) => patch({ translateEngine: v })}
+                langPair={langPairFromSettings(draft)}
+              />
+            </div>
+
             {/* 背景画像 (#48 step 3, design Q5): opt-in — default off.
                The rendered hint (llm/profileHint.ts) is spliced into the
                USER message only, never the cached SYSTEM prompt (see
@@ -3219,6 +3378,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
 
+            {/* v0.5 F9 (L7 lane subcomponent, lead-inserted per blueprint
+               §2's SettingsDialog serialization rule): AnkiConnect —
+               module-only for now; the post-save delivery hook lands in
+               F0b (store wiring), so 测试并授权 works but auto-delivery
+               starts once that hook merges. Hidden on iOS inside the
+               component itself. */}
+            <AnkiConnectSection
+              value={draft.ankiConnect}
+              onChange={(ankiPatch) =>
+                patch({ ankiConnect: { ...draft.ankiConnect, ...ankiPatch } })
+              }
+            />
+
             <label className="flex items-center justify-between gap-3 py-1">
               <div>
                 <div className="text-sm text-fg">Frontmatter</div>
@@ -3247,7 +3419,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
                     取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Soniox Key /
-                    Webhook / 连接码），请妥善保管
+                    Deepgram Key / Webhook / 连接码），请妥善保管
                   </div>
                 </div>
                 <ToggleSwitch

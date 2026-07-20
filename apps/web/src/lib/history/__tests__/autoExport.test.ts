@@ -35,6 +35,7 @@ function makeEntry(overrides: Partial<CustomEntry> = {}): CustomEntry {
   return {
     id: "e1",
     kind: "expression",
+    packId: "personal",
     headword: "circle back",
     variants: [],
     chinese_explanation: "回头再聊",
@@ -73,6 +74,8 @@ const keyedSettings: Settings = {
   // v0.4 S4 (blueprint decision E): Soniox BYOK key — hand-listed
   // stripped field, same as hfToken/agentToken (see stripKeyMaterial).
   sonioxKey: "soniox-secret",
+  // v0.4.7 (Lane D): Deepgram BYOK key — same hand-listed strip.
+  deepgramKey: "deepgram-secret",
   agentToken: "agent-secret",
   taskLlm: {
     detect: { enabled: true, apiKey: "sk-detect-secret", provider: "anthropic" },
@@ -112,7 +115,10 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       expect(emptySessions).toHaveLength(0);
 
       const result = await autoExport.restoreFullBackup(json);
-      expect(result).toEqual({ sessions: 2, entries: 1, learnset: 1, settingsRestored: true });
+      // packs: 1 — buildFullBackup's own glossary.loadCustomEntries()
+      // call auto-creates+persists "personal" as a side effect (v0.5
+      // Wave-1 F8), so even a backup with no custom packs carries it.
+      expect(result).toEqual({ sessions: 2, entries: 1, learnset: 1, packs: 1, settingsRestored: true });
 
       const restoredSessions = await storage.listSessions();
       expect(restoredSessions.map((m) => m.id).sort()).toEqual(["s1", "s2"]);
@@ -227,6 +233,98 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         sessions: 0,
         entries: 0,
       });
+    });
+  });
+
+  describe("customPacks round-trip (v0.5 Wave-1 F8, §5 A7)", () => {
+    it("a named pack created before export round-trips through build -> restore", async () => {
+      const glossary = await import("../glossary");
+      await glossary.createCustomPack("术语库 A");
+
+      const autoExport = await import("../autoExport");
+      const json = await autoExport.buildFullBackup();
+      const parsed = JSON.parse(json) as { customPacks: unknown[] };
+      expect(parsed.customPacks.map((p) => (p as { name: string }).name).sort()).toEqual([
+        "个人词库",
+        "术语库 A",
+      ]);
+
+      memStore.clear();
+      const result = await autoExport.restoreFullBackup(json);
+      expect(result.packs).toBe(2);
+
+      const restoredPacks = await glossary.loadCustomPacks();
+      expect(restoredPacks.map((p) => p.name).sort()).toEqual(["个人词库", "术语库 A"]);
+      const restoredPack = restoredPacks.find((p) => p.name === "术语库 A")!;
+      expect(restoredPack.enabled).toBe(true);
+    });
+
+    it("restoring twice does not duplicate packs (upsert-by-id)", async () => {
+      const glossary = await import("../glossary");
+      await glossary.createCustomPack("术语库 A");
+
+      const autoExport = await import("../autoExport");
+      const json = await autoExport.buildFullBackup();
+
+      await autoExport.restoreFullBackup(json);
+      await autoExport.restoreFullBackup(json);
+
+      const packs = await glossary.loadCustomPacks();
+      expect(packs.filter((p) => p.name === "术语库 A")).toHaveLength(1);
+    });
+
+    it("a legacy backup with no customPacks field restores 0 packs but 'personal' still exists (glossary.ts's own auto-create)", async () => {
+      const glossary = await import("../glossary");
+      const autoExport = await import("../autoExport");
+      const legacyBackup = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+        // customPacks intentionally omitted (pre-F8 backup).
+      });
+
+      const result = await autoExport.restoreFullBackup(legacyBackup);
+      expect(result.packs).toBe(0);
+
+      const packs = await glossary.loadCustomPacks();
+      expect(packs.map((p) => p.id)).toEqual(["personal"]);
+    });
+
+    it("sanitizeRestoredCustomPack drops malformed rows and accepts sane ones", async () => {
+      const autoExport = await import("../autoExport");
+      const sane = { id: "p1", name: "Sane Pack", enabled: true, createdAt: 1000 };
+      expect(autoExport.sanitizeRestoredCustomPack(sane)).toEqual(sane);
+
+      expect(autoExport.sanitizeRestoredCustomPack(null)).toBeNull();
+      expect(autoExport.sanitizeRestoredCustomPack({ ...sane, id: "" })).toBeNull();
+      expect(autoExport.sanitizeRestoredCustomPack({ ...sane, id: "__proto__" })).toBeNull();
+      expect(autoExport.sanitizeRestoredCustomPack({ ...sane, name: "  " })).toBeNull();
+      expect(autoExport.sanitizeRestoredCustomPack({ ...sane, enabled: "yes" })).toBeNull();
+      expect(autoExport.sanitizeRestoredCustomPack({ ...sane, createdAt: "yesterday" })).toBeNull();
+    });
+
+    it("a mixed customPacks array drops only the malformed rows, restoring every sane one and counting accurately", async () => {
+      const glossary = await import("../glossary");
+      const autoExport = await import("../autoExport");
+      const backup = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+        customPacks: [
+          { id: "personal", name: "个人词库", enabled: true, createdAt: 1000 },
+          { id: "p2", name: "Sane Pack", enabled: false, createdAt: 2000 },
+          { id: "p3", name: "", enabled: true, createdAt: 3000 }, // malformed: blank name
+        ],
+      });
+
+      const result = await autoExport.restoreFullBackup(backup);
+      expect(result.packs).toBe(2);
+
+      const packs = await glossary.loadCustomPacks();
+      expect(packs.map((p) => p.id).sort()).toEqual(["p2", "personal"]);
+      expect(packs.find((p) => p.id === "p2")?.enabled).toBe(false);
     });
   });
 
@@ -442,7 +540,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
   });
 
   describe("includeKeys / key-stripping checkbox logic", () => {
-    it("includeKeys:true (or omitted) — the export carries apiKey/hfToken/sonioxKey/agentToken/taskLlm[*].apiKey as-is", async () => {
+    it("includeKeys:true (or omitted) — the export carries apiKey/hfToken/sonioxKey/deepgramKey/agentToken/taskLlm[*].apiKey as-is", async () => {
       const storage = await import("../storage");
       await storage.saveSettings(keyedSettings);
 
@@ -455,6 +553,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         expect(parsed.settings.apiKey).toBe("sk-ant-secret");
         expect(parsed.settings.hfToken).toBe("hf_secret");
         expect(parsed.settings.sonioxKey).toBe("soniox-secret");
+        expect(parsed.settings.deepgramKey).toBe("deepgram-secret");
         expect(parsed.settings.agentToken).toBe("agent-secret");
         expect(parsed.settings.taskLlm?.detect?.apiKey).toBe("sk-detect-secret");
       }
@@ -471,6 +570,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       expect(parsed.settings.apiKey).toBe("");
       expect(parsed.settings.hfToken).toBe("");
       expect(parsed.settings.sonioxKey).toBe("");
+      expect(parsed.settings.deepgramKey).toBe("");
       expect(parsed.settings.agentToken).toBe("");
       expect(parsed.settings.taskLlm?.detect?.apiKey).toBeUndefined();
       // Non-key fields on the stripped domain block must survive.

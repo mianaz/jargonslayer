@@ -25,6 +25,13 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   // identifier convention.
   osspeech: "系统识别",
   soniox: "Soniox 云端识别",
+  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+  // Lane D): second cloud engine, terse noun form matching soniox above.
+  deepgram: "Deepgram 云端识别",
+  // v0.5 Wave-1 Foundation (F4 tab-audio-cloud kind, not yet a
+  // selectable engine — see STTEngineKind's own doc comment in
+  // types.ts). Terse noun form matching every other entry here.
+  "tabaudio-cloud": "标签页音频·云端",
   import: "导入",
   // v0.4.4 field ruling (round 2, item 1): the desktop app never frames
   // this path as "浏览器" — it's 内置 there (see ImportHub's own card);
@@ -208,6 +215,21 @@ export function buildSessionJson(session: MeetingSession): string {
 /** Trigger a browser download of `content` as `filename`. */
 export function downloadFile(filename: string, content: string, mime: string): void {
   const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/** Trigger a browser download of a pre-built `blob` as `filename` —
+ *  same anchor-click mechanics as downloadFile above, for callers
+ *  (e.g. buildDocxReport, history/docx.ts) that already produce a
+ *  Blob directly instead of a string+mime pair. */
+export function downloadBlob(filename: string, blob: Blob): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;

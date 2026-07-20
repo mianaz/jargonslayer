@@ -10,9 +10,10 @@
 // browser audio graph (see D5, docs/design-explorations/s9-app-audio-
 // tap-blueprint.md). Both feed paths share the ONE pushPcm() guard.
 
-import type { STTEvents, Settings } from "@jargonslayer/core/types";
+import type { MeetingLexicon, STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
 import { pushLagSample } from "./latencyStats";
+import { projectForInitialPrompt } from "./lexicon";
 
 const RECONNECT_DELAY_MS = 1000;
 
@@ -117,6 +118,12 @@ export interface WsTransportCallbacks {
   settings: Settings;
   /** Message shown once the single reconnect attempt also fails. */
   connectFailureMessage: (whisperUrl: string) => string;
+  // v0.4.7 Lane B (glossary -> recognizer bias, D8): the ONE lexicon
+  // snapshot built at the meeting-start callsite — projected onto the
+  // sidecar's `initial_prompt` config field (see connect()'s onopen
+  // below). Optional so every existing WsTransport caller/test that
+  // predates this lane keeps compiling unchanged.
+  lexicon?: MeetingLexicon;
 }
 
 /** Owns the AudioContext/worklet graph for a given source stream and
@@ -126,6 +133,7 @@ export class WsTransport {
   private events: STTEvents;
   private settings: Settings;
   private connectFailureMessage: (whisperUrl: string) => string;
+  private lexicon?: MeetingLexicon;
 
   private ws: WebSocket | null = null;
   private ctx: AudioContext | null = null;
@@ -232,6 +240,7 @@ export class WsTransport {
     this.events = cb.events;
     this.settings = cb.settings;
     this.connectFailureMessage = cb.connectFailureMessage;
+    this.lexicon = cb.lexicon;
   }
 
   /** Build the AudioContext -> worklet -> (muted) destination graph
@@ -341,6 +350,14 @@ export class WsTransport {
         config.diarize = true;
         if (settings.hfToken) config.hf_token = settings.hfToken;
       }
+      // v0.4.7 Lane B (glossary -> recognizer bias, doc §3): only sent
+      // when the lexicon actually projects to something (D1 default-on
+      // is unconditional for this free/local mechanism — no settings
+      // gate here; see useMeeting.ts's attachEngine for the one
+      // extension-point comment marking where a future toggle would
+      // gate the snapshot build itself, upstream of this transport).
+      const initialPrompt = projectForInitialPrompt(this.lexicon ?? { terms: [] });
+      if (initialPrompt) config.initial_prompt = initialPrompt;
       ws.send(JSON.stringify(config));
       this.reconnectAttempted = false;
       events.onStatus("listening");

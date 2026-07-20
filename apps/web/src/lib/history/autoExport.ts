@@ -4,7 +4,12 @@
 // these; do not change them.
 
 import { del, get, set } from "idb-keyval";
-import { DEFAULT_SETTINGS, type MeetingSession, type Settings } from "@jargonslayer/core/types";
+import {
+  DEFAULT_SETTINGS,
+  type CustomPack,
+  type MeetingSession,
+  type Settings,
+} from "@jargonslayer/core/types";
 import { buildMarkdownReport, buildObsidianFrontmatter } from "./export";
 import * as storage from "./storage";
 import * as glossary from "./glossary";
@@ -248,6 +253,9 @@ function stripKeyMaterial(settings: Settings): Settings {
     // strip as the other BYOK/pairing fields here (types.ts's own
     // sonioxKey doc comment points back at this exact line).
     sonioxKey: "",
+    // v0.4.7 (Lane D): Deepgram BYOK key — same hand-listed strip,
+    // mirroring sonioxKey's own precedent immediately above.
+    deepgramKey: "",
     agentToken: "",
     // Webhook URLs routinely embed capability tokens in the path
     // (n8n/飞书 style) — credential-like, stripped with the rest
@@ -269,7 +277,14 @@ function stripKeyMaterial(settings: Settings): Settings {
  *  (pre-#48) restores exactly as before (see restoreFullBackup below,
  *  which tolerates its absence). Losing the learn-set on restore means
  *  re-teaching the app every known term, which is why this ships in
- *  the same release as #48 step 1 (known-term suppression). */
+ *  the same release as #48 step 1 (known-term suppression).
+ *
+ *  `customPacks` (v0.5 Wave-1 F8, §5 A7): the named custom-pack
+ *  registry (glossary.ts's own IDB slice, not a Settings field) — same
+ *  "optional field, schemaVersion stays 1" precedent as learnset
+ *  above. glossary.loadCustomEntries() above already loads+normalizes
+ *  the pack registry as a side effect, so getCustomPacks() here is
+ *  always fresh. */
 export async function buildFullBackup(
   opts: { includeKeys?: boolean } = {},
 ): Promise<string> {
@@ -279,6 +294,7 @@ export async function buildFullBackup(
     await Promise.all(metas.map((m) => storage.getSession(m.id)))
   ).filter((s): s is MeetingSession => s !== null);
   const glossaryEntries = await glossary.loadCustomEntries();
+  const customPacks = glossary.getCustomPacks();
   const learnsetRecords = await learnset.loadLearnset();
   const rawSettings = await storage.loadSettings();
   const settings = rawSettings && !includeKeys ? stripKeyMaterial(rawSettings) : rawSettings;
@@ -289,6 +305,7 @@ export async function buildFullBackup(
       exportedAt: Date.now(),
       sessions,
       glossary: glossaryEntries,
+      customPacks,
       learnset: learnsetRecords,
       settings,
     },
@@ -306,6 +323,11 @@ interface BackupShape {
   // tolerates absence (0 count / no restore writes / learn-set left
   // untouched), never assumes the key exists.
   learnset?: Record<string, unknown>;
+  // v0.5 Wave-1 F8 (§5 A7): absent on any pre-F8 backup — restore
+  // below tolerates absence (0 packs restored; "personal" still
+  // exists via glossary.ts's own load-time auto-create, so a legacy
+  // restore just ends up with "personal" only, per A7).
+  customPacks?: unknown[];
   settings?: Settings;
 }
 
@@ -373,17 +395,26 @@ export function previewBackup(json: string): {
  *  locally is overwritten by the backup's copy, everything else local
  *  is kept. A backup with no `learnset` key (any pre-#48 file) simply
  *  contributes zero records — the current learn-set is left completely
- *  untouched, never cleared. */
-// Keys that must never be trusted as either a learn-set dict key or a
-// record's own `learnKey` field (Codex/#48 s1 review item 4): a
-// hostile or hand-edited backup could otherwise smuggle one of these
-// through Object.entries/JSON.parse (both of which DO produce a
-// literal own data property named e.g. "__proto__" — unlike bracket
-// ASSIGNMENT (`obj[key] = v`), object-literal/spread semantics don't
-// trigger the real prototype setter, but this module treats the check
-// as defense-in-depth regardless of whether today's call sites happen
-// to be spread-based) rather than actually polluting Object.prototype.
-const DANGEROUS_LEARNSET_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+ *  untouched, never cleared.
+ *
+ *  `customPacks` (v0.5 Wave-1 F8, §5 A7): upserted by `id`, same
+ *  posture as glossary entries — a pack id already present locally is
+ *  overwritten by the backup's copy (name/enabled/createdAt), packs
+ *  not mentioned stay untouched. A backup with no `customPacks` key
+ *  (any pre-F8 file) contributes zero packs — "personal" still exists
+ *  via glossary.ts's own load-time auto-create, so this is exactly
+ *  "missing in old backups -> just personal" (A7). */
+// Keys that must never be trusted as a learn-set dict key, a record's
+// own `learnKey` field, or (v0.5 Wave-1 F8) a restored pack's own `id`
+// field (Codex/#48 s1 review item 4): a hostile or hand-edited backup
+// could otherwise smuggle one of these through Object.entries/
+// JSON.parse (both of which DO produce a literal own data property
+// named e.g. "__proto__" — unlike bracket ASSIGNMENT (`obj[key] = v`),
+// object-literal/spread semantics don't trigger the real prototype
+// setter, but this module treats the check as defense-in-depth
+// regardless of whether today's call sites happen to be spread-based)
+// rather than actually polluting Object.prototype.
+const DANGEROUS_OBJECT_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 /** Validate one untrusted learn-set record from a backup file before
  *  it's ever upserted (Codex/#48 s1 review item 4). Malformed records
@@ -404,7 +435,7 @@ export function sanitizeRestoredLearnRecord(
   const r = raw as Record<string, unknown>;
 
   if (typeof r.learnKey !== "string" || r.learnKey.length === 0) return null;
-  if (DANGEROUS_LEARNSET_KEYS.has(r.learnKey)) return null;
+  if (DANGEROUS_OBJECT_KEYS.has(r.learnKey)) return null;
   if (typeof r.surface !== "string" || r.surface.length === 0) return null;
   if (r.kind !== "expression" && r.kind !== "term") return null;
   if (typeof r.suppressed !== "boolean") return null;
@@ -442,9 +473,29 @@ export function sanitizeRestoredLearnRecord(
   };
 }
 
-export async function restoreFullBackup(
-  json: string,
-): Promise<{ sessions: number; entries: number; learnset: number; settingsRestored: boolean }> {
+/** Validate one untrusted CustomPack row from a backup file before
+ *  it's ever upserted (v0.5 Wave-1 F8) — same defense-in-depth posture
+ *  as sanitizeRestoredLearnRecord above. Malformed rows are DROPPED. */
+export function sanitizeRestoredCustomPack(raw: unknown): CustomPack | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+
+  if (typeof r.id !== "string" || r.id.length === 0) return null;
+  if (DANGEROUS_OBJECT_KEYS.has(r.id)) return null;
+  if (typeof r.name !== "string" || r.name.trim().length === 0) return null;
+  if (typeof r.enabled !== "boolean") return null;
+  if (typeof r.createdAt !== "number" || !Number.isFinite(r.createdAt)) return null;
+
+  return { id: r.id, name: r.name, enabled: r.enabled, createdAt: r.createdAt };
+}
+
+export async function restoreFullBackup(json: string): Promise<{
+  sessions: number;
+  entries: number;
+  learnset: number;
+  packs: number;
+  settingsRestored: boolean;
+}> {
   const parsed = parseBackup(json);
 
   const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
@@ -457,6 +508,20 @@ export async function restoreFullBackup(
     await glossary.upsertCustomEntry(entry as Parameters<typeof glossary.upsertCustomEntry>[0]);
   }
 
+  // v0.5 Wave-1 F8: validate every pack row before it's ever upserted
+  // — malformed/hostile rows are dropped, only accepted ones counted
+  // (see sanitizeRestoredCustomPack above). Absent on a pre-F8 backup
+  // -> 0 packs restored (A7: "personal" already exists regardless, via
+  // glossary.ts's own load-time auto-create).
+  const customPacks = Array.isArray(parsed.customPacks) ? parsed.customPacks : [];
+  let packsAccepted = 0;
+  for (const rawPack of customPacks) {
+    const pack = sanitizeRestoredCustomPack(rawPack);
+    if (!pack) continue;
+    await glossary.upsertCustomPack(pack);
+    packsAccepted += 1;
+  }
+
   // #48 s1 review item 4: validate every learn-set record before it's
   // ever upserted — malformed/hostile entries are dropped, only
   // accepted ones are counted (see sanitizeRestoredLearnRecord above).
@@ -464,7 +529,7 @@ export async function restoreFullBackup(
     parsed.learnset && typeof parsed.learnset === "object" ? Object.entries(parsed.learnset) : [];
   let learnsetAccepted = 0;
   for (const [dictKey, rawRecord] of learnsetEntries) {
-    if (DANGEROUS_LEARNSET_KEYS.has(dictKey)) continue;
+    if (DANGEROUS_OBJECT_KEYS.has(dictKey)) continue;
     const record = sanitizeRestoredLearnRecord(rawRecord);
     if (!record) continue;
     await learnset.upsertLearnRecord(record);
@@ -484,6 +549,7 @@ export async function restoreFullBackup(
     sessions: sessions.length,
     entries: entries.length,
     learnset: learnsetAccepted,
+    packs: packsAccepted,
     settingsRestored,
   };
 }

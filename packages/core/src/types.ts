@@ -26,12 +26,37 @@ export type STTEngineKind =
   | "webspeech"
   | "whisper"
   | "tabaudio"
+  // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
+  // blueprint.md §1 Feature 4 + §5 A4): tab audio WITHOUT the local
+  // sidecar — getDisplayMedia capture piped into a CLOUD STT backend
+  // (Soniox or Deepgram, see Settings.tabAudioCloudProvider) instead of
+  // tabaudio's local faster-whisper sidecar. ONE kind covers both cloud
+  // backends (avoids an STTEngineKind explosion per provider). This
+  // Foundation lane lands only the kind + total migration/coercion
+  // coverage (store.ts's applyPlatformEngineDefaults/applyTierDefaults
+  // and migrateSettings' mode back-derivation all already know this
+  // value) — the actual engine (lib/stt/tabAudioCloud.ts) is a later
+  // lane's job. Unreachable from any picker until that lane adds its
+  // ENGINE_CARD/ENGINE_OPTIONS entry — same "exists, not yet
+  // selectable" posture osspeech/appaudio had between their own kind
+  // landing and their UI wiring. Web-only for v0.5 (desktop already has
+  // sidecar+appaudio) — applyPlatformEngineDefaults coerces a persisted
+  // value to appaudio on desktop.
+  | "tabaudio-cloud"
   // v0.4 S4: Soniox cloud STT (BYOK, experimental until the zh-en
   // benchmark clears it — docs/design-explorations/s4-model-wizard-
   // blueprint.md §E). Preview tier must never offer it: it joins
   // whisper/tabaudio's triple gate (ENGINE_CARDS/Header previewLocked +
   // store.ts applyTierDefaults coercion + key field disabled).
   | "soniox"
+  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+  // Lane D): Deepgram Nova-3 cloud STT — second cloud engine, same BYOK
+  // triple gate as soniox above (ENGINE_CARDS byokOnly + store.ts
+  // applyTierDefaults coercion + key field disabled). English-only in
+  // v0.4.7 (Nova-3's language=multi has no Chinese — soniox stays the
+  // zh-en code-switching engine); lights up web + desktop from the one
+  // browser-WS adapter (deepgramTransport.ts), no iOS v1 capture path.
+  | "deepgram"
   // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D7):
   // desktop-only native app/system audio capture via a CoreAudio
   // process tap (apps/desktop/src-tauri's audiocap helper) — the
@@ -72,6 +97,19 @@ export interface TranscriptSegment {
   // auto-update (see store.ts renameSpeaker/applySpeakerUpdate).
   sttSeg?: number;
   sttSpeaker?: string;
+  // v0.5 Wave-1 Feature 1 (per-segment speaker assignment, docs/design-
+  // explorations/v05-wave1-blueprint.md §1 Feature 1 + §5 A2): true once
+  // this segment's `speaker` was set by an explicit user action (single
+  // assign / bulk multi-select / "this and after" / the live latch —
+  // see store.ts's assignSegmentsSpeaker/assignSpeakerFollowing/addFinal)
+  // rather than realtime diarization. Manual-wins: a LOCKED segment's
+  // `sttSpeaker` still updates on a later speaker_update (the sidecar's
+  // changed-only assignments carry the only copy of that raw id — see
+  // A2), but `speaker` itself is never overwritten while locked. Cleared
+  // by the 跟随识别 unlock action (store.ts's unlockSegmentSpeaker), which
+  // recomputes `speaker` from the alias map. Absent/false = today's
+  // realtime-diarization-wins behavior, unchanged.
+  speakerLocked?: boolean;
 }
 
 export interface InterimState {
@@ -118,9 +156,29 @@ export interface STTEvents {
   onEngineMode?: (mode: "on-device" | "cloud") => void;
 }
 
+// v0.4.7 Lane B (glossary -> recognizer bias, docs/design-explorations/
+// stt-provider-wiring-2026-07.md §3/D3/D8): ONE tiered, deduped,
+// priority-ordered (highest priority first) term list, built ONCE per
+// engine.start() call at the meeting-start callsite
+// (apps/web/src/hooks/useMeeting.ts's attachEngine) and passed
+// explicitly — D8: adapters never read the store for this themselves.
+// Purely structural (no zh strings) so it can live in core alongside
+// STTEngine; the actual builder (glossary + packs + suppressed-
+// learn-set tiering, D3) and every per-adapter projection/cap live in
+// apps/web/src/lib/stt/lexicon.ts (D6 placement — core carries no zh
+// strings/business logic; desktop/iOS both wrap the same apps/web
+// bundle, so that placement already reaches every surface).
+export interface MeetingLexicon {
+  terms: string[];
+}
+
 export interface STTEngine {
   readonly kind: STTEngineKind;
-  start(events: STTEvents, settings: Settings): Promise<void>;
+  // `lexicon` (v0.4.7 Lane B, D8): optional so engines that don't
+  // consume bias (webspeech: biasSupport "none"; demo) need not
+  // declare/read a 3rd param at all — TS structurally allows an
+  // implementation with fewer parameters than the interface declares.
+  start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void>;
   stop(): Promise<void>;
   // Soft pause/resume (STT protocol v2, B4 pause matrix): OPTIONAL —
   // only engines that can keep their capture/transport alive through a
@@ -275,6 +333,32 @@ export interface TranslateResponse {
   translations: { id: string; text: string }[];
 }
 
+// ---------- AI transcript correction (v0.5 Wave-1 Feature 2, batch/
+// review-gated — docs/design-explorations/v05-wave1-blueprint.md §1
+// Feature 2 + §5 A5). Mirrors TranslateRequest/TranslateResponse above:
+// segments keyed by id, corrections returned keyed by id. Isomorphic —
+// implemented through ONE shared task module consumed by both
+// app/api/correct/route.ts (web) and correctViaClient (desktop/iOS,
+// which strip app/api) — see A5. ----------
+
+export interface CorrectRequest {
+  segments: { id: string; text: string }[];
+  context: string; // surrounding-segment context the batch needs to disambiguate jargon/homophones
+  lexicon: string[]; // glossary/pack bias terms — ground truth for what counts as a "real" correction
+  meetingTitle?: string;
+  model?: string;
+  lang?: ExplainLanguage;
+}
+
+// A5 (BLOCKER): no model-supplied `changed` field on the wire — a
+// silent/incorrect model claim of "unchanged" must never suppress a
+// review row, and a false "changed" must never fabricate a diff. Every
+// consumer computes `changed` itself, CLIENT-side, by diffing this
+// `text` against the request's own original segment text.
+export interface CorrectResponse {
+  corrections: { id: string; text: string }[];
+}
+
 export interface BilingualLine {
   en: string;
   zh: string;
@@ -378,6 +462,25 @@ export interface Settings {
   uiMode: "simple" | "advanced";
 
   engine: STTEngineKind;
+  // v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
+  // v05-wave1-blueprint.md §1 Feature 5 + §5 A3): the user's INTENT —
+  // what she's trying to capture — kept as its own persisted field
+  // rather than inferred from `engine` alone, because intent and
+  // mechanism can legitimately diverge (StatusLine's engine dropdown
+  // stays a power-user override that writes `engine` directly without
+  // touching `mode` — see doc §1 F5's "Store shape decision"). Picking
+  // a mode tile (a later lane's ModeSelector) derives+writes BOTH
+  // `mode` and `engine` together via deriveEngineForMode (engineOptions.
+  // ts, that lane's job). "system-audio" = 本机会议声音, "tab" = 浏览器
+  // 标签页, "mic" = 麦克风, "import"/"url" = the two non-live ingest paths
+  // (ImportHub's file/text vs URL tabs) — never a live capture engine by
+  // themselves. migrateSettings back-derives this from a persisted
+  // `engine` for every returning user who saved settings before this
+  // field existed (see modeForPersistedEngine in store.ts, exported for
+  // tests) — runtime-validated (an untrusted/garbage persisted string is
+  // treated as absent, not blindly trusted) and NEVER derived as "url"
+  // (a returning user is never silently dropped into the URL-ingest tab).
+  mode: "system-audio" | "tab" | "mic" | "import" | "url";
   micId?: string;
   language: string; // BCP-47, for Web Speech API
   whisperUrl: string; // local sidecar websocket
@@ -438,6 +541,19 @@ export interface Settings {
   autoExport: boolean; // write session .md/.json to a chosen folder on save
   webhookUrl: string; // "" = off; POST session JSON after meeting
   exportFrontmatter: boolean; // YAML frontmatter on exported markdown
+  // v0.5 Wave-1 Feature 9 (AnkiConnect connector, docs/design-
+  // explorations/v05-wave1-blueprint.md §1 Feature 9 + §5 A8): fires an
+  // `addNotes` POST to a local AnkiConnect instance on session save
+  // (like webhookUrl/autoExport above), reusing the existing flashcard
+  // projection (customEntryToFlashcard). No credential field —
+  // AnkiConnect is localhost-only, no auth. `port` defaults to 8765,
+  // AnkiConnect's own default — which COLLIDES with whisperUrl's
+  // ws://localhost:8765 sidecar default above; both can't bind on the
+  // same desktop machine at once, hence this being independently
+  // configurable rather than hardcoded (see A8's port-clash copy, which
+  // explains both sides). `deckName` is the target Anki deck, created if
+  // it doesn't already exist.
+  ankiConnect: { enabled: boolean; deckName: string; port: number };
   // explanation target language ("zh" default; "en" = English-only
   // explanations for non-Chinese users; more languages later)
   explainLanguage: "zh" | "en";
@@ -454,6 +570,26 @@ export interface Settings {
   // (→ hasSonioxKey), but history/autoExport.ts's stripKeyMaterial is a
   // HAND-LISTED strip — sonioxKey must be added there (S4 chunk 6).
   sonioxKey: string;
+  // v0.4.7 (stt-provider-wiring-2026-07.md, Lane D): Deepgram BYOK API
+  // key for the "deepgram" cloud engine; "" = engine unavailable. Sent
+  // ONLY via deepgramTransport.ts's WebSocket Sec-WebSocket-Protocol
+  // handshake to api.deepgram.com (never a URL param, never a JSON
+  // message body — see that file's own header for the verified wire
+  // shape). diag/report.ts's SECRET_KEY_RE catches the name
+  // automatically (→ hasDeepgramKey), but history/autoExport.ts's
+  // stripKeyMaterial is a HAND-LISTED strip — deepgramKey is added there
+  // too, mirroring sonioxKey's own precedent immediately above.
+  deepgramKey: string;
+  // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
+  // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
+  // A4): which BYOK cloud backend the "tabaudio-cloud" engine (see
+  // STTEngineKind above) transports the tab's getDisplayMedia capture
+  // to — reuses sonioxKey/deepgramKey above (no separate credential
+  // field); gated on the matching key actually being present (else mode
+  // derivation falls back — see A4). Default "soniox" (the zh-en
+  // code-switching engine, matching this codebase's existing default
+  // cloud-engine preference).
+  tabAudioCloudProvider: "soniox" | "deepgram";
   // Realtime speaker diarization (beta, whisper/tabaudio only): labels
   // live transcript segments with SPEAKER_1/2/… as the meeting
   // progresses, via the sidecar's ws-side pyannote pass (see
@@ -488,6 +624,18 @@ export interface Settings {
   // explainLanguage !== "en" (translating English into English is a
   // no-op); default off (existing single-line transcript unchanged).
   bilingualTranscript: boolean;
+  // v0.5 Wave-1 Feature 6 (configurable translation engines, docs/
+  // design-explorations/v05-wave1-blueprint.md §1 Feature 6 + §5 A6):
+  // which TranslationProvider the live bilingual-transcript queue
+  // (lib/translate/queue.ts) resolves through — "llm" (default,
+  // quality, today's translateApi path, unchanged) or "system"
+  // (on-device, free — Chrome's Translator API on web; a future Apple
+  // Translation spike elsewhere; hidden/falls back to "llm" wherever no
+  // on-device provider exists, e.g. Tauri desktop/iOS — see A6).
+  // Independent of explainLanguage/bilingualTranscript above (this only
+  // selects WHICH engine translates, not whether/into-what-language
+  // translation happens at all).
+  translateEngine: "llm" | "system";
 
   // Background profile (#48 step 3, design Q5): a handful of short
   // free-text hints about the user, rendered into ONE short string
@@ -563,6 +711,11 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   uiMode: "simple",
   engine: "demo",
+  // "mic" — the one capture mode legal on every platform (web/desktop/
+  // iOS all support mic capture; system-audio/tab don't) — see
+  // modeForPersistedEngine in store.ts, which resolves to this same
+  // value for both "demo" and any unrecognized legalEngine.
+  mode: "mic",
   language: "en-US",
   whisperUrl: "ws://localhost:8765",
   sidecarMode: "managed",
@@ -614,14 +767,18 @@ export const DEFAULT_SETTINGS: Settings = {
   autoExport: false,
   webhookUrl: "",
   exportFrontmatter: true,
+  ankiConnect: { enabled: false, deckName: "JargonSlayer", port: 8765 },
   explainLanguage: "zh",
   enabledPacks: null,
   hfToken: "",
   sonioxKey: "",
+  deepgramKey: "",
+  tabAudioCloudProvider: "soniox",
   realtimeDiarize: false,
   partials: true,
   preferOnDeviceSpeech: true,
   bilingualTranscript: false,
+  translateEngine: "llm",
   profile: { enabled: false },
   themeId: "terminal",
   fontSize: "md",
@@ -665,6 +822,17 @@ export interface MeetingSession {
   // applySpeakerUpdate never clobbers a rename ("rename-wins", see
   // store.ts).
   speakerAliases?: Record<string, string>;
+  // v0.5 Wave-1 Feature 1 (manual speaker roster, see TranscriptSegment.
+  // speakerLocked above): this meeting's roster of manually-managed
+  // speaker names (store.ts's speakerRoster live slice), persisted
+  // ALWAYS (even []) by saveCurrentSession — same "presence, even
+  // empty, marks this as known-complete bookkeeping vs. legacy-absent"
+  // posture as pauseIntervals below, NOT speakerAliases/translations'
+  // omit-when-empty convention above: loadSession must tell "this
+  // session's roster really is empty" apart from "this session predates
+  // the roster feature entirely" (only the latter derives a roster from
+  // segments' own speaker values — see store.ts's loadSession).
+  speakerRoster?: string[];
   // Live bilingual transcript (#42): segment id -> translated text,
   // for segments translated while the meeting was live. Absent when
   // the feature was off or a segment's translation never landed.
@@ -716,9 +884,34 @@ export function sessionToMeta(s: MeetingSession): SessionMeta {
 
 export type CustomEntryKind = "expression" | "term";
 
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, docs/design-
+// explorations/v05-wave1-blueprint.md §1 Feature 8 + §5 A7): a named,
+// independently toggleable group of CustomEntry rows — a separate
+// persisted slice (own IDB key, mirroring lib/history/glossary.ts's own
+// storage; NOT a Settings field, so pack CRUD doesn't round-trip
+// through the settings save/restore path). "personal" (CustomEntry.
+// packId's own default below) is the always-present, non-deletable
+// pack every pre-Feature-8 entry migrates onto — the load-time
+// normalization/auto-creation that guarantees it exists is a later
+// lane's job (A7), not this Foundation type.
+export interface CustomPack {
+  id: string;
+  name: string;
+  enabled: boolean;
+  createdAt: number;
+}
+
 export interface CustomEntry {
   id: string;
   kind: CustomEntryKind;
+  // v0.5 Wave-1 Feature 8 (see CustomPack above): which pack this entry
+  // belongs to. REQUIRED (not optional) so every construction site must
+  // decide explicitly rather than silently defaulting somewhere
+  // downstream — "personal" is the value every construction site in
+  // this codebase sets today (see cardToCustomEntry/termToCustomEntry
+  // below and every UI/test construction site) until a later lane
+  // builds real pack selection.
+  packId: string;
   headword: string; // canonical phrase/term — display + primary match
   variants: string[]; // extra surface forms to also match
   chinese_explanation: string; // 中文解释（两种 kind 都有）
@@ -829,6 +1022,7 @@ export function cardToCustomEntry(c: ExpressionCard): CustomEntry {
   return {
     id: newId(),
     kind: "expression",
+    packId: "personal",
     headword: c.expression,
     variants: [],
     chinese_explanation: c.chinese_explanation,
@@ -852,6 +1046,7 @@ export function termToCustomEntry(t: TermCard): CustomEntry {
   return {
     id: newId(),
     kind: "term",
+    packId: "personal",
     headword: t.term,
     variants: [],
     chinese_explanation: t.gloss_zh,

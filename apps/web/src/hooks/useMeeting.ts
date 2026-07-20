@@ -8,8 +8,10 @@ import { useApp } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
+import { langPairFromSettings, resolveTranslationProvider } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
+import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
@@ -266,7 +268,29 @@ export function useMeeting(): UseMeetingResult {
       },
     };
 
-    await engine.start(events, settings);
+    // v0.4.7 Lane B (glossary -> recognizer bias, docs/design-
+    // explorations/stt-provider-wiring-2026-07.md §3, D8): ONE lexicon
+    // snapshot, built HERE (read via existing store selectors, same
+    // moment `settings` above was read) and passed explicitly into
+    // engine.start() — adapters never read the store for this
+    // themselves anymore (Q11's osSpeech.ts direct read migrated onto
+    // this same seam). Every real engine.start() invocation goes
+    // through this ONE attachEngine() call site (fresh start() AND
+    // resume()'s teardown-reattach), so a mid-meeting reattach always
+    // gets a freshly-built snapshot too — same "start-time one-shot"
+    // semantics Q11 already had, just generalized.
+    //
+    // D1 extension point: bias is default-ON, unconditional, for every
+    // free/local mechanism (doc D1) — a future 术语偏置 Settings toggle
+    // would gate this whole build+pass step right here (e.g. `settings
+    // .termBiasEnabled === false ? undefined : buildMeetingLexicon(...)`)
+    // rather than inside any individual adapter.
+    const lexicon = buildMeetingLexicon({
+      customEntries: useApp.getState().customEntries,
+      enabledPacks: settings.enabledPacks,
+      learnset: useApp.getState().learnset,
+    });
+    await engine.start(events, settings, lexicon);
     return !attachFailed;
   }, []);
 
@@ -349,9 +373,24 @@ export function useMeeting(): UseMeetingResult {
     // Replace any previous translate queue before wiring a fresh one —
     // same lifecycle as the scheduler above.
     translateQueueRef.current?.stop();
+    // v0.5 Wave-1 Feature 6 / A6 (docs/design-explorations/
+    // v05-wave1-blueprint.md §1 Feature 6 + §5 A6): provider KIND is
+    // decided once here (mirrors attachEngine's own settings.engine
+    // snapshot just below) and, when it resolves to the on-device
+    // Chrome provider, prepare() MUST fire synchronously, inside THIS
+    // Start click's own user gesture, before any await — this whole
+    // start() callback body still runs synchronously up to
+    // attachEngine's own internal `await engine.start(...)`, so this
+    // call site is well inside that window. See providers.ts's header
+    // comment for the full activation contract; LlmTranslationProvider's
+    // prepare() is a no-op, so this is harmless when the resolved
+    // provider is (as by far most commonly) "llm".
+    const provider = resolveTranslationProvider(() => useApp.getState().settings);
+    provider.prepare(langPairFromSettings(useApp.getState().settings));
     const translateQueue = new TranslateQueue({
       getSettings: () => useApp.getState().settings,
       getMeetingGen: () => useApp.getState().meetingGen,
+      provider,
       onTranslations: (map, gen) => useApp.getState().applyTranslations(map, gen),
       onError: (msg) => useApp.getState().showToast(logAndToastError("translate-queue", msg)),
     });

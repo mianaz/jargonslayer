@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CORRECT_SYSTEM_PROMPT,
   DETECT_SYSTEM_PROMPT,
   DEFINE_SYSTEM_PROMPT,
   SWEEP_SYSTEM_PROMPT,
+  buildCorrectUserMessage,
   buildDefineSystemPrompt,
   buildDefineUserMessage,
   buildDetectSystemPrompt,
@@ -167,6 +169,75 @@ describe("buildDefineUserMessage", () => {
   it("falls back to '(none)' when context is empty", () => {
     const msg = buildDefineUserMessage("circle back", "");
     expect(msg).toBe("PHRASE:\ncircle back\n\nCONTEXT:\n(none)");
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.5 Wave-1 Feature 2 (AI transcript correction, §5 A5) — "prompt
+// fixture (corrects jargon, preserves rest)" from the blueprint's §4
+// verification table: a deterministic structural fixture (asserts the
+// PROMPT's own rules/JSON contract), not a live-model quality check
+// (that's an owner field-test item — "Correction QUALITY on a real
+// jargon transcript" — no fixture test can substitute for it).
+// ---------------------------------------------------------------
+
+describe("CORRECT_SYSTEM_PROMPT — fixes ONLY clear ASR errors, preserves the rest, strict JSON contract", () => {
+  it("instructs fixing ONLY clear ASR mistakes (proper nouns/jargon/homophones), using the lexicon as ground truth", () => {
+    expect(CORRECT_SYSTEM_PROMPT).toContain("Fix ONLY clear ASR mistakes");
+    expect(CORRECT_SYSTEM_PROMPT).toContain("GROUND TRUTH");
+    expect(CORRECT_SYSTEM_PROMPT).toContain("mis-heard proper nouns, jargon, acronyms, and homophones");
+  });
+
+  it("instructs preserving everything else verbatim (grammar/wording/filler/punctuation)", () => {
+    expect(CORRECT_SYSTEM_PROMPT).toContain(
+      "NEVER rewrite grammar, wording, filler words, punctuation, or phrasing choices",
+    );
+    expect(CORRECT_SYSTEM_PROMPT).toContain("verbatim");
+  });
+
+  it("requires ALL segments returned, including unchanged ones (mirrors the translate prompt's id-echo contract)", () => {
+    expect(CORRECT_SYSTEM_PROMPT).toContain("EXACTLY one item per input id");
+    expect(CORRECT_SYSTEM_PROMPT).toContain("including segments that need no fix at all");
+  });
+
+  it("strict JSON contract: {\"corrections\": [{\"id\", \"text\"}]}, no markdown fences, no prose", () => {
+    expect(CORRECT_SYSTEM_PROMPT).toContain('{"corrections": [{"id": "<same id>", "text": "<corrected text>"}]}');
+    expect(CORRECT_SYSTEM_PROMPT).toContain("No markdown fences, no prose outside the JSON object");
+  });
+
+  it("never asks the model to return a `changed` field (A5: changed is ALWAYS computed client-side) — the JSON contract is id/text only", () => {
+    expect(CORRECT_SYSTEM_PROMPT).not.toContain('"changed"');
+    expect(CORRECT_SYSTEM_PROMPT).toContain('{"id": "<same id>", "text": "<corrected text>"}');
+  });
+});
+
+describe("buildCorrectUserMessage", () => {
+  const segments = [{ id: "s1", text: "scar an seek data" }];
+
+  it("formats LEXICON/CONTEXT/SEGMENTS sections", () => {
+    const msg = buildCorrectUserMessage(segments, ["scRNA-seq", "UMAP"], "prior discussion of sequencing");
+    expect(msg).toBe(
+      "LEXICON:\nscRNA-seq, UMAP\n\nCONTEXT:\nprior discussion of sequencing\n\nSEGMENTS:\n" +
+        JSON.stringify(segments),
+    );
+  });
+
+  it("falls back to '(none)' for an empty lexicon and empty context", () => {
+    const msg = buildCorrectUserMessage(segments, [], "");
+    expect(msg).toContain("LEXICON:\n(none)");
+    expect(msg).toContain("CONTEXT:\n(none)");
+  });
+
+  it("prepends a MEETING TITLE section only when meetingTitle is supplied", () => {
+    const withTitle = buildCorrectUserMessage(segments, [], "", "周会 2026-07-19");
+    expect(withTitle.startsWith("MEETING TITLE:\n周会 2026-07-19\n\n")).toBe(true);
+    const withoutTitle = buildCorrectUserMessage(segments, [], "");
+    expect(withoutTitle).not.toContain("MEETING TITLE");
+  });
+
+  it("SEGMENTS is the exact id-keyed JSON.stringify of the input segments (translate's own user-message contract)", () => {
+    const msg = buildCorrectUserMessage(segments, [], "");
+    expect(msg.endsWith(JSON.stringify(segments))).toBe(true);
   });
 });
 

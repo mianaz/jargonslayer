@@ -4,7 +4,7 @@
 // AudioWorklet/WebSocket plumbing itself lives in wsTransport.ts,
 // shared with tabAudio.ts.
 
-import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
+import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { WsTransport } from "./wsTransport";
 
 export class WhisperSocketEngine implements STTEngine {
@@ -14,7 +14,7 @@ export class WhisperSocketEngine implements STTEngine {
   private stream: MediaStream | null = null;
   private stopping = false;
 
-  async start(events: STTEvents, settings: Settings): Promise<void> {
+  async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
     this.stopping = false;
 
     let stream: MediaStream;
@@ -40,6 +40,7 @@ export class WhisperSocketEngine implements STTEngine {
     const transport = new WsTransport({
       events,
       settings,
+      lexicon,
       connectFailureMessage: (url) =>
         `无法连接本地 Whisper（${url}）。请先启动本地 Whisper 服务：cd sidecar && python whisper_server.py（详见 README）`,
     });

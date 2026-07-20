@@ -36,7 +36,16 @@ export class FakeWebSocket {
   onclose: (() => void) | null = null;
   onerror: (() => void) | null = null;
 
-  constructor(public url: string) {
+  // v0.4.7 Lane D: deepgramTransport.ts authenticates via the WS
+  // handshake's Sec-WebSocket-Protocol (`new WebSocket(url, ["token",
+  // apiKey])`), unlike Soniox/whisper's 1-arg `new WebSocket(url)` — this
+  // optional 2nd param is purely additive (defaults to []), so every
+  // existing 1-arg call site (wsTransport.ts/sonioxTransport.ts and their
+  // own tests) keeps constructing/asserting identically.
+  constructor(
+    public url: string,
+    public protocols: string | string[] = [],
+  ) {
     FakeWebSocket.instances.push(this);
   }
 

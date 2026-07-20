@@ -35,7 +35,7 @@
 // once at module load, not per render.
 
 import { useEffect, useState } from "react";
-import type { STTEngineKind } from "@jargonslayer/core/types";
+import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { PREVIEW_TIER } from "@/lib/deployTier";
@@ -48,10 +48,26 @@ import {
   type AudiocapCapabilities,
 } from "@/lib/desktop/audiocapCaps";
 import {
+  getOsSpeechCapsSnapshot,
   isOsSpeechFloorLocked,
   osSpeechLockReason,
   type OsSpeechCapabilities,
 } from "@/lib/desktop/osspeechCaps";
+import {
+  derivePosture,
+  ENGINE_CAPABILITIES,
+  resolveWebspeechRetentionClass,
+  type LiveEngineKind,
+  type RetentionClass,
+} from "./engineCapabilities";
+import type { OnDeviceMode } from "./onDeviceSpeech";
+// v0.5 Wave-1 Feature 5 (mode-first UI, §5 A3/A4): deriveEngineForMode's
+// own "always run the result through applyPlatformEngineDefaults+
+// applyTierDefaults semantics" sanitize pass reuses those two pure,
+// already-tested store.ts coercions verbatim rather than re-deriving
+// platform/tier legality here — store.ts does not import this module
+// (grepped), so this is a one-directional, non-circular edge.
+import { applyPlatformEngineDefaults, applyTierDefaults } from "@/lib/store";
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine, so it has exactly one affordance: the ≡ menu's 演示 item.
@@ -63,41 +79,77 @@ import {
 // everything, no dead ends). byokOnly (v0.4 S4, blueprint decision E):
 // soniox is an unproven BYOK cloud engine (no local sidecar involved,
 // but not benchmark-cleared either) — same preview lock as sidecarOnly.
+//
+// v0.4.7 (stt-provider-wiring-2026-07.md, Lane A, D5/D6): this shape
+// stays exactly as it was — ENGINE_OPTIONS/engineOptionGate's own
+// consumers (Header/StatusLine) are untouched by that doc's lanes —
+// but the arrays below are now PROJECTIONS of the new capability
+// contract (engineCapabilities.ts) instead of separately hand-authored
+// literals, so `label` has exactly one source across both.
 export interface EngineOption {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   posture: "local" | "cloud";
+  // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): the richer
+  // axis StatusLine/Header now read instead of the coarse posture above.
+  // Always populated by toEngineOption below — posture stays alongside
+  // it unchanged (TutorialOverlay.tsx/SettingsDialog.tsx's own separate
+  // POSTURE_LABEL copies still read it; out of this lane's scope).
+  retentionClass: RetentionClass;
   sidecarOnly?: boolean;
   byokOnly?: boolean;
 }
 
+function toEngineOption(kind: LiveEngineKind): EngineOption {
+  const cap = ENGINE_CAPABILITIES[kind];
+  return {
+    value: cap.kind,
+    label: cap.label,
+    posture: derivePosture(cap.retentionClass),
+    retentionClass: cap.retentionClass,
+    sidecarOnly: cap.sidecarOnly,
+    byokOnly: cap.byokOnly,
+  };
+}
+
 const ALL_ENGINE_OPTIONS: EngineOption[] = [
-  { value: "webspeech", label: "浏览器识别", posture: "cloud" },
-  { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true },
-  IS_DESKTOP
-    ? { value: "appaudio", label: "系统/App 音频", posture: "local", sidecarOnly: true }
-    : { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
+  toEngineOption("webspeech"),
+  toEngineOption("whisper"),
+  IS_DESKTOP ? toEngineOption("appaudio") : toEngineOption("tabaudio"),
+  // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
+  // blueprint.md §1 Feature 4 + §5 A4) — tab audio without the local
+  // sidecar, BYOK cloud backend instead (Soniox/Deepgram, see
+  // Settings.tabAudioCloudProvider). Web-only for v0.5: desktop already
+  // has sidecar+appaudio in this same slot, and store.ts's
+  // applyPlatformEngineDefaults coerces a persisted value away there —
+  // same `!IS_DESKTOP` guard the appaudio/tabaudio swap above relies on
+  // (the IS_IOS branch below never reads ALL_ENGINE_OPTIONS at all, so
+  // no separate iOS guard is needed here either).
+  ...(!IS_DESKTOP ? [toEngineOption("tabaudio-cloud")] : []),
   // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
   // Zero-Install 系统识别: desktop-only (macOS 26+ gated via
   // engineOptionGate below, not here — mirrors appaudio's own
   // macOS-14.4 floor gate). NOT sidecarOnly (it needs no local Whisper
   // sidecar at all — the whole point is zero-install), so it is
   // structurally unaffected by the #61 preview-tier lock.
-  ...(IS_DESKTOP
-    ? [{ value: "osspeech" as const, label: "系统识别 · 开箱即用", posture: "local" as const }]
-    : []),
-  { value: "soniox", label: "Soniox 云端识别", posture: "cloud", byokOnly: true },
+  ...(IS_DESKTOP ? [toEngineOption("osspeech")] : []),
+  toEngineOption("soniox"),
+  // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
+  // Lane D) — second BYOK cloud engine, web + desktop only (no iOS v1
+  // capture path — see engineCapabilities.ts's own doc comment); same
+  // byokOnly preview-tier lock as soniox above.
+  toEngineOption("deepgram"),
 ];
 
 // S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D): iOS
 // v1 = mic-only, single native engine — osspeech ONLY (label byte-
 // identical to the desktop entry above, Miana-veto #2: the two surfaces
-// must never say this engine's name differently). No webspeech/whisper/
+// must never say this engine's name differently — now structurally
+// guaranteed, not just conventionally matched, since both project off
+// the SAME ENGINE_CAPABILITIES.osspeech.label). No webspeech/whisper/
 // tabaudio/appaudio/soniox/mlx on iOS v1 (Soniox deferred, blueprint D7)
 // — none has an iOS capture path in v1's scope.
-const IOS_ENGINE_OPTIONS: EngineOption[] = [
-  { value: "osspeech", label: "系统识别 · 开箱即用", posture: "local" },
-];
+const IOS_ENGINE_OPTIONS: EngineOption[] = [toEngineOption("osspeech")];
 
 /** PINNED CONTRACT (S10 blueprint wave 2): StatusLine's engine dropdown
  *  and Header's EnginePostureChip both consume this exact list — see
@@ -121,6 +173,75 @@ export const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",
   cloud: "云端",
 };
+
+// v0.4.7 Lane C — tri-state privacy label (docs/design-explorations/
+// stt-provider-wiring-2026-07.md §4, D6: zh copy lives in apps/web,
+// packages/core carries zero zh strings). Upgrades the binary
+// 本地/云端 chip: Soniox (cloud-transient, no-retention default) and a
+// future cloud-stored engine used to collapse into the same amber
+// "云端" — a privacy-positioned tool should never say that. `label` is
+// the compact chip form (Header's EnginePostureChip); `hint` is the
+// doc §4 wording verbatim (WHERE audio goes + what the vendor
+// retains) — StatusLine's wider privacy segment shows it directly,
+// Header's badge carries it as its `title` tooltip. Colors keep the
+// established green=local/amber=cloud idiom (lab-green/warn-soft,
+// unchanged pixel-for-pixel from the pre-tri-state chips) and extend
+// honestly for cloud-stored — the doc's own "red" column (Deepgram
+// default currently resolves to cloud-transient per D7's
+// mip_opt_out=true, so no live engine occupies this row yet; the UI
+// must still be able to tell the truth the day one does). ITEM 6 fix
+// (fix round, Sol, LOW): cloud-stored's TEXT stays warn-soft, same as
+// cloud-transient — DESIGN.md rule 3 ("warn TEXT uses warn-soft; fills
+// use lab-red, small elements only") reserves lab-red for the escalated
+// BORDER, not the label color, so the stronger warning reads as a
+// bolder/redder outline around the same amber text rather than a
+// second, ungoverned red-text variant.
+export const RETENTION_COPY: Record<
+  RetentionClass,
+  { label: string; hint: string; textClass: string; borderClass: string }
+> = {
+  local: {
+    label: "本地",
+    hint: "本地处理 · 音频不出设备",
+    textClass: "text-lab-green",
+    borderClass: "border-lab-green/30",
+  },
+  "cloud-transient": {
+    label: "云端·不留存",
+    hint: "云端 · 处理后不留存",
+    textClass: "text-warn-soft",
+    borderClass: "border-warn-soft/30",
+  },
+  "cloud-stored": {
+    label: "云端·可能留存",
+    hint: "云端 · 可能留存/需配置",
+    textClass: "text-warn-soft",
+    borderClass: "border-lab-red/30",
+  },
+};
+
+/** D7 two-layer truth (doc §9 D7 + Lane C addendum, Opus C5): the ONE
+ *  place StatusLine's privacy segment and Header's EnginePostureChip
+ *  both resolve the ACTIVE retentionClass for the selected engine, so
+ *  the two surfaces can never disagree (the addendum's own failure
+ *  mode: "two coexisting privacy labels that can disagree"). Mirrors
+ *  StatusLine's pre-tri-state posture derivation byte-for-byte: demo
+ *  has no audio at all (S10 field-fix #2's lead adjudication — hard-
+ *  pinned local), an engine absent from ENGINE_OPTIONS (import/
+ *  browser-whisper, or any future value) never defaults to local, and
+ *  webspeech alone narrows via the D7 runtime overlay
+ *  (resolveWebspeechRetentionClass, engineCapabilities.ts) using the
+ *  live onEngineMode signal (store.sttEngineMode). */
+export function resolveEngineRetentionClass(
+  engine: STTEngineKind,
+  sttEngineMode: OnDeviceMode | null,
+): RetentionClass {
+  if (engine === "demo") return "local";
+  const fallback = ENGINE_OPTIONS.find((o) => o.value === engine)?.retentionClass ?? "cloud-transient";
+  return engine === "webspeech"
+    ? resolveWebspeechRetentionClass(fallback, sttEngineMode ?? undefined)
+    : fallback;
+}
 
 export interface EngineOptionGate {
   disabled: boolean;
@@ -173,4 +294,130 @@ export function useAudiocapCaps(): AudiocapCapabilities | null {
     return unsubscribe;
   }, []);
   return caps;
+}
+
+// ---------------------------------------------------------------
+// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
+// v05-wave1-blueprint.md §1 Feature 5 + §5 A3/A4) — L8's own seam:
+// ModeSelector.tsx (components/) calls deriveEngineForMode on a tile
+// click to resolve WHICH engine a chosen mode should actually run, then
+// writes both `mode` and the derived `engine` together via
+// updateSettings (see Settings.mode's own doc comment, types.ts, for
+// the mode/engine divergence contract this deliberately preserves —
+// StatusLine's EngineDropdown keeps writing `engine` alone, unrelated
+// to this function).
+// ---------------------------------------------------------------
+
+/** Platform flags this function needs — an EXPLICIT parameter (not the
+ *  module-scope IS_DESKTOP/IS_IOS consts every other platform-filtered
+ *  export in this file reads directly) so it's directly unit-testable
+ *  across all three shells from one test file, no vi.mock+resetModules
+ *  gymnastics required — mirrors modeForPersistedEngine's own `platform`
+ *  parameter (store.ts). */
+export interface DeriveEnginePlatform {
+  isDesktop: boolean;
+  isIos: boolean;
+}
+
+/** §1 F5's mode→engine table + §5 A4, as a pure(-ish) function: given
+ *  the mode a ModeSelector tile just picked (or a mode already
+ *  persisted from before), returns the engine that mode should run WITH
+ *  on this platform/settings.
+ *
+ *  - "import"/"url" open ImportHub (page.tsx) rather than starting a
+ *    live engine — `settings.engine` passes through UNCHANGED (§1 F5:
+ *    "engine unchanged").
+ *  - "system-audio" (desktop only in the real tile set, §3 Q2): osspeech
+ *    when the shared macOS-26 floor probe (osspeechCaps.ts) says so,
+ *    else appaudio (S9's CoreAudio tap) — reads the SAME single-flight
+ *    cache engineOptionGate already consults (getOsSpeechCapsSnapshot)
+ *    rather than re-probing; a not-yet-resolved (null) snapshot fails
+ *    OPEN to osspeech, mirroring isOsSpeechFloorLocked's own D6 policy
+ *    ("runtime commands re-check support — UI gating is not a
+ *    boundary") — the conservative, precedent-consistent choice rather
+ *    than a new one invented here. A caller reaching this branch off
+ *    desktop (never happens from the real tile set — absent, not
+ *    disabled) degrades to a working mic default rather than a
+ *    platform-nonsensical one; the sanitize pass below still runs.
+ *  - "tab" (web only in the real tile set): A4's key-gated rule —
+ *    tabaudio-cloud when Settings.tabAudioCloudProvider's MATCHING BYOK
+ *    key is present, else the local-sidecar tabaudio (never silently
+ *    swaps to the OTHER provider's key). Whether the sidecar itself is
+ *    actually reachable (`whisperUrl`) isn't knowable synchronously from
+ *    a pure function — deliberately not attempted, same "let the surface
+ *    explain" posture ImportHub's own url tab already takes for an
+ *    analogous unknowable-synchronously case.
+ *  - "mic": iOS is osspeech unconditionally (v1's only engine). Desktop
+ *    is osspeech-if-floor else whisper (deliberately never appaudio —
+ *    that is SYSTEM audio, not a mic substitute; mirrors store.ts's own
+ *    desktop webspeech->whisper coercion precedent). Web defaults to
+ *    webspeech (zero-config) UNLESS a BYOK cloud key already exists AND
+ *    the CURRENT settings.engine is already whisper/soniox/deepgram —
+ *    then that existing choice is respected rather than clobbered on
+ *    every mic-tile click.
+ *
+ *  Sanitize pass (L8 task spec: "always run the result through
+ *  applyPlatformEngineDefaults+applyTierDefaults semantics"): every
+ *  candidate above is run through those exact two store.ts coercions
+ *  before returning — belt-and-suspenders against a derivation mistake
+ *  above AND the one thing this function genuinely cannot decide for
+ *  itself from its own inputs, preview-tier (byokOnly/sidecarOnly)
+ *  legality, which those two pure, already-unit-tested functions already
+ *  own. NOTE (verified by reading store.ts): `updateSettings` itself
+ *  does NOT re-run migrateSettings/these coercions on every write — it
+ *  is a plain merge+persist — so this function, not the later store
+ *  write, is what actually guarantees the returned engine is legal. */
+export function deriveEngineForMode(
+  mode: Settings["mode"],
+  platform: DeriveEnginePlatform,
+  settings: Settings,
+): STTEngineKind {
+  if (mode === "import" || mode === "url") return settings.engine;
+
+  const { isDesktop, isIos } = platform;
+  const osspeechFloorMet = !isOsSpeechFloorLocked("osspeech", getOsSpeechCapsSnapshot());
+
+  let candidate: STTEngineKind;
+  if (mode === "system-audio") {
+    candidate = isDesktop
+      ? osspeechFloorMet
+        ? "osspeech"
+        : "appaudio"
+      : isIos
+        ? "osspeech" // unreachable via the real tile set (iOS has no system-audio mode)
+        : "webspeech"; // unreachable via the real tile set (web has no system-audio capture)
+  } else if (mode === "tab") {
+    const providerKeyPresent =
+      settings.tabAudioCloudProvider === "deepgram" ? !!settings.deepgramKey : !!settings.sonioxKey;
+    candidate = providerKeyPresent ? "tabaudio-cloud" : "tabaudio";
+  } else {
+    // mode === "mic"
+    if (isIos) {
+      candidate = "osspeech";
+    } else if (isDesktop) {
+      candidate = osspeechFloorMet ? "osspeech" : "whisper";
+    } else {
+      // whisper is respected UNCONDITIONALLY (local sidecar, needs no
+      // key — a local-first user's deliberate choice must survive a
+      // mic-tile click); soniox/deepgram are respected only when their
+      // OWN matching key exists (L8 review fix — the first draft's flat
+      // hasCloudKey && compatible gate reset keyless whisper users to
+      // webspeech).
+      const cloudKeyFor =
+        settings.engine === "soniox"
+          ? !!settings.sonioxKey
+          : settings.engine === "deepgram"
+            ? !!settings.deepgramKey
+            : false;
+      candidate =
+        settings.engine === "whisper" || cloudKeyFor ? settings.engine : "webspeech";
+    }
+  }
+
+  const candidateSettings: Settings = { ...settings, engine: candidate };
+  const platformSanitized = applyPlatformEngineDefaults(candidateSettings, isDesktop, isIos);
+  // `true`: applyTierDefaults' own 3rd param is unread post-S14.1 (see
+  // its doc comment in store.ts) — kept `true` for signature-intent
+  // clarity only ("yes, there is a real candidate engine to sanitize").
+  return applyTierDefaults(platformSanitized, PREVIEW_TIER, true).engine;
 }

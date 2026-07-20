@@ -285,6 +285,46 @@ export function buildTranslateUserMessage(
   return JSON.stringify(segments);
 }
 
+// ---------------- AI transcript correction (v0.5 Wave-1 Feature 2) ----------------
+// Batch, whole-meeting, review-gated (docs/design-explorations/
+// v05-wave1-blueprint.md §1 Feature 2 + §5 A5) — id-keyed like
+// buildTranslateSystemPrompt/buildTranslateUserMessage above, but fixes
+// ASR mistakes in place instead of translating. `changed` is NEVER part
+// of this contract (see CorrectResponse's own doc in types.ts) — every
+// consumer computes it client-side by diffing the returned text against
+// the original request text.
+
+export const CORRECT_SYSTEM_PROMPT = `You proofread a live-transcribed English business-meeting transcript for a Chinese professional reviewer. The transcript came from automatic speech recognition (ASR) and may contain ASR errors: mis-heard proper nouns, jargon, acronyms, and homophones.
+
+You are given:
+- LEXICON: known-correct proper nouns / jargon / product names / acronyms from this user's own glossary. Treat these as GROUND TRUTH for what a garbled ASR span should have been, when a plausible garble is present.
+- CONTEXT: transcript surrounding the segments below, for disambiguation only (may be empty).
+- SEGMENTS: a JSON array of {"id": "<segment id>", "text": "<ASR transcript segment>"}, in speaking order.
+
+Return ONLY a JSON object: {"corrections": [{"id": "<same id>", "text": "<corrected text>"}]}
+
+Rules:
+1. Return EXACTLY one item per input id, echoing "id" unchanged, covering EVERY input segment — including segments that need no fix at all (echo their text back verbatim, unchanged).
+2. Fix ONLY clear ASR mistakes: a mis-transcribed proper noun/jargon/acronym/homophone that a LEXICON entry (or unambiguous surrounding context) makes obvious. Example: "scar an seek" -> "scRNA-seq" when the lexicon carries that term.
+3. NEVER rewrite grammar, wording, filler words, punctuation, or phrasing choices — preserve the speaker's own words verbatim except for the specific garbled span you are fixing.
+4. When in doubt, leave the text unchanged. A wrong "fix" is worse than a missed one — never guess.
+5. Never invent content, never merge/split/reorder/drop a segment.
+No markdown fences, no prose outside the JSON object.`;
+
+/** Mirrors buildTranslateUserMessage's id-keyed JSON contract, plus the
+ *  LEXICON/CONTEXT/TITLE preamble a correction pass needs (ground truth
+ *  + disambiguation) — see CorrectRequest in types.ts. */
+export function buildCorrectUserMessage(
+  segments: { id: string; text: string }[],
+  lexicon: string[],
+  context: string,
+  meetingTitle?: string,
+): string {
+  const title = meetingTitle ? `MEETING TITLE:\n${meetingTitle}\n\n` : "";
+  const lex = lexicon.length ? lexicon.join(", ") : "(none)";
+  return `${title}LEXICON:\n${lex}\n\nCONTEXT:\n${context || "(none)"}\n\nSEGMENTS:\n${JSON.stringify(segments)}`;
+}
+
 export function buildDefineSystemPrompt(lang: ExplainLanguage): string {
   if (lang === "zh") return DEFINE_SYSTEM_PROMPT;
   return applyLangVariant(DEFINE_SYSTEM_PROMPT, [

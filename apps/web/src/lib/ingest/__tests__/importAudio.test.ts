@@ -42,6 +42,11 @@ vi.mock("../../llm/client", () => ({
 
 vi.mock("@jargonslayer/core/detect/dictionary", () => ({
   scanDictionary: vi.fn(() => ({ expressions: [], terms: [] })),
+  // Pre-merge review Finding 2 fix: history/glossary.ts (transitively
+  // imported here) registers a shadow lookup into this module at load
+  // time — a no-op stub keeps that call from throwing under this
+  // partial mock.
+  setGlossaryShadowLookup: vi.fn(),
 }));
 
 const memStore = new Map<string, unknown>();

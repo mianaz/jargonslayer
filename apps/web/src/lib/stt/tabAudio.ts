@@ -4,7 +4,7 @@
 // loopback setup. Requires the local Whisper sidecar; audio flows
 // only to that local sidecar process and never leaves the machine.
 
-import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
+import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { WsTransport } from "./wsTransport";
 
 export class TabAudioEngine implements STTEngine {
@@ -16,7 +16,7 @@ export class TabAudioEngine implements STTEngine {
   private events: STTEvents | null = null;
   private stopping = false;
 
-  async start(events: STTEvents, settings: Settings): Promise<void> {
+  async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
     this.events = events;
     this.stopping = false;
 
@@ -75,6 +75,7 @@ export class TabAudioEngine implements STTEngine {
     const transport = new WsTransport({
       events,
       settings,
+      lexicon,
       connectFailureMessage: (url) =>
         `标签页音频需要本地 Whisper（见 README），无法连接 ${url}`,
     });

@@ -14,6 +14,7 @@ import {
   type MeetingStatus,
   type SessionMeta,
   type Settings,
+  type STTEngineKind,
   type SummaryResult,
   type TermCard,
   type TranscriptSegment,
@@ -105,7 +106,17 @@ export type ToastState =
  * id itself when unaliased). Pure — does not touch aliases; the alias
  * map itself is only ever written by a user rename (see
  * aliasesAfterRename), never by an auto-update — that's what makes
- * "rename-wins" hold. */
+ * "rename-wins" hold.
+ *
+ * v0.5 Wave-1 Feature 1 / §5 A2 (manual-assignment guard, REWRITTEN
+ * from a rev-1 draft that skipped locked segments wholesale): the
+ * sidecar sends CHANGED-ONLY assignments (whisper_server.py:1126-1148)
+ * — a locked segment may never appear in another update again, so
+ * dropping it wholesale would permanently discard its raw stable id.
+ * A locked segment's `sttSpeaker` therefore still updates; only its
+ * manually-assigned DISPLAY `speaker` is protected. Unlock (跟随识别,
+ * see unlockSegmentSpeaker below) clears the lock and recomputes
+ * `speaker` from the alias map. */
 export function applySpeakerUpdateToSegments(
   segments: TranscriptSegment[],
   assignments: { segId: number; speaker: string }[],
@@ -116,6 +127,7 @@ export function applySpeakerUpdateToSegments(
   return segments.map((s) => {
     const stableId = bySegId.get(s.sttSeg ?? -1);
     if (stableId === undefined) return s;
+    if (s.speakerLocked) return { ...s, sttSpeaker: stableId };
     return { ...s, sttSpeaker: stableId, speaker: aliases[stableId] ?? stableId };
   });
 }
@@ -171,6 +183,119 @@ export function aliasesAfterRename(
   return next;
 }
 
+// ---------------------------------------------------------------
+// v0.5 Wave-1 Feature 1 (owner amendment — unbounded roster, default
+// unassigned, multi-select, retroactive-following, live latch; docs/
+// design-explorations/v05-wave1-blueprint.md §1 Feature 1 + §5 A2) —
+// pure helpers for the manual speaker roster + per-segment assignment,
+// same "thin store action wraps an extracted pure function" pattern as
+// the realtime-diarization helpers immediately above.
+// ---------------------------------------------------------------
+
+/** Soft cap (§5 A1: "cap 200 enforced in store", not merely a UI
+ *  decoration) — a roster this large is almost certainly a stuck/
+ *  runaway auto-number loop rather than a real meeting's speaker list. */
+export const SPEAKER_ROSTER_CAP = 200;
+
+/** Add a name to the roster, or auto-number "说话人 N" (smallest N not
+ *  already taken) when `name` is omitted/blank. Trims a provided name;
+ *  a name already present (or a full roster) is a no-op on the roster
+ *  itself, but the resolved name is still returned so a caller can
+ *  still use it (e.g. re-selecting an existing entry by name). Pure. */
+export function addSpeakerToRosterList(
+  roster: string[],
+  name?: string,
+): { roster: string[]; name: string } {
+  const trimmed = name?.trim();
+  const resolved =
+    trimmed ||
+    (() => {
+      let n = 1;
+      while (roster.includes(`说话人 ${n}`)) n++;
+      return `说话人 ${n}`;
+    })();
+  if (roster.includes(resolved) || roster.length >= SPEAKER_ROSTER_CAP) {
+    return { roster, name: resolved };
+  }
+  return { roster: [...roster, resolved], name: resolved };
+}
+
+/** Rename a roster entry in place. Refuses (returns null — caller
+ *  no-ops) a blank result or a collision with a DIFFERENT existing
+ *  entry, so the roster never ends up with two entries sharing one
+ *  display name. Pure — segment/alias rewrite is the caller's job (the
+ *  store action delegates to the existing renameSpeaker path). */
+export function renameRosterSpeakerList(
+  roster: string[],
+  from: string,
+  to: string,
+): string[] | null {
+  const cleaned = to.trim();
+  if (!cleaned || from === cleaned || roster.includes(cleaned)) return null;
+  return roster.map((r) => (r === from ? cleaned : r));
+}
+
+/** Bulk per-segment assignment (single assign = a one-element
+ *  `segmentIds` array) — sets `speaker` + `speakerLocked:true` on every
+ *  matching segment, manual-wins semantics matching the A2 guard above. */
+export function assignSpeakerToSegments(
+  segments: TranscriptSegment[],
+  segmentIds: string[],
+  name: string,
+): TranscriptSegment[] {
+  const ids = new Set(segmentIds);
+  return segments.map((s) =>
+    ids.has(s.id) ? { ...s, speaker: name, speakerLocked: true } : s,
+  );
+}
+
+/** Retroactive "this and everything after" (应用到本句及之后): assigns
+ *  `segmentId` AND every segment arriving after it (array/arrival
+ *  order — TranscriptSegment.index is exactly this order). An unknown
+ *  `segmentId` is a no-op (same array returned). */
+export function assignSpeakerFollowingInSegments(
+  segments: TranscriptSegment[],
+  segmentId: string,
+  name: string,
+): TranscriptSegment[] {
+  const idx = segments.findIndex((s) => s.id === segmentId);
+  if (idx === -1) return segments;
+  return segments.map((s, i) => (i >= idx ? { ...s, speaker: name, speakerLocked: true } : s));
+}
+
+/** 跟随识别 unlock: clears `speakerLocked` on one segment and recomputes
+ *  its DISPLAY `speaker` from `aliases[sttSpeaker] ?? sttSpeaker` — the
+ *  same resolution applySpeakerUpdateToSegments uses — falling back to
+ *  whatever `speaker` already held when the segment has no `sttSpeaker`
+ *  at all (never diarized; nothing to "follow" back to). An unknown
+ *  `segmentId` is a no-op. */
+export function unlockSpeakerInSegments(
+  segments: TranscriptSegment[],
+  segmentId: string,
+  aliases: Record<string, string>,
+): TranscriptSegment[] {
+  return segments.map((s) => {
+    if (s.id !== segmentId) return s;
+    const speaker = s.sttSpeaker !== undefined ? aliases[s.sttSpeaker] ?? s.sttSpeaker : s.speaker;
+    return { ...s, speakerLocked: false, speaker };
+  });
+}
+
+/** Legacy-session roster fallback (§5 A2: "legacy loaded sessions
+ *  derive roster from unique segment.speaker values"): a session saved
+ *  before the roster feature existed has no `speakerRoster` at all —
+ *  reconstruct one from whatever distinct display names its segments
+ *  already carry, in first-seen order, so a loaded old session still
+ *  gets a working roster instead of starting from an empty one despite
+ *  having named speakers on screen already. */
+export function deriveRosterFromSegments(segments: TranscriptSegment[]): string[] {
+  const seen = new Set<string>();
+  for (const s of segments) {
+    if (s.speaker) seen.add(s.speaker);
+  }
+  return [...seen];
+}
+
 interface AppState {
   // settings
   settings: Settings;
@@ -223,6 +348,20 @@ interface AppState {
   // display name, written only by renameSpeaker (see rename-wins in
   // applySpeakerUpdate/aliasesAfterRename above).
   speakerAliases: Record<string, string>;
+  // v0.5 Wave-1 Feature 1 (manual speaker roster, owner amendment): this
+  // meeting's manually-managed speaker names — starts empty (no
+  // pre-seeded speakers), grows via addSpeakerToRoster, reset in
+  // beginMeeting/loadSession/newMeeting, persisted ALWAYS (even []) in
+  // saveCurrentSession (see MeetingSession.speakerRoster's own doc for
+  // why "always", unlike speakerAliases/translations below).
+  speakerRoster: string[];
+  // Live latch (F1): while set, addFinal stamps this roster name onto
+  // every NEW finalized segment that arrives with no speaker of its own
+  // (see addFinal below) — until switched (setActiveSpeaker) or cleared
+  // (null). NOT persisted in Settings and NOT part of a saved
+  // MeetingSession (a live-only ergonomic aid, same posture as `interim`
+  // below); reset in beginMeeting/loadSession/newMeeting.
+  activeSpeaker: string | null;
   // Live bilingual transcript (#42): segment id -> translated text,
   // written by applyTranslations (see TranslateQueue.onTranslations).
   translations: Record<string, string>;
@@ -240,6 +379,14 @@ interface AppState {
   // post-meeting
   summary: SummaryResult | null;
   summarizing: boolean;
+  // v0.5 Wave-1 Feature 2 (AI transcript correction, batch/review-gated
+  // — docs/design-explorations/v05-wave1-blueprint.md §1 Feature 2 + §5
+  // A5): true while the batch correction call is in flight. Review
+  // state itself (proposed changes, per-row accept/ignore) lives in the
+  // CorrectionReview component, not here — this flag only gates the
+  // trigger button/spinner. Reset on begin/load/new (a stale busy flag
+  // from a previous meeting/session must never survive into a new one).
+  correctionBusy: boolean;
 
   // history
   sessions: SessionMeta[];
@@ -340,6 +487,21 @@ interface AppState {
     speakers: string[],
     expectedGen: number,
   ) => void;
+  // v0.5 Wave-1 Feature 1 (manual speaker roster + per-segment
+  // assignment — see the pure helpers above this interface for the
+  // exact semantics each wraps). Available whenever a session exists
+  // (stopped/paused/listening) — a USER action, not an engine mutation,
+  // so unlike updateSegmentText/updateCard/updateTerm below these are
+  // NOT gated to status==="stopped" (doc §1 F1's own "UX shape"); each
+  // still triggers the same post-stop re-save top-up as every other
+  // post-stop-reachable mutation in this file when the meeting has
+  // already ended.
+  addSpeakerToRoster: (name?: string) => string; // returns the resolved (trimmed/auto-numbered) name
+  renameRosterSpeaker: (from: string, to: string) => void;
+  assignSegmentsSpeaker: (segmentIds: string[], name: string) => void;
+  assignSpeakerFollowing: (segmentId: string, name: string) => void;
+  setActiveSpeaker: (name: string | null) => void;
+  unlockSegmentSpeaker: (segmentId: string) => void;
   // Live bilingual transcript (#42): merges a translated-segment batch
   // from TranslateQueue.onTranslations. `gen` is the meetingGen
   // captured at that batch's dispatch time — a payload whose gen no
@@ -363,10 +525,31 @@ interface AppState {
 
   setSummary: (s: SummaryResult | null) => void;
   setSummarizing: (v: boolean) => void;
+  // v0.5 Wave-1 Feature 2 (AI transcript correction) — see the
+  // `correctionBusy` field's own doc above.
+  setCorrectionBusy: (v: boolean) => void;
 
   // transcript editing (stopped/imported sessions)
   renameSpeaker: (from: string, to: string) => void;
-  updateSegmentText: (segmentId: string, text: string) => void;
+  // Finding 3 fix (pre-merge review): returns true when the mutation
+  // was actually applied, false when the stopped-only tripwire (or a
+  // blank/whitespace-only text) refused it — see the implementation's
+  // own doc. CorrectionReview.tsx is the one caller that acts on this;
+  // every other caller may ignore the return value unchanged.
+  updateSegmentText: (segmentId: string, text: string) => boolean;
+  // v0.5 Wave-1 Feature 7 (inline card edit, docs/design-explorations/
+  // v05-wave1-blueprint.md §1 Feature 7): patches editable fields by id
+  // — expression/meaning/chinese_explanation/plain_english for a card,
+  // term/gloss_en/gloss_zh for a term. Same committed-mutation tripwire
+  // as updateSegmentText above (status==="stopped" only, fix #A5's
+  // posture extended to cards/terms) + post-stop re-save.
+  updateCard: (
+    id: string,
+    patch: Partial<
+      Pick<ExpressionCard, "expression" | "meaning" | "chinese_explanation" | "plain_english">
+    >,
+  ) => void;
+  updateTerm: (id: string, patch: Partial<Pick<TermCard, "term" | "gloss_en" | "gloss_zh">>) => void;
 
   saveCurrentSession: () => Promise<string | null>;
   loadSession: (id: string) => Promise<void>;
@@ -446,13 +629,26 @@ interface AppState {
  *  engine iOS never offers either. No reverse (iOS -> other platform)
  *  coercion is needed: osspeech already exists on desktop, and web's own
  *  osspeech->tabaudio coercion above already covers a stored osspeech
- *  landing on a web build. */
+ *  landing on a web build.
+ *
+ *  v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.
+ *  md §1 Feature 4 + §5 A4): desktop ALSO coerces a persisted
+ *  "tabaudio-cloud" to "appaudio" — same D7 rationale as "tabaudio"
+ *  itself immediately below (WKWebView has no tab-share picker to fail
+ *  into, cloud backend or not) — tabaudio-cloud is web-only for v0.5
+ *  (desktop already has sidecar+appaudio). No web/iOS coercion needed:
+ *  tabaudio-cloud is legal on web as-is, and iOS's own isIos branch
+ *  above already sweeps every non-osspeech/demo value (including this
+ *  one) to osspeech before this line is ever reached. */
 export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean, isIos = false): Settings {
   if (isIos) {
     if (settings.engine === "osspeech" || settings.engine === "demo") return settings;
     return { ...settings, engine: "osspeech" };
   }
   if (isDesktop && settings.engine === "tabaudio") {
+    return { ...settings, engine: "appaudio" };
+  }
+  if (isDesktop && settings.engine === "tabaudio-cloud") {
     return { ...settings, engine: "appaudio" };
   }
   if (isDesktop && settings.engine === "webspeech") {
@@ -470,48 +666,39 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
 /** Preview tier (#61) engine defaults — pure so it's unit-testable
  *  without depending on the PREVIEW_TIER build-time env const (tests
  *  pass `isPreview` directly; migrateSettings below is the only real
- *  caller, feeding it the actual PREVIEW_TIER). One coercion, a no-op
- *  when `isPreview` is false (full tier unaffected): a saved engine of
- *  "whisper"/"tabaudio" (sidecar-only, greyed in preview — see
- *  Header.tsx's ENGINE_OPTIONS), "soniox" (BYOK cloud, same preview
- *  lock via ENGINE_OPTIONS' byokOnly — v0.4 S4 blueprint decision E),
- *  or "demo" (see below) is coerced to "webspeech" so a returning
- *  preview user's start button still does real transcription instead
- *  of silently trying a disabled engine or replaying the script.
- *  "appaudio" joins this list too (S9/D7) — structurally, not because
- *  it's ever actually reachable here: appaudio is desktop-only, and the
- *  preview tier is a hosted WEB build, so applyPlatformEngineDefaults
- *  above would already have coerced any stored "appaudio" away to
- *  "tabaudio" before this function ever sees it on a real preview
- *  build (migrateSettings runs both, platform first) — same "extend
- *  the engine-legality function even though this exact build can't
- *  reach it" posture soniox's own listing here already set as
- *  precedent. "osspeech" (S11, v0.4.3) joins for the IDENTICAL
- *  structural-only reason — also desktop/Tauri-only, so
- *  applyPlatformEngineDefaults would already have coerced any stored
- *  "osspeech" away to "tabaudio" on a real (web) preview build before
- *  this function ever sees it.
- *
- *  "demo" (S14.1 field fix — real owner report on the hosted preview):
- *  UNCONDITIONALLY coerced now, regardless of `_hadSavedEngine`. It
- *  used to coerce only on a true first run (no saved engine key at
- *  all), on the theory that a RETURNING user's own persisted
- *  engine:"demo" meant "they last quit mid-demo" and deliberately kept
- *  it reachable. In the field that theory broke: ≡ 演示 persisted
- *  engine:"demo" the moment it ran, and nothing ever coerced it back —
- *  a returning preview user's 开始监听 silently replayed the demo
- *  forever after, with no obvious way to tell why (see Header.tsx's
- *  EnginePostureChip, which renders nothing at all for demo). Fixed at
- *  the root in useMeeting.ts's startDemo (same commit): it no longer
- *  persists engine:"demo" to storage at all — a live demo session
- *  never needs to survive a reload, so nothing legitimate is lost by
- *  refusing to persist it. That leaves this coercion only ever firing
- *  on a STALE value from before that fix shipped (exactly what the
- *  owner hit) or a hand-restored/edited settings blob — safe to always
- *  redirect to webspeech. `_hadSavedEngine` is kept in the signature
- *  (migrateSettings below still feeds it — cheap to keep, and every
- *  other existing call site still passes it) but is no longer read
- *  here. */
+ *  caller, feeding it the actual PREVIEW_TIER). Two independent
+ *  coercion groups, both no-ops when `isPreview` is false (full tier
+ *  unaffected):
+ *   1. A saved engine of "whisper"/"tabaudio" (sidecar-only, greyed in
+ *      preview — see Header.tsx's ENGINE_OPTIONS) OR "soniox"/"deepgram"
+ *      (BYOK cloud, same preview lock via ENGINE_OPTIONS' byokOnly —
+ *      v0.4 S4 blueprint decision E / v0.4.7 Lane D) OR "tabaudio-cloud"
+ *      (v0.5 Wave-1 F4 + §5 A4: byokOnly, web-only, genuinely reachable
+ *      on a hosted preview build) is coerced to "webspeech" so a
+ *      returning preview user's start button still does real
+ *      transcription instead of silently trying a disabled engine.
+ *      "appaudio" joins structurally, not because it's reachable:
+ *      desktop-only, so applyPlatformEngineDefaults above already
+ *      coerced any stored "appaudio" away before this function sees it
+ *      on a real preview build (migrateSettings runs both, platform
+ *      first) — same "extend the engine-legality function even though
+ *      this exact build can't reach it" posture soniox's listing set as
+ *      precedent. "osspeech" (S11) joins for the IDENTICAL
+ *      structural-only reason.
+ *   2. "demo" (S14.1 field fix — real owner report on the hosted
+ *      preview): UNCONDITIONALLY coerced now, regardless of
+ *      `_hadSavedEngine`. It used to coerce only on a true first run,
+ *      on the theory that a returning user's persisted engine:"demo"
+ *      meant "they last quit mid-demo". In the field that theory broke:
+ *      ≡ 演示 persisted engine:"demo" the moment it ran, and nothing
+ *      ever coerced it back — a returning preview user's 开始监听
+ *      silently replayed the demo forever after. Fixed at the root in
+ *      useMeeting.ts's startDemo (S14.1): it no longer persists
+ *      engine:"demo" at all — this coercion only ever fires on a STALE
+ *      pre-fix value or a hand-edited settings blob, safe to always
+ *      redirect. `_hadSavedEngine` is kept in the signature
+ *      (migrateSettings still feeds it; other call sites pass it) but
+ *      is no longer read here. */
 export function applyTierDefaults(
   settings: Settings,
   isPreview: boolean,
@@ -521,9 +708,11 @@ export function applyTierDefaults(
   if (
     settings.engine === "whisper" ||
     settings.engine === "tabaudio" ||
+    settings.engine === "tabaudio-cloud" ||
     settings.engine === "appaudio" ||
     settings.engine === "osspeech" ||
     settings.engine === "soniox" ||
+    settings.engine === "deepgram" ||
     settings.engine === "demo"
   ) {
     return { ...settings, engine: "webspeech" };
@@ -658,6 +847,93 @@ export function applyOpenRouterModelDefaults(settings: Settings): Settings {
   return Object.keys(patch).length > 0 ? { ...settings, ...patch } : settings;
 }
 
+/** v0.5 Wave-1 Feature 5 / §5 A3 — the three shells this repo builds
+ *  for, named (rather than two booleans) because modeForPersistedEngine
+ *  below has one genuinely three-way branch (osspeech). */
+export type ModePlatform = "web" | "desktop" | "ios";
+
+const VALID_MODES = new Set<Settings["mode"]>(["system-audio", "tab", "mic", "import", "url"]);
+
+/** §5 A3: "persisted mode strings runtime-validated" — an untrusted/
+ *  garbage/future-unknown value is treated as absent (triggers
+ *  back-derivation below) rather than blindly trusted, unlike `engine`
+ *  elsewhere in this file (no picker ever writes a bad `mode` string,
+ *  but a hand-edited/cross-version IndexedDB blob could). */
+function isValidMode(x: unknown): x is Settings["mode"] {
+  return typeof x === "string" && VALID_MODES.has(x as Settings["mode"]);
+}
+
+/** §5 A3 (BLOCKER) — total, platform-aware back-derivation of `mode`
+ *  from a persisted `engine`, for every returning user who saved
+ *  settings before `mode` existed (or whose saved `mode` didn't
+ *  validate — see isValidMode above). Exported for tests: this is the
+ *  exact mapping the migration matrix pins.
+ *
+ *  `rawEngine` is the UNCOERCED value straight off the saved blob (may
+ *  be undefined — a fresh install has none) — checked FIRST and only
+ *  for "import"/"browser-whisper", because neither
+ *  applyPlatformEngineDefaults nor applyTierDefaults has (or ever will
+ *  have) a branch that produces those two values, so a raw import-
+ *  origin engine would otherwise never be visible to this mapper once
+ *  `legalEngine` has settled on some other, unrelated coerced value.
+ *  `legalEngine` is the FULLY coerced (platform + tier) engine — every
+ *  other branch reads it, since by then it's guaranteed legal for
+ *  `platform`.
+ *
+ *  Mapping (§5 A3, verbatim): import/browser-whisper(raw)->import;
+ *  tabaudio/tabaudio-cloud->tab; webspeech/whisper/soniox/deepgram->mic;
+ *  appaudio->system-audio(desktop); osspeech->mic on iOS/system-audio on
+ *  desktop; demo->platform's legal default capture mode; unknown-
+ *  >platform default; NEVER url. */
+export function modeForPersistedEngine(
+  rawEngine: STTEngineKind | undefined,
+  legalEngine: STTEngineKind,
+  platform: ModePlatform,
+): Settings["mode"] {
+  if (rawEngine === "import" || rawEngine === "browser-whisper") return "import";
+  switch (legalEngine) {
+    case "tabaudio":
+    case "tabaudio-cloud":
+      return "tab";
+    case "webspeech":
+    case "whisper":
+    case "soniox":
+    case "deepgram":
+      return "mic";
+    case "appaudio":
+      return "system-audio";
+    case "osspeech":
+      // osspeech spans both platforms with a different mode meaning on
+      // each: iOS's only engine (mic-only v1) vs desktop's system-audio
+      // CoreAudio-tap pairing (see appaudio's own branch above).
+      return platform === "desktop" ? "system-audio" : "mic";
+    case "demo":
+    default:
+      // demo (scripted preview, not a real capture mode) and any
+      // unrecognized future value both fall back to "mic" — the one
+      // mode legal on every platform (web/desktop/iOS all support mic
+      // capture; system-audio/tab don't) — never "url".
+      return "mic";
+  }
+}
+
+/** Finding 4 fix (pre-merge review): isValidMode above only proves a
+ *  persisted `mode` STRING is one of the 5 enum values — not that it's
+ *  legal on THIS platform. A web backup's mode:"tab" restored on
+ *  desktop (or "system-audio" restored on web/iOS) is syntactically
+ *  valid but names a capture intent this platform can never satisfy.
+ *  "mic" is legal everywhere (DEFAULT_SETTINGS' own comment); "import"/
+ *  "url" are the import-family modes and are ALWAYS fine to keep —
+ *  they're never tied to a capture engine's platform restrictions in
+ *  the first place (same modes modeForPersistedEngine above NEVER
+ *  derives except "import", but a persisted "url" surviving here is
+ *  still legitimate: A3's own "locked is FINE to keep" ruling). */
+export function isModeLegalForPlatform(mode: Settings["mode"], platform: ModePlatform): boolean {
+  if (mode === "tab") return platform === "web";
+  if (mode === "system-audio") return platform === "desktop";
+  return true;
+}
+
 /** Fold persisted settings over defaults, migrating legacy field
  *  shapes. #54: pre-v0.2.2 settings had dictionaryOnly (force
  *  offline) instead of aiDetect (opt into the LLM upgrade layer) —
@@ -683,7 +959,30 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // above (detectModel/summaryModel vs. engine), order is arbitrary
   // either way, but this needs the fully-folded `baseUrl` (from
   // `legacy`/DEFAULT_SETTINGS above) to decide.
-  return applyOpenRouterModelDefaults(tierSettings);
+  const openRouterSettings = applyOpenRouterModelDefaults(tierSettings);
+  // v0.5 Wave-1 Feature 5 / §5 A3: mode back-derivation. `hadSavedMode`
+  // reads the RAW saved object, before the defaults fold above — mirrors
+  // `hadSavedEngine`'s own "engine" in saved check for applyTierDefaults.
+  // Runs LAST (after platform/tier coercion) so it derives `mode` from a
+  // legal `engine`, per A3's own ordering requirement.
+  //
+  // Finding 4 fix (pre-merge review): hadSavedMode (isValidMode) alone
+  // used to be the whole gate — kept unchanged as the FIRST half of
+  // this check (a persisted mode must still be a syntactically real
+  // value to even consider keeping) — now ALSO requires the value be
+  // legal on THIS platform (isModeLegalForPlatform); when it isn't, a
+  // platform-illegal-but-syntactically-valid persisted mode falls
+  // through to the exact same back-derivation the no-saved-mode path
+  // below already uses, rather than surviving hydration as a stale,
+  // unavailable intent.
+  const platform: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
+  if (isValidMode(legacy.mode) && isModeLegalForPlatform(legacy.mode, platform)) {
+    return openRouterSettings;
+  }
+  return {
+    ...openRouterSettings,
+    mode: modeForPersistedEngine(legacy.engine, openRouterSettings.engine, platform),
+  };
 }
 
 // ---------------------------------------------------------------
@@ -754,6 +1053,8 @@ export const useApp = create<AppState>((set, get) => ({
   pauseStartedAt: null,
   pauseIntervals: [],
   speakerAliases: {},
+  speakerRoster: [],
+  activeSpeaker: null,
   translations: {},
 
   cards: [],
@@ -765,6 +1066,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   summary: null,
   summarizing: false,
+  correctionBusy: false,
 
   sessions: [],
   activeSessionId: null,
@@ -918,10 +1220,13 @@ export const useApp = create<AppState>((set, get) => ({
       pauseStartedAt: null,
       pauseIntervals: [],
       speakerAliases: {},
+      speakerRoster: [],
+      activeSpeaker: null,
       translations: {},
       cards: [],
       terms: [],
       summary: null,
+      correctionBusy: false,
       focusCardId: null,
       lookup: null,
       activeSessionId: null,
@@ -953,14 +1258,24 @@ export const useApp = create<AppState>((set, get) => ({
     }),
 
   addFinal: (text, opts) => {
-    const { segments, settings } = get();
+    const { segments, settings, activeSpeaker } = get();
     const now = Date.now();
+    // v0.5 Wave-1 Feature 1 (live latch): applies ONLY to a final that
+    // arrives with no speaker of its own (demo/deepgram/soniox can
+    // report one directly at finalize time; wsTransport's realtime
+    // diarization only ever back-labels via a LATER speaker_update, so
+    // its finals always arrive speaker-less here) — stamps the latched
+    // roster name and marks it manually locked, same "manual wins"
+    // semantics as a per-segment assignment (see applySpeakerUpdateToSegments'
+    // A2 guard above).
+    const latched = opts?.speaker === undefined && activeSpeaker !== null;
     const seg: TranscriptSegment = {
       id: newId(),
       index: segments.length,
       startedAt: opts?.startedAt ?? now,
       endedAt: now,
-      speaker: opts?.speaker,
+      speaker: opts?.speaker ?? (activeSpeaker ?? undefined),
+      speakerLocked: latched ? true : undefined,
       text: text.trim(),
       engine: settings.engine,
       sttSeg: opts?.sttSeg,
@@ -1000,6 +1315,80 @@ export const useApp = create<AppState>((set, get) => ({
     // own doc above): the sidecar's final pass can resolve after the
     // session was already saved on stop — same top-up re-save as
     // applyTranslations/applyDetection/renameSpeaker/updateSegmentText.
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+
+  // v0.5 Wave-1 Feature 1 (manual speaker roster + per-segment
+  // assignment) — thin wrappers around the pure helpers defined above
+  // this store, per this file's own established pattern. None of these
+  // are gated to status==="stopped" (see AppState's own doc); each
+  // schedules the same post-stop re-save top-up as applySpeakerUpdate
+  // above whenever the meeting has already ended.
+  addSpeakerToRoster: (name) => {
+    const { roster, name: resolved } = addSpeakerToRosterList(get().speakerRoster, name);
+    set({ speakerRoster: roster });
+    // speakerRoster is ALWAYS persisted (see saveCurrentSession's own
+    // doc) — a bare add with no segment assignment yet must still
+    // survive a stopped session's re-save, same top-up as every other
+    // mutation in this file.
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+    return resolved;
+  },
+
+  renameRosterSpeaker: (from, to) => {
+    const next = renameRosterSpeakerList(get().speakerRoster, from, to);
+    if (next === null) return;
+    set({ speakerRoster: next });
+    // Delegate the segment/alias rewrite to the existing rename-all
+    // path (renameSpeaker below) — guarded once, above, so the roster
+    // and the segments/aliases it labels never end up split-brain.
+    get().renameSpeaker(from, to);
+  },
+
+  assignSegmentsSpeaker: (segmentIds, name) => {
+    const cleaned = name.trim();
+    if (!cleaned || segmentIds.length === 0) return;
+    set({ segments: assignSpeakerToSegments(get().segments, segmentIds, cleaned) });
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+
+  assignSpeakerFollowing: (segmentId, name) => {
+    const cleaned = name.trim();
+    if (!cleaned) return;
+    set({ segments: assignSpeakerFollowingInSegments(get().segments, segmentId, cleaned) });
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+
+  setActiveSpeaker: (activeSpeaker) => set({ activeSpeaker }),
+
+  unlockSegmentSpeaker: (segmentId) => {
+    set({
+      segments: unlockSpeakerInSegments(get().segments, segmentId, get().speakerAliases),
+    });
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(
         () => get().saveCurrentSession(),
@@ -1066,6 +1455,7 @@ export const useApp = create<AppState>((set, get) => ({
 
   setSummary: (summary) => set({ summary }),
   setSummarizing: (summarizing) => set({ summarizing }),
+  setCorrectionBusy: (correctionBusy) => set({ correctionBusy }),
 
   renameSpeaker: (from, to) => {
     const cleaned = to.trim();
@@ -1098,6 +1488,15 @@ export const useApp = create<AppState>((set, get) => ({
     // engine) may ever mutate already-committed text. Refuse the write
     // and log rather than silently accepting a call that shouldn't be
     // possible; PRIVACY: segment id + status only, never the text.
+    //
+    // Finding 3 fix (pre-merge review): returns a boolean (true =
+    // mutation applied) instead of void — CorrectionReview.tsx's own
+    // acceptance gate checks session/gen/text but NOT status, so a
+    // refused write here used to be silently indistinguishable from a
+    // successful one from that caller's point of view (the review row
+    // still got marked accepted + queued for retranslation). Callers
+    // that don't need the outcome (TranscriptPanel's inline edit) are
+    // unaffected — ignoring a non-void return is always legal.
     const status = get().status;
     if (status !== "stopped") {
       diagLog(
@@ -1106,10 +1505,10 @@ export const useApp = create<AppState>((set, get) => ({
         "refused to mutate committed transcript text outside a stopped session",
         `segmentId=${segmentId} status=${status}`,
       );
-      return;
+      return false;
     }
     const cleaned = text.trim();
-    if (!cleaned) return;
+    if (!cleaned) return false;
     set({
       segments: get().segments.map((s) =>
         s.id === segmentId ? { ...s, text: cleaned } : s,
@@ -1119,6 +1518,52 @@ export const useApp = create<AppState>((set, get) => ({
     // now, so drop it (useMeeting.ts re-enqueues it for a fresh
     // translation while the meeting is still live and the toggle is on).
     get().invalidateTranslation(segmentId);
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+    return true;
+  },
+
+  // v0.5 Wave-1 Feature 7 (inline card edit) — same committed-mutation
+  // tripwire as updateSegmentText above (status==="stopped" only) + the
+  // same post-stop re-save.
+  updateCard: (id, patch) => {
+    const status = get().status;
+    if (status !== "stopped") {
+      diagLog(
+        "warn",
+        "stt-committed-mutation",
+        "refused to mutate a committed card outside a stopped session",
+        `cardId=${id} status=${status}`,
+      );
+      return;
+    }
+    set({ cards: get().cards.map((c) => (c.id === id ? { ...c, ...patch } : c)) });
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+
+  updateTerm: (id, patch) => {
+    const status = get().status;
+    if (status !== "stopped") {
+      diagLog(
+        "warn",
+        "stt-committed-mutation",
+        "refused to mutate a committed term outside a stopped session",
+        `termId=${id} status=${status}`,
+      );
+      return;
+    }
+    set({ terms: get().terms.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(
         () => get().saveCurrentSession(),
@@ -1148,6 +1593,15 @@ export const useApp = create<AppState>((set, get) => ({
       summary: s.summary ?? undefined,
       speakerAliases:
         Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
+      // v0.5 Wave-1 Feature 1: always persisted (even []) — same
+      // "presence, even empty, marks known-complete bookkeeping vs.
+      // legacy-absent" posture as pauseIntervals below, NOT
+      // speakerAliases/translations' omit-when-empty convention above:
+      // loadSession must tell "this session's roster really is empty"
+      // apart from "this session predates the roster feature entirely"
+      // (only the latter derives a roster from segments' own speaker
+      // values — see loadSession below).
+      speakerRoster: s.speakerRoster,
       translations:
         Object.keys(s.translations).length > 0 ? s.translations : undefined,
       // Transcript-timestamp fix: always persisted (even []) — unlike
@@ -1172,6 +1626,21 @@ export const useApp = create<AppState>((set, get) => ({
     }
     if (webhookUrl) {
       void autoExporter.postWebhook(session, webhookUrl);
+    }
+    // v0.5 F9 / blueprint §5 A8 (F0b, lead-owned): AnkiConnect delivery
+    // rides the SAME post-save hook as the webhook — a stopped session
+    // re-saves many times (late diarization/translations/edits), and
+    // deliverSessionNotes' ledger is what makes those repeats
+    // duplicate-free, so firing on every save is deliberate, not waste.
+    // Dynamic import keeps the connector (and idb ledger) entirely off
+    // the hot path for the overwhelmingly common disabled case. iOS is
+    // rejected inside ankiInvoke itself; fail-soft like postWebhook.
+    const ankiCfg = s.settings.ankiConnect;
+    if (ankiCfg?.enabled) {
+      void import("./history/connectors/ankiConnect").then(
+        ({ deliverSessionNotes, ankiLedger }) =>
+          deliverSessionNotes(session, ankiCfg, ankiLedger),
+      );
     }
     return session.id;
   },
@@ -1211,6 +1680,16 @@ export const useApp = create<AppState>((set, get) => ({
       pauseStartedAt: null,
       pauseIntervals,
       speakerAliases: session.speakerAliases ?? {},
+      // v0.5 Wave-1 Feature 1 / §5 A2: a session saved by the new code
+      // always carries `speakerRoster` (even []) — only a session saved
+      // BEFORE this feature existed lacks the key entirely, and only
+      // THAT case derives a roster from the segments' own distinct
+      // speaker values (see deriveRosterFromSegments above).
+      speakerRoster: session.speakerRoster ?? deriveRosterFromSegments(session.segments),
+      // A loaded/stopped session has no live latch to carry over, and
+      // no correction batch in flight.
+      activeSpeaker: null,
+      correctionBusy: false,
       translations: session.translations ?? {},
       cards: session.cards,
       terms: session.terms,
@@ -1435,11 +1914,14 @@ export const useApp = create<AppState>((set, get) => ({
       pauseStartedAt: null,
       pauseIntervals: [],
       speakerAliases: {},
+      speakerRoster: [],
+      activeSpeaker: null,
       translations: {},
       cards: [],
       terms: [],
       summary: null,
       summarizing: false,
+      correctionBusy: false,
       focusCardId: null,
       lookup: null,
       activeSessionId: null,
@@ -1468,6 +1950,9 @@ export function currentSessionSnapshot(): MeetingSession | null {
     summary: s.summary ?? undefined,
     speakerAliases:
       Object.keys(s.speakerAliases).length > 0 ? s.speakerAliases : undefined,
+    // v0.5 Wave-1 Feature 1: always present, mirroring saveCurrentSession's
+    // own posture (see that call site's comment for why).
+    speakerRoster: s.speakerRoster,
     translations:
       Object.keys(s.translations).length > 0 ? s.translations : undefined,
     // Transcript-timestamp fix: same "always present" posture as

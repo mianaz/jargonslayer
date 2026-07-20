@@ -7,11 +7,18 @@
 
 import { useState } from "react";
 import { CaretRight, CheckCircle } from "@phosphor-icons/react";
-import { useApp } from "@/lib/store";
+import { modeForPersistedEngine, useApp, type ModePlatform } from "@/lib/store";
+import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
 import type { STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
+
+// ITEM 4 fix (fix round, Opus#2): platform for modeForPersistedEngine
+// below — IS_DESKTOP/IS_IOS are build-time consts, so this resolves once
+// at module load, mirroring store.ts's own migrateSettings computation
+// of the identical value.
+const PLATFORM: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
 
 export interface TutorialOverlayProps {
   open: boolean;
@@ -49,10 +56,12 @@ const STEP_COUNT = 5;
 // capture engine (no audio, scripted preview) so it is not a card
 // peer here — it gets its own visually-separated "先看演示" row above
 // the grid, still driving the same settings.engine="demo" + onStart
-// demo mechanism as the header's 演示 button. posture drives the
-// 本地/云端 chip: 浏览器识别·云端（音频经浏览器厂商云端识别，会离开设
-// 备）/ 本地 Whisper·本地（音频不出本机）/ 标签页音频（或桌面端的系统/App
-// 音频）·本地（本地转录）.
+// demo mechanism as the header's 演示 button. The retention chip below
+// each card (ITEM 2 fix, fix round Sol#4 + Lane C flag) is derived from
+// resolveEngineRetentionClass/RETENTION_COPY (lib/stt/engineOptions.ts)
+// — the SAME tri-state source Header/StatusLine already read — instead
+// of a hand-rolled binary 本地/云端 pair, so this first-run picker can
+// never disagree with what the app shows once a meeting starts.
 //
 // D7 desktop tabaudio replacement (docs/design-explorations/
 // s9-app-audio-tap-blueprint.md): tabaudio can only ever fail inside
@@ -68,63 +77,69 @@ const STEP_COUNT = 5;
 // first-run onboarding too), so IS_IOS branches FIRST to the one iOS v1
 // engine — osspeech, label byte-identical to engineOptions.ts's own
 // ENGINE_OPTIONS entry (Miana-veto #2).
+//
+// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
+// v05-wave1-blueprint.md §1 Feature 5, L8 task spec: "speak intent/mode,
+// not engine names"): `label` copy only — reworded to lead with the
+// SAME mode nouns ModeSelector.tsx's own tiles use (麦克风/本机会议声音/
+// 浏览器标签页), dropping the one literal engine BRAND name this array
+// had ("本地 Whisper" -> "本地识别", mirroring its 系统识别/浏览器识别
+// siblings' existing naming pattern). Values/hint/onClick mechanics
+// below are UNCHANGED apart from the ITEM 2/4 fixes documented at their
+// own call sites — this step still writes settings.engine directly.
 // ---------------------------------------------------------------
 
 const ENGINE_OPTIONS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   hint: string;
-  posture: "local" | "cloud";
 }[] = IS_IOS
   ? [
       {
         value: "osspeech",
-        label: "系统识别 · 开箱即用",
+        label: "麦克风 · 系统识别",
         hint: "无需下载模型，音频不离开设备，开箱即用",
-        posture: "local",
       },
     ]
   : [
       {
         value: "webspeech",
-        label: "浏览器识别",
+        label: "麦克风 · 浏览器识别",
         hint: "零配置，Chrome/Edge 最佳，开箱即用",
-        posture: "cloud",
       },
       {
         value: "whisper",
-        label: "本地 Whisper",
+        label: "麦克风 · 本地识别",
         hint: "隐私保护最强，需启动本地 Whisper",
-        posture: "local",
       },
       IS_DESKTOP
         ? {
             value: "appaudio",
-            label: "系统/App 音频",
+            label: "本机会议声音",
             hint: "转录对方与其他声音，非你的麦克风",
-            posture: "local",
           }
         : {
             value: "tabaudio",
-            label: "标签页音频",
+            label: "浏览器标签页",
             hint: "共享标签页，听懂对方声音",
-            posture: "local",
           },
     ];
 
-const POSTURE_LABEL: Record<"local" | "cloud", string> = {
-  local: "本地",
-  cloud: "云端",
-};
-
 function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
   const engine = useApp((s) => s.settings.engine);
+  // ITEM 2 fix: the D7 webspeech on-device runtime overlay
+  // (resolveEngineRetentionClass) reads this exactly like Header/
+  // StatusLine do — almost always null here (this overlay only shows
+  // pre-first-use, before any engine session could have reported a
+  // mode), but reading the real store value keeps this call site
+  // byte-identical to the other two surfaces rather than hardcoding null.
+  const sttEngineMode = useApp((s) => s.sttEngineMode);
   const updateSettings = useApp((s) => s.updateSettings);
 
   return (
     <div>
       <div className="text-lg font-medium text-fg">
-        选择转录引擎
+        选择你的收听方式
       </div>
 
       <button
@@ -142,11 +157,28 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
       <div className="mt-3 grid grid-cols-2 gap-2">
         {ENGINE_OPTIONS.map((opt) => {
           const selected = engine === opt.value;
+          // ITEM 2 fix: tri-state retention badge, sourced from the
+          // SAME resolver/copy table Header/StatusLine already use.
+          const retention = RETENTION_COPY[resolveEngineRetentionClass(opt.value, sttEngineMode)];
           return (
             <button
               key={opt.value}
               type="button"
-              onClick={() => updateSettings({ engine: opt.value })}
+              onClick={() => {
+                // ITEM 4 fix (fix round, Opus#2): this picker used to
+                // write `engine` alone, leaving `mode` stuck on
+                // whatever it was before (default "mic" on a fresh
+                // install) — contradicting ModeSelector, whose grid
+                // reads `mode` to decide which tile shows selected.
+                // modeForPersistedEngine (store.ts) is the SAME
+                // engine->mode back-derivation store hydration already
+                // uses; rawEngine/legalEngine are both the freshly
+                // picked value here (nothing to back-derive FROM).
+                updateSettings({
+                  engine: opt.value,
+                  mode: modeForPersistedEngine(opt.value, opt.value, PLATFORM),
+                });
+              }}
               className={`rounded-none border p-3 text-left text-sm transition-colors ${
                 selected
                   ? "border-act bg-panel3 text-fg"
@@ -161,13 +193,10 @@ function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
               </div>
               <div className="mt-2 text-xs leading-[1.7] text-mut">{opt.hint}</div>
               <div
-                className={`mt-2 inline-block border px-2 py-0.5 text-[10px] ${
-                  opt.posture === "local"
-                    ? "border-lab-green/30 text-lab-green"
-                    : "border-warn-soft/30 text-warn-soft"
-                }`}
+                title={retention.hint}
+                className={`mt-2 inline-block border px-2 py-0.5 text-[10px] ${retention.borderClass} ${retention.textClass}`}
               >
-                {POSTURE_LABEL[opt.posture]}
+                {retention.label}
               </div>
             </button>
           );

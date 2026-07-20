@@ -32,8 +32,9 @@
 // token into the final token stream at each utterance boundary;
 // SonioxTokenMapper below is what actually reads that sentinel.
 
-import type { STTEvents, Settings } from "@jargonslayer/core/types";
+import type { MeetingLexicon, STTEvents, Settings } from "@jargonslayer/core/types";
 import { withBase } from "../basePath";
+import { projectForSonioxContext } from "./lexicon";
 
 const SONIOX_WS_URL = "wss://stt-rt.soniox.com/transcribe-websocket";
 const SONIOX_MODEL = "stt-rt-v5";
@@ -212,6 +213,11 @@ export interface SonioxConfigMessage {
   num_channels: number;
   language_hints: string[];
   enable_endpoint_detection: boolean;
+  // v0.4.7 Lane B (glossary -> recognizer bias, doc §3): `terms` ONLY —
+  // no translation_terms/general/text yet (out of scope). Omitted
+  // entirely (not sent as an empty object) when the lexicon has
+  // nothing to contribute — see buildSonioxConfig below.
+  context?: { terms: string[] };
 }
 
 export interface BuildSonioxConfigOpts {
@@ -220,6 +226,9 @@ export interface BuildSonioxConfigOpts {
    *  preview/MV3 caller drops in a real `create_temporary_api_key`
    *  mint here without this function's shape changing at all. */
   mintToken?: (key: string) => Promise<string>;
+  // v0.4.7 Lane B (D8): the ONE lexicon snapshot built at the
+  // meeting-start callsite — projected onto `context.terms` below.
+  lexicon?: MeetingLexicon;
 }
 
 /** Builds the first (JSON) message Soniox's websocket protocol
@@ -232,7 +241,7 @@ export async function buildSonioxConfig(
 ): Promise<SonioxConfigMessage> {
   const mintToken = opts.mintToken ?? ((key: string) => Promise.resolve(key));
   const apiKey = await mintToken(settings.sonioxKey);
-  return {
+  const config: SonioxConfigMessage = {
     api_key: apiKey,
     model: SONIOX_MODEL,
     // MUST be "pcm_s16le" — soniox.com/docs/stt/rt/real-time-
@@ -249,6 +258,15 @@ export async function buildSonioxConfig(
     // (blueprint decision E); adding the flag later is a one-line
     // change here, not a shape change.
   };
+  // v0.4.7 Lane B: D1 default-on is unconditional for this mechanism
+  // (marginal token cost on an already-paid BYOK session, capped small
+  // by projectForSonioxContext) — no settings gate here; see
+  // useMeeting.ts's attachEngine for the one extension-point comment
+  // marking where a future toggle would gate the snapshot build
+  // itself, upstream of this transport.
+  const contextTerms = projectForSonioxContext(opts.lexicon ?? { terms: [] });
+  if (contextTerms.length > 0) config.context = { terms: contextTerms };
+  return config;
 }
 
 /** settings.language is BCP-47 (e.g. "en-US" — the same field
@@ -317,6 +335,10 @@ export interface SonioxTransportCallbacks {
   events: STTEvents;
   settings: Settings;
   mintToken?: (key: string) => Promise<string>;
+  // v0.4.7 Lane B (D8): the ONE lexicon snapshot built at the
+  // meeting-start callsite — threaded into buildSonioxConfig's own
+  // opts (see sendConfig below).
+  lexicon?: MeetingLexicon;
 }
 
 /** Owns the AudioContext/worklet graph for a given source stream and
@@ -330,6 +352,7 @@ export class SonioxTransport {
   private events: STTEvents;
   private settings: Settings;
   private mintToken?: (key: string) => Promise<string>;
+  private lexicon?: MeetingLexicon;
 
   private ws: WebSocket | null = null;
   private ctx: AudioContext | null = null;
@@ -355,6 +378,7 @@ export class SonioxTransport {
     this.events = cb.events;
     this.settings = cb.settings;
     this.mintToken = cb.mintToken;
+    this.lexicon = cb.lexicon;
   }
 
   /** Build the AudioContext -> worklet -> (muted) destination graph
@@ -483,7 +507,7 @@ export class SonioxTransport {
   private async sendConfig(ws: WebSocket): Promise<void> {
     let config: SonioxConfigMessage;
     try {
-      config = await buildSonioxConfig(this.settings, { mintToken: this.mintToken });
+      config = await buildSonioxConfig(this.settings, { mintToken: this.mintToken, lexicon: this.lexicon });
     } catch {
       this.emitError("无法准备 Soniox 连接（获取密钥失败）");
       try {

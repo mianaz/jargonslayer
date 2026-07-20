@@ -293,6 +293,118 @@ function useFocusRing(
   return { ref, ring };
 }
 
+// ---------- v0.5 Wave-1 Feature 7: inline card/term edit ----------
+// SHIP scope, docs/design-explorations/v05-wave1-blueprint.md §1
+// Feature 7: stopped/loaded sessions only (sidesteps the live
+// mergeDetections clobber hazard — see the file's own doc). Reuses
+// GlossaryPanel's EntryRow local editing+draft+save/cancel PATTERN,
+// but keeps each card's existing layout (only the editable text nodes
+// themselves swap for inputs) rather than EntryRow's own full-row
+// EntryForm swap.
+
+interface CardDraft {
+  expression: string;
+  // ITEM 5 fix (fix round, Sol, MEDIUM): the display view already showed
+  // card.meaning (below, ExpressionCardRow's expanded layout) with no
+  // editable counterpart — this closes that gap the same way the other
+  // three fields already work. Store already supports it (updateCard
+  // merges any Partial<ExpressionCard> patch by id).
+  meaning: string;
+  chinese_explanation: string;
+  plain_english: string;
+}
+
+function draftFromCard(card: ExpressionCard): CardDraft {
+  return {
+    expression: card.expression,
+    meaning: card.meaning,
+    chinese_explanation: card.chinese_explanation,
+    plain_english: card.plain_english,
+  };
+}
+
+interface TermDraft {
+  term: string;
+  gloss_en: string;
+  gloss_zh: string;
+}
+
+function draftFromTerm(term: TermCard): TermDraft {
+  return { term: term.term, gloss_en: term.gloss_en, gloss_zh: term.gloss_zh };
+}
+
+/** Diffs a draft against its source, returning a patch with only the
+ *  fields whose trimmed value actually changed — an emptied field
+ *  falls back to the original rather than saving blank (mirrors
+ *  EntryRow's own `draft.headword.trim() || entry.headword`). Callers
+ *  pass this straight to updateCard/updateTerm, which already merge a
+ *  partial patch onto the existing card/term by id. `T extends object`
+ *  (not `Record<string, string>`) — CardDraft/TermDraft are plain
+ *  interfaces with no index signature, which TS won't structurally
+ *  match against a Record constraint even though every field is a
+ *  string; the cast below asserts that per-field string-ness instead. */
+function buildPatch<T extends object>(draft: T, original: T): Partial<T> {
+  const patch: Partial<T> = {};
+  (Object.keys(draft) as (keyof T)[]).forEach((key) => {
+    const draftValue = draft[key] as unknown as string;
+    const originalValue = original[key] as unknown as string;
+    const value = (draftValue.trim() || originalValue) as T[typeof key];
+    if (value !== original[key]) patch[key] = value;
+  });
+  return patch;
+}
+
+/** Shared 编辑/保存/取消 action row for both card kinds. h-10 buttons =
+ *  the app's existing ≥40px touch-target convention (DueReview/
+ *  PracticeDeck's own `btn-tactile h-10 ...`); the 编辑 affordance
+ *  itself stays visually small (text-xs) with the same 40px hit box. */
+function EditActions({
+  editing,
+  saveDisabled,
+  onEdit,
+  onSave,
+  onCancel,
+}: {
+  editing: boolean;
+  saveDisabled: boolean;
+  onEdit: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  if (!editing) {
+    return (
+      <div className="mt-1 flex items-center text-xs">
+        <button
+          type="button"
+          onClick={onEdit}
+          className="btn-tactile inline-flex h-10 items-center px-1 text-mut hover:text-fg"
+        >
+          编辑
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1 flex items-center gap-2 text-xs">
+      <button
+        type="button"
+        onClick={onCancel}
+        className="btn-tactile inline-flex h-10 items-center px-3 text-mut hover:text-fg"
+      >
+        取消
+      </button>
+      <button
+        type="button"
+        onClick={onSave}
+        disabled={saveDisabled}
+        className="btn-terminal inline-flex h-10 items-center bg-act px-3 font-mono font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        保存
+      </button>
+    </div>
+  );
+}
+
 function ExpressionCardRow({
   card,
   expanded,
@@ -314,11 +426,50 @@ function ExpressionCardRow({
     card.count,
   );
 
+  // v0.5 Wave-1 Feature 7: edit affordance only for a stopped/loaded
+  // session — live meetings show none at all (a live LLM detection
+  // merge would otherwise clobber a mid-meeting edit, see the doc
+  // comment above EditActions).
+  const status = useApp((s) => s.status);
+  const updateCard = useApp((s) => s.updateCard);
+  const canEdit = status === "stopped";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<CardDraft>(() => draftFromCard(card));
+
+  // The panel's 全部折叠/全部展开 cycle (or a focus-ring collapse) can
+  // force this card closed out from under an in-progress edit — the
+  // collapsed layout has no room for inputs, so treat that the same as
+  // Cancel instead of leaving stale editing state around.
+  useEffect(() => {
+    if (!expanded && editing) setEditing(false);
+  }, [expanded, editing]);
+
+  const handleEdit = () => {
+    setDraft(draftFromCard(card));
+    setEditing(true);
+  };
+  const handleCancel = () => setEditing(false);
+  const handleSave = () => {
+    const patch = buildPatch(draft, draftFromCard(card));
+    if (Object.keys(patch).length > 0) updateCard(card.id, patch);
+    setEditing(false);
+  };
+
   const hue = CATEGORY_COLOR[card.category];
 
   const badgeRow = (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="font-mono font-semibold text-fg">{card.expression}</span>
+      {editing && expanded ? (
+        <input
+          type="text"
+          aria-label="表达"
+          value={draft.expression}
+          onChange={(e) => setDraft((d) => ({ ...d, expression: e.target.value }))}
+          className="w-full border border-edge bg-panel2 px-2 py-1.5 font-mono text-sm font-semibold text-fg focus:outline-none sm:w-auto sm:min-w-[10rem]"
+        />
+      ) : (
+        <span className="font-mono font-semibold text-fg">{card.expression}</span>
+      )}
       <span className={`border px-1.5 py-0 text-[12px] ${hue.border} ${hue.text}`}>
         {CATEGORY_LABELS[card.category]}
       </span>
@@ -374,15 +525,47 @@ function ExpressionCardRow({
       />
       {badgeRow}
 
-      <div className="mt-2 text-sm text-fg/90">{card.meaning}</div>
+      {editing ? (
+        <input
+          type="text"
+          aria-label="语境释义"
+          value={draft.meaning}
+          onChange={(e) => setDraft((d) => ({ ...d, meaning: e.target.value }))}
+          className="mt-2 w-full border border-edge bg-panel2 px-2 py-1 text-sm text-fg focus:outline-none"
+        />
+      ) : (
+        <div className="mt-2 text-sm text-fg/90">{card.meaning}</div>
+      )}
 
-      <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
-        {card.chinese_explanation}
-      </div>
+      {editing ? (
+        <textarea
+          aria-label="中文释义"
+          value={draft.chinese_explanation}
+          onChange={(e) =>
+            setDraft((d) => ({ ...d, chinese_explanation: e.target.value }))
+          }
+          rows={2}
+          className="mt-2 w-full resize-none border border-edge bg-panel2 px-2.5 py-1.5 text-[15px] font-medium leading-[1.7] text-fg focus:outline-none"
+        />
+      ) : (
+        <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
+          {card.chinese_explanation}
+        </div>
+      )}
 
       <div className="mt-2 flex items-baseline gap-2">
         <span className="font-mono text-xs text-mut2">直白说法</span>
-        <span className="text-sm text-fg/90">{card.plain_english}</span>
+        {editing ? (
+          <input
+            type="text"
+            aria-label="直白说法"
+            value={draft.plain_english}
+            onChange={(e) => setDraft((d) => ({ ...d, plain_english: e.target.value }))}
+            className="min-w-0 flex-1 border border-edge bg-panel2 px-2 py-1 text-sm text-fg focus:outline-none"
+          />
+        ) : (
+          <span className="text-sm text-fg/90">{card.plain_english}</span>
+        )}
       </div>
 
       <div className="mt-2 text-xs italic text-mut">{card.tone}</div>
@@ -393,6 +576,16 @@ function ExpressionCardRow({
       >
         {card.source_sentence}
       </div>
+
+      {canEdit && (
+        <EditActions
+          editing={editing}
+          saveDisabled={!draft.chinese_explanation.trim()}
+          onEdit={handleEdit}
+          onSave={handleSave}
+          onCancel={handleCancel}
+        />
+      )}
     </div>
   );
 }
@@ -418,9 +611,41 @@ function TermCardRow({
     term.count,
   );
 
+  // v0.5 Wave-1 Feature 7 — see the identical block in ExpressionCardRow.
+  const status = useApp((s) => s.status);
+  const updateTerm = useApp((s) => s.updateTerm);
+  const canEdit = status === "stopped";
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<TermDraft>(() => draftFromTerm(term));
+
+  useEffect(() => {
+    if (!expanded && editing) setEditing(false);
+  }, [expanded, editing]);
+
+  const handleEdit = () => {
+    setDraft(draftFromTerm(term));
+    setEditing(true);
+  };
+  const handleCancel = () => setEditing(false);
+  const handleSave = () => {
+    const patch = buildPatch(draft, draftFromTerm(term));
+    if (Object.keys(patch).length > 0) updateTerm(term.id, patch);
+    setEditing(false);
+  };
+
   const badgeRow = (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="font-mono font-semibold text-fg">{term.term}</span>
+      {editing && expanded ? (
+        <input
+          type="text"
+          aria-label="词条"
+          value={draft.term}
+          onChange={(e) => setDraft((d) => ({ ...d, term: e.target.value }))}
+          className="w-full border border-edge bg-panel2 px-2 py-1.5 font-mono text-sm font-semibold text-fg focus:outline-none sm:w-auto sm:min-w-[10rem]"
+        />
+      ) : (
+        <span className="font-mono font-semibold text-fg">{term.term}</span>
+      )}
       <span className={`border px-1.5 py-0 text-[12px] ${TERM_COLOR.border} ${TERM_COLOR.text}`}>
         术语 · {TERM_TYPE_LABELS[term.type]}
       </span>
@@ -474,11 +699,41 @@ function TermCardRow({
       />
       {badgeRow}
 
-      <div className="mt-2 text-sm text-fg/90">{term.gloss_en}</div>
+      {editing ? (
+        <textarea
+          aria-label="英文释义"
+          value={draft.gloss_en}
+          onChange={(e) => setDraft((d) => ({ ...d, gloss_en: e.target.value }))}
+          rows={2}
+          className="mt-2 w-full resize-none border border-edge bg-panel2 px-2.5 py-1.5 text-sm text-fg focus:outline-none"
+        />
+      ) : (
+        <div className="mt-2 text-sm text-fg/90">{term.gloss_en}</div>
+      )}
 
-      <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
-        {term.gloss_zh}
-      </div>
+      {editing ? (
+        <textarea
+          aria-label="中文释义"
+          value={draft.gloss_zh}
+          onChange={(e) => setDraft((d) => ({ ...d, gloss_zh: e.target.value }))}
+          rows={2}
+          className="mt-2 w-full resize-none border border-edge bg-panel2 px-2.5 py-1.5 text-[15px] font-medium leading-[1.7] text-fg focus:outline-none"
+        />
+      ) : (
+        <div className="mt-2 text-[15px] font-medium leading-[26px] text-fg">
+          {term.gloss_zh}
+        </div>
+      )}
+
+      {canEdit && (
+        <EditActions
+          editing={editing}
+          saveDisabled={!draft.gloss_zh.trim()}
+          onEdit={handleEdit}
+          onSave={handleSave}
+          onCancel={handleCancel}
+        />
+      )}
     </div>
   );
 }

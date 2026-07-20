@@ -35,7 +35,7 @@ import type { MeetingStatus, Settings, STTEngineKind } from "@jargonslayer/core/
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
-import { ENGINE_OPTIONS, POSTURE_LABEL } from "@/lib/stt/engineOptions";
+import { ENGINE_OPTIONS, RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
 import { selectRunningCount, useTasks } from "@/lib/tasks/registry";
 import { useUpdateCheck } from "@/lib/desktop/updateCheck";
 import { useCaptionPip } from "@/lib/captionWindow";
@@ -259,23 +259,29 @@ function MobileImportButton({ onOpenImport }: { onOpenImport: () => void }) {
   );
 }
 
-// Compact 本地/云端 posture chip for the ACTIVE engine, so at a glance
-// the user knows where their audio goes. demo has no audio at all, so
-// it renders nothing here (the demo menu item itself makes that obvious).
+// Compact tri-state privacy chip for the ACTIVE engine (v0.4.7 Lane C,
+// docs/design-explorations/stt-provider-wiring-2026-07.md §4/§9 D5-D7),
+// so at a glance the user knows where their audio goes AND what the
+// vendor retains — not just local/cloud. demo has no audio at all, so
+// it renders nothing here (the demo menu item itself makes that
+// obvious) — same early-out as before, ENGINE_OPTIONS excludes demo.
+// resolveEngineRetentionClass (lib/stt/engineOptions.ts) is the SAME
+// resolver StatusLine's privacy segment uses, folding in the webspeech
+// on-device runtime overlay too, so the two surfaces can never
+// disagree (Lane C addendum, Opus C5).
 function EnginePostureChip() {
   const engine = useApp((s) => s.settings.engine);
+  const sttEngineMode = useApp((s) => s.sttEngineMode);
   const opt = ENGINE_OPTIONS.find((o) => o.value === engine);
   if (!opt) return null;
 
-  const isLocal = opt.posture === "local";
+  const copy = RETENTION_COPY[resolveEngineRetentionClass(engine, sttEngineMode)];
   return (
     <span
-      title={isLocal ? "音频只在本机处理，不出设备" : "音频将经过浏览器厂商云端识别"}
-      className={`hidden items-center gap-1 border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${
-        isLocal ? "border-lab-green/30 text-lab-green" : "border-warn-soft/30 text-warn-soft"
-      }`}
+      title={copy.hint}
+      className={`hidden items-center gap-1 border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${copy.borderClass} ${copy.textClass}`}
     >
-      {POSTURE_LABEL[opt.posture]}
+      {copy.label}
     </span>
   );
 }

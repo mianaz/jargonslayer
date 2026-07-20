@@ -18,6 +18,14 @@ Protocol v2 (per connection):
         - "partials": bool, optional — per-connection override of this
           process's --partials default (absent = server default, see
           WhisperServer.emit_partials / _partials_enabled)
+        - "initial_prompt": str, optional (v0.4.7 Lane B, glossary ->
+          recognizer bias, docs/design-explorations/stt-provider-
+          wiring-2026-07.md §3/D3) — a biasing hint threaded into
+          every faster-whisper transcribe() call on this connection
+          (both partial and final, see WhisperServer._transcribe).
+          Ignored (never read) by the parakeet-mlx backend below — an
+          explicit no-op, not a client-side gate (ParakeetMlxBackend.
+          transcribe_file has no such parameter at all).
     - text frame: JSON {"type": "stop"} — force-finalizes any
       in-progress speech, then drains: once every already-enqueued
       final (including the just-forced tail one, if any) has actually
@@ -550,6 +558,11 @@ class ConnectionState:
     # wide CLI default; a connection's own config.partials (true/false)
     # wins when present. See WhisperServer._partials_enabled.
     partials_override: Optional[bool] = None
+    # v0.4.7 Lane B (glossary -> recognizer bias): set from config.
+    # initial_prompt (see WhisperServer._handle_text's "config" branch)
+    # and forwarded on every _transcribe() call for this connection —
+    # see that method below. None = no bias, the wire's own default.
+    initial_prompt: Optional[str] = None
 
     # ---- protocol v2: per-connection finalize queue + send lock ----
     # Unbounded (maxsize=0) — put() on a finalize job never actually
@@ -739,6 +752,17 @@ class WhisperServer:
             if isinstance(partials, bool):
                 state.partials_override = partials
 
+            # v0.4.7 Lane B (glossary -> recognizer bias): mirrors
+            # language's own isinstance+truthy gate above — an absent
+            # key or an empty string leaves a PRIOR value untouched
+            # (same "no key = no change" contract partials_override
+            # itself does NOT have, but language does; initial_prompt
+            # follows language's stricter gate since an empty string is
+            # never a meaningful override to send).
+            initial_prompt = msg.get("initial_prompt")
+            if isinstance(initial_prompt, str) and initial_prompt:
+                state.initial_prompt = initial_prompt
+
             # Realtime speaker diarization (beta) gate: only arms when
             # the client asked for it AND a token is available (config's
             # own hf_token, or this process's --hf-token/$HF_TOKEN
@@ -871,7 +895,7 @@ class WhisperServer:
                 audio = audio[-tail_samples:]
             try:
                 t0 = time.monotonic()
-                text = await asyncio.to_thread(self._transcribe, audio, state.language)
+                text = await asyncio.to_thread(self._transcribe, audio, state.language, state.initial_prompt)
                 lag_ms = round((time.monotonic() - t0) * 1000)
             except Exception as exc:  # noqa: BLE001 - a partial preview is best-effort;
                 # never worth tearing down the connection over.
@@ -956,7 +980,7 @@ class WhisperServer:
                 return
             try:
                 t0 = time.monotonic()
-                text = await asyncio.to_thread(self._transcribe, job.audio, state.language)
+                text = await asyncio.to_thread(self._transcribe, job.audio, state.language, state.initial_prompt)
                 lag_ms = round((time.monotonic() - t0) * 1000)
             except Exception as exc:  # noqa: BLE001 - one bad segment must never
                 # permanently stop every later final on this connection —
@@ -1195,13 +1219,23 @@ class WhisperServer:
                 state.diar_buf_offset_s += trim / bytes_per_second
         return bytes(buf), state.diar_buf_offset_s
 
-    def _transcribe(self, audio: np.ndarray, language: str) -> str:
+    def _transcribe(
+        self, audio: np.ndarray, language: str, initial_prompt: Optional[str] = None
+    ) -> str:
         segments, _info = self.model.transcribe(
             audio,
             language=language,
             beam_size=1,
             vad_filter=True,
             condition_on_previous_text=False,
+            # v0.4.7 Lane B: faster-whisper's own get_prompt() keeps
+            # only the LAST (self.max_length // 2 - 1) tokens of this
+            # string — verified against the installed faster-whisper
+            # source (self.max_length == 448, so the real ceiling is
+            # 223 tokens) — the CLIENT is what orders the string so its
+            # highest-priority terms survive that truncation (see
+            # apps/web/src/lib/stt/lexicon.ts's projectForInitialPrompt).
+            initial_prompt=initial_prompt,
         )
         return " ".join(seg.text.strip() for seg in segments).strip()
 
@@ -2316,6 +2350,7 @@ class JobManager:
         language: Optional[str],
         diarize: Optional[bool] = None,
         hf_token: Optional[str] = None,
+        initial_prompt: Optional[str] = None,
     ) -> Optional[str]:
         """Register a queued job and kick off its background worker
         thread. Returns the job id immediately (non-blocking), or None
@@ -2337,7 +2372,10 @@ class JobManager:
         this job's hf_token= query param — localhost-only transport, so
         passing it per-request (rather than only via --hf-token/HF_TOKEN
         at process start) is fine; it's preferred over the CLI/env token
-        for this job when present."""
+        for this job when present. `initial_prompt` (v0.4.7 Lane B):
+        this job's own initial_prompt= query param — forwarded to
+        _transcribe_job below; a no-op for a ParakeetMlxBackend job (see
+        that method's own doc)."""
         if isinstance(self.model, ParakeetMlxBackend) and not self.model.try_acquire_stream():
             return None
 
@@ -2352,14 +2390,19 @@ class JobManager:
 
         thread = threading.Thread(
             target=self._run_job,
-            args=(job_id, file_path, language or self.default_language, effective_token),
+            args=(job_id, file_path, language or self.default_language, effective_token, initial_prompt),
             daemon=True,
         )
         thread.start()
         return job_id
 
     def _run_job(
-        self, job_id: str, file_path: str, language: str, hf_token: Optional[str]
+        self,
+        job_id: str,
+        file_path: str,
+        language: str,
+        hf_token: Optional[str],
+        initial_prompt: Optional[str] = None,
     ) -> None:
         # S13 hotfix (--lazy-load only; isinstance-gated exactly like
         # this method's own ParakeetMlxBackend checks below — see
@@ -2381,7 +2424,7 @@ class JobManager:
             if lazy_model is not None:
                 lazy_model.acquire()
             self._set(job_id, status="running")
-            self._transcribe_job(job_id, file_path, language)
+            self._transcribe_job(job_id, file_path, language, initial_prompt=initial_prompt)
 
             job = self.get(job_id)
             if job is not None and job["diarize_requested"]:
@@ -2416,6 +2459,7 @@ class JobManager:
         language: Optional[str],
         diarize: Optional[bool] = None,
         hf_token: Optional[str] = None,
+        initial_prompt: Optional[str] = None,
     ) -> Optional[str]:
         """Register a queued URL-import (#43 phase 2c, LOCAL TIER ONLY)
         job and kick off its background worker thread. Returns the job
@@ -2428,7 +2472,8 @@ class JobManager:
         gate exactly (None return if a parakeet job's slot can't be
         reserved — "holding through URL download is fine for v1", so
         this reserves BEFORE the yt-dlp download phase even starts, not
-        just around transcription)."""
+        just around transcription). `initial_prompt` (v0.4.7 Lane B):
+        same contract as start_job's own."""
         if isinstance(self.model, ParakeetMlxBackend) and not self.model.try_acquire_stream():
             return None
 
@@ -2447,14 +2492,19 @@ class JobManager:
 
         thread = threading.Thread(
             target=self._run_url_job,
-            args=(job_id, url, language or self.default_language, effective_token),
+            args=(job_id, url, language or self.default_language, effective_token, initial_prompt),
             daemon=True,
         )
         thread.start()
         return job_id
 
     def _run_url_job(
-        self, job_id: str, url: str, language: str, hf_token: Optional[str]
+        self,
+        job_id: str,
+        url: str,
+        language: str,
+        hf_token: Optional[str],
+        initial_prompt: Optional[str] = None,
     ) -> None:
         """Download phase (yt-dlp) followed by the SAME transcribe/
         diarize phases _run_job uses — progress 0-0.3 for the
@@ -2484,6 +2534,7 @@ class JobManager:
                 file_path,
                 language,
                 progress_floor=INGEST_DOWNLOAD_HOLD_PROGRESS,
+                initial_prompt=initial_prompt,
             )
 
             job = self.get(job_id)
@@ -2621,6 +2672,7 @@ class JobManager:
         file_path: str,
         language: str,
         progress_floor: float = 0.0,
+        initial_prompt: Optional[str] = None,
     ) -> None:
         """`progress_floor`: for the upload path (default 0.0, the
         only caller until #43 phase 2c) transcription progress maps
@@ -2639,7 +2691,14 @@ class JobManager:
         returns one AlignedResult (not faster-whisper's incremental
         segment generator + info), so there is no per-segment progress
         to stream; the faster-whisper branch below is otherwise BYTE-
-        UNCHANGED from before this backend seam existed."""
+        UNCHANGED from before this backend seam existed.
+
+        `initial_prompt` (v0.4.7 Lane B, glossary -> recognizer bias):
+        EXPLICIT no-op for the parakeet arm — Backend.transcribe_file()
+        below has no such parameter at all, so it is simply never
+        passed through on that branch (not a client-side/JS-side
+        "is this model parakeet" check; the sidecar itself structurally
+        cannot wire it through for that backend)."""
         if isinstance(self.model, ParakeetMlxBackend):
             self._transcribe_job_parakeet(job_id, file_path, progress_floor)
             return
@@ -2650,6 +2709,7 @@ class JobManager:
             beam_size=1,
             vad_filter=True,
             word_timestamps=False,
+            initial_prompt=initial_prompt,
         )
         duration = max(info.duration, 1e-6)
 
@@ -2913,6 +2973,9 @@ def make_job_http_handler(
             # accepted tradeoff for a local-only job API, not a general
             # web-facing auth token.
             hf_token = (qs.get("hf_token") or [None])[0]
+            # v0.4.7 Lane B (glossary -> recognizer bias): same
+            # localhost-only tradeoff as hf_token above.
+            initial_prompt = (qs.get("initial_prompt") or [None])[0]
 
             length = int(self.headers.get("Content-Length", "0"))
             if length <= 0:
@@ -2953,7 +3016,7 @@ def make_job_http_handler(
                 return
 
             job_id = job_manager.start_job(
-                tmp_path, language, diarize=diarize, hf_token=hf_token
+                tmp_path, language, diarize=diarize, hf_token=hf_token, initial_prompt=initial_prompt
             )
             if job_id is None:
                 # FB4: the shared parakeet workload slot (live ws
@@ -3093,9 +3156,14 @@ def make_job_http_handler(
             diarize_raw = payload.get("diarize")
             diarize = None if diarize_raw is None else bool(diarize_raw)
             hf_token = payload.get("hf_token") if isinstance(payload.get("hf_token"), str) else None
+            # v0.4.7 Lane B (glossary -> recognizer bias): mirrors
+            # hf_token's own isinstance gate above.
+            initial_prompt = (
+                payload.get("initial_prompt") if isinstance(payload.get("initial_prompt"), str) else None
+            )
 
             job_id = job_manager.start_url_job(
-                url, language, diarize=diarize, hf_token=hf_token
+                url, language, diarize=diarize, hf_token=hf_token, initial_prompt=initial_prompt
             )
             if job_id is None:
                 # FB4: same shared-slot rejection as do_PUT /transcribe
