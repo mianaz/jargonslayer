@@ -560,13 +560,21 @@ export class SonioxTransport {
     // nothing to drain from a server that was never sent a config.
     if (ws && ws.readyState === WebSocket.OPEN && this.configSent) {
       try {
-        // Empty binary frame = Soniox's own end-of-audio sentinel (no
+        // Empty TEXT frame = Soniox's end-of-audio sentinel (no
         // {"type":"stop"} JSON envelope like whisper_server.py's
-        // protocol — this IS the whole message). onmessage stays wired
-        // to this same `ws` for the whole wait below, so a trailing
-        // drain final flows through the normal onFinal path exactly
-        // like any other final (risk 3).
-        ws.send(new ArrayBuffer(0));
+        // protocol — this IS the whole message). S13.1 LIVE-KEY FINDING
+        // (2026-07-19): this was `new ArrayBuffer(0)` — an empty BINARY
+        // frame — which the live server does NOT recognize as end-of-
+        // audio: it keeps waiting for more audio and 408s ~21s later,
+        // so every stop burned the full drain timeout below and the
+        // trailing utterance flushed locally instead of server-acked.
+        // The api-reference page claims "binary or text" both work; the
+        // rt-transcription page's `""` is what the live service actually
+        // honors (verified: binary→408, ""→finished ack in <100ms, same
+        // key, same audio). onmessage stays wired to this same `ws` for
+        // the whole wait below, so a trailing drain final flows through
+        // the normal onFinal path exactly like any other final (risk 3).
+        ws.send("");
         await new Promise<void>((resolve) => {
           this.stopDrainResolve = resolve;
           setTimeout(() => {

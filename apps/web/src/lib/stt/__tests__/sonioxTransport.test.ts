@@ -331,7 +331,7 @@ describe("SonioxTransport", () => {
   // stop() drain-ack wait
   // ---------------------------------------------------------------
 
-  it("stop() stops feeding PCM, sends one empty binary frame, and waits for {finished:true} before closing", async () => {
+  it("stop() stops feeding PCM, sends one empty TEXT frame, and waits for {finished:true} before closing", async () => {
     const transport = makeTransport();
     const ws = await attachAndOpen(transport);
     const worklet = workletNodes[workletNodes.length - 1];
@@ -343,9 +343,14 @@ describe("SonioxTransport", () => {
     await Promise.resolve();
 
     // The empty frame was sent as the very next message after config.
-    const lastSent = ws.sent[ws.sent.length - 1] as ArrayBuffer;
-    expect(lastSent).toBeInstanceOf(ArrayBuffer);
-    expect(lastSent.byteLength).toBe(0);
+    // S13.1 live-key finding: MUST be the empty STRING sentinel — the
+    // live server does not recognize an empty BINARY frame as end-of-
+    // audio (it 408s ~21s later instead of acking {finished:true});
+    // see sonioxTransport.ts's own stop() comment for the verification
+    // record. This assertion pins the exact frame TYPE, not just
+    // emptiness, so a regression back to ArrayBuffer(0) goes red.
+    const lastSent = ws.sent[ws.sent.length - 1];
+    expect(lastSent).toBe("");
     expect(resolved).toBe(false);
     expect(ws.closeCalls).toBe(0);
 
