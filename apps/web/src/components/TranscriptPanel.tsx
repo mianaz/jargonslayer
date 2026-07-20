@@ -1068,12 +1068,13 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
         // Header above (page.tsx) — this container otherwise starts
         // its content flush at scrollTop:0 with zero clearance, so
         // anything (a mobile-Safari sticky/flex rendering quirk) that
-        // makes Header paint over the top edge hides it. pt-14 matches
-        // Header's own h-14 exactly (only ever spends space once, at
-        // the very top of the whole list — scrolls away immediately
-        // after); scroll-pt-14 gives the same clearance to any future
-        // scrollIntoView/anchor jump landing near the top.
-        className="scroll-thin flex-1 overflow-y-auto pt-14 scroll-pt-14"
+        // makes Header paint over the top edge hides it. pt-2 gives a small
+        // breathing gap only — S14.2 owner report: the earlier pt-14
+        // DOUBLE-padded (the header reserves its own flex space, so a
+        // full header-height pad left a large void above segment 1,
+        // visually confirmed at 375px); scroll-pt-2 keeps the same
+        // small clearance for any future scrollIntoView/anchor jump.
+        className="scroll-thin flex-1 overflow-y-auto pt-2 scroll-pt-2"
         onScroll={handleScroll}
         onMouseUp={handleMouseUp}
       >
