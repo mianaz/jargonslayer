@@ -728,6 +728,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [connectingOpenRouter, setConnectingOpenRouter] = useState(false);
   const [openRouterOauthHint, setOpenRouterOauthHint] = useState<string | null>(null);
   const [exportFolderName, setExportFolderName] = useState<string | null>(null);
+  // Storage durability + visibility (v0.5 closeout item 4): read-only,
+  // feature-detected navigator.storage.estimate() snapshot — re-read on
+  // every dialog open (see the `open`-gated effect below), same "snapshot
+  // on open" posture as exportFolderName/diagEntries. null covers both
+  // "not resolved yet" and "unsupported" alike — no separate loading
+  // state; the line below simply doesn't render until this resolves.
+  const [storageEstimate, setStorageEstimate] = useState<{ usageMb: number; quotaGb: number } | null>(
+    null,
+  );
   // 全量备份/恢复 (#57): 「不包含 API Key」defaults to CHECKED (safe
   // default — a backup file is meant to be shareable/storable without
   // automatically also being a key leak). restorePreview holds the
@@ -1064,6 +1073,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         }
       });
       setDiagEntries(getDiagEntries());
+      // Storage durability + visibility (v0.5 closeout item 4) — reset
+      // then re-fetch, same shape as sidecarStatus's own open-gated probe
+      // just below (a stale PREVIOUS open's numbers must not flash
+      // before the fresh estimate resolves).
+      setStorageEstimate(null);
+      if (typeof navigator !== "undefined" && navigator.storage?.estimate) {
+        void navigator.storage.estimate().then((est) => {
+          if (est.usage == null || est.quota == null) return;
+          setStorageEstimate({ usageMb: est.usage / 1024 ** 2, quotaGb: est.quota / 1024 ** 3 });
+        });
+      }
       // 订阅直连（实验性）: kill-switch layer 2 — never even probes when
       // this build didn't set NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT
       // (the section itself doesn't render either — see below). Reads
@@ -3495,6 +3515,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                not a single click. */}
             <div className="space-y-2 border-t border-edge pt-3">
               <div className="text-xs text-mut">全量备份</div>
+
+              {/* Storage durability + visibility (v0.5 closeout item 4):
+                 read-only navigator.storage.estimate() line — feature-
+                 detected, no loading state (renders nothing until the
+                 effect above resolves). Sits next to 全量备份 since both
+                 are "how much of my meeting history/data is here" data
+                 concerns. */}
+              {storageEstimate && (
+                <div className="text-xs text-mut2">
+                  本地存储：已用 {storageEstimate.usageMb.toFixed(1)} MB / 配额约{" "}
+                  {storageEstimate.quotaGb.toFixed(1)} GB
+                </div>
+              )}
 
               <label className="flex items-center justify-between gap-3 py-1">
                 <div>

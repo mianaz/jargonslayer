@@ -26,6 +26,7 @@ import {
 } from "../store";
 import {
   DEFAULT_SETTINGS,
+  sessionToMeta,
   type CustomEntry,
   type DetectResponse,
   type MeetingSession,
@@ -36,6 +37,7 @@ import {
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
 import * as learnsetModule from "../learn/store";
 import * as storageModule from "../history/storage";
+import * as liveDraftModule from "../history/liveDraft";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
 import { clearDiag, getDiagEntries } from "../diag/log";
 import { segmentElapsedMs } from "../segmentElapsed";
@@ -1000,6 +1002,126 @@ describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.
     await useApp.getState().loadSession(stored!.id);
 
     expect(useApp.getState().speakerRoster).toEqual(["Alice", "Bob"]);
+  });
+});
+
+describe("saveCurrentSession clears the live draft (crash/refresh recovery, v0.5 closeout)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("clears the liveDraft on every normal save — a meeting that ends normally must never leave a draft behind", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    const clearSpy = vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("restoreLiveDraft — materializes a RecoveryBanner draft into history (v0.5 closeout)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeDraftSession(overrides: Partial<MeetingSession> = {}): MeetingSession {
+    return {
+      id: "draft-1",
+      title: "会议 2026-07-01 09:00",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "webspeech",
+      segments: [makeSegment({ id: "d1" })],
+      cards: [],
+      terms: [],
+      speakerRoster: [],
+      ...overrides,
+    };
+  }
+
+  it("the draft snapshot is a session the history layer's own sessionToMeta accepts (session-shape check, mirrors storage.test.ts)", () => {
+    expect(sessionToMeta(makeDraftSession())).toMatchObject({
+      id: "draft-1",
+      startedAt: 1000,
+      endedAt: 2000,
+      segmentCount: 1,
+      cardCount: 0,
+      termCount: 0,
+      hasSummary: false,
+    });
+  });
+
+  it("saves the exact snapshot via the SAME storage.saveSession path saveCurrentSession uses", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    const snapshot = makeDraftSession();
+
+    await useApp.getState().restoreLiveDraft(snapshot);
+
+    expect(saveSpy).toHaveBeenCalledWith(snapshot);
+  });
+
+  it("refreshes the sessions list from storage so the restored meeting shows up in 历史 immediately", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    const metas = [
+      {
+        id: "draft-1",
+        title: "t",
+        startedAt: 1000,
+        endedAt: 2000,
+        segmentCount: 1,
+        cardCount: 0,
+        termCount: 0,
+        hasSummary: false,
+      },
+    ];
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue(metas);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    await useApp.getState().restoreLiveDraft(makeDraftSession());
+
+    expect(useApp.getState().sessions).toEqual(metas);
+  });
+
+  it("clears the draft once materialized", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    const clearSpy = vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    await useApp.getState().restoreLiveDraft(makeDraftSession());
+
+    expect(clearSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the recovery toast", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    await useApp.getState().restoreLiveDraft(makeDraftSession());
+
+    expect(useApp.getState().toast).toBe("已恢复，可在历史记录中查看");
+  });
+
+  it("does NOT touch the live segments/cards/activeSessionId — the draft may belong to a different meeting than whatever is (or isn't) live in this tab", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    const liveSegments = [makeSegment({ id: "live-only" })];
+    useApp.setState({ segments: liveSegments, activeSessionId: "currently-viewing", cards: [] });
+
+    await useApp.getState().restoreLiveDraft(makeDraftSession({ id: "totally-different-draft" }));
+
+    expect(useApp.getState().segments).toBe(liveSegments);
+    expect(useApp.getState().activeSessionId).toBe("currently-viewing");
   });
 });
 

@@ -4,7 +4,7 @@
 // the detection scheduler. Owns the lifecycle of both per meeting.
 
 import { useCallback, useEffect, useRef } from "react";
-import { useApp } from "../lib/store";
+import { useApp, currentSessionSnapshot } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
@@ -14,12 +14,23 @@ import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
 import { getPreviewSessionSeconds } from "../lib/stt/soniox";
+import * as liveDraft from "../lib/history/liveDraft";
 import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
 // finalized segments to catch up when the toggle flips OFF->ON
 // mid-meeting (see the backfill effect below).
 const BILINGUAL_BACKFILL_COUNT = 5;
+
+// Storage durability (v0.5 closeout item 4): navigator.storage.persist()
+// asks the browser not to evict IndexedDB under pressure. Requested once
+// per PAGE LOAD (not per meeting, and never at app boot — see this
+// module-level flag's own read site in start() below for why boot is the
+// wrong moment). Module-level, not a ref: this hook is mounted once for
+// the app's whole lifetime (page.tsx), so this is equivalent in practice,
+// but a plain module flag says "once ever this load" more directly than
+// a ref would.
+let storagePersistRequested = false;
 
 /** Diagnostics choke-point wiring (item 2/3): every onError-shaped
  *  callback below (DetectionScheduler, TranslateQueue, STT engine
@@ -110,6 +121,18 @@ export function useMeeting(): UseMeetingResult {
   // ref is only reset in start(), never in resume(), so that re-fire is
   // deliberately suppressed (one notice per MEETING, not per attach).
   const previewMintNoticeRef = useRef(false);
+
+  // Live draft persistence (v0.5 closeout item 1 — see
+  // lib/history/liveDraft.ts's own header comment for the write policy).
+  // Throttle state for shouldWriteDraft's pure decision fn; both null
+  // means "this meeting hasn't written a draft yet". Reset in start()
+  // (same seam as diarReadyToastedRef/previewMintNoticeRef above) so a
+  // brand-new meeting's first segment isn't blocked by the PREVIOUS
+  // meeting's throttle timestamp — without this, a crash in the first
+  // few seconds of meeting 2 could lose everything if meeting 1 happened
+  // to write its own last draft less than 10s earlier.
+  const lastDraftWriteAtRef = useRef<number | null>(null);
+  const lastDraftCountsRef = useRef<liveDraft.DraftCounts | null>(null);
 
   // Engine-creation/wiring block (pause/resume, B3): extracted out of
   // start() so resume() can reattach a FRESH engine instance to the
@@ -382,6 +405,27 @@ export function useMeeting(): UseMeetingResult {
 
     diarReadyToastedRef.current = false;
     previewMintNoticeRef.current = false;
+    // Live draft persistence: fresh throttle state for the new meeting —
+    // see lastDraftWriteAtRef's own doc comment above for why this reset
+    // matters (not just tidiness).
+    lastDraftWriteAtRef.current = null;
+    lastDraftCountsRef.current = null;
+    // Storage durability (v0.5 closeout item 4): first meeting start of
+    // this page load only (not app boot — see storagePersistRequested's
+    // own doc comment above), fire-and-forget, feature-detected. Fires
+    // for a demo start too — this is general IndexedDB-eviction
+    // protection (settings/history/glossary/learnset), unrelated to
+    // whether THIS particular meeting ever drafts anything.
+    if (!storagePersistRequested) {
+      storagePersistRequested = true;
+      try {
+        if (typeof navigator !== "undefined" && navigator.storage?.persist) {
+          void navigator.storage.persist();
+        }
+      } catch {
+        // non-fatal
+      }
+    }
     // S10 field-fix #6: a fresh session must never show a stale EMA
     // reading carried over from the previous one (lib/stt/latencyStats.
     // ts's own resetLagStats doc comment) — same per-session-start seam
@@ -563,6 +607,44 @@ export function useMeeting(): UseMeetingResult {
     };
   }, []);
 
+  // Live draft persistence (v0.5 closeout item 1): immediate best-effort
+  // flush on the iOS-Safari kill path. `pagehide` is the reliable signal
+  // there (the tab can be gone by the time a debounced/throttled write
+  // would otherwise have fired); `visibilitychange`→hidden is the belt
+  // (fires earlier, and covers backgrounding without an actual unload).
+  // Bypasses shouldWriteDraft's throttle entirely — this is the last
+  // chance, not a routine tick — but still updates the throttle refs
+  // afterward so the periodic effect below doesn't immediately redo the
+  // same write if the page returns to visible without navigating away.
+  // Mount-once: this hook lives for the whole page load (page.tsx), the
+  // same lifetime `now` vs. "first meeting start of a page load" above
+  // assumes. Reads useApp.getState() fresh rather than closing over the
+  // reactive `status`/`segments` below — no stale-closure risk despite
+  // the empty deps array.
+  useEffect(() => {
+    const flush = () => {
+      const { status, settings } = useApp.getState();
+      if (!liveDraft.isDraftableMeeting(status, settings.engine)) return;
+      const snapshot = currentSessionSnapshot();
+      if (!snapshot) return;
+      lastDraftWriteAtRef.current = Date.now();
+      lastDraftCountsRef.current = {
+        segments: snapshot.segments.length,
+        cards: snapshot.cards.length,
+      };
+      void liveDraft.writeDraft(snapshot);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+
   // Live bilingual transcript (#42): flipping the toggle OFF->ON
   // mid-meeting shouldn't leave the just-elapsed minute untranslated —
   // catch up the most recent finalized segments that don't have one
@@ -610,6 +692,36 @@ export function useMeeting(): UseMeetingResult {
       lastText.set(seg.id, seg.text);
     }
   }, [segments, meetingGen]);
+
+  // Live draft persistence (v0.5 closeout item 1) — the routine (non-
+  // pagehide) write path. Reacts to the same `segments`/`status`
+  // reactive values already declared above (plus `cards`/`engine`,
+  // reactive here too) rather than a setInterval poll: this hook already
+  // re-renders exactly when a segment/card is added, translated, or
+  // detected, so there is no meaningful update this effect could miss by
+  // being change-driven instead of timer-driven. shouldWriteDraft's own
+  // throttle is what actually bounds the write RATE to <= 1/10s.
+  const cards = useApp((s) => s.cards);
+  const engine = useApp((s) => s.settings.engine);
+  useEffect(() => {
+    if (!liveDraft.isDraftableMeeting(status, engine)) return;
+    const counts: liveDraft.DraftCounts = { segments: segments.length, cards: cards.length };
+    if (
+      !liveDraft.shouldWriteDraft(
+        Date.now(),
+        lastDraftWriteAtRef.current,
+        lastDraftCountsRef.current,
+        counts,
+      )
+    ) {
+      return;
+    }
+    const snapshot = currentSessionSnapshot();
+    if (!snapshot) return;
+    lastDraftWriteAtRef.current = Date.now();
+    lastDraftCountsRef.current = counts;
+    void liveDraft.writeDraft(snapshot);
+  }, [segments, cards, status, engine]);
 
   return { start, pause, resume, stop, startDemo };
 }

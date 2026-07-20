@@ -23,6 +23,7 @@ import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
 import type { DetectMode } from "./detect/scheduler";
 import type { OnDeviceMode } from "./stt/onDeviceSpeech";
 import * as storage from "./history/storage";
+import * as liveDraft from "./history/liveDraft";
 import * as glossary from "./history/glossary";
 import * as learnset from "./learn/store";
 import { filterSuppressed } from "./learn/suppress";
@@ -554,6 +555,16 @@ interface AppState {
   saveCurrentSession: () => Promise<string | null>;
   loadSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
+  // Crash/refresh recovery (v0.5 closeout — lib/history/liveDraft.ts's
+  // own header comment has the full write policy/multi-tab caveat).
+  // Materializes a RecoveryBanner-recovered draft snapshot via the SAME
+  // storage.saveSession/listSessions pair saveCurrentSession uses below,
+  // so the session appears in 历史 exactly like any normally-ended
+  // meeting — deliberately NOT routed through the live segments/cards
+  // slice (unlike saveCurrentSession), since the draft may belong to a
+  // different meeting than whatever is (or isn't) currently live in this
+  // tab (see RecoveryBanner's "new meeting keeps the draft" contract).
+  restoreLiveDraft: (snapshot: MeetingSession) => Promise<void>;
   newMeeting: () => void;
 
   addCustomEntry: (entry: CustomEntry) => Promise<void>;
@@ -1160,15 +1171,13 @@ export const useApp = create<AppState>((set, get) => ({
     if (typeof document !== "undefined") {
       document.documentElement.dataset.fs = settings.fontSize;
     }
-    // Ask the browser not to evict IndexedDB under storage pressure
-    // (Safari's 7-day eviction, Chrome quota GC). Best-effort.
-    try {
-      if (typeof navigator !== "undefined" && navigator.storage?.persist) {
-        void navigator.storage.persist();
-      }
-    } catch {
-      // non-fatal
-    }
+    // Storage-durability request (navigator.storage.persist, asking the
+    // browser not to evict IndexedDB under pressure — Safari's 7-day
+    // eviction, Chrome quota GC) used to fire here at boot; moved to
+    // useMeeting.ts's start() (first meeting start of a page load) —
+    // Firefox actually prompts for this permission, and a prompt at
+    // boot, before the user has done anything, is hostile. See that
+    // call site's own comment.
 
     // Subscription-direct (v0.2.2, experimental) kill-switch layer 3:
     // an emergency remote hide for already-shipped builds — see
@@ -1647,6 +1656,17 @@ export const useApp = create<AppState>((set, get) => ({
     await storage.saveSession(session);
     const metas = await storage.listSessions();
     set({ sessions: metas, activeSessionId: session.id });
+    // Crash/refresh recovery (v0.5 closeout): a meeting that ends
+    // normally (this is the ONLY function that ever reaches "stopped"
+    // persistence — every call site is gated on status==="stopped", see
+    // useMeeting.ts's doStop/runStopFlow and this file's own post-stop
+    // top-up re-saves) must never leave a stale liveDraft behind. A
+    // no-op when nothing was ever drafted (e.g. a short meeting the
+    // 10s/changed-guard throttle never got to write). Awaited, like the
+    // storage.* calls just above — this is local IndexedDB bookkeeping,
+    // not one of the optional external integrations below that
+    // deliberately fire-and-forget.
+    await liveDraft.clearDraft();
     // Agent-native output layer (both no-op unless configured).
     const { autoExport, exportFrontmatter, webhookUrl } = s.settings;
     if (autoExport) {
@@ -1738,6 +1758,19 @@ export const useApp = create<AppState>((set, get) => ({
       patch.activeSessionId = null;
     }
     set(patch);
+  },
+
+  // Crash/refresh recovery (v0.5 closeout) — see this action's own
+  // AppState doc comment above for why this bypasses the live
+  // segments/cards slice entirely: `snapshot` is whatever RecoveryBanner
+  // loaded from IndexedDB, not necessarily anything related to this
+  // tab's current live meeting (or lack thereof).
+  restoreLiveDraft: async (snapshot) => {
+    await storage.saveSession(snapshot);
+    const metas = await storage.listSessions();
+    set({ sessions: metas });
+    await liveDraft.clearDraft();
+    get().showToast("已恢复，可在历史记录中查看");
   },
 
   addCustomEntry: async (entry) => {
