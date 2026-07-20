@@ -322,8 +322,12 @@ describe("TranscriptPanel InterimLine throttle correctness", () => {
       root!.render(<TranscriptPanel />);
     });
 
+    // v0.5 Wave-1 Feature 1: TranscriptPanel's header bar (selection
+    // mode / live latch / AI 校正) is now ALSO a direct child div, so
+    // the scroll container needs its own stable selector instead of
+    // the old positional "first div child" assumption.
     const scrollEl = container!.querySelector(
-      '[data-testid="transcript-panel"] > div',
+      '[data-testid="transcript-scroll"]',
     ) as HTMLDivElement;
     expect(scrollEl).toBeTruthy();
     Object.defineProperty(scrollEl, "scrollHeight", {

@@ -8,6 +8,7 @@ import { useApp } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
+import { langPairFromSettings, resolveTranslationProvider } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
@@ -372,9 +373,24 @@ export function useMeeting(): UseMeetingResult {
     // Replace any previous translate queue before wiring a fresh one —
     // same lifecycle as the scheduler above.
     translateQueueRef.current?.stop();
+    // v0.5 Wave-1 Feature 6 / A6 (docs/design-explorations/
+    // v05-wave1-blueprint.md §1 Feature 6 + §5 A6): provider KIND is
+    // decided once here (mirrors attachEngine's own settings.engine
+    // snapshot just below) and, when it resolves to the on-device
+    // Chrome provider, prepare() MUST fire synchronously, inside THIS
+    // Start click's own user gesture, before any await — this whole
+    // start() callback body still runs synchronously up to
+    // attachEngine's own internal `await engine.start(...)`, so this
+    // call site is well inside that window. See providers.ts's header
+    // comment for the full activation contract; LlmTranslationProvider's
+    // prepare() is a no-op, so this is harmless when the resolved
+    // provider is (as by far most commonly) "llm".
+    const provider = resolveTranslationProvider(() => useApp.getState().settings);
+    provider.prepare(langPairFromSettings(useApp.getState().settings));
     const translateQueue = new TranslateQueue({
       getSettings: () => useApp.getState().settings,
       getMeetingGen: () => useApp.getState().meetingGen,
+      provider,
       onTranslations: (map, gen) => useApp.getState().applyTranslations(map, gen),
       onError: (msg) => useApp.getState().showToast(logAndToastError("translate-queue", msg)),
     });

@@ -777,6 +777,86 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: Deepgram (v0.4.7 Lane D)
   });
 });
 
+// ---------------------------------------------------------------
+// 标签页音频·云端 engine card (v0.5 Wave-1 Feature 4, docs/design-
+// explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4). Web-only
+// (ambient test env is the web build) — has no key input of its own,
+// unlike Soniox/Deepgram above, so it gets a hint pointing back at
+// those cards instead of a key field of its own.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS: 标签页音频·云端 (v0.5 Wave-1 F4)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("renders the card with its 实验 tag and copy naming both providers + the Deepgram English-only caveat", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const card = findButtonContaining("标签页音频·云端");
+    expect(card.textContent).toContain("实验");
+    expect(card.textContent).toContain("Soniox 或 Deepgram Key");
+    expect(card.textContent).toContain("共享音频");
+    expect(card.textContent).toContain("仅支持英文");
+  });
+
+  it("the provider-key hint is absent until the card is picked, then names the currently selected provider", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.textContent).not.toContain("点击上方对应卡片临时切换以填写");
+
+    await act(async () => {
+      findButtonContaining("标签页音频·云端").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container!.textContent).toContain("使用当前选择的 Soniox API");
+    expect(container!.textContent).toContain("点击上方对应卡片临时切换以填写");
+  });
+
+  it("switching tabAudioCloudProvider to deepgram updates the hint to name Deepgram", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "tabaudio-cloud", tabAudioCloudProvider: "deepgram" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(container!.textContent).toContain("使用当前选择的 Deepgram API");
+  });
+});
+
 describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox Key (v0.4 S4 chunk 6)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;

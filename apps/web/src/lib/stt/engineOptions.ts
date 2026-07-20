@@ -108,6 +108,16 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   toEngineOption("webspeech"),
   toEngineOption("whisper"),
   IS_DESKTOP ? toEngineOption("appaudio") : toEngineOption("tabaudio"),
+  // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
+  // blueprint.md §1 Feature 4 + §5 A4) — tab audio without the local
+  // sidecar, BYOK cloud backend instead (Soniox/Deepgram, see
+  // Settings.tabAudioCloudProvider). Web-only for v0.5: desktop already
+  // has sidecar+appaudio in this same slot, and store.ts's
+  // applyPlatformEngineDefaults coerces a persisted value away there —
+  // same `!IS_DESKTOP` guard the appaudio/tabaudio swap above relies on
+  // (the IS_IOS branch below never reads ALL_ENGINE_OPTIONS at all, so
+  // no separate iOS guard is needed here either).
+  ...(!IS_DESKTOP ? [toEngineOption("tabaudio-cloud")] : []),
   // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
   // Zero-Install 系统识别: desktop-only (macOS 26+ gated via
   // engineOptionGate below, not here — mirrors appaudio's own

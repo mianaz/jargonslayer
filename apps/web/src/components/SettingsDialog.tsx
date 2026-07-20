@@ -81,6 +81,9 @@ import { clearDiag, getDiagEntries, type DiagEntry } from "@/lib/diag/log";
 import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
+import TranslationEngineRow from "@/components/settings/TranslationEngineRow";
+import AnkiConnectSection from "@/components/settings/AnkiConnectSection";
+import { langPairFromSettings } from "@/lib/translate/providers";
 import ModelPicker from "@/components/desktop/ModelPicker";
 import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 import CredentialFields, {
@@ -174,6 +177,28 @@ const ALL_ENGINE_CARDS: {
         disabled: true,
         sidecarOnly: true,
       },
+  // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
+  // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
+  // A4): web-only, same `!IS_DESKTOP` guard lib/stt/engineOptions.ts's
+  // own ENGINE_OPTIONS entry uses (desktop already has sidecar+appaudio
+  // in the slot above; store.ts's applyPlatformEngineDefaults coerces a
+  // persisted value away there — the IS_IOS filter on ENGINE_CARDS below
+  // drops it on iOS too, so no separate guard is needed for that). BYOK,
+  // same preview lock/实验 tag as Soniox/Deepgram above — the actual
+  // provider (Settings.tabAudioCloudProvider, default Soniox) picks
+  // which key this card needs; see the hint block below the Deepgram key
+  // field (this card has no key input of its own).
+  ...(!IS_DESKTOP
+    ? [
+        {
+          value: "tabaudio-cloud" as const,
+          label: "标签页音频·云端",
+          hint: "需要 Soniox 或 Deepgram Key、浏览器分享标签页并勾选共享音频；选择 Deepgram 时仅支持英文",
+          posture: "cloud" as const,
+          byokOnly: true,
+        },
+      ]
+    : []),
   // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
   // Zero-Install 系统识别 (SpeechAnalyzer): NOT sidecarOnly (needs no
   // local Whisper sidecar at all — that's the whole point), so it's
@@ -2141,6 +2166,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
+            {/* 标签页音频·云端 key hint (v0.5 Wave-1 Feature 4, §5 A4):
+               unlike Soniox/Deepgram above, this card has no key input
+               of its own — it rides whichever provider
+               Settings.tabAudioCloudProvider currently resolves to
+               (default Soniox; a provider PICKER is a later lane's job,
+               §1 Feature 5 mode-first) — so this points at the matching
+               card above instead of duplicating its key field. */}
+            {draft.engine === "tabaudio-cloud" && (
+              <div className="text-xs leading-[1.7] text-mut2">
+                使用当前选择的 {draft.tabAudioCloudProvider === "deepgram" ? "Deepgram" : "Soniox"} API
+                Key——点击上方对应卡片临时切换以填写
+              </div>
+            )}
+
             <div>
               <label className="text-xs text-mut">麦克风</label>
               <select
@@ -2906,6 +2945,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               />
             </label>
 
+            {/* v0.5 F6 (L4 lane subcomponent, lead-inserted per blueprint
+               §2's SettingsDialog serialization rule): 翻译引擎 selector —
+               LLM (default) vs Chrome 内置系统翻译 (web-only, on-device). */}
+            <div data-ui-level="aiDetectTranslateEngine">
+              <TranslationEngineRow
+                value={draft.translateEngine}
+                onChange={(v) => patch({ translateEngine: v })}
+                langPair={langPairFromSettings(draft)}
+              />
+            </div>
+
             {/* 背景画像 (#48 step 3, design Q5): opt-in — default off.
                The rendered hint (llm/profileHint.ts) is spliced into the
                USER message only, never the cached SYSTEM prompt (see
@@ -3286,6 +3336,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 task.* 事件
               </div>
             </div>
+
+            {/* v0.5 F9 (L7 lane subcomponent, lead-inserted per blueprint
+               §2's SettingsDialog serialization rule): AnkiConnect —
+               module-only for now; the post-save delivery hook lands in
+               F0b (store wiring), so 测试并授权 works but auto-delivery
+               starts once that hook merges. Hidden on iOS inside the
+               component itself. */}
+            <AnkiConnectSection
+              value={draft.ankiConnect}
+              onChange={(ankiPatch) =>
+                patch({ ankiConnect: { ...draft.ankiConnect, ...ankiPatch } })
+              }
+            />
 
             <label className="flex items-center justify-between gap-3 py-1">
               <div>

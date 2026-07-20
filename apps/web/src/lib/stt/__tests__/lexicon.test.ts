@@ -19,6 +19,7 @@ import {
   projectForOsSpeechContextualJson,
   projectForSonioxContext,
 } from "../lexicon";
+import * as glossary from "../../history/glossary";
 
 const mockPackTermsForBias = vi.mocked(packTermsForBias);
 
@@ -164,6 +165,44 @@ describe("buildMeetingLexicon", () => {
       learnset: {},
     });
     expect(lexicon.terms).toEqual(["real-term"]);
+  });
+});
+
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, blueprint §1
+// F8 + §5 A7) — the Wave-0 seam: buildMeetingLexicon's glossary tier
+// consults glossary.ts's own pack registry directly (see lexicon.ts's
+// header comment), since useMeeting.ts's live-session snapshot still
+// passes the FULL customEntries list. Unique pack names per test —
+// this file's module state (glossary.ts's pack registry) is NOT
+// reset between tests (no vi.resetModules() here, unlike glossary.
+// test.ts), so a name collision would spuriously throw.
+describe("buildMeetingLexicon — pack-aware filtering (the Wave-0 seam, A7)", () => {
+  it("excludes a disabled custom pack's entries from the glossary tier", async () => {
+    const packs = await glossary.createCustomPack("Lexicon Pack A");
+    const pack = packs.find((p) => p.name === "Lexicon Pack A")!;
+    await glossary.setCustomPackEnabled(pack.id, false);
+
+    const lexicon = buildMeetingLexicon({
+      customEntries: [
+        glossaryEntry("personal-term"),
+        { ...glossaryEntry("disabled-term"), packId: pack.id },
+      ],
+      enabledPacks: null,
+      learnset: {},
+    });
+    expect(lexicon.terms).toEqual(["personal-term"]);
+  });
+
+  it("includes an enabled non-personal custom pack's entries", async () => {
+    const packs = await glossary.createCustomPack("Lexicon Pack B");
+    const pack = packs.find((p) => p.name === "Lexicon Pack B")!;
+
+    const lexicon = buildMeetingLexicon({
+      customEntries: [{ ...glossaryEntry("enabled-term"), packId: pack.id }],
+      enabledPacks: null,
+      learnset: {},
+    });
+    expect(lexicon.terms).toEqual(["enabled-term"]);
   });
 });
 

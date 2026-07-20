@@ -29,6 +29,7 @@ export const SETTINGS_UI_LEVELS = {
   aiDetectConfidence: "advanced", // 置信度阈值
   aiDetectExplainLanguage: "simple", // 解释语言
   aiDetectBilingual: "simple", // 双语转录
+  aiDetectTranslateEngine: "simple", // 翻译引擎 (v0.5 F6: LLM vs 系统翻译)
   aiDetectProfile: "simple", // 背景画像 opt-in block (#48 step 3)
   aiDetectPacks: "advanced", // 词典主题包
   aiDetectPackSources: "advanced", // 词典源

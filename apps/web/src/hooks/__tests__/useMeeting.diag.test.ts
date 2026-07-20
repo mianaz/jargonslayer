@@ -33,6 +33,7 @@ vi.mock("../../lib/llm/client", () => ({
 import { detectApi, NoKeyError, translateApi } from "../../lib/llm/client";
 import { DetectionScheduler } from "../../lib/detect/scheduler";
 import { TranslateQueue } from "../../lib/translate/queue";
+import { LlmTranslationProvider } from "../../lib/translate/providers";
 import { clearDiag, getDiagEntries } from "../../lib/diag/log";
 import { logAndToastError } from "../useMeeting";
 
@@ -142,9 +143,14 @@ describe("useMeeting.ts diagnostics wiring — TranslateQueue choke point", () =
     settings = makeSettings({ bilingualTranscript: true });
     mockTranslateApi.mockReset();
     toasts = [];
+    // v0.5 Wave-1 Feature 6: mirrors useMeeting.ts's own real
+    // resolveTranslationProvider() -> LlmTranslationProvider path for
+    // the default "llm" engine — see queue.test.ts's own beforeEach for
+    // the same wiring.
     queue = new TranslateQueue({
       getSettings: () => settings,
       getMeetingGen: () => 0,
+      provider: new LlmTranslationProvider(() => settings),
       onTranslations: vi.fn(),
       onError: (msg) => toasts.push(logAndToastError("translate-queue", msg)),
     });

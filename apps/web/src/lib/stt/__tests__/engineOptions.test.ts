@@ -20,9 +20,9 @@ import {
 } from "../engineOptions";
 
 describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
-  it("keeps webspeech (web never drops it) and tabaudio (D7: desktop-only swaps to appaudio), and lists deepgram alongside soniox (v0.4.7 Lane D: web + desktop, no iOS v1)", () => {
+  it("keeps webspeech (web never drops it) and tabaudio (D7: desktop-only swaps to appaudio), adds tabaudio-cloud (v0.5 Wave-1 F4: web-only), and lists deepgram alongside soniox (v0.4.7 Lane D: web + desktop, no iOS v1)", () => {
     const values = ENGINE_OPTIONS.map((o) => o.value);
-    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox", "deepgram"]);
+    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "tabaudio-cloud", "soniox", "deepgram"]);
   });
 
   it("every option carries a zh label, a local/cloud posture, and a matching retentionClass", () => {
@@ -34,6 +34,24 @@ describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
       // derivePosture) — the two must never disagree on local-vs-cloud.
       expect(opt.posture).toBe(opt.retentionClass === "local" ? "local" : "cloud");
     }
+  });
+
+  // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.
+  // md §1 Feature 4 + §5 A4): exact shape, mirrors this file's own
+  // osspeech pin in engineOptions.desktop.test.ts — byokOnly (same
+  // preview lock as soniox/deepgram), cloud-transient/cloud posture (the
+  // DEFAULT provider's static row — engineCapabilities.test.ts covers
+  // the provider-aware resolveEngineCapability overlay this projection
+  // does NOT yet consume).
+  it("tabaudio-cloud: exact shape (byokOnly cloud-transient, DEFAULT-provider label)", () => {
+    const tabaudioCloud = ENGINE_OPTIONS.find((o) => o.value === "tabaudio-cloud");
+    expect(tabaudioCloud).toEqual({
+      value: "tabaudio-cloud",
+      label: "标签页音频·云端",
+      posture: "cloud",
+      retentionClass: "cloud-transient",
+      byokOnly: true,
+    });
   });
 });
 

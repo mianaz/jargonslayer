@@ -42,7 +42,7 @@
 // `mip_opt_out=true` unconditionally, so it is honestly
 // cloud-transient in OUR integration once Lane D adds it).
 
-import type { STTEngineKind } from "@jargonslayer/core/types";
+import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 
 // Live capture engines only — excludes "demo" (scripted preview, not a
 // peer engine) and the two file-ingest paths "import"/"browser-whisper"
@@ -165,15 +165,18 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   },
   // v0.5 Wave-1 Foundation (F4 tab-audio-cloud, docs/design-
   // explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4): STATIC
-  // placeholder row only — required because ENGINE_CAPABILITIES is
+  // DEFAULT row — required because ENGINE_CAPABILITIES is
   // Record<LiveEngineKind, …> and "tabaudio-cloud" widened that union
   // (see this file's own header comment on that discipline). retention/
   // bias here match the DEFAULT provider (Settings.tabAudioCloudProvider
-  // "soniox"); A4's own resolveEngineCapability(kind, settings) runtime
-  // overlay — not yet built — is what actually resolves biasSupport
-  // per-provider (soniox→context / deepgram→keyterms), mirroring how
-  // resolveWebspeechRetentionClass overlays webspeech above. Not yet a
-  // selectable engine (see the kind's own STTEngineKind doc comment).
+  // "soniox"); resolveEngineCapability(kind, settings) below is A4's
+  // runtime overlay that actually resolves biasSupport plus a
+  // disambiguating label suffix per-provider (soniox→context /
+  // deepgram→keyterms), mirroring how resolveWebspeechRetentionClass
+  // overlays webspeech above — a caller that needs the per-session
+  // truth (not just this static default) goes through that function,
+  // not this row directly. Selectable via ENGINE_CARDS/ENGINE_OPTIONS
+  // as of lib/stt/tabAudioCloud.ts (v0.5 Wave-1 L3).
   "tabaudio-cloud": {
     kind: "tabaudio-cloud",
     label: "标签页音频·云端",
@@ -182,3 +185,49 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     byokOnly: true,
   },
 };
+
+// ---------------------------------------------------------------
+// A4 provider-aware capability overlay (v05-wave1-blueprint.md §5 A4):
+// the tabaudio-cloud analogue of resolveWebspeechRetentionClass above.
+// Lives here (not lib/stt/tabAudioCloud.ts) so engineOptions.ts/a future
+// StatusLine consumer can resolve it without importing the engine
+// itself — that module drags in SonioxTransport/DeepgramTransport and
+// DOM/MediaStream machinery this one has never depended on.
+// ---------------------------------------------------------------
+
+export type TabAudioCloudProvider = Settings["tabAudioCloudProvider"];
+
+/** A4: sanitizes a persisted `tabAudioCloudProvider` value — the field
+ *  is typed as a two-value union, but that guarantee doesn't survive a
+ *  JSON.parse off localStorage (a corrupted/future/hand-edited value
+ *  could be anything) — falls back to "soniox" (DEFAULT_SETTINGS' own
+ *  default) for anything that isn't literally "deepgram". */
+export function resolveTabAudioCloudProvider(settings: Settings): TabAudioCloudProvider {
+  return settings.tabAudioCloudProvider === "deepgram" ? "deepgram" : "soniox";
+}
+
+const TAB_AUDIO_CLOUD_PROVIDER_LABEL: Record<TabAudioCloudProvider, string> = {
+  soniox: "Soniox",
+  deepgram: "Deepgram",
+};
+
+/** A4: resolves a capability row's per-session truth. A structural
+ *  no-op for every kind besides "tabaudio-cloud" (the static table is
+ *  already final truth for those — returned as-is, same reference). For
+ *  "tabaudio-cloud" it resolves biasSupport off the sanitized provider
+ *  (soniox→context / deepgram→keyterms, matching ENGINE_CAPABILITIES.
+ *  soniox/.deepgram's own biasSupport values) and appends a
+ *  disambiguating provider suffix to `label` (e.g. "标签页音频·云端（Soniox）").
+ *  Not yet consumed by any live UI — engineOptions.ts/StatusLine wire
+ *  this up in a later lane (§5's own "L3 tail" sequencing note) —
+ *  exported+tested now so that wiring is a pure call-site change. */
+export function resolveEngineCapability(kind: LiveEngineKind, settings: Settings): EngineCapability {
+  const base = ENGINE_CAPABILITIES[kind];
+  if (kind !== "tabaudio-cloud") return base;
+  const provider = resolveTabAudioCloudProvider(settings);
+  return {
+    ...base,
+    biasSupport: provider === "deepgram" ? "keyterms" : "context",
+    label: `${base.label}（${TAB_AUDIO_CLOUD_PROVIDER_LABEL[provider]}）`,
+  };
+}

@@ -9,6 +9,7 @@ import { OsSpeechEngine } from "./osSpeech";
 import { DemoEngine } from "./demo";
 import { SonioxEngine } from "./soniox";
 import { DeepgramEngine } from "./deepgram";
+import { TabAudioCloudEngine } from "./tabAudioCloud";
 
 export function createEngine(kind: STTEngineKind): STTEngine {
   switch (kind) {
@@ -46,14 +47,14 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       return new DeepgramEngine();
     case "tabaudio-cloud":
       // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
-      // blueprint.md §1 Feature 4) — the kind lands with the Foundation
-      // (F0a) so migration/coercion can be total; the actual engine
-      // (lib/stt/tabAudioCloud.ts) is a later lane's job. Unreachable
-      // from the UI until that lane wires ENGINE_CARDS/ENGINE_OPTIONS +
-      // replaces this throw with a real engine, same "kind exists before
-      // its engine does" posture "import"/"browser-whisper" below have
-      // always had.
-      throw new Error('createEngine: "tabaudio-cloud" is not wired yet (v0.5 Wave-1 Feature 4)');
+      // blueprint.md §1 Feature 4 + §5 A4) — getDisplayMedia capture
+      // routed into a BYOK cloud transport (Soniox/Deepgram, see
+      // Settings.tabAudioCloudProvider) instead of the local sidecar.
+      // Live opt-in engine as of this lane: reachable via ENGINE_CARDS
+      // (SettingsDialog.tsx) and ENGINE_OPTIONS (engineOptions.ts,
+      // byokOnly + web-only gated), same preview-tier coercion path as
+      // soniox/deepgram above.
+      return new TabAudioCloudEngine();
     case "import":
       // "import" (#43) is never a live capture engine — imported
       // sessions are built fully offline by importText.ts and never

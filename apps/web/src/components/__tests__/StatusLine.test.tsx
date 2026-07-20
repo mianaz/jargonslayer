@@ -641,7 +641,7 @@ describe("StatusLine — engine dropdown", () => {
     return el as HTMLSelectElement;
   }
 
-  it("lists every ENGINE_OPTIONS value (web build: webspeech/whisper/tabaudio/soniox/deepgram, D7 keeps tabaudio; deepgram v0.4.7 Lane D)", async () => {
+  it("lists every ENGINE_OPTIONS value (web build: webspeech/whisper/tabaudio/tabaudio-cloud/soniox/deepgram, D7 keeps tabaudio; deepgram v0.4.7 Lane D; tabaudio-cloud v0.5 Wave-1 F4)", async () => {
     useApp.setState((s) => ({ settings: { ...s.settings, engine: "whisper" } }));
     renderStatusLine();
     await act(async () => {
@@ -651,7 +651,7 @@ describe("StatusLine — engine dropdown", () => {
     const values = Array.from(select().querySelectorAll("option"))
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
-    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "soniox", "deepgram"]);
+    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "tabaudio-cloud", "soniox", "deepgram"]);
   });
 
   it("changing the value writes settings.engine (same store write as the old mobile <select>)", async () => {

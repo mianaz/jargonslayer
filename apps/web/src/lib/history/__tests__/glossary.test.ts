@@ -216,4 +216,189 @@ describe("glossary.ts", () => {
       expect(loaded).toEqual([]);
     });
   });
+
+  // v0.5 Wave-1 Feature 8 (named custom dictionary packs, blueprint
+  // §1 F8 + §5 A7 "path-complete registry").
+  describe("pack-aware filtering — getCachedEntries/scanCustomEntries (A7)", () => {
+    it("excludes a disabled custom pack's entries from scanCustomEntries", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await glossary.setCustomPackEnabled(pack.id, false);
+      await glossary.upsertCustomEntry(makeEntry({ id: "a", packId: pack.id }));
+
+      const res = glossary.scanCustomEntries("We need to circle back on pricing tomorrow.");
+      expect(res.expressions).toHaveLength(0);
+    });
+
+    it("excludes a disabled custom pack's entries from getCachedEntries — the SAME accessor upload.ts's currentUploadLexicon imports, so its filtering comes for free", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await glossary.setCustomPackEnabled(pack.id, false);
+      await glossary.upsertCustomEntry(makeEntry({ id: "a", packId: pack.id }));
+      await glossary.upsertCustomEntry(makeEntry({ id: "b", packId: "personal" }));
+
+      expect(glossary.getCachedEntries().map((e) => e.id)).toEqual(["b"]);
+    });
+
+    it("re-enabling a pack makes its entries match/appear again", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await glossary.setCustomPackEnabled(pack.id, false);
+      await glossary.upsertCustomEntry(makeEntry({ id: "a", packId: pack.id }));
+      expect(glossary.getCachedEntries()).toHaveLength(0);
+
+      await glossary.setCustomPackEnabled(pack.id, true);
+      expect(glossary.getCachedEntries().map((e) => e.id)).toEqual(["a"]);
+    });
+
+    it("a disabled pack's entries are still returned by loadCustomEntries (full/unfiltered — the management-UI list must never silently lose them)", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await glossary.setCustomPackEnabled(pack.id, false);
+      await glossary.upsertCustomEntry(makeEntry({ id: "a", packId: pack.id }));
+
+      const loaded = await glossary.loadCustomEntries();
+      expect(loaded.map((e) => e.id)).toContain("a");
+    });
+  });
+
+  describe("loadCustomPacks — personal auto-create + packId normalization (A7)", () => {
+    it("auto-creates the 'personal' pack when none is persisted yet", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.loadCustomPacks();
+      expect(packs.map((p) => p.id)).toEqual(["personal"]);
+      expect(packs[0].name).toBe("个人词库");
+      expect(packs[0].enabled).toBe(true);
+      expect(memStore.has("jargonslayer:custom-packs")).toBe(true);
+    });
+
+    it("does not duplicate 'personal' when it's already persisted", async () => {
+      const glossary = await import("../glossary");
+      await glossary.loadCustomPacks();
+      const again = await glossary.loadCustomPacks();
+      expect(again.filter((p) => p.id === "personal")).toHaveLength(1);
+    });
+
+    it("normalizes an entry with a missing/unknown packId to 'personal' and persists the fix", async () => {
+      const glossary = await import("../glossary");
+      await glossary.upsertCustomEntry(makeEntry({ id: "a", packId: "ghost-pack" }));
+
+      const loaded = await glossary.loadCustomEntries();
+      expect(loaded.find((e) => e.id === "a")?.packId).toBe("personal");
+      // Persisted, not just in-memory — a fresh load reflects the fix.
+      expect(
+        (memStore.get("jargonslayer:glossary") as { id: string; packId: string }[]).find(
+          (e) => e.id === "a",
+        )?.packId,
+      ).toBe("personal");
+    });
+
+    it("leaves an entry with a valid non-personal packId untouched", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await glossary.upsertCustomEntry(makeEntry({ id: "a", packId: pack.id }));
+
+      const loaded = await glossary.loadCustomEntries();
+      expect(loaded.find((e) => e.id === "a")?.packId).toBe(pack.id);
+    });
+  });
+
+  describe("pack CRUD (A7)", () => {
+    it("createCustomPack rejects a blank/whitespace-only name", async () => {
+      const glossary = await import("../glossary");
+      await expect(glossary.createCustomPack("   ")).rejects.toThrow("词包名称不能为空");
+    });
+
+    it("createCustomPack rejects a duplicate name, case-insensitive and trimmed", async () => {
+      const glossary = await import("../glossary");
+      await glossary.createCustomPack("Tech Terms");
+      await expect(glossary.createCustomPack("  tech terms  ")).rejects.toThrow("词包名称已存在");
+    });
+
+    it("renameCustomPack allows keeping its own name (uniqueness check excludes itself)", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await expect(glossary.renameCustomPack(pack.id, "Tech Terms")).resolves.not.toThrow();
+    });
+
+    it("renameCustomPack rejects renaming to another pack's existing name", async () => {
+      const glossary = await import("../glossary");
+      await glossary.createCustomPack("Tech Terms");
+      const packs = await glossary.createCustomPack("Biz Terms");
+      const bizPack = packs.find((p) => p.name === "Biz Terms")!;
+      await expect(glossary.renameCustomPack(bizPack.id, "Tech Terms")).rejects.toThrow(
+        "词包名称已存在",
+      );
+    });
+
+    it("renameCustomPack rejects an unknown pack id", async () => {
+      const glossary = await import("../glossary");
+      await expect(glossary.renameCustomPack("does-not-exist", "New Name")).rejects.toThrow(
+        "词包不存在",
+      );
+    });
+
+    it("setCustomPackEnabled rejects an unknown pack id", async () => {
+      const glossary = await import("../glossary");
+      await expect(glossary.setCustomPackEnabled("does-not-exist", false)).rejects.toThrow(
+        "词包不存在",
+      );
+    });
+
+    it("deleteCustomPack refuses to delete 'personal' even with confirmCascade:true", async () => {
+      const glossary = await import("../glossary");
+      await glossary.loadCustomPacks();
+      await expect(glossary.deleteCustomPack("personal", true)).rejects.toThrow(
+        "个人词库不能删除",
+      );
+    });
+
+    it("deleteCustomPack refuses without confirmCascade:true", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      await expect(glossary.deleteCustomPack(pack.id, false)).rejects.toThrow(
+        "删除词包需要先确认词条会移动到个人词库",
+      );
+      // Refused — the pack must still exist.
+      expect(glossary.getCustomPacks().some((p) => p.id === pack.id)).toBe(true);
+    });
+
+    it("deleteCustomPack removes a confirmed non-personal pack", async () => {
+      const glossary = await import("../glossary");
+      const packs = await glossary.createCustomPack("Tech Terms");
+      const pack = packs.find((p) => p.name === "Tech Terms")!;
+      const next = await glossary.deleteCustomPack(pack.id, true);
+      expect(next.some((p) => p.id === pack.id)).toBe(false);
+    });
+
+    it("upsertCustomPack inserts a new pack or overwrites an existing one by id", async () => {
+      const glossary = await import("../glossary");
+      const inserted = await glossary.upsertCustomPack({
+        id: "restored-1",
+        name: "Restored Pack",
+        enabled: false,
+        createdAt: 1000,
+      });
+      expect(inserted.find((p) => p.id === "restored-1")).toMatchObject({
+        name: "Restored Pack",
+        enabled: false,
+      });
+
+      const overwritten = await glossary.upsertCustomPack({
+        id: "restored-1",
+        name: "Renamed",
+        enabled: true,
+        createdAt: 1000,
+      });
+      expect(overwritten.filter((p) => p.id === "restored-1")).toHaveLength(1);
+      expect(overwritten.find((p) => p.id === "restored-1")?.name).toBe("Renamed");
+    });
+  });
 });

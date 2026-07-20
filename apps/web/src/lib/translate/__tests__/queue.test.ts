@@ -19,6 +19,7 @@ vi.mock("../../llm/client", () => ({
 
 import { translateApi, NoKeyError, RateLimitApiError } from "../../llm/client";
 import { TranslateQueue } from "../queue";
+import { LlmTranslationProvider } from "../providers";
 
 const mockTranslateApi = vi.mocked(translateApi);
 
@@ -74,9 +75,20 @@ describe("TranslateQueue", () => {
     onTranslations = vi.fn<(map: Record<string, string>, gen: number) => void>();
     onError = vi.fn<(msg: string) => void>();
     mockTranslateApi.mockReset();
+    // v0.5 Wave-1 Feature 6: the queue now takes an injected provider
+    // rather than calling translateApi directly — wrapping the SAME
+    // mocked translateApi through the real LlmTranslationProvider
+    // reproduces 100% of this suite's existing behavior/assertions
+    // unchanged (same request body shape, same thrown-error passthrough)
+    // while genuinely exercising the injection seam. Provider-specific
+    // behavior (Chrome/system, the new SystemTranslatorUnavailableError
+    // branch) is covered separately in providers.test.ts /
+    // queueProvider.test.ts.
+    const provider = new LlmTranslationProvider(() => settings);
     queue = new TranslateQueue({
       getSettings: () => settings,
       getMeetingGen: () => meetingGen,
+      provider,
       onTranslations,
       onError,
     });

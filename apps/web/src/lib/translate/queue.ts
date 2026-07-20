@@ -1,14 +1,18 @@
 // Live bilingual transcript (#42): batches FINALIZED transcript
-// segments and drives /api/translate (LLM) so each segment gets a
-// secondary translated line under the English text. Sibling to
-// detect/scheduler.ts but simpler — no dictionary fallback, no
-// mode-changing latch (a dropped batch here just means one segment
-// stays English-only, not something the user needs to be told about
-// beyond the one-time NoKey toast — see MAX_CONSECUTIVE_RATE_LIMITS
-// for the one queue-management counter this DOES keep). Public
-// signature is contract — do not change it.
+// segments and drives an injected TranslationProvider (v0.5 Wave-1
+// Feature 6, providers.ts — "llm" by default, wrapping the same
+// /api/translate path as before; "system" = an on-device provider,
+// e.g. Chrome's Translator API) so each segment gets a secondary
+// translated line under the English text. Sibling to detect/
+// scheduler.ts but simpler — no dictionary fallback, no mode-changing
+// latch (a dropped batch here just means one segment stays
+// English-only, not something the user needs to be told about beyond
+// the one-time NoKey toast — see MAX_CONSECUTIVE_RATE_LIMITS for the
+// one queue-management counter this DOES keep). Public signature is
+// contract — do not change it.
 
-import { translateApi, NoKeyError, RateLimitApiError } from "../llm/client";
+import { NoKeyError, RateLimitApiError } from "../llm/client";
+import { SystemTranslatorUnavailableError, type TranslationProvider } from "./providers";
 import type { Settings, TranscriptSegment } from "@jargonslayer/core/types";
 
 export interface TranslateQueueOptions {
@@ -18,6 +22,12 @@ export interface TranslateQueueOptions {
   // A response whose captured gen no longer matches the store's
   // current gen belongs to a PREVIOUS meeting and is silently dropped.
   getMeetingGen: () => number;
+  // v0.5 Wave-1 Feature 6: resolved once per meeting by useMeeting.ts's
+  // start() (resolveTranslationProvider) and primed there via a
+  // synchronous prepare() call — see providers.ts's own header comment
+  // for the full A6 activation contract. The queue only ever calls
+  // translate() on it; it never resolves/primes a provider itself.
+  provider: TranslationProvider;
   onTranslations: (map: Record<string, string>, gen: number) => void;
   onError: (msg: string) => void;
 }
@@ -37,6 +47,12 @@ const ERROR_COOLDOWN_MS = 5_000;
 // latch into a self-healing pause that quietly recovers once the user
 // fills in a key, without them having to restart the meeting.
 const NO_KEY_PAUSE_MS = 60_000;
+// v0.5 Wave-1 Feature 6 / A6: same self-healing shape as NO_KEY_PAUSE_MS
+// (drop pending, pause, retry) but for a system-provider (e.g. Chrome
+// Translator) that's unavailable or still mid-download — a distinct
+// constant purely so the pause site reads clearly, not because the
+// value needs to differ.
+const SYSTEM_UNAVAILABLE_PAUSE_MS = 60_000;
 // Persistent 429s would otherwise re-queue the SAME oldest batch
 // forever, starving every newer segment behind it — 5 consecutive
 // failures (~2.5min at the 30s pause above) gives up on that one
@@ -69,6 +85,9 @@ export class TranslateQueue {
 
   private stopped = false;
   private noKeyToastShown = false; // NoKeyError toast fires at most once per meeting
+  // SystemTranslatorUnavailableError toast fires at most once per
+  // meeting too — same one-shot rationale as noKeyToastShown.
+  private systemUnavailableToastShown = false;
   private consecutiveRateLimits = 0; // reset on any successful batch
   // Segment ids that already burned their one generic-error retry —
   // a transient 5xx (the flaky-endpoint case, e.g. upstream 502s)
@@ -192,10 +211,7 @@ export class TranslateQueue {
   private async attemptTranslate(batch: Batch): Promise<void> {
     const settings = this.opts.getSettings();
     try {
-      const res = await translateApi(
-        { segments: batch.items, lang: settings.explainLanguage },
-        settings,
-      );
+      const translations = await this.opts.provider.translate(batch.items, settings.explainLanguage);
 
       // Meeting-boundary guard — see TranslateQueueOptions.getMeetingGen.
       if (batch.gen !== this.opts.getMeetingGen()) return;
@@ -205,9 +221,9 @@ export class TranslateQueue {
       // escape hatch below.
       this.consecutiveRateLimits = 0;
 
-      if (res.translations.length > 0) {
+      if (translations.length > 0) {
         const map: Record<string, string> = {};
-        for (const t of res.translations) map[t.id] = t.text;
+        for (const t of translations) map[t.id] = t.text;
         this.opts.onTranslations(map, batch.gen);
       }
       // A partial/empty response is failed-soft by design (see route
@@ -223,6 +239,28 @@ export class TranslateQueue {
     // batch dispatched by a PREVIOUS meeting must not latch/toast onto
     // the current (unrelated) meeting.
     if (batch.gen !== this.opts.getMeetingGen()) return;
+
+    // v0.5 Wave-1 Feature 6 / A6: a system-provider (e.g. Chrome
+    // Translator) failure gets its OWN classification — it must never
+    // fall into the LLM-specific NoKeyError/RateLimitApiError branches
+    // below, and it never enters the generic-error one-retry path
+    // either (retrying an unavailable/still-downloading model on the
+    // SAME batch is pointless): drop this batch outright (segments
+    // stay English-only, no retry) and pause+self-heal, same shape as
+    // NoKeyError just below.
+    if (err instanceof SystemTranslatorUnavailableError) {
+      this.pending = [];
+      this.pauseFor(SYSTEM_UNAVAILABLE_PAUSE_MS);
+      if (!this.systemUnavailableToastShown) {
+        this.systemUnavailableToastShown = true;
+        const msg =
+          err.reason === "downloading"
+            ? "系统翻译模型下载中，双语转录已暂停，下载完成后自动恢复"
+            : "系统翻译不可用，双语转录已暂停。可在设置中切换回 AI 模型翻译";
+        this.opts.onError(msg);
+      }
+      return;
+    }
 
     if (err instanceof NoKeyError) {
       // Self-healing pause, not a permanent latch: drop pending (a

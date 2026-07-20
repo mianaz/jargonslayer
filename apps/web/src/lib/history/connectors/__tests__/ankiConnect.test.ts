@@ -1,0 +1,457 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Flashcard, MeetingSession } from "@jargonslayer/core/types";
+import { buildAnkiTSV } from "../../export";
+
+// Same in-memory idb-keyval mock as glossary.test.ts/autoExport.test.ts
+// — ankiLedger is idb-keyval-backed, same guarded get/set convention.
+const memStore = new Map<string, unknown>();
+
+vi.mock("idb-keyval", () => ({
+  get: vi.fn(async (key: string) => memStore.get(key)),
+  set: vi.fn(async (key: string, value: unknown) => {
+    memStore.set(key, value);
+  }),
+}));
+
+import {
+  AnkiConnectApiError,
+  AnkiIosUnsupportedError,
+  ankiInvoke,
+  ankiLedger,
+  buildAnkiNotePayload,
+  deliverSessionNotes,
+  flashcardFingerprint,
+  testAndAuthorize,
+  type AnkiDeliveryLedger,
+} from "../ankiConnect";
+
+// ---------------------------------------------------------------
+// Fake-fetch helpers — a per-action router so multi-step flows
+// (requestPermission -> version, canAddNotes -> addNotes) can be
+// scripted per test without a plain sequential queue.
+// ---------------------------------------------------------------
+
+interface AnkiCall {
+  action: string;
+  version: number;
+  params?: unknown;
+}
+
+function routedFetch(
+  handlers: Record<string, (params: unknown) => { result?: unknown; error?: string | null }>,
+  calls: AnkiCall[],
+) {
+  return vi.fn(async (_url: string, init: { body: string }) => {
+    const body = JSON.parse(init.body) as AnkiCall;
+    calls.push(body);
+    const handler = handlers[body.action];
+    if (!handler) throw new Error(`unmocked action: ${body.action}`);
+    const out = handler(body.params);
+    return { json: async () => ({ result: out.result ?? null, error: out.error ?? null }) } as Response;
+  });
+}
+
+function makeCard(overrides: Partial<Flashcard> = {}): Flashcard {
+  return {
+    front: "circle back",
+    back_zh: "回头再聊",
+    back_en: "discuss again",
+    example: "Let's circle back later.",
+    tags: ["expression"],
+    ...overrides,
+  };
+}
+
+function makeSession(overrides: Partial<MeetingSession> = {}, flashcards: Flashcard[] = [makeCard()]): MeetingSession {
+  return {
+    id: "s1",
+    title: "Weekly sync",
+    startedAt: 1000,
+    endedAt: 2000,
+    engine: "demo",
+    segments: [],
+    cards: [],
+    terms: [],
+    summary: {
+      summary: { topic: { en: "", zh: "" }, key_points: [], decisions: [], action_items: [] },
+      translations: [],
+      flashcards,
+      generatedAt: 1500,
+      model: "test-model",
+    },
+    ...overrides,
+  };
+}
+
+function makeFakeLedger(): AnkiDeliveryLedger & { sentKeys: Set<string> } {
+  const sentKeys = new Set<string>();
+  return {
+    sentKeys,
+    async hasSent(sessionId, fingerprint) {
+      return sentKeys.has(`${sessionId}::${fingerprint}`);
+    },
+    async markSent(sessionId, fingerprint) {
+      sentKeys.add(`${sessionId}::${fingerprint}`);
+    },
+  };
+}
+
+beforeEach(() => {
+  memStore.clear();
+  (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  delete (globalThis as { indexedDB?: unknown }).indexedDB;
+});
+
+describe("ankiInvoke", () => {
+  it("POSTs {action, version: 6, params} and unwraps a successful result", async () => {
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch({ deckNames: () => ({ result: ["Default"] }) }, calls) as unknown as typeof fetch;
+
+    const result = await ankiInvoke<string[]>(8765, "deckNames", { foo: "bar" });
+
+    expect(result).toEqual(["Default"]);
+    expect(calls).toEqual([{ action: "deckNames", version: 6, params: { foo: "bar" } }]);
+    const [url] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("http://127.0.0.1:8765");
+  });
+
+  it("omits the params key entirely when no params are given (matches AnkiConnect's own no-params sample requests)", async () => {
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch({ version: () => ({ result: 6 }) }, calls) as unknown as typeof fetch;
+
+    await ankiInvoke(8765, "version");
+
+    expect(calls[0]).toEqual({ action: "version", version: 6 });
+    expect("params" in calls[0]).toBe(false);
+  });
+
+  it("throws AnkiConnectApiError with the envelope's error message when error is non-null", async () => {
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch(
+      { addNotes: () => ({ result: null, error: "model was not found: bogus" }) },
+      calls,
+    ) as unknown as typeof fetch;
+
+    await expect(ankiInvoke(8765, "addNotes", { notes: [] })).rejects.toThrow(
+      "model was not found: bogus",
+    );
+    await expect(ankiInvoke(8765, "addNotes", { notes: [] })).rejects.toBeInstanceOf(AnkiConnectApiError);
+  });
+
+  it("propagates a network-level fetch rejection (e.g. Anki not running) instead of swallowing it", async () => {
+    global.fetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+
+    await expect(ankiInvoke(8765, "version")).rejects.toThrow("Failed to fetch");
+  });
+});
+
+describe("ankiInvoke — iOS guard", () => {
+  // IS_IOS is a module-scope import-time const — see
+  // ankiConnect.ios.test.ts for the vi.mock'd-module coverage (this file
+  // covers ambient/web behavior, where IS_IOS is false).
+  it("is exported as a coded, named error class", () => {
+    const err = new AnkiIosUnsupportedError();
+    expect(err.name).toBe("AnkiIosUnsupportedError");
+    expect(err).toBeInstanceOf(Error);
+  });
+});
+
+describe("buildAnkiNotePayload — projection parity with buildAnkiTSV", () => {
+  it("Front/Back match buildAnkiTSV's own front/back for the identical flashcard", () => {
+    const card = makeCard();
+    const note = buildAnkiNotePayload(card, "JargonSlayer");
+    const [tsvFront, tsvBack] = buildAnkiTSV([card]).split("\t");
+
+    expect(note.fields.Front).toBe(tsvFront);
+    expect(note.fields.Back).toBe(tsvBack);
+  });
+
+  it("carries deckName, Basic model, allowDuplicate:false, and the jargonslayer tag", () => {
+    const note = buildAnkiNotePayload(makeCard(), "我的牌组");
+    expect(note.deckName).toBe("我的牌组");
+    expect(note.modelName).toBe("Basic");
+    expect(note.options).toEqual({ allowDuplicate: false });
+    expect(note.tags).toEqual(["jargonslayer"]);
+  });
+
+  it("escapes tabs/newlines the same way buildAnkiTSV does (shared escapeAnkiField semantics)", () => {
+    const card = makeCard({ front: "a\tb", back_zh: "第一行\n第二行" });
+    const note = buildAnkiNotePayload(card, "Default");
+    expect(note.fields.Front).toBe("a b");
+    expect(note.fields.Back).toContain("第一行<br>第二行");
+  });
+});
+
+describe("flashcardFingerprint", () => {
+  it("is stable across repeated calls for identical content", () => {
+    const note = buildAnkiNotePayload(makeCard(), "Default");
+    expect(flashcardFingerprint(note)).toBe(flashcardFingerprint(note));
+  });
+
+  it("differs when the front or back content differs", () => {
+    const a = buildAnkiNotePayload(makeCard(), "Default");
+    const b = buildAnkiNotePayload(makeCard({ front: "different phrase" }), "Default");
+    const c = buildAnkiNotePayload(makeCard({ back_zh: "不同的中文" }), "Default");
+    expect(flashcardFingerprint(a)).not.toBe(flashcardFingerprint(b));
+    expect(flashcardFingerprint(a)).not.toBe(flashcardFingerprint(c));
+  });
+
+  it("is independent of deckName (deck is not part of the note's content identity)", () => {
+    const a = buildAnkiNotePayload(makeCard(), "Deck A");
+    const b = buildAnkiNotePayload(makeCard(), "Deck B");
+    expect(flashcardFingerprint(a)).toBe(flashcardFingerprint(b));
+  });
+});
+
+describe("testAndAuthorize — outcome classification", () => {
+  it("已连接: requestPermission granted, then version succeeds", async () => {
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch(
+      {
+        requestPermission: () => ({ result: { permission: "granted", requireApiKey: false, version: 6 } }),
+        version: () => ({ result: 6 }),
+      },
+      calls,
+    ) as unknown as typeof fetch;
+
+    const status = await testAndAuthorize(8765);
+    expect(status).toEqual({ kind: "ok", label: "已连接" });
+    expect(calls.map((c) => c.action)).toEqual(["requestPermission", "version"]);
+  });
+
+  it("未授权: requestPermission responds denied", async () => {
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch(
+      { requestPermission: () => ({ result: { permission: "denied" } }) },
+      calls,
+    ) as unknown as typeof fetch;
+
+    const status = await testAndAuthorize(8765);
+    expect(status.kind).toBe("denied");
+    expect(status.label).toBe("未授权（请在 Anki 弹窗中允许）");
+    // version must never be called once denied.
+    expect(calls.map((c) => c.action)).toEqual(["requestPermission"]);
+  });
+
+  it("Anki 未运行或端口不通: a plain (non-abort) fetch rejection", async () => {
+    global.fetch = vi.fn(async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+
+    const status = await testAndAuthorize(8765);
+    expect(status).toEqual({ kind: "unreachable", label: "Anki 未运行或端口不通" });
+  });
+
+  it("浏览器阻止了本地网络访问: the requestPermission call aborts via our own timeout", async () => {
+    global.fetch = vi.fn(async () => {
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    }) as unknown as typeof fetch;
+
+    const status = await testAndAuthorize(8765);
+    expect(status).toEqual({
+      kind: "network-blocked",
+      label: "浏览器阻止了本地网络访问（需在弹窗中允许）",
+    });
+  });
+
+  it("unreachable when requestPermission succeeds (granted) but the follow-up version call fails", async () => {
+    const calls: AnkiCall[] = [];
+    global.fetch = vi.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body) as AnkiCall;
+      calls.push(body);
+      if (body.action === "requestPermission") {
+        return { json: async () => ({ result: { permission: "granted" }, error: null }) } as Response;
+      }
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+
+    const status = await testAndAuthorize(8765);
+    expect(status.kind).toBe("unreachable");
+    expect(calls.map((c) => c.action)).toEqual(["requestPermission", "version"]);
+  });
+});
+
+describe("deliverSessionNotes — payload delivery + ledger idempotency", () => {
+  it("no-op (no network calls) when the session has no flashcards", async () => {
+    global.fetch = vi.fn() as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+
+    const result = await deliverSessionNotes(makeSession({}, []), { deckName: "JargonSlayer", port: 8765 }, ledger);
+
+    expect(result).toEqual({ sent: 0, skipped: 0 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("delivers unsent flashcards via canAddNotes pre-filter + addNotes, marking only successful indices sent", async () => {
+    const cards = [makeCard({ front: "circle back" }), makeCard({ front: "touch base" })];
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch(
+      {
+        canAddNotes: () => ({ result: [true, true] }),
+        addNotes: () => ({ result: [111, 222] }),
+      },
+      calls,
+    ) as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+
+    const result = await deliverSessionNotes(
+      makeSession({}, cards),
+      { deckName: "JargonSlayer", port: 8765 },
+      ledger,
+    );
+
+    expect(result).toEqual({ sent: 2, skipped: 0 });
+    expect(ledger.sentKeys.size).toBe(2);
+    expect(calls.map((c) => c.action)).toEqual(["canAddNotes", "addNotes"]);
+  });
+
+  it("second delivery of the SAME session sends nothing further (ledger idempotency) — no network calls at all", async () => {
+    const cards = [makeCard()];
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch(
+      { canAddNotes: () => ({ result: [true] }), addNotes: () => ({ result: [111] }) },
+      calls,
+    ) as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+    const cfg = { deckName: "JargonSlayer", port: 8765 };
+    const session = makeSession({}, cards);
+
+    const first = await deliverSessionNotes(session, cfg, ledger);
+    expect(first).toEqual({ sent: 1, skipped: 0 });
+
+    calls.length = 0;
+    (global.fetch as ReturnType<typeof vi.fn>).mockClear();
+    const second = await deliverSessionNotes(session, cfg, ledger);
+
+    expect(second).toEqual({ sent: 0, skipped: 1 });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("partial addNotes failure (one null result) marks ONLY the successful note sent — the failed one is retried next call", async () => {
+    const cards = [makeCard({ front: "circle back" }), makeCard({ front: "touch base" })];
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch(
+      {
+        canAddNotes: () => ({ result: [true, true] }),
+        addNotes: () => ({ result: [111, null] }),
+      },
+      calls,
+    ) as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+    const cfg = { deckName: "JargonSlayer", port: 8765 };
+    const session = makeSession({}, cards);
+
+    const result = await deliverSessionNotes(session, cfg, ledger);
+    expect(result).toEqual({ sent: 1, skipped: 1 });
+    expect(ledger.sentKeys.size).toBe(1);
+
+    // A follow-up delivery re-attempts exactly the one that failed.
+    calls.length = 0;
+    const retryFetch = routedFetch(
+      { canAddNotes: () => ({ result: [true] }), addNotes: () => ({ result: [333] }) },
+      calls,
+    );
+    global.fetch = retryFetch as unknown as typeof fetch;
+    const retry = await deliverSessionNotes(session, cfg, ledger);
+    // total flashcards is still 2 ("circle back" from the first call
+    // counts toward skipped again here, same accounting convention as
+    // the "second delivery sends nothing" case above — skipped means
+    // "not delivered BY THIS call", not "never delivered at all").
+    expect(retry).toEqual({ sent: 1, skipped: 1 });
+    const addNotesCall = calls.find((c) => c.action === "addNotes")!;
+    expect((addNotesCall.params as { notes: Array<{ fields: { Front: string } }> }).notes).toHaveLength(1);
+    expect((addNotesCall.params as { notes: Array<{ fields: { Front: string } }> }).notes[0].fields.Front).toBe(
+      "touch base",
+    );
+  });
+
+  it("canAddNotes:false pre-filters a note out of the addNotes call entirely (never marked sent)", async () => {
+    const cards = [makeCard({ front: "circle back" }), makeCard({ front: "touch base" })];
+    const calls: AnkiCall[] = [];
+    global.fetch = routedFetch(
+      {
+        canAddNotes: () => ({ result: [true, false] }),
+        addNotes: () => ({ result: [111] }),
+      },
+      calls,
+    ) as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+
+    const result = await deliverSessionNotes(
+      makeSession({}, cards),
+      { deckName: "JargonSlayer", port: 8765 },
+      ledger,
+    );
+
+    expect(result).toEqual({ sent: 1, skipped: 1 });
+    const addNotesCall = calls.find((c) => c.action === "addNotes")!;
+    expect((addNotesCall.params as { notes: unknown[] }).notes).toHaveLength(1);
+  });
+
+  it("canAddNotes itself failing falls back to sending the full unfiltered candidate set (auxiliary pre-filter, never the sole gate)", async () => {
+    const cards = [makeCard()];
+    const calls: AnkiCall[] = [];
+    global.fetch = vi.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body) as AnkiCall;
+      calls.push(body);
+      if (body.action === "canAddNotes") throw new TypeError("Failed to fetch");
+      return { json: async () => ({ result: [111], error: null }) } as Response;
+    }) as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+
+    const result = await deliverSessionNotes(
+      makeSession({}, cards),
+      { deckName: "JargonSlayer", port: 8765 },
+      ledger,
+    );
+
+    expect(result).toEqual({ sent: 1, skipped: 0 });
+    expect(calls.map((c) => c.action)).toEqual(["canAddNotes", "addNotes"]);
+  });
+
+  it("addNotes failing entirely marks nothing sent and never throws", async () => {
+    const cards = [makeCard()];
+    global.fetch = vi.fn(async (_url: string, init: { body: string }) => {
+      const body = JSON.parse(init.body) as AnkiCall;
+      if (body.action === "canAddNotes") {
+        return { json: async () => ({ result: [true], error: null }) } as Response;
+      }
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    const ledger = makeFakeLedger();
+
+    await expect(
+      deliverSessionNotes(makeSession({}, cards), { deckName: "JargonSlayer", port: 8765 }, ledger),
+    ).resolves.toEqual({ sent: 0, skipped: 1 });
+    expect(ledger.sentKeys.size).toBe(0);
+  });
+});
+
+describe("ankiLedger — the real IDB-backed implementation", () => {
+  it("hasSent is false until markSent is called for that exact (sessionId, fingerprint) pair", async () => {
+    expect(await ankiLedger.hasSent("s1", "fp-a")).toBe(false);
+    await ankiLedger.markSent("s1", "fp-a");
+    expect(await ankiLedger.hasSent("s1", "fp-a")).toBe(true);
+    // A different session or a different fingerprint is unaffected.
+    expect(await ankiLedger.hasSent("s2", "fp-a")).toBe(false);
+    expect(await ankiLedger.hasSent("s1", "fp-b")).toBe(false);
+  });
+
+  it("markSent is idempotent — calling it twice does not throw and hasSent stays true", async () => {
+    await ankiLedger.markSent("s1", "fp-a");
+    await expect(ankiLedger.markSent("s1", "fp-a")).resolves.toBeUndefined();
+    expect(await ankiLedger.hasSent("s1", "fp-a")).toBe(true);
+  });
+
+  it("degrades to false/no-op (never throws) when indexedDB is unavailable", async () => {
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+    await expect(ankiLedger.markSent("s1", "fp-a")).resolves.toBeUndefined();
+    await expect(ankiLedger.hasSent("s1", "fp-a")).resolves.toBe(false);
+  });
+});

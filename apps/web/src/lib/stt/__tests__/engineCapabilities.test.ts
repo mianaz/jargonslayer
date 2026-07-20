@@ -14,6 +14,8 @@ import { describe, expect, it } from "vitest";
 import {
   derivePosture,
   ENGINE_CAPABILITIES,
+  resolveEngineCapability,
+  resolveTabAudioCloudProvider,
   resolveWebspeechRetentionClass,
   type EngineCapability,
 } from "../engineCapabilities";
@@ -170,5 +172,87 @@ describe("cross-invariant: preview-gate-locked capability entries never survive 
   it("webspeech (no sidecarOnly/byokOnly — the intended preview default) is left alone by applyTierDefaults — the coercion isn't over-broad either. NOT a general 'every other entry' check: osspeech carries neither flag either but IS still hardcoded away in store.ts for its own (platform-structural, not byokOnly/sidecarOnly) reasons — see store.test.ts's own applyTierDefaults coverage", () => {
     const s = applyTierDefaults({ ...DEFAULT_SETTINGS, engine: ENGINE_CAPABILITIES.webspeech.kind }, true, true);
     expect(s.engine).toBe("webspeech");
+  });
+});
+
+// v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.md
+// §5 A4): provider-aware capability overlay — resolveTabAudioCloudProvider's
+// sanitization contract and resolveEngineCapability's truth table.
+describe("resolveTabAudioCloudProvider — A4 sanitization", () => {
+  it("returns 'deepgram' only for the literal value 'deepgram'", () => {
+    expect(resolveTabAudioCloudProvider({ ...DEFAULT_SETTINGS, tabAudioCloudProvider: "deepgram" })).toBe(
+      "deepgram",
+    );
+  });
+
+  it("falls back to 'soniox' for the DEFAULT_SETTINGS value", () => {
+    expect(resolveTabAudioCloudProvider(DEFAULT_SETTINGS)).toBe("soniox");
+  });
+
+  it("falls back to 'soniox' for any invalid/corrupted persisted string (localStorage survives no runtime type guarantee)", () => {
+    expect(
+      resolveTabAudioCloudProvider({
+        ...DEFAULT_SETTINGS,
+        tabAudioCloudProvider: "azure" as unknown as "soniox" | "deepgram",
+      }),
+    ).toBe("soniox");
+    expect(
+      resolveTabAudioCloudProvider({
+        ...DEFAULT_SETTINGS,
+        tabAudioCloudProvider: undefined as unknown as "soniox" | "deepgram",
+      }),
+    ).toBe("soniox");
+  });
+});
+
+describe("resolveEngineCapability — A4 provider-aware overlay truth table", () => {
+  it("every kind besides tabaudio-cloud is a structural no-op (returns the static row as-is)", () => {
+    for (const kind of Object.keys(ENGINE_CAPABILITIES) as (keyof typeof ENGINE_CAPABILITIES)[]) {
+      if (kind === "tabaudio-cloud") continue;
+      expect(resolveEngineCapability(kind, DEFAULT_SETTINGS)).toBe(ENGINE_CAPABILITIES[kind]);
+    }
+  });
+
+  it("tabaudio-cloud + default settings (soniox): context bias, Soniox label suffix", () => {
+    const cap = resolveEngineCapability("tabaudio-cloud", DEFAULT_SETTINGS);
+    expect(cap).toEqual({
+      kind: "tabaudio-cloud",
+      label: "标签页音频·云端（Soniox）",
+      retentionClass: "cloud-transient",
+      biasSupport: "context",
+      byokOnly: true,
+    });
+  });
+
+  it("tabaudio-cloud + tabAudioCloudProvider:'deepgram': keyterms bias, Deepgram label suffix", () => {
+    const cap = resolveEngineCapability("tabaudio-cloud", {
+      ...DEFAULT_SETTINGS,
+      tabAudioCloudProvider: "deepgram",
+    });
+    expect(cap).toEqual({
+      kind: "tabaudio-cloud",
+      label: "标签页音频·云端（Deepgram）",
+      retentionClass: "cloud-transient",
+      biasSupport: "keyterms",
+      byokOnly: true,
+    });
+  });
+
+  it("tabaudio-cloud + an invalid persisted provider string sanitizes to soniox's own overlay", () => {
+    const cap = resolveEngineCapability("tabaudio-cloud", {
+      ...DEFAULT_SETTINGS,
+      tabAudioCloudProvider: "azure" as unknown as "soniox" | "deepgram",
+    });
+    expect(cap.biasSupport).toBe("context");
+    expect(cap.label).toBe("标签页音频·云端（Soniox）");
+  });
+
+  it("resolved biasSupport matches the corresponding live engine's own static biasSupport (soniox/deepgram never disagree with their tab-cloud overlay)", () => {
+    expect(resolveEngineCapability("tabaudio-cloud", { ...DEFAULT_SETTINGS, tabAudioCloudProvider: "soniox" }).biasSupport).toBe(
+      ENGINE_CAPABILITIES.soniox.biasSupport,
+    );
+    expect(
+      resolveEngineCapability("tabaudio-cloud", { ...DEFAULT_SETTINGS, tabAudioCloudProvider: "deepgram" }).biasSupport,
+    ).toBe(ENGINE_CAPABILITIES.deepgram.biasSupport);
   });
 });

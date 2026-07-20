@@ -74,6 +74,9 @@ const DAILY_TASK_CAPS: Record<string, number> = {
   define: 400,
   translate: 1500,
   summarize: 100,
+  // v0.5 Wave-1 Feature 2 (AI transcript correction, §5 A5): batch,
+  // one-shot per meeting like summarize — same cap.
+  correct: 100,
 };
 
 const DAILY_BUDGET_TOTAL_DEFAULT = 3000;

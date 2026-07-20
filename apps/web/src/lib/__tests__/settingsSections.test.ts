@@ -25,6 +25,7 @@ describe("SETTINGS_UI_LEVELS — level-tagging completeness", () => {
     "aiDetectConfidence",
     "aiDetectExplainLanguage",
     "aiDetectBilingual",
+    "aiDetectTranslateEngine",
     "aiDetectProfile",
     "aiDetectPacks",
     "aiDetectPackSources",
@@ -58,6 +59,7 @@ describe("SETTINGS_UI_LEVELS — level-tagging completeness", () => {
         "aiDetectCore",
         "aiDetectExplainLanguage",
         "aiDetectBilingual",
+        "aiDetectTranslateEngine",
         "aiDetectProfile",
       ].sort(),
     );

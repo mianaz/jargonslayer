@@ -20,11 +20,23 @@
 // switch of its own — see useMeeting.ts's attachEngine for the ONE
 // extension-point comment marking where a future 术语偏置 Settings
 // toggle would gate the whole build+pass step.
+//
+// v0.5 Wave-1 Feature 8 (named custom dictionary packs, blueprint §1
+// F8 + §5 A7) — the ONE exception to D8's "no store reads" purity:
+// isCustomPackEnabled reads glossary.ts's own synchronous, already-
+// loaded pack registry (NOT the zustand store — same category of read
+// packTermsForBias already does against core's built-in pack table).
+// Needed because useMeeting.ts's snapshot still passes the FULL
+// customEntries list (unfiltered, since store.ts's own customEntries
+// state must stay unfiltered for the management UI) — filtering
+// happens HERE, the shared seam, so both the live-session lexicon and
+// upload.ts's already-pack-aware getCachedEntries() end up correct.
 
 import { termNormKey } from "@jargonslayer/core/detect/dedupe";
 import { packTermsForBias } from "@jargonslayer/core/detect/dictionary";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
 import type { CustomEntry, MeetingLexicon } from "@jargonslayer/core/types";
+import { isCustomPackEnabled } from "../history/glossary";
 
 // D3: per-entry ceiling on GLOSSARY VARIANTS once headwords are
 // exhausted — "headwords first, variants backfilled with a per-entry
@@ -107,10 +119,14 @@ export function buildMeetingLexicon(input: BuildMeetingLexiconInput): MeetingLex
   const terms: string[] = [];
   const seen = new Set<string>();
 
-  for (const entry of input.customEntries) {
+  // v0.5 Wave-1 F8: a disabled custom pack's entries never contribute
+  // bias terms — see the header note above.
+  const enabledEntries = input.customEntries.filter((e) => isCustomPackEnabled(e.packId));
+
+  for (const entry of enabledEntries) {
     pushUnique(terms, seen, entry.headword);
   }
-  for (const entry of input.customEntries) {
+  for (const entry of enabledEntries) {
     for (const variant of entry.variants.slice(0, GLOSSARY_VARIANT_CEILING)) {
       pushUnique(terms, seen, variant);
     }
