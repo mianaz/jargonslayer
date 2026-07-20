@@ -77,7 +77,12 @@ import {
   shouldAutoPromoteToAdvanced,
 } from "@/lib/settingsSections";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
-import { PREVIEW_LIVE_MODELS, PREVIEW_SUMMARY_MODELS, PREVIEW_TIER } from "@/lib/deployTier";
+import {
+  PREVIEW_LIVE_MODELS,
+  PREVIEW_SUMMARY_MODELS,
+  PREVIEW_TIER,
+  SONIOX_PREVIEW_LANE,
+} from "@/lib/deployTier";
 import { clearDiag, getDiagEntries, type DiagEntry } from "@/lib/diag/log";
 import { copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
@@ -228,8 +233,18 @@ const ALL_ENGINE_CARDS: {
     label: "Soniox 云端识别",
     // Honest per the blueprint's benchmark gate (decision E) — BYOK,
     // opt-in, NOT claimed to beat local Whisper until Miana's zh-en
-    // clip benchmark clears it.
-    hint: "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
+    // clip benchmark clears it. Soniox preview lane (hosted trial,
+    // SONIOX_PREVIEW_LANE, deployTier.ts): the trial needs no BYOK key
+    // at all, so the benchmark-gate hint is replaced entirely rather
+    // than appended to — mirrors this same array's own IS_DESKTOP/
+    // IS_TAURI module-scope ternaries above (appaudio/tabaudio,
+    // osspeech) for reading a build-time const directly in a card
+    // literal. byokOnly stays true unconditionally (still the correct
+    // description of the mechanism) — the render block below is what
+    // actually carves the preview LOCK out for this one card.
+    hint: SONIOX_PREVIEW_LANE
+      ? "预览体验：无需密钥，每日限量，单次最长 10 分钟；音频经 Soniox 云端转写（不留存）"
+      : "BYOK 按量计费、音频经 Soniox 云端、中英混说场景的候选引擎（尚未通过本地对照测试）",
     byokOnly: true,
   },
   // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
@@ -1851,7 +1866,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // v0.4 S4 (blueprint decision E, risk 4): byokOnly
                 // joins sidecarOnly in the preview lock — see
                 // ENGINE_CARDS' own byokOnly doc comment above.
-                const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
+                // Soniox preview lane (SONIOX_PREVIEW_LANE): carved OUT
+                // of the lock for THIS card only — it now runs on a
+                // server-minted key (stt/soniox.ts's SonioxEngine.
+                // start), so it's left selectable with the trial `hint`
+                // already swapped in above, instead of the generic
+                // 「本地版功能」 lock. Every other byokOnly/sidecarOnly
+                // card (deepgram included) keeps locking exactly as
+                // before — mirrors engineOptionGate's own soniox-only
+                // carve-out (lib/stt/engineOptions.ts).
+                const sonioxPreviewUnlocked = SONIOX_PREVIEW_LANE && opt.value === "soniox";
+                const previewLocked =
+                  PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly) && !sonioxPreviewUnlocked;
                 // S9.4, D6 (F9): 系统/App 音频's own macOS-floor gate —
                 // "shown-but-disabled below floor", never hidden (see
                 // ENGINE_CARDS' own appaudio doc comment above for why

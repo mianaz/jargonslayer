@@ -39,3 +39,21 @@ export const PREVIEW_SUMMARY_MODELS = [
   "deepseek/deepseek-v4-flash",
   "deepseek/deepseek-v4-pro",
 ] as const;
+
+// Soniox preview lane (hosted trial, server-funded via /api/soniox/
+// token — see that route's own header): a SECOND gate on top of
+// PREVIEW_TIER, not a replacement for it, so the trial can be flipped
+// on/off per-deploy independent of the tier switch itself. Presentation
+// +routing gate ONLY — card selectability, coercion survival, mint-path
+// wiring (SettingsDialog.tsx/store.ts/engineOptions.ts/stt/soniox.ts).
+// If the flag is set but the deploy has no JARGONSLAYER_SONIOX_KEY, the
+// runtime mint simply 404s (no_key) and the client surfaces an honest
+// error — there is no security reliance on this flag being build-time
+// (unlike a real credential, which never reaches the client either
+// way). Also unlike SUBSCRIPTION_DIRECT_BUILT (lib/agent/localHost.ts),
+// this build-time const has no Terser/webpack cross-module-inlining
+// caveat to work around — see PREVIEW_TIER's own comment above for why
+// that caveat doesn't apply here either (presentation-only gating, no
+// dead-code-elimination requirement on any BYOK markup's own text).
+export const SONIOX_PREVIEW_LANE =
+  PREVIEW_TIER && process.env.NEXT_PUBLIC_SONIOX_PREVIEW === "1";

@@ -122,6 +122,71 @@ export function allowDailyBudget(task: string, now: number = Date.now()): boolea
   return true;
 }
 
+// ---------------------------------------------------------------
+// Soniox preview-lane mint budget — the money cap behind
+// /api/soniox/token. The preview build offers the hosted Soniox STT
+// trial on the OWNER's Soniox credential (not BYOK); every minted
+// temporary key is one ≤N-minute server-capped session, so worst-case
+// spend = (mints/day) × (session minutes / 60) × Soniox's $0.12/hr
+// streaming rate. The daily total below is sized so daily×31 stays
+// under the owner's monthly ceiling ($10/mo → ≤$9.92 at the defaults:
+// 16 mints/day × 10-min sessions × $0.12/hr).
+//
+// Same in-memory, single-process, restart-resets posture as the LLM
+// budget above (documented there): a restart re-grants the day's
+// count. For a low-traffic niche preview that only redeploys a few
+// times a week, the worst case is a few extra cents around a deploy,
+// not a blow-out — and the per-session server cap (max_session_
+// duration_seconds on the minted key) bounds each grant regardless.
+// A persistent monthly counter is the upgrade if traffic ever makes
+// the reset window matter (noted in the route).
+
+const SONIOX_MINT_DAILY_TOTAL = (() => {
+  const raw = Number(process.env.JARGONSLAYER_SONIOX_MINT_DAILY);
+  return Number.isFinite(raw) && raw > 0 ? raw : 16;
+})();
+
+const SONIOX_MINT_DAILY_PER_IP = (() => {
+  const raw = Number(process.env.JARGONSLAYER_SONIOX_MINT_DAILY_PER_IP);
+  return Number.isFinite(raw) && raw > 0 ? raw : 3;
+})();
+
+const SONIOX_MINT_TOTAL_KEY = "soniox-mint-total";
+
+/** True when one more preview Soniox key may be minted for `ip` today
+ *  — must fit BOTH the per-IP daily cap (fairness/anti-abuse) and the
+ *  global daily cap (the money ceiling). Counts against both only when
+ *  both pass, so a caller blocked by the global cap doesn't burn its
+ *  own per-IP allowance. Fixed UTC-day window like allowDailyBudget. */
+export function allowSonioxMint(ip: string, now: number = Date.now()): boolean {
+  const dayStart = utcDayStart(now);
+  const ipBucket = dailyBucket(`soniox-mint-ip:${ip}`, dayStart);
+  const totalBucket = dailyBucket(SONIOX_MINT_TOTAL_KEY, dayStart);
+
+  if (ipBucket.count >= SONIOX_MINT_DAILY_PER_IP || totalBucket.count >= SONIOX_MINT_DAILY_TOTAL) {
+    return false;
+  }
+  ipBucket.count++;
+  totalBucket.count++;
+  return true;
+}
+
+/** Refund one previously-granted mint for `ip` (same UTC day only).
+ *  Called by the token route when the UPSTREAM mint fails after
+ *  allowSonioxMint already reserved the slot: reserving BEFORE the
+ *  async upstream call keeps concurrent requests from over-minting
+ *  past the cap (no check-then-act window), and refunding on upstream
+ *  failure keeps a Soniox outage + user retries from draining the
+ *  day's budget without a single key issued. Floor at 0 guards a
+ *  refund landing after the UTC-day bucket rolled over. */
+export function refundSonioxMint(ip: string, now: number = Date.now()): void {
+  const dayStart = utcDayStart(now);
+  const ipBucket = dailyBucket(`soniox-mint-ip:${ip}`, dayStart);
+  const totalBucket = dailyBucket(SONIOX_MINT_TOTAL_KEY, dayStart);
+  ipBucket.count = Math.max(0, ipBucket.count - 1);
+  totalBucket.count = Math.max(0, totalBucket.count - 1);
+}
+
 /** Test helper — clears all window state. */
 export function resetRateLimiter(): void {
   buckets.clear();

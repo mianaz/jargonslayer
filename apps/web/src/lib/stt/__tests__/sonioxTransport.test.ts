@@ -273,10 +273,14 @@ describe("SonioxTransport", () => {
     vi.useRealTimers();
   });
 
-  function makeTransport(overrides: Partial<Settings> = {}): SonioxTransport {
+  function makeTransport(
+    overrides: Partial<Settings> = {},
+    mintToken?: (key: string) => Promise<string>,
+  ): SonioxTransport {
     return new SonioxTransport({
       events,
       settings: { ...DEFAULT_SETTINGS, sonioxKey: "sk-should-never-leak", ...overrides },
+      mintToken,
     });
   }
 
@@ -698,5 +702,106 @@ describe("SonioxTransport", () => {
     expect(errorCalls.length).toBe(1);
     const [, message] = errorCalls[0] as [string, string];
     expect(message).not.toContain("sk-should-never-leak");
+  });
+
+  // ---------------------------------------------------------------
+  // 403 collision (soniox-preview lane spec addition, lead field probe
+  // 2026-07-20): Soniox reuses error_code 403 for BOTH an auth failure
+  // AND the normal end of a preview-minted session's own
+  // max_session_duration_seconds cap — formatSonioxError's own doc
+  // comment above has the full rationale for why previewSessionCapLikely
+  // (mintToken injected + no BYOK sonioxKey + at least one token already
+  // ingested) is the code-free proxy that tells the two apart.
+  // ---------------------------------------------------------------
+
+  it("a 403 AFTER real tokens have already flowed on a preview-minted session (mintToken injected, no BYOK key) reads as the trial's own session-cap ending, not an auth failure", async () => {
+    const transport = makeTransport({ sonioxKey: "" }, async (key) => key);
+    const ws = await attachAndOpen(transport);
+
+    ws.simulateMessage({ tokens: [{ text: "hello", is_final: true }] });
+    ws.simulateMessage({ tokens: [], error_code: 403, error_type: "temp_api_key_session_expired" });
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls.length).toBe(1);
+    expect(errorCalls[0][1]).toBe("预览体验单次时长已到，可重新开始一段");
+  });
+
+  it("a 403 on a preview-minted session BEFORE any tokens have flowed still reads as an auth failure (bad/expired temp key at config)", async () => {
+    const transport = makeTransport({ sonioxKey: "" }, async (key) => key);
+    const ws = await attachAndOpen(transport);
+
+    ws.simulateMessage({ tokens: [], error_code: 403, error_type: "temp_api_key_session_expired" });
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls[0][1]).toBe("Soniox API Key 无效或无权限");
+  });
+
+  it("a 403 on a SILENT preview-minted session (zero tokens ever, but the connection is well past any auth round-trip) still reads as the session cap — the age discriminator's whole point", async () => {
+    const transport = makeTransport({ sonioxKey: "" }, async (key) => key);
+    const ws = await attachAndOpen(transport);
+
+    // A muted/idle mic for the whole trial: no tokens message ever
+    // arrives, then the server-side cap fires. Only the connection's
+    // age (>= SESSION_CAP_MIN_AGE_MS since sendConfig) distinguishes
+    // this from an at-config auth rejection.
+    const realNow = Date.now();
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(realNow + 31_000);
+    try {
+      ws.simulateMessage({ tokens: [], error_code: 403, error_type: "temp_api_key_session_expired" });
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls[0][1]).toBe("预览体验单次时长已到，可重新开始一段");
+  });
+
+  it("a 403 on a REAL BYOK session (no mintToken injected) always reads as an auth failure, even after tokens have flowed", async () => {
+    // makeTransport()'s default settings carry a real sonioxKey and no
+    // mintToken override — mirrors every other BYOK test in this file.
+    const transport = makeTransport();
+    const ws = await attachAndOpen(transport);
+
+    ws.simulateMessage({ tokens: [{ text: "hello", is_final: true }] });
+    ws.simulateMessage({ tokens: [], error_code: 403, error_type: "temp_api_key_session_expired" });
+
+    const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+    expect(errorCalls[0][1]).toBe("Soniox API Key 无效或无权限");
+  });
+
+  // ---------------------------------------------------------------
+  // mintToken rejection forwarding (soniox-preview lane spec item 2's
+  // own "IMPORTANT" caveat): a rejecting mintToken must reach
+  // onStatus("error") with ITS OWN message — not swallowed by the
+  // generic "获取密钥失败" fallback — so e.g. stt/soniox.ts's own
+  // mintPreviewToken can surface a 429 preview_budget mint failure's
+  // real zh copy ("...额度已达上限...") instead of a one-size-fits-all
+  // failure that hides why.
+  // ---------------------------------------------------------------
+
+  describe("sendConfig — mintToken rejection forwarding", () => {
+    it("a rejecting mintToken's own Error message reaches onStatus('error') verbatim", async () => {
+      const mintToken = vi.fn(async () => {
+        throw new Error("预览版 Soniox 体验额度已达上限，请改用浏览器识别或自备密钥");
+      });
+      const transport = makeTransport({ sonioxKey: "" }, mintToken);
+      const ws = await attachAndOpen(transport);
+
+      const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+      expect(errorCalls.length).toBe(1);
+      expect(errorCalls[0][1]).toBe("预览版 Soniox 体验额度已达上限，请改用浏览器识别或自备密钥");
+      expect(ws.sent).toEqual([]); // the config was never sent — the mint failed first
+    });
+
+    it("a non-Error mintToken rejection falls back to the generic zh '获取密钥失败' message", async () => {
+      const mintToken = vi.fn(async () => {
+        throw "not an Error instance";
+      });
+      const transport = makeTransport({ sonioxKey: "" }, mintToken);
+      await attachAndOpen(transport);
+
+      const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
+      expect(errorCalls[0][1]).toBe("无法准备 Soniox 连接（获取密钥失败）");
+    });
   });
 });

@@ -1694,6 +1694,32 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
   });
 });
 
+// Soniox preview lane (hosted trial, SONIOX_PREVIEW_LANE — deployTier.
+// ts): applyTierDefaults' new optional 4th param. Unlike isPreview
+// above, this is exercised via EXPLICIT args rather than vi.mock'ing
+// deployTier — the pure function takes the lane as a real parameter
+// (default SONIOX_PREVIEW_LANE only matters to migrateSettings' real
+// call site, already covered structurally by every omitted-4th-arg
+// call in the describe block above, which pins today's behavior with
+// the ambient (false) const).
+describe("applyTierDefaults — soniox preview lane (4th param)", () => {
+  function withEngine(engine: Settings["engine"]): Settings {
+    return { ...DEFAULT_SETTINGS, engine };
+  }
+
+  it("soniox SURVIVES coercion when the lane is on", () => {
+    expect(applyTierDefaults(withEngine("soniox"), true, true, true).engine).toBe("soniox");
+  });
+
+  it("soniox is still coerced to webspeech when the lane is off (today's behavior, explicit false)", () => {
+    expect(applyTierDefaults(withEngine("soniox"), true, true, false).engine).toBe("webspeech");
+  });
+
+  it("deepgram keeps coercing to webspeech even when the (soniox-only) lane is on", () => {
+    expect(applyTierDefaults(withEngine("deepgram"), true, true, true).engine).toBe("webspeech");
+  });
+});
+
 // S14.1 field fix, other half: useMeeting.ts's startDemo now calls
 // updateSettings({engine:"demo"}, {persist:false}) — see that call
 // site's own doc comment. These pin the store-action contract it

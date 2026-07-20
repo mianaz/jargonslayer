@@ -34,7 +34,7 @@ import { activateTheme } from "./theme/apply";
 import { writeDisplayMirror } from "./theme/displayStorage";
 import { getBuiltinTheme } from "./theme/themes";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
-import { PREVIEW_TIER } from "./deployTier";
+import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "./deployTier";
 import { IS_DESKTOP } from "./platform/desktop";
 import { IS_IOS } from "./platform/ios";
 import { diagLog } from "./diag/log";
@@ -698,13 +698,30 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *      pre-fix value or a hand-edited settings blob, safe to always
  *      redirect. `_hadSavedEngine` is kept in the signature
  *      (migrateSettings still feeds it; other call sites pass it) but
- *      is no longer read here. */
+ *      is no longer read here.
+ *
+ *  Soniox preview lane (hosted trial, SONIOX_PREVIEW_LANE — deployTier.
+ *  ts): a THIRD, independent exception on top of the two groups above —
+ *  "soniox" is carved OUT of group 1's coercion (survives instead of
+ *  falling to webspeech) when `sonioxPreviewLane` is true, since a
+ *  preview user can now actually run it on a server-minted key (see
+ *  stt/soniox.ts's SonioxEngine.start). Every OTHER byokOnly/sidecarOnly
+ *  engine in group 1 (deepgram included) keeps coercing exactly as
+ *  before — the lane is soniox-specific, not a blanket preview unlock.
+ *  Defaults to the real build-time const so every existing call site
+ *  (this function has two: migrateSettings below, and engineOptions.
+ *  ts's deriveEngineForMode) keeps compiling and behaving unchanged
+ *  without passing a 4th argument; tests drive it explicitly instead
+ *  (see store.test.ts) since the pure-function contract is otherwise
+ *  identical to isPreview/_hadSavedEngine above. */
 export function applyTierDefaults(
   settings: Settings,
   isPreview: boolean,
   _hadSavedEngine: boolean,
+  sonioxPreviewLane: boolean = SONIOX_PREVIEW_LANE,
 ): Settings {
   if (!isPreview) return settings;
+  if (settings.engine === "soniox" && sonioxPreviewLane) return settings;
   if (
     settings.engine === "whisper" ||
     settings.engine === "tabaudio" ||

@@ -47,6 +47,15 @@ const SONIOX_MODEL = "stt-rt-v5";
 // forever (risk register item 3).
 const STOP_DRAIN_TIMEOUT_MS = 8000;
 
+// 403-collision age discriminator (see formatSonioxError + the
+// configSentAt field): an auth 403 lands within a couple of seconds of
+// the config message, while a preview session-cap 403 can only fire
+// SESSION_SECONDS (≥10 min, /api/soniox/token) later — 30s sits far
+// above the former and far below the latter, so a mis-bucketing needs
+// a >28s-late auth rejection or a <30s server-side cap, neither of
+// which the live service exhibits.
+const SESSION_CAP_MIN_AGE_MS = 30_000;
+
 const SONIOX_CONNECT_ERROR =
   "无法连接 Soniox 云端识别服务，请检查网络连接和 API Key 后重试";
 
@@ -222,9 +231,10 @@ export interface SonioxConfigMessage {
 
 export interface BuildSonioxConfigOpts {
   /** BYOK -> temp-key boundary (blueprint decision E): v0.4 desktop
-   *  sends the real key directly — default identity. A future hosted-
-   *  preview/MV3 caller drops in a real `create_temporary_api_key`
-   *  mint here without this function's shape changing at all. */
+   *  sends the real key directly — default identity. The hosted preview
+   *  lane (SONIOX_PREVIEW_LANE, stt/soniox.ts's SonioxEngine.start) is
+   *  the first real caller that drops in an actual mint here — this
+   *  function's own shape never had to change for it. */
   mintToken?: (key: string) => Promise<string>;
   // v0.4.7 Lane B (D8): the ONE lexicon snapshot built at the
   // meeting-start callsite — projected onto `context.terms` below.
@@ -310,8 +320,25 @@ interface SonioxServerMessage {
 // exhausted, 408/413 timeouts, 500/503 server-side, or any other/
 // future code) falls into one generic bucket that still surfaces the
 // numeric code for support purposes.
-function formatSonioxError(msg: SonioxServerMessage): string {
+//
+// 403 COLLISION (lead field probe, 2026-07-20): Soniox also returns 403
+// for a completely unrelated, EXPECTED condition on the preview lane —
+// a minted temp key's own max_session_duration_seconds cap firing at
+// the NORMAL end of a trial session (see /api/soniox/token's own
+// SESSION_SECONDS), not an auth failure at all. error_message/
+// error_type would disambiguate the two 403 causes but are, per the
+// paragraph above, never read here even for this — `previewSessionCapLikely`
+// is a code-free proxy the caller (connect()'s ws.onmessage below)
+// computes instead: true only once a preview-minted session (mintToken
+// injected AND no BYOK sonioxKey — see stt/soniox.ts's SONIOX_PREVIEW_
+// LANE wiring) has already ingested at least one real token, since an
+// auth failure 403s immediately, before any audio round-trips ever
+// happen. formatSonioxError itself stays pure (same output for the
+// same inputs) — it just takes that boolean as an explicit parameter
+// rather than reaching for transport state itself.
+function formatSonioxError(msg: SonioxServerMessage, previewSessionCapLikely: boolean): string {
   const code = msg.error_code;
+  if (code === 403 && previewSessionCapLikely) return "预览体验单次时长已到，可重新开始一段";
   if (code === 401 || code === 403) return "Soniox API Key 无效或无权限";
   if (code === 429) return "Soniox 配额或速率限制";
   return `Soniox 服务错误（代码 ${code}）`;
@@ -373,6 +400,21 @@ export class SonioxTransport {
   // generic "dropped mid-session" branch right after.
   private erroredOut = false;
   private stopDrainResolve: (() => void) | null = null;
+  // 403 collision guard (see formatSonioxError's own doc comment above)
+  // — flips true the first time an ordinary tokens message actually
+  // carries at least one token, so a LATER 403 can be told apart from
+  // an auth failure (which 403s before any audio round-trips) without
+  // ever reading error_message/error_type.
+  private sawAnyTokens = false;
+  // Second discriminator for the same 403 collision: a SILENT preview
+  // session (muted/idle mic for the whole trial) never produces a
+  // token, so sawAnyTokens alone would misread its normal session-cap
+  // 403 as an auth failure. Config acceptance is the auth boundary —
+  // an auth 403 lands within seconds of sendConfig, while the session
+  // cap can only fire ≥SESSION_SECONDS later — so "connection age well
+  // past any auth round-trip" (see SESSION_CAP_MIN_AGE_MS at the top
+  // of the class's onmessage handler) is an equally code-free proxy.
+  private configSentAt: number | null = null;
 
   constructor(cb: SonioxTransportCallbacks) {
     this.events = cb.events;
@@ -445,7 +487,23 @@ export class SonioxTransport {
         return;
       }
       if (msg.error_code !== undefined) {
-        this.emitError(formatSonioxError(msg));
+        // previewSessionCapLikely: see formatSonioxError's own 403
+        // COLLISION doc comment. mintToken is only ever injected for a
+        // preview-minted session (stt/soniox.ts's SonioxEngine.start),
+        // and only when settings.sonioxKey is empty — a real BYOK
+        // session never sets mintToken at all, so this stays false for
+        // it regardless of the two session-progress discriminators.
+        // Those two are OR'd because either alone has a hole: a silent
+        // (muted-mic) trial never sets sawAnyTokens, and a fast talker
+        // could in principle produce tokens before a slow auth
+        // rejection lands — together "audio round-tripped OR the
+        // connection is far older than any auth exchange" covers both.
+        const age = this.configSentAt !== null ? Date.now() - this.configSentAt : 0;
+        const previewSessionCapLikely =
+          (this.sawAnyTokens || age >= SESSION_CAP_MIN_AGE_MS) &&
+          !!this.mintToken &&
+          !this.settings.sonioxKey;
+        this.emitError(formatSonioxError(msg, previewSessionCapLikely));
         return;
       }
       if (msg.finished) {
@@ -458,6 +516,7 @@ export class SonioxTransport {
         return;
       }
       const tokens = msg.tokens ?? [];
+      if (tokens.length > 0) this.sawAnyTokens = true;
       if (!this.mapper || tokens.length === 0) return;
       const { interim, finals } = this.mapper.ingest(tokens);
       this.events.onInterim(interim);
@@ -508,8 +567,21 @@ export class SonioxTransport {
     let config: SonioxConfigMessage;
     try {
       config = await buildSonioxConfig(this.settings, { mintToken: this.mintToken, lexicon: this.lexicon });
-    } catch {
-      this.emitError("无法准备 Soniox 连接（获取密钥失败）");
+    } catch (err) {
+      // Preview-lane mint failures (stt/soniox.ts's mintToken callback)
+      // reject with a real, already-user-readable zh Error — e.g. a 429
+      // preview_budget mint failure surfaces "...额度已达上限..." straight
+      // from the server (see /api/soniox/token's own ApiErrorBody).
+      // Surfacing THAT message instead of discarding it into a one-
+      // size-fits-all fallback is the whole point of catching `err`
+      // here — any OTHER rejection (a non-Error throw, or a future
+      // non-mint config-build failure) keeps the generic message.
+      // emitError's own scrubApiKey guard (S4 review finding 2) still
+      // runs either way, even though a preview-minted session has no
+      // BYOK sonioxKey for it to redact.
+      const message =
+        err instanceof Error && err.message ? err.message : "无法准备 Soniox 连接（获取密钥失败）";
+      this.emitError(message);
       try {
         ws.close();
       } catch {
@@ -532,6 +604,7 @@ export class SonioxTransport {
       return;
     }
     this.configSent = true;
+    this.configSentAt = Date.now();
     this.events.onStatus("listening");
   }
 

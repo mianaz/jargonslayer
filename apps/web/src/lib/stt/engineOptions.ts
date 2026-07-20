@@ -38,7 +38,7 @@ import { useEffect, useState } from "react";
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
-import { PREVIEW_TIER } from "@/lib/deployTier";
+import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "@/lib/deployTier";
 import {
   appAudioLockReason,
   getAudiocapCapsSnapshot,
@@ -169,6 +169,13 @@ export const ENGINE_OPTIONS: EngineOption[] = IS_IOS
 // copy stays reason-agnostic rather than claiming "sidecar" for both.
 export const PREVIEW_LOCKED_TITLE = "本地版功能：体验版暂未开放";
 
+// Soniox preview lane (hosted trial, SONIOX_PREVIEW_LANE): the honest
+// replacement for PREVIEW_LOCKED_TITLE on soniox's own option/card once
+// the trial is live — see engineOptionGate below. Exported so tests pin
+// it instead of re-duplicating the zh string (same convention as
+// PREVIEW_LOCKED_TITLE itself).
+export const SONIOX_PREVIEW_TRIAL_TITLE = "预览体验：每日限量，单次最长 10 分钟";
+
 export const POSTURE_LABEL: Record<"local" | "cloud", string> = {
   local: "本地",
   cloud: "云端",
@@ -259,13 +266,23 @@ export interface EngineOptionGate {
  *  fold in `isEngineControlBusy` — a caller combines that itself at
  *  whichever granularity its own control needs (one <select disabled>
  *  for the whole picker vs a per-<option> gate), same split the pre-S10
- *  components already had. */
+ *  components already had.
+ *
+ *  Soniox preview lane (hosted trial, SONIOX_PREVIEW_LANE): soniox's own
+ *  byokOnly preview lock is lifted while the lane is on — it can now
+ *  actually run on a server-minted key (stt/soniox.ts's SonioxEngine.
+ *  start), so the option is left selectable with an honest trial title
+ *  instead of PREVIEW_LOCKED_TITLE. Every OTHER byokOnly/sidecarOnly
+ *  option (deepgram included) keeps the exact same lock as before — this
+ *  is a soniox-specific carve-out, not a blanket preview unlock, same
+ *  posture as applyTierDefaults' own soniox exception (store.ts). */
 export function engineOptionGate(
   opt: EngineOption,
   audiocapCaps: AudiocapCapabilities | null,
   osspeechCaps?: OsSpeechCapabilities | null,
 ): EngineOptionGate {
-  const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly);
+  const sonioxPreviewTrial = SONIOX_PREVIEW_LANE && opt.value === "soniox";
+  const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly) && !sonioxPreviewTrial;
   const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
   const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osspeechCaps ?? null);
   return {
@@ -276,7 +293,9 @@ export function engineOptionGate(
         ? appAudioLockReason(audiocapCaps)
         : osSpeechLocked
           ? osSpeechLockReason(osspeechCaps ?? null)
-          : undefined,
+          : sonioxPreviewTrial
+            ? SONIOX_PREVIEW_TRIAL_TITLE
+            : undefined,
   };
 }
 
@@ -402,10 +421,14 @@ export function deriveEngineForMode(
       // mic-tile click); soniox/deepgram are respected only when their
       // OWN matching key exists (L8 review fix — the first draft's flat
       // hasCloudKey && compatible gate reset keyless whisper users to
-      // webspeech).
+      // webspeech). Soniox preview lane (SONIOX_PREVIEW_LANE): an
+      // already-selected soniox is ALSO respected with no key at all —
+      // the trial runs on a server-minted key, so "no sonioxKey" is no
+      // longer proof the user can't actually use it (mirrors
+      // applyTierDefaults' own soniox exception, store.ts).
       const cloudKeyFor =
         settings.engine === "soniox"
-          ? !!settings.sonioxKey
+          ? !!settings.sonioxKey || SONIOX_PREVIEW_LANE
           : settings.engine === "deepgram"
             ? !!settings.deepgramKey
             : false;
