@@ -58,15 +58,33 @@ export default function RecoveryBanner() {
   const busyRef = useRef(false);
   const [busy, setBusy] = useState(false);
 
-  // Boot check, AFTER hydrate (task spec — a pre-hydrate read could
-  // still see a stale/absent IndexedDB connection).
+  // Draft check AFTER hydrate (a pre-hydrate read could still see a
+  // stale/absent IndexedDB connection) — and RE-checked on every
+  // meetingGen change (Sol re-verify HIGH): a draft that survives its
+  // banner being ignored (or a clearDraft that silently failed) makes
+  // every LATER meeting's writes buffer-skip — if this component only
+  // ever read the disk once at boot, that stuck draft would be
+  // unresolvable without a reload, and a stale cached entry could
+  // conversely resurrect a banner for a draft already cleared. Each
+  // new meeting start is exactly the moment the buffer-skip starts
+  // biting, so it's the right moment to re-sync banner state to disk
+  // truth (in BOTH directions — set when a foreign draft exists,
+  // clear when it no longer does).
   useEffect(() => {
     if (!hydrated) return;
+    let stale = false;
     void liveDraft.loadDraft().then((d) => {
-      if (!d || d.snapshot.segments.length === 0) return;
+      if (stale) return;
+      if (!d || d.snapshot.segments.length === 0) {
+        setDraft(null);
+        return;
+      }
       setDraft(d);
     });
-  }, [hydrated]);
+    return () => {
+      stale = true;
+    };
+  }, [hydrated, meetingGen]);
 
   // This tab's OWN current-meeting identity — a "gen:none"-shaped value
   // when no meeting has ever started this page load (see deriveDraftId's

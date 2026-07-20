@@ -81,7 +81,7 @@ describe("useMeeting — live draft persistence interval (M1 field fix)", () => 
       terms: [],
       settings: { ...DEFAULT_SETTINGS, engine: "webspeech" },
     });
-    writeDraftSpy = vi.spyOn(liveDraftModule, "writeDraft").mockResolvedValue(undefined);
+    writeDraftSpy = vi.spyOn(liveDraftModule, "writeDraft").mockResolvedValue(true);
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);

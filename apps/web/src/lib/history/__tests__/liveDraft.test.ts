@@ -204,7 +204,7 @@ describe("liveDraft.ts", () => {
   });
 
   describe("computeDraftSignature — cheap dirty signature (M1 fix, replaces shouldWriteDraft)", () => {
-    it("sums segments.length + last segment's text length + translated count + cards.length + terms.length + speaker-assigned count", async () => {
+    it("emits a FIELD-SEPARATED string (Sol re-verify M fix: additive sums had ordinary collisions)", async () => {
       const liveDraft = await import("../liveDraft");
       const session = makeSession({
         segments: [
@@ -215,9 +215,34 @@ describe("liveDraft.ts", () => {
         terms: [],
         translations: { a: "你好" },
       });
-      // segments.length=2, lastSegment("there team").length=10,
-      // translated=1, cards.length=1, terms.length=0, speakerAssigned=1
-      expect(liveDraft.computeDraftSignature(session)).toBe(2 + 10 + 1 + 1 + 0 + 1);
+      // segments.length=2 | total text chars ("hi"+"there team")=12 |
+      // translated keys=1 | translated chars ("你好")=2 | cards=1 |
+      // terms=0 | speakerAssigned=1 | roster (absent → "")
+      expect(liveDraft.computeDraftSignature(session)).toBe("2|12|1|2|1|0|1|");
+    });
+
+    it("does NOT collide when a new segment is one char shorter than the old tail (the exact Sol re-verify counterexample to the additive sum)", async () => {
+      const liveDraft = await import("../liveDraft");
+      const seg = (id: string, index: number, text: string): MeetingSession["segments"][number] =>
+        ({ id, index, startedAt: index, endedAt: index + 1, text, engine: "webspeech" });
+      const before = makeSession({ segments: [seg("a", 0, "hello team")] }); // len 10
+      const after = makeSession({ segments: [seg("a", 0, "hello team"), seg("b", 1, "nine char")] }); // +1 seg, tail len 9
+      expect(liveDraft.computeDraftSignature(after)).not.toBe(liveDraft.computeDraftSignature(before));
+    });
+
+    it("changes on a speaker RENAME (roster verbatim in the signature) and a same-key re-translation (translated chars)", async () => {
+      const liveDraft = await import("../liveDraft");
+      const base = makeSession({
+        segments: [
+          { id: "a", index: 0, startedAt: 0, endedAt: 1, text: "hi", engine: "webspeech", speaker: "Alice" },
+        ],
+        translations: { a: "你好" },
+        speakerRoster: ["Alice"],
+      });
+      const renamed = { ...base, speakerRoster: ["Alicia"] };
+      const retranslated = { ...base, translations: { a: "妳好啊" } };
+      expect(liveDraft.computeDraftSignature(renamed)).not.toBe(liveDraft.computeDraftSignature(base));
+      expect(liveDraft.computeDraftSignature(retranslated)).not.toBe(liveDraft.computeDraftSignature(base));
     });
 
     it("changes when a translation is added with no new segment/card (the exact gap the old count-based check missed)", async () => {
