@@ -19,18 +19,52 @@
 // memo() never triggers at all.
 
 import { act } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import type { ExpressionCard, TermCard, TranscriptSegment } from "@jargonslayer/core/types";
 import TranscriptPanel, {
   INTERIM_THROTTLE_MS,
   SCROLL_STICKY_THRESHOLD,
+  TOUCH_LOOKUP_DEBOUNCE_MS,
   renderCounters,
 } from "../TranscriptPanel";
 
 const SEGMENT_COUNT = 200;
 const HIGHLIGHT_TERM = "Kubernetes";
+
+// jsdom has no matchMedia — TranscriptPanel's touch-selection action
+// bar (S14.1 item 3) checks `(pointer: coarse)` on every mount, same
+// jsdom gap StatusLine.test.tsx's own identical stub already documents
+// (PixelDragon's reduced-motion hook). Every describe below needs this
+// regardless of whether it specifically exercises the touch path —
+// defaults to `matches: false` (fine/mouse pointer), the correct
+// posture for every pre-existing (desktop-path) test in this file.
+function stubMatchMedia(matches = false): void {
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  }));
+}
+
+// jsdom's Range has no layout engine behind it and doesn't implement
+// getBoundingClientRect at all (selectionLookupRequest calls it for
+// both the desktop mouseup path and the touch action-bar path below) —
+// a no-op zero rect is fine, no test asserts on the returned x/y.
+// Patched once at module scope (not per-test): purely additive
+// (nothing legitimate to preserve/restore), and each test file gets
+// its own fresh jsdom globals under Vitest's default file isolation.
+if (typeof Range !== "undefined" && !Range.prototype.getBoundingClientRect) {
+  Range.prototype.getBoundingClientRect = function (): DOMRect {
+    return { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
+  };
+}
 
 function buildSegments(): TranscriptSegment[] {
   const out: TranscriptSegment[] = [];
@@ -70,6 +104,8 @@ describe("TranscriptPanel render split", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
+  beforeEach(() => stubMatchMedia());
+
   afterEach(() => {
     if (root) {
       act(() => root!.unmount());
@@ -79,6 +115,7 @@ describe("TranscriptPanel render split", () => {
       container.remove();
       container = null;
     }
+    vi.unstubAllGlobals();
     // Reset the store's meeting-relevant slice so other test files in
     // this run (if any ever share the jsdom environment) start clean.
     useApp.setState({
@@ -259,6 +296,7 @@ describe("TranscriptPanel InterimLine throttle correctness", () => {
       container.remove();
       container = null;
     }
+    vi.unstubAllGlobals();
     useApp.setState({
       segments: [],
       cards: [],
@@ -272,6 +310,7 @@ describe("TranscriptPanel InterimLine throttle correctness", () => {
     (
       globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
     ).IS_REACT_ACT_ENVIRONMENT = true;
+    stubMatchMedia();
     useApp.setState({
       segments: [],
       cards: EMPTY_CARDS,
@@ -422,6 +461,8 @@ describe("TranscriptPanel — demo CTA in the empty state", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
+  beforeEach(() => stubMatchMedia());
+
   afterEach(() => {
     if (root) {
       act(() => root!.unmount());
@@ -431,6 +472,7 @@ describe("TranscriptPanel — demo CTA in the empty state", () => {
       container.remove();
       container = null;
     }
+    vi.unstubAllGlobals();
     useApp.setState({ segments: [], status: "idle" });
   });
 
@@ -473,5 +515,178 @@ describe("TranscriptPanel — demo CTA in the empty state", () => {
     });
 
     expect(container!.querySelector('[data-testid="btn-demo-empty"]')).toBeNull();
+  });
+});
+
+// ---- S14.1 field fix, item 3: mobile Safari's native selection
+// callout owns mouseup-equivalent gestures on touch, so LookupPopover
+// needs a different trigger there — a debounced document.selectionchange
+// listener + small fixed action bar, gated to coarse (touch) pointers,
+// running through the SAME selectionLookupRequest → setLookup flow the
+// desktop mouseup handler uses (see TranscriptPanel.tsx). ----
+
+describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  const SEGMENT_TEXT = "Let's discuss the Kubernetes rollout plan for next quarter.";
+  const SELECT_SUBSTR = "Kubernetes rollout plan";
+
+  function selectSubstring(): void {
+    const tsBody = container!.querySelector(".ts-body") as HTMLElement;
+    const textNode = tsBody.firstChild as Text;
+    const start = SEGMENT_TEXT.indexOf(SELECT_SUBSTR);
+    const range = document.createRange();
+    range.setStart(textNode, start);
+    range.setEnd(textNode, start + SELECT_SUBSTR.length);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function collapseSelection(): void {
+    window.getSelection()?.removeAllRanges();
+  }
+
+  // selectionchange itself is debounced (TOUCH_LOOKUP_DEBOUNCE_MS) —
+  // waits it out for real, same "await a real setTimeout inside act()"
+  // pattern the InterimLine throttle describe block above already uses.
+  async function fireSelectionChangeAndWaitDebounce(): Promise<void> {
+    document.dispatchEvent(new Event("selectionchange"));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, TOUCH_LOOKUP_DEBOUNCE_MS + 60));
+    });
+  }
+
+  function mount(coarsePointer: boolean): void {
+    (
+      globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
+    ).IS_REACT_ACT_ENVIRONMENT = true;
+    stubMatchMedia(coarsePointer);
+    useApp.setState({
+      segments: [
+        {
+          id: "seg-1",
+          index: 0,
+          startedAt: 1000,
+          endedAt: 2000,
+          text: SEGMENT_TEXT,
+          engine: "demo",
+        },
+      ],
+      cards: [],
+      terms: [],
+      interim: null,
+      translations: {},
+      status: "listening",
+      focusMode: false,
+      lookup: null,
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  afterEach(() => {
+    collapseSelection();
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    vi.unstubAllGlobals();
+    useApp.setState({
+      segments: [],
+      cards: [],
+      terms: [],
+      interim: null,
+      translations: {},
+      lookup: null,
+    });
+  });
+
+  it("a coarse-pointer selection inside the transcript shows the 解释所选 action bar after the debounce", async () => {
+    mount(true);
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+
+    selectSubstring();
+    await fireSelectionChangeAndWaitDebounce();
+
+    expect(container!.querySelector('[data-testid="touch-lookup-bar"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="btn-touch-lookup"]')?.textContent).toBe(
+      "解释所选",
+    );
+  });
+
+  it("tapping 解释所选 runs the same lookup flow as the desktop mouseup path, then hides the bar", async () => {
+    mount(true);
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+
+    selectSubstring();
+    await fireSelectionChangeAndWaitDebounce();
+    const btn = container!.querySelector('[data-testid="btn-touch-lookup"]');
+    expect(btn).not.toBeNull();
+
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().lookup).toEqual(
+      expect.objectContaining({ text: SELECT_SUBSTR, contextText: SEGMENT_TEXT }),
+    );
+    expect(container!.querySelector('[data-testid="touch-lookup-bar"]')).toBeNull();
+  });
+
+  it("collapsing the selection dismisses the bar, never calling setLookup", async () => {
+    mount(true);
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+
+    selectSubstring();
+    await fireSelectionChangeAndWaitDebounce();
+    expect(container!.querySelector('[data-testid="touch-lookup-bar"]')).not.toBeNull();
+
+    collapseSelection();
+    await fireSelectionChangeAndWaitDebounce();
+
+    expect(container!.querySelector('[data-testid="touch-lookup-bar"]')).toBeNull();
+    expect(useApp.getState().lookup).toBeNull();
+  });
+
+  it("a fine (mouse) pointer never shows the action bar, even for the identical selection", async () => {
+    mount(false);
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+
+    selectSubstring();
+    await fireSelectionChangeAndWaitDebounce();
+
+    expect(container!.querySelector('[data-testid="touch-lookup-bar"]')).toBeNull();
+  });
+
+  it("the desktop mouseup path still fires setLookup unchanged after the shared-helper extraction", async () => {
+    mount(false);
+    await act(async () => {
+      root!.render(<TranscriptPanel />);
+    });
+
+    selectSubstring();
+    const scrollEl = container!.querySelector('[data-testid="transcript-panel"] > div')!;
+    await act(async () => {
+      scrollEl.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, detail: 1 }));
+    });
+
+    expect(useApp.getState().lookup).toEqual(
+      expect.objectContaining({ text: SELECT_SUBSTR, contextText: SEGMENT_TEXT }),
+    );
   });
 });

@@ -479,6 +479,19 @@ export class WebSpeechEngine implements STTEngine {
 
   private handleError(ev: SpeechRecognitionErrorEvent): void {
     if (!this.events) return;
+    // Diagnostics (S14.1 field fix, item 7a): every onerror, including
+    // the benign no-speech/aborted codes the switch below silently
+    // swallows — a readable field timeline needs all of them, not just
+    // the ones that already reach a user-facing onStatus("error")
+    // (useMeeting.ts's own logAndToastError diag-logs those separately,
+    // at "error" level with zh copy — this is a terser, code-level
+    // breadcrumb alongside that, not a replacement).
+    diagLog(
+      "info",
+      "stt-webspeech-lifecycle",
+      "onerror",
+      `code=${ev.error} sinceLastEventMs=${Date.now() - this.lastEventAt}`,
+    );
     this.lastEventAt = Date.now();
 
     switch (ev.error) {
@@ -515,6 +528,17 @@ export class WebSpeechEngine implements STTEngine {
   }
 
   private handleEnd(): void {
+    // Diagnostics (item 7a): every onend, unconditionally — including
+    // the userStopped case the very next line returns early on. This
+    // is also the anchor launch()'s own "relaunch" log below reads its
+    // "gap since previous end" against (lastEventAt, stamped right
+    // here).
+    diagLog(
+      "info",
+      "stt-webspeech-lifecycle",
+      "onend",
+      `sinceStartMs=${Date.now() - this.lastStartAt} userStopped=${this.userStopped}`,
+    );
     this.lastEventAt = Date.now();
     if (this.userStopped || !this.recognition || !this.events) return;
 
@@ -573,6 +597,22 @@ export class WebSpeechEngine implements STTEngine {
         "stt-relaunch-rescue",
         "rescued a pending tail that never received a trailing real final before relaunch",
         `rescuedChars=${rescued.text.length}`,
+      );
+    }
+
+    // Diagnostics (item 7a): every RELAUNCH — i.e. not the very first
+    // launch() from start() (lastEventAt is still its 0 default then)
+    // — logs the gap since the previous onend (handleEnd() is the only
+    // thing that sets lastEventAt between one launch() and the next).
+    // This is the actual "~47s gap" timeline the field report needs: a
+    // healthy relaunch gap is ~RESTART_DELAY_MS (250ms); a much larger
+    // one means something between onend and this relaunch stalled.
+    if (this.lastEventAt !== 0) {
+      diagLog(
+        "info",
+        "stt-webspeech-lifecycle",
+        "relaunch",
+        `gapSincePrevEndMs=${Date.now() - this.lastEventAt}`,
       );
     }
 
@@ -658,6 +698,21 @@ export class WebSpeechEngine implements STTEngine {
       consecutiveSpeechStalls: this.consecutiveSpeechStalls,
       lastRecoverAt: this.lastRecoverAt,
     });
+
+    // Diagnostics (item 7a): every rotation trigger (rotate/recover/
+    // steer) — WHY the supervisor is about to tear down + relaunch
+    // this session, with the session age/idle time it decided on.
+    // "none" (the overwhelming common case, every WATCHDOG_TICK_MS)
+    // is deliberately not logged — that would flood the ring buffer
+    // for no diagnostic value.
+    if (action.type !== "none") {
+      diagLog(
+        "info",
+        "stt-webspeech-lifecycle",
+        "rotation trigger",
+        `reason=${action.type} sessionAgeMs=${now - this.lastStartAt} idleMs=${now - this.lastEventAt}`,
+      );
+    }
 
     switch (action.type) {
       case "none":

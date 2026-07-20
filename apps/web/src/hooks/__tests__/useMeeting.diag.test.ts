@@ -159,7 +159,7 @@ describe("useMeeting.ts diagnostics wiring — TranslateQueue choke point", () =
     mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
 
     queue.pushSegment(makeSegment("hello world"));
-    await vi.advanceTimersByTimeAsync(1500); // DEBOUNCE_MS
+    await vi.advanceTimersByTimeAsync(800); // DEBOUNCE_MS (S14.1: was 1500)
 
     expect(toasts).toHaveLength(1);
     expect(toasts[0].ref).toMatch(/^JS-/);

@@ -212,8 +212,13 @@ function SummaryContent() {
     summary.translations.map((t) => [t.index, t.zh]),
   );
 
+  // S14.1 field fix (item 9): pb matches StatusLine's own h-7 (page.tsx
+  // renders it as a separate sibling BELOW this whole tab panel) + a
+  // safe-area-inset-bottom no-op for now — see CardsPanel.tsx's own
+  // identical fix for the full rationale. Split out of the old py-3
+  // shorthand so only the bottom side grows; top stays pt-3.
   return (
-    <div className="scroll-thin flex-1 space-y-6 overflow-y-auto px-3 py-3">
+    <div className="scroll-thin flex-1 space-y-6 overflow-y-auto px-3 pt-3 pb-[calc(1.75rem+env(safe-area-inset-bottom))]">
       <section>
         <div className="text-xs uppercase tracking-wide text-mut">主题</div>
         <div className="mt-2 text-sm text-fg">{summary.summary.topic.en}</div>

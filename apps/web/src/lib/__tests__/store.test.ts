@@ -854,15 +854,23 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(s.engine).toBe("webspeech");
   });
 
-  it("preview tier + true first run (no saved engine key, default demo) coerces to webspeech", () => {
-    const s = applyTierDefaults(withEngine("demo"), true, false);
-    expect(s.engine).toBe("webspeech");
-  });
-
-  it("preview tier does NOT coerce a returning user's persisted engine:demo (reachable via ≡ 演示)", () => {
-    const s = applyTierDefaults(withEngine("demo"), true, true);
-    expect(s.engine).toBe("demo");
-  });
+  // S14.1 field fix (real owner report on the hosted preview): this
+  // used to coerce ONLY on a true first run (hadSavedEngine:false) —
+  // a returning user's own persisted engine:"demo" (from ≡ 演示)
+  // survived untouched, on the theory that they'd deliberately left it
+  // mid-demo. In the field that theory broke: 开始监听 silently
+  // replayed the demo forever after, with no obvious way to tell why.
+  // Now unconditional regardless of hadSavedEngine — see
+  // applyTierDefaults' own doc comment for the root-cause half of this
+  // fix (useMeeting.ts's startDemo no longer persists engine:"demo" at
+  // all, so this coercion only ever redirects a STALE pre-fix value).
+  it.each([true, false])(
+    "preview tier coerces engine:demo to webspeech unconditionally — hadSavedEngine=%s",
+    (hadSavedEngine) => {
+      const s = applyTierDefaults(withEngine("demo"), true, hadSavedEngine);
+      expect(s.engine).toBe("webspeech");
+    },
+  );
 
   it("preview tier leaves webspeech untouched", () => {
     const s = applyTierDefaults(withEngine("webspeech"), true, true);
@@ -893,6 +901,51 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(!!withEngineKey && "engine" in withEngineKey).toBe(true);
     expect(!!withoutEngineKey && "engine" in withoutEngineKey).toBe(false);
     expect(!!noSavedObject && "engine" in noSavedObject).toBe(false);
+  });
+});
+
+// S14.1 field fix, other half: useMeeting.ts's startDemo now calls
+// updateSettings({engine:"demo"}, {persist:false}) — see that call
+// site's own doc comment. These pin the store-action contract it
+// relies on directly, independent of the pure applyTierDefaults
+// coercion tested above (which only ever cleans up an ALREADY-stale
+// persisted value; this is what stops a fresh one from being written).
+describe("updateSettings — persist opt-out (S14.1 演示 fix)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS });
+  });
+
+  it("opts.persist:false updates live settings but never calls storage.saveSettings", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ engine: "demo" }, { persist: false });
+
+    expect(useApp.getState().settings.engine).toBe("demo");
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("every other call site (opts omitted) persists exactly as before", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ aiDetect: false });
+
+    expect(useApp.getState().settings.aiDetect).toBe(false);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(saveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ engine: "webspeech", aiDetect: false }),
+    );
+  });
+
+  it("opts.persist:true is identical to omitting opts — persists", () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ engine: "demo" }, { persist: true });
+
+    expect(useApp.getState().settings.engine).toBe("demo");
+    expect(saveSpy).toHaveBeenCalledTimes(1);
   });
 });
 

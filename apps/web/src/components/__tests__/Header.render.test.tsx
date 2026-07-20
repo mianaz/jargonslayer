@@ -539,3 +539,88 @@ describe("HamburgerMenu — btn-caption (S14 悬浮字幕), web host", () => {
     expect(container!.querySelector('[data-testid="btn-caption"]')).toBeNull();
   });
 });
+
+// S14.1 field fix (item 7b): 复制诊断信息 in the ≡ menu — reachable at
+// every uiMode/width, unlike the pre-existing SettingsDialog.tsx block
+// (advanced-only, a category deep). Same navigator.clipboard stub
+// technique as Toast.test.tsx's own "clicking 复制诊断" test.
+describe("HamburgerMenu — btn-copy-diagnostics (S14.1 item 7b)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", toast: null });
+    vi.unstubAllGlobals();
+  });
+
+  async function openMenu(): Promise<void> {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+          onOpenTaskCenter={noop}
+        />,
+      );
+    });
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="btn-menu"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  it("renders in the ≡ menu regardless of platform/uiMode", async () => {
+    await openMenu();
+    expect(container!.querySelector('[data-testid="btn-copy-diagnostics"]')).not.toBeNull();
+  });
+
+  it("clicking it copies the diagnostic report and shows a success toast, then closes the menu", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText }, userAgent: "test-agent" });
+    await openMenu();
+
+    const btn = container!.querySelector('[data-testid="btn-copy-diagnostics"]') as HTMLButtonElement;
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(useApp.getState().toast).toBe("诊断信息已复制到剪贴板");
+    expect(container!.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  it("clipboard unavailable (jsdom's own real absence, no stub): shows the failure toast instead of throwing", async () => {
+    await openMenu();
+
+    const btn = container!.querySelector('[data-testid="btn-copy-diagnostics"]') as HTMLButtonElement;
+    await act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(useApp.getState().toast).toBe("复制失败，请检查浏览器剪贴板权限");
+  });
+});

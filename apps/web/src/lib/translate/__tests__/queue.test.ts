@@ -19,6 +19,7 @@ vi.mock("../../llm/client", () => ({
 
 import { translateApi, NoKeyError, RateLimitApiError } from "../../llm/client";
 import { TranslateQueue } from "../queue";
+import * as diagLogModule from "../../diag/log";
 
 const mockTranslateApi = vi.mocked(translateApi);
 
@@ -85,32 +86,37 @@ describe("TranslateQueue", () => {
   afterEach(() => {
     queue.stop();
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
-  it("debounces 1500ms before flushing", async () => {
+  // S14.1 field fix (item 8b): DEBOUNCE_MS 1500->800, BATCH_MAX 6->3 —
+  // see queue.ts's own doc comment above both constants for the "big
+  // clump" rationale. Every timing number below is derived from the
+  // new values, not the old ones.
+  it("debounces 800ms before flushing", async () => {
     mockTranslateApi.mockResolvedValue(emptyRes());
     queue.pushSegment(makeSegment("hello"));
     expect(mockTranslateApi).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(1499);
+    await vi.advanceTimersByTimeAsync(799);
     expect(mockTranslateApi).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(1);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
   });
 
-  it("caps a batch at 6 oldest-first (FIFO), leaving the rest pending", async () => {
+  it("caps a batch at 3 oldest-first (FIFO), leaving the rest pending", async () => {
     const d1 = deferred<{ translations: { id: string; text: string }[] }>();
     mockTranslateApi.mockImplementationOnce(() => d1.promise);
 
-    const segs = Array.from({ length: 8 }, (_, i) => makeSegment(`seg text ${i}`));
+    const segs = Array.from({ length: 5 }, (_, i) => makeSegment(`seg text ${i}`));
     for (const s of segs) queue.pushSegment(s);
 
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     const firstCallBody = mockTranslateApi.mock.calls[0][0];
-    expect(firstCallBody.segments).toHaveLength(6);
-    expect(firstCallBody.segments.map((s) => s.id)).toEqual(segs.slice(0, 6).map((s) => s.id));
+    expect(firstCallBody.segments).toHaveLength(3);
+    expect(firstCallBody.segments.map((s) => s.id)).toEqual(segs.slice(0, 3).map((s) => s.id));
 
     // Resolve the first batch, freeing the in-flight slot -> the
     // remaining 2 items should flush as a second batch.
@@ -118,10 +124,10 @@ describe("TranslateQueue", () => {
     d1.resolve(emptyRes());
     await vi.advanceTimersByTimeAsync(0);
     // Second batch is armed via the ordinary debounce timer.
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(2);
     const secondCallBody = mockTranslateApi.mock.calls[1][0];
-    expect(secondCallBody.segments.map((s) => s.id)).toEqual(segs.slice(6, 8).map((s) => s.id));
+    expect(secondCallBody.segments.map((s) => s.id)).toEqual(segs.slice(3, 5).map((s) => s.id));
   });
 
   it("single in-flight max: a batch dispatched while one is in-flight is not sent until the first resolves", async () => {
@@ -129,18 +135,18 @@ describe("TranslateQueue", () => {
     mockTranslateApi.mockImplementationOnce(() => d1.promise);
 
     queue.pushSegment(makeSegment("first batch"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     // New segment arrives while the first request is still in-flight.
     queue.pushSegment(makeSegment("second batch, queued"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
     d1.resolve(emptyRes());
     await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(2);
   });
 
@@ -156,7 +162,7 @@ describe("TranslateQueue", () => {
     queue.pushSegment(makeSegment("a".repeat(1501)));
     queue.pushSegment(makeSegment("short one, under the cap"));
 
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     const body = mockTranslateApi.mock.calls[0][0];
     expect(body.segments).toHaveLength(1);
@@ -166,7 +172,7 @@ describe("TranslateQueue", () => {
   it("exactly 1500 chars is NOT skipped (boundary)", async () => {
     mockTranslateApi.mockResolvedValue(emptyRes());
     queue.pushSegment(makeSegment("a".repeat(1500)));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
   });
 
@@ -174,7 +180,7 @@ describe("TranslateQueue", () => {
     mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
 
     queue.pushSegment(makeSegment("first"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledTimes(1);
     expect(onError.mock.calls[0][0]).toBe(
@@ -201,7 +207,7 @@ describe("TranslateQueue", () => {
     mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
 
     queue.pushSegment(makeSegment("first, no key yet"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     expect(onError).toHaveBeenCalledTimes(1);
 
@@ -226,7 +232,7 @@ describe("TranslateQueue", () => {
 
     queue.pushSegment(makeSegment("gets rate limited"));
     queue.pushSegment(makeSegment("waits in queue during the pause"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     // Still paused just before the 30s window elapses.
@@ -247,7 +253,7 @@ describe("TranslateQueue", () => {
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
 
     queue.pushSegment(makeSegment("gets rate limited forever"));
-    await vi.advanceTimersByTimeAsync(1500); // attempt #1 (consecutiveRateLimits -> 1)
+    await vi.advanceTimersByTimeAsync(800); // attempt #1 (consecutiveRateLimits -> 1)
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     for (let i = 0; i < 4; i++) {
@@ -263,15 +269,40 @@ describe("TranslateQueue", () => {
     // pushed now (nothing left in `pending` from the dropped batch)
     // still gets translated — though it has to wait out the drop's
     // OWN pauseFor(30s) first (the same "prevent an immediate re-429"
-    // guard the <5 branch already relies on), not just its own 1500ms
+    // guard the <5 branch already relies on), not just its own 800ms
     // debounce.
     queue.pushSegment(makeSegment("new segment, after the drop"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(5); // still paused from the drop
-    await vi.advanceTimersByTimeAsync(30_000 - 1500);
+    await vi.advanceTimersByTimeAsync(30_000 - 800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(6);
     const body = mockTranslateApi.mock.calls[5][0];
     expect(body.segments.map((s) => s.text)).toEqual(["new segment, after the drop"]);
+  });
+
+  // S14.1 field fix (item 8a): this drop used to be a silent
+  // console.warn/no-op — a phone field session has no way to see
+  // devtools, so diagLog is the only trail. Pins the tag/content, not
+  // just "some log call happened".
+  it("dropping a batch after 5 consecutive rate limits diagLogs the drop (used to be silent)", async () => {
+    const diagSpy = vi.spyOn(diagLogModule, "diagLog");
+    for (let i = 0; i < 5; i++) {
+      mockTranslateApi.mockRejectedValueOnce(new RateLimitApiError());
+    }
+
+    queue.pushSegment(makeSegment("one"));
+    queue.pushSegment(makeSegment("two"));
+    await vi.advanceTimersByTimeAsync(800);
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+
+    expect(diagSpy).toHaveBeenCalledWith(
+      "warn",
+      "translate-queue",
+      expect.stringContaining("rate-limit"),
+      expect.stringContaining("count=2"),
+    );
   });
 
   it("a successful batch resets the consecutive-rate-limit counter — 4 rate limits then a success then 4 more do NOT trigger the drop-batch threshold", async () => {
@@ -285,7 +316,7 @@ describe("TranslateQueue", () => {
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
 
     queue.pushSegment(makeSegment("survives interleaved rate limits"));
-    await vi.advanceTimersByTimeAsync(1500); // attempt #1
+    await vi.advanceTimersByTimeAsync(800); // attempt #1
 
     // 3 more retries (consecutiveRateLimits: 2, 3, 4) then the 5th
     // attempt succeeds (resetting the counter) rather than dropping,
@@ -300,7 +331,7 @@ describe("TranslateQueue", () => {
     // hit the >=5 threshold on the 4th of these and drop early. It
     // must instead behave exactly like a fresh run: re-queue each time.
     queue.pushSegment(makeSegment("second run of rate limits"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     for (let i = 0; i < 3; i++) {
       await vi.advanceTimersByTimeAsync(30_000);
     }
@@ -314,21 +345,21 @@ describe("TranslateQueue", () => {
     expect(body.segments.map((s) => s.text)).toEqual(["second run of rate limits"]);
   });
 
-  it("a transient (non-NoKey, non-rate-limit) error re-queues the batch for ONE retry after the 5s cooldown", async () => {
+  it("a transient (non-NoKey, non-rate-limit) error re-queues the batch for retry after the 5s cooldown", async () => {
     mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502"));
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
 
     queue.pushSegment(makeSegment("fails once, then retried"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     // A distinct segment arrives during the post-error cooldown — the
     // cooldown still gates everything (no immediate hammering).
     queue.pushSegment(makeSegment("arrives during cooldown"));
-    await vi.advanceTimersByTimeAsync(1500); // its own debounce elapses…
+    await vi.advanceTimersByTimeAsync(800); // its own debounce elapses…
     expect(mockTranslateApi).toHaveBeenCalledTimes(1); // …but cooldown gates it
 
-    await vi.advanceTimersByTimeAsync(3_499); // total 4999ms since the failure
+    await vi.advanceTimersByTimeAsync(4_199); // total 4999ms since the failure
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(1); // 5000ms — cooldown lifts
@@ -343,27 +374,66 @@ describe("TranslateQueue", () => {
     ]);
   });
 
-  it("an item that fails its retry too is dropped for good — no infinite retry loop", async () => {
+  // S14.1 field fix (item 8a): a segment now gets MAX_RETRIES_PER_SEGMENT
+  // (3) retries — 4 total attempts — instead of the old one-shot Set's
+  // single retry (2 total attempts), specifically so a segment unlucky
+  // enough to fail right around a pause/resume-correlated network blip
+  // isn't permanently abandoned by its FIRST bad-timing failure. See
+  // queue.ts's own MAX_RETRIES_PER_SEGMENT doc for the full field-report
+  // rationale.
+  it("an item exhausts MAX_RETRIES_PER_SEGMENT (3) retries and is then dropped for good — no infinite retry loop", async () => {
     mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502"));
     mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 again"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 a third time"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 a fourth time"));
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
 
-    queue.pushSegment(makeSegment("fails twice, dropped"));
-    await vi.advanceTimersByTimeAsync(1500); // attempt #1 fails -> retry queued
+    queue.pushSegment(makeSegment("fails 4 times, dropped"));
+    await vi.advanceTimersByTimeAsync(800); // attempt #1 (original) fails -> retry #1 queued
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
-    await vi.advanceTimersByTimeAsync(5_000); // cooldown lifts -> attempt #2 fails
-    expect(mockTranslateApi).toHaveBeenCalledTimes(2);
+    for (let i = 0; i < 3; i++) {
+      // Each 5s cooldown lifts on its own and re-attempts the SAME
+      // re-queued segment (retries #1, #2, #3 — the 3rd of these is
+      // the segment's 4th and FINAL attempt, exhausting the cap).
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    expect(mockTranslateApi).toHaveBeenCalledTimes(4); // 1 original + 3 retries, all failed
 
-    // After the second failure the item must NOT be re-queued again: a
-    // fresh segment pushed after the second cooldown translates alone.
+    // After exhausting every retry the item must NOT be re-queued
+    // again: a fresh segment pushed after the last cooldown translates
+    // alone.
     queue.pushSegment(makeSegment("fresh segment, after the drop"));
-    await vi.advanceTimersByTimeAsync(5_000); // second cooldown lifts
-    expect(mockTranslateApi).toHaveBeenCalledTimes(3);
-    const body = mockTranslateApi.mock.calls[2][0];
+    await vi.advanceTimersByTimeAsync(5_000); // final cooldown lifts
+    expect(mockTranslateApi).toHaveBeenCalledTimes(5);
+    const body = mockTranslateApi.mock.calls[4][0];
     expect(body.segments.map((s) => s.text)).toEqual([
       "fresh segment, after the drop",
     ]);
+  });
+
+  // S14.1 field fix (item 8a): same "used to be console.warn only"
+  // visibility gap as the rate-limit drop above, for the generic-error
+  // exhausted-retries path.
+  it("exhausting a segment's retries diagLogs the drop (used to be console.warn only)", async () => {
+    const diagSpy = vi.spyOn(diagLogModule, "diagLog");
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 again"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 a third time"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 a fourth time"));
+
+    queue.pushSegment(makeSegment("fails 4 times, dropped"));
+    await vi.advanceTimersByTimeAsync(800);
+    for (let i = 0; i < 3; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+
+    expect(diagSpy).toHaveBeenCalledWith(
+      "warn",
+      "translate-queue",
+      expect.stringContaining("gave up"),
+      expect.stringContaining("count=1"),
+    );
   });
 
   it("meeting-boundary guard: a response whose gen no longer matches the current meetingGen is silently dropped", async () => {
@@ -371,7 +441,7 @@ describe("TranslateQueue", () => {
     mockTranslateApi.mockImplementationOnce(() => d1.promise);
 
     queue.pushSegment(makeSegment("in flight when meeting ends"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     meetingGen += 1; // a new meeting begins while this request is in flight
@@ -387,7 +457,7 @@ describe("TranslateQueue", () => {
     mockTranslateApi.mockImplementationOnce(() => d1.promise);
 
     queue.pushSegment(makeSegment("in flight when meeting ends"));
-    await vi.advanceTimersByTimeAsync(1500); // dispatches with gen=0 captured
+    await vi.advanceTimersByTimeAsync(800); // dispatches with gen=0 captured
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
 
     meetingGen += 1; // new meeting begins while the request is in flight
@@ -401,7 +471,7 @@ describe("TranslateQueue", () => {
     // immediately, on its own ordinary debounce.
     mockTranslateApi.mockResolvedValueOnce(emptyRes());
     queue.pushSegment(makeSegment("new meeting, should still translate"));
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(2);
   });
 
@@ -414,7 +484,7 @@ describe("TranslateQueue", () => {
     const earlier = [makeSegment("backfilled 1"), makeSegment("backfilled 2")];
     queue.backfill(earlier);
 
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     const body = mockTranslateApi.mock.calls[0][0];
     expect(body.segments.map((s) => s.id)).toEqual([
@@ -433,7 +503,7 @@ describe("TranslateQueue", () => {
     settings = makeSettings();
     mockTranslateApi.mockResolvedValue(emptyRes());
     queue.backfill([makeSegment("a".repeat(1501)), makeSegment("kept")]);
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     const body = mockTranslateApi.mock.calls[0][0];
     expect(body.segments).toHaveLength(1);
@@ -453,7 +523,7 @@ describe("TranslateQueue", () => {
     settings = makeSettings();
     const fresh = makeSegment("new segment after re-enable");
     queue.pushSegment(fresh);
-    await vi.advanceTimersByTimeAsync(1500);
+    await vi.advanceTimersByTimeAsync(800);
     expect(mockTranslateApi).toHaveBeenCalledTimes(1);
     const body = mockTranslateApi.mock.calls[0][0];
     expect(body.segments.map((s) => s.id)).toEqual([fresh.id]);

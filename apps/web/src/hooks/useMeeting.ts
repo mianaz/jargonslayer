@@ -469,7 +469,11 @@ export function useMeeting(): UseMeetingResult {
   }, [withLifecycleGate, doStop]);
 
   const startDemo = useCallback(async () => {
-    useApp.getState().updateSettings({ engine: "demo" });
+    // S14.1 field fix: live-only — never persisted (store.ts's
+    // updateSettings `persist:false`), so a demo run can't strand a
+    // returning preview user's real engine pick across a reload (see
+    // store.ts's applyTierDefaults doc for the field report).
+    useApp.getState().updateSettings({ engine: "demo" }, { persist: false });
     await start();
   }, [start]);
 

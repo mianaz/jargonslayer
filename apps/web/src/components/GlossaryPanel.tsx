@@ -355,7 +355,11 @@ export default function GlossaryPanel() {
         />
       </div>
 
-      <div className="scroll-thin flex-1 space-y-2 overflow-y-auto px-3 pb-3 pt-2">
+      {/* S14.1 field fix (item 9): pb matches StatusLine's own h-7
+          (page.tsx renders it as a separate sibling BELOW this whole
+          tab panel) + a safe-area-inset-bottom no-op for now — see
+          CardsPanel.tsx's own identical fix for the full rationale. */}
+      <div className="scroll-thin flex-1 space-y-2 overflow-y-auto px-3 pb-[calc(1.75rem+env(safe-area-inset-bottom))] pt-2">
         {creating && (
           <EntryForm
             draft={createDraft}
