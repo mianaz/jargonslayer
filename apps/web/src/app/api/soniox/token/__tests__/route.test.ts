@@ -140,9 +140,17 @@ describe("POST /api/soniox/token", () => {
       });
       expect((await POST(makeRequest("6.6.6.6"))).status).toBe(502);
 
-      // Day 30: this IP still has its FULL per-IP allowance of 3 —
-      // without the mintedAt threading, the midnight refund would have
-      // pre-credited day 30 to -1/…, or (worse shape) debited a slot.
+      // THE discriminating assertion (Sol final-confirm): day 29's own
+      // ledger entry must be back to 0 — a refund with a DEFAULTED
+      // timestamp lands on day 30 (absent → no-op) and would leave day
+      // 29's count stranded at 1, while every downstream day-30
+      // assertion still passed. Reading the ledger file is the only
+      // observation that separates the two implementations.
+      const { readFileSync } = await import("node:fs");
+      const ledger = JSON.parse(readFileSync(join(scratchDir, "ledger.json"), "utf8"));
+      expect(ledger.days[String(29 * DAY_MS)]?.total ?? 0).toBe(0);
+
+      // Day 30: this IP still has its FULL per-IP allowance of 3.
       global.fetch = vi.fn().mockImplementation(() => Promise.resolve(mintedResponse()));
       vi.setSystemTime(30 * DAY_MS + 61_000); // clear the burst window
       expect((await POST(makeRequest("6.6.6.6"))).status).toBe(200);

@@ -242,13 +242,31 @@ function loadSonioxLedger(): SonioxLedger | null {
   }
   try {
     const parsed = JSON.parse(raw) as SonioxLedger;
-    if (parsed && typeof parsed === "object" && parsed.days && typeof parsed.days === "object") {
-      return parsed;
-    }
+    if (sonioxLedgerShapeValid(parsed)) return parsed;
   } catch {
     // fall through — corrupt
   }
   return null;
+}
+
+/** Full shape walk, not a typeof spot-check (Sol final-confirm,
+ *  2026-07-20): `{"days":[]}` passes `typeof === "object"`, and a
+ *  non-finite counter (e.g. a string total) makes every `>=` cap
+ *  comparison false — i.e. valid-but-corrupt JSON silently fails
+ *  OPEN. Anything structurally off → the whole file is untrusted. */
+function sonioxLedgerShapeValid(parsed: unknown): parsed is SonioxLedger {
+  if (!parsed || typeof parsed !== "object") return false;
+  const days = (parsed as SonioxLedger).days;
+  if (!days || typeof days !== "object" || Array.isArray(days)) return false;
+  for (const day of Object.values(days)) {
+    if (!day || typeof day !== "object" || Array.isArray(day)) return false;
+    if (!Number.isFinite(day.total) || day.total < 0) return false;
+    if (!day.perIp || typeof day.perIp !== "object" || Array.isArray(day.perIp)) return false;
+    for (const n of Object.values(day.perIp)) {
+      if (!Number.isFinite(n) || n < 0) return false;
+    }
+  }
+  return true;
 }
 
 /** True when the ledger write landed. A ledger that cannot be

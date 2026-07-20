@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowSonioxMint, refundSonioxMint, resetRateLimiter } from "../rateLimit";
@@ -69,6 +69,14 @@ describe("allowSonioxMint", () => {
     vi.resetModules();
     const fresh = await import("../rateLimit");
     expect(fresh.allowSonioxMint("10.9.9.9", t)).toBe(false);
+  });
+
+  it("fails CLOSED on valid-but-corrupt ledger JSON (array days, non-finite counters) — never re-grants off an untrusted file", () => {
+    const path = join(scratchDir, "ledger.json");
+    writeFileSync(path, JSON.stringify({ days: [] })); // array passes typeof "object"
+    expect(allowSonioxMint("2.2.2.2", 1_000)).toBe(false);
+    writeFileSync(path, JSON.stringify({ days: { "0": { total: "abc", perIp: {} } } }));
+    expect(allowSonioxMint("2.2.2.2", 1_000)).toBe(false);
   });
 
   it("refund lands on the RESERVATION's day, not the refund-time day", () => {
