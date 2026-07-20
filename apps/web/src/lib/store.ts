@@ -1582,6 +1582,21 @@ export const useApp = create<AppState>((set, get) => ({
     if (webhookUrl) {
       void autoExporter.postWebhook(session, webhookUrl);
     }
+    // v0.5 F9 / blueprint §5 A8 (F0b, lead-owned): AnkiConnect delivery
+    // rides the SAME post-save hook as the webhook — a stopped session
+    // re-saves many times (late diarization/translations/edits), and
+    // deliverSessionNotes' ledger is what makes those repeats
+    // duplicate-free, so firing on every save is deliberate, not waste.
+    // Dynamic import keeps the connector (and idb ledger) entirely off
+    // the hot path for the overwhelmingly common disabled case. iOS is
+    // rejected inside ankiInvoke itself; fail-soft like postWebhook.
+    const ankiCfg = s.settings.ankiConnect;
+    if (ankiCfg?.enabled) {
+      void import("./history/connectors/ankiConnect").then(
+        ({ deliverSessionNotes, ankiLedger }) =>
+          deliverSessionNotes(session, ankiCfg, ankiLedger),
+      );
+    }
     return session.id;
   },
 
