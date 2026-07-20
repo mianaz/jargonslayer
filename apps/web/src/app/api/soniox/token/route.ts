@@ -23,18 +23,16 @@ export const runtime = "nodejs";
 // session-capped + single-use + short-lived.
 
 import { NextResponse } from "next/server";
-import { allowRequest, allowSonioxMint, clientIp, refundSonioxMint } from "@/lib/llm/rateLimit";
+import {
+  allowRequest,
+  allowSonioxMint,
+  clientIp,
+  refundSonioxMint,
+  SONIOX_SESSION_SECONDS,
+} from "@/lib/llm/rateLimit";
 import type { ApiErrorBody } from "@jargonslayer/core/types";
 
 const MINT_URL = "https://api.soniox.com/v1/auth/temporary-api-key";
-
-// How long each minted session may run (server-enforced). 10 min is a
-// real trial length; it also sets the per-mint cost bound
-// (10min × $0.12/hr = $0.02). Env-overridable to retune the ceiling.
-const SESSION_SECONDS = (() => {
-  const raw = Number(process.env.JARGONSLAYER_SONIOX_SESSION_SECONDS);
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 600;
-})();
 
 // The key must survive from mint until the client opens the ws (after
 // the mic-permission prompt). 120s is ample; it does NOT extend the
@@ -46,9 +44,20 @@ function errorBody(body: ApiErrorBody, status: number) {
 }
 
 export async function POST(req: Request) {
+  // Two-factor enablement (Sol review 2026-07-20, M finding): the
+  // credential alone must not arm a billable endpoint — a key
+  // provisioned on the wrong deployment (full tier, staging, a
+  // self-hoster's copied env file) stays inert until the deployment
+  // ALSO opts in with the explicit runtime flag. Both failures return
+  // the same body so a prober can't tell which factor is missing.
+  // (This is the RUNTIME sibling of the client's build-time
+  // NEXT_PUBLIC_SONIOX_PREVIEW — NEXT_PUBLIC_* is inlined at build and
+  // never reaches this server process's env, so it cannot be checked
+  // here.)
   const serverKey = process.env.JARGONSLAYER_SONIOX_KEY;
-  if (!serverKey) {
-    // Not a preview deploy (or the key isn't provisioned) — the client
+  const laneEnabled = process.env.JARGONSLAYER_SONIOX_PREVIEW === "1";
+  if (!serverKey || !laneEnabled) {
+    // Not a preview deploy (or not fully provisioned) — the client
     // treats any non-200 here as "fall back to browser 识别".
     return errorBody(
       { error: "此部署未启用 Soniox 预览体验", code: "no_key" },
@@ -87,7 +96,7 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         usage_type: "transcribe_websocket",
         expires_in_seconds: KEY_TTL_SECONDS,
-        max_session_duration_seconds: SESSION_SECONDS,
+        max_session_duration_seconds: SONIOX_SESSION_SECONDS,
         single_use: true,
       }),
     });

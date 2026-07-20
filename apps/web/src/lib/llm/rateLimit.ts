@@ -12,6 +12,17 @@
 // That matches this file's existing documented posture, and the worst
 // case is a handful of extra requests around a deploy, not an
 // unbounded blow-out.
+//
+// (The Soniox mint budget at the bottom is the one DELIBERATE
+// exception to the in-memory posture — see its own header for why a
+// dollar-denominated cap can't accept restart amnesia. Server-only
+// module: the node:fs imports below are safe because every importer
+// is an API route — verified 2026-07-20, and a client-bundle import
+// would fail the build loudly rather than silently.)
+
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 const WINDOW_MS = 60_000;
 // Stale-bucket sweep threshold — prevents unbounded growth under a
@@ -27,7 +38,17 @@ const buckets = new Map<string, Bucket>();
 
 /** Best-effort client IP behind the nginx/Cloudflare chain: nginx sets
  *  X-Real-IP from the restored CF-Connecting-IP; X-Forwarded-For's
- *  first hop is the fallback for other reverse-proxy setups. */
+ *  first hop is the fallback for other reverse-proxy setups.
+ *
+ *  TRUST BOUNDARY (Sol review 2026-07-20, accept-documented): these
+ *  headers are only as honest as the proxy in front — an origin
+ *  reachable DIRECTLY lets a caller rotate X-Real-IP and sidestep
+ *  every per-IP window in this file (all routes share this seam; it
+ *  predates the Soniox lane). The blast radius is bounded by the
+ *  GLOBAL caps (daily LLM budget / Soniox mint ledger), i.e. trial
+ *  exhaustion for the day, never unbounded spend. Closing it for real
+ *  is an ops task — firewall the origin to the proxy and strip
+ *  inbound forwarding headers at nginx — not an app-code change. */
 export function clientIp(req: Request): string {
   return (
     req.headers.get("x-real-ip") ||
@@ -126,69 +147,171 @@ export function allowDailyBudget(task: string, now: number = Date.now()): boolea
 // Soniox preview-lane mint budget — the money cap behind
 // /api/soniox/token. The preview build offers the hosted Soniox STT
 // trial on the OWNER's Soniox credential (not BYOK); every minted
-// temporary key is one ≤N-minute server-capped session, so worst-case
-// spend = (mints/day) × (session minutes / 60) × Soniox's $0.12/hr
-// streaming rate. The daily total below is sized so daily×31 stays
-// under the owner's monthly ceiling ($10/mo → ≤$9.92 at the defaults:
-// 16 mints/day × 10-min sessions × $0.12/hr).
+// temporary key is one ≤SONIOX_SESSION_SECONDS server-capped session.
 //
-// Same in-memory, single-process, restart-resets posture as the LLM
-// budget above (documented there): a restart re-grants the day's
-// count. For a low-traffic niche preview that only redeploys a few
-// times a week, the worst case is a few extra cents around a deploy,
-// not a blow-out — and the per-session server cap (max_session_
-// duration_seconds on the minted key) bounds each grant regardless.
-// A persistent monthly counter is the upgrade if traffic ever makes
-// the reset window matter (noted in the route).
+// Unlike the LLM daily budget above, this one is DURABLE (a small
+// JSON ledger on disk, sync read-modify-write per mint) and the daily
+// cap is DERIVED from the owner's monthly dollar ceiling rather than
+// hand-sized: dailyMints = floor(monthlyUsd / 31 / perSessionUsd).
+// Both choices close the 2026-07-20 Sol review's H finding — an
+// in-memory count resets on every restart, quietly multiplying the
+// advertised "$10/month" by (1 + restarts/day), and a hand-sized
+// count silently diverges from the dollar target whenever the session
+// length knob moves. Deriving from the money knob makes the ceiling
+// hold by construction; persisting makes it hold across deploys.
+// Sync fs (not async) is deliberate: it makes reserve() atomic w.r.t.
+// the single-threaded event loop, and the write volume is ≤ a few
+// dozen tiny writes per UTC day.
 
-const SONIOX_MINT_DAILY_TOTAL = (() => {
-  const raw = Number(process.env.JARGONSLAYER_SONIOX_MINT_DAILY);
-  return Number.isFinite(raw) && raw > 0 ? raw : 16;
+// Soniox real-time streaming list price. Not an env knob: a price
+// change should be a reviewed edit here (it re-derives the daily cap),
+// not a silent per-deployment override.
+const SONIOX_RT_USD_PER_HOUR = 0.12;
+
+/** One minted session's server-enforced maximum length — exported for
+ *  /api/soniox/token, which passes it as max_session_duration_seconds
+ *  (live-verified 2026-07-20: Soniox itself drops the ws at the cap).
+ *  Clamped to [60, 900]: below 60s the transport's 403-collision age
+ *  heuristic (SESSION_CAP_MIN_AGE_MS) could mislabel a real cap as an
+ *  auth failure; above 900s a single grant exceeds the per-session
+ *  cost the trial copy promises (Sol review M finding — the knobs
+ *  must not be able to wander off the budget math unbounded). */
+export const SONIOX_SESSION_SECONDS = (() => {
+  const raw = Number(process.env.JARGONSLAYER_SONIOX_SESSION_SECONDS);
+  const val = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 600;
+  return Math.min(900, Math.max(60, val));
 })();
+
+// The money knob. Everything else derives from it.
+const SONIOX_MONTHLY_USD = (() => {
+  const raw = Number(process.env.JARGONSLAYER_SONIOX_MONTHLY_USD);
+  const val = Number.isFinite(raw) && raw > 0 ? raw : 10;
+  return Math.min(200, val);
+})();
+
+// floor(10 / 31 / (600/3600 × 0.12)) = 16 mints/day at the defaults —
+// ≈$9.92/mo worst case. Always ≥1 so a tiny monthly budget still
+// serves one trial a day rather than bricking the lane.
+const SONIOX_MINT_DAILY_TOTAL = Math.max(
+  1,
+  Math.floor(SONIOX_MONTHLY_USD / 31 / ((SONIOX_SESSION_SECONDS / 3600) * SONIOX_RT_USD_PER_HOUR)),
+);
 
 const SONIOX_MINT_DAILY_PER_IP = (() => {
   const raw = Number(process.env.JARGONSLAYER_SONIOX_MINT_DAILY_PER_IP);
-  return Number.isFinite(raw) && raw > 0 ? raw : 3;
+  const val = Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 3;
+  return Math.min(8, Math.max(1, val));
 })();
 
-const SONIOX_MINT_TOTAL_KEY = "soniox-mint-total";
+// Ledger shape: { days: { "<utcDayStartMs>": { total, perIp: {ip: n} } } }.
+// Day keys let a refund target the exact day its reservation was
+// charged to (Sol review L finding: a refund crossing UTC midnight
+// must not erase a NEW day's count). Pruned to the last 2 days on
+// every write, so the file never grows past a few hundred bytes.
+interface SonioxLedgerDay {
+  total: number;
+  perIp: Record<string, number>;
+}
+interface SonioxLedger {
+  days: Record<string, SonioxLedgerDay>;
+}
+
+// Per-call (not module-load) so tests can point each case at a scratch
+// file; production resolves once to the same path every call.
+function sonioxLedgerPath(): string {
+  return (
+    process.env.JARGONSLAYER_SONIOX_LEDGER_PATH ||
+    join(homedir(), ".jargonslayer", "soniox-mint-ledger.json")
+  );
+}
+
+function loadSonioxLedger(): SonioxLedger {
+  try {
+    const parsed = JSON.parse(readFileSync(sonioxLedgerPath(), "utf8")) as SonioxLedger;
+    if (parsed && typeof parsed === "object" && parsed.days && typeof parsed.days === "object") {
+      return parsed;
+    }
+  } catch {
+    // Missing file (first mint ever) or a corrupt one (crash mid-write)
+    // — start fresh. A corrupt file forfeits at most one day's counts,
+    // and the alternative (refusing every mint until someone ssh-es in)
+    // punishes users for a filesystem hiccup.
+  }
+  return { days: {} };
+}
+
+/** True when the ledger write landed. A ledger that cannot be
+ *  PERSISTED fails the mint closed (money safety over availability):
+ *  granting on an unwritable ledger would silently revert to exactly
+ *  the restart-amnesia this ledger exists to prevent. */
+function saveSonioxLedger(ledger: SonioxLedger, dayStart: number): boolean {
+  // Prune: keep today and yesterday (the only day a refund can still
+  // legitimately target after a midnight-straddling request).
+  for (const key of Object.keys(ledger.days)) {
+    if (Number(key) < dayStart - DAY_MS) delete ledger.days[key];
+  }
+  try {
+    const path = sonioxLedgerPath();
+    const dir = dirname(path);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(path, JSON.stringify(ledger));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /** True when one more preview Soniox key may be minted for `ip` today
  *  — must fit BOTH the per-IP daily cap (fairness/anti-abuse) and the
- *  global daily cap (the money ceiling). Counts against both only when
- *  both pass, so a caller blocked by the global cap doesn't burn its
- *  own per-IP allowance. Fixed UTC-day window like allowDailyBudget. */
+ *  derived global daily cap (the money ceiling), and the reservation
+ *  must PERSIST (see saveSonioxLedger). Counts against both only when
+ *  granted. Fixed UTC-day window; the route must pass the SAME `now`
+ *  to a later refundSonioxMint so the refund lands on this
+ *  reservation's day. */
 export function allowSonioxMint(ip: string, now: number = Date.now()): boolean {
   const dayStart = utcDayStart(now);
-  const ipBucket = dailyBucket(`soniox-mint-ip:${ip}`, dayStart);
-  const totalBucket = dailyBucket(SONIOX_MINT_TOTAL_KEY, dayStart);
+  const ledger = loadSonioxLedger();
+  const day = (ledger.days[String(dayStart)] ??= { total: 0, perIp: {} });
+  const ipCount = day.perIp[ip] ?? 0;
 
-  if (ipBucket.count >= SONIOX_MINT_DAILY_PER_IP || totalBucket.count >= SONIOX_MINT_DAILY_TOTAL) {
+  if (ipCount >= SONIOX_MINT_DAILY_PER_IP || day.total >= SONIOX_MINT_DAILY_TOTAL) {
     return false;
   }
-  ipBucket.count++;
-  totalBucket.count++;
-  return true;
+  day.perIp[ip] = ipCount + 1;
+  day.total += 1;
+  return saveSonioxLedger(ledger, dayStart);
 }
 
-/** Refund one previously-granted mint for `ip` (same UTC day only).
- *  Called by the token route when the UPSTREAM mint fails after
- *  allowSonioxMint already reserved the slot: reserving BEFORE the
- *  async upstream call keeps concurrent requests from over-minting
- *  past the cap (no check-then-act window), and refunding on upstream
- *  failure keeps a Soniox outage + user retries from draining the
- *  day's budget without a single key issued. Floor at 0 guards a
- *  refund landing after the UTC-day bucket rolled over. */
+/** Refund one previously-granted mint. Called by the token route when
+ *  the UPSTREAM mint fails after allowSonioxMint already reserved the
+ *  slot: reserving BEFORE the async upstream call keeps concurrent
+ *  requests from over-minting past the cap (no check-then-act window),
+ *  and refunding on upstream failure keeps a Soniox outage + user
+ *  retries from draining the day's budget without a single key issued.
+ *  `now` MUST be the same instant the route passed to allowSonioxMint:
+ *  the refund decrements that reservation's own day entry — if it was
+ *  already pruned (a >1-day-hung request), the refund is a no-op
+ *  rather than a debit against a newer day. */
 export function refundSonioxMint(ip: string, now: number = Date.now()): void {
   const dayStart = utcDayStart(now);
-  const ipBucket = dailyBucket(`soniox-mint-ip:${ip}`, dayStart);
-  const totalBucket = dailyBucket(SONIOX_MINT_TOTAL_KEY, dayStart);
-  ipBucket.count = Math.max(0, ipBucket.count - 1);
-  totalBucket.count = Math.max(0, totalBucket.count - 1);
+  const ledger = loadSonioxLedger();
+  const day = ledger.days[String(dayStart)];
+  if (!day) return;
+  day.total = Math.max(0, day.total - 1);
+  day.perIp[ip] = Math.max(0, (day.perIp[ip] ?? 0) - 1);
+  saveSonioxLedger(ledger, dayStart);
 }
 
-/** Test helper — clears all window state. */
+/** Test helper — clears all window state, including the on-disk
+ *  Soniox mint ledger (tests point JARGONSLAYER_SONIOX_LEDGER_PATH at
+ *  a scratch file). */
 export function resetRateLimiter(): void {
   buckets.clear();
   dailyBuckets.clear();
+  try {
+    rmSync(sonioxLedgerPath(), { force: true });
+  } catch {
+    // Best-effort: a missing/undeletable scratch ledger only matters
+    // inside tests, which stub the path per-case anyway.
+  }
 }

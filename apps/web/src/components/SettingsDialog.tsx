@@ -2124,6 +2124,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="mt-1 text-xs text-mut2">
                   按量计费；Key 随会话直接发给 Soniox 云端（wss://stt-rt.soniox.com），不经我们的服务器
                 </div>
+                {/* Restored-backup honesty (Sol review 2026-07-20, L
+                   finding): a backup restored WITH keys can leave a real
+                   sonioxKey in preview storage, and BYOK-wins routing
+                   (stt/soniox.ts) will then bill the USER's account
+                   while the engine card above still advertises the
+                   server-funded trial. The input itself stays disabled
+                   on preview (posture: preview never COLLECTS keys),
+                   so this notice + explicit clear is the only exit. */}
+                {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && (
+                  <div className="mt-1 text-xs leading-[1.7] text-warn-soft">
+                    检测到已保存的 Soniox Key：会话将直接使用你自己的 Key 并按你的账户计费，而非上方的预览体验。
+                    <button
+                      type="button"
+                      onClick={() => patch({ sonioxKey: "" })}
+                      className="ml-1 underline decoration-[rgb(var(--warn-soft-rgb)/0.4)]"
+                    >
+                      清除已保存的 Key（改用预览体验）
+                    </button>
+                  </div>
+                )}
                 {!PREVIEW_TIER && !draft.sonioxKey && (
                   <div className="mt-1 text-xs leading-[1.7] text-mut2">
                     前往{" "}

@@ -336,9 +336,20 @@ interface SonioxServerMessage {
 // happen. formatSonioxError itself stays pure (same output for the
 // same inputs) — it just takes that boolean as an explicit parameter
 // rather than reaching for transport state itself.
-function formatSonioxError(msg: SonioxServerMessage, previewSessionCapLikely: boolean): string {
+function formatSonioxError(
+  msg: SonioxServerMessage,
+  previewSessionCapLikely: boolean,
+  previewMinted: boolean,
+): string {
   const code = msg.error_code;
   if (code === 403 && previewSessionCapLikely) return "预览体验单次时长已到，可重新开始一段";
+  // A pre-audio 403 on a MINTED session isn't the user's key being
+  // wrong (they never entered one — Soniox's docs put plain auth
+  // failures on 401, and 403 on the temp-key expiry/cap class, Sol
+  // review 2026-07-20): it's the single-use temp key dying between
+  // mint and connect (>TTL in the permission prompt, or a reused
+  // key). Tell them the recoverable truth instead of 无效 key copy.
+  if (code === 403 && previewMinted) return "预览体验连接密钥已过期，请重新开始";
   if (code === 401 || code === 403) return "Soniox API Key 无效或无权限";
   if (code === 429) return "Soniox 配额或速率限制";
   return `Soniox 服务错误（代码 ${code}）`;
@@ -499,11 +510,10 @@ export class SonioxTransport {
         // rejection lands — together "audio round-tripped OR the
         // connection is far older than any auth exchange" covers both.
         const age = this.configSentAt !== null ? Date.now() - this.configSentAt : 0;
+        const previewMinted = !!this.mintToken && !this.settings.sonioxKey;
         const previewSessionCapLikely =
-          (this.sawAnyTokens || age >= SESSION_CAP_MIN_AGE_MS) &&
-          !!this.mintToken &&
-          !this.settings.sonioxKey;
-        this.emitError(formatSonioxError(msg, previewSessionCapLikely));
+          previewMinted && (this.sawAnyTokens || age >= SESSION_CAP_MIN_AGE_MS);
+        this.emitError(formatSonioxError(msg, previewSessionCapLikely, previewMinted));
         return;
       }
       if (msg.finished) {

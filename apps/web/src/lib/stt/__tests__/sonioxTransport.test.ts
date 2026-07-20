@@ -726,14 +726,14 @@ describe("SonioxTransport", () => {
     expect(errorCalls[0][1]).toBe("预览体验单次时长已到，可重新开始一段");
   });
 
-  it("a 403 on a preview-minted session BEFORE any tokens have flowed still reads as an auth failure (bad/expired temp key at config)", async () => {
+  it("a 403 on a preview-minted session BEFORE any tokens have flowed reads as the minted key dying between mint and connect — recoverable copy, not 无效 key blame", async () => {
     const transport = makeTransport({ sonioxKey: "" }, async (key) => key);
     const ws = await attachAndOpen(transport);
 
     ws.simulateMessage({ tokens: [], error_code: 403, error_type: "temp_api_key_session_expired" });
 
     const errorCalls = onStatus.mock.calls.filter((c) => c[0] === "error");
-    expect(errorCalls[0][1]).toBe("Soniox API Key 无效或无权限");
+    expect(errorCalls[0][1]).toBe("预览体验连接密钥已过期，请重新开始");
   });
 
   it("a 403 on a SILENT preview-minted session (zero tokens ever, but the connection is well past any auth round-trip) still reads as the session cap — the age discriminator's whole point", async () => {

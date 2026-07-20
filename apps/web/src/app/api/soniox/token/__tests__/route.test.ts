@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resetRateLimiter } from "@/lib/llm/rateLimit";
 import { POST } from "../route";
 
@@ -21,17 +24,30 @@ function mintedResponse() {
 }
 
 describe("POST /api/soniox/token", () => {
+  let scratchDir: string;
   beforeEach(() => {
-    resetRateLimiter();
+    scratchDir = mkdtempSync(join(tmpdir(), "soniox-route-"));
+    vi.stubEnv("JARGONSLAYER_SONIOX_LEDGER_PATH", join(scratchDir, "ledger.json"));
     vi.stubEnv("JARGONSLAYER_SONIOX_KEY", "sk-server-key");
+    vi.stubEnv("JARGONSLAYER_SONIOX_PREVIEW", "1");
+    resetRateLimiter();
   });
   afterEach(() => {
+    resetRateLimiter();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
+    rmSync(scratchDir, { recursive: true, force: true });
   });
 
   it("404s with no_key when the deploy has no server credential", async () => {
     vi.stubEnv("JARGONSLAYER_SONIOX_KEY", "");
+    const res = await POST(makeRequest());
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("no_key");
+  });
+
+  it("404s (same body) when the key exists but the runtime lane flag is absent — credential alone must not arm the endpoint", async () => {
+    vi.stubEnv("JARGONSLAYER_SONIOX_PREVIEW", "");
     const res = await POST(makeRequest());
     expect(res.status).toBe(404);
     expect((await res.json()).code).toBe("no_key");
