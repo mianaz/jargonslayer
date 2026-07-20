@@ -1718,6 +1718,22 @@ describe("applyTierDefaults — soniox preview lane (4th param)", () => {
   it("deepgram keeps coercing to webspeech even when the (soniox-only) lane is on", () => {
     expect(applyTierDefaults(withEngine("deepgram"), true, true, true).engine).toBe("webspeech");
   });
+
+  // v0.5 closeout: tabaudio-cloud joins the SAME carve-out — its own
+  // start() always forces the minted-Soniox path on this lane
+  // (tabAudioCloud.ts's effectiveProvider), so a stale/persisted
+  // provider choice is harmless and the engine survives unconditionally.
+  it("tabaudio-cloud SURVIVES coercion when the lane is on", () => {
+    expect(applyTierDefaults(withEngine("tabaudio-cloud"), true, true, true).engine).toBe("tabaudio-cloud");
+  });
+
+  it("tabaudio-cloud is still coerced to webspeech when the lane is off (today's behavior, explicit false)", () => {
+    expect(applyTierDefaults(withEngine("tabaudio-cloud"), true, true, false).engine).toBe("webspeech");
+  });
+
+  it("tabaudio (local-sidecar, no mint path at all) keeps coercing to webspeech even when the lane is on — the carve-out is soniox/tabaudio-cloud-specific", () => {
+    expect(applyTierDefaults(withEngine("tabaudio"), true, true, true).engine).toBe("webspeech");
+  });
 });
 
 // S14.1 field fix, other half: useMeeting.ts's startDemo now calls

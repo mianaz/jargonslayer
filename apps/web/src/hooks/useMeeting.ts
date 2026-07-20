@@ -12,6 +12,8 @@ import { langPairFromSettings, resolveTranslationProvider } from "../lib/transla
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
+import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
+import { getPreviewSessionSeconds } from "../lib/stt/soniox";
 import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
@@ -94,6 +96,20 @@ export function useMeeting(): UseMeetingResult {
   // never re-arms at all, so this also naturally covers "don't toast
   // again on a within-meeting reconnect".
   const diarReadyToastedRef = useRef(false);
+
+  // Preview-lane trial notice (v0.5 closeout, owner ask: "the trial's
+  // limits CLEARLY noticed"): one-shot per meeting start, same reset
+  // seam as diarReadyToastedRef immediately above — no existing
+  // "first listening" hook point exists in this file to piggy-back on
+  // (diarReadyToastedRef covers a DIFFERENT event, onDiarStatus
+  // "ready"), so this is a new ref styled identically. Unlike
+  // diarReadyToastedRef, this ALSO covers a teardown-RESUME: soniox/
+  // tabaudio-cloud have no soft pause (see either engine's own "No
+  // pause/resume" header note), so resuming from a pause reattaches a
+  // FRESH engine instance that fires onStatus("listening") again — this
+  // ref is only reset in start(), never in resume(), so that re-fire is
+  // deliberately suppressed (one notice per MEETING, not per attach).
+  const previewMintNoticeRef = useRef(false);
 
   // Engine-creation/wiring block (pause/resume, B3): extracted out of
   // start() so resume() can reattach a FRESH engine instance to the
@@ -224,6 +240,28 @@ export function useMeeting(): UseMeetingResult {
             return;
           }
           useApp.getState().setStatus(status, status === "connecting" ? detail : undefined);
+          // Preview-lane trial notice (v0.5 closeout item 3): fires
+          // once per meeting start, only for a session actually riding
+          // the server-minted credential — soniox OR tabaudio-cloud
+          // (tabAudioCloud.ts's own effectiveProvider forces the same
+          // path on this lane, so its BYOK check is the SAME
+          // settings.sonioxKey, never deepgramKey) — with no BYOK
+          // sonioxKey of the user's own.
+          if (
+            status === "listening" &&
+            !previewMintNoticeRef.current &&
+            SONIOX_PREVIEW_LANE &&
+            !settings.sonioxKey &&
+            (engine.kind === "soniox" || engine.kind === "tabaudio-cloud")
+          ) {
+            previewMintNoticeRef.current = true;
+            const s = getPreviewSessionSeconds() ?? 600;
+            useApp
+              .getState()
+              .showToast(
+                `预览体验：本段最长 ${Math.round(s / 60)} 分钟（每日限量），音频经 Soniox 云端转写、不留存`,
+              );
+          }
         } else if (status === "error") {
           attachFailed = true;
           // F6: set BEFORE runStopFlow's first await — see
@@ -343,6 +381,7 @@ export function useMeeting(): UseMeetingResult {
     if (status === "listening" || status === "connecting") return;
 
     diarReadyToastedRef.current = false;
+    previewMintNoticeRef.current = false;
     // S10 field-fix #6: a fresh session must never show a stale EMA
     // reading carried over from the previous one (lib/stt/latencyStats.
     // ts's own resetLagStats doc comment) — same per-session-start seam

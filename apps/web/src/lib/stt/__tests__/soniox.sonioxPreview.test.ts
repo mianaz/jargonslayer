@@ -35,7 +35,7 @@ import {
   installFakeMediaDevices,
   uninstallFakeMediaDevices,
 } from "./fakeMedia";
-import { SonioxEngine } from "../soniox";
+import { getPreviewSessionSeconds, SonioxEngine } from "../soniox";
 import { DEFAULT_SETTINGS, type STTEvents } from "@jargonslayer/core/types";
 
 function noopEvents(): STTEvents {
@@ -93,6 +93,40 @@ describe("SonioxEngine.start() — preview lane mint wiring", () => {
     const mintToken = await startAndCaptureMintToken("");
     await expect(mintToken!("")).resolves.toBe("minted-key-abc");
     expect(fetchMock).toHaveBeenCalledWith("/api/soniox/token", expect.objectContaining({ method: "POST" }));
+  });
+
+  // v0.5 closeout: session_seconds caching (getPreviewSessionSeconds) —
+  // useMeeting.ts's session-start notice quotes this instead of a
+  // hardcoded 600s.
+  it("caches session_seconds from a successful mint, readable via getPreviewSessionSeconds()", async () => {
+    expect(getPreviewSessionSeconds()).toBeNull();
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({ api_key: "minted-key-abc", expires_at: null, session_seconds: 480 }, 200),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const mintToken = await startAndCaptureMintToken("");
+    await mintToken!("");
+
+    expect(getPreviewSessionSeconds()).toBe(480);
+  });
+
+  it("a response with no session_seconds field leaves an already-cached value untouched", async () => {
+    // Self-contained (doesn't rely on the previous test's own cache
+    // side effect running first): primes the cache to 480, THEN mints
+    // again with a response that omits session_seconds entirely (e.g.
+    // an older deploy) — the omission must not blank it back to null.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ api_key: "minted-key-abc", expires_at: null, session_seconds: 480 }, 200)),
+    );
+    await (await startAndCaptureMintToken(""))!("");
+    expect(getPreviewSessionSeconds()).toBe(480);
+
+    vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ api_key: "minted-key-abc", expires_at: null }, 200)));
+    await (await startAndCaptureMintToken(""))!("");
+
+    expect(getPreviewSessionSeconds()).toBe(480);
   });
 
   it("a 429 preview_budget response rejects with the server's own zh error string (contains 额度)", async () => {

@@ -29,7 +29,7 @@
 import { useApp } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
-import { PREVIEW_TIER } from "@/lib/deployTier";
+import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "@/lib/deployTier";
 import { deriveEngineForMode } from "@/lib/stt/engineOptions";
 import { resolveEngineCapability } from "@/lib/stt/engineCapabilities";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
@@ -56,6 +56,9 @@ export interface ModeTileVisibility {
   isDesktop: boolean;
   isIos: boolean;
   isPreview: boolean;
+  /** Soniox preview lane (SONIOX_PREVIEW_LANE, deployTier.ts) — see the
+   *  ITEM 7 fix note below. */
+  sonioxPreviewLane: boolean;
 }
 
 /** Which tile KEYS render for a given platform/tier — pure and
@@ -66,17 +69,27 @@ export interface ModeTileVisibility {
  *  already imported it (repo precedent — see engineOptions.test.ts's own
  *  header comment; nothing in this repo mocks "@/lib/deployTier").
  *
- *  ITEM 1 fix (Sol#3): PREVIEW_TIER coerces BOTH tab-audio engines
- *  (sidecar tabaudio + BYOK tabaudio-cloud — store.ts's applyTierDefaults)
- *  down to webspeech, a MIC engine — a preview click on this tile used to
- *  persist mode:"tab" alongside an engine that doesn't capture tab audio
- *  at all (a lie: the tile silently became a microphone). Absent, not
- *  disabled (blueprint posture) — same `!isPreview` guard the url tile
- *  already had. */
+ *  ITEM 1 fix (Sol#3): PREVIEW_TIER used to coerce BOTH tab-audio
+ *  engines (sidecar tabaudio + BYOK tabaudio-cloud — store.ts's
+ *  applyTierDefaults) down to webspeech, a MIC engine — a preview click
+ *  on this tile used to persist mode:"tab" alongside an engine that
+ *  doesn't capture tab audio at all (a lie: the tile silently became a
+ *  microphone), so the tile was made absent rather than disabled
+ *  (blueprint posture, same `!isPreview` guard the url tile already
+ *  had).
+ *
+ *  ITEM 7 fix (v0.5 closeout, Soniox preview lane): the lie is now cured
+ *  for THIS one path — on the lane, tabaudio-cloud always routes
+ *  through minted Soniox (tabAudioCloud.ts's own effectiveProvider
+ *  override), a real capture engine preview can actually run — so the
+ *  tile is restored (`sonioxPreviewLane` carve-out) instead of staying
+ *  absent. Independent of the lane, the tile is still absent on plain
+ *  preview (no trial funded) — same "absent, not disabled" posture as
+ *  before. */
 export function visibleModeTileKeys(v: ModeTileVisibility): ModeTileKey[] {
   const keys: ModeTileKey[] = [];
   if (v.isDesktop) keys.push("system-audio");
-  if (!v.isDesktop && !v.isIos && !v.isPreview) keys.push("tab");
+  if (!v.isDesktop && !v.isIos && (!v.isPreview || v.sonioxPreviewLane)) keys.push("tab");
   keys.push("mic");
   keys.push("import");
   if (!v.isIos && !v.isPreview) keys.push("url");
@@ -127,7 +140,12 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
   // reads off that pure, testable function instead of an inline
   // IS_DESKTOP/IS_IOS/PREVIEW_TIER expression.
   const visibleTiles = new Set(
-    visibleModeTileKeys({ isDesktop: IS_DESKTOP, isIos: IS_IOS, isPreview: PREVIEW_TIER }),
+    visibleModeTileKeys({
+      isDesktop: IS_DESKTOP,
+      isIos: IS_IOS,
+      isPreview: PREVIEW_TIER,
+      sonioxPreviewLane: SONIOX_PREVIEW_LANE,
+    }),
   );
 
   const tiles: ModeTile[] = [];

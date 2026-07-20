@@ -36,8 +36,10 @@
 // no transport ever constructed.
 
 import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
+import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "../deployTier";
 import { SonioxTransport } from "./sonioxTransport";
 import { DeepgramTransport } from "./deepgramTransport";
+import { mintPreviewToken } from "./soniox";
 import { resolveTabAudioCloudProvider, type TabAudioCloudProvider } from "./engineCapabilities";
 
 const PROVIDER_NAME: Record<TabAudioCloudProvider, string> = {
@@ -58,12 +60,28 @@ export class TabAudioCloudEngine implements STTEngine {
     this.events = events;
     this.stopping = false;
 
-    const provider = resolveTabAudioCloudProvider(settings);
-    const key = provider === "deepgram" ? settings.deepgramKey : settings.sonioxKey;
-    if (!key) {
+    // Soniox preview lane INVARIANT (lead-pinned, v0.5 closeout): on
+    // this lane, tabaudio-cloud ALWAYS takes the minted-Soniox path — a
+    // persisted/restored tabAudioCloudProvider:"deepgram" (no server
+    // trial exists for Deepgram) must not re-create a dead tab tile by
+    // reading resolveTabAudioCloudProvider unconditionally. The
+    // `SONIOX_PREVIEW_LANE && PREVIEW_TIER` check is redundant on its
+    // face (the lane const already implies the tier — deployTier.ts)
+    // but deliberately spelled out anyway, mirroring the route's own
+    // two-factor posture (api/soniox/token/route.ts).
+    const effectiveProvider: TabAudioCloudProvider =
+      SONIOX_PREVIEW_LANE && PREVIEW_TIER ? "soniox" : resolveTabAudioCloudProvider(settings);
+    const key = effectiveProvider === "deepgram" ? settings.deepgramKey : settings.sonioxKey;
+    // Mint path (mirrors soniox.ts's own SonioxEngine.start doc): a
+    // keyless start is allowed ONLY when the lane is actually funding a
+    // server-minted session for THIS (forced) provider — a deliberate
+    // BYOK sonioxKey always still wins over the mint, see the transport
+    // construction below.
+    const mintable = effectiveProvider === "soniox" && SONIOX_PREVIEW_LANE;
+    if (!key && !mintable) {
       events.onStatus(
         "error",
-        `标签页音频·云端需要 ${PROVIDER_NAME[provider]} API Key，请前往设置填写后重试`,
+        `标签页音频·云端需要 ${PROVIDER_NAME[effectiveProvider]} API Key，请前往设置填写后重试`,
       );
       return;
     }
@@ -122,9 +140,14 @@ export class TabAudioCloudEngine implements STTEngine {
     this.audioTrack.addEventListener("ended", this.handleTrackEnded);
 
     const transport =
-      provider === "deepgram"
+      effectiveProvider === "deepgram"
         ? new DeepgramTransport({ events, settings })
-        : new SonioxTransport({ events, settings, lexicon });
+        : new SonioxTransport({
+            events,
+            settings,
+            lexicon,
+            mintToken: SONIOX_PREVIEW_LANE && !settings.sonioxKey ? mintPreviewToken : undefined,
+          });
     this.transport = transport;
 
     try {

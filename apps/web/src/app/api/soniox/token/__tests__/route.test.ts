@@ -53,7 +53,7 @@ describe("POST /api/soniox/token", () => {
     expect((await res.json()).code).toBe("no_key");
   });
 
-  it("mints a session-capped single-use key and returns ONLY api_key/expires_at", async () => {
+  it("mints a session-capped single-use key and returns ONLY api_key/expires_at/session_seconds", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(mintedResponse()));
     global.fetch = fetchMock as unknown as typeof fetch;
 
@@ -61,7 +61,7 @@ describe("POST /api/soniox/token", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toBe("no-store");
     const json = await res.json();
-    expect(json).toEqual({ api_key: "temp:ABC123", expires_at: "2026-07-20T00:02:00Z" });
+    expect(json).toEqual({ api_key: "temp:ABC123", expires_at: "2026-07-20T00:02:00Z", session_seconds: 600 });
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("https://api.soniox.com/v1/auth/temporary-api-key");

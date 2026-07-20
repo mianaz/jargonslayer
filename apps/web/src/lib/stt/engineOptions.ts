@@ -272,16 +272,24 @@ export interface EngineOptionGate {
  *  byokOnly preview lock is lifted while the lane is on — it can now
  *  actually run on a server-minted key (stt/soniox.ts's SonioxEngine.
  *  start), so the option is left selectable with an honest trial title
- *  instead of PREVIEW_LOCKED_TITLE. Every OTHER byokOnly/sidecarOnly
- *  option (deepgram included) keeps the exact same lock as before — this
- *  is a soniox-specific carve-out, not a blanket preview unlock, same
- *  posture as applyTierDefaults' own soniox exception (store.ts). */
+ *  instead of PREVIEW_LOCKED_TITLE. tabaudio-cloud joins the SAME
+ *  carve-out: its own start() always forces the identical minted-Soniox
+ *  path on this lane (tabAudioCloud.ts's effectiveProvider), regardless
+ *  of the persisted tabAudioCloudProvider, so it is equally real to
+ *  leave selectable — same SONIOX_PREVIEW_TRIAL_TITLE, since the
+ *  trial's limits are identical either way (one shared server
+ *  credential/budget). Every OTHER byokOnly/sidecarOnly option
+ *  (deepgram included) keeps the exact same lock as before — this is a
+ *  two-engine carve-out for the ONE lane-funded mechanism, not a
+ *  blanket preview unlock, same posture as applyTierDefaults' own
+ *  soniox+tabaudio-cloud exception (store.ts). */
 export function engineOptionGate(
   opt: EngineOption,
   audiocapCaps: AudiocapCapabilities | null,
   osspeechCaps?: OsSpeechCapabilities | null,
 ): EngineOptionGate {
-  const sonioxPreviewTrial = SONIOX_PREVIEW_LANE && opt.value === "soniox";
+  const sonioxPreviewTrial =
+    SONIOX_PREVIEW_LANE && (opt.value === "soniox" || opt.value === "tabaudio-cloud");
   const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly) && !sonioxPreviewTrial;
   const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
   const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osspeechCaps ?? null);
@@ -406,8 +414,16 @@ export function deriveEngineForMode(
         ? "osspeech" // unreachable via the real tile set (iOS has no system-audio mode)
         : "webspeech"; // unreachable via the real tile set (web has no system-audio capture)
   } else if (mode === "tab") {
+    // Soniox preview lane (SONIOX_PREVIEW_LANE): tabaudio-cloud is
+    // reachable with NO key at all here — tabAudioCloud.ts's own
+    // start() unconditionally forces the minted-Soniox path on this
+    // lane (effectiveProvider), so a missing/mismatched BYOK key is no
+    // longer proof the tile can't run (mirrors this same function's own
+    // mic-branch soniox exception below, and applyTierDefaults' own
+    // soniox+tabaudio-cloud carve-out, store.ts).
     const providerKeyPresent =
-      settings.tabAudioCloudProvider === "deepgram" ? !!settings.deepgramKey : !!settings.sonioxKey;
+      SONIOX_PREVIEW_LANE ||
+      (settings.tabAudioCloudProvider === "deepgram" ? !!settings.deepgramKey : !!settings.sonioxKey);
     candidate = providerKeyPresent ? "tabaudio-cloud" : "tabaudio";
   } else {
     // mode === "mic"

@@ -705,14 +705,25 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *  "soniox" is carved OUT of group 1's coercion (survives instead of
  *  falling to webspeech) when `sonioxPreviewLane` is true, since a
  *  preview user can now actually run it on a server-minted key (see
- *  stt/soniox.ts's SonioxEngine.start). Every OTHER byokOnly/sidecarOnly
- *  engine in group 1 (deepgram included) keeps coercing exactly as
- *  before — the lane is soniox-specific, not a blanket preview unlock.
- *  Defaults to the real build-time const so every existing call site
- *  (this function has two: migrateSettings below, and engineOptions.
- *  ts's deriveEngineForMode) keeps compiling and behaving unchanged
- *  without passing a 4th argument; tests drive it explicitly instead
- *  (see store.test.ts) since the pure-function contract is otherwise
+ *  stt/soniox.ts's SonioxEngine.start). "tabaudio-cloud" joins the SAME
+ *  carve-out, UNCONDITIONALLY on the stored tabAudioCloudProvider —
+ *  tabAudioCloud.ts's own start() always forces the identical
+ *  minted-Soniox path on this lane (effectiveProvider), regardless of
+ *  whether the persisted provider is "soniox" or a stale "deepgram" (no
+ *  trial exists for Deepgram — see that file's own INVARIANT comment),
+ *  so a persisted "deepgram" pick must not be re-coerced away here
+ *  either; the RUNTIME override, not this coercion, is what makes a
+ *  stale deepgram pick harmless. "tabaudio" (the local-sidecar engine,
+ *  no cloud/mint path at all) is NOT part of this carve-out and keeps
+ *  coercing exactly as before. Every OTHER byokOnly/sidecarOnly engine
+ *  in group 1 (deepgram included) also keeps coercing exactly as
+ *  before — the lane is a two-engine carve-out for the ONE lane-funded
+ *  mechanism, not a blanket preview unlock. Defaults to the real
+ *  build-time const so every existing call site (this function has
+ *  two: migrateSettings below, and engineOptions.ts's
+ *  deriveEngineForMode) keeps compiling and behaving unchanged without
+ *  passing a 4th argument; tests drive it explicitly instead (see
+ *  store.test.ts) since the pure-function contract is otherwise
  *  identical to isPreview/_hadSavedEngine above. */
 export function applyTierDefaults(
   settings: Settings,
@@ -721,7 +732,9 @@ export function applyTierDefaults(
   sonioxPreviewLane: boolean = SONIOX_PREVIEW_LANE,
 ): Settings {
   if (!isPreview) return settings;
-  if (settings.engine === "soniox" && sonioxPreviewLane) return settings;
+  if (sonioxPreviewLane && (settings.engine === "soniox" || settings.engine === "tabaudio-cloud")) {
+    return settings;
+  }
   if (
     settings.engine === "whisper" ||
     settings.engine === "tabaudio" ||
