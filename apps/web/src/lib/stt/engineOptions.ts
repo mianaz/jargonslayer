@@ -52,6 +52,7 @@ import {
   osSpeechLockReason,
   type OsSpeechCapabilities,
 } from "@/lib/desktop/osspeechCaps";
+import { derivePosture, ENGINE_CAPABILITIES, type LiveEngineKind } from "./engineCapabilities";
 
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine, so it has exactly one affordance: the ≡ menu's 演示 item.
@@ -63,6 +64,13 @@ import {
 // everything, no dead ends). byokOnly (v0.4 S4, blueprint decision E):
 // soniox is an unproven BYOK cloud engine (no local sidecar involved,
 // but not benchmark-cleared either) — same preview lock as sidecarOnly.
+//
+// v0.4.7 (stt-provider-wiring-2026-07.md, Lane A, D5/D6): this shape
+// stays exactly as it was — ENGINE_OPTIONS/engineOptionGate's own
+// consumers (Header/StatusLine) are untouched by that doc's lanes —
+// but the arrays below are now PROJECTIONS of the new capability
+// contract (engineCapabilities.ts) instead of separately hand-authored
+// literals, so `label` has exactly one source across both.
 export interface EngineOption {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
@@ -71,33 +79,40 @@ export interface EngineOption {
   byokOnly?: boolean;
 }
 
+function toEngineOption(kind: LiveEngineKind): EngineOption {
+  const cap = ENGINE_CAPABILITIES[kind];
+  return {
+    value: cap.kind,
+    label: cap.label,
+    posture: derivePosture(cap.retentionClass),
+    sidecarOnly: cap.sidecarOnly,
+    byokOnly: cap.byokOnly,
+  };
+}
+
 const ALL_ENGINE_OPTIONS: EngineOption[] = [
-  { value: "webspeech", label: "浏览器识别", posture: "cloud" },
-  { value: "whisper", label: "本地 Whisper", posture: "local", sidecarOnly: true },
-  IS_DESKTOP
-    ? { value: "appaudio", label: "系统/App 音频", posture: "local", sidecarOnly: true }
-    : { value: "tabaudio", label: "标签页音频", posture: "local", sidecarOnly: true },
+  toEngineOption("webspeech"),
+  toEngineOption("whisper"),
+  IS_DESKTOP ? toEngineOption("appaudio") : toEngineOption("tabaudio"),
   // S11 (v0.4.3, docs/design-explorations/s11-osspeech-blueprint.md) —
   // Zero-Install 系统识别: desktop-only (macOS 26+ gated via
   // engineOptionGate below, not here — mirrors appaudio's own
   // macOS-14.4 floor gate). NOT sidecarOnly (it needs no local Whisper
   // sidecar at all — the whole point is zero-install), so it is
   // structurally unaffected by the #61 preview-tier lock.
-  ...(IS_DESKTOP
-    ? [{ value: "osspeech" as const, label: "系统识别 · 开箱即用", posture: "local" as const }]
-    : []),
-  { value: "soniox", label: "Soniox 云端识别", posture: "cloud", byokOnly: true },
+  ...(IS_DESKTOP ? [toEngineOption("osspeech")] : []),
+  toEngineOption("soniox"),
 ];
 
 // S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D): iOS
 // v1 = mic-only, single native engine — osspeech ONLY (label byte-
 // identical to the desktop entry above, Miana-veto #2: the two surfaces
-// must never say this engine's name differently). No webspeech/whisper/
+// must never say this engine's name differently — now structurally
+// guaranteed, not just conventionally matched, since both project off
+// the SAME ENGINE_CAPABILITIES.osspeech.label). No webspeech/whisper/
 // tabaudio/appaudio/soniox/mlx on iOS v1 (Soniox deferred, blueprint D7)
 // — none has an iOS capture path in v1's scope.
-const IOS_ENGINE_OPTIONS: EngineOption[] = [
-  { value: "osspeech", label: "系统识别 · 开箱即用", posture: "local" },
-];
+const IOS_ENGINE_OPTIONS: EngineOption[] = [toEngineOption("osspeech")];
 
 /** PINNED CONTRACT (S10 blueprint wave 2): StatusLine's engine dropdown
  *  and Header's EnginePostureChip both consume this exact list — see
