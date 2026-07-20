@@ -433,6 +433,111 @@ describe("deliverSessionNotes — payload delivery + ledger idempotency", () => 
   });
 });
 
+describe("deliverSessionNotes — per-session in-flight serialization", () => {
+  it("two overlapping deliveries for the SAME session serialize — the second only starts once the first's ledger writes have landed, so addNotes is never sent twice", async () => {
+    const cards = [makeCard()];
+    const calls: AnkiCall[] = [];
+    let releaseAddNotes: () => void = () => {};
+    const addNotesStarted = new Promise<void>((resolveStarted) => {
+      global.fetch = vi.fn(async (_url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body) as AnkiCall;
+        calls.push(body);
+        if (body.action === "canAddNotes") {
+          return { json: async () => ({ result: [true], error: null }) } as Response;
+        }
+        // addNotes hangs until the test releases it — this holds the
+        // first delivery mid-flight (past its ledger.hasSent read, but
+        // before its ledger.markSent write) so the second call is
+        // issued into exactly the race window being closed.
+        resolveStarted();
+        await new Promise<void>((resolve) => {
+          releaseAddNotes = resolve;
+        });
+        return { json: async () => ({ result: [111], error: null }) } as Response;
+      }) as unknown as typeof fetch;
+    });
+    const ledger = makeFakeLedger();
+    const cfg = { deckName: "JargonSlayer", port: 8765 };
+    const session = makeSession({}, cards);
+
+    const first = deliverSessionNotes(session, cfg, ledger);
+    await addNotesStarted;
+    const second = deliverSessionNotes(session, cfg, ledger);
+    releaseAddNotes();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult).toEqual({ sent: 1, skipped: 0 });
+    expect(secondResult).toEqual({ sent: 0, skipped: 1 });
+    expect(calls.filter((c) => c.action === "addNotes")).toHaveLength(1);
+    expect(ledger.sentKeys.size).toBe(1);
+  });
+
+  it("different sessions are NOT serialized against each other", async () => {
+    const cardA = makeCard({ front: "circle back" });
+    const cardB = makeCard({ front: "touch base" });
+    let releaseAddNotesA: () => void = () => {};
+    const addNotesAStarted = new Promise<void>((resolveStarted) => {
+      global.fetch = vi.fn(async (_url: string, init: { body: string }) => {
+        const body = JSON.parse(init.body) as AnkiCall;
+        if (body.action === "canAddNotes") {
+          return { json: async () => ({ result: [true], error: null }) } as Response;
+        }
+        const notes = (body.params as { notes: Array<{ fields: { Front: string } }> }).notes;
+        if (notes[0].fields.Front !== cardA.front) {
+          return { json: async () => ({ result: [222], error: null }) } as Response;
+        }
+        // Only session "a"'s addNotes hangs — session "b" must resolve
+        // without ever waiting on it.
+        resolveStarted();
+        await new Promise<void>((resolve) => {
+          releaseAddNotesA = resolve;
+        });
+        return { json: async () => ({ result: [111], error: null }) } as Response;
+      }) as unknown as typeof fetch;
+    });
+    const ledger = makeFakeLedger();
+    const cfg = { deckName: "JargonSlayer", port: 8765 };
+
+    const first = deliverSessionNotes(makeSession({ id: "session-a" }, [cardA]), cfg, ledger);
+    await addNotesAStarted;
+    const second = await deliverSessionNotes(makeSession({ id: "session-b" }, [cardB]), cfg, ledger);
+    expect(second).toEqual({ sent: 1, skipped: 0 });
+
+    releaseAddNotesA();
+    expect(await first).toEqual({ sent: 1, skipped: 0 });
+  });
+
+  it("a REJECTED delivery does not poison the per-session chain — a later delivery for the same session still runs", async () => {
+    const cards = [makeCard()];
+    global.fetch = routedFetch(
+      { canAddNotes: () => ({ result: [true] }), addNotes: () => ({ result: [111] }) },
+      [],
+    ) as unknown as typeof fetch;
+    const realLedger = makeFakeLedger();
+    let hasSentCalls = 0;
+    // A ledger whose FIRST call rejects — violates AnkiDeliveryLedger's
+    // own "must never throw" contract deliberately, to prove the
+    // serialization queue survives a misbehaving/failed link rather than
+    // wedging every later delivery for the session.
+    const flakyLedger: AnkiDeliveryLedger = {
+      async hasSent(sessionId, fingerprint) {
+        hasSentCalls++;
+        if (hasSentCalls === 1) throw new Error("ledger boom");
+        return realLedger.hasSent(sessionId, fingerprint);
+      },
+      markSent: realLedger.markSent,
+    };
+    const cfg = { deckName: "JargonSlayer", port: 8765 };
+    const session = makeSession({}, cards);
+
+    await expect(deliverSessionNotes(session, cfg, flakyLedger)).rejects.toThrow("ledger boom");
+
+    const second = await deliverSessionNotes(session, cfg, flakyLedger);
+    expect(second).toEqual({ sent: 1, skipped: 0 });
+    expect(realLedger.sentKeys.size).toBe(1);
+  });
+});
+
 describe("ankiLedger — the real IDB-backed implementation", () => {
   it("hasSent is false until markSent is called for that exact (sessionId, fingerprint) pair", async () => {
     expect(await ankiLedger.hasSent("s1", "fp-a")).toBe(false);

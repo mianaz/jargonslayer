@@ -291,7 +291,7 @@ export interface AnkiDeliveryResult {
  *  Never throws — mirrors autoExport.ts's postWebhook/
  *  exportSessionToFolder fire-and-forget contract, since this is
  *  designed to run from the same post-save path. */
-export async function deliverSessionNotes(
+async function deliverSessionNotesImpl(
   session: MeetingSession,
   cfg: AnkiConnectDeliveryConfig,
   ledger: AnkiDeliveryLedger,
@@ -338,4 +338,52 @@ export async function deliverSessionNotes(
   }
 
   return { sent, skipped: total - sent };
+}
+
+// ---------------------------------------------------------------
+// deliverSessionNotes — per-session in-flight serialization (Sol review
+// follow-up, v0.5 Wave-1: "anki per-session delivery serialization").
+// ---------------------------------------------------------------
+
+// Race window this closes: deliverSessionNotesImpl's candidates loop
+// above reads ledger.hasSent for every card FIRST; the matching
+// ledger.markSent write only happens much later, after the addNotes
+// network round trip resolves. The ledger is idempotent ACROSS
+// separate, sequential saves, but two overlapping deliverSessionNotes
+// calls for the SAME session (rapid double-save, or a save landing
+// while a slow AnkiConnect roundtrip is still in flight) both run that
+// read phase before either has written anything — both see "not sent"
+// and both send, duplicating notes despite the ledger. Chaining a
+// session's calls one after another closes the window: a queued call's
+// own ledger read cannot start until the call ahead of it has fully
+// settled (reads AND writes). Keyed per session id (not one global
+// lock) so unrelated sessions are never made to wait on each other.
+const sessionQueues = new Map<string, Promise<void>>();
+
+/** Runs deliverSessionNotesImpl only after any in-flight delivery for
+ *  the same session has settled — see the race-window comment above.
+ *  A rejected prior delivery is swallowed before chaining off it
+ *  (`.catch(() => undefined)`) so one failed call can never poison the
+ *  chain for every later delivery of that session; the promise returned
+ *  to THIS call's own caller still rejects normally when its own run
+ *  fails. The queue entry clears itself once settled (re-checked by
+ *  identity first, in case a newer call already replaced it), so this
+ *  map never leaks/grows for the life of the tab. */
+export async function deliverSessionNotes(
+  session: MeetingSession,
+  cfg: AnkiConnectDeliveryConfig,
+  ledger: AnkiDeliveryLedger,
+): Promise<AnkiDeliveryResult> {
+  const { id: sessionId } = session;
+  const prior = sessionQueues.get(sessionId) ?? Promise.resolve();
+  const chained = prior.catch(() => undefined).then(() => deliverSessionNotesImpl(session, cfg, ledger));
+  const marker = chained.then(
+    () => undefined,
+    () => undefined,
+  );
+  sessionQueues.set(sessionId, marker);
+  marker.then(() => {
+    if (sessionQueues.get(sessionId) === marker) sessionQueues.delete(sessionId);
+  });
+  return chained;
 }
