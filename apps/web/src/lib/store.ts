@@ -67,10 +67,36 @@ export function scheduleSessionSave(
 }
 
 export interface LookupRequest {
+  // Stable per-selection id, minted once in TranscriptPanel's
+  // selectionLookupRequest (background 划词 card generation, v0.5
+  // closeout) — keys the background pipeline's progress state
+  // (lib/tasks/selectionLookup.ts's useSelectionLookup) so the detect/
+  // dictionary pipeline can run to completion independent of this
+  // popover's own open/closed lifecycle. See LookupPopover.tsx's header
+  // comment for the bug this fixes (closing the popover used to discard
+  // an in-flight ~20s AI result).
+  id: string;
   text: string; // selected text
   contextText: string; // surrounding segment text, for disambiguation
   x: number; // viewport coords for the popover
   y: number;
+}
+
+// lib/llm/client.ts already imports `useApp` FROM this file (its own
+// header comment) — a static import here of anything that reaches
+// detectApi (lib/tasks/selectionLookup.ts -> llm/client.ts) would close
+// a real cycle back into store.ts. A dynamic import resolves after this
+// module has already finished its own top-level evaluation, so there's
+// no cycle in practice; mirrors lib/desktop/bootstrap.ts's/lib/oauth/
+// openrouterDesktop.ts's own `await import("../store")` idiom for
+// exactly this class of problem, just applied in the opposite
+// direction (keeping llm/client.ts's own sizeable graph — provider
+// clients, subscription-direct, telemetry — out of THIS file's static
+// graph instead). runSelectionLookup itself never throws (see that
+// module's own doc), so this fire-and-forget is safe.
+async function triggerSelectionLookup(req: LookupRequest, settings: Settings): Promise<void> {
+  const { runSelectionLookup } = await import("./tasks/selectionLookup");
+  void runSelectionLookup(req, settings);
 }
 
 export interface ToastAction {
@@ -1490,7 +1516,18 @@ export const useApp = create<AppState>((set, get) => ({
   setDetectBusy: (detectBusy) => set({ detectBusy }),
   setDetectMode: (detectMode) => set({ detectMode }),
   setFocusCard: (focusCardId) => set({ focusCardId }),
-  setLookup: (lookup) => set({ lookup }),
+  // Background 划词 card generation (v0.5 closeout): setLookup is the
+  // single trigger for the selection-lookup pipeline — every UI call
+  // site (TranscriptPanel's mouse + touch paths) just calls this, so
+  // the pipeline can never be duplicated or forgotten at some future
+  // third call site. Fire-and-forget: from here on the pipeline owns
+  // its own progress/task-registry/toast lifecycle independent of
+  // whatever this popover does next (close/reselect/navigate away) —
+  // see lib/tasks/selectionLookup.ts's own header.
+  setLookup: (lookup) => {
+    set({ lookup });
+    if (lookup) void triggerSelectionLookup(lookup, get().settings);
+  },
 
   setSummary: (summary) => set({ summary }),
   setSummarizing: (summarizing) => set({ summarizing }),

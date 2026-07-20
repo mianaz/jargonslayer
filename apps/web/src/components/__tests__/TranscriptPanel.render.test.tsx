@@ -585,6 +585,14 @@ describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => 
       status: "listening",
       focusMode: false,
       lookup: null,
+      // Background 划词 card generation (v0.5 closeout): setLookup now
+      // triggers a real detect pipeline (lib/tasks/selectionLookup.ts).
+      // This suite's tests below call the REAL setLookup via simulated
+      // mouseup/touch-bar interactions and don't mock lib/llm/client —
+      // aiDetect:false keeps that pipeline on the synchronous,
+      // network-free dictionary path (irrelevant to what these tests
+      // actually assert: setLookup's request shape / bar visibility).
+      settings: { ...useApp.getState().settings, aiDetect: false },
     });
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -609,6 +617,7 @@ describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => 
       interim: null,
       translations: {},
       lookup: null,
+      settings: { ...useApp.getState().settings, aiDetect: true },
     });
   });
 

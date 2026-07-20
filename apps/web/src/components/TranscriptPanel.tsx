@@ -19,7 +19,12 @@ import {
 import { formatElapsedClock, segmentElapsedMs } from "../lib/segmentElapsed";
 import { resolveTaskCreds } from "../lib/llm/taskConfig";
 import { PREVIEW_TIER } from "../lib/deployTier";
-import type { ExpressionCard, TermCard, TranscriptSegment } from "@jargonslayer/core/types";
+import {
+  newId,
+  type ExpressionCard,
+  type TermCard,
+  type TranscriptSegment,
+} from "@jargonslayer/core/types";
 import HoverGlossCard, { type GlossItem } from "./HoverGlossCard";
 import SpeakerAssignPopover, { type SpeakerAssignRequest } from "./SpeakerAssignPopover";
 import CorrectionReview from "./CorrectionReview";
@@ -780,7 +785,13 @@ function selectionLookupRequest(container: HTMLElement): LookupRequest | null {
   const range = selection.getRangeAt(0);
   const rect = range.getBoundingClientRect();
 
-  return { text, contextText, x: rect.left, y: rect.bottom };
+  // id minted here (background 划词 card generation, v0.5 closeout):
+  // this is the one place every real LookupRequest gets built (both the
+  // mouse and touch entry points below call this same helper), so it's
+  // the natural single choke point for the id setLookup's pipeline
+  // trigger keys progress/task-registry state on — see LookupRequest.id's
+  // own doc comment in store.ts.
+  return { id: newId(), text, contextText, x: rect.left, y: rect.bottom };
 }
 
 export interface TranscriptPanelProps {
