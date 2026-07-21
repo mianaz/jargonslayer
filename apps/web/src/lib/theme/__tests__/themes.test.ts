@@ -26,7 +26,7 @@ function contrastRatio(a: string, b: string): number {
 }
 
 describe("BUILTIN_THEMES", () => {
-  it("contains exactly the seven shipped builtins, in registry order", () => {
+  it("contains exactly the nine shipped builtins, in registry order", () => {
     expect(BUILTIN_THEMES.map((t) => t.id)).toEqual([
       "terminal",
       "terminal-light",
@@ -35,6 +35,8 @@ describe("BUILTIN_THEMES", () => {
       "grimoire",
       "noir",
       "qinglv",
+      "8bit",
+      "sketch",
     ]);
   });
 
