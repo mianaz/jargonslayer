@@ -6,7 +6,7 @@
 // Deliberately does NOT replace 翻卡浏览 — the two modes ship in
 // parallel per the design (usage decides later, see PLAN-v0.3.0.md).
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
 import type { CustomEntry, ExpressionCard, MeetingSession, TermCard } from "@jargonslayer/core/types";
 import { learnKey } from "@/lib/learn/store";
@@ -148,7 +148,20 @@ function EmptyDueState({ pendingRelearn }: { pendingRelearn: boolean }) {
   );
 }
 
-export default function DueReview({ cache }: { cache: Record<string, MeetingSession> }) {
+export default function DueReview({
+  cache,
+  onQueueEmptied,
+}: {
+  cache: Record<string, MeetingSession>;
+  /** Fires once when the due queue transitions >0 → 0, i.e. the user's
+   *  grade just cleared the last due card — NOT on mounting with an
+   *  already-empty queue. The transition can only come from a learnset
+   *  write: the queue is time-dependent (30s tick below) but time only
+   *  ever ADDS due cards (dueAt <= now), never removes them, so a
+   *  shrink to zero is always a completed session. (v0.5.1 Bit sprint:
+   *  review/page.tsx wires this to the store's celebrateBit nonce.) */
+  onQueueEmptied?: () => void;
+}) {
   const learnset = useApp((s) => s.learnset);
   const customEntries = useApp((s) => s.customEntries);
   const gradeReview = useApp((s) => s.gradeReview);
@@ -180,6 +193,21 @@ export default function DueReview({ cache }: { cache: Record<string, MeetingSess
     () => composeReviewQueue(learnset, candidates, now),
     [learnset, candidates, now],
   );
+
+  // >0 → 0 transition watcher for onQueueEmptied (see the prop doc).
+  // The callback rides a per-render ref so a parent passing a fresh
+  // arrow each render can't re-run the effect; the null-seeded prev ref
+  // guarantees the first observation never fires, whatever it is.
+  const onQueueEmptiedRef = useRef(onQueueEmptied);
+  onQueueEmptiedRef.current = onQueueEmptied;
+  const prevQueueLenRef = useRef<number | null>(null);
+  useEffect(() => {
+    const prev = prevQueueLenRef.current;
+    prevQueueLenRef.current = queue.length;
+    if (prev !== null && prev > 0 && queue.length === 0) {
+      onQueueEmptiedRef.current?.();
+    }
+  }, [queue.length]);
 
   const current = queue[0] ?? null;
   const [flipped, setFlipped] = useState(false);

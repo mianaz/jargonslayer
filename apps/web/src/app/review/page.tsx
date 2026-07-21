@@ -35,6 +35,12 @@ export default function ReviewPage() {
     if (!hydrated) void hydrate();
   }, [hydrated, hydrate]);
 
+  // Bit celebration seam (v0.5.1 Bit sprint): DueReview owns the queue
+  // and reports the "a grade just cleared the last due card" moment
+  // through onQueueEmptied (see its prop doc for the transition
+  // semantics) — store nonce (celebrateBit) → PixelDragon.
+  const handleQueueEmptied = () => useApp.getState().celebrateBit();
+
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel/85 px-4 backdrop-blur">
@@ -74,7 +80,7 @@ export default function ReviewPage() {
               </button>
             ))}
           </div>
-          {mode === "due" ? <DueReview cache={cache} /> : <PracticeDeck />}
+          {mode === "due" ? <DueReview cache={cache} onQueueEmptied={handleQueueEmptied} /> : <PracticeDeck />}
         </div>
       </main>
 

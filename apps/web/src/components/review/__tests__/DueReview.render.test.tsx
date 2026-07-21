@@ -140,4 +140,55 @@ describe("DueReview — queue re-evaluates time while mounted (F2 MEDIUM)", () =
     expect(container!.textContent).toContain("今天没有待复习的词条");
     expect(container!.textContent).not.toContain("circle back");
   });
+
+  // v0.5.1 Bit sprint: onQueueEmptied fires on the >0→0 transition a
+  // grade causes — never on mounting an already-empty queue, and AGAIN
+  // when a resurfaced relearn card is cleared a second time (per-
+  // session, not a one-shot latch). Uses the same real grading UI as
+  // the F2 tests above, so the transition is driven by the actual
+  // gradeReview store write, not a synthetic state poke.
+  it("onQueueEmptied fires once per queue-clearing grade, not on mount", async () => {
+    const onQueueEmptied = vi.fn();
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} onQueueEmptied={onQueueEmptied} />);
+    });
+
+    // Mount with a non-empty queue: no fire.
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+
+    const grade0 = () =>
+      Array.from(container!.querySelectorAll("button")).find(
+        (b) => b.textContent === "不认识",
+      )!;
+    await act(async () => {
+      grade0().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(onQueueEmptied).toHaveBeenCalledTimes(1);
+
+    // Relearn step elapses → the card resurfaces (0→1: still one call).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RELEARN_STEP_MS + 30_000);
+    });
+    expect(onQueueEmptied).toHaveBeenCalledTimes(1);
+
+    // Clearing it again fires again.
+    await act(async () => {
+      grade0().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(onQueueEmptied).toHaveBeenCalledTimes(2);
+  });
+
+  it("onQueueEmptied does NOT fire when mounted with an already-empty queue", async () => {
+    const onQueueEmptied = vi.fn();
+    useApp.setState({ learnset: {} });
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} onQueueEmptied={onQueueEmptied} />);
+    });
+    expect(container!.textContent).toContain("今天没有待复习的词条");
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+  });
 });

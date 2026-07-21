@@ -31,6 +31,11 @@ import {
   type DragonPose,
   type Particle,
 } from "@/lib/pixelDragon";
+import {
+  BIT_COSTUMES,
+  resolveBitCostume,
+  type BitCostumeId,
+} from "@/lib/bitCostumes";
 
 // ── palette (mirrors globals terminal tokens; kept local so the widget
 //    is fully self-contained per the component contract) ────────────
@@ -474,11 +479,44 @@ function Rects({ px }: { px: Px[] }) {
 // REACT SHELL
 // ───────────────────────────────────────────────────────────────────
 
+// CELEBRATION (v0.5.1 Bit sprint): a one-shot ~2.5s overlay triggered by
+// the store's bitCelebrateNonce, kept ENTIRELY component-local instead
+// of a machine event/state. Reusing the machine's real "burst" pose
+// instead would inherit two things that don't fit: BURST_MS's 600ms
+// auto-revert (the burst-lifecycle effect below dispatches burstDone
+// on its own timeout) and that same effect's own setParticles call,
+// which fires on every machine.pose/burstQueue change and would
+// immediately clobber a denser celebration batch with its usual 5-8
+// count. A celebration doesn't need to interact with the sleep / hold /
+// burst-queue rules the machine exists to encode — it only needs to
+// override the RENDER for a fixed window and fall back to whatever the
+// machine already says, which a local override gets for free
+// (self-restoring even mid-listening or mid-sleep, since machine.pose
+// is never touched by it). Exported so the test file doesn't hardcode
+// this timing (same posture as TranscriptPanel.tsx's own exported
+// INTERIM_THROTTLE_MS/etc.).
+export const CELEBRATE_MS = 2500;
+
 export default function PixelDragon({ size = 40 }: { size?: number }) {
   // store subscriptions (read-only — never mutate the store)
   const status = useApp((s) => s.status);
   const cardCount = useApp((s) => s.cards.length + s.terms.length);
   const listening = status === "listening";
+
+  // costume (v0.5.1 Bit sprint): two primitive string reads, no
+  // useShallow needed — neither selector derives a new object/array
+  // (the repo-wide useShallow invariant, see lib/tasks/registry.ts's
+  // own doc, only applies to DERIVED references; bare primitives are
+  // safe as-is, same posture as `status`/`cardCount` above).
+  // resolveBitCostume takes the wide `string` deliberately (core's
+  // Settings.bitCostume can't carry the apps/web union — validation
+  // lives inside the resolver, once, instead of as casts at call sites).
+  const bitCostumeSetting = useApp((s) => s.settings.bitCostume);
+  const themeId = useApp((s) => s.settings.themeId);
+  const costume = useMemo(() => {
+    const id = resolveBitCostume(bitCostumeSetting, themeId);
+    return id ? BIT_COSTUMES[id] : null;
+  }, [bitCostumeSetting, themeId]);
 
   const now0 = useRef<number>(Date.now());
   const [machine, dispatch] = useReducer(
@@ -532,6 +570,46 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
     }, BURST_MS);
     return () => window.clearTimeout(id);
   }, [machine.pose, machine.burstQueue, reduced]);
+
+  // ── celebration: one-shot ~2.5s render override on bitCelebrateNonce
+  //    increment (see CELEBRATE_MS above for why this stays local
+  //    instead of a machine event) — reuses the SAME particles state +
+  //    fire-rendering block a burst uses, just seeded denser. Mirrors
+  //    the cardCount `prevCount` ref pattern above: the ref seeds to
+  //    whatever the nonce already is at mount, so an already-nonzero
+  //    nonce never celebrates on first render, only later INCREASES do.
+  const celebrateNonce = useApp((s) => s.bitCelebrateNonce);
+  const prevCelebrateNonce = useRef(celebrateNonce);
+  const [celebrating, setCelebrating] = useState(false);
+  const celebrateTimer = useRef<number | null>(null);
+  useEffect(() => {
+    if (celebrateNonce > prevCelebrateNonce.current) {
+      if (celebrateTimer.current !== null) window.clearTimeout(celebrateTimer.current);
+      burstSeed.current += 1;
+      const count = 8 + (burstSeed.current % 3); // 8–10, denser than a normal 5–8 burst
+      setParticles(makeParticles(burstSeed.current, count, true));
+      setCelebrating(true);
+      // reduced-motion: settle back to the real machine pose almost
+      // immediately (still one commit, no lingering hop/spread) — same
+      // "static frame only" posture as the burst-lifecycle effect above.
+      celebrateTimer.current = window.setTimeout(() => {
+        setCelebrating(false);
+        setParticles([]);
+        celebrateTimer.current = null;
+      }, reduced ? 0 : CELEBRATE_MS);
+    }
+    prevCelebrateNonce.current = celebrateNonce;
+  }, [celebrateNonce, reduced]);
+
+  // cleanup any dangling celebrate timer on unmount (deliberately NOT
+  // returned from the effect above — that effect's deps include
+  // `reduced`, and a cleanup there would fire on every reduced-motion
+  // toggle, clearing an in-flight timer with nothing left to re-arm it)
+  useEffect(() => {
+    return () => {
+      if (celebrateTimer.current !== null) window.clearTimeout(celebrateTimer.current);
+    };
+  }, []);
 
   // ── click / triple-click / press-and-hold on the dragon ───────────
   const clickTimes = useRef<number[]>([]);
@@ -606,7 +684,7 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
   const uid = "bit-scope";
 
   const pose = machine.pose;
-  const showFire = pose === "burst";
+  const showFire = pose === "burst" || celebrating;
   const px = size;
   // baseline-align: the 30-tall grid should sit so feet (y26–27) rest
   // on the bar, same "perch" convention as the pre-wing 26-tall grid (2
@@ -647,26 +725,30 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
             (WINGS_SLEEP top row sits at y=21, SLEEP_BODY horns at
             y=20), shifted +4y from the pre-wing sleep pose to keep
             floating clear of the raised back. */}
-        {pose === "sleep" && !reduced && (
+        {pose === "sleep" && !celebrating && !reduced && (
           <g className="bit-zzz">
             <ZGlyphSmall x={16} y={8} />
             <ZGlyphBig x={18} y={5} />
           </g>
         )}
-        {pose === "sleep" && reduced && (
+        {pose === "sleep" && !celebrating && reduced && (
           <g opacity={0.5}>
             <ZGlyphSmall x={16} y={8} />
             <ZGlyphBig x={18} y={5} />
           </g>
         )}
 
-        {/* ── body by pose ── */}
-        {pose === "sleep" ? (
+        {/* ── body by pose (a live celebration always wins — it forces
+            the awake branch below regardless of the real machine pose,
+            e.g. asleep/belly-up, and self-restores when it ends since
+            `pose` itself is never touched by the celebration effect) ── */}
+        {pose === "sleep" && !celebrating ? (
           <>
             <Rects px={WINGS_SLEEP} />
             <Rects px={SLEEP_BODY} />
+            {costume && <Rects px={costume.sleep} />}
           </>
-        ) : pose === "bellyUp" ? (
+        ) : pose === "bellyUp" && !celebrating ? (
           <g>
             <Rects px={WINGS_BELLYUP} />
             <Rects px={BELLYUP_BODY} />
@@ -678,77 +760,114 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
             <g className={reduced ? "" : "bit-paddle-b"}>
               <Rects px={BELLYUP_LEGS_B} />
             </g>
+            {costume && <Rects px={costume.bellyup} />}
           </g>
         ) : (
-          // awake: idle / listening / burst
-          <g className={pose === "listening" ? "" : "bit-sway"}>
-            {/* wings render BEHIND the body, geometry keyed by pose */}
-            <Rects
-              px={
-                pose === "listening"
-                  ? WINGS_RAISED
-                  : showFire
-                    ? WINGS_SPREAD
-                    : WINGS_FOLDED
-              }
-            />
-            {showFire ? (
-              <Rects px={MOUTH_OPEN} />
-            ) : (
-              <>
-                <Rects px={BODY_AWAKE} />
-                {/* eye: cursor-block; blink + pupil-pulse only when resting */}
-                {reduced ? (
-                  <Rects px={EYE_OPEN} />
-                ) : (
-                  <>
-                    <g className="bit-eye-open">
-                      <Rects px={EYE_OPEN} />
-                    </g>
-                    <g className="bit-eye-pupil">
-                      <Rects px={EYE_PUPIL} />
-                    </g>
-                    <g className="bit-eye-blink">
-                      <Rects px={EYE_BLINK} />
-                    </g>
-                  </>
-                )}
-              </>
-            )}
-            {/* tail: sways through 2-3 frames when resting, static (mid)
-                frame during burst / reduced-motion */}
-            {showFire || reduced ? (
-              <Rects px={TAIL_MID} />
-            ) : (
-              TAIL_FRAMES.map((frame, i) => (
-                <g key={i} className={`bit-tail bit-tail-${i}`}>
-                  <Rects px={frame} />
+          // awake: idle / listening / burst / celebrating
+          <g
+            className={celebrating && !reduced ? "bit-hop" : ""}
+            key={celebrating ? `hop-${celebrateNonce}` : "resting"}
+          >
+            <g className={pose === "listening" && !celebrating ? "" : "bit-sway"}>
+              {/* wings render BEHIND the body, geometry keyed by pose —
+                  celebrating always throws them open regardless of the
+                  real pose; idle otherwise gets an occasional flutter
+                  (both layers cross-fade on their own clock, see
+                  bitWingFolded/bitWingRaised below), suppressed under
+                  reduced-motion */}
+              {celebrating ? (
+                <Rects px={WINGS_SPREAD} />
+              ) : pose === "listening" ? (
+                <Rects px={WINGS_RAISED} />
+              ) : showFire ? (
+                <Rects px={WINGS_SPREAD} />
+              ) : pose === "idle" && !reduced ? (
+                <>
+                  <g className="bit-wing-folded">
+                    <Rects px={WINGS_FOLDED} />
+                  </g>
+                  <g className="bit-wing-raised">
+                    <Rects px={WINGS_RAISED} />
+                  </g>
+                </>
+              ) : (
+                <Rects px={WINGS_FOLDED} />
+              )}
+              {showFire ? (
+                <Rects px={MOUTH_OPEN} />
+              ) : (
+                <>
+                  <Rects px={BODY_AWAKE} />
+                  {/* eye: cursor-block; blink + pupil-pulse only when resting */}
+                  {reduced ? (
+                    <Rects px={EYE_OPEN} />
+                  ) : (
+                    <>
+                      <g className="bit-eye-open">
+                        <Rects px={EYE_OPEN} />
+                      </g>
+                      <g className="bit-eye-pupil">
+                        <Rects px={EYE_PUPIL} />
+                      </g>
+                      <g className="bit-eye-blink">
+                        <Rects px={EYE_BLINK} />
+                      </g>
+                    </>
+                  )}
+                </>
+              )}
+              {/* tail: sways through 2-3 frames when resting, static (mid)
+                  frame during burst / celebrating / reduced-motion */}
+              {showFire || reduced ? (
+                <Rects px={TAIL_MID} />
+              ) : (
+                TAIL_FRAMES.map((frame, i) => (
+                  <g key={i} className={`bit-tail bit-tail-${i}`}>
+                    <Rects px={frame} />
+                  </g>
+                ))
+              )}
+              {/* front fin pair — static in all awake poses (the listening
+                  signal meter lives on the wing edge, see below) */}
+              {!showFire && <Rects px={FINS} />}
+              {/* signal meter — 8 segments (front fins → wing leading edge
+                  → scallop claws, nose→tail) pulse one-by-one while
+                  listening, replacing the old 5-fin sequential meter.
+                  Paused during a celebration: the segments are sized to
+                  sit on WINGS_RAISED's geometry, which isn't what's on
+                  screen once celebrating throws WINGS_SPREAD open. */}
+              {pose === "listening" &&
+                !celebrating &&
+                !reduced &&
+                SIGNAL_SEGMENTS.map(([x, y, w, h], i) => (
+                  <rect
+                    key={i}
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    fill={PHOS}
+                    className={`bit-signal bit-signal-${i}`}
+                    opacity={0.35}
+                  />
+                ))}
+              {pose === "listening" && !celebrating && reduced && (
+                <Rects px={SIGNAL_SEGMENTS.map(([x, y, w, h]) => [x, y, w, h, PHOS])} />
+              )}
+              {/* ember puff — idle-only life: a phosphor spark near the
+                  nostril drifts up and fades once per ~19s clock (offset
+                  from the wing flutter's 26s clock so the two don't line
+                  up), hidden under reduced-motion */}
+              {pose === "idle" && !celebrating && !reduced && (
+                <g className="bit-ember">
+                  <rect x={1} y={10} width={1} height={1} fill={PHOS} />
                 </g>
-              ))
-            )}
-            {/* front fin pair — static in all awake poses (the listening
-                signal meter lives on the wing edge, see below) */}
-            {!showFire && <Rects px={FINS} />}
-            {/* signal meter — 8 segments (front fins → wing leading edge
-                → scallop claws, nose→tail) pulse one-by-one while
-                listening, replacing the old 5-fin sequential meter */}
-            {pose === "listening" &&
-              !reduced &&
-              SIGNAL_SEGMENTS.map(([x, y, w, h], i) => (
-                <rect
-                  key={i}
-                  x={x}
-                  y={y}
-                  width={w}
-                  height={h}
-                  fill={PHOS}
-                  className={`bit-signal bit-signal-${i}`}
-                  opacity={0.35}
-                />
-              ))}
-            {pose === "listening" && reduced && (
-              <Rects px={SIGNAL_SEGMENTS.map(([x, y, w, h]) => [x, y, w, h, PHOS])} />
-            )}
+              )}
+              {/* costume — worn layers render LAST (on top of body/fins/
+                  eye), inside this same sway group so hats/etc. move
+                  with the head exactly like the body does */}
+              {costume && <Rects px={costume.awake} />}
+            </g>
           </g>
         )}
 
@@ -876,6 +995,10 @@ function StyleTag({ uid, reduced }: { uid: string; reduced: boolean }) {
     .${uid} .bit-tail-1 { animation-delay: 1500ms; }
     .${uid} .bit-tail-2 { animation-delay: 3000ms; }
     .${uid} .bit-tail-3 { animation-delay: 4500ms; }
+    .${uid} .bit-wing-folded { animation: bitWingFolded 26s steps(1) infinite; }
+    .${uid} .bit-wing-raised { animation: bitWingRaised 26s steps(1) infinite; }
+    .${uid} .bit-ember { animation: bitEmber 19s ease-out infinite; animation-delay: 9s; }
+    .${uid} .bit-hop { animation: bitHop 600ms ease-out 1; }
   `;
   return (
     <style
@@ -901,10 +1024,96 @@ function StyleTag({ uid, reduced }: { uid: string; reduced: boolean }) {
     @keyframes bitSignal { 0%,74%{ opacity:0.3;} 75%,99%{ opacity:1;} }
     /* tail sway: 4 frames (mid→up→mid→down) shown one at a time */
     @keyframes bitTail { 0%,25%{ opacity:1;} 25.01%,100%{ opacity:0;} }
+    /* idle-only wing flutter: a quick lift ~once per 26s (folded most
+       of the cycle, raised for the final ~4.5%/~1.2s), same cross-fade
+       shape as the eye's 3-layer clock above */
+    @keyframes bitWingFolded { 0%,95.5%{ opacity:1;} 95.51%,100%{ opacity:0;} }
+    @keyframes bitWingRaised { 0%,95.5%{ opacity:0;} 95.51%,100%{ opacity:1;} }
+    /* idle-only ember puff near the nostril: drifts up 2px and fades,
+       then stays invisible for the rest of the ~19s cycle (delayed via
+       animation-delay above, offset from the wing flutter's 26s clock
+       so the two don't land on the same beat) */
+    @keyframes bitEmber { 0%{ opacity:0; transform: translateY(0px);} 4%{ opacity:0.9; transform: translateY(-0.5px);} 16%,100%{ opacity:0; transform: translateY(-2px);} }
+    /* celebration hop: one quick bounce, not looping */
+    @keyframes bitHop { 0%{ transform: translateY(0);} 35%{ transform: translateY(-3px);} 60%{ transform: translateY(0.5px);} 100%{ transform: translateY(0);} }
     @keyframes bitEdgeGlow { 0%{ opacity:0;} 20%{ opacity:1;} 100%{ opacity:0;} }
     ${motion}
   `,
       }}
     />
+  );
+}
+
+// ───────────────────────────────────────────────────────────────────
+// BitCameo — a static preview render for use OUTSIDE the status line
+// (empty states, costume pickers, etc. — see CardsPanel.tsx's idle
+// empty-state cameo). Same Px data, scaled to a given height; no store
+// subscriptions and no JS timers. The only motion is a gentle CSS
+// sway/zzz loop, gated off entirely via a plain `@media
+// (prefers-reduced-motion: reduce)` rule — no matchMedia hook needed
+// for a component this static.
+// ───────────────────────────────────────────────────────────────────
+
+export function BitCameo({
+  pose = "sleep",
+  costume = null,
+  height = 64,
+  className,
+}: {
+  pose?: "sleep" | "awake";
+  costume?: BitCostumeId | null;
+  height?: number;
+  className?: string;
+}) {
+  const uid = "bit-cameo";
+  const layers = costume ? BIT_COSTUMES[costume] : null;
+  return (
+    <span
+      className={[uid, className].filter(Boolean).join(" ")}
+      aria-hidden="true"
+      style={{ display: "inline-block", lineHeight: 0 }}
+    >
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+    .${uid} .bit-sway { animation: bitCameoSway 6s ease-in-out infinite; transform-origin: 19px 25px; }
+    .${uid} .bit-zzz { animation: bitCameoZzz 3s ease-in-out infinite; }
+    @keyframes bitCameoSway { 0%,100%{ transform: rotate(0deg);} 25%{ transform: rotate(-1.5deg);} 75%{ transform: rotate(1.5deg);} }
+    @keyframes bitCameoZzz { 0%,100%{ transform: translateY(0); opacity:0.55;} 50%{ transform: translateY(-1px); opacity:0.9;} }
+    @media (prefers-reduced-motion: reduce) {
+      .${uid} .bit-sway, .${uid} .bit-zzz { animation: none; }
+    }
+  `,
+        }}
+      />
+      <svg
+        width={(height * GRID_W) / GRID_H}
+        height={height}
+        viewBox={`0 0 ${GRID_W} ${GRID_H}`}
+        shapeRendering="crispEdges"
+        style={{ display: "block", overflow: "visible" }}
+      >
+        {pose === "sleep" ? (
+          <>
+            <g className="bit-zzz">
+              <ZGlyphSmall x={16} y={8} />
+              <ZGlyphBig x={18} y={5} />
+            </g>
+            <Rects px={WINGS_SLEEP} />
+            <Rects px={SLEEP_BODY} />
+            {layers && <Rects px={layers.sleep} />}
+          </>
+        ) : (
+          <g className="bit-sway">
+            <Rects px={WINGS_FOLDED} />
+            <Rects px={BODY_AWAKE} />
+            <Rects px={EYE_OPEN} />
+            <Rects px={TAIL_MID} />
+            <Rects px={FINS} />
+            {layers && <Rects px={layers.awake} />}
+          </g>
+        )}
+      </svg>
+    </span>
   );
 }

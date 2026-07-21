@@ -15,6 +15,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import type { ExpressionCard, TermCard } from "@jargonslayer/core/types";
+
+// BitCameo (v0.5.1 Bit sprint) is a sibling lane's named export on
+// PixelDragon.tsx, possibly not landed yet on disk — stubbed here so
+// this suite is self-contained either way (per the task spec).
+vi.mock("@/components/PixelDragon", () => ({
+  BitCameo: (props: { pose?: string; costume?: string | null }) => (
+    <div
+      data-testid="bit-cameo-stub"
+      data-pose={props.pose}
+      data-costume={props.costume ?? ""}
+    />
+  ),
+}));
+
 import CardsPanel from "../CardsPanel";
 
 function makeCard(overrides: Partial<ExpressionCard> = {}): ExpressionCard {
@@ -314,6 +328,30 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
       expect(updateTermSpy).not.toHaveBeenCalled();
       expect(container!.querySelector('[aria-label="英文释义"]')).toBeNull();
       expect(container!.textContent).toContain("Annual Recurring Revenue");
+    });
+  });
+
+  describe("EmptyState — Bit cameo (v0.5.1 Bit sprint, Lane B)", () => {
+    it("renders the sleep-pose BitCameo above the 还没有开始会议 copy, costume resolved from settings", async () => {
+      useApp.setState({
+        cards: [],
+        terms: [],
+        status: "idle",
+        settings: { ...useApp.getState().settings, bitCostume: "auto", themeId: "shuimo" },
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+
+      const cameo = container!.querySelector('[data-testid="bit-cameo-stub"]');
+      expect(cameo).not.toBeNull();
+      expect(cameo!.getAttribute("data-pose")).toBe("sleep");
+      // themeId "shuimo" + bitCostume "auto" resolves via THEME_COSTUME
+      // (bitCostumes.ts) to "douli" — proves the store values actually
+      // thread through resolveBitCostume into the rendered cameo.
+      expect(cameo!.getAttribute("data-costume")).toBe("douli");
+      expect(container!.textContent).toContain("还没有开始会议");
     });
   });
 });

@@ -625,6 +625,14 @@ interface AppState {
 
   showToast: (toast: Exclude<ToastState, null>) => void;
   clearToast: () => void;
+  // Bit celebration (v0.5.1 Bit sprint): a transient, NEVER-persisted
+  // monotonic nonce — PixelDragon subscribes and plays one celebration
+  // sequence per increment (wings-spread + spark shower). Callers:
+  // summary generation success + learning-center session completion.
+  // A nonce (not a boolean) so back-to-back triggers each fire and no
+  // reset write is needed from the consumer side.
+  bitCelebrateNonce: number;
+  celebrateBit: () => void;
   setFocusMode: (v: boolean) => void;
   setCaptionMode: (v: boolean) => void;
   setSidecarUp: (up: boolean | null) => void;
@@ -2190,6 +2198,8 @@ export const useApp = create<AppState>((set, get) => ({
     })),
 
   showToast: (toast) => set({ toast }),
+  bitCelebrateNonce: 0,
+  celebrateBit: () => set((s) => ({ bitCelebrateNonce: s.bitCelebrateNonce + 1 })),
   clearToast: () => set({ toast: null }),
   setFocusMode: (focusMode) => set({ focusMode }),
   setCaptionMode: (captionMode) => set({ captionMode }),
