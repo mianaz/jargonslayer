@@ -580,16 +580,25 @@ export async function restoreFullBackup(json: string): Promise<{
  *  no JSON can shadow a builtin id") — `existingIds` accumulates ids
  *  already accepted from EARLIER entries in the same restore batch, so
  *  two entries within one file can't collide with each other either.
- *  Not exported: single call site below, same as the other
- *  restore-time validators' local-helper siblings would be if they had
- *  one (sanitizeRestoredLearnRecord/sanitizeRestoredCustomPack above
- *  are exported only because they're tested directly; this one is
- *  covered via sanitizeRestoredSettings's own tests instead). */
+ *  This ALSO covers two entries that both already carry the SAME
+ *  `custom-`-prefixed id (a hand-edited or duplicated file, adversarial
+ *  review F4): the first occurrence keeps its id verbatim (referential
+ *  integrity — themeId elsewhere in Settings may point at it), but a
+ *  later entry whose id is already in `existingIds` is re-minted same
+ *  as a non-prefixed one, rather than surviving as a same-id duplicate
+ *  (duplicate React keys downstream, and an edit/delete would hit both
+ *  entries at once). Not exported: single call site below, same as the
+ *  other restore-time validators' local-helper siblings would be if
+ *  they had one (sanitizeRestoredLearnRecord/sanitizeRestoredCustomPack
+ *  above are exported only because they're tested directly; this one
+ *  is covered via sanitizeRestoredSettings's own tests instead). */
 function sanitizeRestoredCustomTheme(raw: unknown, existingIds: string[]): ThemeDefinition | null {
   const result = parseTheme(raw);
   if (!result.ok) return null;
   const theme = result.theme;
-  if (theme.id.startsWith(CUSTOM_THEME_ID_PREFIX)) return theme;
+  if (theme.id.startsWith(CUSTOM_THEME_ID_PREFIX) && !existingIds.includes(theme.id)) {
+    return theme;
+  }
   return { ...theme, id: mintCustomThemeId(theme.label, existingIds) };
 }
 
@@ -643,6 +652,11 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
   }
   picked.uiFont = sanitizeRestoredFontValue(picked.uiFont, DEFAULT_SETTINGS.uiFont);
   picked.monoFont = sanitizeRestoredFontValue(picked.monoFont, DEFAULT_SETTINGS.monoFont);
-  picked.overlayGlass = Boolean(picked.overlayGlass);
+  // F11 (adversarial review): `Boolean(v)` treats ANY truthy value as
+  // true — including the STRING "false", which is truthy in JS despite
+  // reading like a negative. Only an actual boolean is trusted; every
+  // other shape (a stray string, a number, missing entirely) falls back
+  // to the default rather than being truthy-coerced.
+  picked.overlayGlass = typeof picked.overlayGlass === "boolean" ? picked.overlayGlass : DEFAULT_SETTINGS.overlayGlass;
   return picked as Partial<Settings>;
 }

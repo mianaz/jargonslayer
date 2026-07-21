@@ -12,6 +12,7 @@ import { buildDisplayMirror, useApp } from "../store";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import * as storageModule from "../history/storage";
 import { CLARITY_THEME, TERMINAL_THEME } from "../theme/themes";
+import { darkenHex } from "../theme/apply";
 import type { ThemeDefinition } from "../theme/schema";
 
 function cssVar(name: string): string {
@@ -53,6 +54,19 @@ describe("buildDisplayMirror (pure)", () => {
     expect(mirror.custom?.rgb.ink).toBe("10 10 10"); // #0a0a0a
     expect(mirror.custom?.rgb.fg).toBe("255 255 255"); // #ffffff
     expect(mirror.custom?.scheme).toBe("dark");
+  });
+
+  // F9 (adversarial review): --bit-phos/--bit-phos-dim must ride along
+  // in the custom mirror payload too, via the same darkenHex helper
+  // apply.ts's applyTheme uses (D7) — otherwise a themed reload flashes
+  // the terminal-default mascot green pre-hydration.
+  it("includes pre-derived --bit-phos/--bit-phos-dim for a resolved custom theme", () => {
+    const mirror = buildDisplayMirror(
+      { ...DEFAULT_SETTINGS, themeId: CUSTOM.id, customThemes: [CUSTOM] },
+      CUSTOM,
+    );
+    expect(mirror.custom?.phos).toBe(CUSTOM.tokens["lab-green"]);
+    expect(mirror.custom?.phosDim).toBe(darkenHex(CUSTOM.tokens["lab-green"], 0.55));
   });
 
   it("omits uiFont/monoFont when both settings are \"default\"", () => {

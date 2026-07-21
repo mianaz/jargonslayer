@@ -716,6 +716,24 @@ describe("sanitizeRestoredSettings — v0.5.1 customThemes/uiFont/monoFont/overl
     expect(out.customThemes?.[0].id).not.toBe(out.customThemes?.[1].id);
   });
 
+  it("keeps the FIRST occurrence's id verbatim when two entries share the same already-prefixed id, re-minting only the later duplicate (F4)", async () => {
+    const autoExport = await import("../autoExport");
+    const raw = {
+      ...DEFAULT_SETTINGS,
+      customThemes: [
+        { id: "custom-x", label: "第一个", scheme: "dark", tokens: validTokens() },
+        { id: "custom-x", label: "第二个", scheme: "dark", tokens: validTokens() },
+      ],
+    } as never;
+    const out = autoExport.sanitizeRestoredSettings(raw);
+    expect(out.customThemes).toHaveLength(2);
+    expect(out.customThemes?.[0].id).toBe("custom-x");
+    expect(out.customThemes?.[0].label).toBe("第一个");
+    expect(out.customThemes?.[1].id).not.toBe("custom-x");
+    expect(out.customThemes?.[1].label).toBe("第二个");
+    expect(new Set(out.customThemes?.map((t) => t.id)).size).toBe(2);
+  });
+
   it("falls back to the default uiFont/monoFont when the restored value isn't a string", async () => {
     const autoExport = await import("../autoExport");
     const out = autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, uiFont: 42, monoFont: null } as never);
@@ -744,12 +762,28 @@ describe("sanitizeRestoredSettings — v0.5.1 customThemes/uiFont/monoFont/overl
     expect(out.uiFont).toBe("serif");
   });
 
-  it("coerces overlayGlass to a strict boolean", async () => {
+  // F11 (adversarial review): the previous `Boolean(picked.overlayGlass)`
+  // coercion accepted ANY truthy value — including the string "false",
+  // which is truthy in JS — so a hand-edited/foreign backup carrying
+  // `overlayGlass: "false"` restored as TRUE. Only an actual boolean is
+  // ever trusted now; anything else (including truthy non-booleans)
+  // falls back to DEFAULT_SETTINGS.overlayGlass.
+  it("accepts only an actual boolean for overlayGlass, falling back to the default for anything else (including the string \"false\")", async () => {
     const autoExport = await import("../autoExport");
     expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: true } as never).overlayGlass).toBe(true);
-    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: 1 } as never).overlayGlass).toBe(true);
-    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: undefined } as never).overlayGlass).toBe(false);
-    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: "yes" } as never).overlayGlass).toBe(true);
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: false } as never).overlayGlass).toBe(false);
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: undefined } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: 1 } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: "yes" } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: "false" } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
   });
 });
 

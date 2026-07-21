@@ -555,6 +555,25 @@ function coercePreviewModels(draft: Settings): Settings {
   return Object.keys(patch).length > 0 ? { ...draft, ...patch } : draft;
 }
 
+// F5 fix (v0.5.1 appearance sprint, GPT-5.6 Sol adversarial review): the
+// 自定义 font text inputs below store the RAW typed text (`custom:<raw>`)
+// straight into the draft — sanitizeFontFamily previously only ever ran
+// at CSS-application time (store.ts's applyFontVar/fonts.ts's own
+// resolveFontStack), so a quoted/`;`-laced/overlong payload round-
+// tripped through Settings/export completely unsanitized while only
+// ever RENDERING the sanitized form, and an empty `custom:` persisted
+// forever instead of visually falling back. Normalized here, at the one
+// persistence boundary every save must cross (handleSave below), rather
+// than on every keystroke — the raw text field itself keeps echoing
+// exactly what was typed, never fighting the user mid-edit (same
+// "text input is honest, sanitizing happens at the boundary" posture as
+// ThemeEditor's own rawInputs/draftTokens split).
+function sanitizeDraftFontValue(value: string): string {
+  if (!value.startsWith(CUSTOM_FONT_PREFIX)) return value;
+  const sanitized = sanitizeFontFamily(value.slice(CUSTOM_FONT_PREFIX.length));
+  return sanitized ? `${CUSTOM_FONT_PREFIX}${sanitized}` : "default";
+}
+
 // S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
 // lives only in the shared BASE venv; parakeet rides a fully separate,
 // airtight-isolated MLX venv (§C R1) that never has pyannote installed,
@@ -1168,9 +1187,20 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         void agentHealth(settings).then(setAgentHealthState);
       }
     }
-    // Only reset the draft when the dialog is (re)opened.
+    // Settings save/hydrate debt-ledger class (same ledger tag-blocker 1
+    // opened for the auto-promote effect above): this dialog is mounted
+    // unconditionally by page.tsx BEFORE store.hydrate() resolves, so an
+    // open that happens pre-hydration seeds `draft` from DEFAULT_SETTINGS
+    // — hydrate() then publishes the real `settings`, but without
+    // `hydrated` in this deps array the draft never re-seeds, and a
+    // later 保存 spreads those stale defaults straight over the user's
+    // real apiKey/engine/themeId/etc. `hydrated` re-runs this WHOLE
+    // effect (draft reset + the themeEditor/import-UI resets right
+    // below it) on the false→true flip while open — pre-hydration edits
+    // made in that sub-second window are an acceptable loss; re-seeding
+    // is the data-preserving choice.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open]);
+  }, [open, hydrated]);
 
   // FINDING 5 (S14 fix round): 测试连接 (handleTestConnection below)
   // always probes resolveTaskCreds(draft, "detect")'s CURRENT
@@ -1341,14 +1371,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const handleDeleteCustomTheme = (id: string) => {
     const next = settings.customThemes.filter((t) => t.id !== id);
-    updateSettings({ customThemes: next });
-    // The LIVE settings.themeId self-heals as a side effect of the
-    // updateSettings call above (store.ts resolves against the new,
-    // shorter array) — but the DIALOG's own staged draft.themeId is a
-    // separate piece of state updateSettings never touches, so it
-    // needs its own explicit fallback when it was pointing at the
-    // theme just deleted (D4: "deleting the ACTIVE theme falls back to
-    // terminal in both").
+    // F2 fix (v0.5.1 appearance sprint, GPT-5.6 Sol adversarial review):
+    // updateSettings's own customThemes branch (store.ts) only
+    // re-resolves+re-applies the VISUAL CSS when the resolve fails
+    // (falls back to terminal on screen) — it deliberately leaves
+    // settings.themeId itself untouched (see that branch's own doc
+    // comment), so deleting the LIVE SAVED active theme without also
+    // patching themeId here left it a dangling reference forever (no
+    // tile shows selected after reload, the FOUC mirror can't resolve
+    // it either). One atomic write-through when the deleted id IS the
+    // live active theme.
+    if (useApp.getState().settings.themeId === id) {
+      updateSettings({ customThemes: next, themeId: "terminal" });
+    } else {
+      updateSettings({ customThemes: next });
+    }
+    // The DIALOG's own staged draft.themeId is a separate piece of
+    // state updateSettings never touches, so it needs its own explicit
+    // fallback when it was pointing at the theme just deleted (D4:
+    // "deleting the ACTIVE theme falls back to terminal in both").
     if (draft.themeId === id) patch({ themeId: "terminal" });
   };
 
@@ -1372,16 +1413,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       showToast(`主题格式不正确：${result.error}`);
       return;
     }
-    if (settings.customThemes.length >= CUSTOM_THEME_CAP) {
+    // F3 fix (v0.5.1 appearance sprint, GPT-5.6 Sol adversarial review):
+    // read the LIVE store array here, at commit time, rather than the
+    // `settings` hook closure — handleImportThemeFile below awaits
+    // file.text() before reaching this point, so two files picked in
+    // quick succession (re-picking via the same <input>, see its own
+    // onChange) both start from the SAME pre-await closure. Committing
+    // against the live array here means whichever completion runs
+    // second sees the FIRST one's already-appended theme (single-
+    // threaded JS — the commit itself is synchronous once the await
+    // resolves), instead of silently overwriting it with a last-write-
+    // wins array while both still toast 已导入.
+    const liveCustomThemes = useApp.getState().settings.customThemes;
+    if (liveCustomThemes.length >= CUSTOM_THEME_CAP) {
       showToast(`最多保存 ${CUSTOM_THEME_CAP} 个自定义主题，请先删除一些`);
       return;
     }
     const id = mintCustomThemeId(
       result.theme.label,
-      settings.customThemes.map((t) => t.id),
+      liveCustomThemes.map((t) => t.id),
     );
     const theme: ThemeDefinition = { ...result.theme, id };
-    updateSettings({ customThemes: [...settings.customThemes, theme] });
+    updateSettings({ customThemes: [...liveCustomThemes, theme] });
     setThemeImportOpen(false);
     setThemeImportText("");
     showToast(`已导入主题「${theme.label}」`);
@@ -1497,6 +1550,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       enabledPacks,
       uiMode: useApp.getState().settings.uiMode,
       customThemes: useApp.getState().settings.customThemes,
+      // F5 fix: sanitize custom: font values at this same persistence
+      // boundary — see sanitizeDraftFontValue's own doc comment.
+      uiFont: sanitizeDraftFontValue(draft.uiFont),
+      monoFont: sanitizeDraftFontValue(draft.monoFont),
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
     // getSidecarMode is only ever read once, at app start (Finding 2c)

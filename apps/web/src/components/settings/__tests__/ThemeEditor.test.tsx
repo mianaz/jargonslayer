@@ -211,4 +211,135 @@ describe("ThemeEditor", () => {
     });
     expect(onDelete).toHaveBeenCalledWith(CUSTOM.id);
   });
+
+  // F7-W1 (v0.5.1 appearance sprint, Opus adversarial review):
+  // SettingsDialog's nav categories are conditionally rendered —
+  // switching to a different one while this editor is open unmounts it
+  // directly, without 返回/保存主题/删除 ever running. Real parent usage
+  // (unlike this suite's plain vi.fn() onBack elsewhere, which never
+  // actually removes the instance) — simulated here by unmounting the
+  // root directly.
+  it("F7-W1: unmounting WITHOUT 返回/保存主题/删除 (e.g. the parent switching to a different section) still reverts the live preview to activeThemeId", () => {
+    mount({ sourceThemeId: "terminal", activeThemeId: "clarity" });
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    activateThemeMock.mockClear();
+
+    act(() => {
+      root!.unmount();
+    });
+    root = null;
+
+    expect(activateThemeMock).toHaveBeenCalledWith("clarity", CLARITY_THEME.tokens, "dark");
+  });
+
+  // Pins the handledRef guard the fix above relies on: without it, an
+  // unmount immediately following 返回 would run its generic revert a
+  // SECOND time using this instance's OWN (possibly stale) last-
+  // rendered props — harmless for 返回 itself, but the exact mechanism
+  // that would silently regress F2/保存主题 (deleting/editing the theme
+  // that IS activeThemeId, where the stale snapshot disagrees with what
+  // the store just committed).
+  it("F7-W1: 返回's own explicit revert is not duplicated by the generic unmount effect", () => {
+    const onBack = vi.fn(() => {
+      root!.unmount();
+      root = null;
+    });
+    const { el } = mount({ sourceThemeId: "terminal", activeThemeId: "clarity", onBack });
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    activateThemeMock.mockClear();
+
+    const backBtn = Array.from(el.querySelectorAll("button")).find((b) => b.textContent === "← 返回")!;
+    act(() => {
+      backBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(activateThemeMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Same guard, the case it actually exists for: deleting the theme
+  // that IS activeThemeId (F2's own scenario) is the one place a stale
+  // generic revert would be WRONG, not just redundant — the real
+  // SettingsDialog's onDelete already reset the live theme via its own
+  // updateSettings side effect (see F2's fix), but THIS component's own
+  // customThemes/activeThemeId props never re-render with that change
+  // before unmounting, so its snapshot would still resolve the
+  // just-deleted theme's own (stale, in-memory) tokens.
+  it("F7-W1: 确认删除's own exit is not followed by a stale generic revert (guards the F2 delete-active-theme interaction)", () => {
+    const onDelete = vi.fn();
+    const onBack = vi.fn(() => {
+      root!.unmount();
+      root = null;
+    });
+    const { el } = mount({
+      customThemes: [CUSTOM],
+      sourceThemeId: CUSTOM.id,
+      editingThemeId: CUSTOM.id,
+      activeThemeId: CUSTOM.id,
+      onDelete,
+      onBack,
+    });
+    act(() => {
+      vi.advanceTimersByTime(150);
+    });
+    activateThemeMock.mockClear();
+
+    const deleteBtn = () => Array.from(el.querySelectorAll("button")).find((b) => b.textContent?.includes("删除"))!;
+    act(() => {
+      deleteBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    act(() => {
+      deleteBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // onDelete/onBack are plain mocks here — the real live-theme reset
+    // is SettingsDialog's own updateSettings side effect, outside this
+    // component entirely — so ANY activateTheme call here could only be
+    // the generic unmount revert firing when it shouldn't.
+    expect(activateThemeMock).not.toHaveBeenCalled();
+  });
+
+  // F6 (v0.5.1 appearance sprint, GPT-5.6 Sol adversarial review): an
+  // in-progress invalid hex only ever updated rawInputs — draftTokens
+  // (what 保存主题/导出 actually persist) silently kept the last VALID
+  // value, so both succeeded with a color the user believed they'd just
+  // changed.
+  it("F6: an invalid hex in ANY token field disables 保存主题/导出 (functionally + visually), naming the invalid token, until it's fixed", () => {
+    const onSave = vi.fn();
+    const { el } = mount({ sourceThemeId: "terminal", onSave });
+    const saveBtn = () =>
+      Array.from(el.querySelectorAll("button")).find((b) => b.textContent === "保存主题") as HTMLButtonElement;
+    const exportBtn = () =>
+      Array.from(el.querySelectorAll("button")).find((b) => b.textContent === "导出") as HTMLButtonElement;
+
+    expect(saveBtn().disabled).toBe(false);
+    expect(exportBtn().disabled).toBe(false);
+
+    act(() => {
+      typeInto(hexInput(el, "fg"), "#f"); // mid-typo, invalid
+    });
+
+    expect(saveBtn().disabled).toBe(true);
+    expect(exportBtn().disabled).toBe(true);
+    expect(el.textContent).toContain("颜色值格式不对");
+    expect(el.textContent).toContain("fg");
+
+    // Clicking while disabled must never reach onSave — pins the
+    // "functionally", not just visually, blocked half of the fix.
+    act(() => {
+      saveBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onSave).not.toHaveBeenCalled();
+
+    act(() => {
+      typeInto(hexInput(el, "fg"), "#123456"); // fixed
+    });
+
+    expect(saveBtn().disabled).toBe(false);
+    expect(exportBtn().disabled).toBe(false);
+    expect(el.textContent).not.toContain("颜色值格式不对");
+  });
 });

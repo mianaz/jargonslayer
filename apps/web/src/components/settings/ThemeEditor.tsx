@@ -188,6 +188,16 @@ export default function ThemeEditor({
   const [rawInputs, setRawInputs] = useState<ThemeTokens>(initial.tokens);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
+  // F6 fix (v0.5.1 appearance sprint, GPT-5.6 Sol adversarial review): an
+  // in-progress invalid hex (e.g. "#f") only ever updates rawInputs
+  // above — draftTokens (what 保存主题/导出 actually persist) silently
+  // keeps the LAST VALID value for that token, so saving/exporting while
+  // a field is mid-typo succeeded with a color the user believed they'd
+  // just changed. Derived every render (cheap: 17 tokens, one regex
+  // test each) rather than tracked as its own state.
+  const invalidTokenKeys = THEME_TOKEN_KEYS.filter((key) => !HEX_COLOR_RE.test(rawInputs[key]));
+  const hasInvalidHex = invalidTokenKeys.length > 0;
+
   const handleBasedOnChange = (id: string) => {
     setBasedOnId(id);
     const source = resolveThemeById(id, customThemes) ?? TERMINAL_THEME;
@@ -233,13 +243,59 @@ export default function ThemeEditor({
     };
   }, [draftTokens, scheme]);
 
+  // F7-W1 fix (v0.5.1 appearance sprint, Opus adversarial review):
+  // SettingsDialog's categories are conditionally rendered — clicking a
+  // DIFFERENT nav category (转录引擎 etc.) while this editor is open
+  // unmounts it directly, without 返回/保存主题/删除 ever running (the
+  // preview effect above only clearTimeouts its debounce on cleanup, it
+  // never reverts CSS) — the in-progress preview color was left live
+  // app-wide until the whole dialog later closed. mirrorRef always holds
+  // this component's own most-recently-RENDERED activeThemeId/
+  // customThemes (updated every render, not just effects, so the
+  // unmount-only effect below never reads a first-render-only closure).
+  // handledRef is flipped right before onBack() in all three explicit
+  // exits below (返回/保存主题/确认删除) — each of those already lands
+  // the live theme correctly on its own (返回 explicitly, save/delete as
+  // a side effect of their own updateSettings call — see the
+  // activeThemeId props doc) — for save/delete specifically, mirrorRef
+  // can be a render BEHIND the write-through that unmounts this same
+  // instance (editing/deleting the theme that IS activeThemeId itself),
+  // so re-running the generic revert there would re-apply THIS
+  // component's stale pre-edit snapshot right over the correct result.
+  // Only an unmount neither of those three caused (activeCategory
+  // switch is the one this sprint's report names) leaves handledRef
+  // false, which is exactly when this generic revert is both correct
+  // and needed.
+  const mirrorRef = useRef({ activeThemeId, customThemes });
+  mirrorRef.current = { activeThemeId, customThemes };
+  const handledRef = useRef(false);
+  useEffect(() => {
+    return () => {
+      if (handledRef.current) return;
+      const { activeThemeId: id, customThemes: themes } = mirrorRef.current;
+      const target = resolveThemeById(id, themes);
+      if (target) {
+        activateTheme(target.id, target.tokens, target.scheme);
+      } else {
+        resetToDefaultTheme();
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // 取消/返回: no store write happens on this path (unlike save/delete,
   // which self-heal the live theme as a side effect of their own
   // updateSettings call — see the props doc above), so THIS is the one
   // path that must explicitly undo whatever this panel's own preview
   // left on the page, reverting to the SAVED/applied theme (see the
   // activeThemeId props doc for why never the dialog draft's pick).
+  // Stays an explicit call (rather than delegating to the unmount
+  // effect above) because a standalone mount (this component's own test
+  // suite, no real SettingsDialog parent) never actually unmounts on a
+  // 返回 click — onBack there is just a plain callback, not something
+  // that removes this instance from the tree.
   const handleBack = () => {
+    handledRef.current = true;
     const target = resolveThemeById(activeThemeId, customThemes);
     if (target) {
       activateTheme(target.id, target.tokens, target.scheme);
@@ -250,6 +306,7 @@ export default function ThemeEditor({
   };
 
   const handleSaveTheme = () => {
+    if (hasInvalidHex) return; // F6: also guarded functionally, not just via the button's disabled attribute
     if (!editingThemeId && customThemes.length >= CUSTOM_THEME_CAP) {
       showToast(`最多保存 ${CUSTOM_THEME_CAP} 个自定义主题，请先删除一些再新建`);
       return;
@@ -266,11 +323,13 @@ export default function ThemeEditor({
       showToast(`主题保存失败：${result.error}`);
       return;
     }
+    handledRef.current = true;
     onSave(result.theme);
     onBack();
   };
 
   const handleExport = () => {
+    if (hasInvalidHex) return; // F6: also guarded functionally, not just via the button's disabled attribute
     const trimmedLabel = label.trim() || "自定义主题";
     const id =
       editingThemeId ??
@@ -293,6 +352,7 @@ export default function ThemeEditor({
   const handleDeleteClick = () => {
     if (!editingThemeId) return;
     if (confirmDelete) {
+      handledRef.current = true;
       onDelete(editingThemeId);
       setConfirmDelete(false);
       onBack();
@@ -412,14 +472,16 @@ export default function ThemeEditor({
         <button
           type="button"
           onClick={handleSaveTheme}
-          className="btn-terminal rounded-none bg-act px-4 py-2 text-sm font-semibold text-ink hover:bg-act/85"
+          disabled={hasInvalidHex}
+          className="btn-terminal rounded-none bg-act px-4 py-2 text-sm font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-60"
         >
           保存主题
         </button>
         <button
           type="button"
           onClick={handleExport}
-          className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+          disabled={hasInvalidHex}
+          className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
         >
           导出
         </button>
@@ -437,6 +499,11 @@ export default function ThemeEditor({
           </button>
         )}
       </div>
+      {hasInvalidHex && (
+        <div className="text-xs leading-[1.7] text-warn-soft">
+          有 {invalidTokenKeys.length} 个颜色值格式不对（{invalidTokenKeys.join("、")}），改好才能保存
+        </div>
+      )}
     </div>
   );
 }

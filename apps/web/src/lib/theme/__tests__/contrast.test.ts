@@ -6,6 +6,14 @@ describe("luminance", () => {
     expect(luminance("#000000")).toBeCloseTo(0, 5);
     expect(luminance("#ffffff")).toBeCloseTo(1, 5);
   });
+
+  // F7 (adversarial review): 3-digit shorthand is a schema-valid hex
+  // value (schema.ts HEX_COLOR_RE accepts #RGB) — luminance must expand
+  // it the same way apply.ts's hexToRgbTriplet does, not yield NaN.
+  it("expands 3-digit shorthand the same as its 6-digit equivalent", () => {
+    expect(luminance("#fff")).toBeCloseTo(luminance("#ffffff"), 10);
+    expect(luminance("#000")).toBeCloseTo(luminance("#000000"), 10);
+  });
 });
 
 describe("contrastRatio", () => {
@@ -26,5 +34,11 @@ describe("contrastRatio", () => {
     // exact literal so this doesn't become a change-detector on any
     // future hand-tuning of these two builtin values.
     expect(contrastRatio("#ededed", "#0a0a0a")).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // F7: a 3-digit shorthand pair must resolve to the same maximum ratio
+  // as its 6-digit equivalent, not NaN (the editor's "⚠ NaN" hint bug).
+  it("handles 3-digit shorthand hex values (#fff vs #000 is exactly 21)", () => {
+    expect(contrastRatio("#fff", "#000")).toBeCloseTo(21, 5);
   });
 });

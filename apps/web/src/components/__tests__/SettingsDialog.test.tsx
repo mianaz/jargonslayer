@@ -22,6 +22,7 @@ import { useApp } from "../../lib/store";
 import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { RETENTION_COPY } from "../../lib/stt/engineOptions";
+import { CLARITY_THEME } from "../../lib/theme/themes";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import SettingsDialog, { SETTINGS_CATEGORIES, type SettingsCategoryId } from "../SettingsDialog";
 
@@ -127,6 +128,74 @@ describe("SettingsDialog — tag-blocker BLOCKER 1: auto-promote waits for hydra
     await flush();
 
     expect(useApp.getState().settings.uiMode).toBe("simple");
+  });
+});
+
+// F1 (v0.5.1 appearance sprint fix round, GPT-5.6 Sol adversarial review):
+// the [open]-keyed draft-seed effect never re-ran on the hydrated
+// false->true flip, so a dialog opened before store.hydrate() resolves
+// kept a DEFAULT_SETTINGS draft even after the real settings landed —
+// clicking 保存 then spread those stale defaults straight over the
+// user's real apiKey/engine/themeId. Same race as tag-blocker BLOCKER 1
+// above (mirrors its exact mount/flip pattern), different effect.
+describe("SettingsDialog — F1: draft re-seeds on hydration completing while the dialog is open", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    resetStore();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  it("saving right after a pre-hydration open + hydrate() flip persists the real hydrated settings, not the stale DEFAULT_SETTINGS draft seeded before hydration", async () => {
+    // Dialog opens before store.hydrate() resolves — draft seeds from
+    // DEFAULT_SETTINGS (resetStore's hydrated:false).
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    // hydrate()'s single synchronous `set` publishes the real persisted
+    // settings + hydrated:true together (store.ts's own hydrate() shape)
+    // — apiKey/engine/themeId all deviate from default so a revert to
+    // defaults is unambiguous.
+    const hydratedSettings: Settings = {
+      ...DEFAULT_SETTINGS,
+      apiKey: "sk-real-user-key",
+      engine: "soniox",
+      themeId: "clarity",
+    };
+    await act(async () => {
+      useApp.setState({ settings: hydratedSettings, hydrated: true });
+    });
+    await flush();
+
+    // No further edits — 保存 immediately with whatever the draft holds.
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const saved = useApp.getState().settings;
+    expect(saved.apiKey).toBe("sk-real-user-key");
+    expect(saved.engine).toBe("soniox");
+    expect(saved.themeId).toBe("clarity");
   });
 });
 
@@ -1556,5 +1625,344 @@ describe("SettingsDialog — S14 credential-health chips", () => {
     expect(chips.some((c) => c.textContent === "已配置")).toBe(true);
     expect(chips.some((c) => c.textContent === "正常")).toBe(false);
     expect(chips.some((c) => c.textContent === "异常")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.5.1 appearance sprint fix round (GPT-5.6 Sol adversarial review,
+// F2/F3) + an Opus test-gap addendum pinning the D1 write-through
+// contract (theme CRUD writes straight through updateSettings, never
+// staged in the dialog draft — see SettingsDialog.tsx's own
+// handleSaveCustomTheme doc comment).
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — F2: deleting the LIVE active custom theme resets settings.themeId, not just the draft", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        customThemes: [{ id: "custom-mine", label: "我的主题", scheme: "dark", tokens: CLARITY_THEME.tokens }],
+        themeId: "custom-mine",
+      },
+      hydrated: true,
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("deleting the tile that IS settings.themeId falls back to terminal in the STORE (not just the dialog's own draft.themeId)", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const displayBtn = navButtons.find((b) => b.textContent === "显示");
+    if (!displayBtn) throw new Error('nav category "显示" not found');
+    await act(async () => {
+      displayBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const editBtn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === "编辑");
+    if (!editBtn) throw new Error('theme tile "编辑" button not found');
+    await act(async () => {
+      editBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const deleteBtn = () =>
+      Array.from(container!.querySelectorAll("button")).find((b) => b.textContent?.includes("删除"))!;
+    await act(async () => {
+      deleteBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      deleteBtn().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.themeId).toBe("terminal");
+    expect(useApp.getState().settings.customThemes.some((t) => t.id === "custom-mine")).toBe(false);
+  });
+});
+
+describe("SettingsDialog — F3: two theme-file imports resolving out of order both land (no last-write-wins drop)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  // A real File whose own .text() is a manually-controlled deferred
+  // promise — lets the test resolve two in-flight imports in whichever
+  // order it wants, rather than depending on real async file-read
+  // timing.
+  function deferredFile(name: string, json: string) {
+    const file = new File([json], name, { type: "application/json" });
+    let resolve!: () => void;
+    const promise = new Promise<string>((res) => {
+      resolve = () => res(json);
+    });
+    Object.defineProperty(file, "text", { value: () => promise, configurable: true });
+    return { file, resolve };
+  }
+
+  // input.files is read-only on a real <input> — Object.defineProperty
+  // is the standard test-only bypass (component only ever reads
+  // e.target.files?.[0], a plain array satisfies that).
+  function pickFile(input: HTMLInputElement, file: File) {
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  it("both themes survive when the file picked SECOND finishes reading FIRST", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const displayBtn = navButtons.find((b) => b.textContent === "显示");
+    if (!displayBtn) throw new Error('nav category "显示" not found');
+    await act(async () => {
+      displayBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText("展开").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const fileInput = container!.querySelector('input[type="file"]') as HTMLInputElement;
+    if (!fileInput) throw new Error("theme file input not found");
+
+    const fileA = deferredFile("a.json", JSON.stringify({ ...CLARITY_THEME, id: "whatever-a", label: "主题A" }));
+    const fileB = deferredFile("b.json", JSON.stringify({ ...CLARITY_THEME, id: "whatever-b", label: "主题B" }));
+
+    // Picking file B re-uses the SAME <input> (e.target.value is reset
+    // to "" on every change, explicitly to allow this) — both reads
+    // start in flight before either resolves.
+    await act(async () => {
+      pickFile(fileInput, fileA.file);
+    });
+    await act(async () => {
+      pickFile(fileInput, fileB.file);
+    });
+
+    // Out-of-order completion: the SECOND file picked finishes reading
+    // FIRST — the exact race the pre-fix `settings` closure lost.
+    fileB.resolve();
+    await flush();
+    fileA.resolve();
+    await flush();
+
+    const labels = useApp.getState().settings.customThemes.map((t) => t.label);
+    expect(labels).toContain("主题A");
+    expect(labels).toContain("主题B");
+    expect(useApp.getState().settings.customThemes.length).toBe(2);
+  });
+});
+
+describe("SettingsDialog — D1 contract: importing a theme then 取消 leaves the import in the store (write-through, not draft-staged)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  const nativeTextareaValueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype,
+    "value",
+  )!.set!;
+  function typeIntoTextarea(el: HTMLTextAreaElement, value: string) {
+    nativeTextareaValueSetter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  it("解析并导入 writes through immediately; a later 取消 (never touching draft/保存) does not revert it", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const displayBtn = navButtons.find((b) => b.textContent === "显示");
+    if (!displayBtn) throw new Error('nav category "显示" not found');
+    await act(async () => {
+      displayBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText("展开").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const textarea = container!.querySelector(
+      'textarea[placeholder="或粘贴主题 JSON…"]',
+    ) as HTMLTextAreaElement;
+    if (!textarea) throw new Error("theme JSON textarea not found");
+    await act(async () => {
+      typeIntoTextarea(textarea, JSON.stringify({ ...CLARITY_THEME, id: "whatever", label: "导入的主题" }));
+    });
+    await act(async () => {
+      findButtonByText("解析并导入").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.customThemes.some((t) => t.label === "导入的主题")).toBe(true);
+
+    await act(async () => {
+      findButtonByText("取消").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.customThemes.some((t) => t.label === "导入的主题")).toBe(true);
+  });
+});
+
+// F5 (v0.5.1 appearance sprint, GPT-5.6 Sol adversarial review): the
+// 自定义 font text inputs stored the RAW typed text into the draft —
+// sanitizeFontFamily (lib/theme/fonts.ts) only ever ran at CSS-
+// application time, so a quoted/`;`-laced payload round-tripped through
+// Settings/export unsanitized while only ever RENDERING the sanitized
+// form, and an empty `custom:` persisted forever instead of visually
+// falling back to "default".
+describe("SettingsDialog — F5: custom font values are sanitized at 保存, not left raw", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  // Scopes to the 界面字体 block specifically — 等宽字体 right below it
+  // renders an identically-labeled 自定义 button, both go through the
+  // SAME shared sanitizeDraftFontValue at 保存.
+  function uiFontSection(): HTMLElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "界面字体");
+    if (!label) throw new Error('"界面字体" label not found');
+    return label.parentElement as HTMLElement;
+  }
+
+  async function openUiFontCustomInput(): Promise<HTMLInputElement> {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const displayBtn = navButtons.find((b) => b.textContent === "显示");
+    if (!displayBtn) throw new Error('nav category "显示" not found');
+    await act(async () => {
+      displayBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const section = uiFontSection();
+    const customBtn = Array.from(section.querySelectorAll("button")).find((b) => b.textContent === "自定义");
+    if (!customBtn) throw new Error('"自定义" button not found in 界面字体 section');
+    await act(async () => {
+      customBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const input = section.querySelector('input[type="text"]') as HTMLInputElement | null;
+    if (!input) throw new Error("custom uiFont text input not found");
+    return input;
+  }
+
+  it('save with custom:\'"Fira";x\' stores the sanitized form (custom:Firax), not the raw quoted/semicolon payload', async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const input = await openUiFontCustomInput();
+    await act(async () => {
+      typeInto(input, '"Fira";x');
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.uiFont).toBe("custom:Firax");
+  });
+
+  it("save with an empty custom: family falls back to \"default\" instead of persisting a dangling custom: prefix", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    // Freshly opened, the custom field is already empty (draft.uiFont
+    // === "custom:", untyped) — the exact "custom: with empty family"
+    // shape the finding describes; no need to type anything.
+    await openUiFontCustomInput();
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.uiFont).toBe("default");
   });
 });

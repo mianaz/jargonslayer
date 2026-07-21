@@ -29,8 +29,8 @@
 // disabled storage, quota) — every read/write here fails silently
 // back to the built-in default rather than crashing the app.
 
-import { hexToRgbTriplet } from "./apply";
-import { HEX_COLOR_RE, type ThemeDefinition } from "./schema";
+import { darkenHex, hexToRgbTriplet } from "./apply";
+import { HEX_COLOR_RE, THEME_TOKEN_KEYS, type ThemeDefinition } from "./schema";
 
 const DISPLAY_STORAGE_KEY = "js-display";
 
@@ -67,8 +67,21 @@ export interface DisplayMirror {
    *  module comment above. rgb is pre-derived at WRITE time
    *  (store.ts, via hexToRgbTriplet) so the FOUC script itself never
    *  parses a hex value, same "dumb script" posture as the builtin
-   *  FoucThemePayload below. */
-  custom?: { hex: Record<string, string>; rgb: Record<string, string>; scheme: ThemeDefinition["scheme"] };
+   *  FoucThemePayload below. `phos`/`phosDim` (F9, v0.5.1): the same
+   *  --bit-phos/--bit-phos-dim pair apply.ts's applyTheme derives from
+   *  a theme's own lab-green (D7), pre-derived here at write time (via
+   *  darkenHex — same helper, no duplicated math) so a themed reload
+   *  doesn't flash the terminal-default mascot green pre-hydration.
+   *  Both optional: a mirror written before this landed simply omits
+   *  them (self-heals on the next hydrate — never a reason to reject
+   *  the rest of the payload). */
+  custom?: {
+    hex: Record<string, string>;
+    rgb: Record<string, string>;
+    scheme: ThemeDefinition["scheme"];
+    phos?: string;
+    phosDim?: string;
+  };
   /** Pre-resolved CSS font-family stacks (never a preset id) for a
    *  non-"default" uiFont/monoFont — see lib/theme/fonts.ts's
    *  resolveFontStack. Absent = no override (the "default" preset). */
@@ -97,6 +110,25 @@ function isPlainStringRecord(v: unknown): v is Record<string, string> {
   return Object.values(v).every((entry) => typeof entry === "string");
 }
 
+/** Keep only the 17 legitimate theme-token keys from an untrusted
+ *  string record, dropping everything else (F8 adversarial review): a
+ *  hand-tampered `js-display` localStorage payload could otherwise
+ *  smuggle an arbitrary key — e.g. `--font-mono-brand`, a REAL CSS
+ *  variable this app already uses elsewhere — through to setProperty.
+ *  Chosen posture: drop the unknown keys rather than reject the whole
+ *  payload (matching schema.ts's own ThemeTokensSchema, whose default
+ *  zod `strip` behavior already does exactly this for every OTHER
+ *  entry point a theme's tokens flow through) — a payload with one
+ *  stray key alongside otherwise-legitimate tokens still themes
+ *  correctly, just without the stray property. */
+function pickAllowedTokenKeys(v: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const key of THEME_TOKEN_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(v, key)) out[key] = v[key];
+  }
+  return out;
+}
+
 /** Validate an untrusted `custom` payload from the mirror's raw JSON:
  *  hex/rgb must both be plain string-valued objects, scheme must be
  *  exactly "dark"|"light" — any deviation drops the WHOLE payload
@@ -106,13 +138,27 @@ function isPlainStringRecord(v: unknown): v is Record<string, string> {
  *  fallback for "no custom payload" is the builtin lookup, which for a
  *  `custom-` id just renders terminal for one frame — self-heals the
  *  moment hydrate() re-derives and re-writes the mirror from the
- *  authoritative Settings.customThemes). */
+ *  authoritative Settings.customThemes). Keys within an otherwise-sane
+ *  hex/rgb shape are separately allow-listed (pickAllowedTokenKeys,
+ *  F8) rather than gated here — that's a per-KEY filter, not a
+ *  shape check. `phos`/`phosDim` (F9) are independently optional: kept
+ *  only when present as a string, never a reason to reject hex/rgb/
+ *  scheme — the actual hex-format check happens at the FOUC script's
+ *  own setProperty guard (belt-and-suspenders, same posture as every
+ *  other value here), not this shape-level reader. */
 function readCustomPayload(raw: unknown): DisplayMirror["custom"] | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const c = raw as Record<string, unknown>;
   if (!isPlainStringRecord(c.hex) || !isPlainStringRecord(c.rgb)) return undefined;
   if (c.scheme !== "dark" && c.scheme !== "light") return undefined;
-  return { hex: c.hex, rgb: c.rgb, scheme: c.scheme };
+  const custom: DisplayMirror["custom"] = {
+    hex: pickAllowedTokenKeys(c.hex),
+    rgb: pickAllowedTokenKeys(c.rgb),
+    scheme: c.scheme,
+  };
+  if (typeof c.phos === "string") custom.phos = c.phos;
+  if (typeof c.phosDim === "string") custom.phosDim = c.phosDim;
+  return custom;
 }
 
 /** Best-effort read of the mirror; any failure (missing key, disabled
@@ -178,6 +224,17 @@ interface FoucThemePayload {
   hex: Record<string, string>;
   rgb: Record<string, string>;
   scheme: ThemeDefinition["scheme"];
+  /** F9: pre-derived --bit-phos/--bit-phos-dim pair (Bit's phosphor
+   *  green, D7), same darkenHex(...,0.55) apply.ts's applyTheme uses.
+   *  Optional: `themes` here is a minimal structural type (not a full
+   *  ThemeTokens), so a caller (chiefly tests) may pass a token map
+   *  with no "lab-green" key at all — computing this is skipped rather
+   *  than crashing on a missing key, and the emitted script's own
+   *  hex-regex guard (same guard the custom branch already uses) is
+   *  what actually keeps a missing/undefined value from ever reaching
+   *  setProperty at runtime. */
+  phos?: string;
+  phosDim?: string;
 }
 
 /** Source string for the inline pre-hydration <script> in layout.tsx.
@@ -202,7 +259,15 @@ interface FoucThemePayload {
  *  readCustomPayload-adjacent code elsewhere relies on) before
  *  setProperty — a value that fails is just skipped, matching
  *  readCustomPayload's "don't trust, don't throw" posture one layer
- *  further in; any OTHER themeId (including a `custom-` one with no
+ *  further in. The custom branch iterates the embedded 17-token
+ *  allowlist (TOKEN_KEYS below, sourced from schema.ts's own
+ *  THEME_TOKEN_KEYS) rather than the payload's own keys (F8
+ *  adversarial review) — a hand-tampered localStorage payload can
+ *  carry an arbitrary key alongside legitimate ones, and iterating the
+ *  payload's keys directly would call setProperty for that key too
+ *  regardless of the value regex passing; reading `chex[key]` for each
+ *  ALLOWLISTED key instead means an unknown key never gets looked up,
+ *  let alone set. Any OTHER themeId (including a `custom-` one with no
  *  mirror.custom at all — see readCustomPayload's own doc on why that
  *  self-heals) falls through to the existing builtin-only path
  *  unchanged. (2) mirror.uiFont/monoFont, each independently
@@ -226,7 +291,13 @@ export function buildFoucScript(
     for (const [key, hex] of Object.entries(tokens)) {
       rgb[key] = hexToRgbTriplet(hex);
     }
-    payload[id] = { hex: tokens, rgb, scheme };
+    const entry: FoucThemePayload = { hex: tokens, rgb, scheme };
+    const labGreen = tokens["lab-green"];
+    if (typeof labGreen === "string") {
+      entry.phos = labGreen;
+      entry.phosDim = darkenHex(labGreen, 0.55);
+    }
+    payload[id] = entry;
   }
   const themesJson = JSON.stringify(payload);
   return `(function(){try{
@@ -239,14 +310,18 @@ export function buildFoucScript(
     var HEX_RE = new RegExp(${JSON.stringify(HEX_COLOR_RE.source)});
     var RGB_RE = new RegExp(${JSON.stringify(RGB_TRIPLET_RE.source)});
     var FONT_RE = new RegExp(${JSON.stringify(FONT_STACK_RE.source)});
+    var TOKEN_KEYS = ${JSON.stringify(THEME_TOKEN_KEYS)};
     if (themeId.indexOf("custom-") === 0 && mirror && mirror.custom && mirror.custom.hex && typeof mirror.custom.hex === "object") {
       var chex = mirror.custom.hex, crgb = mirror.custom.rgb || {};
-      for (var ckey in chex) {
+      for (var ti = 0; ti < TOKEN_KEYS.length; ti++) {
+        var ckey = TOKEN_KEYS[ti];
         if (Object.prototype.hasOwnProperty.call(chex, ckey) && HEX_RE.test(chex[ckey])) {
           root.style.setProperty("--" + ckey, chex[ckey]);
           if (RGB_RE.test(crgb[ckey])) root.style.setProperty("--" + ckey + "-rgb", crgb[ckey]);
         }
       }
+      if (HEX_RE.test(mirror.custom.phos)) root.style.setProperty("--bit-phos", mirror.custom.phos);
+      if (HEX_RE.test(mirror.custom.phosDim)) root.style.setProperty("--bit-phos-dim", mirror.custom.phosDim);
       root.dataset.theme = themeId;
       root.dataset.scheme = mirror.custom.scheme === "light" ? "light" : "dark";
     } else {
@@ -260,6 +335,8 @@ export function buildFoucScript(
             root.style.setProperty("--" + key + "-rgb", rgb[key]);
           }
         }
+        if (HEX_RE.test(theme.phos)) root.style.setProperty("--bit-phos", theme.phos);
+        if (HEX_RE.test(theme.phosDim)) root.style.setProperty("--bit-phos-dim", theme.phosDim);
         root.dataset.theme = themeId;
         root.dataset.scheme = theme.scheme === "light" ? "light" : "dark";
       } else {

@@ -144,7 +144,7 @@ export default function SpeakerAssignPopover({
     <div
       ref={ref}
       data-testid="speaker-assign-popover"
-      className="fixed z-50 w-60 border border-edge bg-panel2 p-2 shadow-xl"
+      className="fixed z-50 w-60 border border-edge bg-panel2 glassable p-2 shadow-xl"
       style={{ left: pos.left, top: pos.top, maxHeight: POPOVER_MAX_HEIGHT }}
     >
       <div className="scroll-thin max-h-48 space-y-1 overflow-y-auto">

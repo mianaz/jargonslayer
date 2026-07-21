@@ -31,7 +31,7 @@ import { schedule, type SrsGrade } from "@jargonslayer/core/learn/srs";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "@jargonslayer/core/types";
 import type { LearnKind, LearnRecord } from "@jargonslayer/core/learn/types";
-import { activateTheme, hexToRgbTriplet, resetToDefaultTheme } from "./theme/apply";
+import { activateTheme, darkenHex, hexToRgbTriplet, resetToDefaultTheme } from "./theme/apply";
 import { writeDisplayMirror, type DisplayMirror } from "./theme/displayStorage";
 import { MONO_FONT_PRESETS, resolveFontStack, UI_FONT_PRESETS } from "./theme/fonts";
 import { CUSTOM_THEME_ID_PREFIX, resolveThemeById } from "./theme/resolve";
@@ -1085,10 +1085,15 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
  *  one (a builtin never needs it — the FOUC script has its own
  *  embedded builtin registry, see displayStorage.ts); rgb triplets are
  *  pre-derived here (not at FOUC-script runtime) via the same
- *  hexToRgbTriplet the theme engine's own applyTheme uses. uiFont/
- *  monoFont are stored as RESOLVED CSS font-family stacks (never a
- *  preset id) via lib/theme/fonts.ts's resolveFontStack — absent
- *  (undefined) means "default", the mirror's own "no override" idiom. */
+ *  hexToRgbTriplet the theme engine's own applyTheme uses — phos/
+ *  phosDim (F9, v0.5.1) are pre-derived the same way, via the same
+ *  darkenHex(...,0.55) applyTheme uses for --bit-phos/--bit-phos-dim
+ *  (D7), so the FOUC script can set Bit's mascot color pre-hydration
+ *  too instead of flashing the terminal default's green for one frame.
+ *  uiFont/monoFont are stored as RESOLVED CSS font-family stacks
+ *  (never a preset id) via lib/theme/fonts.ts's resolveFontStack —
+ *  absent (undefined) means "default", the mirror's own "no override"
+ *  idiom. */
 export function buildDisplayMirror(
   settings: Settings,
   theme: ThemeDefinition | undefined,
@@ -1099,7 +1104,8 @@ export function buildDisplayMirror(
     for (const [key, hex] of Object.entries(theme.tokens)) {
       rgb[key] = hexToRgbTriplet(hex);
     }
-    mirror.custom = { hex: theme.tokens, rgb, scheme: theme.scheme };
+    const labGreen = theme.tokens["lab-green"];
+    mirror.custom = { hex: theme.tokens, rgb, scheme: theme.scheme, phos: labGreen, phosDim: darkenHex(labGreen, 0.55) };
   }
   const uiFontStack = resolveFontStack(UI_FONT_PRESETS[0].stack, settings.uiFont);
   if (uiFontStack) mirror.uiFont = uiFontStack;

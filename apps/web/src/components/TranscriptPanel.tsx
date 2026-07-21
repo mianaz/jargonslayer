@@ -272,7 +272,7 @@ function SpeakerRenamePopover({
   return (
     <div
       ref={ref}
-      className="fixed z-50 w-64 border border-edge bg-panel2 p-3 shadow-xl"
+      className="fixed z-50 w-64 border border-edge bg-panel2 glassable p-3 shadow-xl"
       style={{ left: pos.left, top: pos.top }}
     >
       <input
