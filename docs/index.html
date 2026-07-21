@@ -304,6 +304,7 @@
     <a href="#ai">AI Modes</a>
     <a href="#review">Review and Learning</a>
     <a href="#glossary">Glossary and Packs</a>
+    <a href="#appearance">Appearance</a>
     <a href="#exports">Export and Backup</a>
     <a href="#privacy">Privacy</a>
     <a href="#faq">FAQ</a>
@@ -388,7 +389,10 @@
         <li>AI provider setup: Anthropic, OpenAI-compatible endpoints, OpenRouter, Poe, Ollama, per-task models.</li>
         <li>Privacy boundary: audio, transcript text, API keys, history, auto-export, webhooks.</li>
         <li>Import limits: file types, browser model download, 45-minute browser audio cap, 200 MB browser audio cap, video extraction.</li>
-        <li>Speaker labels: batch diarization, realtime diarization beta, rename-wins behavior.</li>
+        <li>Speaker labels: batch diarization, realtime diarization beta, rename-wins behavior, manual per-line and bulk assignment with apply-to-following, and a reviewed AI transcript-correction pass.</li>
+        <li>Live-meeting extras: floating captions (web Document Picture-in-Picture, desktop caption strip), crash-recovery drafts, background selection lookups.</li>
+        <li>Appearance: nine built-in themes, a custom theme editor with JSON import/export, UI and monospace font pickers, a frosted-glass overlay, and independent type-size controls.</li>
+        <li>AI transparency: a per-task status panel (detection, explanation, translation, reports) showing model, routing, and call/failure/QC-drop counts.</li>
         <li>Exports and automation: Markdown, JSON, Anki TSV, Cornell notes, folder auto-save, webhook payloads.</li>
         <li>Failure modes: no key, rate limits, sidecar unreachable, background tab throttling, stale async results.</li>
         <li>Future realtime search: background enrichment that never steals focus from the live meeting.</li>
@@ -440,9 +444,13 @@ npm run dev
       </div>
       <ul>
         <li>Click underlined expressions in the transcript to jump to their cards.</li>
-        <li>Select any transcript text to run an ad-hoc lookup and optionally save it to your personal glossary.</li>
-        <li>If speaker diarization is enabled, click speaker labels to rename them; aliases are re-applied to later updates.</li>
+        <li>Select any transcript text to run an ad-hoc lookup and optionally save it to your personal glossary. The explanation keeps generating in the background and lands in the card list even if you close the popover.</li>
+        <li>Assign speakers by hand — one line, or several selected lines at once — with an "apply to this and following" option; a live "current speaker" tag tracks along while you listen. A manually assigned line is locked and survives later automatic diarization. Click any speaker label to rename it.</li>
       </ul>
+      <h3>Floating Captions (悬浮字幕)</h3>
+      <p>Turn on <code>悬浮字幕</code> from the <code>≡</code> menu to pop the live transcript into a small, always-on-top caption view — just the last final line, the interim line being recognized, and the most recent explanation gloss. On the web app this opens a Document Picture-in-Picture window (Chrome/Edge 116+; the menu entry hides itself where the browser has no PiP API). On the desktop app there is no second window — it shrinks the main window itself into a chromeless strip you can drag from anywhere, then restores the previous size when you close it. It is meant to sit over a video call while the full app stays out of the way. iOS has no floating-caption path and hides the entry.</p>
+      <h3>Crash Recovery</h3>
+      <p>A live meeting is auto-drafted as you go. After a page refresh, a closed tab, or a browser crash, history shows a <code>恢复到历史记录</code> banner that restores everything up to the moment things stopped, so one accident does not cost the whole meeting.</p>
     </section>
 
     <section id="transcription">
@@ -569,6 +577,9 @@ python whisper_server.py --model small</code></pre>
       <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser and relayed in memory through the app's API routes. It is not persisted server-side. Environment keys keep the key out of the browser entirely. On the desktop build, OAuth opens your system browser (RFC 8252 loopback) instead of an in-app popup — see <a href="#desktop-app">Desktop App</a> for the first-run version of this same flow.</div>
       <h3>Per-task Models</h3>
       <p>Advanced settings can use different providers or models for detection, translation, and reports. The normal split is fast/cheap for live detection and stronger models for post-meeting reports.</p>
+      <h3>AI Status Panel (AI 状态)</h3>
+      <p>Open <code>AI 状态</code> from the bottom status line to see what the AI is actually doing. Each of the four task types — detection, explanation, translation, and reports — shows the model it uses, how it is routed (<strong>自带 Key</strong> your own key / <strong>服务端代理</strong> server proxy / <strong>未配置</strong> unconfigured), and running counts of calls, failures, and QC-drops. A small status chip in the status line mirrors the same at a glance. When a key is missing, the panel says plainly which features fall back to the dictionary and which are unavailable, instead of failing silently.</p>
+      <div class="callout info"><strong>Added in v0.4.6.</strong> The same release also fixed whole sentences being over-eagerly flagged as "jargon" — only genuine idioms and proverbs now get the raised length cap, so ordinary sentences are no longer mislabeled.</div>
     </section>
 
     <section id="review">
@@ -599,7 +610,7 @@ python whisper_server.py --model small</code></pre>
         <li>Export glossary entries to Anki TSV when you want a separate review workflow.</li>
       </ol>
       <h3>Built-in Packs</h3>
-      <p>Dictionary packs let users narrow detection by topic. Current built-in groups include core expressions, meeting flow, project execution, feedback, sales and growth, softening/criticism, academic meetings, chitchat, business terms, tech terms, and pharma/biotech.</p>
+      <p>Dictionary packs let users narrow detection by topic. Fourteen built-in packs ship today: core expressions, meeting flow, project execution, feedback, sales and growth, softening/criticism, academic meetings, chitchat, business terms, tech terms, pharma/biotech, and — added in v0.4.6 — statistics, machine learning, and bioinformatics (about 226 terms across the three, with English and Chinese glosses sourced from Wikipedia, the EDAM ontology, and Google's ML Glossary). The full built-in dictionary is 650+ entries. Every pack toggles on or off per meeting; <code>core</code> is always on. A handful of everyday-English headwords in the stats/ML packs (mean, prior, attention, precision, …) stay opt-in — they only fire once you customize the enabled-pack list, so casual speech is never flagged under the default all-on state.</p>
       <h3>Community Packs</h3>
       <p>Remote packs are JSON manifests installed from a GitHub raw or jsDelivr URL. They can contain expression entries and term entries; acronyms are <code>terms</code> with <code>type: "acronym"</code>.</p>
       <pre><code>{
@@ -614,6 +625,32 @@ python whisper_server.py --model small</code></pre>
   }]
 }</code></pre>
       <div class="callout risk"><strong>Known gotcha:</strong> overlapping built-in and remote terms can currently double-fire. Fix cross-source term deduplication before importing large acronym packs.</div>
+    </section>
+
+    <section id="appearance">
+      <h2>Appearance</h2>
+      <p>Everything under Settings → <code>显示</code> is local to this browser or app and applies live when you save. None of it travels with your data.</p>
+      <h3>Built-in Themes</h3>
+      <p>Nine built-in themes ride a strict 17-token engine (hex-only, validated, injected as CSS properties rather than raw strings). Every theme is contrast-checked against WCAG AA, and native controls plus the app icon follow its light/dark scheme:</p>
+      <ul>
+        <li><strong>终端（默认）</strong> — the terminal dark default.</li>
+        <li><strong>终端（浅色）</strong> — its warm-paper light counterpart.</li>
+        <li><strong>清晰（高对比深色）</strong> — a high-contrast dark variant for readability.</li>
+        <li><strong>水墨（宣纸朱批）</strong> — ink-wash on rice paper with cinnabar accents (light).</li>
+        <li><strong>魔典（哥特烫金）</strong> — gothic gilt-on-leather (dark).</li>
+        <li><strong>黑金（黑色电影）</strong> — black-and-gold editorial noir (dark).</li>
+        <li><strong>青绿（矿彩山水）</strong> — mineral-green landscape painting (dark).</li>
+        <li><strong>像素（8-bit 任务日志）</strong> — a quest-log pixel look on deep indigo with sprite-color accents (dark). <em>New this release.</em></li>
+        <li><strong>笔记（课堂手绘）</strong> — a classroom-notebook look with pencil-blue and red-pen annotations on white cards (light). <em>New this release.</em></li>
+      </ul>
+      <h3>Custom Theme Editor</h3>
+      <p>Beyond the built-ins, the theme grid has a <code>新建</code> tile that opens an in-place editor. Create a theme from scratch or duplicate any theme (built-in or custom), then edit all 17 tokens with a native color picker plus a hex field each, set the light/dark scheme, and name it. A live preview applies as you edit and reverts to the saved theme if you cancel. Contrast hints flag tokens that fall below the AA/UI-contrast bars as you go — they warn, they never block. Export a theme to a JSON file, or import one by pasting or picking a file; imported themes are validated and their id is re-minted, so an imported file can never shadow or overwrite a built-in. Delete with a confirm; deleting the active theme falls back to the terminal default.</p>
+      <div class="callout info"><strong>Themes carry colors only.</strong> Fonts are deliberately excluded from the theme schema and from exported theme files — they are a separate setting (below), so a shared theme JSON can never change which fonts your app loads.</div>
+      <h3>Fonts</h3>
+      <p>Two independent pickers — <code>界面字体</code> (UI font) and <code>等宽字体</code> (monospace) — each offer zero-download system presets or a custom system font name you type in. UI presets are default / serif / rounded; monospace presets are the bundled JetBrains Mono default / your system monospace. Custom names are sanitized before use.</p>
+      <h3>Glass and Type Size</h3>
+      <p>The <code>毛玻璃</code> (frosted glass) toggle is off by default; turning it on frosts true overlays — the settings panel, drawers, popovers, the hover card, the import hub — with a backdrop blur. Three type controls sit alongside: <code>全局字号</code> (global size, four tiers 小 / 标准 / 大 / 特大, like browser zoom), <code>转录字号</code> (scales the transcript area only, independent of global size), and <code>转录行距</code> (transcript line spacing).</p>
+      <div class="callout"><strong>Glass readability is best-effort.</strong> AA contrast on a translucent, blurred surface depends on what shows through it, so it can't be guaranteed the way the solid themes are — glass is opt-in for exactly that reason.</div>
     </section>
 
     <section id="exports">
@@ -705,7 +742,7 @@ python whisper_server.py --model small</code></pre>
         <li><code>enabledPacks</code>: <code>null</code> means all packs are enabled; <code>core</code> is always on.</li>
         <li><code>bilingualTranscript</code>: live segment-by-segment translation into <code>explainLanguage</code>.</li>
         <li><code>hfToken</code> and <code>realtimeDiarize</code>: local sidecar diarization controls.</li>
-        <li><code>themeId</code>, <code>fontSize</code>, <code>transcriptScale</code>, <code>transcriptLeading</code>: display controls persisted independently from theme tokens.</li>
+        <li><code>themeId</code>, <code>customThemes</code>, <code>uiFont</code>, <code>monoFont</code>, <code>overlayGlass</code>, <code>fontSize</code>, <code>transcriptScale</code>, <code>transcriptLeading</code>: display controls (see <a href="#appearance">Appearance</a>), persisted independently from theme tokens; <code>customThemes</code> holds user-authored theme definitions, and fonts are stored separately from theme JSON by design.</li>
         <li><code>sidecarMode</code> (desktop build only): <code>managed</code> (default — the app installs/starts/restarts its own sidecar) or <code>external</code> (point at a sidecar you started yourself, same as the web build).</li>
       </ul>
 
@@ -932,7 +969,7 @@ npm run build</code></pre>
           <tr><td>PWA install</td><td>Available</td><td>Uses existing manifest and icons</td></tr>
           <tr><td>macOS desktop app (Tauri)</td><td>Available</td><td>Signed, notarized DMG on <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>; Apple Silicon only, no Intel build</td></tr>
           <tr><td>Chrome extension (Lite)</td><td>Available, load-unpacked</td><td>Zip on releases; Chrome Web Store submission pending</td></tr>
-          <tr><td>Native mobile</td><td>Not recommended now</td><td>PWA covers most mobile use cases</td></tr>
+          <tr><td>iOS / iPadOS (beta)</td><td>TestFlight, by invite</td><td>Get in touch for an invite; iOS 26+, on-device system speech recognition. No Android or store listing planned — the PWA covers most mobile use cases</td></tr>
         </tbody>
       </table>
       <p>Preview deployments use <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>. The default build is the full local-first build.</p>
@@ -984,6 +1021,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>英文加速 Parakeet (desktop, Apple Silicon, v0.4.4):</strong> opt-in, MLX-accelerated English engine in the model picker — far faster than Whisper (~100x realtime in batch), no realtime speaker diarization yet.</li>
         <li><strong>Chrome extension (Lite):</strong> MV3 side panel with live mic capture, the built-in dictionary, and on-device translation.</li>
         <li><strong>Background task center, engine dropdown, first-run onboarding, update check (desktop):</strong> see <a href="#desktop-app">Desktop App</a> for all four.</li>
+        <li><strong>AI transparency panel + domain dictionary packs (v0.4.6):</strong> a per-task <a href="#ai">AI status panel</a> (detection / explanation / translation / reports) with model, routing, and call/failure/QC-drop counts plus a status-line chip; three new built-in dictionary packs — statistics, machine learning, bioinformatics (~226 terms); and a detection-quality fix so ordinary sentences are no longer mislabeled as jargon.</li>
       </ol>
       <p>v0.5 has since shipped:</p>
       <ol>
@@ -997,6 +1035,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Deepgram cloud recognition (BYOK, English):</strong> a new cloud STT engine option for English-only meetings.</li>
         <li><strong>Hosted preview's limited trial:</strong> a built-in Soniox cloud-recognition trial (no key, up to 3 clips per person per day, ~10 minutes max per clip, shared first-come quota); tab audio is back in the hosted preview on the same trial quota.</li>
       </ol>
+      <p>The appearance system has since expanded — see <a href="#appearance">Appearance</a>: two more built-in themes (nine total), a custom theme editor with live contrast hints and JSON import/export, separate UI and monospace font pickers, and an optional frosted-glass overlay.</p>
       <p><strong>Pending:</strong> Chrome Web Store submission for the extension (load-unpacked is the only install path until then).</p>
       <p>Parked items include browser-Whisper realtime streaming and select-to-web-search.</p>
     </section>

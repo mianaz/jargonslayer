@@ -55,6 +55,7 @@
     <tr><td>音频（本地 Whisper / 标签页音频 / 系统/App 音频 / 文件导入）</td><td><span class="dot local"></span>仅本机（websocket 走 127.0.0.1；桌面版系统/App 音频经本机进程通道；文件在浏览器内转录）</td></tr>
     <tr><td>音频（浏览器识别）</td><td><span class="dot cloud"></span>Chrome 139+ 有本地语言包时仅本机；否则浏览器厂商的语音服务（Google/Apple）</td></tr>
     <tr><td>音频（Soniox 引擎，自备 Key，实验）</td><td><span class="dot cloud"></span>用你自己的 Key 经 WSS 直连 Soniox，适用其隐私条款</td></tr>
+    <tr><td>音频（Deepgram 引擎，自备 Key，英文）</td><td><span class="dot cloud"></span>用你自己的 Key 发往 Deepgram 云端，适用其隐私条款</td></tr>
     <tr><td>音频（体验版：Soniox 试用 / 标签页音频）</td><td><span class="dot cloud"></span>无需 API Key；每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得；音频经 Soniox 云端转写，不留存</td></tr>
     <tr><td>转录文本（体验版，AI 开启）</td><td><span class="dot cloud"></span>经本项目服务器内存中转（不落盘、不存储）→ OpenRouter</td></tr>
     <tr><td>转录文本（本地版，BYOK AI 开启）</td><td><span class="dot cloud"></span>直接发往你自己配置的模型端点</td></tr>
@@ -93,6 +94,7 @@
     <tr><td>Audio (local Whisper / tab audio / system-app audio / file imports)</td><td><span class="dot local"></span>Local only (websocket on 127.0.0.1; desktop system/app audio via a local process channel; files transcribed in-browser)</td></tr>
     <tr><td>Audio (browser recognition)</td><td><span class="dot cloud"></span>On-device on Chrome 139+ when a language pack is available; otherwise the browser vendor's speech service (Google/Apple)</td></tr>
     <tr><td>Audio (Soniox engine, BYOK, experimental)</td><td><span class="dot cloud"></span>Directly to Soniox over WSS under your own key; Soniox's privacy terms apply</td></tr>
+    <tr><td>Audio (Deepgram engine, BYOK, English)</td><td><span class="dot cloud"></span>Sent to Deepgram's cloud under your own key; Deepgram's privacy terms apply</td></tr>
     <tr><td>Audio (preview tier: Soniox trial / tab audio)</td><td><span class="dot cloud"></span>No API key needed; up to 3 clips per person per day, ~10 min max per clip, shared quota on a first-come basis; audio is transcribed by Soniox's cloud service and not retained</td></tr>
     <tr><td>Transcript text (preview tier, AI on)</td><td><span class="dot cloud"></span>Transits this project's server in memory only (never stored) → OpenRouter</td></tr>
     <tr><td>Transcript text (local tier, BYOK AI on)</td><td><span class="dot cloud"></span>Sent directly to the model endpoint you configured</td></tr>

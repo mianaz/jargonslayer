@@ -278,6 +278,7 @@
     <a href="#ai">AI 模式</a>
     <a href="#review">复习与学习</a>
     <a href="#glossary">词典与词典包</a>
+    <a href="#appearance">外观</a>
     <a href="#exports">导出与备份</a>
     <a href="#privacy">隐私</a>
     <a href="#faq">FAQ</a>
@@ -362,7 +363,10 @@
         <li>AI 提供商配置：Anthropic、OpenAI 兼容端点、OpenRouter、Poe、Ollama、分任务模型。</li>
         <li>隐私边界：音频、转录文本、API Key、历史、自动导出、webhook。</li>
         <li>导入限制：文件类型、浏览器模型下载、45 分钟浏览器音频上限、200 MB 浏览器音频上限、视频提取。</li>
-        <li>说话人标签：批处理分离、实时分离 beta、用户改名优先。</li>
+        <li>说话人标签：批处理分离、实时分离 beta、用户改名优先；另有单句/批量手动指定与「应用到本句及之后」，以及审阅制的 AI 转写修订。</li>
+        <li>会议中的其他能力：悬浮字幕（网页 Document 画中画、桌面版字幕条）、崩溃恢复草稿、划词解释后台生成。</li>
+        <li>外观：九套内置主题、自定义主题编辑器（JSON 导入导出）、界面字体与等宽字体、毛玻璃开关、字号控制。</li>
+        <li>AI 透明度：按任务（检测/解释/翻译/报告）显示所用模型、路由方式与调用/失败/QC 丢弃次数。</li>
         <li>导出和自动化：Markdown、JSON、Anki TSV、Cornell 笔记、文件夹自动保存、webhook payload。</li>
         <li>失败模式：无 Key、限流、sidecar 不可达、后台标签页节流、过期异步结果。</li>
         <li>未来实时搜索：后台增强，不抢走会议中的前台焦点。</li>
@@ -414,9 +418,13 @@ npm run dev
       </div>
       <ul>
         <li>点击转录里的下划线表达，可以跳到对应卡片。</li>
-        <li>选中任意转录文本，可以即时查询并保存到个人词典。</li>
-        <li>启用说话人分离后，可以点击说话人标签改名；后续自动更新会继续应用别名。</li>
+        <li>选中任意转录文本即可即时查询并存进个人词典。解释在后台生成，关掉弹窗也不会丢，做完自动并入卡片列表。</li>
+        <li>说话人可以手动指定：单句，或一次选中多句一起改，单句操作里有「应用到本句及之后」；实时监听时侧边跟着一个「当前说话人」标记。手动指定过的句子会被锁定，后续自动说话人分离不会覆盖它。点击说话人标签即可改名。</li>
       </ul>
+      <h3>悬浮字幕</h3>
+      <p>从 <code>≡</code> 菜单打开<code>悬浮字幕</code>，实时转录会弹成一个小小的置顶字幕视图——只显示最后一句定稿、正在识别的中间句，加最近一条解释释义。网页版用的是 Document 画中画窗口（Chrome/Edge 116+；浏览器没有这个接口时，菜单项自动隐藏）。桌面版没有第二个窗口，而是把主窗口自己缩成一条无边框字幕条，随便点哪儿都能拖动，关掉再还原成原来的大小。它适合压在视频通话上层看，主应用退到后面。iOS 没有这条路径，菜单里不显示。</p>
+      <h3>崩溃恢复</h3>
+      <p>会议进行中会实时写自动草稿。页面刷新、标签页被关、浏览器崩溃后重新打开，历史里会出现一条<code>恢复到历史记录</code>横幅，把中断前的内容一键找回，一次意外不至于赔掉整场会议。</p>
     </section>
 
     <section id="transcription">
@@ -543,6 +551,9 @@ python whisper_server.py --model small</code></pre>
       <div class="callout"><strong>Key 处理：</strong>UI 输入的 Key 存在本地浏览器，并经应用 API 路由内存转发；不会在服务器侧持久化。环境变量方式可以让 Key 完全不进入浏览器。桌面版的 OAuth 走的是系统默认浏览器（RFC 8252 loopback），不是应用内弹窗——这个流程首次启动时的版本见「<a href="#desktop-app">桌面版</a>」。</div>
       <h3>分任务模型</h3>
       <p>高级设置可以为检测、翻译、报告使用不同提供商或模型。常见策略是实时检测用快而便宜的模型，会后报告用更强的模型。</p>
+      <h3>AI 状态面板</h3>
+      <p>从底部状态栏打开<code>AI 状态</code>，能一眼看清 AI 到底在做什么。检测、解释、翻译、报告四类任务分别显示各自用的模型、路由方式（<strong>自带 Key</strong> / <strong>服务端代理</strong> / <strong>未配置</strong>），以及调用、失败、QC 丢弃的累计次数。状态栏还有一个随时能瞄一眼的状态小标。没配 Key 时，面板会直接告诉你哪些功能回退到词典、哪些暂不可用，而不是默默出错。</p>
+      <div class="callout info"><strong>v0.4.6 加入。</strong>同一版还修掉了整句被误判成「黑话」的问题——只有真正的成语、俗语才放宽长度上限，普通句子不再被误标。</div>
     </section>
 
     <section id="review">
@@ -573,7 +584,7 @@ python whisper_server.py --model small</code></pre>
         <li>需要独立复习流程时，可导出为 Anki TSV。</li>
       </ol>
       <h3>内置词典包</h3>
-      <p>词典包用于按主题控制检测范围。当前内置分组包括基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药与生物科技。</p>
+      <p>词典包按主题控制检测范围。目前内置 14 个包：基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药与生物科技，以及 v0.4.6 新增的统计学、机器学习、生物信息学（三个包合计约 226 个术语，中英释义取自 Wikipedia、EDAM 本体和 Google ML Glossary）。内置词典整体 650+ 条。每个包都能按会议单独开关，<code>core</code> 始终开启。统计学/机器学习包里有几个日常英语高频词（mean、prior、attention、precision 等）默认不触发，只有你自己定制过启用列表后才会命中，平时闲聊不会被误标。</p>
       <h3>社区词典包</h3>
       <p>远程词典包是从 GitHub raw 或 jsDelivr URL 安装的 JSON manifest。它可以包含表达条目和术语条目；缩写用 <code>terms</code> 且 <code>type: "acronym"</code>。</p>
       <pre><code>{
@@ -588,6 +599,32 @@ python whisper_server.py --model small</code></pre>
   }]
 }</code></pre>
       <div class="callout risk"><strong>已知问题：</strong>如果内置词典和远程词典包有同一术语，目前可能双重命中。导入大型缩写包前，应先修复跨来源术语去重。</div>
+    </section>
+
+    <section id="appearance">
+      <h2>外观</h2>
+      <p>设置 → <code>显示</code> 下的所有项都只作用于这台浏览器或这台机器，保存即时生效，不随数据外传。</p>
+      <h3>内置主题</h3>
+      <p>九套内置主题跑在严格校验的 17-token 引擎上（只收 hex、逐项校验、以 CSS 属性注入而不是拼字符串）。每套都按 WCAG AA 逐项测过对比度，原生控件和应用图标跟随它的深浅方案：</p>
+      <ul>
+        <li><strong>终端（默认）</strong>——默认的终端深色。</li>
+        <li><strong>终端（浅色）</strong>——它的暖纸浅色版。</li>
+        <li><strong>清晰（高对比深色）</strong>——为可读性加强对比的深色。</li>
+        <li><strong>水墨（宣纸朱批）</strong>——宣纸上的水墨加朱砂批注（浅色）。</li>
+        <li><strong>魔典（哥特烫金）</strong>——皮面烫金的哥特风（深色）。</li>
+        <li><strong>黑金（黑色电影）</strong>——黑金编辑部的黑色电影感（深色）。</li>
+        <li><strong>青绿（矿彩山水）</strong>——矿物色青绿山水（深色）。</li>
+        <li><strong>像素（8-bit 任务日志）</strong>——深靛蓝底、红黄绿蓝紫五色像素点缀的任务日志风（深色）。<em>本次新增。</em></li>
+        <li><strong>笔记（课堂手绘）</strong>——白纸卡片、铅笔蓝与红笔批注的课堂笔记风（浅色）。<em>本次新增。</em></li>
+      </ul>
+      <h3>自定义主题编辑器</h3>
+      <p>内置主题之外，主题网格里有一个<code>新建</code>格子，点开是就地编辑器。可以从零建一套，也可以复制任意主题（内置或自定义）再改。17 个 token 每个都配一个原生取色器加一个 hex 输入框，可设深浅方案、起名字。编辑时有实时预览，取消就回到已保存的那套。哪个 token 掉到 AA/控件对比度门槛以下，会即时给对比度提示——只警告，不拦你。主题可导出成 JSON 文件，也能粘贴或选文件导入；导入的主题会经校验并重新分配 id，任何导入文件都盖不掉、也覆盖不了内置主题。删除要二次确认；删掉当前正用的那套会回退到终端默认。</p>
+      <div class="callout info"><strong>主题只带颜色。</strong>字体被特意排除在主题 schema 和导出的主题文件之外——它是单独的设置（见下），分享出去的主题 JSON 永远改不了你加载的是哪套字体。</div>
+      <h3>字体</h3>
+      <p>两个独立选择器——<code>界面字体</code>和<code>等宽字体</code>——各自给零下载的系统预设，或你自己输入的系统字体名。界面字体预设有 默认 / 衬线 / 圆体；等宽字体预设有内置的 JetBrains Mono 默认 / 你的系统等宽。自定义名字在使用前会做净化处理。</p>
+      <h3>毛玻璃与字号</h3>
+      <p><code>毛玻璃</code>开关默认关闭；打开后会给真正的浮层——设置面板、抽屉、弹出层、悬浮卡、导入中心——加一层背景模糊。旁边有三个字号控制：<code>全局字号</code>（整体大小，四档 小 / 标准 / 大 / 特大，类似浏览器缩放）、<code>转录字号</code>（只放大转录区，独立于全局）、<code>转录行距</code>（转录区行距）。</p>
+      <div class="callout"><strong>毛玻璃的可读性是尽力而为。</strong>半透明加模糊的表面上，对比度取决于底下透出来什么，没法像纯色主题那样保证——毛玻璃是可选项，正是这个原因。</div>
     </section>
 
     <section id="exports">
@@ -679,7 +716,7 @@ python whisper_server.py --model small</code></pre>
         <li><code>enabledPacks</code>：<code>null</code> 表示启用所有词典包；<code>core</code> 始终开启。</li>
         <li><code>bilingualTranscript</code>：把每个最终片段实时翻译成 <code>explainLanguage</code>。</li>
         <li><code>hfToken</code> 和 <code>realtimeDiarize</code>：本地 sidecar 说话人分离配置。</li>
-        <li><code>themeId</code>、<code>fontSize</code>、<code>transcriptScale</code>、<code>transcriptLeading</code>：显示设置，独立于主题 token 持久化。</li>
+        <li><code>themeId</code>、<code>customThemes</code>、<code>uiFont</code>、<code>monoFont</code>、<code>overlayGlass</code>、<code>fontSize</code>、<code>transcriptScale</code>、<code>transcriptLeading</code>：显示设置（见<a href="#appearance">外观</a>），独立于主题 token 持久化；<code>customThemes</code> 存用户自建的主题定义，字体按设计单独存、不进主题 JSON。</li>
         <li><code>sidecarMode</code>（仅桌面版）：<code>managed</code>（默认——应用自己安装/启动/重启 sidecar）或 <code>external</code>（连接你自己起的 sidecar，跟网页版一样）。</li>
       </ul>
 
@@ -906,7 +943,7 @@ npm run build</code></pre>
           <tr><td>PWA 安装</td><td>可用</td><td>使用已有 manifest 和图标</td></tr>
           <tr><td>macOS 桌面版（Tauri）</td><td>可用</td><td>签名并公证的 DMG，见 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>；仅 Apple Silicon，无 Intel 版本</td></tr>
           <tr><td>Chrome 插件（Lite）</td><td>可用，需手动加载</td><td>zip 在 releases 页面；Chrome 网上应用店上架审核中</td></tr>
-          <tr><td>原生移动端</td><td>暂不推荐</td><td>PWA 已覆盖主要移动场景</td></tr>
+          <tr><td>iOS / iPadOS（测试版）</td><td>TestFlight 邀请制</td><td>需要时联系作者获取邀请；iOS 26+，系统语音识别在设备本地转录。Android 与商店上架暂无计划，PWA 已覆盖主要移动场景</td></tr>
         </tbody>
       </table>
       <p>预览部署使用 <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>。默认构建是完整本地优先构建。</p>
@@ -958,6 +995,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>英文加速（桌面版，Apple 芯片，v0.4.4）：</strong>模型选择器里的可选引擎（非默认）——比 Whisper 快得多（批量推理约百倍实时），暂不支持实时说话人分离。</li>
         <li><strong>Chrome 插件（Lite）：</strong>MV3 侧边栏，含实时麦克风捕获、内置词典、设备端翻译。</li>
         <li><strong>后台任务中心、引擎下拉菜单、首次引导、更新检查（桌面版）：</strong>四项都在「<a href="#desktop-app">桌面版</a>」里有完整说明。</li>
+        <li><strong>AI 透明面板 + 领域词典包（v0.4.6）：</strong>按任务的 <a href="#ai">AI 状态面板</a>（检测/解释/翻译/报告），显示模型、路由方式和调用/失败/QC 丢弃次数，外加状态栏小标；三个新内置词典包——统计学、机器学习、生物信息学（约 226 个术语）；以及一处检测质量修复，普通句子不再被误判成黑话。</li>
       </ol>
       <p>v0.5 目前已上线：</p>
       <ol>
@@ -971,6 +1009,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Deepgram 云端识别（BYOK，英文）：</strong>新增一个纯英文场景的云端识别引擎选项。</li>
         <li><strong>在线体验的限量试用：</strong>内置 Soniox 云端识别限量试用（免 Key，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得）；标签页音频回归在线体验，走同一试用额度。</li>
       </ol>
+      <p>外观体系随后扩展——见<a href="#appearance">外观</a>：再加两套内置主题（共九套）、带实时对比度提示和 JSON 导入导出的自定义主题编辑器、界面字体与等宽字体的独立选择器，以及可选的毛玻璃浮层。</p>
       <p><strong>待完成：</strong>Chrome 插件的网上应用店上架审核——完成之前，手动加载是唯一的安装方式。</p>
       <p>暂缓项：浏览器端 Whisper 实时流、划词联网搜索。</p>
     </section>
