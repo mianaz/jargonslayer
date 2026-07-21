@@ -665,10 +665,56 @@ export interface Settings {
   // pre-hydration FOUC script in layout.tsx can read them
   // synchronously before IndexedDB (async) resolves. ----
 
-  // Built-in theme id (lib/theme/themes.ts registry). "terminal" is
-  // the CSS-authored default; any other id goes through the engine's
-  // applyTheme() pipeline.
+  // Built-in theme id (lib/theme/themes.ts registry) OR a `custom-`-
+  // prefixed id resolved against `customThemes` below (v0.5.1, see
+  // lib/theme/resolve.ts's resolveThemeById — the one resolver every
+  // reader of this field goes through). "terminal" is the CSS-authored
+  // default; any other id goes through the engine's applyTheme()
+  // pipeline.
   themeId: string;
+  // v0.5.1 appearance sprint (custom theme editor, docs/design-
+  // explorations/v051-appearance-blueprint.md D1): user-authored/
+  // imported themes, persisted like every other setting. Typed
+  // structurally here (mirroring lib/theme/schema.ts's ThemeDefinition/
+  // ThemeTokens shape field-for-field) rather than imported from it —
+  // Settings lives in this shared core package (also consumed by the
+  // extension/desktop builds, neither of which has a theme engine),
+  // while the theme engine's zod-validated contract is an apps/web-only
+  // concern. Because the mirror is structural (not a loose
+  // Record<string, unknown>), TypeScript treats this array as
+  // interchangeable with ThemeDefinition[] with no cast at any apps/web
+  // call site, and would immediately fail to compile the day the two
+  // shapes ever actually diverged (e.g. schema.ts's THEME_TOKEN_KEYS
+  // gaining an 18th token) — self-enforcing, not a manual-sync
+  // obligation. Soft-capped at 20 in the UI (ThemeEditor.tsx), same
+  // "enforced where it's written" posture as store.ts's own
+  // SPEAKER_ROSTER_CAP; every entry a restore path accepts is
+  // re-validated through parseTheme first (autoExport.ts's
+  // sanitizeRestoredSettings) — this field is never trusted blind.
+  customThemes: {
+    id: string;
+    label: string;
+    scheme: "dark" | "light";
+    tokens: {
+      ink: string;
+      panel: string;
+      panel2: string;
+      panel3: string;
+      edge: string;
+      edge2: string;
+      fg: string;
+      mut: string;
+      mut2: string;
+      "lab-red": string;
+      "lab-orange": string;
+      "lab-yellow": string;
+      "lab-green": string;
+      "lab-purple": string;
+      "lab-cyan": string;
+      act: string;
+      "warn-soft": string;
+    };
+  }[];
   // Global font-size tier — applied as `<html data-fs="…">` +
   // globals.css `html[data-fs="…"]{font-size:…%}`, an all-rem-relative
   // scale (same effect as the browser's own zoom, just theme-portable
@@ -680,6 +726,24 @@ export interface Settings {
   transcriptScale: "follow" | "lg" | "xl";
   // Transcript-only line-height tier — multiplies `--ts-leading`.
   transcriptLeading: "compact" | "standard" | "relaxed";
+  // v0.5.1 appearance sprint (D5 fonts, D6 glass): "default" | a preset
+  // id (lib/theme/fonts.ts's UI_FONT_PRESETS/MONO_FONT_PRESETS) |
+  // "custom:<family>" (free text, sanitized at write time — see
+  // sanitizeFontFamily). Kept as a bare string (not a union) because
+  // the preset registry is apps/web-local and may grow; store.ts's
+  // updateSettings side effect resolves it through resolveFontStack
+  // and setProperty's/removeProperty's the corresponding CSS var —
+  // an unresolvable value (corrupt restore, future preset removed) is
+  // just silently treated as "default" there, never a crash.
+  uiFont: string;
+  monoFont: string;
+  // Opt-in translucent-blur treatment for overlay surfaces (dialogs/
+  // drawers/popovers) — off by default (glass-on-glass readability is
+  // best-effort, not AA-audited; see globals.css's [data-glass="1"]
+  // .glassable rules). Drives `<html data-glass="1">`, never part of
+  // the FOUC script (overlays never paint first, so there is no flash
+  // to guard against).
+  overlayGlass: boolean;
 
   // ---- subscription-direct (v0.2.2, experimental, LOCAL DEV BUILD
   // ONLY) — lets detect/define call Claude/ChatGPT via YOUR OWN local
@@ -784,9 +848,13 @@ export const DEFAULT_SETTINGS: Settings = {
   translateEngine: "llm",
   profile: { enabled: false },
   themeId: "terminal",
+  customThemes: [],
   fontSize: "md",
   transcriptScale: "follow",
   transcriptLeading: "standard",
+  uiFont: "default",
+  monoFont: "default",
+  overlayGlass: false,
   subscriptionDirect: false,
   subscriptionProvider: "claude-sub",
   agentUrl: "http://127.0.0.1:8767",

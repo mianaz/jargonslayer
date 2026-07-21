@@ -77,6 +77,20 @@ import {
   shouldAutoPromoteToAdvanced,
 } from "@/lib/settingsSections";
 import { BUILTIN_THEMES } from "@/lib/theme/themes";
+import { activateTheme, resetToDefaultTheme } from "@/lib/theme/apply";
+import {
+  CUSTOM_THEME_CAP,
+  CUSTOM_THEME_ID_PREFIX,
+  mintCustomThemeId,
+  resolveThemeById,
+} from "@/lib/theme/resolve";
+import { parseTheme, type ThemeDefinition } from "@/lib/theme/schema";
+import {
+  CUSTOM_FONT_PREFIX,
+  MONO_FONT_PRESETS,
+  UI_FONT_PRESETS,
+  sanitizeFontFamily,
+} from "@/lib/theme/fonts";
 import {
   PREVIEW_LIVE_MODELS,
   PREVIEW_SUMMARY_MODELS,
@@ -89,6 +103,7 @@ import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
 import TranslationEngineRow from "@/components/settings/TranslationEngineRow";
 import AnkiConnectSection from "@/components/settings/AnkiConnectSection";
+import ThemeEditor from "@/components/settings/ThemeEditor";
 import { langPairFromSettings } from "@/lib/translate/providers";
 import ModelPicker from "@/components/desktop/ModelPicker";
 import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
@@ -732,6 +747,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     meetingStatus === "connecting" || meetingStatus === "listening" || meetingStatus === "paused";
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
+  // v0.5.1 appearance sprint (D4): non-null while the 显示 section shows
+  // the ThemeEditor sub-panel instead of its normal grid. customThemes
+  // CRUD (save/delete/import below) always reads/writes `settings.
+  // customThemes` (the LIVE store value), never `draft.customThemes` —
+  // draft is a one-time snapshot taken at mount (coercePreviewModels
+  // above) and is never updated again by these write-through actions,
+  // so it would go stale the moment any one of them fires.
+  const [themeEditor, setThemeEditor] = useState<{
+    sourceThemeId: string;
+    editingThemeId?: string;
+  } | null>(null);
+  const [themeImportOpen, setThemeImportOpen] = useState(false);
+  const [themeImportText, setThemeImportText] = useState("");
   const [mics, setMics] = useState<{ deviceId: string; label: string }[]>([]);
   const [testingConnection, setTestingConnection] = useState(false);
   // S14 credential-health chips: live telemetry read (same "must
@@ -1062,6 +1090,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // summaryModel to the first allowed option as soon as the dialog
       // (re)opens — see coercePreviewModels' own doc comment.
       setDraft(coercePreviewModels(settings));
+      // v0.5.1: SettingsDialog is mounted unconditionally by page.tsx
+      // (this whole component instance survives an open/close cycle —
+      // `if (!open) return null` above is only a render-output guard,
+      // not an unmount), so ThemeEditor's own local state resets for
+      // free on every fresh mount, but THIS state doesn't — without an
+      // explicit reset here, closing the dialog while the theme editor
+      // sub-panel is open (e.g. via 取消/backdrop, never touching its
+      // own 返回 button) would leave `themeEditor` non-null, so the NEXT
+      // open would jump straight back into the editor instead of the
+      // normal 显示 grid.
+      setThemeEditor(null);
+      setThemeImportOpen(false);
+      setThemeImportText("");
       // FINDING 5 (S14 fix round): a 测试连接 result from a PREVIOUS
       // dialog-open must never survive into a fresh one — the freshly
       // re-seeded draft above may no longer be what was last tested.
@@ -1280,6 +1321,97 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   const patch = (p: Partial<Settings>) => setDraft((d) => ({ ...d, ...p }));
 
+  // v0.5.1 appearance sprint (D1/D4): customThemes CRUD writes THROUGH
+  // updateSettings immediately (never staged in `draft` — see the
+  // themeEditor state's own doc comment above), then patches ONLY
+  // draft.themeId so the outer dialog's normal 保存 flow is what
+  // actually SELECTS the theme (creating/editing a theme is not the
+  // same action as activating it — see ThemeEditor.tsx's own props doc
+  // for why 保存主题 alone doesn't need to touch live CSS itself:
+  // updateSettings's own side effect (store.ts) already re-resolves +
+  // re-applies whenever "customThemes" is in the patch).
+  const handleSaveCustomTheme = (theme: ThemeDefinition) => {
+    const exists = settings.customThemes.some((t) => t.id === theme.id);
+    const next = exists
+      ? settings.customThemes.map((t) => (t.id === theme.id ? theme : t))
+      : [...settings.customThemes, theme];
+    updateSettings({ customThemes: next });
+    patch({ themeId: theme.id });
+  };
+
+  const handleDeleteCustomTheme = (id: string) => {
+    const next = settings.customThemes.filter((t) => t.id !== id);
+    updateSettings({ customThemes: next });
+    // The LIVE settings.themeId self-heals as a side effect of the
+    // updateSettings call above (store.ts resolves against the new,
+    // shorter array) — but the DIALOG's own staged draft.themeId is a
+    // separate piece of state updateSettings never touches, so it
+    // needs its own explicit fallback when it was pointing at the
+    // theme just deleted (D4: "deleting the ACTIVE theme falls back to
+    // terminal in both").
+    if (draft.themeId === id) patch({ themeId: "terminal" });
+  };
+
+  // 导入 (picker-area import, D4): parse -> validate -> ALWAYS re-mint a
+  // fresh id (unconditionally, unlike sanitizeRestoredSettings's
+  // conditional re-mint on full-backup restore — this is an APPEND into
+  // an existing list, so trusting the file's own id even when it
+  // already looks like "custom-…" could still collide with something
+  // already present) -> append, write-through immediately (same posture
+  // as handleSaveCustomTheme above).
+  const handleImportThemeJson = (raw: string) => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      showToast("主题文件不是有效的 JSON");
+      return;
+    }
+    const result = parseTheme(parsed);
+    if (!result.ok) {
+      showToast(`主题格式不正确：${result.error}`);
+      return;
+    }
+    if (settings.customThemes.length >= CUSTOM_THEME_CAP) {
+      showToast(`最多保存 ${CUSTOM_THEME_CAP} 个自定义主题，请先删除一些`);
+      return;
+    }
+    const id = mintCustomThemeId(
+      result.theme.label,
+      settings.customThemes.map((t) => t.id),
+    );
+    const theme: ThemeDefinition = { ...result.theme, id };
+    updateSettings({ customThemes: [...settings.customThemes, theme] });
+    setThemeImportOpen(false);
+    setThemeImportText("");
+    showToast(`已导入主题「${theme.label}」`);
+  };
+
+  const handleImportThemeFile = async (file: File) => {
+    const text = await file.text();
+    handleImportThemeJson(text);
+  };
+
+  // Whole-dialog close (取消 button + backdrop click, wrapped below):
+  // ALWAYS re-activate the SAVED settings.themeId — never draft.themeId.
+  // Tile clicks only patch the draft (nothing applies until 保存), so on
+  // a cancel path the applied visual must land back on the saved theme.
+  // Unconditional (not gated on the editor being open) because preview
+  // pixels can outlive the editor: 保存主题 leaves the new theme's live
+  // preview on screen with only draft.themeId pointing at it — a
+  // subsequent 取消 must clean that up too, and re-activating an
+  // already-correct theme is an idempotent no-op (17 setProperty calls).
+  const handleDialogClose = () => {
+    const live = useApp.getState().settings;
+    const target = resolveThemeById(live.themeId, live.customThemes);
+    if (target) {
+      activateTheme(target.id, target.tokens, target.scheme);
+    } else {
+      resetToDefaultTheme();
+    }
+    onClose();
+  };
+
   const togglePack = (id: string, checked: boolean) => {
     setCheckedPacks((prev) => {
       const next = new Set(prev);
@@ -1353,8 +1485,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // still carries whatever uiMode was LIVE when the dialog opened, so
     // spreading it wholesale here would revert a toggle click made
     // while the dialog was open (tag-blocker HIGH 3) — always take the
-    // live value instead.
-    const toSave: Settings = { ...draft, enabledPacks, uiMode: useApp.getState().settings.uiMode };
+    // live value instead. customThemes has the SAME staleness problem
+    // (v0.5.1): ThemeEditor's save/delete/import all write straight
+    // through updateSettings (D1), never touching `draft`, so
+    // draft.customThemes is frozen at whatever it was when this dialog
+    // opened — spreading it here would silently undo any theme
+    // created/edited/deleted during this session the moment 保存 is
+    // clicked for ANY reason, same class of bug uiMode already had.
+    const toSave: Settings = {
+      ...draft,
+      enabledPacks,
+      uiMode: useApp.getState().settings.uiMode,
+      customThemes: useApp.getState().settings.customThemes,
+    };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
     // getSidecarMode is only ever read once, at app start (Finding 2c)
     // — so switching it here can't take effect live; tell the user a
@@ -1840,14 +1983,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // inside the panel and ends on the backdrop (text selection,
       // slider drag) doesn't close it, and a click on an inner popover
       // (which portals onto this same backdrop) doesn't bubble up as
-      // "the backdrop itself was clicked". onClose is the existing
-      // discard-draft cancel path (same handler the footer's 取消 uses)
-      // — no confirmation, matches that button's behavior exactly.
+      // "the backdrop itself was clicked". handleDialogClose is the
+      // existing discard-draft cancel path (same handler the footer's
+      // 取消 uses) — no confirmation, matches that button's behavior
+      // exactly — wrapped (v0.5.1) to also revert a ThemeEditor preview
+      // in flight (see that handler's own doc comment).
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) handleDialogClose();
       }}
     >
-      <div className="flex max-h-[85vh] w-[700px] max-w-[92vw] flex-col rounded-none border border-edge2 bg-panel">
+      <div className="flex max-h-[85vh] w-[700px] max-w-[92vw] flex-col rounded-none border border-edge2 bg-panel glassable-panel">
         <div className="flex shrink-0 items-center justify-between border-b border-edge p-5">
           <div className="text-lg font-semibold text-fg">设置</div>
           {/* 简单/高级 segmented control (#62): applied + persisted
@@ -3897,7 +4042,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             </section>
           )}
 
-          {/* 显示 (v0.2.1: 主题 + 字号/行距，独立于其他设置，切主题不丢) — simple */}
+          {/* 显示 (v0.2.1: 主题 + 字号/行距，独立于其他设置，切主题不丢;
+             v0.5.1: 自定义主题编辑器 + 字体 + 毛玻璃 — 主题的新建/编辑/删除/
+             导入全部走 updateSettings 直接写入，不经过 draft/保存，见
+             handleSaveCustomTheme 等的注释) — simple */}
           {activeCategory === "display" && (
           <section
             className="space-y-3 border-t border-edge pt-5"
@@ -3905,94 +4053,286 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           >
             <SectionHeading>显示</SectionHeading>
 
-            <div>
-              <label className="text-xs text-mut">主题</label>
-              <div className="mt-1 grid grid-cols-2 gap-2">
-                {BUILTIN_THEMES.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    onClick={() => patch({ themeId: t.id })}
-                    className={`border p-3 text-left text-sm transition-colors ${
-                      draft.themeId === t.id
-                        ? "border-act bg-panel3 text-fg"
-                        : "border-edge text-fg hover:bg-panel3"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-1 text-xs text-mut2">
-                更多主题（社区包）将在后续版本开放
-              </div>
-            </div>
+            {themeEditor ? (
+              <ThemeEditor
+                customThemes={settings.customThemes}
+                sourceThemeId={themeEditor.sourceThemeId}
+                editingThemeId={themeEditor.editingThemeId}
+                activeThemeId={settings.themeId}
+                onSave={handleSaveCustomTheme}
+                onDelete={handleDeleteCustomTheme}
+                onBack={() => setThemeEditor(null)}
+                showToast={showToast}
+              />
+            ) : (
+              <>
+                <div>
+                  <label className="text-xs text-mut">主题</label>
+                  <div className="mt-1 grid grid-cols-2 gap-2">
+                    {BUILTIN_THEMES.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => patch({ themeId: t.id })}
+                        className={`border p-3 text-left text-sm transition-colors ${
+                          draft.themeId === t.id
+                            ? "border-act bg-panel3 text-fg"
+                            : "border-edge text-fg hover:bg-panel3"
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                    {settings.customThemes.map((t) => (
+                      <div key={t.id} className="relative">
+                        <button
+                          type="button"
+                          onClick={() => patch({ themeId: t.id })}
+                          className={`w-full border p-3 pr-14 text-left text-sm transition-colors ${
+                            draft.themeId === t.id
+                              ? "border-act bg-panel3 text-fg"
+                              : "border-edge text-fg hover:bg-panel3"
+                          }`}
+                        >
+                          {t.label}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setThemeEditor({ sourceThemeId: t.id, editingThemeId: t.id })}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-mut hover:text-fg"
+                        >
+                          编辑
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setThemeEditor({ sourceThemeId: draft.themeId })}
+                      className="border border-dashed border-edge2 p-3 text-left text-sm text-mut hover:bg-panel3 hover:text-fg"
+                    >
+                      ＋ 新建主题
+                    </button>
+                  </div>
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    自定义主题可复制任意已有主题的取值后调整颜色，也可导出分享或导入他人的主题文件
+                  </div>
+                </div>
 
-            <div>
-              <label className="text-xs text-mut">全局字号</label>
-              <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
-                {FONT_SIZE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => patch({ fontSize: opt.value })}
-                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
-                      draft.fontSize === opt.value
-                        ? "bg-panel3 text-fg"
-                        : "text-mut hover:text-fg"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                整体文字大小，类似浏览器缩放
-              </div>
-            </div>
+                <div>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs text-mut">导入主题文件</label>
+                    <button
+                      type="button"
+                      onClick={() => setThemeImportOpen((v) => !v)}
+                      className="text-xs text-act hover:underline"
+                    >
+                      {themeImportOpen ? "收起" : "展开"}
+                    </button>
+                  </div>
+                  {themeImportOpen && (
+                    <div className="mt-1 space-y-2 border border-edge bg-panel2 p-3">
+                      <label className="btn-tactile inline-block cursor-pointer border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3">
+                        选择文件
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            e.target.value = ""; // allow re-picking the same file
+                            if (file) void handleImportThemeFile(file);
+                          }}
+                        />
+                      </label>
+                      <textarea
+                        value={themeImportText}
+                        onChange={(e) => setThemeImportText(e.target.value)}
+                        placeholder="或粘贴主题 JSON…"
+                        rows={3}
+                        className="w-full resize-none border border-edge bg-panel px-2.5 py-1.5 font-mono text-xs leading-[1.7] text-fg placeholder:text-mut2 focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleImportThemeJson(themeImportText)}
+                        disabled={!themeImportText.trim()}
+                        className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        解析并导入
+                      </button>
+                    </div>
+                  )}
+                </div>
 
-            <div>
-              <label className="text-xs text-mut">转录字号</label>
-              <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
-                {TRANSCRIPT_SCALE_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => patch({ transcriptScale: opt.value })}
-                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
-                      draft.transcriptScale === opt.value
-                        ? "bg-panel3 text-fg"
-                        : "text-mut hover:text-fg"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                只放大转录区文字，独立于全局字号
-              </div>
-            </div>
+                <div>
+                  <label className="text-xs text-mut">全局字号</label>
+                  <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
+                    {FONT_SIZE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => patch({ fontSize: opt.value })}
+                        className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
+                          draft.fontSize === opt.value
+                            ? "bg-panel3 text-fg"
+                            : "text-mut hover:text-fg"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    整体文字大小，类似浏览器缩放
+                  </div>
+                </div>
 
-            <div>
-              <label className="text-xs text-mut">转录行距</label>
-              <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
-                {TRANSCRIPT_LEADING_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => patch({ transcriptLeading: opt.value })}
-                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
-                      draft.transcriptLeading === opt.value
-                        ? "bg-panel3 text-fg"
-                        : "text-mut hover:text-fg"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
+                <div>
+                  <label className="text-xs text-mut">转录字号</label>
+                  <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
+                    {TRANSCRIPT_SCALE_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => patch({ transcriptScale: opt.value })}
+                        className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
+                          draft.transcriptScale === opt.value
+                            ? "bg-panel3 text-fg"
+                            : "text-mut hover:text-fg"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    只放大转录区文字，独立于全局字号
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-mut">转录行距</label>
+                  <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
+                    {TRANSCRIPT_LEADING_OPTIONS.map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => patch({ transcriptLeading: opt.value })}
+                        className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
+                          draft.transcriptLeading === opt.value
+                            ? "bg-panel3 text-fg"
+                            : "text-mut hover:text-fg"
+                        }`}
+                      >
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-mut">界面字体</label>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {UI_FONT_PRESETS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => patch({ uiFont: p.id })}
+                        className={`border px-3 py-1.5 text-sm transition-colors ${
+                          draft.uiFont === p.id
+                            ? "border-act bg-panel3 text-fg"
+                            : "border-edge text-fg hover:bg-panel3"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch({
+                          uiFont: draft.uiFont.startsWith(CUSTOM_FONT_PREFIX)
+                            ? draft.uiFont
+                            : CUSTOM_FONT_PREFIX,
+                        })
+                      }
+                      className={`border px-3 py-1.5 text-sm transition-colors ${
+                        draft.uiFont.startsWith(CUSTOM_FONT_PREFIX)
+                          ? "border-act bg-panel3 text-fg"
+                          : "border-edge text-fg hover:bg-panel3"
+                      }`}
+                    >
+                      自定义
+                    </button>
+                  </div>
+                  {draft.uiFont.startsWith(CUSTOM_FONT_PREFIX) && (
+                    <input
+                      type="text"
+                      value={draft.uiFont.slice(CUSTOM_FONT_PREFIX.length)}
+                      onChange={(e) => patch({ uiFont: `${CUSTOM_FONT_PREFIX}${e.target.value}` })}
+                      placeholder="字体名称，如 Fira Code"
+                      className="mt-2 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                  )}
+                </div>
+
+                <div>
+                  <label className="text-xs text-mut">等宽字体</label>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {MONO_FONT_PRESETS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => patch({ monoFont: p.id })}
+                        className={`border px-3 py-1.5 text-sm transition-colors ${
+                          draft.monoFont === p.id
+                            ? "border-act bg-panel3 text-fg"
+                            : "border-edge text-fg hover:bg-panel3"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch({
+                          monoFont: draft.monoFont.startsWith(CUSTOM_FONT_PREFIX)
+                            ? draft.monoFont
+                            : CUSTOM_FONT_PREFIX,
+                        })
+                      }
+                      className={`border px-3 py-1.5 text-sm transition-colors ${
+                        draft.monoFont.startsWith(CUSTOM_FONT_PREFIX)
+                          ? "border-act bg-panel3 text-fg"
+                          : "border-edge text-fg hover:bg-panel3"
+                      }`}
+                    >
+                      自定义
+                    </button>
+                  </div>
+                  {draft.monoFont.startsWith(CUSTOM_FONT_PREFIX) && (
+                    <input
+                      type="text"
+                      value={draft.monoFont.slice(CUSTOM_FONT_PREFIX.length)}
+                      onChange={(e) => patch({ monoFont: `${CUSTOM_FONT_PREFIX}${e.target.value}` })}
+                      placeholder="字体名称，如 Fira Code"
+                      className="mt-2 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                  )}
+                </div>
+
+                <div>
+                  <label className="flex items-center justify-between gap-3 py-1">
+                    <span className="text-sm text-fg">毛玻璃效果</span>
+                    <ToggleSwitch
+                      checked={draft.overlayGlass}
+                      onChange={(checked) => patch({ overlayGlass: checked })}
+                    />
+                  </label>
+                  <div className="text-xs leading-[1.7] text-mut2">覆盖层半透明模糊背景</div>
+                </div>
+              </>
+            )}
           </section>
           )}
         </div>
@@ -4007,7 +4347,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         <div className="flex shrink-0 justify-end gap-2 border-t border-edge p-4">
           <button
             type="button"
-            onClick={onClose}
+            onClick={handleDialogClose}
             className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
           >
             取消

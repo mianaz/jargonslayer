@@ -330,7 +330,7 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="scroll-thin max-h-[85vh] w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-5">
+      <div className="scroll-thin max-h-[85vh] w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel glassable-panel p-5">
         <div className="mb-4 flex items-center justify-between gap-2">
           <span className="text-lg font-semibold text-fg">导入</span>
           {/* S14.1 field fix (item 6): visible 关闭 affordance — the

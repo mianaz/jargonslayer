@@ -202,7 +202,7 @@ export default function LookupPopover() {
   return (
     <div
       ref={ref}
-      className="scroll-thin fixed z-50 max-h-96 w-80 overflow-auto rounded-none border border-edge bg-panel2 p-3 shadow-xl"
+      className="scroll-thin fixed z-50 max-h-96 w-80 overflow-auto rounded-none border border-edge bg-panel2 glassable p-3 shadow-xl"
       style={{ left: pos.left, top: pos.top }}
     >
       <div className="flex items-center justify-between gap-2">

@@ -68,6 +68,22 @@
   --warn-soft-rgb: 255 138 128;
 
   --bl: 8px; /* baseline unit (v2.1 grid discipline, still honored) */
+
+  /* v0.5.1 appearance sprint (D5 fonts): the CSS-authored default font
+     stacks, verbatim copies of tailwind.config.ts's pre-v0.5.1 `sans`/
+     `mono` literals — that file's fontFamily now points at these ONE
+     var each (`var(--font-ui)` / `var(--font-mono-user)`) instead of a
+     compiled-in array, so every Tailwind font-sans/font-mono utility
+     across the app re-fonts in one step. lib/theme/fonts.ts's
+     resolveFontStack + store.ts's updateSettings side effect
+     setProperty/removeProperty these two vars for a non-"default"
+     uiFont/monoFont; removeProperty lets these :root values take back
+     over, same "CSS default is the fallback, never re-injected" shape
+     as the theme engine's own token vars above. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono-user: var(--font-mono-brand), "SF Mono", Menlo, monospace;
 }
 
 /* Scheme plumbing (v0.2.4 light mode): `data-scheme` is stamped on
@@ -99,6 +115,43 @@
 [data-scheme="light"] {
   --bit-phos: #15803d;
   --bit-phos-dim: #86b598;
+}
+
+/* v0.5.1 appearance sprint (D6 毛玻璃): opt-in translucent-blur
+   treatment for true OVERLAY surfaces only (settings dialog/drawers/
+   popovers/hover card/import hub) — `[data-glass="1"]` is stamped on
+   <html> by store.ts's updateSettings side effect + hydrate, default
+   OFF, never touched by the FOUC script (overlays never paint first,
+   so there's no flash to guard against). Both selectors are scoped
+   under the attribute so default rendering (the vast majority of
+   sessions) is byte-identical to before this landed — .glassable/
+   .glassable-panel exist in these components' className unconditionally
+   but do nothing until the attribute is present. Two classes, not one,
+   because the tagged surfaces sit at two different steps of the
+   existing bg-panel/bg-panel2 elevation ladder (DESIGN.md) — collapsing
+   an already-"raised" surface (bg-panel2: dialogs/popovers/hover card)
+   to the same tint as a "base" one (bg-panel: drawers/import hub) would
+   erase that elevation distinction the moment blur turns on, so each
+   keeps its OWN -rgb var. `[data-glass="1"] .glassable` (two class-
+   level selectors, specificity 0,2,0) beats a plain `.bg-panel2`
+   utility (0,1,0) regardless of stylesheet order, which is what lets
+   this override the element's own Tailwind background only when the
+   attribute is present. -webkit- twin: WKWebView (desktop's Tauri
+   shell + mobile Safari) requires the prefixed property; unprefixed
+   browsers ignore it harmlessly. Glass-on-glass text contrast is
+   best-effort only (not part of the AA suite that gates every theme's
+   own token values) — opt-in and documented here, not a correctness
+   bug. */
+[data-glass="1"] .glassable,
+[data-glass="1"] .glassable-panel {
+  backdrop-filter: blur(12px) saturate(1.1);
+  -webkit-backdrop-filter: blur(12px) saturate(1.1);
+}
+[data-glass="1"] .glassable {
+  background-color: rgb(var(--panel2-rgb) / 0.82);
+}
+[data-glass="1"] .glassable-panel {
+  background-color: rgb(var(--panel-rgb) / 0.82);
 }
 
 html,

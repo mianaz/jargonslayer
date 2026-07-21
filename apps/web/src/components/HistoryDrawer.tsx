@@ -165,7 +165,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
       {/* w-full + max-w, not a bare fixed width: 380px overflowed a
           375px phone viewport by 5px, bleeding every row past the left
           edge (Miana's v0.2.2 E2E finding #5). */}
-      <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] translate-x-0 flex-col border-l border-edge bg-panel transition-transform">
+      <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] translate-x-0 flex-col border-l border-edge bg-panel glassable-panel transition-transform">
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
           <span className="font-medium text-fg">会议历史</span>
           <div className="flex items-center gap-1">

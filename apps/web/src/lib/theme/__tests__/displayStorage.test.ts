@@ -9,9 +9,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildFoucScript,
   DEFAULT_DISPLAY_MIRROR,
+  FONT_STACK_RE,
   readDisplayMirror,
+  RGB_TRIPLET_RE,
   writeDisplayMirror,
 } from "../displayStorage";
+import { HEX_COLOR_RE } from "../schema";
 
 beforeEach(() => {
   window.localStorage.clear();
@@ -171,5 +174,221 @@ describe("buildFoucScript", () => {
     } finally {
       window.localStorage.getItem = original;
     }
+  });
+});
+
+// v0.5.1 appearance sprint — custom theme payload + font stacks on the
+// mirror (D3).
+describe("DisplayMirror — custom theme payload", () => {
+  it("round-trips a custom theme's hex/rgb/scheme through write+read", () => {
+    const mirror = {
+      themeId: "custom-abc",
+      fontSize: "md" as const,
+      custom: { hex: { ink: "#111111" }, rgb: { ink: "17 17 17" }, scheme: "dark" as const },
+    };
+    writeDisplayMirror(mirror);
+    expect(readDisplayMirror()).toEqual(mirror);
+  });
+
+  it("drops a malformed custom payload (non-string hex value) but keeps the rest of the mirror intact", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({
+        themeId: "custom-abc",
+        fontSize: "lg",
+        custom: { hex: { ink: 42 }, rgb: { ink: "17 17 17" }, scheme: "dark" },
+      }),
+    );
+    const mirror = readDisplayMirror();
+    expect(mirror.themeId).toBe("custom-abc");
+    expect(mirror.fontSize).toBe("lg");
+    expect(mirror.custom).toBeUndefined();
+  });
+
+  it("drops a custom payload with an invalid scheme value", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({
+        themeId: "custom-abc",
+        fontSize: "md",
+        custom: { hex: { ink: "#111111" }, rgb: { ink: "17 17 17" }, scheme: "sepia" },
+      }),
+    );
+    expect(readDisplayMirror().custom).toBeUndefined();
+  });
+
+  it("drops a custom payload whose hex/rgb are arrays, not plain objects", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({
+        themeId: "custom-abc",
+        fontSize: "md",
+        custom: { hex: ["#111111"], rgb: { ink: "17 17 17" }, scheme: "dark" },
+      }),
+    );
+    expect(readDisplayMirror().custom).toBeUndefined();
+  });
+
+  it("drops a custom payload missing rgb entirely", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({
+        themeId: "custom-abc",
+        fontSize: "md",
+        custom: { hex: { ink: "#111111" }, scheme: "dark" },
+      }),
+    );
+    expect(readDisplayMirror().custom).toBeUndefined();
+  });
+});
+
+describe("DisplayMirror — uiFont/monoFont", () => {
+  it("round-trips uiFont/monoFont strings", () => {
+    writeDisplayMirror({
+      themeId: "terminal",
+      fontSize: "md",
+      uiFont: '"Songti SC", serif',
+      monoFont: "Menlo, monospace",
+    });
+    const mirror = readDisplayMirror();
+    expect(mirror.uiFont).toBe('"Songti SC", serif');
+    expect(mirror.monoFont).toBe("Menlo, monospace");
+  });
+
+  it("drops a non-string uiFont/monoFont value", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({ themeId: "terminal", fontSize: "md", uiFont: 42, monoFont: null }),
+    );
+    const mirror = readDisplayMirror();
+    expect(mirror.uiFont).toBeUndefined();
+    expect(mirror.monoFont).toBeUndefined();
+  });
+
+  it("drops a uiFont value longer than the 256-char cap", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({ themeId: "terminal", fontSize: "md", uiFont: "a".repeat(257) }),
+    );
+    expect(readDisplayMirror().uiFont).toBeUndefined();
+  });
+
+  it("keeps a uiFont value exactly at the 256-char cap", () => {
+    const value = "a".repeat(256);
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({ themeId: "terminal", fontSize: "md", uiFont: value }),
+    );
+    expect(readDisplayMirror().uiFont).toBe(value);
+  });
+});
+
+describe("RGB_TRIPLET_RE / FONT_STACK_RE", () => {
+  it("RGB_TRIPLET_RE matches a bare 'R G B' triplet only", () => {
+    expect(RGB_TRIPLET_RE.test("255 255 0")).toBe(true);
+    expect(RGB_TRIPLET_RE.test("10 10 10")).toBe(true);
+    expect(RGB_TRIPLET_RE.test("rgb(1,2,3)")).toBe(false);
+    expect(RGB_TRIPLET_RE.test("1,2,3")).toBe(false);
+  });
+
+  it("FONT_STACK_RE accepts a real resolved stack and rejects one with parens", () => {
+    expect(FONT_STACK_RE.test('"Songti SC", "STSong", "SimSun", Georgia, serif')).toBe(true);
+    expect(FONT_STACK_RE.test("var(--font-mono-brand), monospace")).toBe(false);
+  });
+});
+
+describe("buildFoucScript — custom theme branch", () => {
+  it("embeds the hex guard regex source in the generated script (defense in depth)", () => {
+    const script = buildFoucScript([]);
+    expect(script).toContain(HEX_COLOR_RE.source);
+  });
+
+  it("applies a custom theme's tokens (hex + rgb) when themeId starts with custom- and mirror.custom is present", () => {
+    writeDisplayMirror({
+      themeId: "custom-abc",
+      fontSize: "md",
+      custom: {
+        hex: { ink: "#111111", fg: "#eeeeee" },
+        rgb: { ink: "17 17 17", fg: "238 238 238" },
+        scheme: "dark",
+      },
+    });
+    const script = buildFoucScript([]); // no builtins needed for this branch
+    new Function(script)();
+    expect(document.documentElement.style.getPropertyValue("--ink")).toBe("#111111");
+    expect(document.documentElement.style.getPropertyValue("--ink-rgb")).toBe("17 17 17");
+    expect(document.documentElement.style.getPropertyValue("--fg")).toBe("#eeeeee");
+    expect(document.documentElement.dataset.theme).toBe("custom-abc");
+    expect(document.documentElement.dataset.scheme).toBe("dark");
+  });
+
+  it("skips a single non-matching hex value in the custom payload without throwing, still applying the others", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({
+        themeId: "custom-abc",
+        fontSize: "md",
+        custom: {
+          hex: { ink: "not-a-hex", fg: "#eeeeee" },
+          rgb: { ink: "17 17 17", fg: "238 238 238" },
+          scheme: "dark",
+        },
+      }),
+    );
+    document.documentElement.style.removeProperty("--ink");
+    const script = buildFoucScript([]);
+    expect(() => new Function(script)()).not.toThrow();
+    expect(document.documentElement.style.getPropertyValue("--ink")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--fg")).toBe("#eeeeee");
+  });
+
+  it("skips a non-matching rgb value for one key while still setting its hex sibling", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({
+        themeId: "custom-abc",
+        fontSize: "md",
+        custom: { hex: { ink: "#111111" }, rgb: { ink: "rgb(1,2,3)" }, scheme: "dark" },
+      }),
+    );
+    document.documentElement.style.removeProperty("--ink-rgb");
+    const script = buildFoucScript([]);
+    new Function(script)();
+    expect(document.documentElement.style.getPropertyValue("--ink")).toBe("#111111");
+    expect(document.documentElement.style.getPropertyValue("--ink-rgb")).toBe("");
+  });
+
+  it("falls through to the terminal fallback when themeId starts with custom- but mirror.custom is absent (self-heals on next hydrate)", () => {
+    writeDisplayMirror({ themeId: "custom-gone", fontSize: "md" });
+    const script = buildFoucScript([]);
+    new Function(script)();
+    expect(document.documentElement.dataset.theme).toBe("terminal");
+    expect(document.documentElement.dataset.scheme).toBe("dark");
+  });
+});
+
+describe("buildFoucScript — font vars", () => {
+  it("sets --font-ui/--font-mono-user from the mirror when they pass the embedded font guard", () => {
+    writeDisplayMirror({
+      themeId: "terminal",
+      fontSize: "md",
+      uiFont: '"Songti SC", serif',
+      monoFont: "Menlo, monospace",
+    });
+    const script = buildFoucScript([]);
+    new Function(script)();
+    expect(document.documentElement.style.getPropertyValue("--font-ui")).toBe('"Songti SC", serif');
+    expect(document.documentElement.style.getPropertyValue("--font-mono-user")).toBe("Menlo, monospace");
+  });
+
+  it("skips a font value that fails the embedded guard (e.g. contains parens) without throwing", () => {
+    window.localStorage.setItem(
+      "js-display",
+      JSON.stringify({ themeId: "terminal", fontSize: "md", uiFont: "var(--evil)" }),
+    );
+    document.documentElement.style.removeProperty("--font-ui");
+    const script = buildFoucScript([]);
+    expect(() => new Function(script)()).not.toThrow();
+    expect(document.documentElement.style.getPropertyValue("--font-ui")).toBe("");
   });
 });
