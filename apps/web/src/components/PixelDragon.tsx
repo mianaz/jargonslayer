@@ -484,17 +484,19 @@ function Rects({ px }: { px: Px[] }) {
 // of a machine event/state. Reusing the machine's real "burst" pose
 // instead would inherit two things that don't fit: BURST_MS's 600ms
 // auto-revert (the burst-lifecycle effect below dispatches burstDone
-// on its own timeout) and that same effect's own setParticles call,
-// which fires on every machine.pose/burstQueue change and would
+// on its own timeout) and that same effect's own setBurstParticles
+// call, which fires on every machine.pose/burstQueue change and would
 // immediately clobber a denser celebration batch with its usual 5-8
-// count. A celebration doesn't need to interact with the sleep / hold /
-// burst-queue rules the machine exists to encode — it only needs to
-// override the RENDER for a fixed window and fall back to whatever the
-// machine already says, which a local override gets for free
-// (self-restoring even mid-listening or mid-sleep, since machine.pose
-// is never touched by it). Exported so the test file doesn't hardcode
-// this timing (same posture as TranscriptPanel.tsx's own exported
-// INTERIM_THROTTLE_MS/etc.).
+// count (this is also why celebration owns its OWN particle state,
+// celebrationParticles below, rather than sharing the burst's — see F4,
+// v0.5.1 Bit sprint fix round). A celebration doesn't need to interact
+// with the sleep / hold / burst-queue rules the machine exists to
+// encode — it only needs to override the RENDER for a fixed window and
+// fall back to whatever the machine already says, which a local
+// override gets for free (self-restoring even mid-listening or
+// mid-sleep, since machine.pose is never touched by it). Exported so
+// the test file doesn't hardcode this timing (same posture as
+// TranscriptPanel.tsx's own exported INTERIM_THROTTLE_MS/etc.).
 export const CELEBRATE_MS = 2500;
 
 export default function PixelDragon({ size = 40 }: { size?: number }) {
@@ -551,21 +553,30 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
   // ── burst lifecycle: when pose enters "burst", spawn particles and
   //    schedule burstDone after BURST_MS (skipped under reduced-motion,
   //    which shows a single static flame frame instead) ──────────────
-  const [particles, setParticles] = useState<Particle[]>([]);
+  // F4 MEDIUM (v0.5.1 Bit sprint fix round): burst and celebration used
+  // to share ONE `particles` state, each clearing it WHOLESALE on its
+  // own timeout — a celebration starting near a burst's end had its
+  // sparks deleted the moment the burst's own (much shorter, 600ms)
+  // timer fired, and the reverse (a card landing near a celebration's
+  // end got its burst cut short by the celebration's cleanup). Split by
+  // SOURCE into two independent states, each only ever cleared by its
+  // OWN timeout; the render below just concatenates both for display.
+  const [burstParticles, setBurstParticles] = useState<Particle[]>([]);
+  const [celebrationParticles, setCelebrationParticles] = useState<Particle[]>([]);
   const [edgeGlow, setEdgeGlow] = useState(false);
   const burstSeed = useRef(0);
   useEffect(() => {
     if (machine.pose !== "burst") return;
     burstSeed.current += 1;
     const count = 5 + (burstSeed.current % 4); // 5–8
-    setParticles(makeParticles(burstSeed.current, count, false));
+    setBurstParticles(makeParticles(burstSeed.current, count, false));
     if (reduced) {
       // static frame only — no timers, drop straight back
       const id = window.setTimeout(() => dispatch({ type: "burstDone" }), 0);
       return () => window.clearTimeout(id);
     }
     const id = window.setTimeout(() => {
-      setParticles([]);
+      setBurstParticles([]);
       dispatch({ type: "burstDone" });
     }, BURST_MS);
     return () => window.clearTimeout(id);
@@ -573,11 +584,24 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
 
   // ── celebration: one-shot ~2.5s render override on bitCelebrateNonce
   //    increment (see CELEBRATE_MS above for why this stays local
-  //    instead of a machine event) — reuses the SAME particles state +
-  //    fire-rendering block a burst uses, just seeded denser. Mirrors
-  //    the cardCount `prevCount` ref pattern above: the ref seeds to
-  //    whatever the nonce already is at mount, so an already-nonzero
-  //    nonce never celebrates on first render, only later INCREASES do.
+  //    instead of a machine event) — reuses the SAME fire-rendering
+  //    block a burst uses (own particle state, see F4 above), just
+  //    seeded denser. Mirrors the cardCount `prevCount` ref pattern
+  //    above: the ref seeds to whatever the nonce already is at mount,
+  //    so an already-nonzero nonce never celebrates on first render,
+  //    only later INCREASES do.
+  //
+  //    F5 LOW, accept-document (v0.5.1 Bit sprint fix round): this
+  //    effect fires once per React SNAPSHOT where celebrateNonce grew,
+  //    not once per underlying +1 increment — two celebrateBit() calls
+  //    batched into the same render (e.g. two near-simultaneous
+  //    onQueueEmptied firings) present here as ONE nonce jump of +2, and
+  //    this `if` only ever schedules ONE celebration sequence per run.
+  //    This is DELIBERATE, accepted coalescing, not a dropped event: two
+  //    simultaneous "you just finished reviewing" moments playing one
+  //    combined celebration is correct UX (nobody wants two overlapping
+  //    hops), and no second celebration is queued behind the first —
+  //    see "batched nonce increments coalesce" below.
   const celebrateNonce = useApp((s) => s.bitCelebrateNonce);
   const prevCelebrateNonce = useRef(celebrateNonce);
   const [celebrating, setCelebrating] = useState(false);
@@ -587,14 +611,14 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
       if (celebrateTimer.current !== null) window.clearTimeout(celebrateTimer.current);
       burstSeed.current += 1;
       const count = 8 + (burstSeed.current % 3); // 8–10, denser than a normal 5–8 burst
-      setParticles(makeParticles(burstSeed.current, count, true));
+      setCelebrationParticles(makeParticles(burstSeed.current, count, true));
       setCelebrating(true);
       // reduced-motion: settle back to the real machine pose almost
       // immediately (still one commit, no lingering hop/spread) — same
       // "static frame only" posture as the burst-lifecycle effect above.
       celebrateTimer.current = window.setTimeout(() => {
         setCelebrating(false);
-        setParticles([]);
+        setCelebrationParticles([]);
         celebrateTimer.current = null;
       }, reduced ? 0 : CELEBRATE_MS);
     }
@@ -622,7 +646,11 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
 
   function fireBigRainbow() {
     burstSeed.current += 1;
-    setParticles(makeParticles(burstSeed.current, 8, true));
+    // reuses the mouth-open BURST pose (cardIncrease below), not the
+    // celebrating overlay — its particles are a burst-source spark set
+    // (F4 above), cleaned up by the same burst-lifecycle effect's own
+    // BURST_MS timeout.
+    setBurstParticles(makeParticles(burstSeed.current, 8, true));
     dispatch({ type: "cardIncrease" }); // reuse the mouth-open burst
     if (reduced) return;
     // brief page-edge ANSI glow via a portal overlay, removed after 1s
@@ -880,7 +908,10 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
             instead of touching the lib. */}
         {showFire && (
           <g transform="translate(0, 7)">
-            {particles.map((p) => (
+            {/* F4: two independent sources (burst / celebration, see
+                above) rendered together — each only ever cleared by its
+                OWN timeout, so one can't cut the other short. */}
+            {[...burstParticles, ...celebrationParticles].map((p) => (
               <rect
                 key={p.id}
                 x={0}

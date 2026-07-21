@@ -13,6 +13,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
+import { BURST_MS } from "../../lib/pixelDragon";
 import PixelDragon, { BitCameo, CELEBRATE_MS } from "../PixelDragon";
 
 // jsdom has no matchMedia — PixelDragon's prefers-reduced-motion hook
@@ -203,6 +204,44 @@ describe("PixelDragon — celebration (bitCelebrateNonce)", () => {
     expect(container!.querySelector(".bit-hop")).toBeNull();
   });
 
+  // F5 LOW, accept-document (v0.5.1 Bit sprint fix round): two
+  // celebrateBit() calls batched into the SAME React snapshot (React
+  // 18's automatic batching — no await between them here) present as
+  // ONE nonce jump of +2, not two separate +1 renders; the celebration
+  // effect only ever reacts to "did the snapshot's nonce grow", so this
+  // coalesces into exactly one celebration sequence. This is ACCEPTED,
+  // deliberate behavior (two simultaneous "just finished a review"
+  // moments playing one combined celebration is correct UX — nobody
+  // wants two overlapping hops) — pinned here, not treated as a bug.
+  it("two celebrateBit() calls batched into one render coalesce into exactly one celebration sequence", async () => {
+    await act(async () => {
+      root!.render(<PixelDragon />);
+    });
+    expect(container!.querySelector(".bit-hop")).toBeNull();
+
+    await act(async () => {
+      useApp.getState().celebrateBit();
+      useApp.getState().celebrateBit();
+    });
+    // the store really did jump by 2 in one snapshot...
+    expect(useApp.getState().bitCelebrateNonce).toBe(2);
+    // ...but exactly ONE celebration sequence is playing, not two
+    // stacked/queued instances.
+    expect(container!.querySelectorAll(".bit-hop").length).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CELEBRATE_MS + 50);
+    });
+    expect(container!.querySelector(".bit-hop")).toBeNull();
+
+    // No second celebration was queued behind the first — a further
+    // full CELEBRATE_MS window confirms nothing re-triggers on its own.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CELEBRATE_MS + 50);
+    });
+    expect(container!.querySelector(".bit-hop")).toBeNull();
+  });
+
   it("celebrating mid-listening pauses the signal meter, then self-restores it (must not fight a live session)", async () => {
     useApp.setState({ status: "listening" });
     await act(async () => {
@@ -225,6 +264,115 @@ describe("PixelDragon — celebration (bitCelebrateNonce)", () => {
     // changed) — the signal meter resumes on its own.
     expect(container!.querySelector(".bit-signal")).not.toBeNull();
     expect(container!.querySelector(".bit-hop")).toBeNull();
+  });
+});
+
+describe("PixelDragon — burst/celebration particle isolation (F4, v0.5.1 Bit sprint fix round)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    setActEnv();
+    stubMatchMedia(false);
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    useApp.setState({ status: "idle", cards: [], terms: [], bitCelebrateNonce: 0 });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    useApp.setState({ status: "idle", cards: [], terms: [], bitCelebrateNonce: 0 });
+  });
+
+  function sparkCount(): number {
+    return container!.querySelectorAll("rect.bit-spark").length;
+  }
+
+  async function fireBurst(): Promise<void> {
+    // a card-count increase is what the component's own cardCount effect
+    // watches to dispatch cardIncrease (the burst pose trigger) — no
+    // internal helper is exposed, so this drives it the same way the
+    // real app does (a new card landing).
+    await act(async () => {
+      useApp.setState((s) => ({ cards: [...s.cards, {} as never] }));
+    });
+  }
+
+  // Both effects used to own ONE shared `particles` state and each
+  // cleared it WHOLESALE on its own timeout — a celebration starting
+  // near a burst's end had its sparks deleted the moment the burst's
+  // own (much shorter, 600ms) timer fired. The fix's discriminator: if
+  // the burst's own timeout wipes the celebration's sparks too,
+  // sparkCount() reads back exactly 0 right after — regardless of the
+  // seed-dependent exact counts either source generates.
+  it("a celebration started mid-burst survives the burst's own BURST_MS timeout firing", async () => {
+    await act(async () => {
+      root!.render(<PixelDragon />);
+    });
+
+    await fireBurst();
+    expect(sparkCount()).toBeGreaterThan(0);
+
+    // celebrate well before the burst's own 600ms timer elapses
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(BURST_MS - 200);
+    });
+    await act(async () => {
+      useApp.getState().celebrateBit();
+    });
+    expect(container!.querySelector(".bit-hop")).not.toBeNull();
+
+    // cross the burst's own BURST_MS deadline (total elapsed since burst
+    // start is now 600+50ms) while staying well under the celebration's
+    // own CELEBRATE_MS=2500ms budget (only 250ms of it has elapsed).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(container!.querySelector(".bit-hop")).not.toBeNull(); // still celebrating
+    expect(sparkCount()).toBeGreaterThan(0); // celebration sparks survived
+  });
+
+  // The reverse order: celebration starts first, a burst fires mid-
+  // celebration, and the BURST's own (shorter) timeout is what fires
+  // first — must not wipe the celebration's already-longer-running
+  // sparks either.
+  it("a burst fired mid-celebration is cleared by its own timeout without touching the celebration's sparks", async () => {
+    await act(async () => {
+      root!.render(<PixelDragon />);
+    });
+
+    await act(async () => {
+      useApp.getState().celebrateBit();
+    });
+    expect(container!.querySelector(".bit-hop")).not.toBeNull();
+    expect(sparkCount()).toBeGreaterThan(0);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    await fireBurst();
+
+    // cross the burst's own BURST_MS deadline (started at t=100, so
+    // firing by t=100+BURST_MS) while staying well under the
+    // celebration's own CELEBRATE_MS=2500ms budget (elapsed so far:
+    // 100 + BURST_MS + 50 ≈ 750ms).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(BURST_MS + 50);
+    });
+    expect(container!.querySelector(".bit-hop")).not.toBeNull(); // still celebrating
+    expect(sparkCount()).toBeGreaterThan(0); // celebration sparks survived
   });
 });
 

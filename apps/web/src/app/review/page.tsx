@@ -13,6 +13,7 @@ import ReviewDashboard, { useSessionCache } from "@/components/review/ReviewDash
 import PracticeDeck from "@/components/review/PracticeDeck";
 import DueReview from "@/components/review/DueReview";
 import Toast from "@/components/Toast";
+import PixelDragon from "@/components/PixelDragon";
 
 type ReviewMode = "due" | "browse";
 
@@ -85,6 +86,23 @@ export default function ReviewPage() {
       </main>
 
       <Toast />
+
+      {/* F1 (v0.5.1 Bit sprint fix round): PixelDragon previously only
+          mounted inside the main page's StatusLine — handleQueueEmptied
+          above bumps the store's celebrateBit nonce, but with no mascot
+          mounted on THIS route the celebration had no consumer and was
+          invisible. Fixed bottom-right perch, decorative (PixelDragon
+          reads the store itself — no props/route coupling, see its own
+          file), safe-area-aware for the iOS home-indicator strip, z-20
+          so it never competes with the z-30+ dialogs/drawers/Toast
+          above. */}
+      <div
+        aria-hidden="true"
+        className="fixed bottom-2 right-2 z-20 sm:bottom-4 sm:right-4"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <PixelDragon />
+      </div>
     </div>
   );
 }

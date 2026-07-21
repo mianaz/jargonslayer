@@ -191,4 +191,35 @@ describe("DueReview — queue re-evaluates time while mounted (F2 MEDIUM)", () =
     expect(container!.textContent).toContain("今天没有待复习的词条");
     expect(onQueueEmptied).not.toHaveBeenCalled();
   });
+
+  // F3 MEDIUM (v0.5.1 Bit sprint fix round, GPT-5.6 Sol adversarial
+  // review): the queue can empty WITHOUT a grade — an unenrolled
+  // recent-meeting candidate falls out of composeReviewQueue's own
+  // 7-day RECENT_MEETING_WINDOW_MS filter (packages/core learn/queue.ts)
+  // once it ages out, and this component's 30s tick re-evaluates `now`
+  // (see the F2 MEDIUM tests above), so a >0→0 transition can happen on
+  // a tick alone. A learnset write from ANY other source (a suppression,
+  // a cache refresh) is an equally ungraded route to the same
+  // transition; `useApp.setState({ learnset: {} })` below stands in for
+  // all of them without depending on wall-clock expiry math. Either way
+  // must NOT count as "the user just finished a review".
+  it("onQueueEmptied does NOT fire when the queue empties via a learnset change that isn't a grade (stand-in for 7-day candidate expiry)", async () => {
+    const onQueueEmptied = vi.fn();
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} onQueueEmptied={onQueueEmptied} />);
+    });
+    expect(container!.textContent).toContain("circle back");
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+
+    // Queue empties, but NOT via gradeReview — e.g. the learnset record
+    // aged out / got suppressed elsewhere, or (the real-world trigger)
+    // an unenrolled recent candidate fell outside the 7-day window on a
+    // tick. No grade preceded this, so no celebration.
+    await act(async () => {
+      useApp.setState({ learnset: {} });
+    });
+    expect(container!.textContent).toContain("今天没有待复习的词条");
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+  });
 });

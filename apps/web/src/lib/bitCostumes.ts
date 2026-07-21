@@ -250,7 +250,11 @@ export const THEME_COSTUME: Readonly<Record<string, BitCostumeId>> = {
 };
 
 export function isBitCostumeId(v: unknown): v is BitCostumeId {
-  return typeof v === "string" && v in BIT_COSTUMES;
+  // F2 HIGH (v0.5.1 Bit sprint fix round): `v in BIT_COSTUMES` walks the
+  // WHOLE prototype chain, so "__proto__"/"constructor"/"toString" all
+  // read as "present" via Object.prototype's own inherited members —
+  // Object.hasOwn only ever answers for BIT_COSTUMES' own keys.
+  return typeof v === "string" && Object.hasOwn(BIT_COSTUMES, v);
 }
 
 /** Resolve the effective costume for the current setting + theme.
@@ -264,6 +268,13 @@ export function resolveBitCostume(
   themeId: string,
 ): BitCostumeId | null {
   if (setting === "none") return null;
-  if (setting === "auto") return THEME_COSTUME[themeId] ?? null;
+  // F2 HIGH (v0.5.1 Bit sprint fix round): same prototype-chain hole as
+  // isBitCostumeId above, but on THEME_COSTUME — a hostile themeId like
+  // "__proto__" or "constructor" would otherwise read back an inherited
+  // Object.prototype member (truthy, not a BitCostumeId) instead of
+  // falling through to null.
+  if (setting === "auto") {
+    return Object.hasOwn(THEME_COSTUME, themeId) ? THEME_COSTUME[themeId] : null;
+  }
   return isBitCostumeId(setting) ? setting : null;
 }
