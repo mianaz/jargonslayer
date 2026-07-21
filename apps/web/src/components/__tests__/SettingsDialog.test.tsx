@@ -23,6 +23,7 @@ import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { RETENTION_COPY } from "../../lib/stt/engineOptions";
 import { CLARITY_THEME } from "../../lib/theme/themes";
+import { BIT_COSTUME_LABELS } from "../../lib/bitCostumes";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import SettingsDialog, { SETTINGS_CATEGORIES, type SettingsCategoryId } from "../SettingsDialog";
 
@@ -1964,5 +1965,90 @@ describe("SettingsDialog — F5: custom font values are sanitized at 保存, not
     });
 
     expect(useApp.getState().settings.uiFont).toBe("default");
+  });
+});
+
+describe("SettingsDialog — Bit 装扮 picker (v0.5.1 Bit sprint, Lane B)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  // Scopes to the Bit 装扮 block specifically, mirrors uiFontSection()'s
+  // own "find by label text, use its parent" approach above.
+  function bitCostumeSection(): HTMLElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "Bit 装扮");
+    if (!label) throw new Error('"Bit 装扮" label not found');
+    return label.parentElement as HTMLElement;
+  }
+
+  async function openDisplayCategory(): Promise<void> {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const displayBtn = navButtons.find((b) => b.textContent === "显示");
+    if (!displayBtn) throw new Error('nav category "显示" not found');
+    await act(async () => {
+      displayBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  it("renders exactly 9 options — 跟随主题 + 原装 + the 7 BIT_COSTUME_LABELS entries, in registry order", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openDisplayCategory();
+
+    const section = bitCostumeSection();
+    const labels = Array.from(section.querySelectorAll("button")).map((b) => b.textContent);
+    expect(labels).toEqual(["跟随主题", "原装", ...Object.values(BIT_COSTUME_LABELS)]);
+  });
+
+  it("clicking a costume option patches the draft, applied to settings on 保存 (not write-through)", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openDisplayCategory();
+
+    const section = bitCostumeSection();
+    const douliBtn = Array.from(section.querySelectorAll("button")).find(
+      (b) => b.textContent === BIT_COSTUME_LABELS.douli,
+    );
+    if (!douliBtn) throw new Error("斗笠 button not found in Bit 装扮 section");
+    await act(async () => {
+      douliBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // Still a draft edit — normal 保存 flow, exactly like uiFont — so the
+    // live store hasn't moved yet until 保存 is clicked.
+    expect(useApp.getState().settings.bitCostume).toBe("auto");
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.bitCostume).toBe("douli");
   });
 });

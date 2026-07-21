@@ -140,4 +140,86 @@ describe("DueReview — queue re-evaluates time while mounted (F2 MEDIUM)", () =
     expect(container!.textContent).toContain("今天没有待复习的词条");
     expect(container!.textContent).not.toContain("circle back");
   });
+
+  // v0.5.1 Bit sprint: onQueueEmptied fires on the >0→0 transition a
+  // grade causes — never on mounting an already-empty queue, and AGAIN
+  // when a resurfaced relearn card is cleared a second time (per-
+  // session, not a one-shot latch). Uses the same real grading UI as
+  // the F2 tests above, so the transition is driven by the actual
+  // gradeReview store write, not a synthetic state poke.
+  it("onQueueEmptied fires once per queue-clearing grade, not on mount", async () => {
+    const onQueueEmptied = vi.fn();
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} onQueueEmptied={onQueueEmptied} />);
+    });
+
+    // Mount with a non-empty queue: no fire.
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+
+    const grade0 = () =>
+      Array.from(container!.querySelectorAll("button")).find(
+        (b) => b.textContent === "不认识",
+      )!;
+    await act(async () => {
+      grade0().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(onQueueEmptied).toHaveBeenCalledTimes(1);
+
+    // Relearn step elapses → the card resurfaces (0→1: still one call).
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(RELEARN_STEP_MS + 30_000);
+    });
+    expect(onQueueEmptied).toHaveBeenCalledTimes(1);
+
+    // Clearing it again fires again.
+    await act(async () => {
+      grade0().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(onQueueEmptied).toHaveBeenCalledTimes(2);
+  });
+
+  it("onQueueEmptied does NOT fire when mounted with an already-empty queue", async () => {
+    const onQueueEmptied = vi.fn();
+    useApp.setState({ learnset: {} });
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} onQueueEmptied={onQueueEmptied} />);
+    });
+    expect(container!.textContent).toContain("今天没有待复习的词条");
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+  });
+
+  // F3 MEDIUM (v0.5.1 Bit sprint fix round, GPT-5.6 Sol adversarial
+  // review): the queue can empty WITHOUT a grade — an unenrolled
+  // recent-meeting candidate falls out of composeReviewQueue's own
+  // 7-day RECENT_MEETING_WINDOW_MS filter (packages/core learn/queue.ts)
+  // once it ages out, and this component's 30s tick re-evaluates `now`
+  // (see the F2 MEDIUM tests above), so a >0→0 transition can happen on
+  // a tick alone. A learnset write from ANY other source (a suppression,
+  // a cache refresh) is an equally ungraded route to the same
+  // transition; `useApp.setState({ learnset: {} })` below stands in for
+  // all of them without depending on wall-clock expiry math. Either way
+  // must NOT count as "the user just finished a review".
+  it("onQueueEmptied does NOT fire when the queue empties via a learnset change that isn't a grade (stand-in for 7-day candidate expiry)", async () => {
+    const onQueueEmptied = vi.fn();
+    mount();
+    await act(async () => {
+      root!.render(<DueReview cache={{}} onQueueEmptied={onQueueEmptied} />);
+    });
+    expect(container!.textContent).toContain("circle back");
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+
+    // Queue empties, but NOT via gradeReview — e.g. the learnset record
+    // aged out / got suppressed elsewhere, or (the real-world trigger)
+    // an unenrolled recent candidate fell outside the 7-day window on a
+    // tick. No grade preceded this, so no celebration.
+    await act(async () => {
+      useApp.setState({ learnset: {} });
+    });
+    expect(container!.textContent).toContain("今天没有待复习的词条");
+    expect(onQueueEmptied).not.toHaveBeenCalled();
+  });
 });

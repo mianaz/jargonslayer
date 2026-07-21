@@ -15,6 +15,7 @@ import * as storage from "./storage";
 import * as glossary from "./glossary";
 import * as learnset from "../learn/store";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
+import { isBitCostumeId } from "../bitCostumes";
 import { parseTheme, type ThemeDefinition } from "../theme/schema";
 import { CUSTOM_THEME_ID_PREFIX, mintCustomThemeId } from "../theme/resolve";
 import { CUSTOM_FONT_PREFIX, sanitizeFontFamily } from "../theme/fonts";
@@ -658,5 +659,15 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
   // other shape (a stray string, a number, missing entirely) falls back
   // to the default rather than being truthy-coerced.
   picked.overlayGlass = typeof picked.overlayGlass === "boolean" ? picked.overlayGlass : DEFAULT_SETTINGS.overlayGlass;
+  // bitCostume (v0.5.1 Bit sprint): only the three legal shapes pass
+  // ("auto" | "none" | a known costume id) — anything else (unknown id
+  // from a future/older version, wrong type) falls back to "auto"
+  // rather than persisting a value resolveBitCostume would treat as
+  // bare anyway (self-healing, but a clean value keeps the settings
+  // picker from rendering an unselectable state).
+  picked.bitCostume =
+    picked.bitCostume === "auto" || picked.bitCostume === "none" || isBitCostumeId(picked.bitCostume)
+      ? picked.bitCostume
+      : DEFAULT_SETTINGS.bitCostume;
   return picked as Partial<Settings>;
 }

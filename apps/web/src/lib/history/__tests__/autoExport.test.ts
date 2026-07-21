@@ -785,6 +785,19 @@ describe("sanitizeRestoredSettings — v0.5.1 customThemes/uiFont/monoFont/overl
       DEFAULT_SETTINGS.overlayGlass,
     );
   });
+
+  // F2 HIGH (v0.5.1 Bit sprint fix round): bitCostume's own allow-list
+  // (`picked.bitCostume === "auto" || "none" || isBitCostumeId(...)`)
+  // routes every non-legal shape through isBitCostumeId, so a hostile
+  // string like "__proto__" — which used to read as "present" via
+  // isBitCostumeId's now-fixed prototype-chain hole (see
+  // lib/__tests__/bitCostumes.test.ts) — must fall back to the default
+  // ("auto") exactly like any other unknown id, not survive the restore.
+  it('falls back to "auto" for a hostile bitCostume value ("__proto__"), same as any other unknown id', async () => {
+    const autoExport = await import("../autoExport");
+    const hostile = { ...DEFAULT_SETTINGS, bitCostume: "__proto__" } as never;
+    expect(autoExport.sanitizeRestoredSettings(hostile).bitCostume).toBe("auto");
+  });
 });
 
 describe("postTaskWebhook — task.* envelope (#58 task center connector hook)", () => {

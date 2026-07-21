@@ -91,6 +91,7 @@ import {
   UI_FONT_PRESETS,
   sanitizeFontFamily,
 } from "@/lib/theme/fonts";
+import { BIT_COSTUME_LABELS } from "@/lib/bitCostumes";
 import {
   PREVIEW_LIVE_MODELS,
   PREVIEW_SUMMARY_MODELS,
@@ -4387,6 +4388,51 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     />
                   </label>
                   <div className="text-xs leading-[1.7] text-mut2">覆盖层半透明模糊背景</div>
+                </div>
+
+                <div>
+                  <label className="text-xs text-mut">Bit 装扮</label>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => patch({ bitCostume: "auto" })}
+                      className={`border px-3 py-1.5 text-sm transition-colors ${
+                        draft.bitCostume === "auto"
+                          ? "border-act bg-panel3 text-fg"
+                          : "border-edge text-fg hover:bg-panel3"
+                      }`}
+                    >
+                      跟随主题
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => patch({ bitCostume: "none" })}
+                      className={`border px-3 py-1.5 text-sm transition-colors ${
+                        draft.bitCostume === "none"
+                          ? "border-act bg-panel3 text-fg"
+                          : "border-edge text-fg hover:bg-panel3"
+                      }`}
+                    >
+                      原装
+                    </button>
+                    {Object.entries(BIT_COSTUME_LABELS).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => patch({ bitCostume: id })}
+                        className={`border px-3 py-1.5 text-sm transition-colors ${
+                          draft.bitCostume === id
+                            ? "border-act bg-panel3 text-fg"
+                            : "border-edge text-fg hover:bg-panel3"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    状态栏的像素龙 Bit 的穿搭；跟随主题时每套内置主题各有一件
+                  </div>
                 </div>
               </>
             )}

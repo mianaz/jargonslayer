@@ -180,6 +180,8 @@ function GenerateCta() {
         settings,
       );
       setSummary(res);
+      // Bit celebration contract: store nonce (celebrateBit) → PixelDragon.
+      useApp.getState().celebrateBit();
       // saveCurrentSession returns null when the underlying history
       // write failed (H1, v0.5 closeout — it shows its own 保存失败
       // toast and keeps the crash-recovery draft); an unconditional

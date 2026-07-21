@@ -744,6 +744,13 @@ export interface Settings {
   // the FOUC script (overlays never paint first, so there is no flash
   // to guard against).
   overlayGlass: boolean;
+  // Bit's costume (v0.5.1 Bit sprint): "auto" dresses him per the
+  // active builtin theme (apps/web lib/bitCostumes.ts THEME_COSTUME —
+  // structural string here, same core-can't-import-apps/web posture as
+  // customThemes above), "none" = 原装, or a specific costume id
+  // ("glasses" | "douli" | "wizard" | "fedora" | "crown" | "hero" |
+  // "pencil") worn regardless of theme.
+  bitCostume: string;
 
   // ---- subscription-direct (v0.2.2, experimental, LOCAL DEV BUILD
   // ONLY) — lets detect/define call Claude/ChatGPT via YOUR OWN local
@@ -855,6 +862,7 @@ export const DEFAULT_SETTINGS: Settings = {
   uiFont: "default",
   monoFont: "default",
   overlayGlass: false,
+  bitCostume: "auto",
   subscriptionDirect: false,
   subscriptionProvider: "claude-sub",
   agentUrl: "http://127.0.0.1:8767",
