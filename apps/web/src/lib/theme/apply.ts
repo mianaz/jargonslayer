@@ -59,6 +59,32 @@ export function hexToRgbTriplet(hex: string): string {
   return `${r} ${g} ${b}`;
 }
 
+/** Scale a validated (schema.ts HEX_COLOR_RE, 3- or 6-digit) hex
+ *  color's RGB channels toward black by `factor` (0..1 — 0.55 keeps
+ *  55% of each channel's original value) and re-encode as a 6-digit
+ *  lowercase hex string, each channel individually rounded then
+ *  clamped to 0-255 (defensive — a factor outside 0..1 can't corrupt
+ *  the output width). Pure, no DOM involvement, same posture as
+ *  hexToRgbTriplet above — used by applyTheme below to derive
+ *  `--bit-phos-dim` from a theme's own lab-green (D7) without adding a
+ *  second color to the 17-token contract. */
+export function darkenHex(hex: string, factor: number): string {
+  let h = hex.slice(1);
+  if (h.length === 3) {
+    h = h
+      .split("")
+      .map((c) => c + c)
+      .join("");
+  }
+  const scale = (channel: number) =>
+    Math.max(0, Math.min(255, Math.round(channel * factor)));
+  const toHex = (n: number) => n.toString(16).padStart(2, "0");
+  const r = scale(parseInt(h.slice(0, 2), 16));
+  const g = scale(parseInt(h.slice(2, 4), 16));
+  const b = scale(parseInt(h.slice(4, 6), 16));
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 /** Apply a theme's tokens onto `document.documentElement` and stamp
  *  `dataset.theme` for CSS selectors keyed off `[data-theme="…"]`.
  *  Sets BOTH the hex variable and its "-rgb" triplet sibling for every
@@ -79,6 +105,21 @@ export function applyTheme(themeId: string, tokens: ThemeTokens, scheme: ThemeSc
   root.dataset.theme = themeId;
   root.dataset.scheme = scheme;
   syncThemeColorMeta(tokens.ink);
+  // D7 (v0.5.1): Bit (PixelDragon.tsx) reads `var(--bit-phos, #4ADE80)`/
+  // `--bit-phos-dim` directly rather than a lab-* token — it predates
+  // the theme engine, and globals.css's own [data-scheme="light"]
+  // override hand-tunes exactly these two CSS-authored values for
+  // terminal-light only. Every theme (builtin or custom) now gets a
+  // pair derived HERE instead: --bit-phos is the theme's own lab-green
+  // verbatim, --bit-phos-dim is that same hue darkened toward black
+  // (darkenHex, ×0.55). Since this setProperty call is inline style, it
+  // wins over globals.css's rule for terminal-light too — its derived
+  // pair (from lab-green #137038) is only an "acceptable drift" cousin
+  // of that CSS-authored #15803d/#86b598 (blueprint D7), not identical;
+  // the CSS rule itself is left in place as the pre-hydration/no-JS
+  // fallback, same relationship every other token has with globals.css.
+  root.style.setProperty("--bit-phos", tokens["lab-green"]);
+  root.style.setProperty("--bit-phos-dim", darkenHex(tokens["lab-green"], 0.55));
 }
 
 /** Keep the mobile browser-chrome color (<meta name="theme-color">,
@@ -106,6 +147,14 @@ export function resetToDefaultTheme(): void {
     root.style.removeProperty(cssVarName(key));
     root.style.removeProperty(rgbVarName(key));
   }
+  // D7 (v0.5.1): mirror of applyTheme's own --bit-phos/--bit-phos-dim
+  // setProperty pair — removing them lets globals.css's CSS-authored
+  // defaults (the dark-scheme fallback baked into PixelDragon.tsx's own
+  // `var(--bit-phos, #4ADE80)` plus the [data-scheme="light"] override)
+  // take back over, same "terminal keeps CSS defaults" contract every
+  // other token already has.
+  root.style.removeProperty("--bit-phos");
+  root.style.removeProperty("--bit-phos-dim");
   root.dataset.theme = "terminal";
   root.dataset.scheme = "dark";
   // Terminal's ink is CSS-authored in globals.css, never injected —

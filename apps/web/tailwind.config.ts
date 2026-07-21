@@ -59,21 +59,24 @@ export default {
         "warn-soft": "rgb(var(--warn-soft-rgb) / <alpha-value>)", // #FF8A80
       },
       fontFamily: {
-        sans: [
-          "-apple-system",
-          "BlinkMacSystemFont",
-          "Segoe UI",
-          "PingFang SC",
-          "Hiragino Sans GB",
-          "Microsoft YaHei",
-          "Helvetica Neue",
-          "Arial",
-          "sans-serif",
-        ],
+        // v0.5.1 appearance sprint (D5 fonts): both families are now a
+        // SINGLE CSS var reference, not a compiled-in array — the
+        // literal stacks below live in globals.css's `:root` as
+        // `--font-ui`/`--font-mono-user` (still the exact same values
+        // as before this landed, so a "default" pick renders byte-
+        // identically to the pre-v0.5.1 build). lib/theme/fonts.ts's
+        // resolveFontStack + store.ts's updateSettings side effect
+        // setProperty/removeProperty those two vars for a non-default
+        // uiFont/monoFont choice, which is what actually re-fonts every
+        // Tailwind font-sans/font-mono utility across the app in one
+        // step — this file itself never changes again for a font swap.
+        sans: ["var(--font-ui)"],
         // Monospace is the brand identity in v3 (docs/DESIGN.md v3.2):
         // JetBrains Mono, self-hosted via next/font in layout.tsx as
-        // --font-mono-brand, falling back to native monospace stacks.
-        mono: ["var(--font-mono-brand)", "SF Mono", "Menlo", "monospace"],
+        // --font-mono-brand, falling back to native monospace stacks —
+        // --font-mono-user wraps that chain (see globals.css) so a
+        // user's own monoFont choice can still override it.
+        mono: ["var(--font-mono-user)"],
         // v2's serif display face (Cinzel/Songti SC) is retired in v3 —
         // no font-display utility exists anymore. The one legitimate
         // serif survivor (CornellNote's frozen parchment artifact) pins

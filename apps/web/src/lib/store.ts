@@ -31,9 +31,11 @@ import { schedule, type SrsGrade } from "@jargonslayer/core/learn/srs";
 import * as autoExporter from "./history/autoExport";
 import type { CustomEntry } from "@jargonslayer/core/types";
 import type { LearnKind, LearnRecord } from "@jargonslayer/core/learn/types";
-import { activateTheme } from "./theme/apply";
-import { writeDisplayMirror } from "./theme/displayStorage";
-import { getBuiltinTheme } from "./theme/themes";
+import { activateTheme, darkenHex, hexToRgbTriplet, resetToDefaultTheme } from "./theme/apply";
+import { writeDisplayMirror, type DisplayMirror } from "./theme/displayStorage";
+import { MONO_FONT_PRESETS, resolveFontStack, UI_FONT_PRESETS } from "./theme/fonts";
+import { CUSTOM_THEME_ID_PREFIX, resolveThemeById } from "./theme/resolve";
+import type { ThemeDefinition } from "./theme/schema";
 import { isRemotelyKilled, SUBSCRIPTION_DIRECT_BUILT } from "./agent/localHost";
 import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "./deployTier";
 import { IS_DESKTOP } from "./platform/desktop";
@@ -1066,6 +1068,80 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
 }
 
 // ---------------------------------------------------------------
+// v0.5.1 appearance sprint — display-mirror/DOM-effect helpers shared
+// by hydrate() and updateSettings() below, same "thin store action
+// wraps an extracted pure function" pattern as migrateSettings above
+// and the realtime-diarization helpers further down.
+// ---------------------------------------------------------------
+
+/** Build the localStorage FOUC mirror payload for the given settings —
+ *  shared by hydrate() and updateSettings() so the two call sites can
+ *  never independently drift on what "the mirror" means. Takes the
+ *  already-resolved theme (resolveThemeById) rather than re-resolving
+ *  it itself, since both callers already need that resolution for
+ *  their own activateTheme/resetToDefaultTheme decision — computing it
+ *  twice would be wasted work, not just duplicated code. `custom` is
+ *  only populated when the resolved theme is actually a `custom-`
+ *  one (a builtin never needs it — the FOUC script has its own
+ *  embedded builtin registry, see displayStorage.ts); rgb triplets are
+ *  pre-derived here (not at FOUC-script runtime) via the same
+ *  hexToRgbTriplet the theme engine's own applyTheme uses — phos/
+ *  phosDim (F9, v0.5.1) are pre-derived the same way, via the same
+ *  darkenHex(...,0.55) applyTheme uses for --bit-phos/--bit-phos-dim
+ *  (D7), so the FOUC script can set Bit's mascot color pre-hydration
+ *  too instead of flashing the terminal default's green for one frame.
+ *  uiFont/monoFont are stored as RESOLVED CSS font-family stacks
+ *  (never a preset id) via lib/theme/fonts.ts's resolveFontStack —
+ *  absent (undefined) means "default", the mirror's own "no override"
+ *  idiom. */
+export function buildDisplayMirror(
+  settings: Settings,
+  theme: ThemeDefinition | undefined,
+): DisplayMirror {
+  const mirror: DisplayMirror = { themeId: settings.themeId, fontSize: settings.fontSize };
+  if (theme && theme.id.startsWith(CUSTOM_THEME_ID_PREFIX)) {
+    const rgb: Record<string, string> = {};
+    for (const [key, hex] of Object.entries(theme.tokens)) {
+      rgb[key] = hexToRgbTriplet(hex);
+    }
+    const labGreen = theme.tokens["lab-green"];
+    mirror.custom = { hex: theme.tokens, rgb, scheme: theme.scheme, phos: labGreen, phosDim: darkenHex(labGreen, 0.55) };
+  }
+  const uiFontStack = resolveFontStack(UI_FONT_PRESETS[0].stack, settings.uiFont);
+  if (uiFontStack) mirror.uiFont = uiFontStack;
+  const monoFontStack = resolveFontStack(MONO_FONT_PRESETS[0].stack, settings.monoFont);
+  if (monoFontStack) mirror.monoFont = monoFontStack;
+  return mirror;
+}
+
+/** setProperty/removeProperty a resolved font-family CSS var — shared
+ *  by hydrate() and updateSettings()'s own uiFont/monoFont side
+ *  effects below (not exported: this is DOM plumbing, not a pure
+ *  helper worth a direct unit test — same posture as the pre-existing
+ *  bare `document.documentElement.dataset.fs = …` line it sits beside,
+ *  exercised indirectly through the store actions with jsdom instead). */
+function applyFontVar(cssVar: string, slotDefaultStack: string, value: string): void {
+  if (typeof document === "undefined") return;
+  const stack = resolveFontStack(slotDefaultStack, value);
+  if (stack) {
+    document.documentElement.style.setProperty(cssVar, stack);
+  } else {
+    document.documentElement.style.removeProperty(cssVar);
+  }
+}
+
+/** Stamp/clear `<html data-glass="1">` (D6) — same non-exported "DOM
+ *  plumbing beside dataset.fs" posture as applyFontVar above. */
+function applyGlassDataset(overlayGlass: boolean): void {
+  if (typeof document === "undefined") return;
+  if (overlayGlass) {
+    document.documentElement.dataset.glass = "1";
+  } else {
+    delete document.documentElement.dataset.glass;
+  }
+}
+
+// ---------------------------------------------------------------
 // Pause/resume elapsed-time math (B2) — pure, unit-tested independent
 // of zustand, same posture as the realtime-diarization helpers above.
 // ---------------------------------------------------------------
@@ -1204,11 +1280,25 @@ export const useApp = create<AppState>((set, get) => ({
     // Settings once hydration finishes, correcting any mismatch (e.g.
     // first load ever, a stale/absent mirror, or a value set on a
     // different browser) and mirroring it forward for next time.
-    writeDisplayMirror({ themeId: settings.themeId, fontSize: settings.fontSize });
-    const theme = getBuiltinTheme(settings.themeId);
-    if (theme) activateTheme(theme.id, theme.tokens, theme.scheme);
+    const theme = resolveThemeById(settings.themeId, settings.customThemes);
+    writeDisplayMirror(buildDisplayMirror(settings, theme));
+    // v0.5.1 (D2): an unknown themeId (a stale custom id whose theme
+    // was since deleted, a corrupt restore, …) now resets the VISUAL
+    // state to terminal rather than silently keeping whatever CSS
+    // happened to already be on the page (the pre-v0.5.1 bug this
+    // resolver replaces) — settings.themeId itself is left untouched,
+    // no self-heal write-back needed here (if the resolve failure was
+    // transient, a later hydrate can still recover the real theme).
+    if (theme) {
+      activateTheme(theme.id, theme.tokens, theme.scheme);
+    } else {
+      resetToDefaultTheme();
+    }
     if (typeof document !== "undefined") {
       document.documentElement.dataset.fs = settings.fontSize;
+      applyFontVar("--font-ui", UI_FONT_PRESETS[0].stack, settings.uiFont);
+      applyFontVar("--font-mono-user", MONO_FONT_PRESETS[0].stack, settings.monoFont);
+      applyGlassDataset(settings.overlayGlass);
     }
     // Storage-durability request (navigator.storage.persist, asking the
     // browser not to evict IndexedDB under pressure — Safari's 7-day
@@ -1262,22 +1352,49 @@ export const useApp = create<AppState>((set, get) => ({
     if (opts?.persist !== false) {
       void storage.saveSettings(settings);
     }
-    // Display settings (v0.2.1): live-apply a theme change immediately
-    // (rather than waiting for a reload) and mirror themeId/fontSize
-    // to localStorage so the FOUC script can read them synchronously
-    // on the next load — see lib/theme/displayStorage.ts. Only fires
-    // when this patch actually touches one of the two mirrored fields,
-    // so every other settings save (API key, engine, …) stays a no-op
-    // here.
-    if ("themeId" in patch || "fontSize" in patch) {
-      writeDisplayMirror({ themeId: settings.themeId, fontSize: settings.fontSize });
-    }
-    if ("themeId" in patch) {
-      const theme = getBuiltinTheme(settings.themeId);
-      if (theme) activateTheme(theme.id, theme.tokens, theme.scheme);
+    // Display settings (v0.2.1, extended v0.5.1): live-apply a theme/
+    // font change immediately (rather than waiting for a reload) and
+    // mirror the resolved state to localStorage so the FOUC script can
+    // read it synchronously on the next load — see
+    // lib/theme/displayStorage.ts. Only fires when this patch actually
+    // touches a mirrored field, so every other settings save (API key,
+    // engine, …) stays a no-op here. "customThemes" is treated the same
+    // as "themeId" here (both re-resolve + re-activate/reset):
+    // ThemeEditor's 保存主题/删除 write straight through customThemes without
+    // necessarily also patching themeId (e.g. editing/deleting a theme
+    // OTHER than the currently-active one), so the only way to catch
+    // "the ACTIVE theme's own tokens just changed underneath it" (or
+    // "the active custom theme was just deleted, fall back to
+    // terminal") is to always re-resolve+re-apply on ANY customThemes
+    // write — re-applying an unaffected theme is harmless (activateTheme/
+    // resetToDefaultTheme are idempotent setProperty/removeProperty
+    // calls, not a visible flash).
+    if (
+      "themeId" in patch ||
+      "customThemes" in patch ||
+      "fontSize" in patch ||
+      "uiFont" in patch ||
+      "monoFont" in patch
+    ) {
+      const theme = resolveThemeById(settings.themeId, settings.customThemes);
+      writeDisplayMirror(buildDisplayMirror(settings, theme));
+      if (theme) {
+        activateTheme(theme.id, theme.tokens, theme.scheme);
+      } else {
+        resetToDefaultTheme();
+      }
     }
     if ("fontSize" in patch && typeof document !== "undefined") {
       document.documentElement.dataset.fs = settings.fontSize;
+    }
+    if ("uiFont" in patch) {
+      applyFontVar("--font-ui", UI_FONT_PRESETS[0].stack, settings.uiFont);
+    }
+    if ("monoFont" in patch) {
+      applyFontVar("--font-mono-user", MONO_FONT_PRESETS[0].stack, settings.monoFont);
+    }
+    if ("overlayGlass" in patch) {
+      applyGlassDataset(settings.overlayGlass);
     }
   },
 

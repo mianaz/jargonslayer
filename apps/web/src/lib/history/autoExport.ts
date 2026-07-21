@@ -15,6 +15,9 @@ import * as storage from "./storage";
 import * as glossary from "./glossary";
 import * as learnset from "../learn/store";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
+import { parseTheme, type ThemeDefinition } from "../theme/schema";
+import { CUSTOM_THEME_ID_PREFIX, mintCustomThemeId } from "../theme/resolve";
+import { CUSTOM_FONT_PREFIX, sanitizeFontFamily } from "../theme/fonts";
 
 const EXPORT_DIR_KEY = "jargonslayer:export-dir";
 
@@ -568,6 +571,59 @@ export async function restoreFullBackup(json: string): Promise<{
  *     cleared. This is semantically right even for honest backups —
  *     the connection code is per-sidecar-RUN (printed on each start),
  *     so a restored token is stale on this machine by definition. */
+/** Re-validate one restored customThemes entry: shape/color-injection
+ *  safety goes through parseTheme (schema.ts) exactly like any other
+ *  untrusted theme JSON — a backup file is no more trustworthy than a
+ *  hand-pasted import (Codex v0.2.3 MEDIUM's own threat model, just a
+ *  different delivery path for the same untrusted payload). An id that
+ *  doesn't already carry the `custom-` namespace is re-minted (D1: "so
+ *  no JSON can shadow a builtin id") — `existingIds` accumulates ids
+ *  already accepted from EARLIER entries in the same restore batch, so
+ *  two entries within one file can't collide with each other either.
+ *  This ALSO covers two entries that both already carry the SAME
+ *  `custom-`-prefixed id (a hand-edited or duplicated file, adversarial
+ *  review F4): the first occurrence keeps its id verbatim (referential
+ *  integrity — themeId elsewhere in Settings may point at it), but a
+ *  later entry whose id is already in `existingIds` is re-minted same
+ *  as a non-prefixed one, rather than surviving as a same-id duplicate
+ *  (duplicate React keys downstream, and an edit/delete would hit both
+ *  entries at once). Not exported: single call site below, same as the
+ *  other restore-time validators' local-helper siblings would be if
+ *  they had one (sanitizeRestoredLearnRecord/sanitizeRestoredCustomPack
+ *  above are exported only because they're tested directly; this one
+ *  is covered via sanitizeRestoredSettings's own tests instead). */
+function sanitizeRestoredCustomTheme(raw: unknown, existingIds: string[]): ThemeDefinition | null {
+  const result = parseTheme(raw);
+  if (!result.ok) return null;
+  const theme = result.theme;
+  if (theme.id.startsWith(CUSTOM_THEME_ID_PREFIX) && !existingIds.includes(theme.id)) {
+    return theme;
+  }
+  return { ...theme, id: mintCustomThemeId(theme.label, existingIds) };
+}
+
+/** Restored uiFont/monoFont are free-form strings (Settings.uiFont's
+ *  own type — "default" | preset id | `custom:<family>`); a non-string
+ *  survives JSON.parse just fine from a hand-edited file (a number,
+ *  an object, …) and would crash the first `.startsWith()` call that
+ *  ever reads it (resolveFontStack), so that's rejected outright. A
+ *  `custom:` value's family half is re-run through sanitizeFontFamily
+ *  (the "font sanitizer" — this is genuinely the same untrusted-string
+ *  concern sanitizeFontFamily already exists to close, so this reuses
+ *  it rather than re-deriving the same character-allowlist here) —
+ *  everything else (a preset id, real or stale/future/unknown) is
+ *  passed through as-is: an unrecognized preset id is not a safety
+ *  issue, resolveFontStack already treats it as "default" at every
+ *  read site, so there is nothing extra to validate here. */
+function sanitizeRestoredFontValue(v: unknown, fallback: string): string {
+  if (typeof v !== "string") return fallback;
+  if (v.startsWith(CUSTOM_FONT_PREFIX)) {
+    const family = sanitizeFontFamily(v.slice(CUSTOM_FONT_PREFIX.length));
+    return family ? `${CUSTOM_FONT_PREFIX}${family}` : fallback;
+  }
+  return v;
+}
+
 export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settings> {
   const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), "taskLlm"]);
   const picked: Record<string, unknown> = {};
@@ -577,5 +633,30 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
   picked.subscriptionDirect = false;
   picked.agentUrl = DEFAULT_SETTINGS.agentUrl;
   picked.agentToken = "";
+  // v0.5.1 appearance sprint: customThemes/uiFont/monoFont/overlayGlass
+  // are allow-listed above like any other field, but each needs its
+  // own re-validation the generic pick can't express — see the two
+  // helpers immediately above.
+  if (Array.isArray(picked.customThemes)) {
+    const existingIds: string[] = [];
+    const sanitized: ThemeDefinition[] = [];
+    for (const rawTheme of picked.customThemes) {
+      const theme = sanitizeRestoredCustomTheme(rawTheme, existingIds);
+      if (!theme) continue;
+      existingIds.push(theme.id);
+      sanitized.push(theme);
+    }
+    picked.customThemes = sanitized;
+  } else {
+    picked.customThemes = [];
+  }
+  picked.uiFont = sanitizeRestoredFontValue(picked.uiFont, DEFAULT_SETTINGS.uiFont);
+  picked.monoFont = sanitizeRestoredFontValue(picked.monoFont, DEFAULT_SETTINGS.monoFont);
+  // F11 (adversarial review): `Boolean(v)` treats ANY truthy value as
+  // true — including the STRING "false", which is truthy in JS despite
+  // reading like a negative. Only an actual boolean is trusted; every
+  // other shape (a stray string, a number, missing entirely) falls back
+  // to the default rather than being truthy-coerced.
+  picked.overlayGlass = typeof picked.overlayGlass === "boolean" ? picked.overlayGlass : DEFAULT_SETTINGS.overlayGlass;
   return picked as Partial<Settings>;
 }

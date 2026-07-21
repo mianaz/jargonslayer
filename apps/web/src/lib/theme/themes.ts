@@ -368,6 +368,166 @@ export const QINGLV_THEME: ThemeDefinition = {
   },
 };
 
+// ---------------------------------------------------------------------
+// v0.5.1 appearance sprint: the last two of the seven archived design
+// explorations (docs/design-explorations/) tokenized as real builtins —
+// preview-4-terminal.html was always just the terminal reskin (already
+// the shipping default, never needed its own builtin), so this pair
+// completes all seven sources. Same per-token discipline as the #52
+// batch above (verbatim / AA-cousin / invented-in-family, documented
+// per token below) — see that block's comment for the full method this
+// pair inherits, especially the "swap" logic (a hue the source renders
+// as a small FILL usually needs a brighter/darker AA-text cousin to
+// carry real text on our panels instead).
+
+// 像素 8bit — docs/design-explorations/preview-3-8bit.html ("方向3:
+// 8-bit 屠龙任务日志" — pixel-shell/readable-core: retro game chrome
+// around a fully-legible modern-font Chinese body; meetings become
+// dragon-boss fights, jargon becomes loot). DARK scheme (`body{
+// background: var(--bg) }`, --bg #0D0B1E) — and deliberately NOT
+// terminal's neutral near-black: a saturated deep indigo-violet, so
+// this reads as a genuinely different dark theme rather than a
+// terminal reskin. Elevation is a rare case (like qinglv) of the
+// mockup ALREADY being a flat 4-tier ThemeDefinition: --bg/--panel/
+// --inset/--inset-2 form a real monotonic-brightening ladder, used
+// verbatim end to end. NOTE the source's own `--ink` custom property
+// is a TEXT color (#E8E8D8) — unrelated to this engine's `ink` token
+// (the page-canvas background); the two just happen to share a name.
+export const EIGHT_BIT_THEME: ThemeDefinition = {
+  id: "8bit",
+  label: "像素（8-bit 任务日志）",
+  scheme: "dark",
+  tokens: {
+    ink: "#0d0b1e", // --bg, verbatim (page canvas)
+    panel: "#171430", // --panel, verbatim
+    panel2: "#1e1a3a", // --inset, verbatim
+    panel3: "#241f46", // --inset-2, verbatim (hover/active)
+    edge: "#2a2650", // the transcript-row dashed-divider hex, verbatim (subtle hairline, no AA floor)
+    // The frame's own boldest border (#4A4578, the topbar/quest-frame
+    // outline) is only ~2:1 vs panel — brightened (same hue) to clear
+    // the 1.4.11 >=3:1 divider bar.
+    edge2: "#6e67ae",
+    fg: "#e8e8d8", // --ink (source's TEXT var, see module note above), verbatim — body/card text color
+    // --ink-dim (#8A86A8, brand-sub/filter-tab/quote-block text) was
+    // JUST short of our bar (4.45:1 vs panel3) — nudged minimally to clear.
+    mut: "#9591b5",
+    // --ink-faint (#605C82, timestamps/interim text) failed badly
+    // (as low as 2.46:1 across the ladder) — properly brightened AA
+    // cousin, kept dimmer than mut to preserve the fg>mut>mut2 order.
+    mut2: "#8d87bc",
+    // --flame-red is only ever a FILL in the source (rec-dot, the
+    // .pixel-btn.primary bg, the count-badge) with dark text on top —
+    // as TEXT it's just under AA (3.99:1 vs panel3); brightened to its
+    // AA-light cousin, same hue family.
+    "lab-red": "#ff5458",
+    // Invented — no orange anywhere in the 5-hue accent set (flame-red/
+    // slime-green/coin-yellow/ice-blue/poison-purple). A 50/50
+    // interpolation between flame-red and coin-yellow (the theme's own
+    // two real neighbors) already clears every panel without further
+    // tuning, so no extra brightening was needed.
+    "lab-orange": "#efa33a",
+    "lab-yellow": "#f7d51d", // --coin-yellow, verbatim — clears comfortably as-is
+    "lab-green": "#92cc41", // --slime-green, verbatim — clears comfortably; also the pixel-dragon (Bit) mascot SVG's own body-fill hue
+    // --poison-purple is the source's own declared 5th "强色" accent
+    // (Sarah/Mike/Lily's avatars each carry one of the five; Lily's
+    // pixel-art literally uses this exact hex, just as a hardcoded fill
+    // rather than through the custom property). As TEXT it narrowly
+    // fails (4.20:1 vs panel3) — brightened to its AA-light cousin.
+    "lab-purple": "#c969ff",
+    "lab-cyan": "#3cbcfc", // --ice-blue, verbatim — literally the source's own "术语"(term) tag/highlight color already, matching the app's all-terms=cyan rule with zero mapping ambiguity
+    // --flame-red, verbatim — the source's own literal
+    // `.pixel-btn.primary` fill (the actual "▶ 开始监听" CTA), clears
+    // the ink-text pairing at ~5:1. --coin-yellow is the more REPEATED
+    // accent (brand name, quest banner, card tags) but isn't the
+    // literal button fill, so flame-red is the more literal "primary
+    // CTA" reading the module comment above calls for.
+    act: "#e7484c",
+    "warn-soft": "#ff7b7d", // one step lighter than lab-red, same flame-red family, kept distinguishable
+  },
+};
+
+// 笔记 sketch — docs/design-explorations/preview-6-sketch.html ("方向
+// 6 课堂笔记本 · Notion 气质 × 铅笔手绘 × 荧光笔" — Notion-style ruled
+// notebook page, pencil-sketch chrome, highlighter/red-pen annotations
+// standing in for jargon/explanations). LIGHT scheme (`body{ background:
+// var(--paper) }`, --paper #FAFAF7). Elevation mirrors TERMINAL_LIGHT_
+// THEME's own structural move rather than shuimo's monotonic-darkening
+// one: `panel` (the literal #fff used everywhere as the raised-card
+// surface — transcript-panel/engine-badge/icon-slot) is BRIGHTER than
+// `ink` (the warm --paper canvas), i.e. a white card floating on a
+// cream page; panel2/panel3 then darken further from there, same as
+// every other light builtin. panel2 has no flat source value and is
+// interpolated between panel and panel3 (deliberately NOT reusing
+// `.preview-tag`'s #F1EFE9 background — the source's own CSS comment
+// flags that bar as "非产品界面内容", i.e. explicitly not part of the
+// mockup's real design system, same as 8bit's own preview-tag disclaimer
+// above); panel3 repurposes --dot (the page's real background-pattern
+// dot color, #E4E2DC) as the deepest tier, the only additional flat
+// neutral the source actually paints with. Three of this theme's own
+// custom properties already carry a contrast-audit comment in the
+// source (--ink-soft/--pencil-blue/--red-pen were each darkened from a
+// lighter draft specifically to clear real AA bars) — a rare case of a
+// mockup already half-solving our own problem, used verbatim below.
+// --ink-faint, by contrast, is explicitly commented "仅用于非文字装饰"
+// (decoration only, never text) — exactly the kind of trap this suite
+// exists to catch.
+export const SKETCH_THEME: ThemeDefinition = {
+  id: "sketch",
+  label: "笔记（课堂手绘）",
+  scheme: "light",
+  tokens: {
+    ink: "#fafaf7", // --paper, verbatim (page canvas)
+    panel: "#ffffff", // literal #fff, verbatim — the raised-card surface (transcript-panel/engine-badge/icon-slot), authored as a bare hex rather than a custom property but used just as consistently
+    panel2: "#f2f1ee", // interpolated between panel and panel3 (no usable flat source value — see module note on the disclaimed preview-tag bar)
+    panel3: "#e4e2dc", // --dot, repurposed from the page's decorative background-pattern color (verbatim hex, different original role)
+    edge: "#eae7df", // --line-faint, verbatim — the binder-holes border / ruled-notebook-line color
+    // Survives in the source only as the engine-badge's hand-drawn SVG
+    // border stroke, but is ALSO the exact pre-AA-fix draft of
+    // --ink-soft (see that token's own root comment) — already clears
+    // >=3:1 vs panel with real margin, no nudge needed.
+    edge2: "#787066",
+    fg: "#37352f", // --ink (source's own TEXT var — see the naming-collision note on 8bit's module comment above), verbatim — the Notion-style body/heading color
+    // --ink-soft, verbatim — source's own comment: darkened from a
+    // lighter #787066 draft specifically to clear >=4.5:1 on paper AND
+    // all three sticky-note backgrounds.
+    mut: "#655d53",
+    // --ink-faint (#B8B2A7) is explicitly commented by the source as
+    // "仅用于非文字装饰" (decoration only) and fails badly as text
+    // (as low as ~1.6:1). mut2 must stay LIGHTER than mut yet still
+    // clear panel3 (the darkest of the four panels for a light
+    // scheme) — a narrow band; this AA-cousin, darkened off ink-faint's
+    // own hue, threads it with real margin.
+    mut2: "#65625b",
+    "lab-red": "#ae2e1a", // --red-pen, verbatim — source's own comment: darkened from #E5533C specifically for paper/sticky AA
+    // AA-cousin, darkened from Sarah's own avatar-initial text color
+    // (#A85708) — the only orange rendered as real text anywhere in
+    // the source (the accent set itself has no orange: highlighter-
+    // yellow/pencil-blue/red-pen only).
+    "lab-orange": "#8e4906",
+    // AA-cousin, darkened from --hi-yellow (#FFE58A, the highlighter
+    // FILL) — same fill-to-text swap as every dark theme's own yellow.
+    "lab-yellow": "#645932",
+    // AA-cousin, darkened from `.status-lock`'s own green (#3E8F62,
+    // the "音频未离开本机" indicator) — the only green rendered as
+    // text anywhere in the source.
+    "lab-green": "#296443",
+    "lab-purple": "#96408f", // Lily's avatar-initial text color, verbatim — already clears every panel with real margin, no adjustment needed
+    // --pencil-blue, verbatim — source's own comment: darkened from
+    // #5B8DEF for white/blue-sticky AA. Matches the app's all-terms=
+    // cyan slot (hl-term/tag-badge.term/card-headword.term-word); reads
+    // more royal-blue than pure cyan but is the source's unambiguous
+    // "terms" hue, same latitude qinglv/shuimo's own cyan picks took.
+    "lab-cyan": "#2f5fc0",
+    // = fg, verbatim — the source's literal `.btn-primary` fill IS
+    // `var(--ink)` with light text on top (a plain dark button, not a
+    // colorful one). Mirrors TERMINAL_LIGHT_THEME's own act==fg move
+    // for light schemes: ink-text needs a dark-enough bg, and fg is by
+    // definition the theme's darkest token.
+    act: "#37352f",
+    "warn-soft": "#aa3318", // one step lighter than lab-red (nudged toward the lab-orange hue), same red-pen family, kept distinguishable
+  },
+};
+
 export const BUILTIN_THEMES: readonly ThemeDefinition[] = [
   TERMINAL_THEME,
   TERMINAL_LIGHT_THEME,
@@ -376,6 +536,8 @@ export const BUILTIN_THEMES: readonly ThemeDefinition[] = [
   GRIMOIRE_THEME,
   NOIR_THEME,
   QINGLV_THEME,
+  EIGHT_BIT_THEME,
+  SKETCH_THEME,
 ];
 
 export function getBuiltinTheme(id: string): ThemeDefinition | undefined {

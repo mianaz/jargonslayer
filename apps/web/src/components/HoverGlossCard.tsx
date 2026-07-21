@@ -56,8 +56,8 @@ export default function HoverGlossCard({
   // scan) — two complete conditional strings, not an interpolated hue.
   const containerClassName =
     item.kind === "expression"
-      ? "fixed z-50 w-72 border border-edge border-l-2 border-l-lab-orange bg-panel2 p-3 shadow-xl"
-      : "fixed z-50 w-72 border border-edge border-l-2 border-l-lab-cyan bg-panel2 p-3 shadow-xl";
+      ? "fixed z-50 w-72 border border-edge border-l-2 border-l-lab-orange bg-panel2 glassable p-3 shadow-xl"
+      : "fixed z-50 w-72 border border-edge border-l-2 border-l-lab-cyan bg-panel2 glassable p-3 shadow-xl";
 
   return (
     <div className={containerClassName} style={{ left: pos.left, top: pos.top }}>

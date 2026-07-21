@@ -218,7 +218,7 @@ function AiStatusChip() {
           // are taller than the space above the bar. sm+ (tablet/
           // desktop, where this was never reported broken): reverts to
           // the exact original chip-anchored box, untouched.
-          className="scroll-thin fixed inset-x-2 bottom-8 z-30 max-h-[60vh] overflow-y-auto border border-edge bg-panel2 p-3 shadow-lg sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+4px)] sm:left-0 sm:w-72 sm:max-h-none sm:overflow-visible"
+          className="scroll-thin fixed inset-x-2 bottom-8 z-30 max-h-[60vh] overflow-y-auto border border-edge bg-panel2 glassable p-3 shadow-lg sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+4px)] sm:left-0 sm:w-72 sm:max-h-none sm:overflow-visible"
         >
           <AiStatusPanel />
         </div>

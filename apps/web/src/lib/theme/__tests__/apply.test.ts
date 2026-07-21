@@ -8,7 +8,7 @@
 // jsdom, so the global config is left untouched.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { activateTheme, applyTheme, hexToRgbTriplet, resetToDefaultTheme } from "../apply";
+import { activateTheme, applyTheme, darkenHex, hexToRgbTriplet, resetToDefaultTheme } from "../apply";
 import { THEME_TOKEN_KEYS, type ThemeTokens } from "../schema";
 import { CLARITY_THEME, TERMINAL_LIGHT_THEME, TERMINAL_THEME } from "../themes";
 
@@ -27,6 +27,10 @@ beforeEach(() => {
     document.documentElement.style.removeProperty(`--${key}`);
     document.documentElement.style.removeProperty(`--${key}-rgb`);
   }
+  // v0.5.1 D7: Bit's phosphor vars, same cleanup posture as every
+  // token above.
+  document.documentElement.style.removeProperty("--bit-phos");
+  document.documentElement.style.removeProperty("--bit-phos-dim");
   delete document.documentElement.dataset.theme;
   delete document.documentElement.dataset.scheme;
   document.querySelector('meta[name="theme-color"]')?.remove();
@@ -188,5 +192,71 @@ describe("scheme stamping (v0.2.4 light mode)", () => {
     expect(() =>
       applyTheme(TERMINAL_LIGHT_THEME.id, TERMINAL_LIGHT_THEME.tokens, "light"),
     ).not.toThrow();
+  });
+});
+
+describe("darkenHex", () => {
+  it("scales each channel by the given factor, rounded", () => {
+    // 0x4a=74, 0xde=222, 0x80=128; ×0.55 -> 40.7/122.1/70.4 -> 41/122/70
+    expect(darkenHex("#4ade80", 0.55)).toBe("#297a46");
+  });
+
+  it("factor 1 is a no-op (identity)", () => {
+    expect(darkenHex("#4ade80", 1)).toBe("#4ade80");
+  });
+
+  it("factor 0 always yields black", () => {
+    expect(darkenHex("#4ade80", 0)).toBe("#000000");
+  });
+
+  it("expands a 3-digit short hex before scaling", () => {
+    expect(darkenHex("#fff", 0.5)).toBe(darkenHex("#ffffff", 0.5));
+  });
+
+  it("clamps each channel to 0-255 even for a factor outside 0..1", () => {
+    expect(darkenHex("#ffffff", 2)).toBe("#ffffff");
+    expect(darkenHex("#000000", -1)).toBe("#000000");
+  });
+
+  it("is case-insensitive on input, always lowercase on output", () => {
+    expect(darkenHex("#FFFFFF", 0.5)).toBe(darkenHex("#ffffff", 0.5));
+    expect(darkenHex("#ffffff", 0.5)).toMatch(/^#[0-9a-f]{6}$/);
+  });
+});
+
+// v0.5.1 D7: Bit (PixelDragon.tsx) reads --bit-phos/--bit-phos-dim
+// directly rather than a lab-* token — applyTheme/resetToDefaultTheme
+// now carry that pair through the same lifecycle as every other token.
+describe("applyTheme / resetToDefaultTheme — Bit phosphor vars (D7)", () => {
+  it("applyTheme sets --bit-phos to the theme's own lab-green, verbatim", () => {
+    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens, CLARITY_THEME.scheme);
+    expect(cssVar("bit-phos")).toBe(CLARITY_THEME.tokens["lab-green"]);
+  });
+
+  it("applyTheme sets --bit-phos-dim to lab-green darkened ×0.55", () => {
+    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens, CLARITY_THEME.scheme);
+    expect(cssVar("bit-phos-dim")).toBe(darkenHex(CLARITY_THEME.tokens["lab-green"], 0.55));
+  });
+
+  it("switching themes updates both vars to the new theme's lab-green", () => {
+    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens, CLARITY_THEME.scheme);
+    applyTheme(TERMINAL_LIGHT_THEME.id, TERMINAL_LIGHT_THEME.tokens, TERMINAL_LIGHT_THEME.scheme);
+    expect(cssVar("bit-phos")).toBe(TERMINAL_LIGHT_THEME.tokens["lab-green"]);
+  });
+
+  it("resetToDefaultTheme removes both vars, letting globals.css's own defaults take back over", () => {
+    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens, CLARITY_THEME.scheme);
+    expect(cssVar("bit-phos")).not.toBe("");
+
+    resetToDefaultTheme();
+    expect(cssVar("bit-phos")).toBe("");
+    expect(cssVar("bit-phos-dim")).toBe("");
+  });
+
+  it("activateTheme('terminal', ...) removes both vars via the resetToDefaultTheme dispatch", () => {
+    applyTheme(CLARITY_THEME.id, CLARITY_THEME.tokens, CLARITY_THEME.scheme);
+    activateTheme("terminal", TERMINAL_THEME.tokens, "dark");
+    expect(cssVar("bit-phos")).toBe("");
+    expect(cssVar("bit-phos-dim")).toBe("");
   });
 });

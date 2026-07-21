@@ -414,7 +414,7 @@ function HamburgerMenu({
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-[calc(100%+4px)] z-30 flex w-56 flex-col border border-edge bg-panel2 py-1 shadow-lg"
+          className="absolute right-0 top-[calc(100%+4px)] z-30 flex w-56 flex-col border border-edge bg-panel2 glassable py-1 shadow-lg"
         >
           {!meetingActive && (
             <button

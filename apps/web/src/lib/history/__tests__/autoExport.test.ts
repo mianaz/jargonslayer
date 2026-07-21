@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type CustomEntry, type MeetingSession, type Settings } from "@jargonslayer/core/types";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
+import { THEME_TOKEN_KEYS } from "../../theme/schema";
 
 // Same in-memory idb-keyval mock as storage.test.ts/glossary.test.ts —
 // buildFullBackup/restoreFullBackup call through storage.ts + glossary.ts
@@ -641,6 +642,148 @@ describe("sanitizeRestoredSettings — Codex v0.2.3 MEDIUM (untrusted backup set
     const out = autoExport.sanitizeRestoredSettings(honest);
     expect(out.language).toBe("en-GB");
     expect(out.taskLlm?.detect?.model).toBe("m");
+  });
+});
+
+// v0.5.1 appearance sprint: customThemes/uiFont/monoFont/overlayGlass
+// are allow-listed like any other Settings field, but each needs its
+// own re-validation the generic allow-list pick above can't express.
+describe("sanitizeRestoredSettings — v0.5.1 customThemes/uiFont/monoFont/overlayGlass", () => {
+  function validTokens() {
+    const tokens: Record<string, string> = {};
+    for (const key of THEME_TOKEN_KEYS) tokens[key] = "#ffffff";
+    return tokens;
+  }
+
+  it("re-mints a non-custom--prefixed theme id (so a restored file can never shadow a builtin id)", async () => {
+    const autoExport = await import("../autoExport");
+    const hostile = {
+      ...DEFAULT_SETTINGS,
+      customThemes: [{ id: "terminal", label: "冒充终端", scheme: "dark", tokens: validTokens() }],
+    } as never;
+    const out = autoExport.sanitizeRestoredSettings(hostile);
+    expect(out.customThemes).toHaveLength(1);
+    expect(out.customThemes?.[0].id).not.toBe("terminal");
+    expect(out.customThemes?.[0].id.startsWith("custom-")).toBe(true);
+    expect(out.customThemes?.[0].label).toBe("冒充终端");
+  });
+
+  it("leaves an already custom--prefixed id untouched", async () => {
+    const autoExport = await import("../autoExport");
+    const honest = {
+      ...DEFAULT_SETTINGS,
+      customThemes: [{ id: "custom-my-theme", label: "我的主题", scheme: "dark", tokens: validTokens() }],
+    } as never;
+    const out = autoExport.sanitizeRestoredSettings(honest);
+    expect(out.customThemes?.[0].id).toBe("custom-my-theme");
+  });
+
+  it("drops a malformed customThemes entry (fails parseTheme) instead of partially trusting it", async () => {
+    const autoExport = await import("../autoExport");
+    const mixed = {
+      ...DEFAULT_SETTINGS,
+      customThemes: [
+        { id: "custom-good", label: "好主题", scheme: "dark", tokens: validTokens() },
+        { id: "custom-evil", label: "evil", scheme: "dark", tokens: { ...validTokens(), fg: "url(evil)" } },
+        { id: "custom-missing-token", label: "缺token", scheme: "dark", tokens: {} },
+      ],
+    } as never;
+    const out = autoExport.sanitizeRestoredSettings(mixed);
+    expect(out.customThemes).toHaveLength(1);
+    expect(out.customThemes?.[0].id).toBe("custom-good");
+  });
+
+  it("falls back to an empty array when customThemes is absent or not an array", async () => {
+    const autoExport = await import("../autoExport");
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS } as never).customThemes).toEqual([]);
+    expect(
+      autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, customThemes: "not-an-array" } as never)
+        .customThemes,
+    ).toEqual([]);
+  });
+
+  it("re-mints two entries sharing the same non-prefixed label into DISTINCT ids (no in-batch collision)", async () => {
+    const autoExport = await import("../autoExport");
+    const raw = {
+      ...DEFAULT_SETTINGS,
+      customThemes: [
+        { id: "not-prefixed-1", label: "重复标签", scheme: "dark", tokens: validTokens() },
+        { id: "not-prefixed-2", label: "重复标签", scheme: "dark", tokens: validTokens() },
+      ],
+    } as never;
+    const out = autoExport.sanitizeRestoredSettings(raw);
+    expect(out.customThemes).toHaveLength(2);
+    expect(out.customThemes?.[0].id).not.toBe(out.customThemes?.[1].id);
+  });
+
+  it("keeps the FIRST occurrence's id verbatim when two entries share the same already-prefixed id, re-minting only the later duplicate (F4)", async () => {
+    const autoExport = await import("../autoExport");
+    const raw = {
+      ...DEFAULT_SETTINGS,
+      customThemes: [
+        { id: "custom-x", label: "第一个", scheme: "dark", tokens: validTokens() },
+        { id: "custom-x", label: "第二个", scheme: "dark", tokens: validTokens() },
+      ],
+    } as never;
+    const out = autoExport.sanitizeRestoredSettings(raw);
+    expect(out.customThemes).toHaveLength(2);
+    expect(out.customThemes?.[0].id).toBe("custom-x");
+    expect(out.customThemes?.[0].label).toBe("第一个");
+    expect(out.customThemes?.[1].id).not.toBe("custom-x");
+    expect(out.customThemes?.[1].label).toBe("第二个");
+    expect(new Set(out.customThemes?.map((t) => t.id)).size).toBe(2);
+  });
+
+  it("falls back to the default uiFont/monoFont when the restored value isn't a string", async () => {
+    const autoExport = await import("../autoExport");
+    const out = autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, uiFont: 42, monoFont: null } as never);
+    expect(out.uiFont).toBe(DEFAULT_SETTINGS.uiFont);
+    expect(out.monoFont).toBe(DEFAULT_SETTINGS.monoFont);
+  });
+
+  it("re-sanitizes a custom: font value's family half through sanitizeFontFamily", async () => {
+    const autoExport = await import("../autoExport");
+    const out = autoExport.sanitizeRestoredSettings({
+      ...DEFAULT_SETTINGS,
+      uiFont: 'custom:Evil";Font',
+    } as never);
+    expect(out.uiFont).toBe("custom:EvilFont");
+  });
+
+  it("falls back to default when a custom: font value sanitizes to nothing", async () => {
+    const autoExport = await import("../autoExport");
+    const out = autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, uiFont: "custom:;;;" } as never);
+    expect(out.uiFont).toBe(DEFAULT_SETTINGS.uiFont);
+  });
+
+  it("passes through an ordinary (non-custom) preset id string as-is", async () => {
+    const autoExport = await import("../autoExport");
+    const out = autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, uiFont: "serif" } as never);
+    expect(out.uiFont).toBe("serif");
+  });
+
+  // F11 (adversarial review): the previous `Boolean(picked.overlayGlass)`
+  // coercion accepted ANY truthy value — including the string "false",
+  // which is truthy in JS — so a hand-edited/foreign backup carrying
+  // `overlayGlass: "false"` restored as TRUE. Only an actual boolean is
+  // ever trusted now; anything else (including truthy non-booleans)
+  // falls back to DEFAULT_SETTINGS.overlayGlass.
+  it("accepts only an actual boolean for overlayGlass, falling back to the default for anything else (including the string \"false\")", async () => {
+    const autoExport = await import("../autoExport");
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: true } as never).overlayGlass).toBe(true);
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: false } as never).overlayGlass).toBe(false);
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: undefined } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: 1 } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: "yes" } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, overlayGlass: "false" } as never).overlayGlass).toBe(
+      DEFAULT_SETTINGS.overlayGlass,
+    );
   });
 });
 

@@ -162,7 +162,7 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
   return (
     <>
       <div className="fixed inset-0 z-30 bg-black/50" onClick={onClose} aria-hidden />
-      <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] flex-col border-l border-edge bg-panel">
+      <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] flex-col border-l border-edge bg-panel glassable-panel">
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
           <span className="font-medium text-fg">后台任务</span>
           <button
