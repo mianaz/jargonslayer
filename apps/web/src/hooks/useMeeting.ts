@@ -14,6 +14,7 @@ import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
 import { getPreviewSessionSeconds } from "../lib/stt/soniox";
+import { resolveTabAudioCloudProvider } from "../lib/stt/engineCapabilities";
 import * as liveDraft from "../lib/history/liveDraft";
 import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
 
@@ -275,19 +276,31 @@ export function useMeeting(): UseMeetingResult {
             return;
           }
           useApp.getState().setStatus(status, status === "connecting" ? detail : undefined);
-          // Preview-lane trial notice (v0.5 closeout item 3): fires
-          // once per meeting start, only for a session actually riding
-          // the server-minted credential — soniox OR tabaudio-cloud
-          // (tabAudioCloud.ts's own effectiveProvider forces the same
-          // path on this lane, so its BYOK check is the SAME
-          // settings.sonioxKey, never deepgramKey) — with no BYOK
-          // sonioxKey of the user's own.
+          // Preview-lane trial notice (v0.5 closeout item 3, tightened
+          // for BYOK preview — docs/design-explorations/byok-preview-
+          // blueprint.md D3): fires once per meeting start, only for a
+          // session actually riding the server-minted credential — real
+          // BYOK traffic must never see a toast claiming a trial cap
+          // that doesn't apply to it. `engine.kind === "soniox"` is
+          // already gated on `!settings.sonioxKey` (a BYOK sonioxKey
+          // holder never mints, see soniox.ts's own SonioxEngine.
+          // start). `engine.kind === "tabaudio-cloud"` ALSO needs the
+          // resolved-provider check below now: tabAudioCloud.ts's
+          // effectiveProvider no longer force-routes every tab-cloud
+          // session through Soniox on this lane (D3 — it honestly runs
+          // whatever Settings.tabAudioCloudProvider says), so a user
+          // running their OWN Deepgram key through this engine has
+          // `!settings.sonioxKey` trivially true (they never entered a
+          // Soniox key at all) even though no mint is involved —
+          // without this check the notice would wrongly tell a paying
+          // Deepgram BYOK user their audio went through Soniox's trial.
           if (
             status === "listening" &&
             !previewMintNoticeRef.current &&
             SONIOX_PREVIEW_LANE &&
             !settings.sonioxKey &&
-            (engine.kind === "soniox" || engine.kind === "tabaudio-cloud")
+            (engine.kind === "soniox" ||
+              (engine.kind === "tabaudio-cloud" && resolveTabAudioCloudProvider(settings) === "soniox"))
           ) {
             previewMintNoticeRef.current = true;
             const s = getPreviewSessionSeconds() ?? 600;

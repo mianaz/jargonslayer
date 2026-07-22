@@ -97,6 +97,60 @@ export function resolveProvider(req: Request): {
   return { provider, baseUrl };
 }
 
+/** True when JARGONSLAYER_SHARED_KEY_ONLY strict mode is armed.
+ *  Canonical value is "1"; "true" is also accepted so a deploy that
+ *  writes the env as a literal boolean-ish string doesn't silently
+ *  fail open (adversarial review finding H5). Exported so the
+ *  OpenRouter OAuth exchange route (app/api/openrouter/exchange/
+ *  route.ts — a second, unrelated place strict mode needs to gate)
+ *  reads the exact same accepted values instead of re-deriving them
+ *  ad hoc. */
+export function isSharedKeyOnly(): boolean {
+  const v = process.env.JARGONSLAYER_SHARED_KEY_ONLY;
+  return v === "1" || v === "true";
+}
+
+/** Preview strict mode (oracle deploy only): per-IP rate limits and the
+ *  daily budget (see the five routes) apply ONLY when cfg.isServerKey —
+ *  so a request carrying a key header would otherwise make this server
+ *  fetch an attacker-chosen base-url with zero throttling (unthrottled
+ *  open proxy / SSRF). Routes call this FIRST, before body parsing/
+ *  rate limiting/resolveLlmConfig, and reject with
+ *  CLIENT_CREDS_REJECTED_BODY when it returns true.
+ *
+ *  Gates on the KEY header ONLY, via `.has` (presence) rather than
+ *  `.get` (truthiness) — the key header is the ONLY thing that flips
+ *  resolveLlmConfig into the BYOK branch that honors a client base-url
+ *  at all; a base-url-only request is provably harmless, since it
+ *  falls through to the server-key branch, which reads baseUrl from
+ *  env ONLY and still gets isServerKey rate limiting regardless of
+ *  what the client sent. Rejecting on base-url too would ALSO reject
+ *  every keyless trial request: taskHeaders (client.ts) sends
+ *  x-jargonslayer-base-url on every openai-compat call, keyless
+ *  included — DEFAULT_SETTINGS is keyless openai-compat pointed at
+ *  openrouter.ai — so a strict-mode flip would 400 the entire trial
+ *  lane on day one. `.has` instead of a truthy `.get` also means an
+ *  empty-string key header rejects too: still attacker-supplied input,
+ *  not "absent".
+ *
+ *  JARGONSLAYER_SHARED_KEY_ONLY is unset on every other deploy, so
+ *  isSharedKeyOnly() is always false there — full-tier self-host
+ *  behavior is unchanged. The hosted preview bundle itself never sends
+ *  a key header anymore (BYOK there goes client-direct — see
+ *  client.ts's useDirectTransport); this only guards against a
+ *  hand-crafted request against the old header contract. */
+export function rejectClientCreds(req: Request): boolean {
+  if (!isSharedKeyOnly()) return false;
+  return req.headers.has(PROVIDER_HEADERS.key);
+}
+
+/** Shared 400 body for rejectClientCreds, so all five routes reject
+ *  identically. */
+export const CLIENT_CREDS_REJECTED_BODY = {
+  error: "体验版服务端不代理自带 Key 请求，请刷新页面重试",
+  code: "bad_request",
+} as const;
+
 export type LlmCallKind = "detect" | "summary" | "define" | "translate";
 
 /** Parse a comma-separated model-id env var. Unset/empty → []. */

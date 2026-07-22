@@ -128,6 +128,17 @@ export interface SettingsDialogProps {
   onClose: () => void;
 }
 
+// Sol #4 fix (BYOK preview sprint, 2026-07-21): the tabaudio-cloud
+// card's own SONIOX_PREVIEW_LANE branch below (module scope, no draft
+// in reach) only describes a Soniox session — hoisted so the render
+// step (ENGINE_CARDS.map, far below) can swap this SAME string back in
+// once the draft's own 转录服务商 selection resolves to Deepgram, where
+// neither the trial promise nor a Soniox key are relevant. One source
+// of truth, so the copy can never drift between the two spots (same
+// rationale SonioxKeyRestoredNotice below already documents for itself).
+const TABAUDIO_CLOUD_NEUTRAL_HINT =
+  "需要 Soniox 或 Deepgram Key、浏览器分享标签页并勾选共享音频；选择 Deepgram 时仅支持英文";
+
 // Real capture engines only — demo is a scripted preview, not a peer
 // engine (see Header.tsx's 演示 button, the app's single demo entry
 // point). ITEM 2 fix (fix round, Sol#4 + Lane C flag): the retention
@@ -215,14 +226,18 @@ const ALL_ENGINE_CARDS: {
           value: "tabaudio-cloud" as const,
           label: "标签页音频·云端",
           // Soniox preview lane (SONIOX_PREVIEW_LANE): same trial-copy
-          // swap as the Soniox card's own hint above — this card's
-          // start() always forces the identical minted-Soniox path on
-          // the lane (tabAudioCloud.ts's effectiveProvider), so it gets
-          // the same honest trial notice instead of the BYOK/Deepgram
-          // copy that would otherwise still name a key nobody needs.
+          // swap as the Soniox card's own hint above, for when this
+          // card's resolved provider genuinely IS Soniox. Sol #4 fix
+          // (BYOK preview sprint, 2026-07-21): tabAudioCloud.ts no
+          // longer force-routes to Soniox on this lane (D3 — a Deepgram
+          // selection actually runs Deepgram now), so this module-scope
+          // ternary (no draft in reach here) is only the DEFAULT; the
+          // render step below (ENGINE_CARDS.map) swaps back to
+          // TABAUDIO_CLOUD_NEUTRAL_HINT whenever the draft's own 转录
+          // 服务商 resolves to Deepgram instead.
           hint: SONIOX_PREVIEW_LANE
             ? "预览体验：无需密钥，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得；标签页音频经 Soniox 云端转写（不留存）"
-            : "需要 Soniox 或 Deepgram Key、浏览器分享标签页并勾选共享音频；选择 Deepgram 时仅支持英文",
+            : TABAUDIO_CLOUD_NEUTRAL_HINT,
           byokOnly: true,
         },
       ]
@@ -541,11 +556,28 @@ const PROVIDER_PRESETS: SettingsProviderPreset[] = [
 // from BEFORE the build switched to preview (or from a full-tier
 // export) that isn't in the relevant list would otherwise render as a
 // blank/mismatched <select> and could get silently submitted on 保存.
-// Coerced to the list's first entry once, when the draft is seeded
-// (dialog open) — never overwrites a value the user picks from the
-// select afterward.
+// Coerced to the list's first entry at its ORIGINAL call site — the
+// draft seed (dialog open, below) — never overwriting a value the user
+// picks from the select afterward. BYOK preview sprint (2026-07-21):
+// skipped entirely when the seeded draft already carries a primary
+// apiKey — that user's model field is about to render as full-tier
+// free-text (see the primary CredentialFields' own previewOptions doc
+// below), and their persisted custom model string must survive the
+// dialog opening rather than getting silently clobbered to a preview-
+// allowlist id it was never validated against. A keyless open keeps
+// coercing exactly as today (still bound to the locked <select>).
+//
+// Sol #3 fix, same sprint: ALSO called at the 保存 boundary now
+// (handleSave below) — the open-time pass alone missed two in-dialog
+// paths that leave the OUTGOING draft keyless with an off-allowlist
+// model the locked <select> never actually offered: clearing the
+// primary Key field after opening keyed (the model field was free-text
+// until that edit), and a preset pick (handleSelectPreset) writing
+// detectModel/summaryModel straight into state regardless of what the
+// model <select> shows. Reusing this one function at both points keeps
+// the allowlist check itself defined exactly once.
 function coercePreviewModels(draft: Settings): Settings {
-  if (!PREVIEW_TIER) return draft;
+  if (!PREVIEW_TIER || draft.apiKey) return draft;
   const patch: Partial<Settings> = {};
   if (!(PREVIEW_LIVE_MODELS as readonly string[]).includes(draft.detectModel)) {
     patch.detectModel = PREVIEW_LIVE_MODELS[0];
@@ -717,6 +749,26 @@ function TaskDomainBlock({
                 value: config?.model ?? "",
                 onChange: (v) => patchConfig({ model: v }),
                 staticOptions: staticModelOptions,
+                // Sol #3 fix (BYOK preview sprint, 2026-07-21): this
+                // free-text field let a keyless preview visitor type ANY
+                // model id into a per-task override — the server still
+                // only ever honors the same JARGONSLAYER_MODEL_ALLOWLIST
+                // env pickModel checks for the primary block (anthropic.
+                // ts), so the request silently substituted the forced
+                // model while this field claimed otherwise. Locked to
+                // the same allowlist the primary block's own
+                // previewOptions uses, gated on THIS domain's resolved
+                // key (own key, or inherited from primary via
+                // resolveTaskCreds) rather than the primary's key alone
+                // — an own/inherited key means this domain routes
+                // browser-direct (D1) and keeps full-tier free-text,
+                // exactly like the primary field once it has a key.
+                previewOptions:
+                  PREVIEW_TIER && !resolved.apiKey
+                    ? domain === "summary"
+                      ? PREVIEW_SUMMARY_MODELS
+                      : PREVIEW_LIVE_MODELS
+                    : undefined,
                 hint: (
                   <div className="mt-1 text-xs text-mut2">
                     留空则用主配置的模型（{resolved.model || "服务端默认"}）
@@ -1562,7 +1614,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // restart is needed instead of silently saving a toggle that won't
     // do anything until then. No live engine switching.
     const sidecarModeChanged = IS_DESKTOP && draft.sidecarMode !== settings.sidecarMode;
-    updateSettings(toSave);
+    // Sol #3 fix (BYOK preview sprint, 2026-07-21): coercePreviewModels
+    // above only ran ONCE, at draft-seed time (dialog open) — clearing
+    // the primary Key field mid-dialog, or picking a preset that force-
+    // fills detectModel/summaryModel (handleSelectPreset below), can
+    // leave `toSave` keyless with an off-allowlist model that never
+    // passed through it. Re-running the SAME function at this, the
+    // actual persistence boundary, closes both holes with the one
+    // allowlist source of truth instead of re-deriving the check here.
+    updateSettings(coercePreviewModels(toSave));
     setEnabledPacks(enabledPacks);
     showToast(sidecarModeChanged ? "已保存，重启应用后生效" : "设置已保存");
     onClose();
@@ -2033,6 +2093,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // write, see updateSettings' own side effects).
   const level = settings.uiMode;
 
+  // Sol #7 fix (BYOK preview sprint, 2026-07-21): the AI 检测 banner
+  // below (aiDetectPreviewBanner) states ONE posture off draft.apiKey
+  // alone — accurate for the primary domain, but a mixed taskLlm setup
+  // can route a single task on a genuinely different key than the
+  // primary. resolveTaskCreds' own `||` inheritance means an ENABLED
+  // override with a blank Key of its own always resolves to the SAME
+  // keyed-ness as the primary (never a mismatch) — the only real
+  // divergence is an override that supplies (or the primary supplies,
+  // and the override explicitly doesn't) its OWN key, so this only
+  // fires when at least one enabled override's resolved keyed-ness
+  // actually differs from the primary's.
+  const taskLlmRoutingDiverges = TASK_DOMAIN_META.some((meta) => {
+    if (!draft.taskLlm?.[meta.domain]?.enabled) return false;
+    return !!resolveTaskCreds(draft, meta.domain).apiKey !== !!draft.apiKey;
+  });
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
@@ -2120,28 +2196,38 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <SectionHeading>转录引擎</SectionHeading>
             <div className="grid grid-cols-2 gap-2">
               {ENGINE_CARDS.map((opt) => {
-                // v0.4 S4 (blueprint decision E, risk 4): byokOnly
-                // joins sidecarOnly in the preview lock — see
-                // ENGINE_CARDS' own byokOnly doc comment above.
-                // Soniox preview lane (SONIOX_PREVIEW_LANE): carved OUT
-                // of the lock for THIS card — it now runs on a
-                // server-minted key (stt/soniox.ts's SonioxEngine.
-                // start), so it's left selectable with the trial `hint`
-                // already swapped in above, instead of the generic
-                // 「本地版功能」 lock. tabaudio-cloud joins the SAME
-                // carve-out (v0.5 closeout): its own start() always
-                // forces the identical minted-Soniox path on this lane
-                // (tabAudioCloud.ts's effectiveProvider), so it is
-                // equally real to leave selectable, with its own trial
-                // `hint` swapped in above too. Every other byokOnly/
-                // sidecarOnly card (deepgram included) keeps locking
-                // exactly as before — mirrors engineOptionGate's own
-                // soniox+tabaudio-cloud carve-out (lib/stt/engineOptions.
-                // ts).
+                // v0.4 S4 (blueprint decision E, risk 4) originally
+                // joined byokOnly to sidecarOnly in the preview lock —
+                // the BYOK preview sprint (2026-07-21, blueprint D3)
+                // drops that arm: a byokOnly card (soniox/deepgram/
+                // tabaudio-cloud) is selectable on preview exactly like
+                // full tier now, since its own Key row below is no
+                // longer greyed either — keyless, it's still selectable
+                // and fails honestly at start, same as a full-tier user
+                // who never pasted a key (full-tier parity). Only
+                // sidecarOnly cards (whisper/tabaudio/appaudio —
+                // genuinely absent on hosted web, no local sidecar to
+                // talk to) stay locked. sonioxPreviewUnlocked below is
+                // now used ONLY for the trial-vs-BYOK-bills-you hint
+                // distinction (sonioxKeyBillsUser) — it no longer gates
+                // selectability, that's opt.sidecarOnly's job alone.
+                //
+                // Sol #4 fix (BYOK preview sprint, 2026-07-21): the
+                // tabaudio-cloud card used to unlock here off
+                // SONIOX_PREVIEW_LANE alone — but that card's own
+                // runtime (tabAudioCloud.ts's effectiveProvider) only
+                // ever mints/bills through Soniox when the draft's own
+                // 转录服务商 select resolves to "soniox"; a Deepgram
+                // selection makes a residual sonioxKey irrelevant to
+                // THIS card's session (it spends deepgramKey instead).
+                // The "soniox" card has no such branch — it IS the
+                // Soniox engine — so it stays gated on the lane alone.
+                const tabCloudResolvesToSoniox = draft.tabAudioCloudProvider === "soniox";
                 const sonioxPreviewUnlocked =
-                  SONIOX_PREVIEW_LANE && (opt.value === "soniox" || opt.value === "tabaudio-cloud");
-                const previewLocked =
-                  PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly) && !sonioxPreviewUnlocked;
+                  SONIOX_PREVIEW_LANE &&
+                  (opt.value === "soniox" ||
+                    (opt.value === "tabaudio-cloud" && tabCloudResolvesToSoniox));
+                const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
                 // M2 fix (Sol review 2026-07-20, v0.5 closeout): both
                 // cards' own `hint` above promises the shared trial
                 // UNCONDITIONALLY on this lane — a restored/typed
@@ -2151,6 +2237,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // that plainly rather than keep advertising the
                 // keyless trial once a real key is present.
                 const sonioxKeyBillsUser = sonioxPreviewUnlocked && !!draft.sonioxKey;
+                // Sol #4 fix: the tabaudio-cloud card's own static
+                // `hint` (ALL_ENGINE_CARDS above) can't see the draft —
+                // its SONIOX_PREVIEW_LANE branch is only correct while
+                // this card actually resolves to Soniox. A Deepgram
+                // selection falls back to the SAME provider-neutral
+                // copy full tier (and a lane-off preview) already show,
+                // so this card never claims a Soniox trial or names
+                // Soniox at all for a Deepgram session.
+                const cardHint =
+                  opt.value === "tabaudio-cloud" && SONIOX_PREVIEW_LANE && !tabCloudResolvesToSoniox
+                    ? TABAUDIO_CLOUD_NEUTRAL_HINT
+                    : opt.hint;
                 // S9.4, D6 (F9): 系统/App 音频's own macOS-floor gate —
                 // "shown-but-disabled below floor", never hidden (see
                 // ENGINE_CARDS' own appaudio doc comment above for why
@@ -2199,10 +2297,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     {/* S14.1 field fix (item 5): at 375-390px this row
                        had no wrap/shrink escape hatch — a long label
                        (Soniox 云端识别, 系统识别 · 开箱即用) plus a
-                       shrink-0 badge cluster (up to 3 on preview tier:
-                       本地版功能 + 实验 + 本地/云端) simply overflowed the
-                       card's own border ("本地 box outside the bigger
-                       box"). flex-wrap lets the badge cluster drop to
+                       shrink-0 badge cluster (up to 2 — 本地版功能 + 实验
+                       can no longer co-occur on one card since the BYOK
+                       preview sprint, see previewLocked's own doc above —
+                       plus 本地/云端) simply overflowed the card's own
+                       border ("本地 box outside the bigger box").
+                       flex-wrap lets the badge cluster drop to
                        its own line INSIDE the card instead of spilling
                        past it; min-w-0 on the label lets IT shrink/wrap
                        too rather than forcing the row wider than the
@@ -2231,7 +2331,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       </span>
                     </div>
                     <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      {sonioxKeyBillsUser ? "已检测到你的 Soniox Key，将按你的账户计费" : opt.hint}
+                      {sonioxKeyBillsUser ? "已检测到你的 Soniox Key，将按你的账户计费" : cardHint}
                     </div>
                   </button>
                 );
@@ -2357,10 +2457,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                their own hint text), this field is meaningless for any
                engine but soniox, so it only mounts once picked. Same
                hand-rolled masked-input pattern as HF Token (说话人分离
-               section below): showSonioxKey toggle, disabled={PREVIEW_
-               TIER} — preview-tier gate 3 of 3, alongside ENGINE_CARDS'
-               byokOnly lock above and store.ts applyTierDefaults'
-               coercion. */}
+               section below): showSonioxKey toggle. BYOK preview sprint
+               (2026-07-21): unlocked on preview — this is browser→
+               Soniox direct WS either way (see the hint below), no
+               server involvement to gate. */}
             {draft.engine === "soniox" && (
               <div>
                 <div className="flex items-center justify-between gap-2">
@@ -2369,20 +2469,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                      health check) — deriveKeyStatus with no evidence arg
                      can only ever resolve 未配置/已配置, never 正常/异常,
                      so this never fakes a status the app can't back up. */}
-                  {!PREVIEW_TIER && <KeyStatusChip status={deriveKeyStatus(draft.sonioxKey)} />}
+                  <KeyStatusChip status={deriveKeyStatus(draft.sonioxKey)} />
                 </div>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     type={showSonioxKey ? "text" : "password"}
                     value={draft.sonioxKey}
-                    disabled={PREVIEW_TIER}
                     onChange={(e) => patch({ sonioxKey: e.target.value })}
                     placeholder="粘贴你的 Soniox API Key"
                     className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <button
                     type="button"
-                    disabled={PREVIEW_TIER}
                     onClick={() => setShowSonioxKey((v) => !v)}
                     aria-label={showSonioxKey ? "隐藏" : "显示"}
                     className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
@@ -2402,7 +2500,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && (
                   <SonioxKeyRestoredNotice onClear={() => patch({ sonioxKey: "" })} />
                 )}
-                {!PREVIEW_TIER && !draft.sonioxKey && (
+                {!draft.sonioxKey && (
                   <div className="mt-1 text-xs leading-[1.7] text-mut2">
                     前往{" "}
                     <button
@@ -2422,12 +2520,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                stt-provider-wiring-2026-07.md §5/§9): engine-conditional,
                mirrors the Soniox API Key block immediately above field-
                for-field (same hand-rolled masked-input pattern, same S14
-               no-probe KeyStatusChip honesty, same preview-tier gate 3 of
-               3 alongside ENGINE_CARDS' byokOnly lock above and store.ts
-               applyTierDefaults' coercion). The key never rides a URL
-               param or a JSON message body — it rides the WebSocket
-               handshake's Sec-WebSocket-Protocol (see deepgramTransport.
-               ts's own header for the verified wire shape). */}
+               no-probe KeyStatusChip honesty, same BYOK-preview-sprint
+               unlock — see that block's own doc comment). The key never
+               rides a URL param or a JSON message body — it rides the
+               WebSocket handshake's Sec-WebSocket-Protocol (see
+               deepgramTransport.ts's own header for the verified wire
+               shape). */}
             {draft.engine === "deepgram" && (
               <div>
                 <div className="flex items-center justify-between gap-2">
@@ -2436,20 +2534,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                      no-telemetry posture as Soniox above) — deriveKeyStatus
                      with no evidence arg can only ever resolve 未配置/已配置,
                      never 正常/异常. */}
-                  {!PREVIEW_TIER && <KeyStatusChip status={deriveKeyStatus(draft.deepgramKey)} />}
+                  <KeyStatusChip status={deriveKeyStatus(draft.deepgramKey)} />
                 </div>
                 <div className="mt-1 flex items-center gap-2">
                   <input
                     type={showDeepgramKey ? "text" : "password"}
                     value={draft.deepgramKey}
-                    disabled={PREVIEW_TIER}
                     onChange={(e) => patch({ deepgramKey: e.target.value })}
                     placeholder="粘贴你的 Deepgram API Key"
                     className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   />
                   <button
                     type="button"
-                    disabled={PREVIEW_TIER}
                     onClick={() => setShowDeepgramKey((v) => !v)}
                     aria-label={showDeepgramKey ? "隐藏" : "显示"}
                     className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
@@ -2464,7 +2560,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="mt-1 text-xs text-mut2">
                   按量计费；Key 随 WebSocket 握手直接发给 Deepgram 云端（wss://api.deepgram.com），不经我们的服务器；仅英文，中英混说请用 Soniox
                 </div>
-                {!PREVIEW_TIER && !draft.deepgramKey && (
+                {!draft.deepgramKey && (
                   <div className="mt-1 text-xs leading-[1.7] text-mut2">
                     前往{" "}
                     <button
@@ -2498,18 +2594,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <div className="space-y-2">
                 <div>
                   <label className="text-xs text-mut">转录服务商</label>
-                  {/* Soniox preview lane (SONIOX_PREVIEW_LANE): the
-                     INVARIANT is enforced at the engine (tabAudioCloud.
-                     ts's own effectiveProvider always forces soniox on
-                     this lane), so the select mirrors that here rather
-                     than fully disabling like the plain-preview lock
-                     below — it's genuinely live on the trial, just fixed
-                     on Soniox; Deepgram is disabled+titled exactly like
-                     every other 「本地版功能」-locked control in this
-                     dialog (no server trial exists for it). */}
+                  {/* BYOK preview sprint (2026-07-21): un-gated — the
+                     runtime (lib/stt/tabAudioCloud.ts's own
+                     effectiveProvider) honors this selection directly on
+                     every tier now; the Soniox trial mint only ever
+                     applies when SONIOX_PREVIEW_LANE is on AND this
+                     resolves to soniox AND no sonioxKey is set
+                     (cross-lane contract, Lane A/C's runtime side), so
+                     the select shows the REAL draft value with both
+                     options selectable, same as full tier always had. */}
                   <select
-                    value={PREVIEW_TIER && SONIOX_PREVIEW_LANE ? "soniox" : draft.tabAudioCloudProvider}
-                    disabled={PREVIEW_TIER && !SONIOX_PREVIEW_LANE}
+                    value={draft.tabAudioCloudProvider}
                     onChange={(e) =>
                       patch({
                         tabAudioCloudProvider: e.target.value as Settings["tabAudioCloudProvider"],
@@ -2518,29 +2613,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="soniox">Soniox</option>
-                    <option
-                      value="deepgram"
-                      disabled={PREVIEW_TIER && SONIOX_PREVIEW_LANE}
-                      title={PREVIEW_TIER && SONIOX_PREVIEW_LANE ? "本地版功能：体验版暂未开放" : undefined}
-                    >
-                      Deepgram（仅英文）
-                    </option>
+                    <option value="deepgram">Deepgram（仅英文）</option>
                   </select>
                 </div>
                 <div className="text-xs leading-[1.7] text-mut2">
-                  {PREVIEW_TIER && SONIOX_PREVIEW_LANE ? (
-                    draft.sonioxKey ? (
-                      // M2 fix (Sol review, v0.5 closeout): a restored/
-                      // typed key means BYOK-wins routing actually bills
-                      // the user, not the trial — this line sat directly
-                      // below the select promising "无需自备 Key"
-                      // unconditionally, which would otherwise flatly
-                      // contradict the notice just below it once a key
-                      // is present.
-                      "已检测到你的 Soniox Key，将按你的账户计费"
-                    ) : (
-                      "预览体验固定使用 Soniox 云端转写，无需自备 Key"
-                    )
+                  {PREVIEW_TIER && SONIOX_PREVIEW_LANE && draft.tabAudioCloudProvider === "soniox" ? (
+                    // M2 fix (Sol review, v0.5 closeout) folded into the
+                    // BYOK preview sprint's rewrite: one line now covers
+                    // both states instead of branching on sonioxKey —
+                    // "填入自己的 Key 后…" stays true and accurate whether
+                    // or not a key is present yet, so it can't drift out
+                    // of sync with the restored-backup notice just below.
+                    "未填 Key 时（体验版试用）走 Soniox 限时试用；填入自己的 Key 后使用你的账户、浏览器直连"
                   ) : (
                     <>
                       选择转录服务商；需在对应引擎卡片填写该服务商的 API Key——
@@ -2554,11 +2638,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     </>
                   )}
                 </div>
-                {/* Restored-backup honesty — same notice + condition as
-                   the Soniox card above (this card rides the SAME
-                   sonioxKey on this lane — see the select's own doc
-                   comment). */}
-                {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && (
+                {/* Restored-backup honesty — same notice as the Soniox
+                   card above, but ONLY while this card actually rides
+                   sonioxKey. Sol #4 fix (BYOK preview sprint,
+                   2026-07-21): this used to fire off draft.sonioxKey
+                   alone — a Deepgram selection spends deepgramKey
+                   instead (tabAudioCloud.ts's effectiveProvider), so a
+                   residual sonioxKey has no bearing on THIS card's
+                   session and must not trigger a notice implying it
+                   does. Same draft.tabAudioCloudProvider === "soniox"
+                   condition the detail hint right above already uses. */}
+                {PREVIEW_TIER && SONIOX_PREVIEW_LANE && !!draft.sonioxKey && draft.tabAudioCloudProvider === "soniox" && (
                   <SonioxKeyRestoredNotice onClear={() => patch({ sonioxKey: "" })} />
                 )}
               </div>
@@ -3034,29 +3124,50 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           <section className="space-y-3 border-t border-edge pt-5">
             <SectionHeading>AI 检测</SectionHeading>
 
-            {/* Preview tier (#61): every credential-related field below
-               (provider/Poe preset, Base URL, OpenRouter OAuth connect,
-               API Key) renders disabled — greyed showroom, never
-               unmounted — because the hosted build's detect/summarize
-               calls run on OUR server key, not the visitor's own. */}
+            {/* Preview tier (#61): a permanent AI data-path disclosure,
+               not a lock notice — BYOK preview sprint (2026-07-21)
+               un-gated every credential-related field below (provider/
+               Poe preset, Base URL, OpenRouter OAuth connect, API Key),
+               so this no longer marks anything as disabled; it just
+               tells the visitor which of the two data paths their
+               current draft is on. No PreviewLockedBadge (removed —
+               nothing here is locked anymore). */}
             {PREVIEW_TIER && (
               <div className="space-y-1" data-ui-level="aiDetectPreviewBanner">
-                <div className="flex items-center gap-2">
-                  <PreviewLockedBadge />
-                  <span className="text-xs leading-[1.7] text-mut2">
-                    体验版由内置演示 Key 提供 AI，本地版可接入自己的 Key
-                  </span>
-                </div>
-                {/* #63 privacy disclosure at the point of use: the
-                   preview's AI text path differs materially from BYOK
-                   (transits our proxy in memory, and the demo key's
-                   OpenRouter routing carries data_collection=allow). */}
-                <div className="text-xs leading-[1.7] text-mut2">
-                  数据路径：体验版的 AI 文本经我们的服务器内存中转（不存储）后转发
-                  OpenRouter，带 data_collection=allow 标志（可能被模型提供方留存）；本地版
-                  BYOK 直连你自己的端点、不带该标志。音频永远不经过我们的服务器。启用下方「背景画像」后，
-                  画像内容同样经此路径中转。
-                </div>
+                {draft.apiKey ? (
+                  <div className="text-xs leading-[1.7] text-mut2">
+                    自带 Key 由浏览器直连你的模型服务商，Key 与会议内容不经过本站服务器
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-xs leading-[1.7] text-mut2">
+                      体验版由内置演示 Key 提供 AI，本地版可接入自己的 Key
+                    </div>
+                    {/* #63 privacy disclosure at the point of use: the
+                       preview's AI text path differs materially from BYOK
+                       (transits our proxy in memory, and the demo key's
+                       OpenRouter routing carries data_collection=allow). */}
+                    <div className="text-xs leading-[1.7] text-mut2">
+                      数据路径：体验版的 AI 文本经我们的服务器内存中转（不存储）后转发
+                      OpenRouter，带 data_collection=allow 标志（可能被模型提供方留存）；本地版
+                      BYOK 直连你自己的端点、不带该标志。音频永远不经过我们的服务器。启用下方「背景画像」后，
+                      画像内容同样经此路径中转。
+                    </div>
+                  </>
+                )}
+                {/* Sol #7 fix (BYOK preview sprint, 2026-07-21): the two
+                   branches above describe the PRIMARY domain only — a
+                   分任务模型（高级） override can route one task on a
+                   different key than the primary (taskLlmRoutingDiverges
+                   above), which the primary-only sentence doesn't
+                   cover. One terse line, appended rather than branched
+                   into the two cases above, since it's true regardless
+                   of which primary posture is showing. */}
+                {taskLlmRoutingDiverges && (
+                  <div className="text-xs leading-[1.7] text-mut2">
+                    分任务配置按各自 Key 路由：有 Key 的任务浏览器直连，无 Key 的任务走体验版代理
+                  </div>
+                )}
               </div>
             )}
 
@@ -3077,33 +3188,46 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   onApiKeyChange={(apiKey) => patch({ apiKey })}
                   apiKeyPlaceholder="sk-…"
                   apiKeyHint="仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
-                  apiKeyStatus={
-                    PREVIEW_TIER
-                      ? undefined
-                      : deriveKeyStatus(
-                          draft.apiKey,
-                          // FINDING 5 (S14 fix round): telemetry/
-                          // testConnection describe calls made against
-                          // the SAVED settings' primary credential —
-                          // gate evidence on the draft's own primary
-                          // provider/baseUrl/apiKey still matching what's
-                          // actually saved (credsMatch), so editing away
-                          // from a tested/saved key caps this chip at
-                          // 已配置 instead of keeping the OLD key's 正常/
-                          // 异常.
-                          credsMatch(
-                            { provider: draft.provider, baseUrl: draft.baseUrl, apiKey: draft.apiKey },
-                            { provider: settings.provider, baseUrl: settings.baseUrl, apiKey: settings.apiKey },
-                          )
-                            ? llmKeyEvidence(
-                                primaryTelemetryDomains(draft).map((d) => telemetry[d]),
-                                domainUsesOwnKey(draft, "detect") ? undefined : testConnectionOk,
-                              )
-                            : undefined,
+                  // BYOK preview sprint (2026-07-21): the chip used to be
+                  // suppressed wholesale under PREVIEW_TIER (a key field
+                  // that couldn't be set had nothing honest to report) —
+                  // now that the field is live there too, this reads the
+                  // same evidence full tier always has, unconditionally.
+                  apiKeyStatus={deriveKeyStatus(
+                    draft.apiKey,
+                    // FINDING 5 (S14 fix round): telemetry/
+                    // testConnection describe calls made against
+                    // the SAVED settings' primary credential —
+                    // gate evidence on the draft's own primary
+                    // provider/baseUrl/apiKey still matching what's
+                    // actually saved (credsMatch), so editing away
+                    // from a tested/saved key caps this chip at
+                    // 已配置 instead of keeping the OLD key's 正常/
+                    // 异常.
+                    credsMatch(
+                      { provider: draft.provider, baseUrl: draft.baseUrl, apiKey: draft.apiKey },
+                      { provider: settings.provider, baseUrl: settings.baseUrl, apiKey: settings.apiKey },
+                    )
+                      ? llmKeyEvidence(
+                          primaryTelemetryDomains(draft).map((d) => telemetry[d]),
+                          domainUsesOwnKey(draft, "detect") ? undefined : testConnectionOk,
                         )
+                      : undefined,
+                  )}
+                  // BYOK preview sprint: a custom openai-compat endpoint
+                  // on preview now actually gets called browser-direct
+                  // (D1) — CORS, not our server, decides whether it
+                  // works, so a visitor picking "自定义…" needs the heads-
+                  // up before they hit a silent network failure. Only
+                  // once a key is drafted (matches previewOptions below —
+                  // keyless still rides the locked <select>, no Base URL
+                  // typing to warn about yet).
+                  baseUrlHint={
+                    PREVIEW_TIER && draft.apiKey ? (
+                      <>自定义端点需支持浏览器跨域（CORS）；不支持时请使用本地版</>
+                    ) : undefined
                   }
                   presets={PROVIDER_PRESETS}
-                  disabled={PREVIEW_TIER}
                   onConnectOpenRouter={() => void handleConnectOpenRouter()}
                   connectingOpenRouter={connectingOpenRouter}
                   models={[
@@ -3113,16 +3237,31 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       value: draft.detectModel,
                       onChange: (v) => patch({ detectModel: v }),
                       staticOptions: DETECT_MODEL_OPTIONS,
-                      previewOptions: PREVIEW_TIER ? PREVIEW_LIVE_MODELS : undefined,
-                      hint: PREVIEW_TIER ? (
-                        <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                          体验版由服务端在预置模型内代理调用，下拉所选即实际使用的模型；检测用轻量模型（更快），报告可用更强模型
-                        </div>
-                      ) : (
-                        activePreset === "ollama" && (
-                          <div className="mt-1 text-xs text-mut2">Ollama 常用模型：qwen3:8b</div>
-                        )
-                      ),
+                      // BYOK preview sprint: the locked <select> is now
+                      // keyed off the draft's OWN key, not the tier alone
+                      // — a drafted key means this domain is about to
+                      // route browser-direct to whatever model the user
+                      // types, so the preview allowlist no longer applies
+                      // (same free-text+datalist UI full tier always
+                      // had); keyless preview keeps riding the allowlist
+                      // exactly as before. The hint follows the same
+                      // split: the "下拉所选" copy only makes sense while
+                      // this is actually a <select> — a drafted key falls
+                      // through to the SAME ollama-preset hint (or none)
+                      // full tier already shows for this now-identical
+                      // free-text field, rather than repeating the
+                      // banner's data-path line a second time on screen.
+                      previewOptions: PREVIEW_TIER && !draft.apiKey ? PREVIEW_LIVE_MODELS : undefined,
+                      hint:
+                        PREVIEW_TIER && !draft.apiKey ? (
+                          <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                            体验版由服务端在预置模型内代理调用，下拉所选即实际使用的模型；检测用轻量模型（更快），报告可用更强模型
+                          </div>
+                        ) : (
+                          activePreset === "ollama" && (
+                            <div className="mt-1 text-xs text-mut2">Ollama 常用模型：qwen3:8b</div>
+                          )
+                        ),
                     },
                     {
                       key: "summary",
@@ -3130,7 +3269,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       value: draft.summaryModel,
                       onChange: (v) => patch({ summaryModel: v }),
                       staticOptions: SUMMARY_MODEL_OPTIONS,
-                      previewOptions: PREVIEW_TIER ? PREVIEW_SUMMARY_MODELS : undefined,
+                      previewOptions: PREVIEW_TIER && !draft.apiKey ? PREVIEW_SUMMARY_MODELS : undefined,
                     },
                   ]}
                 />
@@ -3587,11 +3726,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              later is a one-line change here) so translate/detect/
              summary can each optionally point at a different provider/
              model, inheriting the primary "AI 检测" credential above by
-             default. Preview tier: disabled as ONE group + one
-             PreviewLockedBadge, same grouping pattern as 说话人分离
-             above — BYOK has no meaning when the hosted build's calls
-             run on our own server key. #62: advanced-only, per the fit
-             note above. */}
+             default. BYOK preview sprint (2026-07-21): un-gated — full-
+             tier behavior on preview, same as the primary credential
+             block above (no more PreviewLockedBadge/disabled-as-ONE-
+             group; the whole point of BYOK is meaningless on the OLD
+             preview where calls ran on our own server key, but that's no
+             longer this build's posture). #62: advanced-only, per the
+             fit note above. */}
           {activeCategory === "taskLlm" && isSectionVisible(level, SETTINGS_UI_LEVELS.taskLlm) && (
           <section
             className="space-y-3 border-t border-edge pt-5"
@@ -3600,23 +3741,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <button
               type="button"
               onClick={() => setTaskLlmExpanded((v) => !v)}
-              disabled={PREVIEW_TIER}
-              className="flex w-full items-center justify-between gap-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex w-full items-center justify-between gap-2"
             >
               <span className="flex items-center gap-2">
                 <SectionHeading>分任务模型（高级）</SectionHeading>
-                {PREVIEW_TIER && <PreviewLockedBadge />}
               </span>
               <span className="text-xs text-mut2">{taskLlmExpanded ? "收起" : "展开"}</span>
             </button>
 
-            {!PREVIEW_TIER && (
-              <div className="text-xs leading-[1.7] text-mut2">
-                为翻译 / 检测与解释 / 会议报告分别指定不同的提供方或模型；未单独配置的场景使用上方主配置
-              </div>
-            )}
+            <div className="text-xs leading-[1.7] text-mut2">
+              为翻译 / 检测与解释 / 会议报告分别指定不同的提供方或模型；未单独配置的场景使用上方主配置
+            </div>
 
-            {!PREVIEW_TIER && taskLlmExpanded && (
+            {taskLlmExpanded && (
               <div className="space-y-2">
                 {TASK_DOMAIN_META.map((meta) => (
                   <TaskDomainBlock
@@ -3628,7 +3765,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     config={draft.taskLlm?.[meta.domain]}
                     primary={draft}
                     onChange={(next) => handleTaskLlmChange(meta.domain, next)}
-                    disabled={PREVIEW_TIER}
+                    disabled={false}
                     // S14: only "detect" is ever what 测试连接 actually
                     // probes (client.ts's testConnection always resolves
                     // the "detect" domain's CURRENT credentials) — so its

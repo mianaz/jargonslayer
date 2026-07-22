@@ -3,14 +3,19 @@ export const runtime = "nodejs";
 // Thin CORS shim for OpenRouter's OAuth PKCE code→key exchange
 // (https://openrouter.ai/docs/use-cases/oauth-pkce). The docs don't
 // state whether https://openrouter.ai/api/v1/auth/keys is CORS-enabled
-// for direct browser fetch, so this route proxies the POST server-side
+// for direct browser fetch, so full tier proxies the POST server-side
 // instead. No server credential is involved — the browser's own
 // code_verifier is passed straight through and the resulting
 // user-controlled key is returned as-is; this never touches
-// resolveLlmConfig or any BYOK/server-key logic.
+// resolveLlmConfig or any BYOK/server-key logic. PREVIEW_TIER
+// (byok-preview sprint): the client goes straight to EXCHANGE_URL
+// instead (see lib/oauth/openrouterPkce.ts's exchangeCodeForKey) —
+// this route stays reachable there only as a stale-bundle/hand-crafted-
+// request target, gated shut by the isSharedKeyOnly() check below.
 
 import { NextResponse } from "next/server";
 import * as z from "zod";
+import { isSharedKeyOnly } from "@/lib/llm/anthropic";
 import { allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { EXCHANGE_URL } from "@/lib/oauth/openrouterPkce";
 import type { ApiErrorBody } from "@jargonslayer/core/types";
@@ -26,6 +31,19 @@ function errorBody(body: ApiErrorBody, status: number) {
 }
 
 export async function POST(req: Request) {
+  // Preview strict mode — see module comment. Once PREVIEW_TIER goes
+  // client-direct, the hosted deploy's own frontend never calls this
+  // route again; anything that still reaches it under
+  // JARGONSLAYER_SHARED_KEY_ONLY is a stale bundle or a hand-crafted
+  // request, same posture as the five LLM routes' rejectClientCreds
+  // guard (anthropic.ts).
+  if (isSharedKeyOnly()) {
+    return errorBody(
+      { error: "体验版服务端不代理 OAuth 兑换请求，请刷新页面重试", code: "bad_request" },
+      400,
+    );
+  }
+
   // Abuse guard: this endpoint takes no API key of its own, so it's
   // otherwise an open proxy to OpenRouter's exchange endpoint.
   if (!allowRequest(`openrouter-exchange:${clientIp(req)}`, 10)) {
@@ -73,5 +91,8 @@ export async function POST(req: Request) {
     return errorBody({ error: message, code: "upstream" }, upstream.status);
   }
 
-  return NextResponse.json(upstreamJson);
+  // Full-tier only (see the strict-mode guard above) — this response
+  // carries a live, usable OpenRouter key; never let an intermediary
+  // cache it.
+  return NextResponse.json(upstreamJson, { headers: { "Cache-Control": "no-store" } });
 }

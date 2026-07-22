@@ -137,9 +137,9 @@ async function withTelemetry<T>(domain: LlmTelemetryDomain, fn: () => Promise<T>
  *  domain inherits the primary credential fields, so this is
  *  byte-identical to the old global authHeaders(settings) for every
  *  pre-#56 user (see resolveTaskCreds's own round-trip test). Exported
- *  so upload.ts's cloud-transcription path can reuse the exact same
- *  builder instead of hand-rolling a second copy (design Q3 — two
- *  header builders is a drift bug factory). */
+ *  so this file's five *ViaNext call sites share the exact same
+ *  builder instead of each hand-rolling a copy (design Q3 — two header
+ *  builders is a drift bug factory). */
 export function taskHeaders(settings: Settings, domain: LlmTaskDomain): Record<string, string> {
   const creds = resolveTaskCreds(settings, domain);
   const headers: Record<string, string> = {
@@ -152,6 +152,28 @@ export function taskHeaders(settings: Settings, domain: LlmTaskDomain): Record<s
     headers[PROVIDER_HEADERS.baseUrl] = creds.baseUrl;
   }
   return headers;
+}
+
+/** True when a call should skip /api/* and reach the provider directly
+ *  from the browser instead. Desktop (useClientTransport() on) always
+ *  does — there's no /api/* to fall back to at all (see llmTransport.
+ *  ts). On the hosted PREVIEW_TIER web build, a configured key ALSO
+ *  takes this path: a user's key must never transit our server there
+ *  (the server-side half of this rule is anthropic.ts's
+ *  JARGONSLAYER_SHARED_KEY_ONLY guard, which rejects those headers
+ *  outright once the client stops sending them). clientProvider.ts
+ *  already sends anthropic-dangerous-direct-browser-access for the
+ *  Anthropic provider, and the openai-compat path rides window.fetch,
+ *  so the existing viaClient functions below work unmodified from a
+ *  browser — this only decides WHEN to reach for them. Keyless preview
+ *  traffic keeps using the shared-key /api/* trial lane, unchanged.
+ *  Per-domain by construction — `creds` is always the caller's own
+ *  resolveTaskCreds result, so a taskLlm split-config user gets each
+ *  domain routed independently. Full-tier web (PREVIEW_TIER false) is
+ *  unaffected either way: a configured key there still rides /api/*,
+ *  exactly as before this existed. */
+function useDirectTransport(creds: Pick<ResolvedTaskCreds, "apiKey">): boolean {
+  return useClientTransport() || (PREVIEW_TIER && !!creds.apiKey);
 }
 
 async function parseErrorBody(res: Response): Promise<ApiErrorBody | undefined> {
@@ -348,8 +370,8 @@ async function detectViaNext(
 }
 
 /** Client-side callProvider detect call (v0.4 S2) — used instead of
- *  detectViaNext above when llmTransport.ts's useClientTransport() is
- *  on. BYOK-only: server-only concerns (pickModel's allowlist, rate
+ *  detectViaNext above when useDirectTransport() picks the direct
+ *  path (desktop, or preview BYOK). BYOK-only: server-only concerns (pickModel's allowlist, rate
  *  limiting, the #61 fallback model) never apply here — see
  *  tasks/detect.ts's header comment. `body.model ?? DEFAULT_DETECT_
  *  MODEL` mirrors the server's pickModel BYOK branch exactly (see
@@ -434,7 +456,7 @@ async function summarizeApiImpl(
   const creds = resolveTaskCreds(settings, "summary");
   const ctx: RequestErrorContext = { tag: "llm-summary", provider: ctxProvider(creds), model: body.model ?? creds.model };
 
-  if (useClientTransport()) {
+  if (useDirectTransport(creds)) {
     return summarizeViaClient(body, settings, creds);
   }
 
@@ -479,7 +501,8 @@ async function summarizeApiImpl(
 }
 
 /** Client-side callProvider summarize call (v0.4 S2) — used instead of
- *  the fetch above when useClientTransport() is on. Runs the full
+ *  the fetch above when useDirectTransport() picks the direct path
+ *  (desktop, or preview BYOK). Runs the full
  *  three-stage orchestration (summary + chunked/parallel translation +
  *  sweep, see tasks/summarize.ts) as several direct provider calls —
  *  exactly what the user's own BYOK key would do called any other way.
@@ -613,7 +636,8 @@ async function defineViaNext(
 }
 
 /** Client-side callProvider define call (v0.4 S2) — used instead of
- *  defineViaNext above when useClientTransport() is on. Rides detect's
+ *  defineViaNext above when useDirectTransport() picks the direct
+ *  path (desktop, or preview BYOK). Rides detect's
  *  creds for provider/key routing, same as defineViaNext (see that
  *  function's own comment) — DEFAULT_DEFINE_MODEL is its own constant
  *  in tasks/define.ts even though it happens to equal detect's default
@@ -800,10 +824,13 @@ async function detectApiImpl(
     // undefined -> host unreachable; fall through to the existing
     // Next.js path below, silently.
   }
-  // v0.4 S2: independent of subscription-direct above — when on, this
-  // ALWAYS wins over the existing Next.js path (desktop has no /api/*
-  // to fall back to at all; see llmTransport.ts).
-  return useClientTransport() ? detectViaClient(body, settings) : detectViaNext(body, settings);
+  // v0.4 S2 / D1: independent of subscription-direct above — when on,
+  // this ALWAYS wins over the existing Next.js path (desktop has no
+  // /api/* to fall back to at all; see llmTransport.ts). A keyed
+  // preview request takes the same client path for a different reason
+  // — see useDirectTransport's own doc.
+  const creds = resolveTaskCreds(settings, "detect");
+  return useDirectTransport(creds) ? detectViaClient(body, settings) : detectViaNext(body, settings);
 }
 
 export async function defineApi(
@@ -829,8 +856,10 @@ async function defineApiImpl(
     }
     if (result !== undefined) return result;
   }
-  // v0.4 S2 — see detectApi's identical comment.
-  return useClientTransport() ? defineViaClient(body, settings) : defineViaNext(body, settings);
+  // v0.4 S2 / D1 — see detectApi's identical comment. Rides detect's
+  // creds, same as defineViaNext/defineViaClient themselves.
+  const creds = resolveTaskCreds(settings, "detect");
+  return useDirectTransport(creds) ? defineViaClient(body, settings) : defineViaNext(body, settings);
 }
 
 export async function translateApi(
@@ -864,7 +893,7 @@ async function translateApiImpl(
   // fine, `requestId` just stays absent in the logged detail.
   const ctx: RequestErrorContext = { tag: "llm-translate", provider: ctxProvider(translateCreds), model: resolvedModel };
 
-  if (useClientTransport()) {
+  if (useDirectTransport(translateCreds)) {
     return translateViaClient(body, translateCreds);
   }
 
@@ -898,7 +927,8 @@ async function translateApiImpl(
 }
 
 /** Client-side callProvider translate call (v0.4 S2) — used instead of
- *  the fetch above when useClientTransport() is on.
+ *  the fetch above when useDirectTransport() picks the direct path
+ *  (desktop, or preview BYOK).
  *  `resolvedModel || body.model || DEFAULT_TRANSLATE_MODEL` is the
  *  exact two-stage resolution translateApi's own outBody construction
  *  above + the server's pickModel BYOK branch collapse to end-to-end
@@ -1008,7 +1038,8 @@ async function correctViaNext(
 }
 
 /** Client-side callProvider correction call (v0.4 S2 pattern) — used
- *  instead of correctViaNext above when useClientTransport() is on
+ *  instead of correctViaNext above when useDirectTransport() picks
+ *  the direct path
  *  (desktop/iOS, which strip app/api — see A5). */
 async function correctViaClient(
   body: CorrectRequest,
@@ -1050,7 +1081,10 @@ export async function correctApi(
   body: CorrectRequest,
   settings: Settings,
 ): Promise<CorrectResponse> {
-  return useClientTransport() ? correctViaClient(body, settings) : correctViaNext(body, settings);
+  // D1: rides the detect domain, same as correctViaNext/correctViaClient's
+  // own resolveTaskCreds calls.
+  const creds = resolveTaskCreds(settings, "detect");
+  return useDirectTransport(creds) ? correctViaClient(body, settings) : correctViaNext(body, settings);
 }
 
 /** Probe the configured provider/key/baseUrl with a trivial detect

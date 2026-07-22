@@ -126,35 +126,48 @@ describe("resolveWebspeechRetentionClass — D7 two-layer truth, runtime overlay
   });
 });
 
-// D5 cross-invariant test: "every preview-ineligible engine appears in
-// BOTH the gate and applyTierDefaults/applyPlatformEngineDefaults
-// coercion (closes Sol F6's persisted-deepgram-survives-into-preview
-// hole)". engineOptionGate's own PREVIEW_TIER branch can't be flipped
-// live (import-time const — see engineOptions.test.ts's header comment
-// for the established, repeatedly-documented reason this codebase
-// never vi.mocks lib/deployTier for it, e.g. SettingsDialog.test.tsx's
+// D5 cross-invariant test: two invariants that must both hold across
+// the FULL live ENGINE_CAPABILITIES table (not just hand-picked
+// EngineOption literals, unlike engineOptionGate's own tests) — a
+// future engine added to the table with the wrong flag/coercion
+// pairing fails HERE, at the data level, not just when someone happens
+// to also write a picker test for it:
+//   1. sidecarOnly (Sol F6's original finding: "persisted-engine-
+//      survives-into-preview hole"): still gate-locked (engineOptionGate's
+//      own PREVIEW_TIER branch, engineOptions.ts) AND still coerced away
+//      by applyTierDefaults on every platform that can persist it — the
+//      hosted preview build genuinely never has the local sidecar
+//      process, unaffected by BYOK preview D3.
+//   2. byokOnly (BYOK preview, docs/design-explorations/byok-preview-
+//      blueprint.md D3): the INVERSE now — no longer gate-locked
+//      (engineOptionGate's own PREVIEW_TIER branch only reads
+//      sidecarOnly), and applyTierDefaults leaves it SURVIVING instead
+//      of coercing it away, wherever the PLATFORM pass hasn't already
+//      swapped its identity into a different (sidecar) kind first (D7's
+//      tabaudio-cloud->appaudio desktop swap, store.ts — out of scope
+//      for THIS invariant, already covered by store.test.ts's own
+//      platform-composition coverage).
+// engineOptionGate's own PREVIEW_TIER branch can't be flipped live
+// (import-time const — see engineOptions.test.ts's header comment for
+// the established, repeatedly-documented reason this codebase never
+// vi.mocks lib/deployTier for it, e.g. SettingsDialog.test.tsx's
 // "PREVIEW_TIER/IS_DESKTOP are import-time consts" block), so the
-// "gate" half is exercised via the EXACT boolean expression the gate
-// itself evaluates (`sidecarOnly || byokOnly`) — this is what actually
-// walks the FULL live table (unlike the gate's own tests, which only
-// exercise hand-picked EngineOption literals), so a future engine
-// (Lane D's "deepgram") added to ENGINE_CAPABILITIES with byokOnly:true
-// but never added to store.ts's coercion lists fails HERE, at the data
-// level, not just when someone happens to also write a picker test for
-// it. The "coercion" half runs the REAL applyPlatformEngineDefaults ->
-// applyTierDefaults pipeline migrateSettings itself composes.
-describe("cross-invariant: preview-gate-locked capability entries never survive the platform->tier coercion pipeline (Sol F6)", () => {
-  const previewIneligible = Object.values(ENGINE_CAPABILITIES).filter(
-    (cap) => cap.sidecarOnly || cap.byokOnly,
-  );
+// "gate" half of invariant 1 is exercised via the EXACT boolean
+// expression the gate itself now evaluates for its lock condition
+// (`sidecarOnly` alone) — the "coercion" half of both invariants runs
+// the REAL applyPlatformEngineDefaults -> applyTierDefaults pipeline
+// migrateSettings itself composes.
+describe("cross-invariant: sidecarOnly stays gate-locked, byokOnly no longer is (Sol F6 + BYOK preview D3)", () => {
+  const sidecarLocked = Object.values(ENGINE_CAPABILITIES).filter((cap) => cap.sidecarOnly);
+  const byokEntries = Object.values(ENGINE_CAPABILITIES).filter((cap) => cap.byokOnly);
 
   it("today's table has at least one sidecarOnly and one byokOnly entry (sanity — a table with none would make this describe block vacuous)", () => {
-    expect(previewIneligible.some((cap) => cap.sidecarOnly)).toBe(true);
-    expect(previewIneligible.some((cap) => cap.byokOnly)).toBe(true);
+    expect(sidecarLocked.length).toBeGreaterThan(0);
+    expect(byokEntries.length).toBeGreaterThan(0);
   });
 
-  it.each(previewIneligible.map((cap) => [cap.kind, cap] as const))(
-    "%s (gate-locked: sidecarOnly||byokOnly) is coerced away by applyTierDefaults on every platform that can persist it",
+  it.each(sidecarLocked.map((cap) => [cap.kind, cap] as const))(
+    "%s (gate-locked: sidecarOnly) is coerced away by applyTierDefaults on every platform that can persist it",
     (kind, cap) => {
       for (const [isDesktop, isIos] of [
         [false, false], // web
@@ -165,6 +178,30 @@ describe("cross-invariant: preview-gate-locked capability entries never survive 
         const platformSettings = applyPlatformEngineDefaults(persisted, isDesktop, isIos);
         const tierSettings = applyTierDefaults(platformSettings, /* isPreview */ true, /* hadSavedEngine */ true);
         expect(tierSettings.engine).not.toBe(cap.kind);
+      }
+    },
+  );
+
+  it.each(byokEntries.map((cap) => [cap.kind, cap] as const))(
+    "%s (byokOnly, no longer gate-locked) SURVIVES the TIER pass wherever the PLATFORM pass left its identity unchanged — selectable exactly like full tier, a keyless pick fails honestly at start",
+    (kind, cap) => {
+      for (const [isDesktop, isIos] of [
+        [false, false], // web
+        [true, false], // desktop
+        [false, true], // iOS
+      ] as const) {
+        const persisted = { ...DEFAULT_SETTINGS, engine: kind };
+        const platformSettings = applyPlatformEngineDefaults(persisted, isDesktop, isIos);
+        // Some byokOnly engines are ALSO swapped to a different
+        // (sidecar) kind by the PLATFORM pass alone (tabaudio-cloud ->
+        // appaudio on desktop, D7) — this invariant is scoped to the
+        // TIER pass specifically, so it only asserts identity survival
+        // where the platform pass left `cap.kind` in place; where it
+        // didn't, that resulting sidecar kind is covered by the
+        // sidecarOnly invariant above instead.
+        if (platformSettings.engine !== cap.kind) continue;
+        const tierSettings = applyTierDefaults(platformSettings, /* isPreview */ true, /* hadSavedEngine */ true);
+        expect(tierSettings.engine).toBe(cap.kind);
       }
     },
   );

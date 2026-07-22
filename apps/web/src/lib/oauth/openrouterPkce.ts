@@ -2,18 +2,27 @@
 // provisioning (https://openrouter.ai/docs/use-cases/oauth-pkce).
 // No client_id / pre-registration required per the docs; PKCE alone
 // authenticates the exchange. The docs don't state whether the
-// exchange endpoint is CORS-enabled for direct browser fetch, so this
-// module calls it through a same-origin proxy route
-// (/api/openrouter/exchange) instead of hitting openrouter.ai
-// directly from the browser — see that route for the actual POST.
+// exchange endpoint is CORS-enabled for direct browser fetch — full
+// tier (default) plays it safe and calls it through a same-origin
+// proxy route (/api/openrouter/exchange) instead of hitting
+// openrouter.ai directly from the browser (see that route for the
+// actual POST). PREVIEW_TIER differs: a live probe from the production
+// origin found openrouter.ai/api/v1/auth/keys DOES answer browser CORS
+// preflight (a deliberately-invalid code came back a readable 400
+// "Invalid code", not a CORS block — see byok-preview-blueprint.md
+// §4), so exchangeCodeForKey below posts straight there instead — the
+// sprint's "a user's key never touches our server" principle applies
+// to the key this very call mints, same as every other BYOK path.
 
+import { PREVIEW_TIER } from "../deployTier";
 import { withBase } from "../basePath";
 
 /** Authorization endpoint the browser is redirected to. */
 export const AUTH_URL = "https://openrouter.ai/auth";
 
-/** Code -> API key exchange endpoint (called server-side by the proxy
- *  route, never directly from the browser — see module comment). */
+/** Code -> API key exchange endpoint. Full tier: called server-side by
+ *  the proxy route only. PREVIEW_TIER: called directly from the
+ *  browser instead — see module comment. */
 export const EXCHANGE_URL = "https://openrouter.ai/api/v1/auth/keys";
 
 // sessionStorage keys shared between the "Connect with OpenRouter"
@@ -91,12 +100,22 @@ export interface ExchangeCodeForKeyResult {
 }
 
 /** Exchanges the authorization `code` for a user-controlled OpenRouter
- *  API key. Goes through the same-origin proxy route rather than
- *  POSTing to EXCHANGE_URL directly (see module comment re: CORS). */
+ *  API key. PREVIEW_TIER: posts DIRECTLY to EXCHANGE_URL from the
+ *  browser via exchangeCodeForKeyDirect below (reusing its body/
+ *  response contract verbatim, browser `fetch` as its fetchImpl) — see
+ *  module comment for why this is safe (live CORS proof) and required
+ *  (a same-origin proxy would still make the freshly-minted key
+ *  transit our server). Full tier (default): unchanged, same-origin
+ *  proxy route. */
 export async function exchangeCodeForKey({
   code,
   codeVerifier,
 }: ExchangeCodeForKeyOptions): Promise<ExchangeCodeForKeyResult> {
+  if (PREVIEW_TIER) {
+    const key = await exchangeCodeForKeyDirect({ code, codeVerifier, fetchImpl: fetch });
+    return { key };
+  }
+
   const res = await fetch(withBase("/api/openrouter/exchange"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -132,23 +151,26 @@ export async function exchangeCodeForKey({
 export interface ExchangeCodeForKeyDirectOptions {
   code: string;
   codeVerifier: string;
-  /** Desktop's own tauri-plugin-http fetch (native, bypasses CORS
-   *  uniformly) — see this function's own doc comment for why desktop
-   *  calls EXCHANGE_URL directly instead of going through
-   *  exchangeCodeForKey's same-origin proxy route. */
+  /** The caller's fetch implementation — desktop's own tauri-plugin-http
+   *  fetch (native, bypasses CORS uniformly) via openrouterDesktop.ts,
+   *  or plain browser `fetch` via exchangeCodeForKey's PREVIEW_TIER
+   *  branch (CORS already verified live for that case — see this
+   *  module's header comment). */
   fetchImpl: typeof fetch;
 }
 
 /** S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
- *  Chunk A) — desktop-only ADDITIVE sibling of exchangeCodeForKey above,
- *  which stays byte-identical (this function never touches it, even to
- *  share parsing logic — the near-identical body below is a deliberate
- *  duplication, not an oversight). POSTs DIRECTLY to EXCHANGE_URL
- *  instead of the same-origin `/api/openrouter/exchange` proxy route:
- *  the Q1 verdict found the proxy's own reason to exist (uncertain CORS
- *  for a plain browser `fetch` — see this module's header comment) moot
- *  for desktop, since desktop's Next build is a static export
- *  (`output: "export"`, no API routes exist to proxy through) and the
+ *  Chunk A) — ADDITIVE sibling of exchangeCodeForKey above. Originally
+ *  desktop-only; the byok-preview sprint (see that function's own doc)
+ *  made it exchangeCodeForKey's OWN PREVIEW_TIER implementation too, so
+ *  "this function never touches it" no longer holds — exchangeCodeForKey
+ *  now calls this one deliberately, injecting browser `fetch` where
+ *  openrouterDesktop.ts injects tauri-plugin-http's. POSTs DIRECTLY to
+ *  EXCHANGE_URL instead of the same-origin `/api/openrouter/exchange`
+ *  proxy route: the Q1 verdict found the proxy's own reason to exist
+ *  (uncertain CORS for a plain browser `fetch`) moot for desktop, since
+ *  desktop's Next build is a static export (`output: "export"`, no API
+ *  routes exist to proxy through) and the
  *  injected `fetchImpl` (tauri-plugin-http's native fetch) bypasses
  *  CORS uniformly regardless. Body shape and response parsing mirror
  *  the proxy route's own forwarding (app/api/openrouter/exchange/

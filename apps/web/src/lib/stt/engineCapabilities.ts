@@ -43,7 +43,6 @@
 // cloud-transient in OUR integration once Lane D adds it).
 
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
-import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "../deployTier";
 
 // Live capture engines only — excludes "demo" (scripted preview, not a
 // peer engine) and the two file-ingest paths "import"/"browser-whisper"
@@ -219,29 +218,26 @@ const TAB_AUDIO_CLOUD_PROVIDER_LABEL: Record<TabAudioCloudProvider, string> = {
  *  (soniox→context / deepgram→keyterms, matching ENGINE_CAPABILITIES.
  *  soniox/.deepgram's own biasSupport values) and appends a
  *  disambiguating provider suffix to `label` (e.g. "标签页音频·云端（Soniox）").
- *  Not yet consumed by any live UI — engineOptions.ts/StatusLine wire
- *  this up in a later lane (§5's own "L3 tail" sequencing note) —
- *  exported+tested now so that wiring is a pure call-site change.
- *
- *  M2 fix (Sol review 2026-07-20, v0.5 closeout): now lane-aware —
- *  mirrors tabAudioCloud.ts's own effectiveProvider computation
- *  EXACTLY (`SONIOX_PREVIEW_LANE && PREVIEW_TIER ? "soniox" : …`).
  *  ModeSelector.tsx's "已选…引擎：Y" hint is this function's one live
- *  consumer today — on the Soniox preview lane, TabAudioCloudEngine.
- *  start() always forces the minted-Soniox path regardless of
- *  Settings.tabAudioCloudProvider (a restored/persisted "deepgram" must
- *  not re-create a dead tab tile there — see that engine's own header
- *  comment), so any surface resolving this card's LABEL must agree:
- *  showing "…（Deepgram）" while the engine actually runs Soniox would
- *  be a lie the user has no way to act on. A structural no-op off the
- *  lane (both consts default false outside a preview-tier build with
- *  the trial flag on), so this changes nothing for a full-tier/plain-
- *  preview build. */
+ *  consumer.
+ *
+ *  BYOK preview (docs/design-explorations/byok-preview-blueprint.md
+ *  D3): honest selection ALWAYS — mirrors tabAudioCloud.ts's own
+ *  effectiveProvider fix EXACTLY, dropping the M2-era (Sol review
+ *  2026-07-20) Soniox-preview-lane force this function used to apply.
+ *  tabaudio-cloud is now a first-class preview engine (engineOptionGate
+ *  no longer locks it, applyTierDefaults no longer coerces it away), so
+ *  a restored/persisted "deepgram" pick genuinely RUNS Deepgram on the
+ *  lane too — showing "…（Soniox）" for it would now be the lie (the
+ *  inverse of the M2 finding this override was built to close), not
+ *  the fix. A structural no-op for the lane const either way: `provider`
+ *  was already just `resolveTabAudioCloudProvider(settings)` off the
+ *  lane, so only the lane-ON case's resolved label/bias actually
+ *  changes here. */
 export function resolveEngineCapability(kind: LiveEngineKind, settings: Settings): EngineCapability {
   const base = ENGINE_CAPABILITIES[kind];
   if (kind !== "tabaudio-cloud") return base;
-  const provider =
-    SONIOX_PREVIEW_LANE && PREVIEW_TIER ? "soniox" : resolveTabAudioCloudProvider(settings);
+  const provider = resolveTabAudioCloudProvider(settings);
   return {
     ...base,
     biasSupport: provider === "deepgram" ? "keyterms" : "context",
