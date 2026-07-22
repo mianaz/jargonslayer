@@ -24,6 +24,13 @@ import {
 } from "../engineOptions";
 
 describe("engineOptionGate — soniox preview lane ON", () => {
+  const whisper: EngineOption = {
+    value: "whisper",
+    label: "本地 Whisper",
+    posture: "local",
+    retentionClass: "local",
+    sidecarOnly: true,
+  };
   const soniox: EngineOption = {
     value: "soniox",
     label: "Soniox 云端识别",
@@ -50,22 +57,32 @@ describe("engineOptionGate — soniox preview lane ON", () => {
     expect(engineOptionGate(soniox, null)).toEqual({ disabled: false, title: SONIOX_PREVIEW_TRIAL_TITLE });
   });
 
-  it("tabaudio-cloud joins the SAME carve-out — its own start() always forces the minted-Soniox path on this lane", () => {
-    expect(engineOptionGate(tabAudioCloud, null)).toEqual({ disabled: false, title: SONIOX_PREVIEW_TRIAL_TITLE });
+  // BYOK preview (docs/design-explorations/byok-preview-blueprint.md
+  // D3): tabaudio-cloud no longer gets the trial title — its runtime
+  // provider is now an honest reflection of Settings.
+  // tabAudioCloudProvider (tabAudioCloud.ts's own effectiveProvider),
+  // which may resolve to Deepgram (no trial at all), so a blanket
+  // "预览体验" hint on the OPTION itself would be wrong half the time.
+  it("tabaudio-cloud is unlocked but carries NO trial title — its provider isn't necessarily Soniox anymore", () => {
+    expect(engineOptionGate(tabAudioCloud, null)).toEqual({ disabled: false, title: undefined });
   });
 
-  it("every OTHER byokOnly engine (deepgram) stays locked — the carve-out is soniox/tabaudio-cloud-specific, not a blanket preview unlock", () => {
-    expect(engineOptionGate(deepgram, null)).toEqual({ disabled: true, title: PREVIEW_LOCKED_TITLE });
+  it("every OTHER byokOnly engine (deepgram) is ALSO unlocked now — D3 dropped byokOnly from the lock condition entirely, not just for soniox/tabaudio-cloud", () => {
+    expect(engineOptionGate(deepgram, null)).toEqual({ disabled: false, title: undefined });
+  });
+
+  it("sidecarOnly (whisper) stays locked regardless — the lane only ever touched byokOnly, never sidecarOnly", () => {
+    expect(engineOptionGate(whisper, null)).toEqual({ disabled: true, title: PREVIEW_LOCKED_TITLE });
   });
 });
 
 describe("deriveEngineForMode — soniox preview lane ON", () => {
-  it("web mic, engine already soniox with NO key at all -> respected (the trial needs no BYOK key)", () => {
+  it("web mic, engine already soniox with NO key at all -> respected (BYOK preview D3: first-class on preview even keyless)", () => {
     const settings = { ...DEFAULT_SETTINGS, engine: "soniox" as const, sonioxKey: "" };
     expect(deriveEngineForMode("mic", { isDesktop: false, isIos: false }, settings)).toBe("soniox");
   });
 
-  it("web tab, no keys at all -> tabaudio-cloud (tabAudioCloud.ts's own start() forces the soniox+mint path on this lane)", () => {
+  it("web tab, no keys at all -> tabaudio-cloud (D3: PREVIEW_TIER alone makes it derivable, no lane/key required)", () => {
     const settings = { ...DEFAULT_SETTINGS, sonioxKey: "", deepgramKey: "" };
     expect(deriveEngineForMode("tab", { isDesktop: false, isIos: false }, settings)).toBe("tabaudio-cloud");
   });

@@ -1,8 +1,12 @@
-// tabAudioCloud — Soniox preview lane (SONIOX_PREVIEW_LANE): the
-// minted-path INVARIANT (v0.5 closeout, lead-pinned) — on this lane,
-// start() ALWAYS routes through Soniox regardless of the persisted
-// tabAudioCloudProvider, and passes mintPreviewToken exactly like
-// soniox.ts's own SonioxEngine.start() does. PREVIEW_TIER/
+// tabAudioCloud — Soniox preview lane (SONIOX_PREVIEW_LANE): the mint
+// path is scoped to a genuinely soniox-RESOLVED session only. BYOK
+// preview (docs/design-explorations/byok-preview-blueprint.md D3)
+// dropped the old "start() ALWAYS routes through Soniox regardless of
+// the persisted tabAudioCloudProvider" force — effectiveProvider now
+// honestly reflects Settings.tabAudioCloudProvider even on this lane,
+// same as tabAudioCloud.test.ts's own ambient provider-dispatch
+// coverage; the lane only ever changes whether a keyless SONIOX session
+// can mint, never WHICH provider is chosen. PREVIEW_TIER/
 // SONIOX_PREVIEW_LANE are both import-time consts (deployTier.ts) —
 // same "needs its own vi.mock'd file" constraint as engineOptions.
 // sonioxPreviewLane.test.ts/soniox.sonioxPreview.test.ts (see either
@@ -107,7 +111,10 @@ describe("TabAudioCloudEngine.start() — soniox preview lane minted path", () =
     expect(ctorArgs.mintToken).toBeUndefined();
   });
 
-  it("a persisted tabAudioCloudProvider:'deepgram' is FORCED to soniox on the lane — no dead tab tile, DeepgramTransport never constructed", async () => {
+  // D3 (honest selection): the lane no longer forces every tab-cloud
+  // session onto Soniox — a persisted/explicit Deepgram pick genuinely
+  // runs Deepgram here too, same as off the lane.
+  it("a persisted tabAudioCloudProvider:'deepgram' with a real key is HONORED on the lane — constructs DeepgramTransport, not SonioxTransport, no mint involved", async () => {
     installFakeDisplayMedia(() => Promise.resolve(new FakeDisplayStream()));
     const engine = new TabAudioCloudEngine();
 
@@ -116,10 +123,32 @@ describe("TabAudioCloudEngine.start() — soniox preview lane minted path", () =
       engine: "tabaudio-cloud" as const,
       tabAudioCloudProvider: "deepgram",
       sonioxKey: "",
+      deepgramKey: "dg-own-key",
+    });
+
+    expect(deepgramTransportCtor).toHaveBeenCalledTimes(1);
+    expect(sonioxTransportCtor).not.toHaveBeenCalled();
+  });
+
+  it("a persisted tabAudioCloudProvider:'deepgram', keyless, on the lane: the same honest missing-key error full tier produces — no silent reroute onto the Soniox mint", async () => {
+    installFakeDisplayMedia(() => Promise.resolve(new FakeDisplayStream()));
+    const engine = new TabAudioCloudEngine();
+    const onStatus = vi.fn();
+    const events = { ...noopEvents(), onStatus } as unknown as STTEvents;
+
+    await engine.start(events, {
+      ...DEFAULT_SETTINGS,
+      engine: "tabaudio-cloud" as const,
+      tabAudioCloudProvider: "deepgram",
+      sonioxKey: "",
       deepgramKey: "",
     });
 
-    expect(sonioxTransportCtor).toHaveBeenCalledTimes(1);
+    expect(onStatus).toHaveBeenCalledWith(
+      "error",
+      "标签页音频·云端需要 Deepgram API Key，请前往设置填写后重试",
+    );
+    expect(sonioxTransportCtor).not.toHaveBeenCalled();
     expect(deepgramTransportCtor).not.toHaveBeenCalled();
   });
 });

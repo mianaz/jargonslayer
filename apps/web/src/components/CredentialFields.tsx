@@ -108,6 +108,12 @@ export interface CredentialFieldsProps {
   onBaseUrlChange: (baseUrl: string) => void;
   onApiKeyChange: (apiKey: string) => void;
   apiKeyPlaceholder: string;
+  /** Small caption under the Base URL field — same "caller owns it,
+   *  this component stays tier-agnostic" posture as apiKeyHint below.
+   *  BYOK preview sprint (2026-07-21): the primary block passes the
+   *  browser-direct-transport CORS notice here once PREVIEW_TIER &&
+   *  the draft has its own key; omit for no caption. */
+  baseUrlHint?: React.ReactNode;
   /** S14 credential-health chip (未配置/已配置/正常/异常) rendered next to
    *  the "API Key" label — undefined renders no chip at all. The
    *  caller owns the PREVIEW_TIER gate itself (a preview-tier row's
@@ -153,6 +159,7 @@ export default function CredentialFields({
   onApiKeyChange,
   apiKeyPlaceholder,
   apiKeyHint,
+  baseUrlHint,
   apiKeyStatus,
   models,
   presets,
@@ -192,6 +199,7 @@ export default function CredentialFields({
             placeholder="https://api.deepseek.com"
             className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           />
+          {baseUrlHint && <div className="mt-1 text-xs leading-[1.7] text-mut2">{baseUrlHint}</div>}
         </div>
       )}
 

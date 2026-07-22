@@ -36,7 +36,7 @@
 // no transport ever constructed.
 
 import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
-import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "../deployTier";
+import { SONIOX_PREVIEW_LANE } from "../deployTier";
 import { SonioxTransport } from "./sonioxTransport";
 import { DeepgramTransport } from "./deepgramTransport";
 import { mintPreviewToken } from "./soniox";
@@ -60,23 +60,26 @@ export class TabAudioCloudEngine implements STTEngine {
     this.events = events;
     this.stopping = false;
 
-    // Soniox preview lane INVARIANT (lead-pinned, v0.5 closeout): on
-    // this lane, tabaudio-cloud ALWAYS takes the minted-Soniox path — a
-    // persisted/restored tabAudioCloudProvider:"deepgram" (no server
-    // trial exists for Deepgram) must not re-create a dead tab tile by
-    // reading resolveTabAudioCloudProvider unconditionally. The
-    // `SONIOX_PREVIEW_LANE && PREVIEW_TIER` check is redundant on its
-    // face (the lane const already implies the tier — deployTier.ts)
-    // but deliberately spelled out anyway, mirroring the route's own
-    // two-factor posture (api/soniox/token/route.ts).
-    const effectiveProvider: TabAudioCloudProvider =
-      SONIOX_PREVIEW_LANE && PREVIEW_TIER ? "soniox" : resolveTabAudioCloudProvider(settings);
+    // BYOK preview (docs/design-explorations/byok-preview-blueprint.md
+    // D3): honest selection ALWAYS — no lane force. tabaudio-cloud is a
+    // first-class preview engine now, selectable exactly like full tier
+    // (engineOptions.ts's engineOptionGate no longer locks it, store.
+    // ts's applyTierDefaults no longer coerces it away), so a
+    // persisted/restored tabAudioCloudProvider:"deepgram" must actually
+    // RUN Deepgram here, not get silently rerouted onto Soniox just
+    // because a trial happens to be funded — SettingsDialog's provider
+    // select shows the real draft.tabAudioCloudProvider with Deepgram
+    // selectable, and this runtime has to honor whatever it picked.
+    const effectiveProvider: TabAudioCloudProvider = resolveTabAudioCloudProvider(settings);
     const key = effectiveProvider === "deepgram" ? settings.deepgramKey : settings.sonioxKey;
     // Mint path (mirrors soniox.ts's own SonioxEngine.start doc): a
     // keyless start is allowed ONLY when the lane is actually funding a
-    // server-minted session for THIS (forced) provider — a deliberate
-    // BYOK sonioxKey always still wins over the mint, see the transport
-    // construction below.
+    // server-minted session for THIS (now honestly resolved) provider —
+    // a deliberate BYOK sonioxKey always still wins over the mint, see
+    // the transport construction below. A keyless Deepgram pick has no
+    // mint path at all (no trial ever existed for Deepgram) and falls
+    // straight through to the same honest missing-key error below that
+    // a keyless Deepgram pick on full tier already produces.
     const mintable = effectiveProvider === "soniox" && SONIOX_PREVIEW_LANE;
     if (!key && !mintable) {
       events.onStatus(

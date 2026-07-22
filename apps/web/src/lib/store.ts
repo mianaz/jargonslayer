@@ -729,22 +729,20 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *  caller, feeding it the actual PREVIEW_TIER). Two independent
  *  coercion groups, both no-ops when `isPreview` is false (full tier
  *  unaffected):
- *   1. A saved engine of "whisper"/"tabaudio" (sidecar-only, greyed in
- *      preview — see Header.tsx's ENGINE_OPTIONS) OR "soniox"/"deepgram"
- *      (BYOK cloud, same preview lock via ENGINE_OPTIONS' byokOnly —
- *      v0.4 S4 blueprint decision E / v0.4.7 Lane D) OR "tabaudio-cloud"
- *      (v0.5 Wave-1 F4 + §5 A4: byokOnly, web-only, genuinely reachable
- *      on a hosted preview build) is coerced to "webspeech" so a
- *      returning preview user's start button still does real
- *      transcription instead of silently trying a disabled engine.
- *      "appaudio" joins structurally, not because it's reachable:
+ *   1. A saved engine of "whisper"/"tabaudio"/"appaudio" (sidecar-only,
+ *      needs the local sidecar process the hosted preview build never
+ *      has — see Header.tsx's ENGINE_OPTIONS) OR "osspeech" (S11, same
+ *      sidecar-tier lock, no local Whisper install needed but still
+ *      desktop-only) is coerced to "webspeech" so a returning preview
+ *      user's start button still does real transcription instead of
+ *      silently trying a disabled engine. "appaudio"/"osspeech" join
+ *      structurally, not because they're reachable: both are
  *      desktop-only, so applyPlatformEngineDefaults above already
- *      coerced any stored "appaudio" away before this function sees it
- *      on a real preview build (migrateSettings runs both, platform
- *      first) — same "extend the engine-legality function even though
- *      this exact build can't reach it" posture soniox's listing set as
- *      precedent. "osspeech" (S11) joins for the IDENTICAL
- *      structural-only reason.
+ *      coerced a stored value away before this function sees it on a
+ *      real (web) preview build (migrateSettings runs both, platform
+ *      first) — "extend the engine-legality function even though this
+ *      exact build can't reach it" (same posture whisper/tabaudio's
+ *      listing already sets, kept for a desktop preview build too).
  *   2. "demo" (S14.1 field fix — real owner report on the hosted
  *      preview): UNCONDITIONALLY coerced now, regardless of
  *      `_hadSavedEngine`. It used to coerce only on a true first run,
@@ -760,49 +758,44 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *      (migrateSettings still feeds it; other call sites pass it) but
  *      is no longer read here.
  *
- *  Soniox preview lane (hosted trial, SONIOX_PREVIEW_LANE — deployTier.
- *  ts): a THIRD, independent exception on top of the two groups above —
- *  "soniox" is carved OUT of group 1's coercion (survives instead of
- *  falling to webspeech) when `sonioxPreviewLane` is true, since a
- *  preview user can now actually run it on a server-minted key (see
- *  stt/soniox.ts's SonioxEngine.start). "tabaudio-cloud" joins the SAME
- *  carve-out, UNCONDITIONALLY on the stored tabAudioCloudProvider —
- *  tabAudioCloud.ts's own start() always forces the identical
- *  minted-Soniox path on this lane (effectiveProvider), regardless of
- *  whether the persisted provider is "soniox" or a stale "deepgram" (no
- *  trial exists for Deepgram — see that file's own INVARIANT comment),
- *  so a persisted "deepgram" pick must not be re-coerced away here
- *  either; the RUNTIME override, not this coercion, is what makes a
- *  stale deepgram pick harmless. "tabaudio" (the local-sidecar engine,
- *  no cloud/mint path at all) is NOT part of this carve-out and keeps
- *  coercing exactly as before. Every OTHER byokOnly/sidecarOnly engine
- *  in group 1 (deepgram included) also keeps coercing exactly as
- *  before — the lane is a two-engine carve-out for the ONE lane-funded
- *  mechanism, not a blanket preview unlock. Defaults to the real
- *  build-time const so every existing call site (this function has
- *  two: migrateSettings below, and engineOptions.ts's
- *  deriveEngineForMode) keeps compiling and behaving unchanged without
- *  passing a 4th argument; tests drive it explicitly instead (see
- *  store.test.ts) since the pure-function contract is otherwise
- *  identical to isPreview/_hadSavedEngine above. */
+ *  BYOK cloud engines — soniox/deepgram/tabaudio-cloud (docs/design-
+ *  explorations/byok-preview-blueprint.md D3): deliberately NOT in
+ *  group 1 — all three survive on preview UNCONDITIONALLY, selectable
+ *  exactly like full tier. A keyless pick fails honestly at start (each
+ *  engine's own start() reports a missing-key zh error — stt/soniox.ts,
+ *  stt/tabAudioCloud.ts), same UX a full-tier keyless BYOK pick already
+ *  has, rather than a special preview-only failure mode. Deliberately
+ *  NOT key-aware either (blueprint's own "explicitly rejected" list): a
+ *  restored backup with engine:"deepgram" and stripped keys lands on a
+ *  selectable engine that errors honestly at start instead of being
+ *  silently coerced away — full-tier parity, and it keeps engine
+ *  legality decided in exactly ONE place (this coercion), not two.
+ *  This subsumes the former Soniox-preview-lane carve-out (the trial
+ *  used to be the ONLY way any of these three survived preview at all,
+ *  so the lane flag gated a narrow two-engine exception on top of an
+ *  otherwise-coerce-everything rule); now the rule itself is "survive,"
+ *  so there is nothing left for the lane to carve out here — the lane
+ *  still matters at runtime (tabAudioCloud.ts/soniox.ts's own
+ *  mintToken wiring, BYOK-wins), just not to this function anymore.
+ *  `sonioxPreviewLane` stays in the signature, unread, for the exact
+ *  same reason `_hadSavedEngine` does: every existing call site (this
+ *  function has two — migrateSettings below, and engineOptions.ts's
+ *  deriveEngineForMode — plus every explicit-4-arg call in
+ *  store.test.ts) keeps compiling and behaving unchanged without a
+ *  signature-shape change. Defaults to the real build-time const so an
+ *  omitted 4th argument is harmless either way. */
 export function applyTierDefaults(
   settings: Settings,
   isPreview: boolean,
   _hadSavedEngine: boolean,
-  sonioxPreviewLane: boolean = SONIOX_PREVIEW_LANE,
+  _sonioxPreviewLane: boolean = SONIOX_PREVIEW_LANE,
 ): Settings {
   if (!isPreview) return settings;
-  if (sonioxPreviewLane && (settings.engine === "soniox" || settings.engine === "tabaudio-cloud")) {
-    return settings;
-  }
   if (
     settings.engine === "whisper" ||
     settings.engine === "tabaudio" ||
-    settings.engine === "tabaudio-cloud" ||
     settings.engine === "appaudio" ||
     settings.engine === "osspeech" ||
-    settings.engine === "soniox" ||
-    settings.engine === "deepgram" ||
     settings.engine === "demo"
   ) {
     return { ...settings, engine: "webspeech" };

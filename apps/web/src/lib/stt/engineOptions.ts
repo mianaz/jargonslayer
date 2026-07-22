@@ -268,29 +268,30 @@ export interface EngineOptionGate {
  *  for the whole picker vs a per-<option> gate), same split the pre-S10
  *  components already had.
  *
- *  Soniox preview lane (hosted trial, SONIOX_PREVIEW_LANE): soniox's own
- *  byokOnly preview lock is lifted while the lane is on — it can now
- *  actually run on a server-minted key (stt/soniox.ts's SonioxEngine.
- *  start), so the option is left selectable with an honest trial title
- *  instead of PREVIEW_LOCKED_TITLE. tabaudio-cloud joins the SAME
- *  carve-out: its own start() always forces the identical minted-Soniox
- *  path on this lane (tabAudioCloud.ts's effectiveProvider), regardless
- *  of the persisted tabAudioCloudProvider, so it is equally real to
- *  leave selectable — same SONIOX_PREVIEW_TRIAL_TITLE, since the
- *  trial's limits are identical either way (one shared server
- *  credential/budget). Every OTHER byokOnly/sidecarOnly option
- *  (deepgram included) keeps the exact same lock as before — this is a
- *  two-engine carve-out for the ONE lane-funded mechanism, not a
- *  blanket preview unlock, same posture as applyTierDefaults' own
- *  soniox+tabaudio-cloud exception (store.ts). */
+ *  BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+ *  `byokOnly` no longer locks anything here — soniox/deepgram/
+ *  tabaudio-cloud are all selectable exactly like full tier, a keyless
+ *  pick just fails honestly at start (same unconditional-survival
+ *  posture as applyTierDefaults, store.ts). ONLY `sidecarOnly` still
+ *  locks (whisper/tabaudio/appaudio) — the hosted preview build
+ *  genuinely never has that local process. Soniox preview lane (hosted
+ *  trial, SONIOX_PREVIEW_LANE): the soniox option keeps its honest
+ *  SONIOX_PREVIEW_TRIAL_TITLE hint while the lane is on, in place of
+ *  `undefined` — this gate has no settings/key visibility (never did),
+ *  so it can't tell a keyless trial rider from a BYOK sonioxKey holder;
+ *  the title is informational, not a lock either way. tabaudio-cloud no
+ *  longer gets this title: D3 makes its runtime provider an honest
+ *  reflection of Settings.tabAudioCloudProvider (tabAudioCloud.ts's own
+ *  effectiveProvider), which may resolve to Deepgram — no trial at all —
+ *  so a blanket "预览体验" hint on the OPTION itself would be wrong half
+ *  the time now. */
 export function engineOptionGate(
   opt: EngineOption,
   audiocapCaps: AudiocapCapabilities | null,
   osspeechCaps?: OsSpeechCapabilities | null,
 ): EngineOptionGate {
-  const sonioxPreviewTrial =
-    SONIOX_PREVIEW_LANE && (opt.value === "soniox" || opt.value === "tabaudio-cloud");
-  const previewLocked = PREVIEW_TIER && (opt.sidecarOnly || opt.byokOnly) && !sonioxPreviewTrial;
+  const sonioxPreviewTrial = SONIOX_PREVIEW_LANE && opt.value === "soniox";
+  const previewLocked = PREVIEW_TIER && opt.sidecarOnly;
   const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
   const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osspeechCaps ?? null);
   return {
@@ -366,14 +367,19 @@ export interface DeriveEnginePlatform {
  *    desktop (never happens from the real tile set — absent, not
  *    disabled) degrades to a working mic default rather than a
  *    platform-nonsensical one; the sanitize pass below still runs.
- *  - "tab" (web only in the real tile set): A4's key-gated rule —
- *    tabaudio-cloud when Settings.tabAudioCloudProvider's MATCHING BYOK
- *    key is present, else the local-sidecar tabaudio (never silently
- *    swaps to the OTHER provider's key). Whether the sidecar itself is
- *    actually reachable (`whisperUrl`) isn't knowable synchronously from
- *    a pure function — deliberately not attempted, same "let the surface
- *    explain" posture ImportHub's own url tab already takes for an
- *    analogous unknowable-synchronously case.
+ *  - "tab" (web only in the real tile set): tabaudio-cloud on preview
+ *    UNCONDITIONALLY (docs/design-explorations/byok-preview-blueprint.md
+ *    D3 — a first-class, always-derivable preview engine now, keyless
+ *    picks just fail honestly at start; the local-sidecar tabaudio is
+ *    never reachable on preview anyway, still sidecarOnly-locked). On
+ *    full tier: A4's key-gated rule — tabaudio-cloud when Settings.
+ *    tabAudioCloudProvider's MATCHING BYOK key is present, else the
+ *    local-sidecar tabaudio (never silently swaps to the OTHER
+ *    provider's key). Whether the sidecar itself is actually reachable
+ *    (`whisperUrl`) isn't knowable synchronously from a pure function —
+ *    deliberately not attempted, same "let the surface explain" posture
+ *    ImportHub's own url tab already takes for an analogous
+ *    unknowable-synchronously case.
  *  - "mic": iOS is osspeech unconditionally (v1's only engine). Desktop
  *    is osspeech-if-floor else whisper (deliberately never appaudio —
  *    that is SYSTEM audio, not a mic substitute; mirrors store.ts's own
@@ -381,7 +387,9 @@ export interface DeriveEnginePlatform {
  *    webspeech (zero-config) UNLESS a BYOK cloud key already exists AND
  *    the CURRENT settings.engine is already whisper/soniox/deepgram —
  *    then that existing choice is respected rather than clobbered on
- *    every mic-tile click.
+ *    every mic-tile click. An already-selected soniox is ALSO respected
+ *    with no key at all on preview (D3: first-class there too, same as
+ *    the "tab" bullet above).
  *
  *  Sanitize pass (L8 task spec: "always run the result through
  *  applyPlatformEngineDefaults+applyTierDefaults semantics"): every
@@ -414,17 +422,18 @@ export function deriveEngineForMode(
         ? "osspeech" // unreachable via the real tile set (iOS has no system-audio mode)
         : "webspeech"; // unreachable via the real tile set (web has no system-audio capture)
   } else if (mode === "tab") {
-    // Soniox preview lane (SONIOX_PREVIEW_LANE): tabaudio-cloud is
-    // reachable with NO key at all here — tabAudioCloud.ts's own
-    // start() unconditionally forces the minted-Soniox path on this
-    // lane (effectiveProvider), so a missing/mismatched BYOK key is no
-    // longer proof the tile can't run (mirrors this same function's own
-    // mic-branch soniox exception below, and applyTierDefaults' own
-    // soniox+tabaudio-cloud carve-out, store.ts).
+    // BYOK preview (docs/design-explorations/byok-preview-blueprint.md
+    // D3): tabaudio-cloud is reachable with NO key at all on preview —
+    // it is now a first-class, always-selectable preview engine (a
+    // keyless pick just fails honestly at start, tabAudioCloud.ts's own
+    // start(); the local-sidecar tabaudio is never reachable on preview
+    // anyway, still sidecarOnly-locked), so PREVIEW_TIER alone settles
+    // it here — mirrors this same function's own mic-branch soniox
+    // exception below, and applyTierDefaults' own unconditional BYOK
+    // survival, store.ts.
     const providerKeyPresent =
-      SONIOX_PREVIEW_LANE ||
-      (settings.tabAudioCloudProvider === "deepgram" ? !!settings.deepgramKey : !!settings.sonioxKey);
-    candidate = providerKeyPresent ? "tabaudio-cloud" : "tabaudio";
+      settings.tabAudioCloudProvider === "deepgram" ? !!settings.deepgramKey : !!settings.sonioxKey;
+    candidate = PREVIEW_TIER || providerKeyPresent ? "tabaudio-cloud" : "tabaudio";
   } else {
     // mode === "mic"
     if (isIos) {
@@ -437,14 +446,21 @@ export function deriveEngineForMode(
       // mic-tile click); soniox/deepgram are respected only when their
       // OWN matching key exists (L8 review fix — the first draft's flat
       // hasCloudKey && compatible gate reset keyless whisper users to
-      // webspeech). Soniox preview lane (SONIOX_PREVIEW_LANE): an
-      // already-selected soniox is ALSO respected with no key at all —
-      // the trial runs on a server-minted key, so "no sonioxKey" is no
-      // longer proof the user can't actually use it (mirrors
-      // applyTierDefaults' own soniox exception, store.ts).
+      // webspeech). BYOK preview (docs/design-explorations/byok-
+      // preview-blueprint.md D3): an already-selected soniox is ALSO
+      // respected with no key at all on preview — it's a first-class,
+      // selectable-even-keyless engine there now (a keyless pick just
+      // fails honestly at start, same as full tier), so "no sonioxKey"
+      // is no longer proof the user can't keep using it (mirrors
+      // applyTierDefaults' own unconditional BYOK survival, store.ts).
+      // deepgram gets no such carve-out here: this branch is a "don't
+      // clobber an existing pick on a mic-tile click" nicety, not a
+      // legality gate (applyTierDefaults/engineOptionGate already make
+      // deepgram equally selectable on preview regardless), and it
+      // never had a keyless carve-out of its own even before D3.
       const cloudKeyFor =
         settings.engine === "soniox"
-          ? !!settings.sonioxKey || SONIOX_PREVIEW_LANE
+          ? !!settings.sonioxKey || PREVIEW_TIER
           : settings.engine === "deepgram"
             ? !!settings.deepgramKey
             : false;

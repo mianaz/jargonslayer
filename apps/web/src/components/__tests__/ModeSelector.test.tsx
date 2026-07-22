@@ -143,69 +143,46 @@ describe("ModeSelector — web build, ambient test env", () => {
   });
 });
 
-// ITEM 1 (fix round, Sol#3): visibleModeTileKeys as a pure function —
-// PREVIEW_TIER is an import-time const nothing in this repo mocks (see
-// engineOptions.test.ts's own header comment on the identical
-// constraint), so the preview-tier omission is pinned here via an
-// explicit `isPreview` param instead of a live render + a deployTier
-// mock the repo has no precedent for.
-describe("visibleModeTileKeys — ITEM 1: preview tier omits the tab tile (never disabled)", () => {
+// BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+// visibleModeTileKeys as a pure function — PREVIEW_TIER is an
+// import-time const nothing in this repo mocks (see engineOptions.
+// test.ts's own header comment on the identical constraint), so the
+// preview-tier tile matrix is pinned here via an explicit `isPreview`
+// param instead of a live render + a deployTier mock the repo has no
+// precedent for. Supersedes the old ITEM 1 (fix round, Sol#3) / ITEM 7
+// (v0.5 closeout, Soniox preview lane) split: D3 made tabaudio-cloud a
+// first-class, always-derivable preview engine, so the tab tile no
+// longer needs a lane carve-out to be honest — it's simply present on
+// preview now, same as full tier, unconditionally.
+describe("visibleModeTileKeys — tab tile visible on preview unconditionally (D3), url stays sidecar-gated", () => {
   it("web, full tier: tab and url both present", () => {
-    const keys = visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: false, sonioxPreviewLane: false });
+    const keys = visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: false });
     expect(keys).toEqual(["tab", "mic", "import", "url"]);
   });
 
-  it("web, preview tier: tab and url both ABSENT — never silently becomes a mic tile", () => {
-    const keys = visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: true, sonioxPreviewLane: false });
-    expect(keys).not.toContain("tab");
+  it("web, preview tier: tab is present (tabaudio-cloud is derivable — D3), url stays ABSENT (still sidecar-dependent)", () => {
+    const keys = visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: true });
+    expect(keys).toContain("tab");
     expect(keys).not.toContain("url");
-    expect(keys).toEqual(["mic", "import"]);
-  });
-
-  it("desktop: system-audio present, tab never present regardless of tier (desktop never had a tab tile)", () => {
-    expect(
-      visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: false, sonioxPreviewLane: false }),
-    ).toEqual(["system-audio", "mic", "import", "url"]);
-    expect(
-      visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: true, sonioxPreviewLane: false }),
-    ).toEqual(["system-audio", "mic", "import"]);
-  });
-
-  it("iOS: mic+import only regardless of tier (tab/url/system-audio never applicable)", () => {
-    expect(
-      visibleModeTileKeys({ isDesktop: false, isIos: true, isPreview: false, sonioxPreviewLane: false }),
-    ).toEqual(["mic", "import"]);
-    expect(
-      visibleModeTileKeys({ isDesktop: false, isIos: true, isPreview: true, sonioxPreviewLane: false }),
-    ).toEqual(["mic", "import"]);
-  });
-});
-
-// ITEM 7 (v0.5 closeout, Soniox preview lane): the tab tile's own
-// PREVIEW_TIER absence (ITEM 1 above) is carved back OUT when the lane
-// is on — tabaudio-cloud is a real, working capture engine there (see
-// ModeSelector.tsx's own doc comment on visibleModeTileKeys).
-describe("visibleModeTileKeys — ITEM 7: soniox preview lane restores the tab tile on preview", () => {
-  it("web, preview tier, lane ON: tab is present again (url stays absent — no trial funds THAT tile)", () => {
-    const keys = visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: true, sonioxPreviewLane: true });
     expect(keys).toEqual(["tab", "mic", "import"]);
   });
 
-  it("web, full tier, lane ON: no-op — the lane flag is meaningless off preview (byte-identical to lane:false)", () => {
-    expect(
-      visibleModeTileKeys({ isDesktop: false, isIos: false, isPreview: false, sonioxPreviewLane: true }),
-    ).toEqual(["tab", "mic", "import", "url"]);
+  it("desktop: system-audio present, tab never present regardless of tier (desktop never had a tab tile)", () => {
+    expect(visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: false })).toEqual([
+      "system-audio",
+      "mic",
+      "import",
+      "url",
+    ]);
+    expect(visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: true })).toEqual([
+      "system-audio",
+      "mic",
+      "import",
+    ]);
   });
 
-  it("desktop, preview tier, lane ON: still no tab tile — desktop never had one (structural, not tier-gated)", () => {
-    expect(
-      visibleModeTileKeys({ isDesktop: true, isIos: false, isPreview: true, sonioxPreviewLane: true }),
-    ).toEqual(["system-audio", "mic", "import"]);
-  });
-
-  it("iOS, preview tier, lane ON: still no tab tile — iOS never had one either", () => {
-    expect(
-      visibleModeTileKeys({ isDesktop: false, isIos: true, isPreview: true, sonioxPreviewLane: true }),
-    ).toEqual(["mic", "import"]);
+  it("iOS: mic+import only regardless of tier (tab/url/system-audio never applicable)", () => {
+    expect(visibleModeTileKeys({ isDesktop: false, isIos: true, isPreview: false })).toEqual(["mic", "import"]);
+    expect(visibleModeTileKeys({ isDesktop: false, isIos: true, isPreview: true })).toEqual(["mic", "import"]);
   });
 });

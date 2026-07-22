@@ -1827,9 +1827,9 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(s.engine).toBe("webspeech");
   });
 
-  it("preview tier coerces a saved BYOK cloud engine (tabaudio-cloud) to webspeech — v0.5 Wave-1 F4 / §5 A4, reachable here (web-only for v0.5, so applyPlatformEngineDefaults never coerces it away first, unlike appaudio/osspeech's structural-only listing)", () => {
+  it("preview tier leaves a saved BYOK cloud engine (tabaudio-cloud) selectable — v0.5 Wave-1 F4 / §5 A4 + BYOK preview D3 (docs/design-explorations/byok-preview-blueprint.md): survives UNCONDITIONALLY, same as full tier — a keyless pick fails honestly at start, not this coercion's job", () => {
     const s = applyTierDefaults(withEngine("tabaudio-cloud"), true, true);
-    expect(s.engine).toBe("webspeech");
+    expect(s.engine).toBe("tabaudio-cloud");
   });
 
   it("preview tier coerces a saved sidecar-only engine (appaudio) to webspeech — S9/D7: structural coverage only, since applyPlatformEngineDefaults would already have coerced a stored appaudio away on a real (web) preview build before this function ever sees it", () => {
@@ -1837,14 +1837,14 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
     expect(s.engine).toBe("webspeech");
   });
 
-  it("preview tier coerces a saved BYOK cloud engine (soniox) to webspeech — v0.4 S4 blueprint decision E / risk 4, same lock as whisper/tabaudio/appaudio", () => {
+  it("preview tier leaves a saved BYOK cloud engine (soniox) selectable — BYOK preview D3: survives UNCONDITIONALLY, same as full tier (superseded the old v0.4 S4 blueprint decision E lock)", () => {
     const s = applyTierDefaults(withEngine("soniox"), true, true);
-    expect(s.engine).toBe("webspeech");
+    expect(s.engine).toBe("soniox");
   });
 
-  it("preview tier coerces a saved BYOK cloud engine (deepgram) to webspeech — v0.4.7 Lane D, same lock as soniox", () => {
+  it("preview tier leaves a saved BYOK cloud engine (deepgram) selectable — BYOK preview D3: survives UNCONDITIONALLY, same posture as soniox (superseded the old v0.4.7 Lane D lock)", () => {
     const s = applyTierDefaults(withEngine("deepgram"), true, true);
-    expect(s.engine).toBe("webspeech");
+    expect(s.engine).toBe("deepgram");
   });
 
   it("preview tier coerces a saved osspeech to webspeech — S11: structural coverage only, since applyPlatformEngineDefaults would already have coerced a stored osspeech away to tabaudio on a real (web) preview build before this function ever sees it", () => {
@@ -1902,46 +1902,51 @@ describe("applyTierDefaults — preview tier (#61) engine defaults", () => {
   });
 });
 
-// Soniox preview lane (hosted trial, SONIOX_PREVIEW_LANE — deployTier.
-// ts): applyTierDefaults' new optional 4th param. Unlike isPreview
-// above, this is exercised via EXPLICIT args rather than vi.mock'ing
-// deployTier — the pure function takes the lane as a real parameter
-// (default SONIOX_PREVIEW_LANE only matters to migrateSettings' real
-// call site, already covered structurally by every omitted-4th-arg
-// call in the describe block above, which pins today's behavior with
-// the ambient (false) const).
-describe("applyTierDefaults — soniox preview lane (4th param)", () => {
+// BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+// applyTierDefaults' optional 4th param (`sonioxPreviewLane`) is now
+// VESTIGIAL — soniox/deepgram/tabaudio-cloud all survive preview
+// UNCONDITIONALLY (see the describe block above), so this argument can
+// no longer change the outcome for any engine. Kept in the function
+// signature (same posture as `_hadSavedEngine` — see applyTierDefaults'
+// own doc comment, store.ts) purely so every existing 4-arg call below
+// keeps compiling; these tests now pin the "the 4th arg is provably
+// inert" claim directly (both `true` and `false` produce the identical
+// result), guarding against an accidental re-wiring silently
+// reintroducing the old lane-only carve-out.
+describe("applyTierDefaults — soniox preview lane (4th param, vestigial per BYOK preview D3)", () => {
   function withEngine(engine: Settings["engine"]): Settings {
     return { ...DEFAULT_SETTINGS, engine };
   }
 
-  it("soniox SURVIVES coercion when the lane is on", () => {
-    expect(applyTierDefaults(withEngine("soniox"), true, true, true).engine).toBe("soniox");
-  });
+  it.each([true, false])(
+    "soniox SURVIVES coercion regardless of the 4th arg (%s) — D3 replaced the lane-only carve-out with unconditional survival",
+    (laneArg) => {
+      expect(applyTierDefaults(withEngine("soniox"), true, true, laneArg).engine).toBe("soniox");
+    },
+  );
 
-  it("soniox is still coerced to webspeech when the lane is off (today's behavior, explicit false)", () => {
-    expect(applyTierDefaults(withEngine("soniox"), true, true, false).engine).toBe("webspeech");
-  });
+  it.each([true, false])(
+    "deepgram ALSO now survives regardless of the 4th arg (%s) — D3 extends survival to every byok engine, not just the two the old carve-out covered",
+    (laneArg) => {
+      expect(applyTierDefaults(withEngine("deepgram"), true, true, laneArg).engine).toBe("deepgram");
+    },
+  );
 
-  it("deepgram keeps coercing to webspeech even when the (soniox-only) lane is on", () => {
-    expect(applyTierDefaults(withEngine("deepgram"), true, true, true).engine).toBe("webspeech");
-  });
+  it.each([true, false])(
+    "tabaudio-cloud SURVIVES coercion regardless of the 4th arg (%s)",
+    (laneArg) => {
+      expect(applyTierDefaults(withEngine("tabaudio-cloud"), true, true, laneArg).engine).toBe(
+        "tabaudio-cloud",
+      );
+    },
+  );
 
-  // v0.5 closeout: tabaudio-cloud joins the SAME carve-out — its own
-  // start() always forces the minted-Soniox path on this lane
-  // (tabAudioCloud.ts's effectiveProvider), so a stale/persisted
-  // provider choice is harmless and the engine survives unconditionally.
-  it("tabaudio-cloud SURVIVES coercion when the lane is on", () => {
-    expect(applyTierDefaults(withEngine("tabaudio-cloud"), true, true, true).engine).toBe("tabaudio-cloud");
-  });
-
-  it("tabaudio-cloud is still coerced to webspeech when the lane is off (today's behavior, explicit false)", () => {
-    expect(applyTierDefaults(withEngine("tabaudio-cloud"), true, true, false).engine).toBe("webspeech");
-  });
-
-  it("tabaudio (local-sidecar, no mint path at all) keeps coercing to webspeech even when the lane is on — the carve-out is soniox/tabaudio-cloud-specific", () => {
-    expect(applyTierDefaults(withEngine("tabaudio"), true, true, true).engine).toBe("webspeech");
-  });
+  it.each([true, false])(
+    "tabaudio (local-sidecar, never byokOnly) keeps coercing to webspeech regardless of the 4th arg (%s) — this param was never sidecar-relevant, before or after D3",
+    (laneArg) => {
+      expect(applyTierDefaults(withEngine("tabaudio"), true, true, laneArg).engine).toBe("webspeech");
+    },
+  );
 });
 
 // S14.1 field fix, other half: useMeeting.ts's startDemo now calls

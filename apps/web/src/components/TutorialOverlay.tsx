@@ -13,7 +13,7 @@ import type { STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
-import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "@/lib/deployTier";
+import { PREVIEW_TIER } from "@/lib/deployTier";
 
 // ITEM 4 fix (fix round, Opus#2): platform for modeForPersistedEngine
 // below — IS_DESKTOP/IS_IOS are build-time consts, so this resolves once
@@ -90,19 +90,14 @@ const STEP_COUNT = 5;
 // own call sites — this step still writes settings.engine directly.
 // ---------------------------------------------------------------
 
-// Soniox preview lane (SONIOX_PREVIEW_LANE): mirrors ModeSelector's own
-// visibleModeTileKeys carve-out (ITEM 7, v0.5 closeout) for its "tab"
-// tile — the 浏览器标签页 card below is absent on preview WITHOUT the
-// lane (tabaudio is dead there, no sidecar reachable — the same lie
-// ITEM 1 already cured for ModeSelector's own tab tile), present again
-// on the lane but pointed at tabaudio-cloud (whose own start() always
-// forces the minted-Soniox path on preview — tabAudioCloud.ts's
-// effectiveProvider) instead of the dead sidecar engine, so onboarding
+// BYOK preview (docs/design-explorations/byok-preview-blueprint.md D3):
+// mirrors ModeSelector's own visibleModeTileKeys — the 浏览器标签页 card
+// is now UNCONDITIONALLY present on web (preview or full tier alike),
+// pointed at tabaudio-cloud on preview (a first-class, always-
+// derivable engine there now — deriveEngineForMode's own "tab" branch,
+// engineOptions.ts) instead of the sidecar-only tabaudio, so onboarding
 // and ModeSelector can never disagree about what "浏览器标签页" actually
-// runs. Resolved once at module load (mirrors IS_DESKTOP/IS_IOS above);
-// explicitly typed (not `as const` on the ternary) so both branches
-// check cleanly against ENGINE_OPTIONS' own `value` field type below.
-const TAB_CARD_VISIBLE = !PREVIEW_TIER || SONIOX_PREVIEW_LANE;
+// runs. Resolved once at module load (mirrors IS_DESKTOP/IS_IOS above).
 const TAB_CARD_ENGINE: Exclude<STTEngineKind, "demo"> = PREVIEW_TIER ? "tabaudio-cloud" : "tabaudio";
 
 const ENGINE_OPTIONS: {
@@ -136,15 +131,13 @@ const ENGINE_OPTIONS: {
               hint: "转录对方与其他声音，非你的麦克风",
             },
           ]
-        : TAB_CARD_VISIBLE
-          ? [
-              {
-                value: TAB_CARD_ENGINE,
-                label: "浏览器标签页",
-                hint: "共享标签页，听懂对方声音",
-              },
-            ]
-          : []),
+        : [
+            {
+              value: TAB_CARD_ENGINE,
+              label: "浏览器标签页",
+              hint: "共享标签页，听懂对方声音",
+            },
+          ]),
     ];
 
 function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {

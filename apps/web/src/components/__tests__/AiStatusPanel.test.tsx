@@ -252,8 +252,20 @@ describe("AiStatusPanel — describeRouting is tier-aware", () => {
     expect(mod.describeRouting("")).toBe("服务端代理（体验版）");
   });
 
-  it("a present apiKey always wins regardless of tier -> 自带 Key", () => {
+  it("full/desktop tier: a present apiKey -> plain 自带 Key", () => {
     expect(describeRouting("sk-real")).toBe("自带 Key");
+  });
+
+  // BYOK preview sprint (2026-07-21): a preview row with its OWN key
+  // routes browser-direct to the provider (D1) rather than through our
+  // server — the label says so instead of the plain full-tier "自带 Key",
+  // which would leave a preview user guessing whether this row is still
+  // proxied.
+  it("preview tier (dynamic re-import): a present apiKey -> 自带 Key（浏览器直连）", async () => {
+    process.env.NEXT_PUBLIC_DEPLOY_TIER = "preview";
+    vi.resetModules();
+    const mod = await import("../AiStatusPanel");
+    expect(mod.describeRouting("sk-real")).toBe("自带 Key（浏览器直连）");
   });
 });
 
@@ -280,10 +292,23 @@ describe("AiStatusPanel — describeErrorKind is tier-aware for ratelimit", () =
     expect(describeErrorKind("ratelimit")).toBe("请求过于频繁，请检查该服务商的 API 额度");
   });
 
-  it("preview tier (dynamic re-import under NEXT_PUBLIC_DEPLOY_TIER=preview): ratelimit blames the shared preview budget", async () => {
+  it("preview tier (dynamic re-import under NEXT_PUBLIC_DEPLOY_TIER=preview): keyless ratelimit blames the shared preview budget", async () => {
     process.env.NEXT_PUBLIC_DEPLOY_TIER = "preview";
     vi.resetModules();
     const mod = await import("../AiStatusPanel");
     expect(mod.describeErrorKind("ratelimit")).toBe("请求过于频繁（体验版限流）");
+    expect(mod.describeErrorKind("ratelimit", "")).toBe("请求过于频繁（体验版限流）");
+  });
+
+  // BYOK preview sprint (2026-07-21): a preview ROW with its own
+  // resolved key routes browser-direct (D1) — a ratelimit there is the
+  // PROVIDER throttling the user's own key, never our shared budget, so
+  // it must NOT get the 体验版限流 framing even though PREVIEW_TIER is
+  // still true for the build as a whole.
+  it("preview tier (dynamic re-import): a row with its own apiKey blames the provider, not 体验版", async () => {
+    process.env.NEXT_PUBLIC_DEPLOY_TIER = "preview";
+    vi.resetModules();
+    const mod = await import("../AiStatusPanel");
+    expect(mod.describeErrorKind("ratelimit", "sk-real")).toBe("请求过于频繁，请检查该服务商的 API 额度");
   });
 });

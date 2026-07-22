@@ -3,8 +3,15 @@
 // useMeeting — Soniox preview lane session-start trial notice (v0.5
 // closeout item 3): fires ONCE per meeting start, only for a session
 // actually riding the server-minted credential (soniox/tabaudio-cloud,
-// SONIOX_PREVIEW_LANE, no BYOK sonioxKey). PREVIEW_TIER/
-// SONIOX_PREVIEW_LANE are both import-time consts (deployTier.ts) —
+// SONIOX_PREVIEW_LANE, no BYOK sonioxKey). Tightened for BYOK preview
+// (docs/design-explorations/byok-preview-blueprint.md D3): tabaudio-
+// cloud's own effectiveProvider no longer force-routes through Soniox
+// on this lane, so the notice ALSO requires the resolved tab-cloud
+// provider to actually be soniox — a BYOK Deepgram tab-cloud session
+// (engine tabaudio-cloud, no sonioxKey, but a real deepgramKey) must
+// never see a toast claiming its audio went through Soniox's trial.
+// PREVIEW_TIER/SONIOX_PREVIEW_LANE are both import-time consts
+// (deployTier.ts) —
 // same "needs its own vi.mock'd file" constraint as engineOptions.
 // sonioxPreviewLane.test.ts/soniox.sonioxPreview.test.ts (see either
 // file's own header) — useMeeting.lifecycle.test.tsx's own ambient env
@@ -54,7 +61,7 @@ vi.mock("../../lib/stt", () => ({
 
 import { useMeeting, type UseMeetingResult } from "../useMeeting";
 import { useApp } from "../../lib/store";
-import type { STTEngineKind } from "@jargonslayer/core/types";
+import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 
 let api: UseMeetingResult | null = null;
 function Probe() {
@@ -96,9 +103,15 @@ describe("useMeeting — soniox preview lane session-start trial notice", () => 
     api = null;
   });
 
-  async function startListening(engineKind: STTEngineKind, sonioxKey: string): Promise<FakeEngine> {
+  async function startListening(
+    engineKind: STTEngineKind,
+    sonioxKey: string,
+    extraSettings: Partial<Settings> = {},
+  ): Promise<FakeEngine> {
     nextEngineKind = engineKind;
-    useApp.setState({ settings: { ...useApp.getState().settings, engine: engineKind, sonioxKey } });
+    useApp.setState({
+      settings: { ...useApp.getState().settings, engine: engineKind, sonioxKey, ...extraSettings },
+    });
     let p: Promise<void>;
     await act(async () => {
       p = api!.start();
@@ -143,6 +156,19 @@ describe("useMeeting — soniox preview lane session-start trial notice", () => 
       engine.events!.onStatus("listening");
     });
 
+    expect(useApp.getState().toast).toBeNull();
+  });
+
+  // BYOK preview D3: engine tabaudio-cloud + no sonioxKey used to be
+  // sufficient to fire the notice (tabAudioCloud.ts's old effectiveProvider
+  // force made that a safe inference) — it no longer is, since the
+  // engine now honestly runs whatever Settings.tabAudioCloudProvider
+  // says. Placed last in this describe block: `startListening` never
+  // resets `settings` between tests (only status/segments/toast/etc —
+  // see beforeEach above), so a persisted tabAudioCloudProvider:
+  // "deepgram" here must not leak into a later test.
+  it("never fires for BYOK Deepgram tab-cloud (engine tabaudio-cloud, resolved provider deepgram, no mint involved)", async () => {
+    await startListening("tabaudio-cloud", "", { tabAudioCloudProvider: "deepgram", deepgramKey: "dg-own-key" });
     expect(useApp.getState().toast).toBeNull();
   });
 });

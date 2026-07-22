@@ -64,17 +64,24 @@ export const AI_STATUS_ERROR_KIND_LABEL: Record<LlmTelemetryErrorKind, string> =
  *  could see the fail count tick up with no way to inspect it further.
  *  One short zh sentence per kind, appended after the existing short
  *  label (kept, not replaced — AI_STATUS_ERROR_KIND_LABEL is still the
- *  at-a-glance word). ratelimit is tier-aware, mirroring describeRouting
- *  above: on preview it's OUR OWN server-side proxy's budget limiter
- *  (PREVIEW_TIER, same const already imported here); on full/BYOK tier
- *  it's the user's OWN provider throttling their key — telling a BYOK
- *  user "体验版限流" would be flatly wrong. */
-export function describeErrorKind(kind: LlmTelemetryErrorKind): string {
+ *  at-a-glance word). ratelimit is key-aware, mirroring describeRouting
+ *  below (BYOK preview sprint, 2026-07-21): `apiKey` is this ROW's own
+ *  resolved credential (resolveTaskCreds), not a bare tier check — a
+ *  keyless preview row is genuinely server-proxied on the shared demo
+ *  key, so 体验版限流 is honest there, but a preview row with its own key
+ *  routes browser-direct to the provider (D1), so a ratelimit there is
+ *  the PROVIDER throttling the user's own key, same framing full/BYOK
+ *  tier already got. apiKey optional (defaults falsy) so the nokey/
+ *  upstream call sites — which never vary by key — don't need to thread
+ *  one through for no reason. */
+export function describeErrorKind(kind: LlmTelemetryErrorKind, apiKey?: string): string {
   switch (kind) {
     case "nokey":
       return "未配置 API Key，已回退到词典检测";
     case "ratelimit":
-      return PREVIEW_TIER ? "请求过于频繁（体验版限流）" : "请求过于频繁，请检查该服务商的 API 额度";
+      return PREVIEW_TIER && !apiKey
+        ? "请求过于频繁（体验版限流）"
+        : "请求过于频繁，请检查该服务商的 API 额度";
     case "upstream":
       return "上游服务请求失败，请稍后重试";
   }
@@ -118,15 +125,18 @@ function healthDotTitle(stat: LlmDomainStat): string {
   return "尚未调用";
 }
 
-/** apiKey present -> 自带 Key; empty + preview -> 服务端代理; empty +
- *  full/desktop -> 未配置 Key. 订阅直连 gets no label of its own here
- *  (design doc's "skip if it adds complexity" escape hatch) — its own
- *  path (agentDetect/agentDefine + settings.subscriptionProvider) never
- *  runs through resolveTaskCreds (see that resolver's own module doc),
- *  so this panel has no signal to distinguish it from "未配置 Key"
+/** apiKey present -> 自带 Key (preview: 自带 Key（浏览器直连） — the BYOK
+ *  preview sprint's D1 client-direct transport actually applies once a
+ *  row has its own key, so the label says so instead of implying the
+ *  request still passes through our server); empty + preview -> 服务端
+ *  代理; empty + full/desktop -> 未配置 Key. 订阅直连 gets no label of its
+ *  own here (design doc's "skip if it adds complexity" escape hatch) —
+ *  its own path (agentDetect/agentDefine + settings.subscriptionProvider)
+ *  never runs through resolveTaskCreds (see that resolver's own module
+ *  doc), so this panel has no signal to distinguish it from "未配置 Key"
  *  without wiring a second read this pass didn't ask for. */
 export function describeRouting(apiKey: string): string {
-  if (apiKey) return "自带 Key";
+  if (apiKey) return PREVIEW_TIER ? "自带 Key（浏览器直连）" : "自带 Key";
   return PREVIEW_TIER ? "服务端代理（体验版）" : "未配置 Key";
 }
 
@@ -196,7 +206,7 @@ export default function AiStatusPanel() {
                 className="mt-0.5 text-warn-soft"
               >
                 上次失败：{AI_STATUS_ERROR_KIND_LABEL[stat.lastErrorKind]} ——{" "}
-                {describeErrorKind(stat.lastErrorKind)}
+                {describeErrorKind(stat.lastErrorKind, resolved.apiKey)}
               </div>
             )}
           </div>

@@ -97,6 +97,33 @@ export function resolveProvider(req: Request): {
   return { provider, baseUrl };
 }
 
+/** Preview strict mode (oracle deploy only): per-IP rate limits and the
+ *  daily budget (see the five routes) apply ONLY when cfg.isServerKey —
+ *  so a request carrying any key header plus an arbitrary base-url
+ *  header would otherwise make this server fetch an attacker-chosen
+ *  URL with zero throttling (unthrottled open proxy / SSRF). Routes
+ *  call this FIRST, before body parsing/rate limiting/resolveLlmConfig,
+ *  and reject with CLIENT_CREDS_REJECTED_BODY when it returns true.
+ *  JARGONSLAYER_SHARED_KEY_ONLY is unset on every other deploy, so this
+ *  is always false there — full-tier self-host behavior is unchanged.
+ *  The hosted preview bundle itself never sends these headers anymore
+ *  (BYOK there goes client-direct — see client.ts's useDirectTransport);
+ *  this only guards against a hand-crafted request against the old
+ *  header contract. */
+export function rejectClientCreds(req: Request): boolean {
+  if (process.env.JARGONSLAYER_SHARED_KEY_ONLY !== "1") return false;
+  return Boolean(
+    req.headers.get(PROVIDER_HEADERS.key) || req.headers.get(PROVIDER_HEADERS.baseUrl),
+  );
+}
+
+/** Shared 400 body for rejectClientCreds, so all five routes reject
+ *  identically. */
+export const CLIENT_CREDS_REJECTED_BODY = {
+  error: "体验版服务端不代理自带 Key 请求，请刷新页面重试",
+  code: "bad_request",
+} as const;
+
 export type LlmCallKind = "detect" | "summary" | "define" | "translate";
 
 /** Parse a comma-separated model-id env var. Unset/empty → []. */

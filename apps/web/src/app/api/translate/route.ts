@@ -2,7 +2,14 @@ export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
 import * as z from "zod";
-import { mapLlmError, pickModel, resolveLlmConfig, withFallback } from "@/lib/llm/anthropic";
+import {
+  CLIENT_CREDS_REJECTED_BODY,
+  mapLlmError,
+  pickModel,
+  rejectClientCreds,
+  resolveLlmConfig,
+  withFallback,
+} from "@/lib/llm/anthropic";
 import { allowDailyBudget, allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "@/lib/llm/tasks/translate";
 import type { ApiErrorBody, TranslateResponse } from "@jargonslayer/core/types";
@@ -34,6 +41,13 @@ function errorBody(body: ApiErrorBody, status: number) {
 }
 
 export async function POST(req: Request) {
+  // Preview strict mode (D2) — see rejectClientCreds's own doc. Runs
+  // before body parsing/rate limiting/resolveLlmConfig so a rejected
+  // request never reaches any of those.
+  if (rejectClientCreds(req)) {
+    return errorBody(CLIENT_CREDS_REJECTED_BODY, 400);
+  }
+
   let json: unknown;
   try {
     json = await req.json();
