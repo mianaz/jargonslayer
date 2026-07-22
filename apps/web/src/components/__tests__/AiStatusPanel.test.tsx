@@ -11,10 +11,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { recordLlmCall, recordLlmQcDrop, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
+import type { ResolvedTaskCreds } from "@/lib/llm/taskConfig";
 import AiStatusPanel, {
   AI_STATUS_ERROR_KIND_LABEL,
   AI_STATUS_ZERO_CONFIG_BANNER,
   describeErrorKind,
+  describeProviderModel,
   describeRouting,
 } from "../AiStatusPanel";
 
@@ -310,5 +312,70 @@ describe("AiStatusPanel — describeErrorKind is tier-aware for ratelimit", () =
     vi.resetModules();
     const mod = await import("../AiStatusPanel");
     expect(mod.describeErrorKind("ratelimit", "sk-real")).toBe("请求过于频繁，请检查该服务商的 API 额度");
+  });
+});
+
+// Sol #7 fix (BYOK preview sprint, 2026-07-21): a keyless row's second
+// line used to render the client's OWN drafted provider/model
+// (describeProvider(resolved)} · {resolved.model) even on preview,
+// where the shared server proxy never reads that client config at all
+// (resolveLlmConfig ignores it once a server key is in play, pickModel
+// forces its own env allowlist) — the line described a request that
+// never happens. Same vi.resetModules + dynamic-reimport technique as
+// the two describe blocks above.
+describe("AiStatusPanel — describeProviderModel is tier-aware", () => {
+  const originalTier = process.env.NEXT_PUBLIC_DEPLOY_TIER;
+
+  afterEach(() => {
+    if (originalTier === undefined) delete process.env.NEXT_PUBLIC_DEPLOY_TIER;
+    else process.env.NEXT_PUBLIC_DEPLOY_TIER = originalTier;
+    vi.resetModules();
+  });
+
+  const resolvedKeyless: ResolvedTaskCreds = {
+    provider: "anthropic",
+    baseUrl: "",
+    apiKey: "",
+    model: "claude-haiku-4-5",
+  };
+  const resolvedKeyed: ResolvedTaskCreds = {
+    provider: "anthropic",
+    baseUrl: "",
+    apiKey: "sk-real",
+    model: "claude-haiku-4-5",
+  };
+  const resolvedKeyedOpenaiCompat: ResolvedTaskCreds = {
+    provider: "openai-compat",
+    baseUrl: "https://api.deepseek.com",
+    apiKey: "sk-real",
+    model: "deepseek-chat",
+  };
+
+  it("full/desktop tier (this file's own ordinary static import, ambient env): a keyless row still shows the real provider/model — unaffected by this fix", () => {
+    expect(describeProviderModel(resolvedKeyless)).toBe("Anthropic · claude-haiku-4-5");
+  });
+
+  it("full/desktop tier: a keyed row shows the real provider/model too (unchanged either way)", () => {
+    expect(describeProviderModel(resolvedKeyed)).toBe("Anthropic · claude-haiku-4-5");
+  });
+
+  it("preview tier (dynamic re-import under NEXT_PUBLIC_DEPLOY_TIER=preview): a keyless row shows the generic server-proxy posture, not the client's own provider/model", async () => {
+    process.env.NEXT_PUBLIC_DEPLOY_TIER = "preview";
+    vi.resetModules();
+    const mod = await import("../AiStatusPanel");
+    expect(mod.describeProviderModel(resolvedKeyless)).toBe("体验版代理 · 预置模型");
+  });
+
+  // BYOK preview sprint: a KEYED row routes browser-direct (D1) — the
+  // provider/model it shows is the real request, so it must keep the
+  // real values, never fall back to the generic posture string.
+  it("preview tier (dynamic re-import): a keyed row keeps the real provider/model, never the generic posture", async () => {
+    process.env.NEXT_PUBLIC_DEPLOY_TIER = "preview";
+    vi.resetModules();
+    const mod = await import("../AiStatusPanel");
+    expect(mod.describeProviderModel(resolvedKeyed)).toBe("Anthropic · claude-haiku-4-5");
+    expect(mod.describeProviderModel(resolvedKeyedOpenaiCompat)).toBe(
+      "https://api.deepseek.com · deepseek-chat",
+    );
   });
 });

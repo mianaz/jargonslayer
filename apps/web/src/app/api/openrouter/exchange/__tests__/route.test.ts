@@ -109,4 +109,65 @@ describe("POST /api/openrouter/exchange — request validation", () => {
     const json = await res.json();
     expect(json.code).toBe("rate_limit");
   });
+
+  it("full tier (JARGONSLAYER_SHARED_KEY_ONLY unset): success response carries Cache-Control: no-store", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ key: "sk-or-v1-xyz" }), { status: 200 }));
+
+    const res = await POST(makeRequest(validBody));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+});
+
+// FIX 2 (byok-preview sprint): once PREVIEW_TIER goes client-direct
+// (openrouterPkce.ts's exchangeCodeForKey), this route is only ever
+// reached by a stale bundle or a hand-crafted request on that deploy —
+// JARGONSLAYER_SHARED_KEY_ONLY gates it shut, same posture and same
+// accepted env values as the five LLM routes' rejectClientCreds guard
+// (anthropic.ts's isSharedKeyOnly, reused here rather than re-derived).
+describe("POST /api/openrouter/exchange — strict mode", () => {
+  beforeEach(() => resetRateLimiter());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it.each(["1", "true"] as const)(
+    "JARGONSLAYER_SHARED_KEY_ONLY=%s: 400 with a terse zh error, upstream fetch never called",
+    async (envValue) => {
+      vi.stubEnv("JARGONSLAYER_SHARED_KEY_ONLY", envValue);
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const res = await POST(makeRequest(validBody));
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe("bad_request");
+      expect(typeof json.error).toBe("string");
+      expect(json.error.length).toBeGreaterThan(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("env unset: proceeds to the normal proxy flow, unaffected", async () => {
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ key: "sk-or-v1-xyz" }), { status: 200 }));
+
+    const res = await POST(makeRequest(validBody));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ key: "sk-or-v1-xyz" });
+  });
+
+  it("env set to a value that isn't '1' or 'true': proceeds to the normal proxy flow (e.g. accidental '0')", async () => {
+    vi.stubEnv("JARGONSLAYER_SHARED_KEY_ONLY", "0");
+    global.fetch = vi
+      .fn()
+      .mockResolvedValue(new Response(JSON.stringify({ key: "sk-or-v1-xyz" }), { status: 200 }));
+
+    const res = await POST(makeRequest(validBody));
+    expect(res.status).toBe(200);
+  });
 });

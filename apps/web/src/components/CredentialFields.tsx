@@ -88,10 +88,11 @@ export interface CredentialFieldsModel {
   staticOptions: readonly string[];
   hint?: React.ReactNode;
   /** Preview tier (#61): render a plain <select> restricted to this
-   *  list instead of the free-text input+datalist. Only the PRIMARY
-   *  credential block ever passes this — the #56 domain blocks are
-   *  greyed wholesale under preview instead (design Q5), so they never
-   *  reach this branch. */
+   *  list instead of the free-text input+datalist. Callers pass it only
+   *  while the block's resolved creds are KEYLESS on preview (shared-
+   *  key trial, allowlist applies) — a configured key flips back to the
+   *  free-text full-tier UI. Both the primary block and the #56 domain
+   *  blocks route through this since the BYOK preview unlock. */
   previewOptions?: readonly string[];
 }
 

@@ -137,9 +137,9 @@ async function withTelemetry<T>(domain: LlmTelemetryDomain, fn: () => Promise<T>
  *  domain inherits the primary credential fields, so this is
  *  byte-identical to the old global authHeaders(settings) for every
  *  pre-#56 user (see resolveTaskCreds's own round-trip test). Exported
- *  so upload.ts's cloud-transcription path can reuse the exact same
- *  builder instead of hand-rolling a second copy (design Q3 — two
- *  header builders is a drift bug factory). */
+ *  so this file's five *ViaNext call sites share the exact same
+ *  builder instead of each hand-rolling a copy (design Q3 — two header
+ *  builders is a drift bug factory). */
 export function taskHeaders(settings: Settings, domain: LlmTaskDomain): Record<string, string> {
   const creds = resolveTaskCreds(settings, domain);
   const headers: Record<string, string> = {

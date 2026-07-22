@@ -147,6 +147,24 @@ function describeProvider(resolved: ResolvedTaskCreds): string {
   return resolved.provider === "anthropic" ? "Anthropic" : resolved.baseUrl || "自定义端点";
 }
 
+/** Sol #7 fix (BYOK preview sprint, 2026-07-21): a keyless row on
+ *  preview used to render `describeProvider(resolved)} · {resolved.
+ *  model}` — the client's OWN drafted provider/baseUrl/model, which the
+ *  shared server proxy never reads once it's serving the request
+ *  (resolveLlmConfig ignores every client header/body model in server-
+ *  key mode, anthropic.ts) and pickModel forces onto its own env
+ *  allowlist regardless. That line was describing a request that never
+ *  happens. A keyed row is the real deal either way (its key routes
+ *  browser-direct, D1) and keeps the actual provider/model; only the
+ *  keyless-on-preview case swaps to a generic server-proxy posture,
+ *  mirroring describeRouting's own "服务端代理" wording. Full/desktop
+ *  tier is untouched (PREVIEW_TIER false short-circuits straight to the
+ *  real provider/model, same as before this fix). */
+export function describeProviderModel(resolved: ResolvedTaskCreds): string {
+  if (PREVIEW_TIER && !resolved.apiKey) return "体验版代理 · 预置模型";
+  return `${describeProvider(resolved)} · ${resolved.model || "服务端默认"}`;
+}
+
 export default function AiStatusPanel() {
   const [settings] = useState<Settings>(() => useApp.getState().settings);
   const telemetry = useLlmTelemetry();
@@ -191,9 +209,7 @@ export default function AiStatusPanel() {
               </div>
               <span className="text-mut2">{describeRouting(resolved.apiKey)}</span>
             </div>
-            <div className="mt-1 text-mut2">
-              {describeProvider(resolved)} · {resolved.model || "服务端默认"}
-            </div>
+            <div className="mt-1 text-mut2">{describeProviderModel(resolved)}</div>
             {row.footnote && <div className="mt-0.5 text-mut2">{row.footnote}</div>}
             <div className="mt-1 flex gap-3 tabular-nums text-mut2">
               <span>调用 {stat.calls}</span>

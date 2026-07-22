@@ -174,3 +174,61 @@ describe("useDirectTransport — preview tier, with a key: every *Api call site 
     expect(String(mockFetch.mock.calls[0][0])).toBe("https://api.anthropic.com/v1/messages");
   });
 });
+
+// ---------------------------------------------------------------
+// Per-domain split (#56 taskLlm overrides x D1): useDirectTransport
+// decides per-CALL off that call's own resolveTaskCreds(settings,
+// domain) result (see client.ts's own comment on this), so a
+// taskLlm override on one domain must never drag a sibling domain's
+// routing lane along with it.
+// ---------------------------------------------------------------
+
+describe("useDirectTransport — preview tier, per-domain split (taskLlm overrides)", () => {
+  it("primary keyless + one taskLlm domain keyed: only that domain goes direct, sibling domains stay on /api/*", async () => {
+    mockFetch.mockImplementation(async (url: string) => {
+      if (String(url).includes("/api/detect")) return detectRouteFixture();
+      return anthropicDirectFixture(JSON.stringify({ translations: [{ id: "1", text: "你好" }] }));
+    });
+
+    const settings = makeSettings({
+      apiKey: "", // primary keyless — detect (no override) stays on the trial lane
+      taskLlm: {
+        translate: { enabled: true, provider: "anthropic", apiKey: "sk-ant-translate-only-key" },
+      },
+    });
+
+    await detectApi({ context: "", new_text: "hi" }, settings);
+    await translateApi({ segments: [{ id: "1", text: "hi" }], lang: "zh" }, settings);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const [detectUrl] = mockFetch.mock.calls[0];
+    const [translateUrl] = mockFetch.mock.calls[1];
+    expect(String(detectUrl)).toContain("/api/detect"); // untouched by translate's own override
+    expect(String(translateUrl)).toBe("https://api.anthropic.com/v1/messages"); // the keyed domain alone goes direct
+  });
+
+  // The mirror direction ("primary keyed + one taskLlm domain override
+  // with a blank key -> that domain goes viaNext") is NOT constructible:
+  // resolveTaskCreds (taskConfig.ts) makes a per-domain BLANK key
+  // inherit the primary key by design (`t.apiKey || settings.apiKey` —
+  // see that file's own doc comment and taskConfig.test.ts's
+  // "documented 'blank per-domain key = inherit primary key' rule"
+  // case), so a blank override key on a keyed primary still resolves
+  // to that primary key and therefore still goes direct. This test
+  // pins that invariant instead: a blank-key override can never carve
+  // a domain OUT of the direct lane once the primary itself is keyed.
+  it("primary keyed + a taskLlm domain override with a blank key: that domain still inherits the primary key and goes direct too (not viaNext)", async () => {
+    mockFetch.mockResolvedValue(anthropicDirectFixture(JSON.stringify({ expressions: [], terms: [] })));
+
+    const settings = makeSettings({
+      apiKey: "sk-ant-primary-key",
+      provider: "anthropic",
+      taskLlm: { detect: { enabled: true, apiKey: "" } },
+    });
+
+    await detectApi({ context: "", new_text: "hi" }, settings);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(String(mockFetch.mock.calls[0][0])).toBe("https://api.anthropic.com/v1/messages");
+  });
+});

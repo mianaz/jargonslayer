@@ -18,7 +18,7 @@ import {
   type TermCard,
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
-import { detectApi, NoKeyError, RateLimitApiError, taskHeaders } from "../llm/client";
+import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
 import { resolveTaskCreds } from "../llm/taskConfig";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
 import { getCachedEntries, scanCustomEntries } from "../history/glossary";
