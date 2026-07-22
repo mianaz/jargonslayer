@@ -470,7 +470,7 @@ npm run dev
         </tbody>
       </table>
       <div class="callout info"><strong>Online meetings:</strong> your microphone only captures you. For Zoom, Teams, or Meet, use tab audio where available, or route system audio through a virtual device such as BlackHole on macOS or VB-Cable on Windows and use local Whisper.</div>
-      <div class="callout info"><strong>Hosted preview's limited trial:</strong> the preview deployment includes a limited Soniox cloud-recognition trial — no API key required, up to 3 clips per person per day, about 10 minutes max per clip, on a shared first-come quota until it runs out; audio is transcribed by Soniox's cloud and is not retained. Tab audio is also back in the hosted preview, riding the same trial quota and no longer requiring a local sidecar. Self-hosted/local-tier Soniox remains BYOK and is unaffected by this limit.</div>
+      <div class="callout info"><strong>Hosted preview's limited trial:</strong> the preview deployment includes a limited Soniox cloud-recognition trial — no API key required, up to 3 clips per person per day, about 10 minutes max per clip, on a shared first-come quota until it runs out; audio is transcribed by Soniox's cloud and is not retained. Tab audio is also back in the hosted preview, riding the same trial quota and no longer requiring a local sidecar. The preview also accepts your own Soniox or Deepgram key now: enter it in Settings and sessions run browser-direct on your account with no trial caps (your key always wins over the trial). Self-hosted/local-tier Soniox remains BYOK and is unaffected by this limit.</div>
 
       <h3>Desktop app (macOS)</h3>
       <table>
@@ -565,7 +565,8 @@ python whisper_server.py --model small</code></pre>
       <h3>Dictionary-only Mode</h3>
       <p>Turn off <code>AI 检测</code> in Settings to keep transcript text local. The built-in dictionary still detects fixed expressions and terms instantly. This is the zero-key, zero-cost, fully local text path.</p>
       <h3>Hosted Preview AI</h3>
-      <p>The hosted preview can use the preview server's configured model path. Text transits the project server in memory and is forwarded to OpenRouter with <code>data_collection=allow</code>. Treat preview AI text as shareable with the model provider.</p>
+      <p>Without a key, the hosted preview uses the preview server's configured model path. Text transits the project server in memory and is forwarded to OpenRouter with <code>data_collection=allow</code>, and model choice is limited to the preset list. Treat preview AI text as shareable with the model provider.</p>
+      <p>With your own key entered, the hosted preview switches to browser-direct BYOK: every AI call goes straight from your browser to your configured provider, any model is allowed, and the key and meeting content never touch the project server — the server even rejects key-carrying relay requests outright. Custom OpenAI-compatible endpoints must support browser CORS on the preview; endpoints without it need the self-hosted or desktop build.</p>
       <h3>BYOK AI</h3>
       <ol>
         <li>Open <code>设置</code> and go to <code>AI 检测</code>.</li>
@@ -574,7 +575,7 @@ python whisper_server.py --model small</code></pre>
         <li>Enter an API key in the UI, connect OpenRouter with one-click OAuth, or use a server environment variable such as <code>ANTHROPIC_API_KEY</code>.</li>
         <li>Choose detection and report models, test the connection, and save.</li>
       </ol>
-      <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser and relayed in memory through the app's API routes. It is not persisted server-side. Environment keys keep the key out of the browser entirely. On the desktop build, OAuth opens your system browser (RFC 8252 loopback) instead of an in-app popup — see <a href="#desktop-app">Desktop App</a> for the first-run version of this same flow.</div>
+      <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser. On self-hosted web builds it is relayed in memory through your own server's API routes, never persisted; on the hosted preview it is never sent to the project server at all — calls go browser-direct to the provider. Environment keys keep the key out of the browser entirely. On the desktop build, OAuth opens your system browser (RFC 8252 loopback) instead of an in-app popup — see <a href="#desktop-app">Desktop App</a> for the first-run version of this same flow.</div>
       <h3>Per-task Models</h3>
       <p>Advanced settings can use different providers or models for detection, translation, and reports. The normal split is fast/cheap for live detection and stronger models for post-meeting reports.</p>
       <h3>AI Status Panel (AI 状态)</h3>

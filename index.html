@@ -843,8 +843,8 @@
       <div class="feat c-green reveal">
         <div class="feat-key">BYOK, multi-model</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek / Qwen / OpenRouter / Ollama）；OpenRouter 支持一键 OAuth 生成 Key，Poe 订阅有内置预设。Key 存本机浏览器，调用时经本应用接口内存转发（不落盘）；也可用环境变量让 Key 完全不进浏览器。</span>
-          <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); OpenRouter OAuth can provision a key in one click, and Poe has a built-in preset. A UI-entered key lives in your browser and is relayed in memory through this app's API routes, never persisted; env keys skip browser storage entirely.</span>
+          <span class="lang-zh"><b>BYOK / 多模型</b>：Anthropic 直连或任意 OpenAI 兼容端点（DeepSeek / Qwen / OpenRouter / Ollama）；OpenRouter 支持一键 OAuth 生成 Key，Poe 订阅有内置预设。Key 存本机浏览器；自托管网页版调用时经你自己的服务内存转发（不落盘），也可用环境变量让 Key 完全不进浏览器。托管体验版现已开放自带 Key：填入后由浏览器直连模型服务商，Key 与会议内容不经过本站服务器（自定义端点需支持浏览器跨域 CORS）。</span>
+          <span class="lang-en"><b>BYOK, multi-model</b>: Anthropic direct or any OpenAI-compatible endpoint (DeepSeek / Qwen / OpenRouter / Ollama); OpenRouter OAuth can provision a key in one click, and Poe has a built-in preset. A UI-entered key lives in your browser; on a self-hosted web build it is relayed in memory through your own server, never persisted, and env keys skip browser storage entirely. The hosted preview now takes your own key too: calls go straight from your browser to the model provider — key and meeting content never touch this site's server (custom endpoints need browser CORS support).</span>
         </div>
       </div>
 
@@ -994,10 +994,18 @@
           </tr>
           <tr>
             <td class="data-col">
-              <span class="lang-zh">转录文本（体验版，AI 开启）</span><span class="lang-en">Transcript text (preview tier, AI on)</span>
+              <span class="lang-zh">转录文本（体验版·未配 Key，AI 开启）</span><span class="lang-en">Transcript text (preview tier, no key, AI on)</span>
             </td>
             <td class="dest-col"><span class="dot cloud"></span>
               <span class="lang-zh">经我们的服务器内存中转（不存储）→ OpenRouter，带 data_collection=allow</span><span class="lang-en">Transits our server in memory only → OpenRouter with data_collection=allow</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
+              <span class="lang-zh">转录文本（体验版·自带 Key，AI 开启）</span><span class="lang-en">Transcript text (preview tier, your own key, AI on)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">浏览器直连你配置的模型服务商，Key 与内容不经过本站服务器；服务端同时拒绝任何带 Key 的转发请求</span><span class="lang-en">Straight from your browser to your configured model provider — key and content never touch this site's server, which also rejects any key-carrying relay request outright</span>
             </td>
           </tr>
           <tr>
