@@ -267,6 +267,19 @@ export type ExplainLanguage = "zh" | "en";
 // Background profile (#48 step 3) self-reported English proficiency.
 export type EnglishLevel = "basic" | "intermediate" | "advanced";
 
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — the prompt asks the
+// model for <=60 chars, hard-capped a bit above that so a slightly-
+// over-budget but otherwise valid reply still saves instead of
+// failing outright (same posture as tasks/define.ts's own clamp
+// constants). Field-test fix (batch C, F2): exported here so EVERY
+// layer that touches this string shares the SAME bound instead of
+// each hardcoding its own 80 that could silently drift out of sync —
+// inferContext.ts's own sanitize clamp, the detect route's zod
+// schema, the header chip's input maxLength, and the store's
+// defensive clamp on manual edits all import this constant.
+export const MEETING_CONTEXT_MAX_CHARS = 80;
+
 export interface DetectRequest {
   context: string; // previously analyzed tail, disambiguation only
   new_text: string; // fresh finalized text to analyze
@@ -278,6 +291,16 @@ export interface DetectRequest {
   // profile.enabled. Spliced into the USER message ONLY (see
   // buildDetectUserMessage); the cached SYSTEM prompt never changes.
   profile?: string;
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — the domain/context
+  // string inferred once per meeting from the accumulating transcript
+  // (see MeetingSession.inferredContext, tasks/inferContext.ts). Same
+  // threading posture as `profile` above: spliced into the USER
+  // message ONLY (buildDetectUserMessage's MEETING CONTEXT block), the
+  // cached SYSTEM prompt never changes. Absent/undefined = no context
+  // inferred yet (today's behavior, unchanged). Hard-capped client-
+  // side at MEETING_CONTEXT_MAX_CHARS (see that constant's own doc).
+  meetingContext?: string;
 }
 
 export interface DetectResponse {
@@ -509,6 +532,16 @@ export interface Settings {
   whisperModel: string;
   provider: LlmProvider;
   baseUrl: string; // openai-compat only, e.g. https://api.deepseek.com/v1
+  // W2 desktop proxy support — desktop-only (meaningless/unread on a web
+  // build), manual escape hatch for whatever tauri-plugin-http's own
+  // macOS-system-proxy auto-detection can't see: env-var-only setups
+  // (a Finder-launched app inherits none of a shell's own http_proxy/
+  // https_proxy exports) or a PAC-only network (the app can't execute a
+  // PAC script). "" (default) = follow the system proxy exactly as
+  // before this field existed. http://, https://, socks5://, socks5h://
+  // schemes; userinfo (user:pass@) is allowed for proxy basic auth — see
+  // SettingsDialog.tsx's own isValidProxyUrl for the exact validation.
+  proxyUrl: string;
   apiKey: string; // "" = rely on server-side env ANTHROPIC_API_KEY
   detectModel: string;
   summaryModel: string;
@@ -828,6 +861,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // this only changes what an UNTOUCHED default looks like.
   provider: "openai-compat",
   baseUrl: "https://openrouter.ai/api/v1",
+  proxyUrl: "",
   apiKey: "",
   // Field-test fix (v0.4.4, real user report): these were bare
   // Anthropic ids (claude-haiku-4-5/claude-sonnet-5) — 400s the moment
@@ -945,6 +979,15 @@ export interface MeetingSession {
   // session's own startedAt (any real pause gap then just shows as a
   // jump between segments — not recoverable after the fact).
   pauseIntervals?: { start: number; end: number }[];
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — the one-shot (plus one
+  // retry, plus one later refresh) inferred domain/context, persisted
+  // with the session it was inferred for (see store.ts's
+  // saveCurrentSession/currentSessionSnapshot). Absent = never
+  // inferred (aiDetect was off, inference failed/never fired, or this
+  // session predates the feature) — SessionMeta (history list) does
+  // NOT carry this; it's a detail view concern only.
+  inferredContext?: string;
 }
 
 export interface SessionMeta {
@@ -1057,6 +1100,21 @@ export interface DefineResult {
   // term-only
   termType?: TermType;
   gloss_en?: string;
+}
+
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — a small one-shot task
+// mirroring DefineRequest/DefineResult's shape immediately above: the
+// client sends a transcript excerpt, the route/task infers a short
+// domain/context sentence. See tasks/inferContext.ts.
+export interface InferContextRequest {
+  excerpt: string;
+  lang: "zh" | "en";
+  model?: string;
+}
+
+export interface InferContextResponse {
+  context: string;
 }
 
 /** All surface forms a custom entry should match against, deduped. */

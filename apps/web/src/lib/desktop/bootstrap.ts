@@ -115,7 +115,15 @@ import { preinstallOsSpeech } from "./osspeechCaps";
 // getMlxCapsSnapshot() in the SAME session skips a redundant round
 // trip.
 import { probeMlxCapabilitiesWith } from "./mlxCaps";
-import { getInvoke, getListen, getTauriFetch, type InvokeFn, type ListenFn, type TauriFetchFn } from "./tauriApi";
+import {
+  getInvoke,
+  getListen,
+  getProxiedTauriFetch,
+  getTauriFetch,
+  type InvokeFn,
+  type ListenFn,
+  type TauriFetchFn,
+} from "./tauriApi";
 import {
   getAppPaths,
   invokeWriteMarker,
@@ -2681,18 +2689,63 @@ async function resolveReadHfToken(): Promise<() => string> {
   return () => useApp.getState().settings.hfToken;
 }
 
+/** W2 desktop proxy support — the real `getProxyUrl` closure
+ *  getProxiedTauriFetch (tauriApi.ts) is called with. Mirrors
+ *  resolveReadHfToken immediately above byte-for-byte (same rationale:
+ *  a Settings.proxyUrl edit can happen minutes into an already-running
+ *  session, and tauriApi.ts itself must stay free of any store.ts
+ *  import — see that file's own doc comment on getProxiedTauriFetch). */
+async function resolveGetProxyUrl(): Promise<() => string> {
+  const { useApp } = await import("../store");
+  if (!useApp.getState().hydrated) {
+    await new Promise<void>((resolve) => {
+      const unsubscribe = useApp.subscribe((state) => {
+        if (state.hydrated) {
+          unsubscribe();
+          resolve();
+        }
+      });
+    });
+  }
+  return () => useApp.getState().settings.proxyUrl;
+}
+
 async function bootstrapWithRealDeps(): Promise<DesktopBootstrapHandle> {
-  const [tauriFetch, invoke, listen, isMeetingActive, readHfToken] = await Promise.all([
+  const [tauriFetch, invoke, listen, isMeetingActive, readHfToken, getProxyUrl] = await Promise.all([
     getTauriFetch(),
     getInvoke(),
     getListen(),
     resolveIsMeetingActive(),
     resolveReadHfToken(),
+    resolveGetProxyUrl(),
   ]);
+  // W2 desktop proxy support — one-time startup diag line reporting
+  // whatever proxy state the OS/env actually expose to THIS launch
+  // (proxy.rs's own os_proxy_summary command) — the observability half
+  // of the field report this task answers: a Finder-launched app
+  // inherits none of a shell's own http_proxy/https_proxy exports, so
+  // "it works fine in Terminal" was previously invisible from here.
+  // Lands in the diagnostic report's own 最近诊断记录 section for free
+  // (report.ts reads the SAME diagLog ring buffer, no separate wiring
+  // needed). Fire-and-forget outside the real init sequence below — a
+  // failure here (or the command itself never resolving) must never
+  // block or fail desktop bootstrap over a diagnostics-only read.
+  void invoke<string>("os_proxy_summary")
+    .then((summary) => {
+      diagLog("info", "desktop-env", summary);
+    })
+    .catch((err) => {
+      diagLog("warn", "desktop-env", "读取系统代理状态失败", redactHomePath(describeError(err)));
+    });
   return bootstrapDesktop({
     invoke,
     listen,
-    tauriFetch,
+    // W2: every setTransport(...) consumer (client-side LLM calls) now
+    // rides the proxy-aware wrapper — see tauriApi.ts's own doc comment
+    // on getProxiedTauriFetch. deps.tauriFetch has exactly one consumer
+    // in this file (deps.setTransport(deps.tauriFetch) below), so
+    // wrapping it here, once, covers that call site completely.
+    tauriFetch: getProxiedTauriFetch(tauriFetch, getProxyUrl),
     setTransport,
     getSidecarMode: getPersistedSidecarMode,
     getDesktopModel: getPersistedDesktopModel,

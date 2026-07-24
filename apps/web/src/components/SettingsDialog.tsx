@@ -61,6 +61,7 @@ import type {
   TaskLlmConfig,
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
+import { isValidProxyUrl, normalizeProxyUrl } from "@/lib/proxyUrl";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS, IS_TAURI } from "@/lib/platform/ios";
 import { openExternal } from "@/lib/platform/openExternal";
@@ -1683,6 +1684,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       showToast("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
       return;
     }
+    // W2 desktop proxy support — same save-boundary hygiene as baseUrl
+    // above; desktop-only field, but validated unconditionally here
+    // (cheap, and IS_DESKTOP already gates the field OUT of the draft
+    // on web/iOS since nothing ever renders it there to set a non-empty
+    // value in the first place).
+    const normalizedProxyUrl = normalizeProxyUrl(draft.proxyUrl);
+    if (!isValidProxyUrl(normalizedProxyUrl)) {
+      showToast("代理地址无效，请检查格式（例如 http://127.0.0.1:7890）");
+      return;
+    }
     let normalizedTaskLlm = draft.taskLlm;
     for (const { domain } of TASK_DOMAIN_META) {
       const override = normalizedTaskLlm?.[domain];
@@ -1736,6 +1747,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // always well-formed (or empty) by this point.
       baseUrl: normalizedBaseUrl,
       taskLlm: normalizedTaskLlm,
+      // W2: same "normalized + already validated above" guarantee.
+      proxyUrl: normalizedProxyUrl,
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
     // getSidecarMode is only ever read once, at app start (Finding 2c)
@@ -2271,6 +2284,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (!draft.taskLlm?.[meta.domain]?.enabled) return false;
     return !!resolveTaskCreds(draft, meta.domain).apiKey !== !!draft.apiKey;
   });
+
+  // F4 fix (field-test batch C, Sol M3): the desktop transport wrapper
+  // reads the SAVED settings.proxyUrl, not this draft — an unsaved
+  // proxy edit would otherwise be silently ignored by exactly the two
+  // actions (测试连接 / OpenRouter connect below) whose entire point is
+  // to verify connectivity through it. Desktop-only, same IS_DESKTOP
+  // gate the proxy field itself renders under.
+  const proxyDraftDirty =
+    IS_DESKTOP && normalizeProxyUrl(draft.proxyUrl) !== normalizeProxyUrl(settings.proxyUrl);
+  const proxyDraftDirtyHint = "代理设置已修改，保存后再测试/连接";
 
   return (
     <div
@@ -3412,6 +3435,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   presets={PROVIDER_PRESETS}
                   onConnectOpenRouter={() => void handleConnectOpenRouter()}
                   connectingOpenRouter={connectingOpenRouter}
+                  connectDisabledHint={proxyDraftDirty ? proxyDraftDirtyHint : undefined}
                   models={[
                     {
                       key: "detect",
@@ -3479,14 +3503,48 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </div>
                 )}
 
+                {/* W2 desktop proxy support — desktop-only (meaningless
+                   on web/iOS, same IS_DESKTOP gate CredentialFields'
+                   own 钥匙串 apiKeyHint above uses): tauri-plugin-http
+                   already auto-detects the macOS system proxy with no
+                   configuration at all, so this is purely the escape
+                   hatch for what that can't see (env-var-only setups a
+                   Finder-launched app never inherits, or a PAC-only
+                   network the app can't execute). */}
+                {IS_DESKTOP && (
+                  <div>
+                    <label className="text-xs text-mut">网络代理（可选）</label>
+                    <input
+                      type="text"
+                      value={draft.proxyUrl}
+                      onChange={(e) => {
+                        patch({ proxyUrl: e.target.value });
+                        // F4 fix (field-test batch C, Sol M3): a stale
+                        // 测试连接 result must not keep reading as
+                        // authoritative once the proxy it was run
+                        // against no longer matches this draft.
+                        setTestConnectionOk(undefined);
+                      }}
+                      placeholder="http://127.0.0.1:7890"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                    <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                      留空则自动跟随系统代理。支持 http:// 与 socks5:// （如 Clash 混合端口 7890）
+                    </div>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={() => void handleTestConnection()}
-                  disabled={testingConnection}
+                  disabled={testingConnection || proxyDraftDirty}
                   className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {testingConnection ? "测试中…" : "测试连接"}
                 </button>
+                {proxyDraftDirty && (
+                  <div className="text-xs leading-[1.7] text-warn-soft">{proxyDraftDirtyHint}</div>
+                )}
 
                 {/* v0.4.5 ambient AI-status mirror (design doc
                    v045-ai-transparency-qc.md Part A) — the same

@@ -15,7 +15,7 @@
 
 import pkg from "../../../package.json";
 import { PREVIEW_TIER } from "../deployTier";
-import type { Settings } from "@jargonslayer/core/types";
+import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import { type DiagEntry, getDiagEntries } from "./log";
 
 export const DIAG_REPORT_ENTRIES = 50;
@@ -182,6 +182,41 @@ function redactSettingsObject(obj: Record<string, unknown>): Record<string, unkn
   return out;
 }
 
+// W2 field-debugging postmortem: a user reading a copied report saw
+// the default OpenRouter baseUrl and read it as deliberate custom
+// config — nothing in the report distinguished "still whatever the app
+// ships with" from "I actually changed this". Marker appended to the
+// redacted line itself (not a separate side list) so it stays exactly
+// where a reader's eye already is.
+const DEFAULT_TAG = "（默认）";
+
+/** Appends DEFAULT_TAG to every TOP-LEVEL settings field whose RAW
+ *  value is still strictly equal (===) to its DEFAULT_SETTINGS
+ *  counterpart. Primitives only (string/number/boolean) — an object/
+ *  array field (taskLlm, customThemes, enabledPacks, profile, …) is
+ *  never tagged: redactSettingsObject's own recursion/collapsing
+ *  already handles those field SHAPES, and "is this whole structure
+ *  still the default one" isn't a single scalar comparison the same
+ *  way a plain field's is. Only ever tags a key that survives
+ *  redaction under its OWN name: a secret-shaped field (renamed to
+ *  has<Key>, see policy point 1) or a free-text field (renamed to
+ *  <key>Chars, see FREE_TEXT_KEYS above) has nothing sitting at
+ *  `redacted[key]` to append onto, so both are left alone rather than
+ *  guessed at. Mutates `redacted` in place — called last, from
+ *  buildFullConfigSnapshot below, specifically AFTER the `provider`
+ *  override immediately below it, so a default provider's tag lands on
+ *  whichever of "(未配置)" / the real provider name that override
+ *  actually produced, never a value the override is about to discard. */
+function tagDefaultValues(settings: Settings, redacted: Record<string, unknown>): void {
+  const defaults = DEFAULT_SETTINGS as unknown as Record<string, unknown>;
+  for (const [key, rawValue] of Object.entries(settings as unknown as Record<string, unknown>)) {
+    const isPrimitive = typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean";
+    if (!isPrimitive || rawValue !== defaults[key]) continue;
+    if (!(key in redacted)) continue;
+    redacted[key] = `${redacted[key]}${DEFAULT_TAG}`;
+  }
+}
+
 /** Full, generically-redacted settings snapshot — every Settings field
  *  flows through redactSettingsObject above; `provider` gets ONE
  *  explicit override afterward (Item 5, pre-existing security-review
@@ -197,6 +232,7 @@ function redactSettingsObject(obj: Record<string, unknown>): Record<string, unkn
 function buildFullConfigSnapshot(settings: Settings): Record<string, unknown> {
   const redacted = redactSettingsObject(settings as unknown as Record<string, unknown>);
   redacted.provider = hasSecret(settings.apiKey) ? settings.provider : "(未配置)";
+  tagDefaultValues(settings, redacted);
   return redacted;
 }
 

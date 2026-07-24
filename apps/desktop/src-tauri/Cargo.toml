@@ -21,7 +21,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
-tauri-plugin-http = "2"
+# W2 desktop proxy support — `socks` is additive onto this plugin's own
+# defaults (rustls-tls/http2/charset/macos-system-configuration/cookies,
+# see its own Cargo.toml `[features] default = [...]`; no
+# default-features=false here, so nothing above is dropped), pulling in
+# reqwest/socks so a manually-configured `socks5://`/`socks5h://`
+# Settings.proxyUrl (SettingsDialog.tsx) actually works — without it,
+# reqwest silently ignores a socks ClientOptions.proxy at runtime.
+tauri-plugin-http = { version = "2", features = ["socks"] }
 # S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
 # Chunk A) — desktop external-link opens (OAuth authorize URL, update
 # download page, pyannote/HF gated-model links) via the system browser.

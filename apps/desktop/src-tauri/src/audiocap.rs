@@ -1053,6 +1053,9 @@ const DIAG_INTERVAL: Duration = Duration::from_secs(5);
 #[serde(rename_all = "camelCase")]
 struct AudiocapStatusEvent {
     kind: &'static str,
+    // None → absent field, not JSON null (same contract as
+    // OsSpeechStatusEvent — see the note there).
+    #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
 }
 

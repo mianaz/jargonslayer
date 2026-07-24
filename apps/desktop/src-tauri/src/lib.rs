@@ -49,6 +49,11 @@ mod devspike_ios;
 mod paths;
 #[cfg(desktop)]
 mod provision;
+// W2 field-context fix — `os_proxy_summary` (system-proxy + env-var
+// observability, see this module's own header comment for the
+// Finder-launch-inherits-no-env-vars report it answers).
+#[cfg(desktop)]
+mod proxy;
 #[cfg(desktop)]
 mod secret;
 #[cfg(desktop)]
@@ -156,6 +161,7 @@ pub fn run() {
             secret::secret_set,
             secret::secret_get,
             secret::secret_delete,
+            proxy::os_proxy_summary,
         ])
         // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
         // — the audiocap TCC-attribution spike rig: inert unless

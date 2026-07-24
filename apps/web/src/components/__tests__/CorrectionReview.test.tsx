@@ -41,7 +41,13 @@ vi.mock("@/lib/llm/client", () => ({
 }));
 
 import { useApp } from "@/lib/store";
-import { DEFAULT_SETTINGS, type CorrectRequest, type Settings, type TranscriptSegment } from "@jargonslayer/core/types";
+import {
+  DEFAULT_SETTINGS,
+  type CorrectRequest,
+  type SessionMeta,
+  type Settings,
+  type TranscriptSegment,
+} from "@jargonslayer/core/types";
 import { NoKeyError, UpstreamError } from "@/lib/llm/client";
 import CorrectionReview from "../CorrectionReview";
 
@@ -56,6 +62,19 @@ function seg(overrides: Partial<TranscriptSegment> & { id: string }): Transcript
     endedAt: 0,
     text: "hello",
     engine: "demo",
+    ...overrides,
+  };
+}
+
+function sessionMeta(overrides: Partial<SessionMeta> & { id: string }): SessionMeta {
+  return {
+    title: "会议",
+    startedAt: 0,
+    endedAt: 0,
+    segmentCount: 0,
+    cardCount: 0,
+    termCount: 0,
+    hasSummary: false,
     ...overrides,
   };
 }
@@ -85,6 +104,7 @@ describe("CorrectionReview", () => {
       activeSessionId: null,
       translations: {},
       correctionBusy: false,
+      sessions: [],
     });
   });
 
@@ -422,5 +442,41 @@ describe("CorrectionReview", () => {
     await openReview();
 
     expect(container!.textContent).toContain("需要 API Key");
+  });
+
+  // ---------------- meetingTitle passthrough (lights up buildCorrectUserMessage's
+  // existing, previously-never-called MEETING TITLE block) ----------------
+
+  it("passes the title of the session under review as meetingTitle", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1", text: "scar an seek" })],
+      status: "stopped",
+      settings: makeSettings(),
+      activeSessionId: "sess-1",
+      sessions: [sessionMeta({ id: "sess-1", title: "周会 2026-07-19" })],
+    });
+    mockCorrectApi.mockResolvedValue({ corrections: [{ id: "s1", text: "scRNA-seq" }] });
+
+    await openReview();
+
+    expect(mockCorrectApi).toHaveBeenCalledTimes(1);
+    const [body] = mockCorrectApi.mock.calls[0] as [CorrectRequest, Settings];
+    expect(body.meetingTitle).toBe("周会 2026-07-19");
+  });
+
+  it("passes undefined when the active session's meta isn't in the history list (e.g. not yet loaded)", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1", text: "scar an seek" })],
+      status: "stopped",
+      settings: makeSettings(),
+      activeSessionId: "sess-unknown",
+      sessions: [sessionMeta({ id: "sess-1", title: "周会 2026-07-19" })],
+    });
+    mockCorrectApi.mockResolvedValue({ corrections: [{ id: "s1", text: "scRNA-seq" }] });
+
+    await openReview();
+
+    const [body] = mockCorrectApi.mock.calls[0] as [CorrectRequest, Settings];
+    expect(body.meetingTitle).toBeUndefined();
   });
 });

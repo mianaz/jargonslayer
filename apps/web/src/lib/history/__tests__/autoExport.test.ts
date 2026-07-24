@@ -645,6 +645,42 @@ describe("sanitizeRestoredSettings — Codex v0.2.3 MEDIUM (untrusted backup set
   });
 });
 
+// F5 fix (field-test batch C, Sol M4): proxyUrl used to be allow-listed
+// through untouched — a hand-edited backup could smuggle a malformed
+// proxy that poisons every remote call, since SettingsDialog's own
+// isValidProxyUrl validator only ever runs on the SAVE path, never at
+// this restore boundary.
+describe("sanitizeRestoredSettings — F5 fix: proxyUrl validated at the restore boundary", () => {
+  it("coerces a non-string proxyUrl to ''", async () => {
+    const autoExport = await import("../autoExport");
+    const hostile = { ...DEFAULT_SETTINGS, proxyUrl: 42 } as never;
+    expect(autoExport.sanitizeRestoredSettings(hostile).proxyUrl).toBe("");
+  });
+
+  it("coerces a disallowed scheme (ftp:) to ''", async () => {
+    const autoExport = await import("../autoExport");
+    const hostile = { ...DEFAULT_SETTINGS, proxyUrl: "ftp://x" } as never;
+    expect(autoExport.sanitizeRestoredSettings(hostile).proxyUrl).toBe("");
+  });
+
+  it("coerces an unparseable URL to ''", async () => {
+    const autoExport = await import("../autoExport");
+    const hostile = { ...DEFAULT_SETTINGS, proxyUrl: "http://[garbage" } as never;
+    expect(autoExport.sanitizeRestoredSettings(hostile).proxyUrl).toBe("");
+  });
+
+  it("keeps a genuinely valid proxyUrl (with Basic-auth userinfo) intact", async () => {
+    const autoExport = await import("../autoExport");
+    const honest = {
+      ...DEFAULT_SETTINGS,
+      proxyUrl: "http://user:pass@127.0.0.1:7890",
+    } as never;
+    expect(autoExport.sanitizeRestoredSettings(honest).proxyUrl).toBe(
+      "http://user:pass@127.0.0.1:7890",
+    );
+  });
+});
+
 // v0.5.1 appearance sprint: customThemes/uiFont/monoFont/overlayGlass
 // are allow-listed like any other Settings field, but each needs its
 // own re-validation the generic allow-list pick above can't express.

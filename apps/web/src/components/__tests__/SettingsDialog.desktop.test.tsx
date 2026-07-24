@@ -418,6 +418,119 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
   });
 });
 
+// F4 fix (field-test batch C, Sol M3): the desktop transport wrapper
+// tests draft provider/key/baseUrl via testConnection(draft), but reads
+// the SAVED settings.proxyUrl for the proxy itself — so a just-typed
+// proxy edit used to be silently ignored by exactly the two actions
+// (测试连接 / 一键连接 OpenRouter 账号) whose entire point is to verify
+// connectivity through it. Reuses openRouterSeedSettings() (already on
+// the "openrouter" preset, see that helper's own doc comment) so the
+// connect button is on-screen to assert against too.
+describe("SettingsDialog (desktop) — F4: unsaved proxy draft disables 测试连接 / OpenRouter connect until saved", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: openRouterSeedSettings(), hydrated: true });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllGlobals();
+  });
+
+  async function flush(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  async function openAiDetectTab(): Promise<void> {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      findNavButton("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  function proxyInput(): HTMLInputElement {
+    const input = container!.querySelector(
+      'input[placeholder="http://127.0.0.1:7890"]',
+    ) as HTMLInputElement | null;
+    if (!input) throw new Error("proxy input not found");
+    return input;
+  }
+
+  it("both buttons stay enabled while the draft proxy matches the saved one (both empty)", async () => {
+    await openAiDetectTab();
+
+    expect(findButtonContaining("测试连接").disabled).toBe(false);
+    expect(findButtonContaining("一键连接 OpenRouter 账号").disabled).toBe(false);
+    expect(container!.textContent).not.toContain("代理设置已修改，保存后再测试/连接");
+  });
+
+  it("typing an unsaved proxy edit disables BOTH 测试连接 and the OpenRouter connect button, with the staging hint", async () => {
+    await openAiDetectTab();
+
+    await act(async () => {
+      typeInto(proxyInput(), "http://127.0.0.1:7890");
+    });
+
+    expect(proxyInput().value).toBe("http://127.0.0.1:7890");
+    expect(findButtonContaining("测试连接").disabled).toBe(true);
+    expect(findButtonContaining("一键连接 OpenRouter 账号").disabled).toBe(true);
+    expect(container!.textContent).toContain("代理设置已修改，保存后再测试/连接");
+  });
+
+  it("re-typing the draft proxy back to exactly the saved value re-enables both buttons", async () => {
+    useApp.setState({
+      settings: { ...openRouterSeedSettings(), proxyUrl: "http://127.0.0.1:7890" },
+      hydrated: true,
+    });
+    await openAiDetectTab();
+    expect(proxyInput().value).toBe("http://127.0.0.1:7890"); // draft seeded from saved — already equal
+
+    await act(async () => {
+      typeInto(proxyInput(), "http://127.0.0.1:9999");
+    });
+    expect(findButtonContaining("测试连接").disabled).toBe(true);
+
+    await act(async () => {
+      typeInto(proxyInput(), "http://127.0.0.1:7890");
+    });
+    expect(findButtonContaining("测试连接").disabled).toBe(false);
+    expect(findButtonContaining("一键连接 OpenRouter 账号").disabled).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------
 // F7 (MEDIUM, adversarial review): jobsBridge.trackInstallDiar's own
 // success handler mirrors sidecarUp into the STORE, but this dialog's

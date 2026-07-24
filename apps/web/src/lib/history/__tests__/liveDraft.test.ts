@@ -281,6 +281,18 @@ describe("liveDraft.ts", () => {
       expect(liveDraft.computeDraftSignature(after)).not.toBe(liveDraft.computeDraftSignature(before));
     });
 
+    // F7 fix (field-test batch C, Sol L1): auto meeting-context detection
+    // — a context inferred (or hand-edited) after the last transcript/
+    // translation/roster change used to leave this signature UNCHANGED,
+    // so the periodic tick's dirty check never rewrote the draft and
+    // crash recovery lost the context. Otherwise identical snapshots.
+    it("changes when only inferredContext differs, with no other field touched", async () => {
+      const liveDraft = await import("../liveDraft");
+      const before = makeSession({ inferredContext: undefined });
+      const after = makeSession({ inferredContext: "生物信息学组会，面向研究生" });
+      expect(liveDraft.computeDraftSignature(after)).not.toBe(liveDraft.computeDraftSignature(before));
+    });
+
     it("is identical for an unchanged snapshot (same content twice)", async () => {
       const liveDraft = await import("../liveDraft");
       const session = makeSession();

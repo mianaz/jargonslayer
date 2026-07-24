@@ -39,9 +39,14 @@ export const DIAG_MAX_FIELD_CHARS = 2000;
 const TRUNCATE_SUFFIX = "…[truncated]";
 
 function truncateField(v: string): string;
-function truncateField(v: string | undefined): string | undefined;
-function truncateField(v: string | undefined): string | undefined {
-  if (v === undefined || v.length <= DIAG_MAX_FIELD_CHARS) return v;
+function truncateField(v: string | null | undefined): string | undefined;
+function truncateField(v: string | null | undefined): string | undefined {
+  // Rust event payloads serialize Option::None as JSON null, so fields
+  // typed `string | undefined` on the TS side can carry null at runtime
+  // (v0.5.0 field crash: every osspeech `starting` status event) —
+  // normalize both empties to undefined rather than reading .length.
+  if (v == null) return undefined;
+  if (v.length <= DIAG_MAX_FIELD_CHARS) return v;
   return v.slice(0, DIAG_MAX_FIELD_CHARS) + TRUNCATE_SUFFIX;
 }
 

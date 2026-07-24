@@ -9,6 +9,8 @@ import type {
   DefineResult,
   DetectRequest,
   DetectResponse,
+  InferContextRequest,
+  InferContextResponse,
   LlmProvider,
   LlmTaskDomain,
   Settings,
@@ -54,6 +56,7 @@ import { DEFAULT_DETECT_MODEL, runDetectTask } from "./tasks/detect";
 import { DEFAULT_DEFINE_MODEL, runDefineTask } from "./tasks/define";
 import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "./tasks/translate";
 import { DEFAULT_CORRECT_MODEL, runCorrectTask } from "./tasks/correct";
+import { DEFAULT_INFER_CONTEXT_MODEL, runInferContextTask } from "./tasks/inferContext";
 import {
   DEFAULT_SUMMARIZE_MODEL,
   MAX_SEGMENTS,
@@ -467,6 +470,7 @@ async function detectViaClient(
         new_text: body.new_text,
         lang: settings.explainLanguage,
         profile: renderProfileHint(settings.profile),
+        meetingContext: body.meetingContext,
       },
       call,
     );
@@ -1143,6 +1147,104 @@ export async function correctApi(
   // own resolveTaskCreds calls.
   const creds = resolveTaskCreds(settings, "detect");
   return useDirectTransport(creds) ? correctViaClient(body, settings) : correctViaNext(body, settings);
+}
+
+// ---------------------------------------------------------------
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — isomorphic like correct
+// above: inferContextViaNext (server route) and inferContextViaClient
+// (desktop/iOS, which strip app/api) both funnel through the SAME
+// tasks/inferContext.ts module. Rides the detect-domain config
+// (resolveTaskCreds(settings, "detect")), same routing choice as
+// correctApi/defineApi above — no dedicated LLM task domain, no
+// subscription-direct pre-branch, no telemetry wrap (same out-of-scope
+// call as correctApi's own header comment).
+// ---------------------------------------------------------------
+
+/** Existing Next.js-routed context-inference call. Mirrors
+ *  correctViaNext's shape — see inferContextApi below for the
+ *  useDirectTransport() branch. */
+async function inferContextViaNext(
+  body: InferContextRequest,
+  settings: Settings,
+): Promise<InferContextResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  const ctx: RequestErrorContext = { tag: "llm-context", provider: ctxProvider(creds), model: body.model ?? creds.model };
+  let res: Response;
+  try {
+    res = await fetch(withBase("/api/context"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...taskHeaders(settings, "detect"),
+      },
+      body: JSON.stringify({
+        ...body,
+        model: body.model ?? creds.model,
+      } satisfies InferContextRequest),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "会议背景推断超时，请稍后重试",
+      network: "会议背景推断失败，请检查网络连接",
+    });
+  }
+
+  if (!res.ok) {
+    await throwForStatus(res, ctx);
+  }
+
+  return (await res.json()) as InferContextResponse;
+}
+
+/** Client-side callProvider context-inference call — used instead of
+ *  inferContextViaNext above when useDirectTransport() picks the
+ *  direct path (desktop/iOS, or preview BYOK). */
+async function inferContextViaClient(
+  body: InferContextRequest,
+  settings: Settings,
+): Promise<InferContextResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  // creds.provider directly, never ctxProvider(creds) — see
+  // summarizeViaClient's comment on why the "server" label doesn't
+  // apply to this BYOK-only path.
+  const ctx: RequestErrorContext = { tag: "llm-context", provider: creds.provider, model: body.model ?? creds.model };
+  requireApiKey(creds.apiKey, ctx);
+  const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
+    return callProviderDirect({ ...opts, timeoutMs: 20000 });
+  };
+
+  try {
+    return await runInferContextTask(
+      {
+        apiKey: creds.apiKey,
+        model: body.model ?? DEFAULT_INFER_CONTEXT_MODEL,
+        provider: creds.provider,
+        baseUrl: creds.baseUrl,
+        excerpt: body.excerpt,
+        lang: body.lang,
+      },
+      call,
+    );
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "会议背景推断超时，请稍后重试",
+      network: "会议背景推断失败，请检查网络连接",
+    });
+  }
+}
+
+export async function inferContextApi(
+  body: InferContextRequest,
+  settings: Settings,
+): Promise<InferContextResponse> {
+  // D1: rides the detect domain, same as inferContextViaNext/
+  // inferContextViaClient's own resolveTaskCreds calls.
+  const creds = resolveTaskCreds(settings, "detect");
+  return useDirectTransport(creds)
+    ? inferContextViaClient(body, settings)
+    : inferContextViaNext(body, settings);
 }
 
 /** Probe the configured provider/key/baseUrl with a trivial detect

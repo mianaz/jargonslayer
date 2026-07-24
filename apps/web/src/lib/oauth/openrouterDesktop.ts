@@ -32,6 +32,7 @@ import {
   getInvoke,
   getListen,
   getOpener,
+  getProxiedTauriFetch,
   getTauriFetch,
   type InvokeFn,
   type ListenFn,
@@ -306,6 +307,12 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
 async function resolveSettingsAccess(): Promise<{
   getSettings: () => Pick<Settings, "detectModel" | "summaryModel">;
   updateSettings: (patch: Partial<Settings>) => void;
+  // W2 desktop proxy support — a live read of Settings.proxyUrl for
+  // getProxiedTauriFetch below, same hydration-gated `useApp` reference
+  // this function already resolves for getSettings/updateSettings (see
+  // tauriApi.ts's own doc comment on why that file itself stays
+  // store.ts-free and needs this injected instead).
+  getProxyUrl: () => string;
 }> {
   const { useApp } = await import("../store");
   if (!useApp.getState().hydrated) {
@@ -321,6 +328,7 @@ async function resolveSettingsAccess(): Promise<{
   return {
     getSettings: () => useApp.getState().settings,
     updateSettings: (patch) => useApp.getState().updateSettings(patch),
+    getProxyUrl: () => useApp.getState().settings.proxyUrl,
   };
 }
 
@@ -338,5 +346,14 @@ export async function connectOpenRouterDesktop(): Promise<ConnectOpenRouterResul
     getTauriFetch(),
     resolveSettingsAccess(),
   ]);
-  return connectOpenRouterDesktopWith({ invoke, listen, openUrl, tauriFetch, ...settingsAccess });
+  return connectOpenRouterDesktopWith({
+    invoke,
+    listen,
+    openUrl,
+    // W2: the code-exchange fetch (step (6) above) now rides the same
+    // proxy-aware wrapper as the LLM transport — see tauriApi.ts's own
+    // doc comment on getProxiedTauriFetch.
+    tauriFetch: getProxiedTauriFetch(tauriFetch, settingsAccess.getProxyUrl),
+    ...settingsAccess,
+  });
 }

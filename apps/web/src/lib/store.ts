@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import {
   DEFAULT_SETTINGS,
+  MEETING_CONTEXT_MAX_CHARS,
   newId,
   type DetectResponse,
   type DetectionSource,
@@ -718,6 +719,40 @@ interface AppState {
   // bumps this from its 「重试 AI 检测」 button.
   aiRetryNonce: number;
   requestAiRetry: () => void;
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — live-only bookkeeping
+  // for the trigger effect in useMeeting.ts (see decideContextTrigger
+  // there for the full threshold/gate contract this state feeds).
+  // Reset alongside the rest of the live-meeting slice in
+  // beginMeeting/newMeeting; `inferredContext` (only) persists with the
+  // session — see MeetingSession.inferredContext, saveCurrentSession/
+  // currentSessionSnapshot below.
+  inferredContext: string | null;
+  // True once the user has set (via setInferredContext's own
+  // opts.override) OR cleared the context by hand from the header
+  // chip — a HARD stop for every further auto-attempt this meeting
+  // (initial/retry AND the later refresh), so a user-cleared (null)
+  // override is never reinterpreted as "still needs a first guess".
+  contextOverride: boolean;
+  // Count of failed/empty initial+retry attempts (0, 1, or 2) — gates
+  // the one-retry-then-give-up contract. Never touched by the refresh
+  // (a wholly separate one-shot latch, see contextRefreshed below).
+  contextAttempts: number;
+  // One-shot latch for the later (>=7000 chars) refresh of an already-
+  // inferred context — set at DISPATCH time (not on resolve), so a
+  // failed/slow refresh call is never retried again this meeting.
+  contextRefreshed: boolean;
+  // `opts.override: true` marks this as a user-authored value (the
+  // header chip's inline edit) — a hard stop for every further
+  // auto-attempt (see contextOverride above). Also the one write-time
+  // guard useMeeting.ts's async trigger effect re-checks before ever
+  // calling this with an INFERRED value, so a user edit that lands
+  // while a call is in flight always wins (gen guard alone can't catch
+  // a same-meeting clobber). `value: null` clears it (chip disappears,
+  // inference stays off when paired with override:true).
+  setInferredContext: (value: string | null, opts?: { override?: boolean }) => void;
+  bumpContextAttempts: () => void;
+  markContextRefreshed: () => void;
   setFocusMode: (v: boolean) => void;
   setCaptionMode: (v: boolean) => void;
   setSidecarUp: (up: boolean | null) => void;
@@ -1961,6 +1996,13 @@ export const useApp = create<AppState>((set, get) => ({
       speakerRoster: [],
       activeSpeaker: null,
       translations: {},
+      // Auto meeting-context detection: a stale context/attempt count
+      // from a PREVIOUS meeting must never survive into a fresh one —
+      // same rationale as the detectMode reset just below.
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
       // F7 fix (Sol LOW #19, keychain-custody fix round): a stale
       // "dictionary" left over from a PREVIOUS meeting's AI fallback
       // otherwise survives into this fresh one — AiStatusPanel's own
@@ -2375,6 +2417,11 @@ export const useApp = create<AppState>((set, get) => ({
       // closes a still-open pause (F5: End-from-paused) — see
       // pauseIntervalsForSnapshot's own doc above.
       pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
+      // Auto meeting-context detection: only the final inferred value
+      // persists with the session — contextAttempts/contextOverride/
+      // contextRefreshed are live-only bookkeeping (see AppState's own
+      // doc), never part of MeetingSession's own shape.
+      inferredContext: s.inferredContext ?? undefined,
     };
     // H1 fix (Sol adversarial review): storage.saveSession now reports
     // whether the write actually landed — a failed local save must
@@ -2486,6 +2533,17 @@ export const useApp = create<AppState>((set, get) => ({
       activeSessionId: session.id,
       focusCardId: null,
       lookup: null,
+      // F1 fix (field-test batch C): a loaded session must show ITS OWN
+      // archived context, not whatever the PREVIOUS live meeting had
+      // inferred — same "stale live-only bookkeeping must not survive a
+      // meeting swap" rationale as beginMeeting/newMeeting's own resets
+      // above. Without this, a post-load re-save (updateSegmentText/
+      // updateCard/updateTerm -> saveCurrentSession) would even bake the
+      // previous meeting's context INTO this session's stored record.
+      inferredContext: session.inferredContext ?? null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
     }));
   },
 
@@ -2735,6 +2793,14 @@ export const useApp = create<AppState>((set, get) => ({
       speakerRoster: [],
       activeSpeaker: null,
       translations: {},
+      // Auto meeting-context detection: mirrors beginMeeting's own
+      // reset above — otherwise a stale context chip from the just-
+      // ended meeting would linger through 新会议 into the idle state
+      // that precedes the next Start.
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
       cards: [],
       terms: [],
       summary: null,
@@ -2750,6 +2816,37 @@ export const useApp = create<AppState>((set, get) => ({
   celebrateBit: () => set((s) => ({ bitCelebrateNonce: s.bitCelebrateNonce + 1 })),
   aiRetryNonce: 0,
   requestAiRetry: () => set((s) => ({ aiRetryNonce: s.aiRetryNonce + 1 })),
+  inferredContext: null,
+  contextOverride: false,
+  contextAttempts: 0,
+  contextRefreshed: false,
+  setInferredContext: (value, opts) => {
+    set((s) => ({
+      // F2 fix (field-test batch C): defensive clamp — the header
+      // chip's input already carries a matching maxLength, but this is
+      // the one write-time guard EVERY caller (chip edit, inferred
+      // result, a future caller) routes through, so it's the backstop
+      // against ever storing (and later re-sending to the hosted
+      // /api/detect route, which 400s past MEETING_CONTEXT_MAX_CHARS)
+      // an over-length value. `null` passes through untouched.
+      inferredContext: value === null ? null : value.slice(0, MEETING_CONTEXT_MAX_CHARS),
+      contextOverride: opts?.override ? true : s.contextOverride,
+    }));
+    // Post-stop top-up re-save (same idiom as applyTranslations/
+    // updateSegmentText elsewhere in this file): a late-landing
+    // inference (or a manual chip edit made after the meeting already
+    // stopped) must still reach the ALREADY-saved session, not just
+    // the live view.
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+  bumpContextAttempts: () => set((s) => ({ contextAttempts: s.contextAttempts + 1 })),
+  markContextRefreshed: () => set({ contextRefreshed: true }),
   clearToast: () => set({ toast: null }),
   setFocusMode: (focusMode) => set({ focusMode }),
   setCaptionMode: (captionMode) => set({ captionMode }),
@@ -2784,5 +2881,8 @@ export function currentSessionSnapshot(): MeetingSession | null {
     // snapshot can be taken mid-pause too (e.g. SummaryPanel's export
     // row shows whenever segments exist, regardless of status).
     pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
+    // Auto meeting-context detection: same "final value only" posture
+    // as saveCurrentSession above.
+    inferredContext: s.inferredContext ?? undefined,
   };
 }

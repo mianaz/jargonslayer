@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../route";
 import { PROFILE_HINT_MAX_CHARS } from "@jargonslayer/core/llm/profileHint";
+import { MEETING_CONTEXT_MAX_CHARS } from "@jargonslayer/core/types";
 import { allowDailyBudget, resetRateLimiter } from "@/lib/llm/rateLimit";
 
 function makeRequest(body: unknown, headers: Record<string, string> = {}): Request {
@@ -55,6 +56,62 @@ describe("POST /api/detect — profile field passthrough (#48 step 3)", () => {
   it("accepts a profile string at exactly PROFILE_HINT_MAX_CHARS", async () => {
     const res = await POST(
       makeRequest({ context: "", new_text: "hi", profile: "x".repeat(PROFILE_HINT_MAX_CHARS) }),
+    );
+    expect(res.status).not.toBe(400);
+  });
+});
+
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — same threading
+// contract/test shape as the profile block above: `meetingContext`
+// just needs to survive zod validation and reach
+// buildDetectUserMessage's MEETING CONTEXT splice.
+describe("POST /api/detect — meetingContext field passthrough (auto meeting-context detection)", () => {
+  it("accepts a request with a meetingContext string (fails later for lack of a key, not schema validation)", async () => {
+    const res = await POST(
+      makeRequest({
+        context: "",
+        new_text: "We need to circle back on this.",
+        meetingContext: "生物信息学组会，面向研究生",
+      }),
+    );
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.code).toBe("no_key");
+  });
+
+  it("accepts a request with no meetingContext field at all (field is optional, same as `profile`)", async () => {
+    const res = await POST(
+      makeRequest({ context: "", new_text: "We need to circle back on this." }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  // F2 fix (field-test batch C): MEETING_CONTEXT_MAX_CHARS is the SAME
+  // exported constant (@jargonslayer/core/types) this route's own zod
+  // schema, inferContext.ts's sanitize clamp, the header chip's input
+  // maxLength, and the store's defensive clamp all import — a
+  // hardcoded 80/81 here could silently drift out of sync with it.
+  it("rejects a meetingContext string over MEETING_CONTEXT_MAX_CHARS with 400 bad_request", async () => {
+    const res = await POST(
+      makeRequest({
+        context: "",
+        new_text: "hi",
+        meetingContext: "x".repeat(MEETING_CONTEXT_MAX_CHARS + 1),
+      }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.code).toBe("bad_request");
+  });
+
+  it("accepts a meetingContext string at exactly MEETING_CONTEXT_MAX_CHARS", async () => {
+    const res = await POST(
+      makeRequest({
+        context: "",
+        new_text: "hi",
+        meetingContext: "x".repeat(MEETING_CONTEXT_MAX_CHARS),
+      }),
     );
     expect(res.status).not.toBe(400);
   });

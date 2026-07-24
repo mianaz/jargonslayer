@@ -35,6 +35,13 @@ export interface SchedulerOptions {
   // F1 review-round fix — was added alongside this one; see retryAi()'s
   // own doc comment.
   getMeetingGen: () => number;
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection"): read at batch-dispatch
+  // time, same as getSettings/getMeetingGen above. Optional so existing/
+  // test callers that don't pass it keep compiling unchanged; a null
+  // (or absent-accessor) return means "no context inferred yet",
+  // exactly like today's behavior.
+  getMeetingContext?: () => string | null;
   // meta.batchWindowStart (llm responses only): when this batch began
   // accumulating — forwarded to mergeDetections as
   // llmCountSuppressSince so floor-counted occurrences aren't counted
@@ -414,8 +421,14 @@ export class DetectionScheduler {
   private async attemptDetect(batch: Batch): Promise<void> {
     const settings = this.opts.getSettings();
     try {
+      const meetingContext = this.opts.getMeetingContext?.();
       const res = await detectApi(
-        { context: batch.context, new_text: batch.new_text, model: resolveTaskCreds(settings, "detect").model },
+        {
+          context: batch.context,
+          new_text: batch.new_text,
+          model: resolveTaskCreds(settings, "detect").model,
+          ...(meetingContext ? { meetingContext } : {}),
+        },
         settings,
       );
 

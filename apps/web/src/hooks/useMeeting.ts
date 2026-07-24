@@ -18,6 +18,8 @@ import { ENGINE_CAPABILITIES, resolveTabAudioCloudProvider, type LiveEngineKind 
 import * as liveDraft from "../lib/history/liveDraft";
 import { IS_DESKTOP } from "../lib/platform/desktop";
 import { initDesktop } from "../lib/desktop/bootstrap";
+import { inferContextApi } from "../lib/llm/client";
+import { resolveTaskCreds } from "../lib/llm/taskConfig";
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
@@ -128,6 +130,112 @@ async function preflightManagedSidecar(): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+// ---------------------------------------------------------------
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — once enough transcript
+// accumulates, a one-shot (plus one retry, plus one later refresh)
+// cheap LLM call infers the meeting's domain/context, which then
+// threads into every subsequent detect call (see scheduler.ts's
+// getMeetingContext / DetectRequest.meetingContext). The actual
+// dispatch lives in the effect inside useMeeting() below (imperative:
+// async call + store writes); the THRESHOLD/GATE decision is pulled
+// out here as a pure function so it's directly unit-testable without
+// mounting this hook — same "pure helper exported alongside the hook"
+// posture as logAndToastError/ridesManagedSidecar above.
+// ---------------------------------------------------------------
+
+/** Cumulative final-segment chars at which a fresh meeting fires its
+ *  first context-inference attempt — deliberately past the opening
+ *  logistics chatter. */
+export const CONTEXT_INITIAL_CHARS = 1200;
+/** One retry, only if the first attempt failed or came back empty. */
+export const CONTEXT_RETRY_CHARS = 1800;
+/** One later refresh of an already-inferred context, once topics have
+ *  had room to settle past the intros. */
+export const CONTEXT_REFRESH_CHARS = 7000;
+
+export type ContextTriggerAction = "initial" | "retry" | "refresh";
+
+export interface ContextTriggerState {
+  /** Meeting actually live (connecting/listening/paused) — false while
+   *  idle/stopped, e.g. browsing a loaded HISTORY session (loadSession
+   *  sets status:"stopped"), so auto-inference never fires there. */
+  live: boolean;
+  aiDetect: boolean;
+  cumulativeChars: number;
+  inferredContext: string | null;
+  contextOverride: boolean;
+  contextAttempts: number;
+  contextRefreshed: boolean;
+}
+
+/** Pure threshold/gate decision (attempt thresholds 1200/1800, one-shot
+ *  refresh at 7000, aiDetect gate, override-is-a-hard-stop). Returns
+ *  which action (if any) the caller should dispatch right now — never
+ *  itself touches the in-flight latch/store/meetingGen, all of which
+ *  are the calling effect's own job. `contextOverride` gates EVERY
+ *  action, not just refresh: once the user has set (or cleared) the
+ *  context by hand, auto-inference stops for the rest of the meeting —
+ *  including a user-cleared (null) override, which must NOT be
+ *  reinterpreted as "still needs an initial guess". */
+export function decideContextTrigger(state: ContextTriggerState): ContextTriggerAction | null {
+  if (!state.live || !state.aiDetect || state.contextOverride) return null;
+
+  if (state.inferredContext !== null) {
+    if (!state.contextRefreshed && state.cumulativeChars >= CONTEXT_REFRESH_CHARS) {
+      return "refresh";
+    }
+    return null;
+  }
+
+  if (state.contextAttempts === 0 && state.cumulativeChars >= CONTEXT_INITIAL_CHARS) {
+    return "initial";
+  }
+  if (state.contextAttempts === 1 && state.cumulativeChars >= CONTEXT_RETRY_CHARS) {
+    return "retry";
+  }
+  return null;
+}
+
+/** Sum of final-segment text lengths — the cumulative-chars gate
+ *  decideContextTrigger reads. Mirrors tasks/correct.ts's identical
+ *  totalSegmentChars helper (kept as its own copy rather than a shared
+ *  import — this hooks-layer file has no business reaching into
+ *  apps/web's llm/tasks layer for one line of arithmetic). */
+export function sumFinalTextLength(segments: { text: string }[]): number {
+  let total = 0;
+  for (const s of segments) total += s.text.length;
+  return total;
+}
+
+/** The excerpt actually sent to the model: final-segment text
+ *  concatenated in speaking order, capped at `cap` chars. The SAME cap
+ *  used for the threshold that fired this dispatch (1200/1800/7000) —
+ *  a bigger cap on the retry/refresh gives the model more room to work
+ *  with, precisely because more transcript has accumulated by the time
+ *  either fires. */
+export function buildContextExcerpt(segments: { text: string }[], cap: number): string {
+  return segments
+    .map((s) => s.text)
+    .join("\n")
+    .slice(0, cap);
+}
+
+/** Async-resolution guard (gen-mismatch drop / override-at-write-time
+ *  drop): a dispatched call's result is dropped when a NEW meeting has
+ *  since begun (gen mismatch) or the user has since set/cleared an
+ *  override while the call was in flight — the meetingGen check alone
+ *  can't catch the second case (same meeting, still current gen, but
+ *  the user's own hand-typed value must win over a late-landing
+ *  guess). */
+export function shouldDropContextResult(
+  dispatchGen: number,
+  currentGen: number,
+  contextOverrideNow: boolean,
+): boolean {
+  return dispatchGen !== currentGen || contextOverrideNow;
 }
 
 export interface UseMeetingResult {
@@ -613,6 +721,10 @@ export function useMeeting(): UseMeetingResult {
     const scheduler = new DetectionScheduler({
       getSettings: () => useApp.getState().settings,
       getMeetingGen: () => useApp.getState().meetingGen,
+      // Auto meeting-context detection (field request: "need AI to
+      // auto detect the context for better detection") — see the
+      // trigger effect further down for how this gets populated.
+      getMeetingContext: () => useApp.getState().inferredContext,
       onDetection: (res, src, meta) => useApp.getState().applyDetection(res, src, meta),
       onBusyChange: (b) => useApp.getState().setDetectBusy(b),
       onModeChange: (m) => useApp.getState().setDetectMode(m),
@@ -992,6 +1104,95 @@ export function useMeeting(): UseMeetingResult {
     const id = setInterval(tick, liveDraft.DRAFT_WRITE_INTERVAL_MS);
     return () => clearInterval(id);
   }, [status, engine]);
+
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — see
+  // decideContextTrigger above for the pure threshold/gate logic this
+  // effect just dispatches against. In-flight latch is a REF (not
+  // store state) so an overlapping effect re-run while a call is still
+  // pending can't double-dispatch — same posture as draftWritingRef
+  // above. Keyed on `segments` (not settings.aiDetect/status too):
+  // every transition that matters for `live`/aiDetect gating is already
+  // accompanied by a `segments` reference change (beginMeeting/
+  // newMeeting reset it, loadSession replaces it), and a mid-meeting
+  // settings toggle is picked up on the very next final segment — same
+  // lazy-settings-read posture the scheduler itself already has.
+  // F3 fix (field-test batch C, Sol M2): ALSO keyed on `contextAttempts`
+  // — an in-flight initial attempt that settles empty/rejected
+  // (bumpContextAttempts, below) must re-evaluate the decision
+  // immediately on settlement, not wait for the NEXT final segment —
+  // otherwise a retry threshold already crossed during the in-flight
+  // window sits unfired until (if ever) more transcript arrives.
+  const contextAttempts = useApp((s) => s.contextAttempts);
+  const contextInFlightRef = useRef(false);
+  useEffect(() => {
+    if (contextInFlightRef.current) return;
+    const state = useApp.getState();
+    const { settings, meetingGen, status: liveStatus, inferredContext, contextOverride, contextRefreshed } =
+      state;
+    const action = decideContextTrigger({
+      live: liveStatus === "connecting" || liveStatus === "listening" || liveStatus === "paused",
+      aiDetect: settings.aiDetect,
+      cumulativeChars: sumFinalTextLength(segments),
+      inferredContext,
+      contextOverride,
+      contextAttempts,
+      contextRefreshed,
+    });
+    if (!action) return;
+
+    const cap =
+      action === "initial"
+        ? CONTEXT_INITIAL_CHARS
+        : action === "retry"
+          ? CONTEXT_RETRY_CHARS
+          : CONTEXT_REFRESH_CHARS;
+    const excerpt = buildContextExcerpt(segments, cap);
+    const dispatchGen = meetingGen;
+    contextInFlightRef.current = true;
+    // The refresh is a one-shot latch regardless of outcome — set at
+    // DISPATCH time (not on resolve), so a failed/slow refresh call is
+    // never retried again this meeting (decideContextTrigger's own
+    // "ONE refresh" contract means one ATTEMPT, not one success).
+    if (action === "refresh") {
+      useApp.getState().markContextRefreshed();
+    }
+
+    inferContextApi(
+      { excerpt, lang: settings.explainLanguage, model: resolveTaskCreds(settings, "detect").model },
+      settings,
+    )
+      .then((res) => {
+        contextInFlightRef.current = false;
+        const now = useApp.getState();
+        if (shouldDropContextResult(dispatchGen, now.meetingGen, now.contextOverride)) return;
+        if (res.context) {
+          now.setInferredContext(res.context);
+        } else if (action !== "refresh") {
+          // Initial/retry counts an empty result as a failed attempt so
+          // the retry/give-up gate above can advance; the refresh's one
+          // shot is already consumed above regardless of outcome, and
+          // an empty refresh must never CLEAR an already-good context.
+          now.bumpContextAttempts();
+        }
+      })
+      .catch((err) => {
+        contextInFlightRef.current = false;
+        diagLog(
+          "warn",
+          "detect-context",
+          "会议背景推断失败",
+          err instanceof Error ? err.message : undefined,
+        );
+        // Same gen guard as the resolve branch above — a stale
+        // rejection for a meeting that has since ended (meetingGen
+        // moved on) must not consume an attempt from whatever NEW
+        // meeting is live now.
+        if (action !== "refresh" && dispatchGen === useApp.getState().meetingGen) {
+          useApp.getState().bumpContextAttempts();
+        }
+      });
+  }, [segments, contextAttempts]);
 
   return { start, pause, resume, stop, startDemo };
 }
