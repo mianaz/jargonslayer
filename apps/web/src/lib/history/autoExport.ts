@@ -31,7 +31,14 @@ import { readSecrets, writeSecret, type SecretName } from "../desktop/secret";
 // edge (no cycle): addPackSource/addPackFromManifest reinstall a
 // url-backed/file-backed pack on restore, through the SAME validation +
 // caps a fresh install goes through.
-import { addPackFromManifest, addPackSource, listPackSources, type RemotePackSource } from "../detect/remotePacks";
+import {
+  addPackFromManifest,
+  addPackSource,
+  isAllowedPackUrl,
+  listPackSources,
+  MAX_PACK_COUNT,
+  type RemotePackSource,
+} from "../detect/remotePacks";
 import type { LoadedRemotePack } from "@jargonslayer/core/detect/remotePacksRegistry";
 import { diagLog } from "../diag/log";
 
@@ -443,11 +450,20 @@ function parseBackup(json: string): BackupShape {
  *  whatever the exporter's "不包含 API Key" checkbox happened to be set
  *  to at export time (a file could have been hand-edited, or exported
  *  by an older build) — the confirm copy should describe what this
- *  FILE actually contains, not what a checkbox once claimed. */
+ *  FILE actually contains, not what a checkbox once claimed.
+ *
+ *  M3 fix (adversarial review): `packSources` is now part of the
+ *  preview too — restoring silently makes the browser fetch N
+ *  attacker-chosen URLs (every url-backed row is refetched), and this
+ *  used to never tell the user the file contains packs at all. This is
+ *  the RAW row count in the file (not yet capped at MAX_PACK_COUNT —
+ *  see restoreFullBackup below), so the confirm step can be honest
+ *  about how many install attempts the file actually asks for. */
 export function previewBackup(json: string): {
   sessions: number;
   entries: number;
   learnset: number;
+  packSources: number;
   hasSettings: boolean;
   hasApiKey: boolean;
 } {
@@ -458,10 +474,12 @@ export function previewBackup(json: string): {
     parsed.learnset && typeof parsed.learnset === "object"
       ? Object.keys(parsed.learnset).length
       : 0;
+  const packSourceCount = Array.isArray(parsed.packSources) ? parsed.packSources.length : 0;
   return {
     sessions: sessions.length,
     entries: entries.length,
     learnset: learnsetCount,
+    packSources: packSourceCount,
     hasSettings: !!parsed.settings,
     hasApiKey: !!parsed.settings?.apiKey,
   };
@@ -584,7 +602,15 @@ export function sanitizeRestoredCustomPack(raw: unknown): CustomPack | null {
  *  validation (length caps, https-only URL fields, minAppVersion gate,
  *  etc.) exactly once, inside addPackFromManifest's own validateManifest
  *  + size-cap pipeline on restore (restoreFullBackup below) — never
- *  specially trusted just because it arrived inside a backup file. */
+ *  specially trusted just because it arrived inside a backup file.
+ *
+ *  N1 fix (adversarial review): a url row is now ALSO required to pass
+ *  isAllowedPackUrl (https-only, no embedded credentials) — the same
+ *  gate remotePacks.ts's own fetchManifestRaw enforces at the actual
+ *  network chokepoint (defense in depth: dropping it HERE means a
+ *  crafted backup's data:/http:/loopback url never even counts toward
+ *  packSourcesAccepted, rather than counting as "attempted" and then
+ *  failing downstream). */
 export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
@@ -595,6 +621,7 @@ export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry 
   if (typeof r.packVersion !== "string" && typeof r.packVersion !== "number") return null;
 
   const url = typeof r.url === "string" && r.url.trim().length > 0 ? r.url.trim() : undefined;
+  if (url && !isAllowedPackUrl(url)) return null;
   // A url-backed entry is refetched on restore — nothing else to check
   // here. A file-backed entry (no url) IS its only copy, so it needs at
   // least an object-shaped `manifest` to be worth attempting at all;
@@ -719,7 +746,18 @@ export async function restoreFullBackup(json: string): Promise<{
   // would be on first import, never specially trusted just because it
   // arrived inside a backup file. Absent on a pre-T7 backup -> 0 pack
   // sources restored, nothing else touched.
-  const packSourceRows = Array.isArray(parsed.packSources) ? parsed.packSources : [];
+  //
+  // M3 fix (adversarial review): capped at MAX_PACK_COUNT BEFORE the
+  // loop below — this array used to be walked unbounded, each url-
+  // backed row a serial ~10s-timeout fetch; a backup with hundreds of
+  // rows aimed at an unreachable host could hang 恢复 for tens of
+  // minutes with no cancel. installValidatedPack's own cap would
+  // eventually reject any install past MAX_PACK_COUNT anyway, but only
+  // AFTER paying for every fetch up to that point.
+  const packSourceRows = (Array.isArray(parsed.packSources) ? parsed.packSources : []).slice(
+    0,
+    MAX_PACK_COUNT,
+  );
   let packSourcesAccepted = 0;
   for (const rawSource of packSourceRows) {
     const entry = sanitizeRestoredPackSource(rawSource);

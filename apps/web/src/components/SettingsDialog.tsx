@@ -26,10 +26,11 @@ import {
   addPackSource,
   checkUpdates,
   classifyPackOrigin,
+  compareSemver,
   listPackSources,
   loadRemotePacksIntoRegistry,
+  MAX_PACK_BYTES,
   removePackSource,
-  type AddPackSourceOptions,
   type RemotePackSource,
 } from "@/lib/detect/remotePacks";
 import { toRawGithubUrl } from "@/lib/detect/githubUrl";
@@ -973,6 +974,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     sessions: number;
     entries: number;
     learnset: number;
+    // M3 fix (adversarial review): so the confirm step can disclose
+    // that the file contains packs at all — restoring makes the
+    // browser fetch every url-backed row.
+    packSources: number;
     hasSettings: boolean;
     hasApiKey: boolean;
   } | null>(null);
@@ -1258,6 +1263,23 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // live scanDictionary() registry as soon as the app loads, even if
   // the user never opens this dialog. Mirrors the dictionary.ts
   // registry-pattern comment (see setEnabledPacks there).
+  //
+  // SEPARATE bug fix (adversarial review, v0.6 dictpacks fix round):
+  // this used to run with `[]` deps, i.e. exactly once, using whatever
+  // `settings.enabledPacks` was in the closure at THAT render. But this
+  // dialog is mounted by page.tsx BEFORE store.hydrate() (async)
+  // resolves (#62/tag-blocker 1's own well-documented hazard), so the
+  // very first run always saw DEFAULT_SETTINGS.enabledPacks — and with
+  // an empty deps array never re-ran once hydrate() published the REAL
+  // persisted selection. The detector registry (setEnabledPacks here)
+  // and the ASR bias hint (buildMeetingLexicon, which reads the live
+  // store directly) would then permanently disagree about which packs
+  // are on for the whole session. `hydrated`/`settings.enabledPacks` in
+  // the deps array make this re-run once hydration actually publishes
+  // the persisted value (and again on any later change, e.g. 保存 or a
+  // backup restore) — loadRemotePacksIntoRegistry/listPackSources
+  // re-running alongside it is a harmless no-op/re-fetch, not a new
+  // side effect (see their own docs).
   useEffect(() => {
     setEnabledPacks(settings.enabledPacks);
     // Remote packs (#20): bootstrapped here, unconditionally on app
@@ -1281,7 +1303,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     });
     void listPackSources().then(setPackSources);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hydrated, settings.enabledPacks]);
 
   // v0.6 T6: 词典库 catalog browse — lazy-fetched only once the AI 检测
   // category is actually visible (never on dialog mount, unlike the
@@ -1320,6 +1342,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setThemeEditor(null);
       setThemeImportOpen(false);
       setThemeImportText("");
+      // L1 fix (adversarial review): exactly the same "don't leak a
+      // previous open's transient panel state into a fresh one" reason
+      // as the theme importer three lines above.
+      setPackInstallError(null);
+      setPackImportOpen(false);
+      setPackImportText("");
       // FINDING 5 (S14 fix round): a 测试连接 result from a PREVIOUS
       // dialog-open must never survive into a fresh one — the freshly
       // re-seeded draft above may no longer be what was last tested.
@@ -1676,47 +1704,6 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const nonCorePackIds = allPacks.filter((p) => p.id !== "core").map((p) => p.id);
   const allPacksChecked = nonCorePackIds.every((id) => checkedPacks.has(id));
   const packEntryCounts = packCounts();
-  // v0.6 T4: the SAME enabledPacks-from-checkedPacks materialization
-  // handleSave (below) computes at 保存 time, hoisted so
-  // packInstallOptions can reuse it verbatim (see that function's own
-  // doc comment for why) — the two must never independently drift.
-  const checkedEnabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
-
-  // v0.6 T4: shared install-completion wiring for every pack-install
-  // path below (URL/file/paste/词典库's own 安装/更新) — see
-  // AddPackSourceOptions' own doc comment (remotePacks.ts). Two
-  // deliberate choices here, both mirroring handleImportThemeJson's own
-  // established write-through-bypasses-draft posture (customThemes/
-  // uiMode — see handleSave's own comment on that a few lines down),
-  // not the normal patch()/draft flow every hand-edited field uses:
-  //  1. onEnabledPacksChange writes straight through updateSettings
-  //     rather than patch()-ing the draft: draft.enabledPacks is never
-  //     actually read at 保存 (handleSave recomputes `enabledPacks`
-  //     from checkedPacks, exactly like checkedEnabledPacks above) — a
-  //     patch() here would be silently discarded. Writing straight
-  //     through means the fix (a newly-installed pack's commonWord
-  //     entries not going live indiscriminately) lands immediately,
-  //     even if the user closes the dialog without ever clicking 保存
-  //     — the same "installing/importing something is its own atomic,
-  //     immediately-persisted action" contract theme CRUD already has.
-  //  2. currentEnabledPacks is checkedEnabledPacks (this dialog's live,
-  //     possibly-unsaved checkbox state), NOT
-  //     useApp.getState().settings.enabledPacks (last-SAVED state).
-  //     Using the last-saved value would silently discard an
-  //     in-progress, not-yet-saved uncheck made earlier in this same
-  //     dialog session the moment a pack install's write-through lands.
-  //  3. onEnabledPacksChange ALSO syncs checkedPacks to the newly
-  //     materialized list — required, not cosmetic: handleSave's own
-  //     recomputation reads checkedPacks, so without this a later 保存
-  //     click in the same session would silently narrow enabledPacks
-  //     back down and undo the write this just made.
-  const packInstallOptions = (): AddPackSourceOptions => ({
-    currentEnabledPacks: checkedEnabledPacks,
-    onEnabledPacksChange: (next) => {
-      updateSettings({ enabledPacks: next });
-      setCheckedPacks(new Set(next));
-    },
-  });
 
   const handleAddPackSource = async () => {
     const rawUrl = packSourceUrl.trim();
@@ -1729,7 +1716,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
     setAddingPackSource(true);
     try {
-      const { pack } = await addPackSource(url, packInstallOptions());
+      const { pack } = await addPackSource(url);
       setPackSources(await listPackSources());
       setPackSourceUrl("");
       showToast(`已添加词典包「${pack.name}」`);
@@ -1745,7 +1732,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // JSON.parse-then-validate split, but addPackFromManifest (unlike
   // parseTheme) never throws — it always resolves {ok, ...}, so there's
   // no separate try/catch needed for the install half itself.
+  // N4(b) fix (adversarial review): the raw string's UTF-8 byte length
+  // is checked BEFORE JSON.parse — addPackFromManifest itself already
+  // enforces MAX_PACK_BYTES, but only after parsing an oversized paste.
   const handleImportPackJson = async (raw: string) => {
+    if (new TextEncoder().encode(raw).length > MAX_PACK_BYTES) {
+      setPackInstallError("词典包过大：单个词典包不能超过 2 MB");
+      return;
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -1754,7 +1748,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       return;
     }
     setPackInstallError(null);
-    const result = await addPackFromManifest(parsed, packInstallOptions());
+    const result = await addPackFromManifest(parsed);
     if (!result.ok) {
       setPackInstallError(result.error);
       return;
@@ -1765,7 +1759,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     showToast(`已导入词典「${result.pack.name}」`);
   };
 
+  // N4(a) fix (adversarial review): File.size is checked BEFORE
+  // file.text() — buffering an oversized file into memory first, cap or
+  // not, is the exact thing this is meant to avoid.
   const handleImportPackFile = async (file: File) => {
+    if (file.size > MAX_PACK_BYTES) {
+      setPackInstallError("词典包过大：单个词典包不能超过 2 MB");
+      return;
+    }
     const text = await file.text();
     await handleImportPackJson(text);
   };
@@ -1782,7 +1783,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
     setInstallingCatalogId(row.id);
     try {
-      const { pack } = await addPackSource(url, packInstallOptions());
+      const { pack } = await addPackSource(url);
       setPackSources(await listPackSources());
       showToast(`已安装词典「${pack.name}」`);
     } catch (err) {
@@ -1792,11 +1793,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
-  // Renamed param url -> identifier (v0.6 T5/GOTCHA): removePackSource
-  // itself already documents accepting either shape — see its own doc
-  // comment (remotePacks.ts) — this just names that explicitly. Callers
-  // pass `s.url || s.pack.id`.
-  const handleRemovePackSource = async (identifier: string) => {
+  // N7(d) fix (adversarial review): removePackSource itself now takes a
+  // DISCRIMINATED (url, packId) pair instead of one overloaded string —
+  // see that function's own doc (remotePacks.ts) for why a merged
+  // "s.url || s.pack.id" string can ambiguously match two different
+  // sources. This handler takes the whole source so both fields are
+  // always available; `identifier` (still `s.url || s.pack.id`) is kept
+  // ONLY for the confirm-then-click UI state / React key, which doesn't
+  // need to be collision-proof the way the actual delete call does.
+  const handleRemovePackSource = async (source: RemotePackSource) => {
+    const identifier = source.url || source.pack.id;
     if (confirmRemovePackId !== identifier) {
       setConfirmRemovePackId(identifier);
       setTimeout(() => {
@@ -1804,9 +1810,34 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       }, 3000);
       return;
     }
-    await removePackSource(identifier);
+    const removed = await removePackSource(source.url, source.pack.id);
     setPackSources(await listPackSources());
     setConfirmRemovePackId(null);
+    // N7(b) fix: report success/failure honestly instead of always
+    // toasting success regardless of whether the write actually landed.
+    if (!removed) {
+      showToast("移除词典包失败，请重试");
+      return;
+    }
+    const packId = source.pack.id;
+    // Drop the removed pack id from the LIVE draft checkbox state so it
+    // can't linger — a stale checked id would silently apply to some
+    // future pack that happens to reuse this id.
+    setCheckedPacks((prev) => {
+      if (!prev.has(packId)) return prev;
+      const next = new Set(prev);
+      next.delete(packId);
+      return next;
+    });
+    // ...and from the PERSISTED selection too, but only when it's
+    // already an explicit list — `enabledPacks: null` has nothing to
+    // clean up, and turning it explicit here would resurrect the exact
+    // commonWord-suppression bug the materializeEnabledPacks revert
+    // (H1/H2) just fixed.
+    const persisted = useApp.getState().settings.enabledPacks;
+    if (persisted !== null && persisted.includes(packId)) {
+      updateSettings({ enabledPacks: persisted.filter((pid) => pid !== packId) });
+    }
     showToast("已移除词典包");
   };
 
@@ -1814,11 +1845,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setCheckingUpdates(true);
     try {
       const updatedIds = await checkUpdates();
-      setPackSources(await listPackSources());
+      // L5 fix (adversarial review): read the REFRESHED list for the
+      // per-source report — the old code read the pre-refresh
+      // `packSources` closure, so a toast right after updating could
+      // still say "已是最新版本" for the pack it just updated.
+      const freshSources = await listPackSources();
+      setPackSources(freshSources);
       if (url) {
         // Per-source button: only report on whether this one source
         // changed, even though checkUpdates() refreshes every source.
-        const source = packSources.find((s) => s.url === url);
+        const source = freshSources.find((s) => s.url === url);
         const changed = source ? updatedIds.includes(source.pack.id) : false;
         showToast(changed ? "已更新到最新版本" : "已是最新版本");
       } else {
@@ -1892,11 +1928,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       normalizedTaskLlm = { ...normalizedTaskLlm, [domain]: { ...override, baseUrl: normalized } };
     }
 
-    // v0.6 T4: same value as checkedEnabledPacks above (hoisted so
-    // packInstallOptions can reuse it too) — kept as its own local here
-    // since renaming every reference below to the hoisted name would
-    // widen this diff for no behavior change.
-    const enabledPacks = checkedEnabledPacks;
+    const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
     // uiMode is deliberately excluded from `draft` — the header toggle
     // above writes it straight through updateSettings the moment it's
     // clicked (a view preference, not part of 保存's flow). `draft`
@@ -2354,8 +2386,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setRestoreError(null);
     const text = await file.text();
     try {
-      const { sessions, entries, learnset, hasSettings, hasApiKey } = previewBackup(text);
-      setRestorePreview({ text, sessions, entries, learnset, hasSettings, hasApiKey });
+      const { sessions, entries, learnset, packSources, hasSettings, hasApiKey } = previewBackup(text);
+      setRestorePreview({ text, sessions, entries, learnset, packSources, hasSettings, hasApiKey });
     } catch (err) {
       setRestorePreview(null);
       setRestoreError(err instanceof Error ? err.message : "备份文件解析失败");
@@ -4047,7 +4079,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   >
                     <div>
                       <div className="text-sm text-fg">
-                        {p.name}
+                        {/* N5 fix (adversarial review): an imported
+                           pack's name is untrusted remote content —
+                           <bdi> isolates it from bidi reordering so it
+                           can't visually swallow/reorder the 官方/已导入
+                           badge, which stays in its OWN sibling element
+                           either way (validateManifest also strips
+                           bidi/zero-width control chars at the source —
+                           this is a second, independent layer). */}
+                        <bdi>{p.name}</bdi>
                         {origin && (
                           <span
                             className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut"
@@ -4062,7 +4102,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                         )}
                       </div>
                       <div className="text-xs text-mut2">
-                        {p.description}（{packEntryCounts[p.id] ?? 0} 条）
+                        {/* H3(b) fix (adversarial review): a plain
+                           packEntryCounts[p.id] read turns an id of
+                           "__proto__" into an Object.prototype access
+                           ("Objects are not valid as a React child")
+                           instead of a real miss — validateManifest now
+                           rejects that id at install time (H3(a)), but
+                           this read-side hardening is defense in depth. */}
+                        {p.description}（{Object.hasOwn(packEntryCounts, p.id) ? packEntryCounts[p.id] : 0} 条）
                       </div>
                     </div>
                     <ToggleSwitch
@@ -4092,8 +4139,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="text-xs text-mut2">加载词典目录中…</div>
               )}
               {catalogStatus === "error" && (
-                <div className="text-xs leading-[1.7] text-mut2">
-                  暂时无法加载词典目录，可稍后重试或用下方链接手动添加
+                <div className="flex items-center justify-between gap-2 text-xs leading-[1.7] text-mut2">
+                  <span>暂时无法加载词典目录，可稍后重试或用下方链接手动添加</span>
+                  {/* L2 fix (adversarial review): catalogStatus never
+                     returned to "idle" on its own, so "可稍后重试" was
+                     unkeepable — resetting to "idle" re-arms the fetch
+                     effect's own "idle" gate above. */}
+                  <button
+                    type="button"
+                    onClick={() => setCatalogStatus("idle")}
+                    className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3"
+                  >
+                    重试
+                  </button>
                 </div>
               )}
               {catalogStatus === "loaded" && catalogPacks && catalogPacks.length === 0 && (
@@ -4103,8 +4161,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <div className="space-y-1.5">
                   {catalogPacks.map((row) => {
                     const installedSource = packSources.find((s) => s.pack.id === row.id);
-                    const upToDate =
-                      !!installedSource && String(installedSource.pack.version) === String(row.version);
+                    // L3/N6 fix (adversarial review): id-only + String()
+                    // equality used to (a) render 更新 pointing at the
+                    // catalog's official url even when the installed
+                    // pack under this id came from a DIFFERENT source
+                    // (e.g. the user's own fork), and (b) present a
+                    // semver-OLDER catalog entry as an "update" (a stale
+                    // catalog serving a downgrade). `upToDate` is
+                    // version-only (>=, real semver ordering — never
+                    // offer anything once the installed version already
+                    // meets or exceeds the catalog's); 更新 additionally
+                    // requires the installed SOURCE to be this same
+                    // catalog url — otherwise it's an honest fresh 安装
+                    // of the official pack, not a same-lineage update.
+                    const versionCmp = installedSource
+                      ? compareSemver(String(installedSource.pack.version), String(row.version))
+                      : null;
+                    const sameSource = !!installedSource && installedSource.url === row.url;
+                    const upToDate = versionCmp !== null && versionCmp >= 0;
+                    const offersUpdate = !upToDate && sameSource;
                     return (
                       <div
                         key={row.id}
@@ -4130,7 +4205,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                             ? "安装中…"
                             : upToDate
                               ? "已安装"
-                              : installedSource
+                              : offersUpdate
                                 ? "更新"
                                 : "安装"}
                         </button>
@@ -4296,7 +4371,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                             )}
                             <button
                               type="button"
-                              onClick={() => void handleRemovePackSource(id)}
+                              onClick={() => void handleRemovePackSource(s)}
                               className={`btn-tactile px-2 py-1 text-xs hover:bg-panel3 ${
                                 confirmRemovePackId === id ? "text-warn-soft" : "text-mut hover:text-warn-soft"
                               }`}
@@ -4604,6 +4679,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，同 ID 的已有会议将被覆盖）</li>
                     <li>个人词典：{restorePreview.entries} 条（按 ID 合并，规则同上）</li>
                     <li>学习记录：{restorePreview.learnset} 条（按记录合并，规则同上；备份不含此项时当前记录保持不变）</li>
+                    {/* M3 fix (adversarial review): disclose that the
+                       file contains dictionary packs at all — restoring
+                       makes the browser fetch every url-backed row. */}
+                    {restorePreview.packSources > 0 && (
+                      <li>词典包：{restorePreview.packSources} 个（url 来源将重新联网获取，请确认文件来源可信）</li>
+                    )}
                     <li>
                       设置：
                       {restorePreview.hasSettings

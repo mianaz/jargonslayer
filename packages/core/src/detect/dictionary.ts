@@ -17,7 +17,7 @@ import { EXTRA_EXPRESSIONS, EXTRA_TERMS } from "./dictionary-data";
 import { COMPILED_PACK_TERMS } from "./dictionary-packs-compiled";
 import { findEntryBySurface } from "../history/glossaryLookup";
 import { isPackEnabled } from "./packs";
-import { getLoadedRemotePacks } from "./remotePacksRegistry";
+import { getLoadedRemotePacks, getRemotePacksGeneration } from "./remotePacksRegistry";
 
 // ---------------------------------------------------------------
 // Dictionary entry shapes (internal — not part of the wire schema)
@@ -1046,15 +1046,29 @@ export function setGlossaryShadowLookup(
 /** Built-in + remote pack TERM entries (bare term string + pack id),
  *  filtered by isPackEnabled — the same universe scanDictionary's own
  *  term loop reads (minus personal-glossary shadowing, which doesn't
- *  apply here — this list feeds a BIAS hint, not the detector). The
- *  commonWord/enabledPacks===null guard is kept for the same reason
- *  scanDictionary applies it: a bias hint toward an everyday English
- *  word ("mean", "precision"...) is at best inert and at worst nudges
- *  the decoder the wrong way on ordinary speech. Expressions are NOT
- *  included — recognizer bias earns its keep on exact jargon/acronym
- *  recall; idiom phrasing is already well-modeled by the decoder's own
- *  LM (v0.4.7 Lane B, docs/design-explorations/stt-provider-wiring-
- *  2026-07.md §3/D3 — apps/web's lexicon.ts is the one consumer). */
+ *  apply here — this list feeds a BIAS hint, not the detector).
+ *
+ *  commonWord guard, exact semantics (v0.6 dictpacks fix round: this
+ *  doc used to be misread as "null -> commonWord entries fire", which
+ *  drove packs.ts's now-deleted materializeEnabledPacks into doing the
+ *  OPPOSITE of its intent — see that file's git history):
+ *    enabledPacks === null (default, "everything on") -> commonWord
+ *      entries are SUPPRESSED (the line below skips them).
+ *    enabledPacks is an explicit list (the user has actively
+ *      customized their pack selection, even one that doesn't mention
+ *      this pack at all) -> commonWord entries are treated like any
+ *      other term and CAN fire.
+ *  Rationale: a bias hint toward an everyday English word ("mean",
+ *  "precision"...) is at best inert and at worst nudges the decoder the
+ *  wrong way on ordinary speech under the default all-on state. See
+ *  scanDictionary's own term loop below for the matching (not just
+ *  bias-hint) guard, same semantics.
+ *
+ *  Expressions are NOT included — recognizer bias earns its keep on
+ *  exact jargon/acronym recall; idiom phrasing is already well-modeled
+ *  by the decoder's own LM (v0.4.7 Lane B, docs/design-explorations/
+ *  stt-provider-wiring-2026-07.md §3/D3 — apps/web's lexicon.ts is the
+ *  one consumer). */
 export function packTermsForBias(
   enabledPacks: string[] | null = registeredEnabledPacks,
 ): { term: string; pack: string }[] {
@@ -1101,6 +1115,60 @@ function splitSentences(text: string): string[] {
 }
 
 // ---------------------------------------------------------------
+// Compiled-regex cache (M4, adversarial review v0.6 dictpacks fix
+// round): scanDictionary used to build a fresh RegExp for every
+// entry+variant on EVERY call (it runs synchronously per finalized
+// transcript segment) — fine for the small built-in tables, but the
+// new remote-pack size caps sanction up to ~100k entries across 20
+// installed packs. Keyed by the raw candidate STRING, not the owning
+// entry: buildExpressionRegex/the term-candidate regex below are both
+// pure functions of that string alone, so two different entries that
+// happen to share a surface safely share one compiled RegExp, and a
+// cache miss just self-heals (a pack installed mid-session is
+// matchable immediately — no invalidation needed for CORRECTNESS).
+// Neither regex uses the "g"/"y" flags, so reusing a cached instance
+// across many exec()/test() calls is safe (no shared lastIndex state).
+//
+// Cleared wholesale whenever remotePacksRegistry's generation counter
+// changes (a pack install/remove/update) — this bounds cache SIZE over
+// a long session with many install/remove cycles (a removed pack's
+// surfaces would otherwise sit cached forever); it is not required for
+// correctness, since a stale-but-present entry for a surface that no
+// longer belongs to any loaded pack is simply never looked up again.
+// ---------------------------------------------------------------
+
+const expressionRegexCache = new Map<string, RegExp>();
+const termRegexCache = new Map<string, RegExp>();
+let cachedRemotePacksGeneration = -1;
+
+function refreshRegexCachesIfStale(): void {
+  const generation = getRemotePacksGeneration();
+  if (generation === cachedRemotePacksGeneration) return;
+  expressionRegexCache.clear();
+  termRegexCache.clear();
+  cachedRemotePacksGeneration = generation;
+}
+
+function getCachedExpressionRegex(phrase: string): RegExp {
+  let re = expressionRegexCache.get(phrase);
+  if (!re) {
+    re = buildExpressionRegex(phrase);
+    expressionRegexCache.set(phrase, re);
+  }
+  return re;
+}
+
+function getCachedTermRegex(candidate: string): RegExp {
+  let re = termRegexCache.get(candidate);
+  if (!re) {
+    const isAllCaps = /^[A-Z0-9&]+$/.test(candidate);
+    re = new RegExp(`\\b${escapeRe(candidate)}\\b`, isAllCaps ? "" : "i");
+    termRegexCache.set(candidate, re);
+  }
+  return re;
+}
+
+// ---------------------------------------------------------------
 // Remote packs (#53 core extraction): this package only ever READS
 // remotePacksRegistry.ts's in-memory cache — the actual fetch +
 // idb-keyval load is inherently impure/browser-only and lives in
@@ -1134,6 +1202,7 @@ export function scanDictionary(
   const expressions: DetectedExpression[] = [];
   const terms: DetectedTerm[] = [];
 
+  refreshRegexCachesIfStale();
   const remotePacks = getLoadedRemotePacks();
   const remoteExpressions: ExpressionEntry[] = remotePacks.flatMap((p) => p.expressions);
   const remoteTerms: TermEntry[] = remotePacks.flatMap((p) => p.terms);
@@ -1146,7 +1215,7 @@ export function scanDictionary(
     // pack-filtered (Finding 2 fix) — see shadowLookup's own doc above.
     if (shadowLookup(entry.expression)) continue;
     const candidates = [entry.expression, ...(entry.variants ?? [])];
-    const regexes = candidates.map(buildExpressionRegex);
+    const regexes = candidates.map(getCachedExpressionRegex);
     let matched = false;
     for (const sentence of sentences) {
       if (matched) break;
@@ -1172,12 +1241,14 @@ export function scanDictionary(
 
   for (const entry of [...TERM_DICTIONARY, ...remoteTerms]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
+    // commonWord guard, exact semantics (see packTermsForBias's own doc
+    // above for the full explanation of why this wording matters):
+    //   enabledPacks === null (default, "everything on") -> SUPPRESSED.
+    //   enabledPacks explicit (user has customized selection) -> FIRES.
     // A few compiled domain-pack terms are also everyday English words
-    // ("mean", "precision", "epoch"...). Under the default all-on state
-    // (enabledPacks === null) they'd fire on casual speech ("I mean...",
-    // "pay attention"), so they stay opt-in: matched only once the user
-    // has actively customized their pack selection (enabledPacks is an
-    // explicit list). Non-common terms are unaffected.
+    // ("mean", "precision", "epoch"...) that would otherwise fire on
+    // casual speech ("I mean...", "pay attention") under the default
+    // all-on state. Non-common terms are unaffected.
     if (entry.commonWord && enabledPacks === null) continue;
     // Same personal-glossary shadowing as the expressions loop above
     // (enabled-pack-filtered — Finding 2 fix).
@@ -1193,11 +1264,7 @@ export function scanDictionary(
     // emitted card always reports the entry's own headword
     // (entry.term), never the variant that actually matched.
     const candidates = [entry.term, ...(entry.variants ?? [])];
-    const hit = candidates.some((candidate) => {
-      const isAllCaps = /^[A-Z0-9&]+$/.test(candidate);
-      const re = new RegExp(`\\b${escapeRe(candidate)}\\b`, isAllCaps ? "" : "i");
-      return re.test(text);
-    });
+    const hit = candidates.some((candidate) => getCachedTermRegex(candidate).test(text));
     if (hit) {
       terms.push({
         term: entry.term,

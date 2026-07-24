@@ -441,6 +441,88 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         autoExport.sanitizeRestoredPackSource({ packId: "p3", packName: "No Manifest", packVersion: 1 }),
       ).toBeNull();
     });
+
+    it("N1 fix: sanitizeRestoredPackSource drops a row whose url is data:/http:/credentialed-https (the https-only gate must not live ONLY in the UI helper)", async () => {
+      const autoExport = await import("../autoExport");
+      const base = { packId: "p1", packName: "Sane Pack", packVersion: 1 };
+      expect(
+        autoExport.sanitizeRestoredPackSource({ ...base, url: "data:application/json,{}" }),
+      ).toBeNull();
+      expect(
+        autoExport.sanitizeRestoredPackSource({ ...base, url: "http://127.0.0.1:8766/pack.json" }),
+      ).toBeNull();
+      expect(
+        autoExport.sanitizeRestoredPackSource({ ...base, url: "http://192.168.1.1/pack.json" }),
+      ).toBeNull();
+      expect(
+        autoExport.sanitizeRestoredPackSource({ ...base, url: "https://user:pass@example.com/pack.json" }),
+      ).toBeNull();
+      // A genuinely valid https url still passes.
+      expect(
+        autoExport.sanitizeRestoredPackSource({ ...base, url: "https://example.com/pack.json" }),
+      ).not.toBeNull();
+    });
+
+    it("N1 fix: restoreFullBackup never fetches a data:/http:/loopback pack-source url — rejected before the row is ever attempted", async () => {
+      const autoExport = await import("../autoExport");
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const hostileBackup = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+        packSources: [
+          { packId: "p1", packName: "Data URL", packVersion: 1, url: "data:application/json,{}" },
+          { packId: "p2", packName: "Loopback", packVersion: 1, url: "http://127.0.0.1:8766/pack.json" },
+          { packId: "p3", packName: "LAN", packVersion: 1, url: "http://192.168.1.1/pack.json" },
+        ],
+      });
+
+      const result = await autoExport.restoreFullBackup(hostileBackup);
+      expect(result.packSources).toBe(0);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("M3 fix: caps the number of pack rows restore ever ATTEMPTS at MAX_PACK_COUNT, even when the backup carries far more — a black-holed host beyond the cap is never even fetched", async () => {
+      const autoExport = await import("../autoExport");
+      const remotePacks = await import("../../detect/remotePacks");
+      const rowCount = 25;
+      expect(rowCount).toBeGreaterThan(remotePacks.MAX_PACK_COUNT);
+
+      const packSourceRows = Array.from({ length: rowCount }, (_, i) => ({
+        packId: `restore-cap-${i}`,
+        packName: `Pack ${i}`,
+        packVersion: 1,
+        url: `https://example.com/restore-cap-${i}.json`,
+      }));
+      const backup = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+        packSources: packSourceRows,
+      });
+
+      const fetchMock = vi.fn(async (url: string) => ({
+        ok: true,
+        status: 200,
+        url,
+        redirected: false,
+        text: async () => JSON.stringify({ id: url.match(/restore-cap-\d+/)?.[0], name: "x", version: 1 }),
+      }));
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      const result = await autoExport.restoreFullBackup(backup);
+      expect(result.packSources).toBe(remotePacks.MAX_PACK_COUNT);
+      // The row-count cap is applied BEFORE the loop — rows past
+      // MAX_PACK_COUNT are never even fetched, not just never installed
+      // (which installValidatedPack's own cap would already guarantee,
+      // just AFTER paying for every fetch up to that point — the whole
+      // point of this fix).
+      expect(fetchMock).toHaveBeenCalledTimes(remotePacks.MAX_PACK_COUNT);
+    });
   });
 
   describe("learn-set record validation on restore (#48 s1 review item 4)", () => {
@@ -604,6 +686,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         sessions: 2,
         entries: 1,
         learnset: 1,
+        packSources: 0,
         hasSettings: true,
         hasApiKey: true,
       });
@@ -636,6 +719,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         sessions: 0,
         entries: 0,
         learnset: 0,
+        packSources: 0,
         hasSettings: false,
         hasApiKey: false,
       });
@@ -651,6 +735,21 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       const preview = autoExport.previewBackup(strippedJson);
       expect(preview.hasSettings).toBe(true);
       expect(preview.hasApiKey).toBe(false);
+    });
+
+    it("M3 fix: packSources reports the RAW row count in the file (not yet capped) so the confirm step can disclose the file contains packs at all", async () => {
+      const autoExport = await import("../autoExport");
+      const json = JSON.stringify({
+        schemaVersion: 1,
+        kind: "jargonslayer-backup",
+        sessions: [],
+        glossary: [],
+        packSources: [
+          { packId: "p1", packName: "P1", packVersion: 1, url: "https://example.com/p1.json" },
+          { packId: "p2", packName: "P2", packVersion: 1, url: "https://example.com/p2.json" },
+        ],
+      });
+      expect(autoExport.previewBackup(json).packSources).toBe(2);
     });
   });
 

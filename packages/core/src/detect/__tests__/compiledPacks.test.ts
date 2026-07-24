@@ -7,6 +7,9 @@ vi.mock("../../history/glossaryLookup", () => ({
 }));
 vi.mock("../remotePacksRegistry", () => ({
   getLoadedRemotePacks: vi.fn(() => []),
+  // M4 fix round: scanDictionary now also reads this for regex-cache
+  // invalidation — see dictionary.test.ts's own mock for the full doc.
+  getRemotePacksGeneration: vi.fn(() => 0),
 }));
 
 import { COMPILED_PACK_TERMS } from "../dictionary-packs-compiled";

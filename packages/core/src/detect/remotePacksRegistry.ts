@@ -58,8 +58,25 @@ export function getLoadedRemotePacks(): LoadedRemotePack[] {
   return registry;
 }
 
+// M4 fix (adversarial review, v0.6 dictpacks fix round): bumped every
+// setLoadedRemotePacks call. dictionary.ts's scanDictionary reads this
+// (getRemotePacksGeneration below) to know when its own compiled-regex
+// cache has gone stale, without this module needing to import/call back
+// into dictionary.ts — that would invert the existing one-way
+// dependency (dictionary.ts already imports FROM this file). Simpler
+// than the alternative ("have setLoadedRemotePacks clear the cache
+// directly").
+let generation = 0;
+
 /** Replace the registry wholesale — called by apps/web's remotePacks.ts
  *  after a successful load/add/remove/checkUpdates (see that file). */
 export function setLoadedRemotePacks(packs: LoadedRemotePack[]): void {
   registry = packs;
+  generation++;
+}
+
+/** Monotonically increasing counter, bumped on every setLoadedRemotePacks
+ *  call — see that function's own doc above. */
+export function getRemotePacksGeneration(): number {
+  return generation;
 }

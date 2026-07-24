@@ -111,36 +111,3 @@ export function getAllPacks(): DictPack[] {
   }));
   return [...PACKS, ...remotePacks];
 }
-
-/** v0.6 T3 fix: `commonWord` suppression (see dictionary.ts's term loop)
- *  only ever applies once enabledPacks is an explicit list — under the
- *  default `enabledPacks: null` ("everything on") it's a no-op, so an
- *  installed pack's everyday-word entries would fire on casual speech
- *  from the moment it's installed. The fix is to materialize `null`
- *  into an explicit list at install time; this is the pure computation
- *  for that, called from apps/web's remotePacks.ts (addPackSource) via
- *  an injected callback — see that file's AddPackSourceOptions — since
- *  this package has no access to live Settings itself.
- *
- *  - `currentEnabled === null`: materializes the FULL list (every
- *    built-in id + every already-installed remote id + the newly
- *    installed one), so the user's effective enabled set doesn't
- *    silently shrink just because it became explicit.
- *  - `currentEnabled` already explicit (the user has actively
- *    customized their selection): only `newId` is appended.
- *    allBuiltInIds/installedIds are deliberately ignored in this
- *    branch — re-adding them would resurrect packs the user already
- *    chose to disable.
- *
- *  Order-stable, deduped (Set preserves insertion order; an id already
- *  present keeps its original position). */
-export function materializeEnabledPacks(
-  currentEnabled: string[] | null,
-  allBuiltInIds: string[],
-  installedIds: string[],
-  newId: string,
-): string[] {
-  const source =
-    currentEnabled === null ? [...allBuiltInIds, ...installedIds, newId] : [...currentEnabled, newId];
-  return [...new Set(source)];
-}
