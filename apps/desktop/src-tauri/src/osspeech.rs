@@ -1201,9 +1201,16 @@ struct OsSpeechStatusEvent {
     /// for why that's safe: every event this module ever builds passes
     /// through it (via `emit_os_speech_status`) before reaching the wire.
     source: &'static str,
+    // skip_serializing_if: None must reach JS as an absent field
+    // (undefined), not JSON null — null slips past `?? / === undefined`
+    // guards on the TS side (the v0.5.0 diagLog crash on engine start).
+    #[serde(skip_serializing_if = "Option::is_none")]
     message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     progress: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     resolved_locale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     supported_locales: Option<Vec<String>>,
 }
 
