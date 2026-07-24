@@ -61,6 +61,7 @@ import type {
   TaskLlmConfig,
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
+import { isValidProxyUrl, normalizeProxyUrl } from "@/lib/proxyUrl";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS, IS_TAURI } from "@/lib/platform/ios";
 import { openExternal } from "@/lib/platform/openExternal";
@@ -669,46 +670,6 @@ function isValidBaseUrl(value: string): boolean {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
   if (url.search || url.hash || url.username || url.password) return false;
-  return true;
-}
-
-// W2 desktop proxy support — same trim + full-width→ASCII hygiene as
-// normalizeBaseUrl above (a sibling, not a shared/parameterized helper:
-// the two fields' validation rules genuinely diverge below — a proxy
-// URL's scheme set is wider and its userinfo is EXPECTED, not
-// rejected — so folding them into one parameterized function would
-// obscure that divergence for no real line-count win).
-function normalizeProxyUrl(raw: string): string {
-  const trimmed = raw.trim();
-  return trimmed
-    .replace(/：/g, ":")
-    .replace(/／/g, "/")
-    .replace(/．/g, ".")
-    .replace(/～/g, "~");
-}
-
-/** Empty stays allowed (= follow the system proxy, this field's own
- *  default). Scheme set is http/https/socks5/socks5h (a manual proxy —
- *  e.g. Clash's mixed port — commonly speaks either); userinfo
- *  (`user:pass@`) is DELIBERATELY allowed here, unlike isValidBaseUrl's
- *  own rejection of it, since a proxy URL is the one legitimate place
- *  Basic-auth credentials belong (tauri-plugin-http's own ProxyConfig
- *  forwards them as a `Proxy-Authorization` header, never sent to the
- *  proxy TARGET). "must have host" rejects a scheme-only value like
- *  `socks5://` (parses successfully but with an empty hostname) rather
- *  than silently handing tauri-plugin-http a hostless proxy config. */
-function isValidProxyUrl(value: string): boolean {
-  if (!value) return true;
-  if (/\s/.test(value)) return false;
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return false;
-  }
-  if (!["http:", "https:", "socks5:", "socks5h:"].includes(url.protocol)) return false;
-  if (!url.hostname) return false;
-  if (url.search || url.hash) return false;
   return true;
 }
 
@@ -2324,6 +2285,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     return !!resolveTaskCreds(draft, meta.domain).apiKey !== !!draft.apiKey;
   });
 
+  // F4 fix (field-test batch C, Sol M3): the desktop transport wrapper
+  // reads the SAVED settings.proxyUrl, not this draft — an unsaved
+  // proxy edit would otherwise be silently ignored by exactly the two
+  // actions (测试连接 / OpenRouter connect below) whose entire point is
+  // to verify connectivity through it. Desktop-only, same IS_DESKTOP
+  // gate the proxy field itself renders under.
+  const proxyDraftDirty =
+    IS_DESKTOP && normalizeProxyUrl(draft.proxyUrl) !== normalizeProxyUrl(settings.proxyUrl);
+  const proxyDraftDirtyHint = "代理设置已修改，保存后再测试/连接";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
@@ -3464,6 +3435,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   presets={PROVIDER_PRESETS}
                   onConnectOpenRouter={() => void handleConnectOpenRouter()}
                   connectingOpenRouter={connectingOpenRouter}
+                  connectDisabledHint={proxyDraftDirty ? proxyDraftDirtyHint : undefined}
                   models={[
                     {
                       key: "detect",
@@ -3545,7 +3517,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <input
                       type="text"
                       value={draft.proxyUrl}
-                      onChange={(e) => patch({ proxyUrl: e.target.value })}
+                      onChange={(e) => {
+                        patch({ proxyUrl: e.target.value });
+                        // F4 fix (field-test batch C, Sol M3): a stale
+                        // 测试连接 result must not keep reading as
+                        // authoritative once the proxy it was run
+                        // against no longer matches this draft.
+                        setTestConnectionOk(undefined);
+                      }}
                       placeholder="http://127.0.0.1:7890"
                       className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
                     />
@@ -3558,11 +3537,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 <button
                   type="button"
                   onClick={() => void handleTestConnection()}
-                  disabled={testingConnection}
+                  disabled={testingConnection || proxyDraftDirty}
                   className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {testingConnection ? "测试中…" : "测试连接"}
                 </button>
+                {proxyDraftDirty && (
+                  <div className="text-xs leading-[1.7] text-warn-soft">{proxyDraftDirtyHint}</div>
+                )}
 
                 {/* v0.4.5 ambient AI-status mirror (design doc
                    v045-ai-transparency-qc.md Part A) — the same

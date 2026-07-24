@@ -188,8 +188,18 @@ export type GetProxyUrlFn = () => string;
  *  form `new URL(...).hostname` actually produces for the IPv6
  *  loopback (verified below); the bare `::1` is kept too purely
  *  defensively, in case some future input shape ever hands this a raw
- *  (non-URL-parsed) hostname string instead. */
-const PROXY_LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+ *  (non-URL-parsed) hostname string instead.
+ *
+ *  F6 fix (field-test batch C, Sol M5): an exact-set membership test
+ *  (the old `PROXY_LOOPBACK_HOSTNAMES.has(...)`) missed every OTHER
+ *  127/8 address (e.g. `127.0.0.2` — a real shape: a local LLM server
+ *  bound to a loopback alias to avoid colliding with something else on
+ *  127.0.0.1) — the entire 127.0.0.0/8 block is loopback, not just the
+ *  one conventional address. */
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === "localhost" || hostname === "::1" || hostname === "[::1]") return true;
+  return /^127\.\d+\.\d+\.\d+$/.test(hostname);
+}
 
 function extractHostname(input: URL | Request | string): string | null {
   try {
@@ -213,19 +223,26 @@ function extractHostname(input: URL | Request | string): string | null {
  *  configuration reqwest feature) stays the only proxy path in effect,
  *  completely unaffected by this wrapper existing at all. A configured
  *  proxyUrl merges `ClientOptions.proxy.all` into the fetch init for
- *  every non-loopback target (see PROXY_LOOPBACK_HOSTNAMES above) —
- *  `noProxy` is set to the SAME loopback hosts as a second layer
- *  (reqwest's own bypass list), belt-and-suspenders alongside this
- *  wrapper's own pre-check rather than relying on either alone. */
+ *  every non-loopback target (see isLoopbackHostname above) — `noProxy`
+ *  is set to the SAME loopback range as a second layer (reqwest's own
+ *  bypass list — tauri-plugin-http's commands.rs feeds this straight
+ *  into `reqwest::NoProxy::from_string`, which supports CIDR notation,
+ *  verified in reqwest 0.12.28's own proxy.rs doc comment/source),
+ *  belt-and-suspenders alongside this wrapper's own pre-check rather
+ *  than relying on either alone. F6 fix (field-test batch C, Sol M5):
+ *  `127.0.0.1` alone omitted both the rest of 127/8 (now the `/8` CIDR
+ *  block, matching isLoopbackHostname's own widened pre-check) and
+ *  IPv6 loopback entirely (now `::1`, since reqwest's NoProxy matches
+ *  the bracket-free form for this entry type). */
 export function getProxiedTauriFetch(fetchFn: TauriFetchFn, getProxyUrl: GetProxyUrlFn): TauriFetchFn {
   return ((input: URL | Request | string, init?: RequestInit) => {
     const proxyUrl = getProxyUrl();
     if (!proxyUrl) return fetchFn(input, init);
     const hostname = extractHostname(input);
-    if (hostname !== null && PROXY_LOOPBACK_HOSTNAMES.has(hostname)) return fetchFn(input, init);
+    if (hostname !== null && isLoopbackHostname(hostname)) return fetchFn(input, init);
     const proxiedInit: RequestInit & TauriProxyOption = {
       ...init,
-      proxy: { all: { url: proxyUrl, noProxy: "localhost,127.0.0.1" } },
+      proxy: { all: { url: proxyUrl, noProxy: "localhost,127.0.0.0/8,::1" } },
     };
     return fetchFn(input, proxiedInit);
   }) as TauriFetchFn;

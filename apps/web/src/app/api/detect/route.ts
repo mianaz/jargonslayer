@@ -14,7 +14,7 @@ import { allowDailyBudget, allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { DEFAULT_DETECT_MODEL, runDetectTask } from "@/lib/llm/tasks/detect";
 import { PROFILE_HINT_MAX_CHARS } from "@jargonslayer/core/llm/profileHint";
 import { newRequestId } from "@/lib/diag/requestId";
-import type { ApiErrorBody, DetectResponse } from "@jargonslayer/core/types";
+import { MEETING_CONTEXT_MAX_CHARS, type ApiErrorBody, type DetectResponse } from "@jargonslayer/core/types";
 
 const BodySchema = z.object({
   context: z.string().max(4000),
@@ -29,10 +29,11 @@ const BodySchema = z.object({
   profile: z.string().max(PROFILE_HINT_MAX_CHARS).optional(),
   // Auto meeting-context detection (field request: "need AI to auto
   // detect the context for better detection") — same threading as
-  // `profile` above; tasks/inferContext.ts already hard-caps this at
-  // 80 chars before it's ever persisted/sent back to a client, so 80
-  // is enough here too.
-  meetingContext: z.string().max(80).optional(),
+  // `profile` above; MEETING_CONTEXT_MAX_CHARS is the SAME exported
+  // constant tasks/inferContext.ts's own sanitize clamp uses (F2 fix,
+  // field-test batch C — a manual chip edit past the old hardcoded 80
+  // here used to 400 every subsequent hosted detect call).
+  meetingContext: z.string().max(MEETING_CONTEXT_MAX_CHARS).optional(),
 });
 
 // Diagnostics (item 5): every error response carries a short

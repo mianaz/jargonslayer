@@ -6,7 +6,12 @@
 // resolveTaskCreds(settings, "detect") — same "no dedicated LLM task
 // domain" posture as tasks/correct.ts's own DEFAULT_CORRECT_MODEL).
 
-import type { ExplainLanguage, InferContextResponse, LlmProvider } from "@jargonslayer/core/types";
+import {
+  MEETING_CONTEXT_MAX_CHARS,
+  type ExplainLanguage,
+  type InferContextResponse,
+  type LlmProvider,
+} from "@jargonslayer/core/types";
 import {
   buildInferContextSystemPrompt,
   buildInferContextUserMessage,
@@ -17,12 +22,6 @@ import { InferContextResponseSchema, type ProviderCaller } from "../providerCore
 // doc comment for the full rationale (bare Anthropic ids 400 on
 // OpenRouter; DeepSeek's own OpenRouter slug is the new default).
 export const DEFAULT_INFER_CONTEXT_MODEL = "deepseek/deepseek-v4-flash";
-
-// Prompt asks for <=60 chars; hard-capped a bit above that so a
-// slightly-over-budget but otherwise valid reply still saves instead
-// of failing the whole request (same posture as tasks/define.ts's own
-// clamp constants).
-const CONTEXT_MAX_CHARS = 80;
 
 export interface InferContextTaskInput {
   apiKey: string;
@@ -54,5 +53,5 @@ export async function runInferContextTask(
   // trim) string is a valid "genuinely unclear" result per the
   // prompt's own rule 3 — callers treat "" as no result, nothing
   // special to do with it here.
-  return { context: raw.context.trim().slice(0, CONTEXT_MAX_CHARS) };
+  return { context: raw.context.trim().slice(0, MEETING_CONTEXT_MAX_CHARS) };
 }

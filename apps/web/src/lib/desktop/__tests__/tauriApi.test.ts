@@ -117,7 +117,7 @@ describe("getProxiedTauriFetch", () => {
     const [, init] = calls[0];
     expect(init).toMatchObject({
       method: "POST",
-      proxy: { all: { url: "http://127.0.0.1:7890", noProxy: "localhost,127.0.0.1" } },
+      proxy: { all: { url: "http://127.0.0.1:7890", noProxy: "localhost,127.0.0.0/8,::1" } },
     });
   });
 
@@ -133,6 +133,38 @@ describe("getProxiedTauriFetch", () => {
     for (const [, init] of calls) {
       expect(init).toBeUndefined();
     }
+  });
+
+  // F6 fix (field-test batch C, Sol M5): the old PROXY_LOOPBACK_HOSTNAMES
+  // exact-set only ever matched the ONE conventional 127.0.0.1 address —
+  // any other 127/8 alias (e.g. a local LLM server deliberately bound to
+  // 127.0.0.2 to avoid colliding with something else on .1) fell through
+  // to "not loopback" and got proxied anyway.
+  it("does NOT inject proxy for any other 127.0.0.0/8 loopback alias", async () => {
+    const { fetchFn, calls } = makeFakeFetch();
+    const proxied = getProxiedTauriFetch(fetchFn, () => "http://127.0.0.1:7890");
+
+    await proxied("http://127.0.0.2:8765/health");
+    await proxied("http://127.99.1.1:8765/health");
+
+    expect(calls).toHaveLength(2);
+    for (const [, init] of calls) {
+      expect(init).toBeUndefined();
+    }
+  });
+
+  // A plain (non-loopback) host must still go through the proxy — the
+  // widened 127/8 match must not accidentally swallow real hosts.
+  it("still proxies an ordinary remote host", async () => {
+    const { fetchFn, calls } = makeFakeFetch();
+    const proxied = getProxiedTauriFetch(fetchFn, () => "http://127.0.0.1:7890");
+
+    await proxied("https://api.anthropic.com/v1/messages");
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toMatchObject({
+      proxy: { all: { url: "http://127.0.0.1:7890", noProxy: "localhost,127.0.0.0/8,::1" } },
+    });
   });
 
   it("is a passthrough with no proxy option when proxyUrl is empty", async () => {
@@ -157,7 +189,7 @@ describe("getProxiedTauriFetch", () => {
     expect(calls).toHaveLength(2);
     expect(calls[0][1]).toBeUndefined();
     expect(calls[1][1]).toMatchObject({
-      proxy: { all: { url: "socks5://127.0.0.1:1080", noProxy: "localhost,127.0.0.1" } },
+      proxy: { all: { url: "socks5://127.0.0.1:1080", noProxy: "localhost,127.0.0.0/8,::1" } },
     });
   });
 });

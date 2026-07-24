@@ -26,6 +26,7 @@ import {
 } from "../store";
 import {
   DEFAULT_SETTINGS,
+  MEETING_CONTEXT_MAX_CHARS,
   sessionToMeta,
   type CustomEntry,
   type DetectResponse,
@@ -992,6 +993,111 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
   });
 });
 
+// F1 fix (field-test batch C, BLOCK — both reviewers): loadSession's own
+// set() used to leave all four auto-context fields untouched, so a
+// PREVIOUS meeting's live inferredContext stayed visible over a loaded
+// history session AND could get baked into that session's stored record
+// by any post-load re-save (updateSegmentText/updateCard/updateTerm ->
+// saveCurrentSession, which writes the LIVE inferredContext — see that
+// action's own doc comment). Mirrors beginMeeting/newMeeting's identical
+// reset above.
+describe("loadSession resets inferredContext/contextOverride/contextAttempts/contextRefreshed (F1 fix)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    useApp.setState({
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
+      activeSessionId: null,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  it("clears a previous (finished) meeting's live inferredContext when the loaded session has none of its own", async () => {
+    const sessionB: MeetingSession = {
+      id: "sess-b",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1" })],
+      cards: [],
+      terms: [],
+      // no inferredContext key — session B never had one
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(sessionB);
+    // Simulates meeting A having just finished with a context inferred.
+    useApp.setState({
+      inferredContext: "会议A的背景",
+      contextOverride: true,
+      contextAttempts: 2,
+      contextRefreshed: true,
+    });
+
+    await useApp.getState().loadSession("sess-b");
+
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(false);
+    expect(s.contextAttempts).toBe(0);
+    expect(s.contextRefreshed).toBe(false);
+  });
+
+  it("shows the loaded session's OWN archived inferredContext, not the previous meeting's", async () => {
+    const sessionB: MeetingSession = {
+      id: "sess-b2",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1" })],
+      cards: [],
+      terms: [],
+      inferredContext: "会议B自己的背景",
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(sessionB);
+    useApp.setState({ inferredContext: "会议A的背景" });
+
+    await useApp.getState().loadSession("sess-b2");
+
+    expect(useApp.getState().inferredContext).toBe("会议B自己的背景");
+  });
+
+  it("corruption repro: a post-load re-save never bakes the PREVIOUS meeting's live context into the loaded session's saved record", async () => {
+    const sessionB: MeetingSession = {
+      id: "sess-b3",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1", text: "original" })],
+      cards: [],
+      terms: [],
+      // no inferredContext key — session B never had one
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(sessionB);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    // Meeting A's context is still live in the store when B loads.
+    useApp.setState({ inferredContext: "会议A的背景" });
+
+    await useApp.getState().loadSession("sess-b3");
+    useApp.getState().updateSegmentText("s1", "edited"); // triggers the post-load debounced re-save
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBeUndefined(); // NOT "会议A的背景"
+  });
+});
+
 describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.5 Wave-1 Feature 1)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -1139,6 +1245,18 @@ describe("setInferredContext / bumpContextAttempts / markContextRefreshed", () =
     const s = useApp.getState();
     expect(s.inferredContext).toBe("用户手改的背景");
     expect(s.contextOverride).toBe(true);
+  });
+
+  // F2 fix (field-test batch C): a manual chip edit past the hosted
+  // /api/detect route's own MEETING_CONTEXT_MAX_CHARS zod cap used to
+  // 400 every subsequent detect call — this defensive clamp is the
+  // backstop even if a caller (or a future one) skips the chip's own
+  // maxLength attribute.
+  it("clamps a value longer than MEETING_CONTEXT_MAX_CHARS at write time", () => {
+    useApp.getState().setInferredContext("x".repeat(200), { override: true });
+    const s = useApp.getState();
+    expect(s.inferredContext).toHaveLength(MEETING_CONTEXT_MAX_CHARS);
+    expect(s.inferredContext).toBe("x".repeat(MEETING_CONTEXT_MAX_CHARS));
   });
 
   it("value:null with override:true clears the context AND sets the hard-stop override (chip disappears, inference stays off)", () => {

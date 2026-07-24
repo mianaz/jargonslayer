@@ -19,6 +19,7 @@ import { isBitCostumeId } from "../bitCostumes";
 import { parseTheme, type ThemeDefinition } from "../theme/schema";
 import { CUSTOM_THEME_ID_PREFIX, mintCustomThemeId } from "../theme/resolve";
 import { CUSTOM_FONT_PREFIX, sanitizeFontFamily } from "../theme/fonts";
+import { isValidProxyUrl, normalizeProxyUrl } from "../proxyUrl";
 import { IS_DESKTOP } from "../platform/desktop";
 // Desktop keychain custody (v0.5.1 desktop keychain migration) — static
 // import (unlike store.ts, which dynamic-imports this same leaf; see
@@ -809,5 +810,15 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
     picked.bitCostume === "auto" || picked.bitCostume === "none" || isBitCostumeId(picked.bitCostume)
       ? picked.bitCostume
       : DEFAULT_SETTINGS.bitCostume;
+  // F5 fix (field-test batch C, Sol M4): proxyUrl was allow-listed
+  // through untouched — a hand-edited backup's malformed proxy would
+  // poison every remote call while SettingsDialog's own validator
+  // (isValidProxyUrl) never gets a chance to run against it. Same
+  // normalize-then-validate pipeline the dialog's own save flow uses;
+  // non-string or invalid coerces to "" (silent coercion, matching
+  // every other bad-shape field's fallback above).
+  const normalizedProxyUrl =
+    typeof picked.proxyUrl === "string" ? normalizeProxyUrl(picked.proxyUrl) : "";
+  picked.proxyUrl = isValidProxyUrl(normalizedProxyUrl) ? normalizedProxyUrl : "";
   return picked as Partial<Settings>;
 }

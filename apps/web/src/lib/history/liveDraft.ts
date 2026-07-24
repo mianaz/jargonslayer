@@ -125,6 +125,13 @@ export function computeDraftSignature(snapshot: MeetingSession): string {
     parts.push(key, SEP, String(translations[key as keyof typeof translations] ?? ""), REC);
   }
   parts.push((snapshot.speakerRoster ?? []).join(SEP));
+  // F7 fix (field-test batch C, Sol L1): auto meeting-context detection
+  // — a context inferred (or hand-edited) after the last transcript/
+  // translation/roster change used to leave this signature unchanged,
+  // so the periodic tick's dirty check never rewrote the draft and
+  // crash recovery lost it. REC-separated from the roster join above,
+  // same posture as every other field boundary in this hash.
+  parts.push(REC, snapshot.inferredContext ?? "");
   const contentHash = djb2(parts.join(""));
   return [segs.length, snapshot.cards.length, snapshot.terms.length, contentHash].join("|");
 }

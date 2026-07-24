@@ -267,6 +267,19 @@ export type ExplainLanguage = "zh" | "en";
 // Background profile (#48 step 3) self-reported English proficiency.
 export type EnglishLevel = "basic" | "intermediate" | "advanced";
 
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — the prompt asks the
+// model for <=60 chars, hard-capped a bit above that so a slightly-
+// over-budget but otherwise valid reply still saves instead of
+// failing outright (same posture as tasks/define.ts's own clamp
+// constants). Field-test fix (batch C, F2): exported here so EVERY
+// layer that touches this string shares the SAME bound instead of
+// each hardcoding its own 80 that could silently drift out of sync —
+// inferContext.ts's own sanitize clamp, the detect route's zod
+// schema, the header chip's input maxLength, and the store's
+// defensive clamp on manual edits all import this constant.
+export const MEETING_CONTEXT_MAX_CHARS = 80;
+
 export interface DetectRequest {
   context: string; // previously analyzed tail, disambiguation only
   new_text: string; // fresh finalized text to analyze
@@ -285,7 +298,8 @@ export interface DetectRequest {
   // threading posture as `profile` above: spliced into the USER
   // message ONLY (buildDetectUserMessage's MEETING CONTEXT block), the
   // cached SYSTEM prompt never changes. Absent/undefined = no context
-  // inferred yet (today's behavior, unchanged).
+  // inferred yet (today's behavior, unchanged). Hard-capped client-
+  // side at MEETING_CONTEXT_MAX_CHARS (see that constant's own doc).
   meetingContext?: string;
 }
 

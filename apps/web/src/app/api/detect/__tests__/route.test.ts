@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST } from "../route";
 import { PROFILE_HINT_MAX_CHARS } from "@jargonslayer/core/llm/profileHint";
+import { MEETING_CONTEXT_MAX_CHARS } from "@jargonslayer/core/types";
 import { allowDailyBudget, resetRateLimiter } from "@/lib/llm/rateLimit";
 
 function makeRequest(body: unknown, headers: Record<string, string> = {}): Request {
@@ -86,18 +87,31 @@ describe("POST /api/detect — meetingContext field passthrough (auto meeting-co
     expect(res.status).toBe(401);
   });
 
-  it("rejects a meetingContext string over 80 chars with 400 bad_request", async () => {
+  // F2 fix (field-test batch C): MEETING_CONTEXT_MAX_CHARS is the SAME
+  // exported constant (@jargonslayer/core/types) this route's own zod
+  // schema, inferContext.ts's sanitize clamp, the header chip's input
+  // maxLength, and the store's defensive clamp all import — a
+  // hardcoded 80/81 here could silently drift out of sync with it.
+  it("rejects a meetingContext string over MEETING_CONTEXT_MAX_CHARS with 400 bad_request", async () => {
     const res = await POST(
-      makeRequest({ context: "", new_text: "hi", meetingContext: "x".repeat(81) }),
+      makeRequest({
+        context: "",
+        new_text: "hi",
+        meetingContext: "x".repeat(MEETING_CONTEXT_MAX_CHARS + 1),
+      }),
     );
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.code).toBe("bad_request");
   });
 
-  it("accepts a meetingContext string at exactly 80 chars", async () => {
+  it("accepts a meetingContext string at exactly MEETING_CONTEXT_MAX_CHARS", async () => {
     const res = await POST(
-      makeRequest({ context: "", new_text: "hi", meetingContext: "x".repeat(80) }),
+      makeRequest({
+        context: "",
+        new_text: "hi",
+        meetingContext: "x".repeat(MEETING_CONTEXT_MAX_CHARS),
+      }),
     );
     expect(res.status).not.toBe(400);
   });

@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import {
   DEFAULT_SETTINGS,
+  MEETING_CONTEXT_MAX_CHARS,
   newId,
   type DetectResponse,
   type DetectionSource,
@@ -2532,6 +2533,17 @@ export const useApp = create<AppState>((set, get) => ({
       activeSessionId: session.id,
       focusCardId: null,
       lookup: null,
+      // F1 fix (field-test batch C): a loaded session must show ITS OWN
+      // archived context, not whatever the PREVIOUS live meeting had
+      // inferred — same "stale live-only bookkeeping must not survive a
+      // meeting swap" rationale as beginMeeting/newMeeting's own resets
+      // above. Without this, a post-load re-save (updateSegmentText/
+      // updateCard/updateTerm -> saveCurrentSession) would even bake the
+      // previous meeting's context INTO this session's stored record.
+      inferredContext: session.inferredContext ?? null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
     }));
   },
 
@@ -2810,7 +2822,14 @@ export const useApp = create<AppState>((set, get) => ({
   contextRefreshed: false,
   setInferredContext: (value, opts) => {
     set((s) => ({
-      inferredContext: value,
+      // F2 fix (field-test batch C): defensive clamp — the header
+      // chip's input already carries a matching maxLength, but this is
+      // the one write-time guard EVERY caller (chip edit, inferred
+      // result, a future caller) routes through, so it's the backstop
+      // against ever storing (and later re-sending to the hosted
+      // /api/detect route, which 400s past MEETING_CONTEXT_MAX_CHARS)
+      // an over-length value. `null` passes through untouched.
+      inferredContext: value === null ? null : value.slice(0, MEETING_CONTEXT_MAX_CHARS),
       contextOverride: opts?.override ? true : s.contextOverride,
     }));
     // Post-stop top-up re-save (same idiom as applyTranslations/

@@ -31,7 +31,12 @@ import {
   UploadSimple,
 } from "@phosphor-icons/react";
 import { elapsedActiveMs, useApp } from "@/lib/store";
-import type { MeetingStatus, Settings, STTEngineKind } from "@jargonslayer/core/types";
+import {
+  MEETING_CONTEXT_MAX_CHARS,
+  type MeetingStatus,
+  type Settings,
+  type STTEngineKind,
+} from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
@@ -228,6 +233,7 @@ function ContextChip() {
         type="text"
         data-testid="header-context-chip-input"
         autoFocus
+        maxLength={MEETING_CONTEXT_MAX_CHARS}
         value={draft}
         onChange={(e) => setDraft(e.target.value)}
         onFocus={(e) => e.currentTarget.select()}

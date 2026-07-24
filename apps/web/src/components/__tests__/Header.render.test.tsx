@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import Header from "../Header";
 import { useApp } from "../../lib/store";
-import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
+import { DEFAULT_SETTINGS, MEETING_CONTEXT_MAX_CHARS } from "@jargonslayer/core/types";
 
 function noop() {}
 
@@ -751,6 +751,11 @@ describe("Header — ContextChip (auto meeting-context detection)", () => {
     expect(input).not.toBeNull();
     expect(input.value).toBe("生物信息学组会");
     expect(document.activeElement).toBe(input);
+    // F2 fix (field-test batch C): a manual edit past the hosted
+    // /api/detect route's MEETING_CONTEXT_MAX_CHARS zod cap used to
+    // 400 every subsequent detect call — the input itself must refuse
+    // to type past the same shared bound.
+    expect(input.maxLength).toBe(MEETING_CONTEXT_MAX_CHARS);
   });
 
   it("saving a non-empty edit on Enter calls setInferredContext(text, {override:true})", async () => {

@@ -1111,18 +1111,24 @@ export function useMeeting(): UseMeetingResult {
   // effect just dispatches against. In-flight latch is a REF (not
   // store state) so an overlapping effect re-run while a call is still
   // pending can't double-dispatch — same posture as draftWritingRef
-  // above. Deliberately keyed on `segments` alone (not settings.
-  // aiDetect/status too): every transition that matters for `live`/
-  // aiDetect gating is already accompanied by a `segments` reference
-  // change (beginMeeting/newMeeting reset it, loadSession replaces it),
-  // and a mid-meeting settings toggle is picked up on the very next
-  // final segment — same lazy-settings-read posture the scheduler
-  // itself already has.
+  // above. Keyed on `segments` (not settings.aiDetect/status too):
+  // every transition that matters for `live`/aiDetect gating is already
+  // accompanied by a `segments` reference change (beginMeeting/
+  // newMeeting reset it, loadSession replaces it), and a mid-meeting
+  // settings toggle is picked up on the very next final segment — same
+  // lazy-settings-read posture the scheduler itself already has.
+  // F3 fix (field-test batch C, Sol M2): ALSO keyed on `contextAttempts`
+  // — an in-flight initial attempt that settles empty/rejected
+  // (bumpContextAttempts, below) must re-evaluate the decision
+  // immediately on settlement, not wait for the NEXT final segment —
+  // otherwise a retry threshold already crossed during the in-flight
+  // window sits unfired until (if ever) more transcript arrives.
+  const contextAttempts = useApp((s) => s.contextAttempts);
   const contextInFlightRef = useRef(false);
   useEffect(() => {
     if (contextInFlightRef.current) return;
     const state = useApp.getState();
-    const { settings, meetingGen, status: liveStatus, inferredContext, contextOverride, contextAttempts, contextRefreshed } =
+    const { settings, meetingGen, status: liveStatus, inferredContext, contextOverride, contextRefreshed } =
       state;
     const action = decideContextTrigger({
       live: liveStatus === "connecting" || liveStatus === "listening" || liveStatus === "paused",
@@ -1186,7 +1192,7 @@ export function useMeeting(): UseMeetingResult {
           useApp.getState().bumpContextAttempts();
         }
       });
-  }, [segments]);
+  }, [segments, contextAttempts]);
 
   return { start, pause, resume, stop, startDemo };
 }
