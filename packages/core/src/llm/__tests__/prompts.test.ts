@@ -225,13 +225,13 @@ describe("buildInferContextSystemPrompt", () => {
     }
   });
 
-  it("instructs: no jargon/term lists, no speaker names, base only on EXCERPT, empty string when unclear", () => {
+  it("instructs: no jargon/term lists, no speaker names, base only on EXCERPT, empty result when unclear", () => {
     for (const lang of ["zh", "en"] as const) {
       const prompt = buildInferContextSystemPrompt(lang);
       expect(prompt).toContain("NEVER list specific jargon/terms/acronyms");
       expect(prompt).toContain("NEVER include any speaker's name");
       expect(prompt).toContain("Base the context ONLY on EXCERPT");
-      expect(prompt).toContain('{"context": ""}');
+      expect(prompt).toContain('{"context": "", "domains": []}');
     }
   });
 
@@ -245,6 +245,53 @@ describe("buildInferContextSystemPrompt", () => {
     buildInferContextSystemPrompt("zh");
     buildInferContextSystemPrompt("en");
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  // v0.6 multi-sense-terms sprint (T5): domains schema pin.
+  describe("domains (v0.6 T5)", () => {
+    const DOMAIN_TAGS = [
+      "biomed",
+      "clinical",
+      "pharma",
+      "genomics",
+      "stats",
+      "ml",
+      "software",
+      "infra",
+      "finance",
+      "sales",
+      "hr",
+      "legal",
+      "ops",
+      "edu",
+      "media",
+      "general",
+    ];
+
+    it("the wire schema names both fields, both required", () => {
+      for (const lang of ["zh", "en"] as const) {
+        const prompt = buildInferContextSystemPrompt(lang);
+        expect(prompt).toContain('"domains":');
+        expect(prompt).toContain("two fields, both required");
+      }
+    });
+
+    it("every DomainTag value is named in the prompt, for both languages", () => {
+      for (const lang of ["zh", "en"] as const) {
+        const prompt = buildInferContextSystemPrompt(lang);
+        for (const tag of DOMAIN_TAGS) {
+          expect(prompt).toContain(tag);
+        }
+      }
+    });
+
+    it("caps domains at 3 and instructs never to invent a tag outside the list", () => {
+      for (const lang of ["zh", "en"] as const) {
+        const prompt = buildInferContextSystemPrompt(lang);
+        expect(prompt).toContain("up to 3 tags");
+        expect(prompt).toContain("NEVER invent a tag outside this list");
+      }
+    });
   });
 });
 

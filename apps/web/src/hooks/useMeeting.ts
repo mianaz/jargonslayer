@@ -8,7 +8,7 @@ import { useApp, currentSessionSnapshot } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
-import { langPairFromSettings, resolveTranslationProvider } from "../lib/translate/providers";
+import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
@@ -20,6 +20,9 @@ import { IS_DESKTOP } from "../lib/platform/desktop";
 import { initDesktop } from "../lib/desktop/bootstrap";
 import { inferContextApi } from "../lib/llm/client";
 import { resolveTaskCreds } from "../lib/llm/taskConfig";
+import { setSenseContext } from "@jargonslayer/core/detect/dictionary";
+import { deriveSenseContext } from "../lib/detect/senseContext";
+import { inferDomainsFromKeywords } from "../lib/detect/domainKeywords";
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
@@ -365,6 +368,11 @@ export function useMeeting(): UseMeetingResult {
       // call site further down for why that race matters).
       const wasDemo = engine.kind === "demo";
       await engine.stop();
+      // v0.6: tear down the native Apple-translate child alongside the
+      // STT engine's own — see providers.ts's own doc comment for why
+      // this is safe/idempotent to call unconditionally (no-op outside
+      // desktop, or when "system" was never the resolved provider).
+      stopSystemTranslator();
       // Stop-drain belt (STT protocol v2): the drain final's own
       // onFinal already clears interim when one arrives, but a stop
       // with no trailing final must not leave a stale gray interim on
@@ -611,6 +619,9 @@ export function useMeeting(): UseMeetingResult {
     if (engine) {
       await engine.stop();
     }
+    // v0.6: same teardown as runStopFlow's matching call above — see
+    // providers.ts's own doc comment on why this is unconditional.
+    stopSystemTranslator();
     // Stop-drain belt (STT protocol v2): the drain final's own onFinal
     // already clears interim when one arrives (WsTransport.stop() now
     // waits for the sidecar's drain ack before resolving — see
@@ -918,6 +929,7 @@ export function useMeeting(): UseMeetingResult {
       void engineRef.current?.stop();
       schedulerRef.current?.stop();
       translateQueueRef.current?.stop();
+      stopSystemTranslator();
     };
   }, []);
 
@@ -1166,6 +1178,13 @@ export function useMeeting(): UseMeetingResult {
         contextInFlightRef.current = false;
         const now = useApp.getState();
         if (shouldDropContextResult(dispatchGen, now.meetingGen, now.contextOverride)) return;
+        // v0.6 multi-sense-terms sprint (T5): domains is an independent
+        // signal from the SAME inference call — set unconditionally on
+        // every successful resolve (context empty or not, refresh or
+        // not), same posture as context's own refresh handling just
+        // below. Feeds dictionary.ts's sense-scoring via the wiring
+        // effect further down this hook.
+        now.setInferredDomains(res.domains);
         if (res.context) {
           now.setInferredContext(res.context);
         } else if (action !== "refresh") {
@@ -1193,6 +1212,39 @@ export function useMeeting(): UseMeetingResult {
         }
       });
   }, [segments, contextAttempts]);
+
+  // Multi-sense dictionary terms (v0.6 multi-sense-terms sprint, T5):
+  // recompute the sense-selection context (dictionary.ts's
+  // setSenseContext) whenever its three inputs change — inferred
+  // domains, the user's pack selection, or the detected-term set
+  // (cooccurrence) — see senseContext.ts's deriveSenseContext for the
+  // actual weighting. ONE reactive effect covers every trigger the spec
+  // names, INCLUDING a fresh meeting's reset (beginMeeting/newMeeting
+  // zero out terms/inferredDomains, which this effect picks up like any
+  // other dependency change) — no separate reset call needed at those
+  // call sites. Falls back to the keyless keyword guess
+  // (domainKeywords.ts) only while inferredDomains is still empty (no
+  // API key, or the LLM inference hasn't landed yet) — dictionary
+  // detection must keep working with zero key. Cheap (O(terms.length)
+  // plus a ~70-keyword scan over the transcript so far) and runs
+  // OUTSIDE scanDictionary's own hot loop, so this never touches the
+  // ~ms per-segment scan budget T2/T3 protect.
+  const senseTerms = useApp((s) => s.terms);
+  const enabledPacksForSense = useApp((s) => s.settings.enabledPacks);
+  const inferredDomains = useApp((s) => s.inferredDomains);
+  useEffect(() => {
+    const effectiveDomains =
+      inferredDomains.length > 0
+        ? inferredDomains
+        : inferDomainsFromKeywords(segments.map((s) => s.text).join(" "));
+    setSenseContext(
+      deriveSenseContext({
+        inferredDomains: effectiveDomains,
+        enabledPacks: enabledPacksForSense,
+        terms: senseTerms,
+      }),
+    );
+  }, [senseTerms, enabledPacksForSense, inferredDomains, segments]);
 
   return { start, pause, resume, stop, startDemo };
 }

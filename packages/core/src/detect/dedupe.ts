@@ -181,6 +181,31 @@ function mergeTerms(
         existing.gloss_zh = det.gloss_zh;
         existing.type = det.type;
         existing.source = "llm";
+        // v0.6 T4 (multi-sense terms): the LLM saw the real sentence —
+        // its judgement supersedes the dictionary's context-scored
+        // heuristic, so that heuristic's own ambiguity bookkeeping no
+        // longer applies once upgraded. This is the existing keyed
+        // disambiguation branch; only these two lines are new.
+        existing.senses = undefined;
+        existing.ambiguous = undefined;
+      }
+      if (
+        existing.source === "dictionary" &&
+        source === "dictionary" &&
+        det.senseId !== undefined &&
+        det.senseId !== existing.senseId
+      ) {
+        // v0.6 T4: meeting context (or the detected-term set) arrived/
+        // changed mid-meeting, re-scoring this entry's senses to a
+        // DIFFERENT winner — replace the glosses IN PLACE (same card,
+        // same id/count/firstSeenAt) rather than creating a second card
+        // for the same surface.
+        existing.gloss_en = det.gloss_en;
+        existing.gloss_zh = det.gloss_zh;
+        existing.type = det.type;
+        existing.senseId = det.senseId;
+        existing.senses = det.senses;
+        existing.ambiguous = det.ambiguous;
       }
       continue;
     }

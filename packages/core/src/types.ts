@@ -229,6 +229,26 @@ export interface DetectedTerm {
   type: TermType;
   gloss_en: string;
   gloss_zh: string;
+  // v0.6 T3 (multi-sense dictionary terms): present only when the
+  // matched dictionary entry declared `senses` (DictTermEntry.senses,
+  // detect/dictionary-data.ts) and dictionary.ts's scanDictionary ran
+  // sense selection on it — see that function's own doc for the scoring
+  // formula. Absent for every LLM-sourced term and every dictionary
+  // entry without `senses` (byte-identical to today, pinned by test).
+  senseId?: string;
+  // Ranked, chosen sense first (`senses[0]` is always the one flattened
+  // into term/type/gloss_en/gloss_zh above). `domain` is loosely
+  // `string` here, not the closed DomainTag union (detect/dictionary-
+  // data.ts) — this file is a dependency-free leaf (dictionary-data.ts
+  // itself imports FROM here), so every real producer (dictionary.ts)
+  // and consumer validates/narrows against the real DomainTag enum at
+  // its own boundary instead.
+  senses?: { senseId: string; gloss_en: string; gloss_zh: string; domain: string; score: number }[];
+  // True when the top two sense scores are within 0.15 of each other,
+  // or (only when a sense context is actually available) the chosen
+  // sense's own domain carries zero weight in it — i.e. this pick is a
+  // low-confidence guess worth flagging. Absent/false otherwise.
+  ambiguous?: boolean;
 }
 
 // ---------- UI cards = detection + bookkeeping ----------
@@ -988,6 +1008,16 @@ export interface MeetingSession {
   // session predates the feature) — SessionMeta (history list) does
   // NOT carry this; it's a detail view concern only.
   inferredContext?: string;
+  // v0.6 T5 (multi-sense terms): the domain tags inferred alongside
+  // inferredContext above (InferContextResponse.domains) — same
+  // "final value only, omit when empty" persistence posture as that
+  // field's own sibling fields (speakerAliases/translations), not the
+  // "presence marks known-complete bookkeeping" posture pauseIntervals/
+  // speakerRoster use (there is no meaningful difference here between
+  // "never inferred" and "inferred as empty", so both collapse to
+  // absent). Loosely `string[]`, same leaf-file reasoning as
+  // InferContextResponse.domains above.
+  inferredDomains?: string[];
 }
 
 export interface SessionMeta {
@@ -1115,6 +1145,18 @@ export interface InferContextRequest {
 
 export interface InferContextResponse {
   context: string;
+  // v0.6 T5 (multi-sense terms): up to 3 domain tags inferred from the
+  // same excerpt, feeding dictionary.ts's setSenseContext so a multi-
+  // sense dictionary term (e.g. "EMT") can be ranked toward the sense
+  // matching the meeting's actual domain. Empty array = no confident
+  // domain (same "genuinely unclear" contract as an empty `context`
+  // string). Loosely typed as string[] here, not the closed DomainTag
+  // union (detect/dictionary-data.ts) — this file is a dependency-free
+  // leaf, and the model's raw output isn't trusted membership anyway;
+  // tasks/inferContext.ts validates against the real enum and drops
+  // anything unrecognized (see providerCore.ts's InferContextResponseSchema,
+  // which likewise only validates shape here, not membership).
+  domains: string[];
 }
 
 /** All surface forms a custom entry should match against, deduped. */

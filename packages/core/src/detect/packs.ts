@@ -2,6 +2,7 @@
 // to the domains relevant to them (e.g. turn off 学术 jargon if they
 // never attend academic meetings). OWNER: worker G.
 
+import type { DomainTag } from "./dictionary-data";
 import { getLoadedRemotePacks } from "./remotePacksRegistry";
 
 export interface DictPack {
@@ -82,7 +83,49 @@ export const PACKS: DictPack[] = [
     name: "生物信息学术语",
     description: "测序、比对、组学分析等生物信息学操作与数据类型",
   },
+  // v0.6: field-agnostic vocabulary — the terms a person meets whatever
+  // their background, which is what belongs in a default-on dictionary.
+  {
+    id: "modern-usage",
+    name: "新兴用法",
+    description: "近几年才有当前含义的词：harness、agent、RAG、guardrails 等",
+  },
+  {
+    id: "finance-consumer",
+    name: "钱与福利",
+    description: "保险、薪酬、股权、税务等日常场合绕不开的英文说法",
+  },
+  {
+    id: "daily-idiom",
+    name: "日常口语与俗语",
+    description: "会议前后的寒暄、委婉说法、体育比喻等课本不教的表达",
+  },
 ];
+
+/** v0.6 T5 (multi-sense terms): a CONSERVATIVE built-in-pack ->
+ *  DomainTag map, feeding apps/web's senseContext.ts derivation ("domains
+ *  of explicitly-enabled packs" contribute 0.5 weight — see that file's
+ *  own doc). Deliberately only covers packs whose id/description names
+ *  ONE DomainTag unambiguously; a pack with no obvious single domain
+ *  (meeting-flow, project, feedback, sales-adjacent softening, chitchat,
+ *  business-terms, tech-terms, core) is left OUT rather than guessed —
+ *  an absent mapping just contributes 0 (T3's scoring formula already
+ *  treats a missing weight as 0), never a wrong nudge. Remote packs are
+ *  never in this map (their own domain signal, if any, is author-set
+ *  per SENSE via DictSense.domain, not per-pack). */
+export const PACK_DOMAINS: Partial<Record<string, DomainTag>> = {
+  sales: "sales",
+  academic: "edu",
+  "pharma-biotech": "pharma",
+  stats: "stats",
+  "ml-stats": "ml",
+  "bioinformatics-edam": "genomics",
+  "finance-consumer": "finance",
+  // modern-usage and daily-idiom are deliberately absent: both are
+  // cross-domain by construction, so mapping either to one DomainTag
+  // would nudge sense selection toward a domain the pack does not
+  // actually imply.
+};
 
 /** null enabled-list = everything on. "core" (the base tables) is
  *  the product floor and is always enabled regardless of what the
@@ -91,6 +134,22 @@ export function isPackEnabled(pack: string, enabled: string[] | null): boolean {
   if (pack === "core") return true;
   if (enabled === null) return true;
   return enabled.includes(pack);
+}
+
+/** True only when the user has an EXPLICIT pack selection (enabled !==
+ *  null) that NAMES this exact pack — unlike isPackEnabled above, "core"
+ *  gets NO special-case here: this answers "did the user actively opt
+ *  into this pack", not "is this pack currently active". v0.6 T3/T6:
+ *  feeds the multi-sense scoring bonus (dictionary.ts's selectSense) and
+ *  the commonWord opt-in guard (scanDictionary/packTermsForBias) — a
+ *  commonWord entry now fires only when ITS OWN pack is explicitly
+ *  enabled, never merely because SOME OTHER pack was explicitly named
+ *  (see dictionary.ts's packTermsForBias doc for the misread history
+ *  this closes — the "core" special-case in isPackEnabled used to let a
+ *  hypothetical commonWord entry tagged "core" fire under ANY explicit
+ *  selection, even one that never named "core" at all). */
+export function isPackExplicitlyEnabled(pack: string, enabled: string[] | null): boolean {
+  return enabled !== null && enabled.includes(pack);
 }
 
 /** Built-in packs plus metadata for every currently-loaded remote pack

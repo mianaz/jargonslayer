@@ -58,6 +58,13 @@ mod proxy;
 mod secret;
 #[cfg(desktop)]
 mod server;
+// v0.6 (Apple on-device translate lane) — `system_translate*` commands
+// supervising a THIRD jargonslayer-audiocap invocation family
+// (`--probe-translate`/`--translate`), see this module's own header
+// comment for how its request/reply RPC shape differs from osspeech's
+// own streaming-session lane immediately above.
+#[cfg(desktop)]
+mod systranslate;
 #[cfg(desktop)]
 mod uv;
 
@@ -115,6 +122,10 @@ pub fn run() {
         // osspeech transcribe session (and its own preinstall slot), see
         // osspeech::OsSpeechState's own doc comment.
         .manage(osspeech::OsSpeechState::default())
+        // v0.6 — single-flight + generation-guard state for the warm
+        // --translate child, plus its own request-id-keyed pending-reply
+        // map, see systranslate::SystemTranslateState's own doc comment.
+        .manage(systranslate::SystemTranslateState::default())
         // S12a §C F16 — a bounded single-flight guard against an
         // overlapping `run_uv` invocation racing the same venv/pip
         // target (the "stale processes keep mutating the venv"
@@ -155,6 +166,10 @@ pub fn run() {
             osspeech::pause_os_speech,
             osspeech::resume_os_speech,
             osspeech::preinstall_os_speech,
+            systranslate::system_translate_probe,
+            systranslate::system_translate_prepare,
+            systranslate::system_translate,
+            systranslate::system_translate_stop,
             mlxcaps::mlx_capabilities,
             uv::mlx_import_preflight,
             diskspace::app_data_disk_free,
@@ -242,6 +257,10 @@ pub fn run() {
             // own child; see osspeech::kill_held_session_on_exit's own
             // doc comment.
             osspeech::kill_held_session_on_exit(app_handle);
+            // v0.6 — same best-effort posture, covering a warm
+            // --translate child; see systranslate::kill_held_translate_
+            // on_exit's own doc comment.
+            systranslate::kill_held_translate_on_exit(app_handle);
         }
     });
 

@@ -361,6 +361,138 @@ describe("mergeDetections — dictionary -> llm content upgrade", () => {
   });
 });
 
+describe("mergeDetections — multi-sense terms (v0.6 T4)", () => {
+  function sense(senseId: string, domain = "biomed", score = 0.5) {
+    return { senseId, gloss_en: `gloss for ${senseId}`, gloss_zh: `释义 ${senseId}`, domain, score };
+  }
+
+  it("a new dictionary-sourced card carries senseId/senses/ambiguous straight through", () => {
+    const res = makeDetectResponse({
+      terms: [makeTerm({ senseId: "s1", senses: [sense("s1"), sense("s2")], ambiguous: true })],
+    });
+    const { terms } = mergeDetections([], [], res, "dictionary", 0.5, 1000);
+    expect(terms).toHaveLength(1);
+    expect(terms[0].senseId).toBe("s1");
+    expect(terms[0].senses).toEqual([sense("s1"), sense("s2")]);
+    expect(terms[0].ambiguous).toBe(true);
+  });
+
+  it("dictionary -> dictionary re-hit with the SAME senseId leaves glosses untouched (falls through to the plain bump path)", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({ gloss_en: "original gloss", senseId: "s1", senses: [sense("s1")], ambiguous: false }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({
+      terms: [makeTerm({ gloss_en: "would-be new gloss", senseId: "s1", senses: [sense("s1")] })],
+    });
+    const { terms } = mergeDetections([], existingTerms, res, "dictionary", 0.5, 2000);
+    expect(terms[0].gloss_en).toBe("original gloss"); // untouched — same senseId, no re-score to apply
+    expect(terms[0].count).toBe(2); // still bumps normally
+  });
+
+  it("dictionary -> dictionary re-hit with a DIFFERENT senseId replaces glosses IN PLACE — same card, not a second one", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({
+          term: "EMT",
+          type: "other",
+          gloss_en: "ITK gene",
+          gloss_zh: "ITK 基因",
+          senseId: "itk",
+          senses: [sense("itk")],
+          ambiguous: false,
+        }),
+        id: "term-1",
+        normKey: "EMT",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 3,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({
+      terms: [
+        makeTerm({
+          term: "EMT",
+          type: "acronym",
+          gloss_en: "epithelial-mesenchymal transition",
+          gloss_zh: "上皮间质转化",
+          senseId: "emt",
+          senses: [sense("emt"), sense("itk")],
+          ambiguous: true,
+        }),
+      ],
+    });
+    const { terms } = mergeDetections([], existingTerms, res, "dictionary", 0.5, 5000);
+
+    expect(terms).toHaveLength(1); // same card, not a second one for the same surface
+    const term = terms[0];
+    expect(term.id).toBe("term-1");
+    expect(term.firstSeenAt).toBe(1000); // preserved
+    expect(term.count).toBe(4); // still bumped
+    expect(term.source).toBe("dictionary"); // NOT upgraded to llm
+    expect(term.type).toBe("acronym");
+    expect(term.gloss_en).toBe("epithelial-mesenchymal transition");
+    expect(term.gloss_zh).toBe("上皮间质转化");
+    expect(term.senseId).toBe("emt");
+    expect(term.senses).toEqual([sense("emt"), sense("itk")]);
+    expect(term.ambiguous).toBe(true);
+  });
+
+  it("dictionary -> llm upgrade CLEARS senses/ambiguous (the LLM's live judgement supersedes the heuristic)", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({
+          gloss_en: "old dict gloss",
+          senseId: "s1",
+          senses: [sense("s1"), sense("s2")],
+          ambiguous: true,
+        }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    // An llm hit never carries senseId/senses/ambiguous at all.
+    const res = makeDetectResponse({ terms: [makeTerm({ gloss_en: "llm gloss" })] });
+    const { terms } = mergeDetections([], existingTerms, res, "llm", 0.5, 5000);
+
+    expect(terms[0].source).toBe("llm");
+    expect(terms[0].gloss_en).toBe("llm gloss");
+    expect(terms[0].senses).toBeUndefined();
+    expect(terms[0].ambiguous).toBeUndefined();
+  });
+
+  it("dictionary -> llm upgrade does NOT clear senseId (only senses/ambiguous, per spec) — inert once source has flipped to llm", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({ senseId: "s1", senses: [sense("s1")], ambiguous: false }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({ terms: [makeTerm({ gloss_en: "llm gloss" })] });
+    const { terms } = mergeDetections([], existingTerms, res, "llm", 0.5, 5000);
+    expect(terms[0].senseId).toBe("s1"); // left as-is — the dictionary->dictionary
+    // branch above requires existing.source === "dictionary", which can
+    // never be true again for this card once source has flipped to llm.
+  });
+});
+
 describe("mergeDetections — custom-source protection", () => {
   it("a later llm hit on a custom expression normKey mutates NOTHING (zero mutation)", () => {
     const customCard: ExpressionCard = {

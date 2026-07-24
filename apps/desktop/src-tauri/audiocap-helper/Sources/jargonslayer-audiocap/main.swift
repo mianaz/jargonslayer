@@ -3,6 +3,7 @@ import AudioToolbox
 import CoreAudio
 import Foundation
 import Speech
+import Translation
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -51,6 +52,15 @@ struct TranscribeArguments {
     let contextualJSON: String?
 }
 
+/// v0.6 (Apple on-device translate lane) — `--probe-translate`'s and
+/// `--translate`'s shared argument bundle: just the BCP-47 source/target
+/// pair, nothing else (no `--exclude-pid`/`--locale`/`--duration` — this
+/// mode has no CoreAudio tap and no SpeechAnalyzer locale to resolve).
+struct TranslateArguments {
+    let source: String
+    let target: String
+}
+
 // S9.2 — the CLI's two mutually-exclusive modes: live capture (the
 // original S9.1 shape, requires --exclude-pid) and --sweep-orphans (the
 // startup best-effort aggregate-device cleanup, OrphanSweep.swift —
@@ -61,12 +71,20 @@ struct TranscribeArguments {
 // (one-shot capability probe, no other arguments — same "whole argv"
 // shape as --sweep-orphans), and `--preinstall-osspeech` (background
 // asset warm-up, `--locale` only).
+// v0.6 adds two more, same macOS-26-gated-independently-at-dispatch
+// posture: `--probe-translate` (one-shot Translation-framework
+// capability probe for a source/target pair) and `--translate` (the
+// long-lived, stay-warm Translation session — mirrors `--transcribe`'s
+// own "spawn once, keep running" lifecycle, not `--probe-translate`'s
+// one-shot shape).
 enum CLIMode {
     case capture(CLIArguments)
     case sweepOrphans
     case transcribe(TranscribeArguments)
     case probeOsSpeech
     case preinstallOsSpeech(locale: String)
+    case probeTranslate(TranslateArguments)
+    case translate(TranslateArguments)
 }
 
 func parseArguments(_ arguments: [String]) -> CLIMode? {
@@ -81,8 +99,12 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
     var durationSeconds: Double?
     var locale: String?
     var contextualJSON: String?
+    var source: String?
+    var target: String?
     var wantsTranscribe = false
     var wantsPreinstall = false
+    var wantsProbeTranslate = false
+    var wantsTranslate = false
     var index = 1
     while index < arguments.count {
         switch arguments[index] {
@@ -100,6 +122,12 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
         case "--preinstall-osspeech":
             wantsPreinstall = true
             index += 1
+        case "--probe-translate":
+            wantsProbeTranslate = true
+            index += 1
+        case "--translate":
+            wantsTranslate = true
+            index += 1
         case "--locale":
             guard index + 1 < arguments.count else { return nil }
             locale = arguments[index + 1]
@@ -108,11 +136,37 @@ func parseArguments(_ arguments: [String]) -> CLIMode? {
             guard index + 1 < arguments.count else { return nil }
             contextualJSON = arguments[index + 1]
             index += 2
+        case "--source":
+            guard index + 1 < arguments.count else { return nil }
+            source = arguments[index + 1]
+            index += 2
+        case "--target":
+            guard index + 1 < arguments.count else { return nil }
+            target = arguments[index + 1]
+            index += 2
         default:
             return nil
         }
     }
 
+    // v0.6 — --probe-translate/--translate checked before --transcribe/
+    // --preinstall-osspeech below so neither can ever fall through into
+    // the plain-capture guard at the bottom: both require --source/
+    // --target and reject every capture/transcribe-only flag.
+    if wantsProbeTranslate {
+        guard !wantsTranslate, !wantsTranscribe, !wantsPreinstall,
+            let source, let target,
+            excludePID == nil, durationSeconds == nil, locale == nil, contextualJSON == nil
+        else { return nil }
+        return .probeTranslate(TranslateArguments(source: source, target: target))
+    }
+    if wantsTranslate {
+        guard !wantsTranscribe, !wantsPreinstall,
+            let source, let target,
+            excludePID == nil, durationSeconds == nil, locale == nil, contextualJSON == nil
+        else { return nil }
+        return .translate(TranslateArguments(source: source, target: target))
+    }
     if wantsTranscribe {
         // §A5: --exclude-pid required in transcribe mode too.
         guard !wantsPreinstall, let excludePID, let locale else { return nil }
@@ -132,7 +186,9 @@ func printUsageAndExit() -> Never {
     | jargonslayer-audiocap --sweep-orphans \
     | jargonslayer-audiocap --transcribe --exclude-pid <pid> --locale <bcp47> [--duration <seconds>] [--contextual-json <jsonArray>] \
     | jargonslayer-audiocap --probe-osspeech \
-    | jargonslayer-audiocap --preinstall-osspeech --locale <bcp47>\n
+    | jargonslayer-audiocap --preinstall-osspeech --locale <bcp47> \
+    | jargonslayer-audiocap --probe-translate --source <bcp47> --target <bcp47> \
+    | jargonslayer-audiocap --translate --source <bcp47> --target <bcp47>\n
     """
     // F12 follow-up (lead): throwing write, same NSException class as
     // Writer/StatusEvents — a closed stderr must not crash even here.
@@ -348,6 +404,207 @@ func runPreinstall(locale: String) -> Never {
     }
     semaphore.wait()
     exit(outcome == .success ? 0 : 1)
+}
+
+// v0.6 — DEVIATION from the "same Task+DispatchSemaphore bridge every
+// other async-CLI entry point in this file uses" instruction, found
+// EMPIRICALLY, not guessed at: that exact bridge (a plain
+// `DispatchSemaphore.wait()` blocking the calling thread while a `Task`
+// runs the real `await`) is what runProbe/runPreinstall/runTranscribe
+// all already use successfully for Speech.framework — but reproduced
+// live, it DEADLOCKS for Translation.framework's `LanguageAvailability
+// .status(from:to:)`/`TranslationSession.translations(from:)` instead
+// (confirmed with a throwaway standalone `swiftc`-compiled repro OUTSIDE
+// this package too, ruling out anything SwiftPM-specific). Near-certain
+// cause: Translation.framework, designed first for SwiftUI's
+// `.translationTask` modifier, delivers its async result via a hop that
+// needs the calling thread's RUN LOOP actually pumped (an XPC reply,
+// most likely) — a bare semaphore-blocked thread never services that.
+// Spinning `RunLoop.current` while polling a completion flag — instead
+// of blocking outright — keeps whatever Translation.framework needs the
+// run loop for able to run, and resolved the deadlock in the same
+// standalone repro before this fix was ever applied here. Scoped to
+// ONLY the two Translation-framework call sites below
+// (runProbeTranslate/handleTranslateRequestLine) — every other async
+// bridge in this file is unchanged.
+@available(macOS 26.0, *)
+func runOnMainRunLoop<T>(_ body: @escaping () async -> T) -> T {
+    var result: T?
+    Task {
+        result = await body()
+    }
+    while result == nil {
+        RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+    }
+    return result!
+}
+
+// v0.6 (Apple on-device translate lane) — `--probe-translate`: one shot,
+// no CoreAudio, no tap, same shape as `--probe-osspeech`'s own runProbe
+// above. `LanguageAvailability.status(from:to:)` is async (spike-
+// verified) — bridged via `runOnMainRunLoop` above (NOT the semaphore
+// bridge every other mode uses — see that function's own doc comment
+// for why).
+@available(macOS 26.0, *)
+func runProbeTranslate(source: String, target: String) -> Never {
+    let status = runOnMainRunLoop {
+        await LanguageAvailability().status(
+            from: Locale.Language(identifier: source),
+            to: Locale.Language(identifier: target)
+        )
+    }
+    // osSupported is unconditionally true here: this function only ever
+    // runs once the dispatch switch below has already confirmed macOS
+    // 26+ via `#available` — the `osSupported:false` wire value is the
+    // OTHER branch of that switch's own fallback, reached without ever
+    // calling into Translation.framework at all.
+    TranslateEvents.emitProbe(osSupported: true, status: translateStatusWireValue(status))
+    exit(0)
+}
+
+/// `LanguageAvailability.Status` -> the probe wire contract's own three
+/// string values (spike-verified case list: `.installed`/`.supported`/
+/// `.unsupported`; NOT `@frozen`, so `@unknown default` folds any future
+/// case back to "unsupported" rather than crashing — same defensive
+/// posture this file already takes toward other closed-set OS enums,
+/// e.g. TranscriptEvents' own `statusLabel`-shaped switches).
+@available(macOS 26.0, *)
+func translateStatusWireValue(_ status: LanguageAvailability.Status) -> String {
+    switch status {
+    case .installed: return "installed"
+    case .supported: return "supported"
+    case .unsupported: return "unsupported"
+    @unknown default: return "unsupported"
+    }
+}
+
+// v0.6 — `--translate`: long-lived, mirrors `--transcribe`'s own
+// stay-warm lifecycle (T1: "NOT per-batch spawn — the session must stay
+// warm"). Session construction itself is a plain, non-throwing,
+// non-async convenience init (spike-verified:
+// `TranslationSession(installedSource:target:)` constructs successfully
+// for ANY pair, even an uninstalled one) — no async bridge needed for
+// THAT step, unlike every other entry point in this file. Only the
+// per-request `translations(from:)` call is async+throwing, so ONE
+// `runOnMainRunLoop` call runs per incoming stdin request line
+// (handleTranslateRequestLine below, NOT the semaphore bridge — see
+// that function's own doc comment for why), not once for the whole
+// process — the session itself stays warm across every request. The
+// read loop itself reuses StdinCommandMonitor's own line-reassembly ALGORITHM
+// (buffer + split on 0x0A) inline rather than that type itself: this
+// mode's stdin lines are structured translate requests, not
+// StdinCommandMonitor's own hardcoded pause/resume vocabulary, and (per
+// §A1's "the ONLY stdin reader" rule one mode over) there is no second
+// thread here to race against — one blocking read loop on the main
+// thread is enough since --translate has no realtime audio producer to
+// keep servicing concurrently.
+@available(macOS 26.0, *)
+func runTranslate(source: String, target: String) -> Never {
+    let session = TranslationSession(
+        installedSource: Locale.Language(identifier: source),
+        target: Locale.Language(identifier: target)
+    )
+    TranslateEvents.emitReady()
+
+    let input = FileHandle.standardInput
+    var buffer = Data()
+    while true {
+        let chunk = input.availableData
+        if chunk.isEmpty {
+            break // EOF — the parent closed stdin; exit cleanly below.
+        }
+        buffer.append(chunk)
+        while let newlineIndex = buffer.firstIndex(of: 0x0A) {
+            let lineData = buffer[buffer.startIndex..<newlineIndex]
+            buffer.removeSubrange(buffer.startIndex...newlineIndex)
+            handleTranslateRequestLine(String(decoding: lineData, as: UTF8.self), session: session)
+        }
+    }
+    exit(0)
+}
+
+/// The `--translate` mode's own stdin wire shape (T1) — a private
+/// Decodable pair, decode-only (main.swift never encodes this shape;
+/// TranslateEvents.TranslationOut is the encode-only analog for the
+/// OUTGOING `result` side).
+private struct TranslateRequestLine: Decodable {
+    let id: String
+    let segments: [Segment]
+
+    struct Segment: Decodable {
+        let id: String
+        let text: String
+    }
+}
+
+/// One incoming `{"id":...,"segments":[{"id":...,"text":...}]}` line. A
+/// line that isn't valid JSON in that exact shape is reported back as a
+/// `kind:"error"` with no `id` (there's no request id to correlate
+/// against — it was never decoded far enough to learn one) and the read
+/// loop simply continues — malformed input is never a reason to tear
+/// down an otherwise-healthy warm session.
+@available(macOS 26.0, *)
+func handleTranslateRequestLine(_ line: String, session: TranslationSession) {
+    guard let data = line.data(using: .utf8),
+        let request = try? JSONDecoder().decode(TranslateRequestLine.self, from: data)
+    else {
+        TranslateEvents.emitError(id: nil, code: "failed", message: "malformed translate request line")
+        return
+    }
+
+    let requests = request.segments.map { segment in
+        TranslationSession.Request(sourceText: segment.text, clientIdentifier: segment.id)
+    }
+
+    // `TranslationOutcome` carries the batch result (or a typed failure)
+    // out of the `runOnMainRunLoop` closure below — a local type rather
+    // than a top-level one since nothing outside this function needs it.
+    enum TranslationOutcome {
+        case ok([TranslationSession.Response])
+        case notInstalled
+        case failed(String)
+    }
+    let outcome = runOnMainRunLoop { () -> TranslationOutcome in
+        do {
+            return .ok(try await session.translations(from: requests))
+        } catch TranslationError.notInstalled {
+            // Spike-verified: matched via TranslationError's own `~=`
+            // pattern operator (no Equatable conformance), not `==`.
+            return .notInstalled
+        } catch {
+            return .failed("\(error)")
+        }
+    }
+
+    let responses: [TranslationSession.Response]
+    switch outcome {
+    case .ok(let value):
+        responses = value
+    case .notInstalled:
+        TranslateEvents.emitError(id: request.id, code: "not-installed", message: "translation language pack not installed")
+        return
+    case .failed(let message):
+        TranslateEvents.emitError(id: request.id, code: "failed", message: message)
+        return
+    }
+
+    // Re-correlate by clientIdentifier (== segment id) rather than
+    // trusting `responses`' own array order to already match
+    // `request.segments`' order — the wire contract requires order
+    // preserved against the ORIGINAL segments regardless of what the
+    // framework's own batch-return order turns out to be. A duplicate
+    // key (a caller-sent duplicate segment id) keeps the FIRST response
+    // seen for it rather than trapping — `Dictionary(uniqueKeysWithValues:)`
+    // would crash this long-lived process over one malformed request.
+    var textByID: [String: String] = [:]
+    for response in responses {
+        guard let id = response.clientIdentifier, textByID[id] == nil else { continue }
+        textByID[id] = response.targetText
+    }
+    let translations = request.segments.map { segment in
+        TranslateEvents.TranslationOut(id: segment.id, text: textByID[segment.id] ?? segment.text)
+    }
+    TranslateEvents.emitResult(id: request.id, translations: translations)
 }
 
 // S11 (§0/§Q1) — `--transcribe`: reuses the EXACT same CoreAudio setup
@@ -569,6 +826,26 @@ case .preinstallOsSpeech(let locale):
         runPreinstall(locale: locale)
     } else {
         StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap --preinstall-osspeech requires macOS 26.0+ (Speech framework SpeechAnalyzer)"))
+        exit(1)
+    }
+case .probeTranslate(let translateArguments):
+    if #available(macOS 26.0, *) {
+        runProbeTranslate(source: translateArguments.source, target: translateArguments.target)
+    } else {
+        // v0.6's own in-band <26 shape (T1's own pinned contract) —
+        // NOT the shared AudioCapError.unsupportedOS path: unlike
+        // --transcribe/--preinstall-osspeech above, --probe-translate
+        // must keep succeeding (exit 0) with an honest
+        // "osSupported:false" reading even below the floor, exactly
+        // mirroring --probe-osspeech's own <26 branch immediately above.
+        TranslateEvents.emitProbe(osSupported: false, status: "unsupported")
+        exit(0)
+    }
+case .translate(let translateArguments):
+    if #available(macOS 26.0, *) {
+        runTranslate(source: translateArguments.source, target: translateArguments.target)
+    } else {
+        StatusEvents.emitError(.unsupportedOS("jargonslayer-audiocap --translate requires macOS 26.0+ (Translation framework)"))
         exit(1)
     }
 }

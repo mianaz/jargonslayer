@@ -21,7 +21,13 @@
 
 import { get, set } from "idb-keyval";
 import type { ExpressionCategory, TermType } from "@jargonslayer/core/types";
-import type { DictExpressionEntry, DictTermEntry } from "@jargonslayer/core/detect/dictionary-data";
+import {
+  DOMAIN_TAGS,
+  type DictExpressionEntry,
+  type DictSense,
+  type DictTermEntry,
+  type DomainTag,
+} from "@jargonslayer/core/detect/dictionary-data";
 import { PACKS } from "@jargonslayer/core/detect/packs";
 import {
   setLoadedRemotePacks,
@@ -129,6 +135,23 @@ export interface RemotePackExpression {
   pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateExpressions)
 }
 
+// v0.6 multi-sense-terms sprint (NOT the "v0.6 T1-T6" labels used
+// elsewhere in this file, which name the earlier/unrelated remote-
+// packs sprint — variants, commonWord, manifest v2, size caps, catalog
+// browse): a community pack term MAY declare `senses` (RemotePackTerm.
+// senses below), mirroring DictSense (@jargonslayer/core/detect/
+// dictionary-data.ts) on the wire. Validated by clampSenses below —
+// same lenient-drop posture as every other field in this module: a
+// malformed SENSE is dropped, never the whole term/pack.
+export interface RemotePackSense {
+  senseId?: string; // optional on the wire — generated from index if absent
+  gloss_en: string;
+  gloss_zh: string;
+  type?: TermType;
+  domain: DomainTag;
+  prior?: number; // optional on the wire — defaults to 0.5
+}
+
 export interface RemotePackTerm {
   term: string;
   // v0.6 T2: alternate surfaces, matched alongside `term` itself — see
@@ -143,6 +166,9 @@ export interface RemotePackTerm {
   // stays opt-in (only matches once the user has actively customized
   // their pack selection), same as the compiled built-in domain packs.
   commonWord?: boolean;
+  // v0.6 multi-sense-terms sprint (see RemotePackSense's own doc just
+  // above): <=6 items, each validated like a term itself (clampSenses).
+  senses?: RemotePackSense[];
   pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateTerms)
 }
 
@@ -342,6 +368,55 @@ function clampTermVariants(raw: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/** Term senses (v0.6 multi-sense-terms sprint — NOT the "v0.6 T1-T6"
+ *  labels used elsewhere in this file, which name the earlier/unrelated
+ *  remote-packs sprint): <=6 items; each validated like a term itself —
+ *  non-empty gloss_en/gloss_zh required or the SENSE is dropped (not the
+ *  whole term); `domain` must be a recognized DomainTag (DOMAIN_TAGS) or
+ *  the sense is dropped; `prior` clamped 0..1, defaulting 0.5; `senseId`
+ *  clamped to <=40 chars, generated from the sense's own index when
+ *  absent/empty. A malformed sense is dropped, never fatal — same
+ *  lenient-drop posture as every other field in this module. */
+function clampSenses(raw: unknown): DictSense[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: DictSense[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    if (out.length >= 6) break;
+    const item = raw[i];
+    if (!item || typeof item !== "object") {
+      console.warn("[remotePacks] dropped malformed sense entry", item);
+      continue;
+    }
+    const s = item as Record<string, unknown>;
+    if (!isNonEmptyString(s.gloss_en) || !isNonEmptyString(s.gloss_zh)) {
+      console.warn("[remotePacks] dropped sense missing required fields", item);
+      continue;
+    }
+    if (typeof s.domain !== "string" || !(DOMAIN_TAGS as readonly string[]).includes(s.domain)) {
+      console.warn("[remotePacks] dropped sense with unrecognized domain", item);
+      continue;
+    }
+    const type =
+      typeof s.type === "string" && (TERM_TYPES as string[]).includes(s.type)
+        ? (s.type as TermType)
+        : undefined;
+    const prior =
+      typeof s.prior === "number" && Number.isFinite(s.prior)
+        ? Math.min(1, Math.max(0, s.prior))
+        : 0.5;
+    const senseId = clampStr(s.senseId, 40) ?? `sense-${i}`;
+    out.push({
+      gloss_en: s.gloss_en.trim(),
+      gloss_zh: clampZh(s.gloss_zh.trim()),
+      type,
+      domain: s.domain as DomainTag,
+      prior,
+      senseId,
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** Expression variants (N3 fix, adversarial review) — used to be fully
  *  uncapped (predating clampTermVariants above); a legal sub-2MB pack
  *  could carry hundreds of thousands of short repeated variants,
@@ -463,6 +538,17 @@ function validateTerms(raw: unknown, packId: string): DictTermEntry[] {
       gloss_en: isNonEmptyString(t.gloss_en) ? t.gloss_en : "",
       gloss_zh: clampZh(t.gloss_zh.trim()),
       commonWord: typeof t.commonWord === "boolean" ? t.commonWord : undefined,
+      // v0.6 multi-sense-terms sprint — see clampSenses' own doc above.
+      // NOTE: this does NOT enforce T1's core-package invariant
+      // (senses[0].gloss_en/gloss_zh === the entry's own top-level
+      // fields above) — a community pack author can legally submit a
+      // sense[0] that diverges from the top-level gloss; scanDictionary
+      // always re-ranks from `senses` when present regardless, so the
+      // only consumer that would ever observe the mismatch (a caller
+      // reading top-level gloss_en/gloss_zh WITHOUT looking at `senses`
+      // at all) simply sees whatever this pack's own top-level fields
+      // say, same as any other term.
+      senses: clampSenses(t.senses),
       // See validateExpressions above: always the manifest's own id,
       // never trusts the entry's own `pack` field.
       pack: packId,

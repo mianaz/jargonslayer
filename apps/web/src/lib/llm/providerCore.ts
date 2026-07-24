@@ -157,9 +157,16 @@ export const DefineResultSchema = z.object({
 // Auto meeting-context detection (field request: "need AI to auto
 // detect the context for better detection") — mirrors DefineResultSchema
 // immediately above: shape validation only, tasks/inferContext.ts owns
-// the trim/cap/empty-means-no-result sanitizing.
+// the trim/cap/empty-means-no-result sanitizing. `domains` (v0.6 multi-
+// sense-terms sprint, T5) is likewise shape-only here (any string array)
+// — tasks/inferContext.ts validates each entry against the real
+// DomainTag enum and drops anything unrecognized, same lenient-drop
+// posture as every other enum-shaped field this codebase validates
+// downstream of its schema rather than inside it (see remotePacks.ts's
+// validateTerms for the same division of responsibility).
 export const InferContextResponseSchema = z.object({
   context: z.string(),
+  domains: z.array(z.string()),
 }) satisfies z.ZodType<InferContextResponse>;
 
 // ---------------------------------------------------------------
