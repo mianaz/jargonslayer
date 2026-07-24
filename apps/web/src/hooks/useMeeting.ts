@@ -14,9 +14,11 @@ import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
 import { getPreviewSessionSeconds } from "../lib/stt/soniox";
-import { resolveTabAudioCloudProvider } from "../lib/stt/engineCapabilities";
+import { ENGINE_CAPABILITIES, resolveTabAudioCloudProvider, type LiveEngineKind } from "../lib/stt/engineCapabilities";
 import * as liveDraft from "../lib/history/liveDraft";
-import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
+import { IS_DESKTOP } from "../lib/platform/desktop";
+import { initDesktop } from "../lib/desktop/bootstrap";
+import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
 // finalized segments to catch up when the toggle flips OFF->ON
@@ -51,6 +53,81 @@ export function logAndToastError(
 ): { message: string; ref?: string } {
   const entry = diagLog("error", tag, message, detail);
   return { message, ref: entry.ref };
+}
+
+/** Field-test fix B: does `engine` ride the managed local sidecar
+ *  process (engineCapabilities.ts's own static sidecarOnly flag, e.g.
+ *  whisper/appaudio) — used by preflightManagedSidecar below (start()'s
+ *  and resume()'s shared preflight). Object.hasOwn
+ *  (not `in`, which also matches anything inherited off
+ *  Object.prototype) keeps the lookup an honest miss for the non-live
+ *  STTEngineKind members (demo/import/browser-whisper), none of which
+ *  have a row in ENGINE_CAPABILITIES. */
+function ridesManagedSidecar(engine: STTEngineKind): boolean {
+  return (
+    Object.hasOwn(ENGINE_CAPABILITIES, engine) &&
+    ENGINE_CAPABILITIES[engine as LiveEngineKind].sidecarOnly === true
+  );
+}
+
+/** Field-test fix B: does `settings` need the managed-sidecar preflight
+ *  below AT ALL — desktop-only (IS_DESKTOP), managed-mode-only
+ *  (sidecarMode !== "external"), sidecar-riding-engine-only
+ *  (ridesManagedSidecar). A plain synchronous boolean, deliberately
+ *  checked by callers BEFORE ever calling (let alone awaiting)
+ *  preflightManagedSidecar itself — that function unconditionally
+ *  awaits initDesktop(), so gating it here means the overwhelmingly
+ *  common case (any non-desktop web build, external sidecar mode, or a
+ *  non-sidecar engine) costs zero async overhead: no promise, no
+ *  microtask tick, same synchronous timing as if this preflight didn't
+ *  exist at all. That's not just tidiness — useMeeting.lifecycle.test.
+ *  tsx's own startListeningSoft() helper relies on createEngine()
+ *  running fully SYNCHRONOUSLY as part of `p = api!.start();` itself
+ *  (see that helper's own comment); an unconditional `await
+ *  preflightManagedSidecar(...)` at the call site, even one that
+ *  resolves "immediately", would still push createEngine() one
+ *  microtask later and break that assumption for every non-desktop
+ *  test in this file. */
+function needsManagedSidecarPreflight(settings: Settings): boolean {
+  return IS_DESKTOP && settings.sidecarMode !== "external" && ridesManagedSidecar(settings.engine);
+}
+
+/** Field-test fix B (verified root cause): whisper/appaudio ride the
+ *  managed local sidecar — starting/resuming into one while the
+ *  sidecar isn't actually provisioned/healthy used to sail straight
+ *  into the engine's own doomed connect, landing on a raw "cd sidecar
+ *  && python whisper_server.py" CLI error no desktop-app user can act
+ *  on (whisperSocket.ts's connectFailureMessage). Only ever called once
+ *  needsManagedSidecarPreflight(settings) above has already returned
+ *  true (see its own doc comment for why that gate lives OUTSIDE this
+ *  function rather than as its own leading check) — an "external" user
+ *  runs their own server and must never be redirected into this app's
+ *  own install wizard. requestProvisionCheck() (bootstrap.ts) is the
+ *  NON-destructive re-entry into the same CHECKING flow reprovision()
+ *  uses — see its own doc comment for why this must not be
+ *  reprovision() itself (which would wipe an already-good install
+ *  record over what might just be a transient probe blip). Fire-and-
+ *  forget + swallowed rejection: the only way it rejects is the shared
+ *  sidecar-lifecycle latch already being held by some OTHER in-flight
+ *  operation, which will settle the UI on its own.
+ *
+ *  Shared by start() and resume() (F2 field-test fix, round 2 —
+ *  resume() used to bypass this entirely: settings cards unlock while
+ *  paused, so switching to an unprovisioned sidecar engine and then
+ *  resuming sailed into the exact same doomed connect start() already
+ *  guarded against) — ONE implementation so both stay in lock-step,
+ *  never two copies of this logic drifting apart. Returns true when
+ *  the caller must ABORT (the toast + fire-and-forget
+ *  requestProvisionCheck() above already fired); false when it's safe
+ *  to proceed with a normal attach — the handle is already HEALTHY. */
+async function preflightManagedSidecar(): Promise<boolean> {
+  const handle = await initDesktop();
+  if (handle.currentState().phase !== "HEALTHY") {
+    useApp.getState().showToast("本地 Whisper 尚未安装，正在打开安装向导…");
+    void handle.requestProvisionCheck().catch(() => {});
+    return true;
+  }
+  return false;
 }
 
 export interface UseMeetingResult {
@@ -169,6 +246,16 @@ export function useMeeting(): UseMeetingResult {
     // case, so callers must not show a contradicting success toast on
     // top of it.
     const runStopFlow = async (): Promise<boolean> => {
+      // F1 field-test fix (stale-teardown ownership guard, Sol
+      // adversarial review): captured HERE, synchronously, before this
+      // flow's OWN first await — this is the engine THIS flow itself
+      // is tearing down, never re-read from live settings.engine after
+      // the awaits below, which by the time they resolve may belong to
+      // an entirely different, NEWER meeting (a real engine erroring
+      // here can race a brand-new startDemo() started while this flow
+      // is still awaiting saveCurrentSession — see the endDemoOverlay()
+      // call site further down for why that race matters).
+      const wasDemo = engine.kind === "demo";
       await engine.stop();
       // Stop-drain belt (STT protocol v2): the drain final's own
       // onFinal already clears interim when one arrives, but a stop
@@ -184,11 +271,28 @@ export function useMeeting(): UseMeetingResult {
       // and a lingering speaker_update (see wsTransport.ts's
       // POST_STOP_LINGER_MS) are both re-saved by the store's post-stop
       // debounced save (store.ts's applyDetection/applySpeakerUpdate).
+      let ok = true;
       if (segCount > 0) {
         const savedId = await useApp.getState().saveCurrentSession();
-        return savedId !== null;
+        ok = savedId !== null;
       }
-      return true;
+      // Demo-overlay stash (field-test round, extends S14.1): this is
+      // the natural-completion teardown path (detail === "demo_finished",
+      // see below) for a demo that plays through to its own scripted end
+      // rather than being manually stopped — doStop below covers the
+      // OTHER teardown path (an early manual End). endDemoOverlay is a
+      // safe no-op for the error/capture_ended branches sharing this
+      // same function (no overlay is ever active while a REAL engine is
+      // attached). Called AFTER saveCurrentSession above, never before —
+      // saveCurrentSession stamps the saved MeetingSession's own
+      // `engine` field from the LIVE settings.engine at call time, which
+      // must still read "demo" for a demo session's own history record.
+      // F1 field-test fix: gated on wasDemo (captured above, before any
+      // await) — a stale flow tearing down a REAL engine must never end
+      // an overlay some OTHER, newer flow armed in the meantime (see
+      // wasDemo's own doc comment for the exact race this closes).
+      if (wasDemo) useApp.getState().endDemoOverlay();
+      return ok;
     };
 
     const events: STTEvents = {
@@ -390,6 +494,11 @@ export function useMeeting(): UseMeetingResult {
   const doStop = useCallback(async () => {
     const engine = engineRef.current;
     engineRef.current = null;
+    // F1 field-test fix — same ownership guard as attachEngine's own
+    // runStopFlow above (see its wasDemo doc comment for the full
+    // race): captured HERE, before this flow's own first await, from
+    // the engine THIS flow itself is tearing down.
+    const wasDemo = engine?.kind === "demo";
     const scheduler = schedulerRef.current;
     if (engine) {
       await engine.stop();
@@ -416,6 +525,17 @@ export function useMeeting(): UseMeetingResult {
         useApp.getState().showToast("会议已保存到历史记录");
       }
     }
+    // Demo-overlay stash (field-test round, extends S14.1): this is the
+    // manual-End teardown path — attachEngine's own runStopFlow covers a
+    // demo playing through to its own scripted end instead. A safe
+    // no-op for any non-demo meeting (endDemoOverlay only restores when
+    // an overlay is actually active), so an ordinary End never touches
+    // this. Called AFTER saveCurrentSession above — see runStopFlow's
+    // matching comment for why the order matters (the saved
+    // MeetingSession.engine must still read "demo").
+    // F1 field-test fix: gated on wasDemo (captured above, before any
+    // await) — see runStopFlow's matching guard for the exact race.
+    if (wasDemo) useApp.getState().endDemoOverlay();
   }, []);
 
   const withLifecycleGate = useCallback(async (fn: () => Promise<void>) => {
@@ -436,8 +556,20 @@ export function useMeeting(): UseMeetingResult {
   }, [doStop]);
 
   const start = useCallback(async () => withLifecycleGate(async () => {
-    const { status } = useApp.getState();
+    const { status, settings } = useApp.getState();
     if (status === "listening" || status === "connecting") return;
+
+    // Field-test fix B (verified root cause) — see preflightManagedSidecar's
+    // own doc comment (shared with resume() below, F2 field-test fix)
+    // for the full rationale. Checked, and returned from, BEFORE
+    // beginMeeting()/the scheduler/translateQueue below are ever
+    // touched, so a blocked Start leaves the app in exactly the state
+    // it was in before the click — unlike the mic-permission-denial
+    // path (acquireStream's own catch, surfaced through this
+    // callback's onStatus("error") handler below AFTER beginMeeting()
+    // has already run and torn down via runStopFlow), there's nothing
+    // here to tear down in the first place.
+    if (needsManagedSidecarPreflight(settings) && (await preflightManagedSidecar())) return;
 
     diarReadyToastedRef.current = false;
     previewMintNoticeRef.current = false;
@@ -568,6 +700,32 @@ export function useMeeting(): UseMeetingResult {
     const { status, meetingGen, settings } = useApp.getState();
     if (status !== "paused") return;
     let engine = engineRef.current;
+    // F2 field-test fix (Sol review, round 2): settings cards unlock
+    // while paused, so this resume() call can end up attaching a
+    // DIFFERENT engine than whatever was live before — either via the
+    // kind-mismatch teardown+reattach below (F7), or because the prior
+    // pause was already a full TEARDOWN pause to begin with (e.g.
+    // webspeech, which has no soft pause at all — `engine` is already
+    // null here). Either way that's a fresh attachEngine() call below,
+    // exactly like start()'s own first attach, and needs the SAME
+    // preflight — see preflightManagedSidecar's own doc comment.
+    // needsFreshAttach is false ONLY when `engine` is both alive AND
+    // still the currently-selected kind — the one case guaranteed to
+    // take the soft in-place engine.resume() branch further down
+    // untouched, so it's the only case that keeps current (no-
+    // preflight) behavior. Computed and checked BEFORE any teardown
+    // below — a blocked resume leaves the meeting exactly as it was:
+    // still paused, old engine (if any) fully untouched, same non-
+    // destructive contract as start()'s own preflight (the user can fix
+    // the sidecar and hit resume again).
+    const needsFreshAttach = !(engine && engine.resume && engine.kind === settings.engine);
+    if (
+      needsFreshAttach &&
+      needsManagedSidecarPreflight(settings) &&
+      (await preflightManagedSidecar())
+    ) {
+      return;
+    }
     // Engine switch during a retained soft pause (codex v2 review F7):
     // pre-v2, EVERY pause was teardown, so switching engines in
     // Settings while paused was already honored (resume's
@@ -626,11 +784,20 @@ export function useMeeting(): UseMeetingResult {
   }, [withLifecycleGate, doStop]);
 
   const startDemo = useCallback(async () => {
-    // S14.1 field fix: live-only — never persisted (store.ts's
-    // updateSettings `persist:false`), so a demo run can't strand a
-    // returning preview user's real engine pick across a reload (see
-    // store.ts's applyTierDefaults doc for the field report).
-    useApp.getState().updateSettings({ engine: "demo" }, { persist: false });
+    // Demo-overlay stash (field-test round, extends S14.1): beginDemoOverlay
+    // stashes the user's real settings.engine (root AppState, never
+    // persisted itself) and flips the live value to "demo" via the same
+    // updateSettings `persist:false` path S14.1 originally added — but
+    // now ALSO guarantees every OTHER settings save (an ordinary
+    // Settings-dialog save, the quit-time flushSettings/pagehide flush)
+    // that fires while the demo is live persists the STASHED real engine
+    // instead of re-baking "demo" back into storage (store.ts's
+    // settingsForPersist chokepoint). doStop/runStopFlow call
+    // endDemoOverlay() on the way out so the live UI (not just storage)
+    // lands back on the user's real engine too — see store.ts's
+    // demoOverlayPrevEngine/applyTierDefaults docs for the full field
+    // report this closes.
+    useApp.getState().beginDemoOverlay();
     await start();
   }, [start]);
 

@@ -223,6 +223,27 @@ describe("useMeeting — lifecycle races", () => {
     return engines[0] as FakeAppAudioEngine;
   }
 
+  /** Same shape as startListening(), but via startDemo() — exercises
+   *  beginDemoOverlay's own live-engine flip alongside the ordinary
+   *  attach dance (createEngine() is mocked to ignore the requested
+   *  kind entirely — see the module-level mock above — so the plain
+   *  FakeEngine is fine here too). Caller sets settings.engine to the
+   *  "real" prior pick BEFORE calling this, matching how a user
+   *  actually reaches ≡ 演示 (already on some real engine). */
+  async function startDemoListening(): Promise<FakeEngine> {
+    let p: Promise<void>;
+    await act(async () => {
+      p = api!.startDemo();
+      await flush();
+      engines[0].startResolve!();
+      await p;
+      engines[0].events!.onStatus("listening");
+    });
+    expect(useApp.getState().status).toBe("listening");
+    expect(useApp.getState().settings.engine).toBe("demo");
+    return engines[0];
+  }
+
   // ---------------------------------------------------------------
   // F10 (adversarial review, MEDIUM): a prior S9.4 fix changed the
   // capture_ended toast copy UNCONDITIONALLY, which silently altered
@@ -647,5 +668,153 @@ describe("useMeeting — lifecycle races", () => {
     expect(engine.resumeCalls).toBe(1);
     expect(engines.length).toBe(1);
     expect(useApp.getState().status).toBe("listening");
+  });
+
+  // ---------------------------------------------------------------
+  // Demo-overlay stash (field-test round, extends S14.1): stopping a
+  // demo — either manually (doStop, via stop()) or by letting it play
+  // through to its own scripted end (runStopFlow, via onStatus("idle",
+  // "demo_finished")) — must restore the user's REAL engine in the LIVE
+  // UI too, not just in storage (store.test.ts's own "demo-overlay
+  // stash" describe block covers the storage/persist half in
+  // isolation). Both restores must land AFTER the session is saved, so
+  // a demo session's own saved MeetingSession.engine still reads
+  // "demo", never the just-restored real engine.
+  // ---------------------------------------------------------------
+
+  it('manual End (doStop) during a demo restores the real engine live, after the save still recorded engine:"demo"', async () => {
+    useApp.setState({ settings: { ...useApp.getState().settings, engine: "webspeech" } });
+    const engine = await startDemoListening();
+    // A real meeting has segments by the time it ends — set directly
+    // (same technique as the capture_ended-while-soft-paused test above)
+    // so saveCurrentSession's own segCount>0 branch fires without
+    // routing a real transcript line through the detect scheduler.
+    useApp.setState({
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    });
+
+    let engineAtSaveTime: string | undefined;
+    const saveSpy = vi
+      .spyOn(useApp.getState(), "saveCurrentSession")
+      .mockImplementation(async () => {
+        engineAtSaveTime = useApp.getState().settings.engine;
+        return "sess-1";
+      });
+
+    await act(async () => {
+      await api!.stop();
+    });
+
+    expect(engineAtSaveTime).toBe("demo");
+    expect(useApp.getState().settings.engine).toBe("webspeech");
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    saveSpy.mockRestore();
+  });
+
+  it('the demo\'s own natural end (demo_finished) ALSO restores the real engine live, after the save still recorded engine:"demo"', async () => {
+    useApp.setState({ settings: { ...useApp.getState().settings, engine: "tabaudio" } });
+    const engine = await startDemoListening();
+    useApp.setState({
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    });
+
+    let engineAtSaveTime: string | undefined;
+    const saveSpy = vi
+      .spyOn(useApp.getState(), "saveCurrentSession")
+      .mockImplementation(async () => {
+        engineAtSaveTime = useApp.getState().settings.engine;
+        return "sess-1";
+      });
+
+    await act(async () => {
+      engine.events!.onStatus("idle", "demo_finished");
+      await flush();
+      await flush();
+    });
+
+    expect(engineAtSaveTime).toBe("demo");
+    expect(useApp.getState().settings.engine).toBe("tabaudio");
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    saveSpy.mockRestore();
+  });
+
+  it("ending a meeting never started via startDemo() never triggers a restore, even though settings.engine happens to read \"demo\" (FakeEngine's default) — only beginDemoOverlay ever arms the stash, not the engine VALUE", async () => {
+    const engine = await startListening(); // plain start(), never startDemo()/beginDemoOverlay()
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+
+    await act(async () => {
+      await api!.stop();
+    });
+
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    expect(engine.stopCalls).toBe(1);
+  });
+
+  // ---------------------------------------------------------------
+  // F1 field-test fix (stale-teardown ownership guard, Sol adversarial
+  // review, round 2): a REAL engine's error-teardown runs runStopFlow()
+  // UN-GATED (see terminalTeardownRef's own doc in useMeeting.ts) and
+  // awaits saveCurrentSession() — the lifecycle gate stays free for
+  // that whole drain, so a brand-new startDemo() can land, attach, and
+  // start running BEFORE the old flow's save resolves. The old flow's
+  // own endDemoOverlay() call must not fire in that case — it isn't
+  // its overlay to end.
+  // ---------------------------------------------------------------
+
+  it("a real engine's error-teardown delayed on a slow save must not end a NEWER demo's overlay (stale-teardown ownership guard)", async () => {
+    const engine = await startListeningSoft(); // kind: "tabaudio" — a REAL (non-demo) engine
+    // A real meeting has segments by the time it errors — lets
+    // runStopFlow's own segCount branch actually reach saveCurrentSession.
+    useApp.setState({
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "tabaudio" }],
+    });
+
+    // Slow/controlled save — this is the interleaving window a new
+    // demo gets started inside.
+    let resolveSave: ((id: string | null) => void) | null = null;
+    const saveSpy = vi
+      .spyOn(useApp.getState(), "saveCurrentSession")
+      .mockImplementation(() => new Promise<string | null>((r) => (resolveSave = r)));
+
+    await act(async () => {
+      engine.events!.onStatus("error", "sidecar crashed");
+      await flush();
+    });
+    // runStopFlow already stopped the engine, flushed, and landed on
+    // "stopped" (1 segment) — now awaiting the slow save above.
+    expect(useApp.getState().status).toBe("stopped");
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+
+    // User starts a NEW demo mid-await — the gate is free during the
+    // whole un-gated error-teardown drain, so this proceeds and attaches
+    // a fresh engine while the OLD flow is still pending on its save.
+    let demoP: Promise<void>;
+    await act(async () => {
+      demoP = api!.startDemo();
+      await flush();
+      engines[1].startResolve!();
+      await demoP;
+      engines[1].events!.onStatus("listening");
+    });
+    expect(useApp.getState().status).toBe("listening");
+    expect(useApp.getState().settings.engine).toBe("demo");
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("tabaudio");
+
+    // The OLD errored flow's save now finally resolves.
+    await act(async () => {
+      resolveSave!("sess-1");
+      await flush();
+      await flush();
+    });
+
+    // The running demo is untouched by the stale flow: still listening
+    // on its own live engine, overlay stash intact (not restored early
+    // over a demo that's still actually running).
+    expect(useApp.getState().status).toBe("listening");
+    expect(useApp.getState().settings.engine).toBe("demo");
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("tabaudio");
+    expect(engines[1].stopCalls).toBe(0); // the new demo's own engine was never touched
+
+    saveSpy.mockRestore();
   });
 });

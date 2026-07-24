@@ -545,7 +545,30 @@ export async function restoreFullBackup(json: string): Promise<{
     // Cast: the sanitizer returns a Partial (unknown keys dropped),
     // and the caller immediately re-hydrates, whose migrateSettings
     // fold fills every missing field from DEFAULT_SETTINGS.
-    await storage.saveSettings(sanitizeRestoredSettings(parsed.settings) as Settings);
+    //
+    // F2 caller-audit fix (store.ts/storage.ts review batch):
+    // storage.saveSettings now rethrows on a write failure instead of
+    // always resolving (see its own doc). This function used to rely on
+    // the old never-rejects contract — every session/entry/pack/learnset
+    // record above is already durably upserted one-by-one by the time
+    // this line runs, so letting a settings-write failure reject the
+    // WHOLE function would discard those already-landed counts from the
+    // caller's summary toast (SettingsDialog's handleConfirmRestore
+    // catches and shows a bare "恢复失败", losing the partial-success
+    // detail). Local catch preserves the exact prior behavior — settings
+    // restore is still reported as attempted/true and the function still
+    // never rejects on this write — at the cost of `settingsRestored`
+    // staying honest-by-omission rather than reflecting the real outcome;
+    // narrower than this batch's flushSettings/handleSave fix, which DOES
+    // surface the failure (a live settings-dialog save is the hot path
+    // this batch targets — a backup-restore failure is logged, not silent
+    // in the sense that matters, since console.warn already fires inside
+    // saveSettings itself).
+    try {
+      await storage.saveSettings(sanitizeRestoredSettings(parsed.settings) as Settings);
+    } catch (err) {
+      console.warn("[autoExport] restoreFullBackup: settings write failed", err);
+    }
     settingsRestored = true;
   }
 

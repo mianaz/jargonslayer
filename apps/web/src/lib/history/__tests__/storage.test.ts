@@ -133,6 +133,26 @@ describe("storage.ts", () => {
       const storage = await import("../storage");
       expect(await storage.loadSettings()).toBeNull();
     });
+
+    it("saveSettings rethrows when the underlying write fails, instead of silently resolving (F2 fix)", async () => {
+      // F2 fix (Sol MEDIUM review): this used to catch-and-swallow every
+      // IndexedDB failure and always resolve, which let store.ts's
+      // flushSettings/updateSettings (and SettingsDialog's 「设置已保存」
+      // toast) report success even when nothing was durably written —
+      // see store.test.ts's own flushSettings/updateSettings F2 describe
+      // block for the caller-side half of this fix.
+      const storage = await import("../storage");
+      const { set } = await import("idb-keyval");
+      vi.mocked(set).mockRejectedValueOnce(new Error("quota exceeded"));
+
+      await expect(storage.saveSettings(sampleSettings)).rejects.toThrow("quota exceeded");
+    });
+
+    it("stays a silent no-op when indexedDB is unavailable — the F2 rethrow only covers an actual write failure, not this pre-existing guard", async () => {
+      delete (globalThis as { indexedDB?: unknown }).indexedDB;
+      const storage = await import("../storage");
+      await expect(storage.saveSettings(sampleSettings)).resolves.toBeUndefined();
+    });
   });
 
   describe("legacy migration", () => {

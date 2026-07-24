@@ -329,6 +329,27 @@ interface AppState {
   // settings
   settings: Settings;
   hydrated: boolean;
+  // Demo-overlay stash (field-test round, extends S14.1): while a demo
+  // (≡ 演示) is live, settings.engine reads "demo" for the WHOLE tab
+  // session so attachEngine/addFinal see it — but S14.1's persist:false
+  // alone only ever closed ONE write (startDemo's own). Any ORDINARY
+  // persist:true updateSettings while the demo is live (e.g. a Settings
+  // dialog save) merges + persists the WHOLE settings object, re-baking
+  // engine:"demo" right back in — same for the quit-time flushSettings/
+  // pagehide flush (both write get().settings verbatim otherwise). Root-
+  // level (NOT inside `settings`) is deliberate: the persisted blob is
+  // only ever the settings object (storage.saveSettings' own signature),
+  // so this field naturally never serializes no matter which write path
+  // fires — no separate "don't persist this one field" carve-out
+  // needed. Non-null while an overlay is active, holding the REAL engine
+  // to restore on the way out — see settingsForPersist (this store's
+  // single saveSettings chokepoint, folded near updateSettings below)
+  // and the beginDemoOverlay/endDemoOverlay actions further down. null =
+  // no overlay active — includes a fresh install that has simply never
+  // run the demo (DEFAULT_SETTINGS.engine is "demo" there by design, and
+  // persisting THAT is correct, unchanged first-run behavior, not a
+  // stranded overlay).
+  demoOverlayPrevEngine: Settings["engine"] | null;
 
   // live meeting
   status: MeetingStatus;
@@ -438,6 +459,19 @@ interface AppState {
   // ergonomic session toggle, not a Settings field).
   captionMode: boolean;
 
+  // Field-test fix (desktop first-run onboarding never seen — verified
+  // root cause): mirrors DesktopBootstrap.tsx's own "am I currently
+  // covering the whole screen" computation (its `visible`/showOnboarding
+  // branches — both render a `fixed inset-0 z-50` overlay, same as
+  // TutorialOverlay.tsx) into the store, so page.tsx can sequence the
+  // first-run tutorial's auto-open AFTER the wizard instead of racing it
+  // (DesktopBootstrap mounts LATER in page.tsx's own JSX, so equal
+  // z-index + later DOM always won the tie before this fix). Set from an
+  // effect in DesktopBootstrap.tsx, including its own unmount cleanup —
+  // stays false forever on a web build (DesktopBootstrap never mounts
+  // there). Non-persisted, same posture as focusMode/captionMode above.
+  wizardVisible: boolean;
+
   // Sidecar status (owner ask 2026-07-11: "I cannot see in the GUI if
   // the local side got set up at all"): last known GET /health result
   // for the local Whisper sidecar, written by SettingsDialog's 转录引擎
@@ -470,16 +504,48 @@ interface AppState {
 
   // ---- actions ----
   hydrate: () => Promise<void>;
-  // `opts.persist` (S14.1 field fix, default true): useMeeting.ts's
-  // startDemo passes `{ persist: false }` when setting engine:"demo" —
-  // a live demo session is entirely in-memory (settings.engine is read
-  // live by attachEngine/addFinal for the duration of that one tab
-  // session) and never needs to survive a reload, so writing it to
-  // storage only risks stranding a returning user on a start button
-  // that silently replays the demo (see applyTierDefaults' own doc for
-  // the exact field report this closes). Every other call site omits
-  // `opts` and persists exactly as before.
+  // `opts.persist` (S14.1 field fix, default true): store.ts's own
+  // beginDemoOverlay (called from useMeeting.ts's startDemo) passes
+  // `{ persist: false }` when setting engine:"demo" — a live demo
+  // session is entirely in-memory (settings.engine is read live by
+  // attachEngine/addFinal for the duration of that one tab session) and
+  // never needs to survive a reload, so writing it to storage only
+  // risks stranding a returning user on a start button that silently
+  // replays the demo (see applyTierDefaults' own doc for the exact
+  // field report this closes). Every other call site omits `opts` and
+  // persists exactly as before. NOTE: this alone only guarantees ONE
+  // write never bakes "demo" in — see demoOverlayPrevEngine's own doc
+  // above for why a live overlay needs more than that.
   updateSettings: (patch: Partial<Settings>, opts?: { persist?: boolean }) => void;
+  // Quit-time settings durability (field fix, real desktop/Tauri report:
+  // an API key saved shortly before quitting the app was lost).
+  // updateSettings' own persist above is fire-and-forget — this is the
+  // durable-commit escape hatch: writes the CURRENT settings via
+  // storage.saveSettings and resolves once that write (AND whatever was
+  // already in flight from a recent updateSettings call) has actually
+  // landed, so a caller gets a real guarantee instead of racing app
+  // teardown. Idempotent — safe to call any time, including with
+  // nothing changed since the last write. SettingsDialog's 保存 handler
+  // awaits this before closing/toasting; hydrate() below also wires a
+  // pagehide/visibilitychange(hidden) listener that calls this
+  // unawaited, mirroring useMeeting.ts's own live-draft flush (WebKit
+  // bug 199854 — WKWebView can drop an uncommitted IndexedDB write on
+  // teardown). See pendingSettingsSave's own doc above the store for
+  // the tracked-promise mechanics both of these lean on.
+  flushSettings: () => Promise<void>;
+  // Demo-overlay stash (field-test round, extends S14.1) — begin/end the
+  // live "demo" overlay described on demoOverlayPrevEngine above.
+  // beginDemoOverlay is idempotent (a second call while already
+  // overlaid re-applies engine:"demo" but does NOT re-stash over the
+  // real value); endDemoOverlay is a safe no-op when no overlay is
+  // active. Both flip live settings.engine via the existing
+  // updateSettings persist:false path, so neither ever touches storage
+  // directly. See useMeeting.ts's startDemo (begin) and doStop/
+  // runStopFlow (end, called AFTER any saveCurrentSession so a demo
+  // session's own saved MeetingSession.engine still correctly reads
+  // "demo") for the call sites.
+  beginDemoOverlay: () => void;
+  endDemoOverlay: () => void;
 
   setStatus: (status: MeetingStatus, detail?: string | null) => void;
   setSttEngineMode: (mode: OnDeviceMode | null) => void;
@@ -636,6 +702,7 @@ interface AppState {
   setFocusMode: (v: boolean) => void;
   setCaptionMode: (v: boolean) => void;
   setSidecarUp: (up: boolean | null) => void;
+  setWizardVisible: (v: boolean) => void;
 }
 
 /** S9/D7 platform engine coercion — desktop never shows tabaudio
@@ -750,11 +817,18 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *      meant "they last quit mid-demo". In the field that theory broke:
  *      ≡ 演示 persisted engine:"demo" the moment it ran, and nothing
  *      ever coerced it back — a returning preview user's 开始监听
- *      silently replayed the demo forever after. Fixed at the root in
- *      useMeeting.ts's startDemo (S14.1): it no longer persists
- *      engine:"demo" at all — this coercion only ever fires on a STALE
- *      pre-fix value or a hand-edited settings blob, safe to always
- *      redirect. `_hadSavedEngine` is kept in the signature
+ *      silently replayed the demo forever after. Fixed at the root by
+ *      the demo-overlay stash design (demoOverlayPrevEngine +
+ *      settingsForPersist, this file — the original S14.1 fix was only
+ *      useMeeting.ts's startDemo passing persist:false on its OWN
+ *      write, which left every OTHER persist:true save, plus the
+ *      quit-time flushSettings/pagehide flush, free to re-bake
+ *      engine:"demo" back in; settingsForPersist is the single
+ *      chokepoint every one of those routes through now): storage never
+ *      sees engine:"demo" while an overlay is live, so this coercion
+ *      only ever fires on a STALE pre-overlay-design value or a
+ *      hand-edited settings blob, safe to always redirect.
+ *      `_hadSavedEngine` is kept in the signature
  *      (migrateSettings still feeds it; other call sites pass it) but
  *      is no longer read here.
  *
@@ -1195,9 +1269,57 @@ export function pauseIntervalsForSnapshot(
   return [...pauseIntervals, { start: pauseStartedAt, end: snapshotAt }];
 }
 
+// Quit-time settings durability (field fix, real desktop/Tauri report:
+// an API key saved shortly before quitting the app was lost) —
+// updateSettings persists via a fire-and-forget `storage.saveSettings`
+// call; this tracks that write's own promise so flushSettings (see
+// AppState's own doc on that action) can chain onto whatever's already
+// in flight instead of racing it, giving a caller (SettingsDialog's 保存
+// handler, and the quit-time pagehide/visibilitychange listener hydrate()
+// installs below) a real durable-commit guarantee. Starts pre-resolved
+// so the very first flushSettings call has nothing to wait on.
+let pendingSettingsSave: Promise<void> = Promise.resolve();
+
+// Installed-once guard for the quit-time listeners hydrate() adds below
+// — hydrate() can run more than once (dev/StrictMode double-invoke, a
+// manual re-hydrate) and must never stack a second pair of pagehide/
+// visibilitychange handlers.
+//
+// F4 fix (Sol review, LOW): keyed on globalThis via Symbol.for rather
+// than a plain module-level `let` — dev HMR re-evaluates this module on
+// every edit, which reset a module-local flag back to false while the
+// OLD listeners (closed over the OLD module instance) were still live on
+// window/document, silently accumulating a duplicate pagehide/
+// visibilitychange pair per edit. globalThis is the one thing that
+// survives a module re-evaluation within the same page, so a flag stored
+// there still reads back true across HMR — Symbol.for's registry key
+// (rather than a plain string prop) just avoids colliding with anything
+// else that might stash a same-named flag on globalThis.
+const QUIT_FLUSH_INSTALLED_KEY = Symbol.for("jargonslayer.quitFlushListenersInstalled");
+const globalFlags = globalThis as unknown as Record<symbol, boolean | undefined>;
+
+/** Demo-overlay stash — the single serialization chokepoint (see
+ *  AppState.demoOverlayPrevEngine's own doc). EVERY storage.saveSettings
+ *  call site in this store must route through this instead of writing
+ *  `state.settings` straight through: while an overlay is active, the
+ *  persisted engine is the STASHED real pick, never the live "demo"
+ *  value the UI is showing; with no overlay active (the ordinary case,
+ *  and a fresh install's first-ever save) this is exactly
+ *  `state.settings`, byte-identical to before the overlay design
+ *  existed. Takes a `Pick` rather than the full AppState so it stays
+ *  callable with a plain `{ settings, demoOverlayPrevEngine }` literal
+ *  (updateSettings needs the FRESHLY computed pair, not whatever `get()`
+ *  would still return mid-call) as well as `get()` itself (flushSettings). */
+function settingsForPersist(
+  state: Pick<AppState, "settings" | "demoOverlayPrevEngine">,
+): Settings {
+  return { ...state.settings, engine: state.demoOverlayPrevEngine ?? state.settings.engine };
+}
+
 export const useApp = create<AppState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   hydrated: false,
+  demoOverlayPrevEngine: null,
 
   status: "idle",
   statusDetail: null,
@@ -1234,11 +1356,44 @@ export const useApp = create<AppState>((set, get) => ({
   toast: null,
   focusMode: false,
   captionMode: false,
+  wizardVisible: false,
   sidecarUp: null,
 
   subscriptionKillCheckSettled: false,
 
   hydrate: async () => {
+    // Quit-time settings flush (field fix — see pendingSettingsSave's
+    // and AppState.flushSettings' own docs above): mirrors useMeeting.ts's
+    // live-draft pagehide/visibilitychange flush verbatim — same two
+    // events, same WebKit bug 199854 rationale (WKWebView can drop an
+    // uncommitted IndexedDB write on teardown, and neither event is
+    // actually GUARANTEED to fire either, just a best-effort head
+    // start). The handler never awaits (pagehide can't) — flushSettings
+    // itself starts the real storage.saveSettings transaction
+    // synchronously, before this handler returns. window-undefined
+    // guarded (no window at all under SSR/static export) and
+    // install-once guarded (quitFlushListenersInstalled) — hydrate() can
+    // run more than once (dev/StrictMode double-invoke, a manual
+    // re-hydrate) and must never stack a second pair of listeners.
+    // Installed FIRST, before the async work below, so it's live as
+    // early into boot as possible regardless of how long that takes. F1
+    // fix (Sol + Opus review, BLOCK): this means these listeners are live
+    // BEFORE the `await Promise.all([...])` below resolves and
+    // `hydrated:true` is set — a pagehide/visibilitychange firing in that
+    // window used to call flushSettings while get().settings was still
+    // DEFAULT_SETTINGS, overwriting the user's real saved blob with
+    // defaults. Fixed at flushSettings itself (see that action's own
+    // doc), not by delaying this install — installing early is still
+    // correct/desired, the bug was flushSettings acting on pre-hydration
+    // state, not the install timing itself.
+    if (typeof window !== "undefined" && !globalFlags[QUIT_FLUSH_INSTALLED_KEY]) {
+      globalFlags[QUIT_FLUSH_INSTALLED_KEY] = true;
+      const flush = () => void get().flushSettings();
+      window.addEventListener("pagehide", flush);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") flush();
+      });
+    }
     const [saved, metas, entries] = await Promise.all([
       storage.loadSettings(),
       storage.listSessions(),
@@ -1349,9 +1504,47 @@ export const useApp = create<AppState>((set, get) => ({
 
   updateSettings: (patch, opts) => {
     const settings = { ...get().settings, ...patch };
-    set({ settings });
+    // Overlay supersession (demo-overlay stash design): an explicit
+    // engine pick other than "demo" while an overlay is active is the
+    // user's REAL choice winning over the stash — clear it so that pick
+    // persists normally on THIS save instead of silently being
+    // overwritten by the now-stale stashed value (settingsForPersist
+    // below). A patch that doesn't touch `engine` at all (the common
+    // case) leaves whatever overlay state was already there untouched;
+    // a patch that explicitly re-asserts engine:"demo" (beginDemoOverlay
+    // below) also leaves it untouched — that IS the stash being kept
+    // live, not superseded.
+    const demoOverlayPrevEngine =
+      "engine" in patch && patch.engine !== "demo"
+        ? null
+        : get().demoOverlayPrevEngine;
+    set({ settings, demoOverlayPrevEngine });
     if (opts?.persist !== false) {
-      void storage.saveSettings(settings);
+      // F2 fix (Sol MEDIUM review): this write is fire-and-forget —
+      // nothing here awaits or observes it — so a rejection (storage.
+      // saveSettings now propagates IndexedDB failures instead of always
+      // swallowing them, see that function's own doc) must not become an
+      // unhandled promise rejection. It also must never leave
+      // pendingSettingsSave itself holding a REJECTED promise:
+      // flushSettings/the next updateSettings both chain onto
+      // pendingSettingsSave via `.then(onFulfilled)`, which on an
+      // already-rejected input skips straight to re-rejecting with that
+      // SAME stale reason without ever attempting the new write — one
+      // failed fire-and-forget save would otherwise permanently poison
+      // every later flush, including a perfectly healthy one. Diag-
+      // logged (nothing here can show the user a toast — flushSettings'
+      // own callers, e.g. SettingsDialog's 保存, are what surface a real
+      // error) and resolved instead of left rejected.
+      pendingSettingsSave = storage
+        .saveSettings(settingsForPersist({ settings, demoOverlayPrevEngine }))
+        .catch((err) => {
+          diagLog(
+            "warn",
+            "settings-persist",
+            "fire-and-forget settings save failed (will retry on next save/flush)",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
     }
     // Display settings (v0.2.1, extended v0.5.1): live-apply a theme/
     // font change immediately (rather than waiting for a reload) and
@@ -1397,6 +1590,85 @@ export const useApp = create<AppState>((set, get) => ({
     if ("overlayGlass" in patch) {
       applyGlassDataset(settings.overlayGlass);
     }
+  },
+
+  // Quit-time settings durability — see AppState.flushSettings' own doc
+  // + pendingSettingsSave's module-level doc above for the WebKit-bug-
+  // 199854 field fix this closes. `write` is fired FIRST, synchronously
+  // (before this function does anything else) — a pagehide handler
+  // can't await, so the one thing that must happen before this even
+  // returns is the underlying storage.saveSettings transaction actually
+  // starting. Chaining onto whatever was already in flight
+  // (pendingSettingsSave) happens after, purely so the RETURNED promise
+  // settles only once BOTH writes have actually landed.
+  flushSettings: () => {
+    // F1 fix (Sol + Opus review, BLOCK): hydrate() installs the quit-time
+    // pagehide/visibilitychange listeners (above) BEFORE the async
+    // `await Promise.all([storage.loadSettings(), ...])` resolves and
+    // `hydrated:true` is set — during that window get().settings is
+    // still DEFAULT_SETTINGS. A pre-hydration pagehide/visibilitychange
+    // used to call this and overwrite the user's real saved settings
+    // blob (API keys/engine/theme) with defaults. Guarding HERE, not
+    // just at the listener call site, covers the listeners AND any other
+    // early caller; handleSave (SettingsDialog's 保存) only ever runs
+    // post-hydration (the dialog reads off the already-hydrated store),
+    // so this is a no-op for it.
+    if (!get().hydrated) return Promise.resolve();
+    const write = storage.saveSettings(settingsForPersist(get()));
+    // F2 fix (Sol MEDIUM review): storage.saveSettings can now reject
+    // (see that function's own doc — it used to swallow every IndexedDB
+    // failure and always resolve, which let this durable-commit escape
+    // hatch silently lie about success). Chaining `.then(() => write)`
+    // makes `settled` adopt `write`'s own eventual state, rejection
+    // included, so a caller (SettingsDialog's 保存 handler) gets an
+    // honest answer. `pendingSettingsSave` itself must stay a promise
+    // that NEVER rejects though — it's shared, chained-onto state: if it
+    // held a rejection, the NEXT flushSettings/updateSettings call's own
+    // `pendingSettingsSave.then(onFulfilled)` would skip straight to
+    // re-rejecting with THIS stale reason, without even attempting its
+    // own new write — one failed flush would otherwise permanently
+    // poison every later one. So the module-level variable is reassigned
+    // a locally-caught variant; the honest, possibly-rejecting `settled`
+    // is what's actually returned to this call's own caller.
+    const settled = pendingSettingsSave.then(() => write);
+    pendingSettingsSave = settled.catch((err) => {
+      diagLog(
+        "warn",
+        "settings-persist",
+        "flushSettings write failed (this call's own caller still sees the rejection; the shared chain continues)",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+    return settled;
+  },
+
+  // Demo-overlay stash — see AppState's own doc on both actions and on
+  // demoOverlayPrevEngine above; useMeeting.ts's startDemo (begin) and
+  // doStop/runStopFlow (end) own doc comments have the exact call-site
+  // reasoning.
+  beginDemoOverlay: () => {
+    const { demoOverlayPrevEngine, settings } = get();
+    // Idempotent: a second begin while ALREADY overlaid (e.g. re-
+    // triggering ≡ 演示 mid-demo, which start()'s own status guard turns
+    // into a no-op immediately after this) must not re-stash the live
+    // "demo" value over the real one already stashed.
+    if (demoOverlayPrevEngine === null) {
+      set({ demoOverlayPrevEngine: settings.engine });
+    }
+    get().updateSettings({ engine: "demo" }, { persist: false });
+  },
+  endDemoOverlay: () => {
+    const { demoOverlayPrevEngine } = get();
+    if (demoOverlayPrevEngine === null) return; // safe no-op — no overlay active
+    // Clear the stash BEFORE the updateSettings call below, not after:
+    // updateSettings' own overlay-supersession only clears it for a
+    // patch whose engine !== "demo" — a fresh install's VERY FIRST
+    // overlay (settings.engine already "demo", DEFAULT_SETTINGS' own
+    // value, at the moment beginDemoOverlay stashed it) stashes "demo"
+    // itself, so restoring THAT value here would otherwise hit that
+    // exact gap and leave a no-longer-meaningful stash behind.
+    set({ demoOverlayPrevEngine: null });
+    get().updateSettings({ engine: demoOverlayPrevEngine }, { persist: false });
   },
 
   setStatus: (status, detail = null) =>
@@ -2197,6 +2469,7 @@ export const useApp = create<AppState>((set, get) => ({
   setFocusMode: (focusMode) => set({ focusMode }),
   setCaptionMode: (captionMode) => set({ captionMode }),
   setSidecarUp: (sidecarUp) => set({ sidecarUp }),
+  setWizardVisible: (wizardVisible) => set({ wizardVisible }),
 }));
 
 /** Meta helper kept here so UI code doesn't rebuild it. */

@@ -19,6 +19,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
+import * as storageModule from "../../lib/history/storage";
 import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { RETENTION_COPY } from "../../lib/stt/engineOptions";
@@ -197,6 +198,77 @@ describe("SettingsDialog — F1: draft re-seeds on hydration completing while th
     expect(saved.apiKey).toBe("sk-real-user-key");
     expect(saved.engine).toBe("soniox");
     expect(saved.themeId).toBe("clarity");
+  });
+});
+
+// F2 fix (Sol MEDIUM review, fieldtest-a batch): flushSettings can now
+// reject (storage.saveSettings propagates IndexedDB failures instead of
+// always resolving — see both functions' own docs). handleSave must show
+// an explicit error toast and keep the dialog open rather than falling
+// through to "已保存" + onClose over a write that never landed — see
+// store.test.ts's own flushSettings/updateSettings F2 describe block for
+// the store-level half of this fix (chain-poisoning, unhandled
+// rejections).
+describe("SettingsDialog — F2: handleSave surfaces a flushSettings failure honestly", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    vi.restoreAllMocks();
+    resetStore();
+    useApp.setState({ toast: null });
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  it("a rejected flushSettings shows the failure toast and does NOT close the dialog", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockRejectedValue(new Error("quota exceeded"));
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={onClose} />);
+    });
+    await flush();
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(useApp.getState().toast).toBe("设置保存失败，请重试（存储不可用或空间不足）");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a successful flushSettings still shows the normal success toast and closes (regression guard)", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={onClose} />);
+    });
+    await flush();
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(useApp.getState().toast).toBe("设置已保存");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1028,6 +1100,142 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: retention badge agrees w
 
     const card = findButtonContaining("本地 Whisper");
     expect(card.textContent).toContain(RETENTION_COPY.local.label);
+  });
+});
+
+// ---------------------------------------------------------------
+// Field-test fix: 本地 Whisper and 系统/App 音频 both transcribe with
+// Whisper, but only 本地 Whisper's own hint used to name an engine —
+// 系统/App 音频 named only its audio source. Both cards' hints must now
+// name BOTH halves. 系统/App 音频 itself only renders once IS_DESKTOP is
+// mocked true (SettingsDialog.desktop.test.tsx), so its own copy
+// assertion lives there instead of here.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS: hint copy names both audio source and recognition backend (field-test fix)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  // Exact label match, not substring: 浏览器识别's OWN hint recommends
+  // "标签页音频或本地 Whisper" as an alternative, so a plain `.includes("本地
+  // Whisper")` scan (this file's usual findButtonContaining idiom) would
+  // match that EARLIER card instead of the 本地 Whisper card itself.
+  function findCardLabeled(label: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.querySelector(".font-medium")?.textContent === label,
+    );
+    if (!btn) throw new Error(`card labeled "${label}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("本地 Whisper card names the mic as the source and Whisper as the backend", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const card = findCardLabeled("本地 Whisper");
+    expect(card.textContent).toContain("麦克风收音，本地 Whisper 模型识别，音频不出设备");
+  });
+});
+
+// ---------------------------------------------------------------
+// Field-test fix: the bottom bar (StatusLine) already disables engine
+// switching via isEngineControlBusy the moment a meeting is connecting/
+// listening — this dialog's own engine cards used to stay enabled the
+// whole time, so a mid-session pick here was silently ignored rather
+// than rejected (useMeeting.ts's attachEngine only snapshots
+// settings.engine at Start). "paused" is deliberately excluded (same
+// isEngineControlBusy contract Header.test.ts/StatusLine.test.tsx
+// already pin) — resuming from pause genuinely reconciles an engine
+// change, so cards must stay pickable there.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS lock while a meeting is connecting/listening (field-test fix)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  const LOCKED_HINT = "会议进行中，无法切换引擎；暂停或结束会议后可切换";
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ status: "idle" }); // resetStore() doesn't cover this field — avoid leaking into later tests
+  });
+
+  it("disables every engine card and shows the standing locked hint while connecting, and again once listening", async () => {
+    useApp.setState({ status: "connecting" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(true);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(true);
+    expect(container!.textContent).toContain(LOCKED_HINT);
+
+    await act(async () => {
+      useApp.setState({ status: "listening" });
+    });
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(true);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(true);
+    expect(container!.textContent).toContain(LOCKED_HINT);
+  });
+
+  it("leaves engine cards enabled with no locked hint while paused, and again once stopped", async () => {
+    useApp.setState({ status: "paused" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(false);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(false);
+    expect(container!.textContent).not.toContain(LOCKED_HINT);
+
+    await act(async () => {
+      useApp.setState({ status: "stopped" });
+    });
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(false);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(false);
+    expect(container!.textContent).not.toContain(LOCKED_HINT);
   });
 });
 

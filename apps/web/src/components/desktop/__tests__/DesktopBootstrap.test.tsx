@@ -30,6 +30,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import type { DesktopBootstrapHandle, DesktopBootstrapState } from "@/lib/desktop/bootstrap";
 import type { DesktopPaths } from "@/lib/desktop/uvCommands";
+import { useApp } from "@/lib/store";
 
 vi.mock("@/lib/platform/desktop", () => ({ IS_DESKTOP: true }));
 
@@ -109,6 +110,7 @@ function makeFakeHandle(initial: DesktopBootstrapState): {
     paths: FAKE_PATHS,
     recheckHealth: async () => {},
     reprovision: async () => {},
+    requestProvisionCheck: async () => {},
     installedModel: async () => null,
     switchModel: async () => {},
     switchModelProgress$: () => () => {},
@@ -198,5 +200,100 @@ describe("DesktopBootstrap — F6: onboarding only after a REAL first-run provis
       setState({ phase: "HEALTHY" });
     });
     expect(onboardingShown()).toBe(true);
+  });
+});
+
+// Field-test fix (desktop first-run onboarding never seen — verified
+// root cause): DesktopBootstrap's own sync of store.ts's wizardVisible —
+// see that field's own doc comment for the full contract this is
+// standing in for (page.tsx itself has no existing test harness to
+// extend — see this worker's own PR report).
+describe("DesktopBootstrap — field-test fix (wizardVisible sync into store.ts)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    container?.remove();
+    container = null;
+    mockInitDesktop.mockReset();
+  });
+
+  async function mount(): Promise<void> {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<DesktopBootstrap />);
+    });
+  }
+
+  function onboardingShown(): boolean {
+    return container!.querySelector('[data-testid="fake-onboarding-steps"]') !== null;
+  }
+
+  it("mirrors the wizard's own visibility: true while WIZARD_CONSENT_REQUIRED/STEP, false once HEALTHY", async () => {
+    const { handle, setState } = makeFakeHandle({ phase: "WIZARD_CONSENT_REQUIRED" });
+    mockInitDesktop.mockResolvedValue(handle);
+
+    await mount();
+    expect(useApp.getState().wizardVisible).toBe(true);
+
+    await act(async () => {
+      setState({ phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" });
+    });
+    expect(useApp.getState().wizardVisible).toBe(true);
+
+    await act(async () => {
+      setState({ phase: "HEALTHY" });
+    });
+    expect(useApp.getState().wizardVisible).toBe(false);
+  });
+
+  it("stays true through the post-install onboarding steps too (showOnboarding) — the SAME full-screen WizardFrame chrome as WIZARD_CONSENT_REQUIRED/STEP, not just those two phases", async () => {
+    const { handle, setState } = makeFakeHandle({ phase: "WIZARD_CONSENT_REQUIRED" });
+    mockInitDesktop.mockResolvedValue(handle);
+
+    await mount();
+    await act(async () => {
+      container!.querySelector('[data-testid="fake-begin-provision"]')!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      );
+    });
+    await act(async () => {
+      setState({ phase: "STEP", step: "INSTALL_PYTHON", status: "RUNNING" });
+    });
+
+    await act(async () => {
+      setState({ phase: "HEALTHY" }); // real beginProvision + STEP -> HEALTHY triggers onboarding
+    });
+    expect(onboardingShown()).toBe(true);
+    expect(useApp.getState().wizardVisible).toBe(true); // onboarding is STILL a full-screen overlay
+  });
+
+  it("resets to false on unmount", async () => {
+    const { handle } = makeFakeHandle({ phase: "WIZARD_CONSENT_REQUIRED" });
+    mockInitDesktop.mockResolvedValue(handle);
+
+    await mount();
+    expect(useApp.getState().wizardVisible).toBe(true);
+
+    await act(async () => {
+      root!.unmount();
+    });
+    root = null;
+    expect(useApp.getState().wizardVisible).toBe(false);
+  });
+
+  it("never leaves the screen uncovered mid-transition: HEALTHY (nothing to show) never marks wizardVisible true", async () => {
+    const { handle } = makeFakeHandle({ phase: "HEALTHY" });
+    mockInitDesktop.mockResolvedValue(handle);
+
+    await mount();
+    expect(useApp.getState().wizardVisible).toBe(false);
   });
 });

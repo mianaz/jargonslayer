@@ -462,6 +462,7 @@ function makeFakeHandle(
     paths: FAKE_PATHS,
     recheckHealth: async () => {},
     reprovision: async () => {},
+    requestProvisionCheck: async () => {},
     installedModel: async () => null,
     switchModel: async () => {},
     switchModelProgress$: () => () => {},
@@ -734,6 +735,54 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     });
     expect(container!.textContent).toContain("该引擎不支持说话人分离");
     expect(container!.textContent).not.toContain("需先配置 HF Token");
+  });
+});
+
+// ---------------------------------------------------------------
+// Field-test fix: 本地 Whisper and 系统/App 音频 both transcribe with
+// Whisper, but 系统/App 音频's own hint used to name only its audio
+// source, never the recognition backend. This card only renders once
+// IS_DESKTOP is mocked true (this file), so its copy assertion lives
+// here rather than in the ambient SettingsDialog.test.tsx.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog (desktop) — 转录引擎 系统/App 音频 card hint copy (field-test fix)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, sidecarMode: "external" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("names both the captured audio source and the Whisper backend", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    const card = findButtonContaining("系统/App 音频");
+    expect(card.textContent).toContain(
+      "捕获 Mac 系统/App 播放的声音（对方语音，不含你的麦克风），同样由本地 Whisper 识别",
+    );
   });
 });
 
