@@ -26,6 +26,21 @@ import { IS_DESKTOP } from "../platform/desktop";
 // secret.ts's own header for why either style is safe here: it never
 // imports back from store.ts, so there's no cycle to avoid either way).
 import { readSecrets, writeSecret, type SecretName } from "../desktop/secret";
+// v0.6 T7 (dict pack backup inclusion) — remotePacks.ts (detect/) never
+// imports anything under history/, so this is a safe one-directional
+// edge (no cycle): addPackSource/addPackFromManifest reinstall a
+// url-backed/file-backed pack on restore, through the SAME validation +
+// caps a fresh install goes through.
+import {
+  addPackFromManifest,
+  addPackSource,
+  isAllowedPackUrl,
+  listPackSources,
+  MAX_PACK_COUNT,
+  type RemotePackSource,
+} from "../detect/remotePacks";
+import type { LoadedRemotePack } from "@jargonslayer/core/detect/remotePacksRegistry";
+import { diagLog } from "../diag/log";
 
 const EXPORT_DIR_KEY = "jargonslayer:export-dir";
 
@@ -314,7 +329,15 @@ function overlaySecrets(settings: Settings, keychainValues: Partial<Record<Secre
  *  "optional field, schemaVersion stays 1" precedent as learnset
  *  above. glossary.loadCustomEntries() above already loads+normalizes
  *  the pack registry as a side effect, so getCustomPacks() here is
- *  always fresh. */
+ *  always fresh.
+ *
+ *  `packSources` (v0.6 T7): installed dictionary theme packs (detect/
+ *  remotePacks.ts's own IDB slice) — same "optional field, schemaVersion
+ *  stays 1" precedent yet again. Only SOURCE records, not full content,
+ *  for a url-backed pack (url/id/name/version — enough to refetch it on
+ *  restore, see toBackupPackSource/restoreFullBackup below); a
+ *  file-imported pack (no url — T6) carries its FULL validated manifest
+ *  instead, since there is nothing else to ever refetch it from. */
 export async function buildFullBackup(
   opts: { includeKeys?: boolean } = {},
 ): Promise<string> {
@@ -326,6 +349,7 @@ export async function buildFullBackup(
   const glossaryEntries = await glossary.loadCustomEntries();
   const customPacks = glossary.getCustomPacks();
   const learnsetRecords = await learnset.loadLearnset();
+  const packSources = (await listPackSources()).map(toBackupPackSource);
   const rawSettings = await storage.loadSettings();
   // Desktop keychain custody (v0.5.1): post-migration, storage.
   // loadSettings() no longer carries the SECRET_NAMES fields already in
@@ -353,11 +377,32 @@ export async function buildFullBackup(
       glossary: glossaryEntries,
       customPacks,
       learnset: learnsetRecords,
+      packSources,
       settings,
     },
     null,
     2,
   );
+}
+
+/** One entry in a backup's `packSources` array (v0.6 T7) — NOT the
+ *  full RemotePackSource shape: a url-backed pack only needs enough to
+ *  find+refetch it (url + id/name/version, e.g. for a future
+ *  confirmation-step preview); a file-imported pack (`url` is "" — see
+ *  RemotePackSource.url's own doc in remotePacks.ts) has nothing to
+ *  refetch, so its full validated manifest rides along instead. */
+interface PackSourceBackupEntry {
+  url?: string;
+  packId: string;
+  packName: string;
+  packVersion: string | number;
+  manifest?: LoadedRemotePack;
+}
+
+function toBackupPackSource(s: RemotePackSource): PackSourceBackupEntry {
+  return s.url
+    ? { url: s.url, packId: s.pack.id, packName: s.pack.name, packVersion: s.pack.version }
+    : { packId: s.pack.id, packName: s.pack.name, packVersion: s.pack.version, manifest: s.pack };
 }
 
 interface BackupShape {
@@ -374,6 +419,9 @@ interface BackupShape {
   // exists via glossary.ts's own load-time auto-create, so a legacy
   // restore just ends up with "personal" only, per A7).
   customPacks?: unknown[];
+  // v0.6 T7: absent on any pre-T7 backup — restore below tolerates
+  // absence (0 packs restored, nothing else touched).
+  packSources?: unknown[];
   settings?: Settings;
 }
 
@@ -402,11 +450,20 @@ function parseBackup(json: string): BackupShape {
  *  whatever the exporter's "不包含 API Key" checkbox happened to be set
  *  to at export time (a file could have been hand-edited, or exported
  *  by an older build) — the confirm copy should describe what this
- *  FILE actually contains, not what a checkbox once claimed. */
+ *  FILE actually contains, not what a checkbox once claimed.
+ *
+ *  M3 fix (adversarial review): `packSources` is now part of the
+ *  preview too — restoring silently makes the browser fetch N
+ *  attacker-chosen URLs (every url-backed row is refetched), and this
+ *  used to never tell the user the file contains packs at all. This is
+ *  the RAW row count in the file (not yet capped at MAX_PACK_COUNT —
+ *  see restoreFullBackup below), so the confirm step can be honest
+ *  about how many install attempts the file actually asks for. */
 export function previewBackup(json: string): {
   sessions: number;
   entries: number;
   learnset: number;
+  packSources: number;
   hasSettings: boolean;
   hasApiKey: boolean;
 } {
@@ -417,10 +474,12 @@ export function previewBackup(json: string): {
     parsed.learnset && typeof parsed.learnset === "object"
       ? Object.keys(parsed.learnset).length
       : 0;
+  const packSourceCount = Array.isArray(parsed.packSources) ? parsed.packSources.length : 0;
   return {
     sessions: sessions.length,
     entries: entries.length,
     learnset: learnsetCount,
+    packSources: packSourceCount,
     hasSettings: !!parsed.settings,
     hasApiKey: !!parsed.settings?.apiKey,
   };
@@ -535,6 +594,49 @@ export function sanitizeRestoredCustomPack(raw: unknown): CustomPack | null {
   return { id: r.id, name: r.name, enabled: r.enabled, createdAt: r.createdAt };
 }
 
+/** Validate one untrusted packSources row from a backup file before
+ *  it's ever used to reinstall a pack (v0.6 T7) — same defense-in-depth
+ *  posture as sanitizeRestoredLearnRecord/sanitizeRestoredCustomPack
+ *  above. Malformed rows are DROPPED. This is only a SHAPE gate — a
+ *  file-backed entry's embedded manifest gets its REAL content
+ *  validation (length caps, https-only URL fields, minAppVersion gate,
+ *  etc.) exactly once, inside addPackFromManifest's own validateManifest
+ *  + size-cap pipeline on restore (restoreFullBackup below) — never
+ *  specially trusted just because it arrived inside a backup file.
+ *
+ *  N1 fix (adversarial review): a url row is now ALSO required to pass
+ *  isAllowedPackUrl (https-only, no embedded credentials) — the same
+ *  gate remotePacks.ts's own fetchManifestRaw enforces at the actual
+ *  network chokepoint (defense in depth: dropping it HERE means a
+ *  crafted backup's data:/http:/loopback url never even counts toward
+ *  packSourcesAccepted, rather than counting as "attempted" and then
+ *  failing downstream). */
+export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+
+  if (typeof r.packId !== "string" || r.packId.length === 0) return null;
+  if (DANGEROUS_OBJECT_KEYS.has(r.packId)) return null;
+  if (typeof r.packName !== "string" || r.packName.trim().length === 0) return null;
+  if (typeof r.packVersion !== "string" && typeof r.packVersion !== "number") return null;
+
+  const url = typeof r.url === "string" && r.url.trim().length > 0 ? r.url.trim() : undefined;
+  if (url && !isAllowedPackUrl(url)) return null;
+  // A url-backed entry is refetched on restore — nothing else to check
+  // here. A file-backed entry (no url) IS its only copy, so it needs at
+  // least an object-shaped `manifest` to be worth attempting at all;
+  // that manifest's real validity is re-checked wholesale below.
+  if (!url && (!r.manifest || typeof r.manifest !== "object")) return null;
+
+  return {
+    url,
+    packId: r.packId,
+    packName: r.packName,
+    packVersion: r.packVersion,
+    manifest: url ? undefined : (r.manifest as LoadedRemotePack),
+  };
+}
+
 /** Desktop keychain custody (v0.5.1) — for every non-empty restored
  *  apiKey/hfToken/sonioxKey/deepgramKey, writes it to the Keychain
  *  (overwriting whatever's already there — restoring a backup is an
@@ -605,6 +707,7 @@ export async function restoreFullBackup(json: string): Promise<{
   entries: number;
   learnset: number;
   packs: number;
+  packSources: number;
   settingsRestored: boolean;
 }> {
   const parsed = parseBackup(json);
@@ -631,6 +734,55 @@ export async function restoreFullBackup(json: string): Promise<{
     if (!pack) continue;
     await glossary.upsertCustomPack(pack);
     packsAccepted += 1;
+  }
+
+  // v0.6 T7: url-backed entries are refetched from their source (best-
+  // effort — an unreachable/changed url shouldn't fail the whole
+  // restore, same posture as every other per-item loop here); file-
+  // backed entries reinstall directly from their embedded manifest.
+  // Both paths run through the SAME validation + size caps a fresh
+  // install already applies (addPackSource/addPackFromManifest) — a
+  // hostile or oversized embedded manifest is rejected exactly like it
+  // would be on first import, never specially trusted just because it
+  // arrived inside a backup file. Absent on a pre-T7 backup -> 0 pack
+  // sources restored, nothing else touched.
+  //
+  // M3 fix (adversarial review): capped at MAX_PACK_COUNT BEFORE the
+  // loop below — this array used to be walked unbounded, each url-
+  // backed row a serial ~10s-timeout fetch; a backup with hundreds of
+  // rows aimed at an unreachable host could hang 恢复 for tens of
+  // minutes with no cancel. installValidatedPack's own cap would
+  // eventually reject any install past MAX_PACK_COUNT anyway, but only
+  // AFTER paying for every fetch up to that point.
+  const packSourceRows = (Array.isArray(parsed.packSources) ? parsed.packSources : []).slice(
+    0,
+    MAX_PACK_COUNT,
+  );
+  let packSourcesAccepted = 0;
+  for (const rawSource of packSourceRows) {
+    const entry = sanitizeRestoredPackSource(rawSource);
+    if (!entry) continue;
+    try {
+      if (entry.url) {
+        await addPackSource(entry.url);
+      } else if (entry.manifest) {
+        const result = await addPackFromManifest(entry.manifest);
+        if (!result.ok) {
+          diagLog("warn", "autoExport", `恢复词典包失败：${entry.packName}`, result.error);
+          continue;
+        }
+      } else {
+        continue;
+      }
+      packSourcesAccepted += 1;
+    } catch (err) {
+      diagLog(
+        "warn",
+        "autoExport",
+        `恢复词典包失败：${entry.packName}`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 
   // #48 s1 review item 4: validate every learn-set record before it's
@@ -695,6 +847,7 @@ export async function restoreFullBackup(json: string): Promise<{
     entries: entries.length,
     learnset: learnsetAccepted,
     packs: packsAccepted,
+    packSources: packSourcesAccepted,
     settingsRestored,
   };
 }

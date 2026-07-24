@@ -31,8 +31,9 @@ export const SETTINGS_UI_LEVELS = {
   aiDetectBilingual: "simple", // 双语转录
   aiDetectTranslateEngine: "simple", // 翻译引擎 (v0.5 F6: LLM vs 系统翻译)
   aiDetectProfile: "simple", // 背景画像 opt-in block (#48 step 3)
-  aiDetectPacks: "advanced", // 词典主题包
-  aiDetectPackSources: "advanced", // 词典源
+  aiDetectPacks: "simple", // 词典主题包 (v0.6: promoted from advanced — installable dict packs are mainstream now)
+  aiDetectPackCatalog: "simple", // 词典库 (v0.6 T6: catalog browse, simple alongside aiDetectPacks/aiDetectPackSources)
+  aiDetectPackSources: "simple", // 词典源 (v0.6: promoted alongside aiDetectPacks)
   // 分任务模型（高级）— whole section (#56, BYOK-only).
   taskLlm: "advanced",
   // 数据与联动 — whole section (export/webhook/backup).

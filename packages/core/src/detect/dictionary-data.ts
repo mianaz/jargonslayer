@@ -20,6 +20,12 @@ export interface DictExpressionEntry {
 
 export interface DictTermEntry {
   term: string;
+  // v0.6 dict packs (T2): alternate surfaces that should also match this
+  // entry — mirrors DictExpressionEntry.variants above. dictionary.ts's
+  // term loop matches each candidate independently (own case-sensitivity
+  // per surface, no inflection), first hit wins, and the emitted card
+  // always reports `term` (the headword), never the variant that hit.
+  variants?: string[];
   type: TermType;
   gloss_en: string;
   gloss_zh: string;

@@ -28,6 +28,27 @@ export interface LoadedRemotePack {
   version: string | number;
   expressions: DictExpressionEntry[];
   terms: DictTermEntry[];
+  // v0.6 T1 — manifest v2 (additive): attribution/provenance/versioning
+  // metadata, all optional so a v1 manifest lacking every one of these
+  // stays valid. Wire contract + validation/clamping rules live in
+  // apps/web's remotePacks.ts (RemotePackManifest/validateManifest);
+  // these mirror that shape 1:1 so UI can render them straight off a
+  // LoadedRemotePack. `entryCount` is deliberately NOT among them — it
+  // is advisory-only wire input and is never threaded through (real
+  // counts always come from expressions.length/terms.length).
+  schemaVersion?: number;
+  license?: string;
+  licenseUrl?: string;
+  source?: string;
+  sourceUrl?: string;
+  sourceVersion?: string;
+  citation?: string;
+  notice?: string;
+  homepage?: string;
+  updateUrl?: string;
+  tags?: string[];
+  minAppVersion?: string;
+  generator?: { model?: string; promptHash?: string; builtAt?: string };
 }
 
 let registry: LoadedRemotePack[] = [];
@@ -37,8 +58,25 @@ export function getLoadedRemotePacks(): LoadedRemotePack[] {
   return registry;
 }
 
+// M4 fix (adversarial review, v0.6 dictpacks fix round): bumped every
+// setLoadedRemotePacks call. dictionary.ts's scanDictionary reads this
+// (getRemotePacksGeneration below) to know when its own compiled-regex
+// cache has gone stale, without this module needing to import/call back
+// into dictionary.ts — that would invert the existing one-way
+// dependency (dictionary.ts already imports FROM this file). Simpler
+// than the alternative ("have setLoadedRemotePacks clear the cache
+// directly").
+let generation = 0;
+
 /** Replace the registry wholesale — called by apps/web's remotePacks.ts
  *  after a successful load/add/remove/checkUpdates (see that file). */
 export function setLoadedRemotePacks(packs: LoadedRemotePack[]): void {
   registry = packs;
+  generation++;
+}
+
+/** Monotonically increasing counter, bumped on every setLoadedRemotePacks
+ *  call — see that function's own doc above. */
+export function getRemotePacksGeneration(): number {
+  return generation;
 }

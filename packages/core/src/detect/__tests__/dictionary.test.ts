@@ -5,23 +5,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../../history/glossaryLookup", () => ({
   findEntryBySurface: vi.fn(() => null),
 }));
+// M4 fix round: dictionary.ts's scanDictionary now ALSO reads
+// getRemotePacksGeneration (regex-cache invalidation) — a mock missing
+// it would throw "getRemotePacksGeneration is not a function" the
+// moment any test below calls scanDictionary. Fixed at 0 by default:
+// most tests here don't care about pack-registry churn, so the cache
+// simply stays warm across calls (still correct — see that function's
+// own doc on why a stale cache entry can never produce a wrong match).
 vi.mock("../remotePacksRegistry", () => ({
   getLoadedRemotePacks: vi.fn(() => []),
+  getRemotePacksGeneration: vi.fn(() => 0),
 }));
 
 import { findEntryBySurface } from "../../history/glossaryLookup";
-import { getLoadedRemotePacks } from "../remotePacksRegistry";
+import { getLoadedRemotePacks, getRemotePacksGeneration } from "../remotePacksRegistry";
 import type { LoadedRemotePack } from "../remotePacksRegistry";
 import { packTermsForBias, scanDictionary, setEnabledPacks } from "../dictionary";
 
 const mockFindEntryBySurface = vi.mocked(findEntryBySurface);
 const mockGetLoadedRemotePacks = vi.mocked(getLoadedRemotePacks);
+const mockGetRemotePacksGeneration = vi.mocked(getRemotePacksGeneration);
 
 beforeEach(() => {
   mockFindEntryBySurface.mockReset();
   mockFindEntryBySurface.mockReturnValue(null);
   mockGetLoadedRemotePacks.mockReset();
   mockGetLoadedRemotePacks.mockReturnValue([]);
+  mockGetRemotePacksGeneration.mockReset();
+  mockGetRemotePacksGeneration.mockReturnValue(0);
 });
 
 afterEach(() => {
@@ -212,6 +223,129 @@ describe("scanDictionary — term matching (case sensitivity for acronyms)", () 
   it("matches a mixed-case term case-insensitively", () => {
     const res = scanDictionary("we are hiring more series b investors");
     expect(res.terms.some((t) => t.term === "Series B")).toBe(true);
+  });
+});
+
+describe("scanDictionary — term variants (v0.6 T2)", () => {
+  function remotePackWithTerm(term: Omit<LoadedRemotePack["terms"][number], "pack">): LoadedRemotePack {
+    return {
+      id: "__test_variant_pack__",
+      name: "variant pack",
+      version: 1,
+      expressions: [],
+      terms: [{ ...term, pack: "__test_variant_pack__" }],
+    };
+  }
+
+  it("a variant hit produces a card keyed by the entry's own headword, not the variant surface that matched", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithTerm({
+        term: "Synthetic Headword Alpha",
+        type: "other",
+        gloss_en: "",
+        gloss_zh: "测试用生造术语",
+        variants: ["SYNALPHA"],
+      }),
+    ]);
+    const res = scanDictionary("Our SYNALPHA is trending down this quarter.");
+    const hit = res.terms.find((t) => t.gloss_zh === "测试用生造术语");
+    expect(hit).toBeDefined();
+    expect(hit!.term).toBe("Synthetic Headword Alpha");
+  });
+
+  it("an all-caps variant stays case-sensitive even though the headword itself is mixed-case", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithTerm({
+        term: "Synthetic Headword Alpha",
+        type: "other",
+        gloss_en: "",
+        gloss_zh: "测试用生造术语",
+        variants: ["SYNALPHA"],
+      }),
+    ]);
+    // Lowercase "synalpha" must NOT match the all-caps variant.
+    const res = scanDictionary("the synalpha number needs review.");
+    expect(res.terms.some((t) => t.gloss_zh === "测试用生造术语")).toBe(false);
+  });
+
+  it("the headword itself still matches when the variant doesn't appear in the text", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithTerm({
+        term: "Synthetic Headword Alpha",
+        type: "other",
+        gloss_en: "",
+        gloss_zh: "测试用生造术语",
+        variants: ["SYNALPHA"],
+      }),
+    ]);
+    const res = scanDictionary("Our synthetic headword alpha is trending down.");
+    expect(res.terms.some((t) => t.gloss_zh === "测试用生造术语")).toBe(true);
+  });
+
+  it("a term without variants behaves byte-identically to today (single-candidate match)", () => {
+    const res = scanDictionary("The ARR figure is up.");
+    expect(res.terms.some((t) => t.term === "ARR")).toBe(true);
+  });
+});
+
+describe("scanDictionary — commonWord term suppression (H1/H2 doc fix pin, v0.6 dictpacks fix round)", () => {
+  function remotePackWithCommonWordTerm(): LoadedRemotePack {
+    return {
+      id: "__test_commonword_pack__",
+      name: "commonword pack",
+      version: 1,
+      expressions: [],
+      terms: [
+        {
+          term: "zzztestword",
+          type: "other",
+          gloss_en: "",
+          gloss_zh: "测试常见词",
+          commonWord: true,
+          pack: "__test_commonword_pack__",
+        },
+      ],
+    };
+  }
+
+  it("suppresses a commonWord term under the default null (all-on) enabledPacks", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWithCommonWordTerm()]);
+    const res = scanDictionary("we discussed zzztestword today", null);
+    expect(res.terms.some((t) => t.term === "zzztestword")).toBe(false);
+  });
+
+  it("fires the SAME commonWord term once the user has an explicit pack selection — even one that names this exact pack", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWithCommonWordTerm()]);
+    const res = scanDictionary("we discussed zzztestword today", ["__test_commonword_pack__"]);
+    expect(res.terms.some((t) => t.term === "zzztestword")).toBe(true);
+  });
+});
+
+describe("scanDictionary — regex cache does not block a mid-session pack install (M4 fix)", () => {
+  it("a pack installed after an earlier scan is matchable on the very next scanDictionary call", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([]);
+    mockGetRemotePacksGeneration.mockReturnValue(0);
+    const before = scanDictionary("we discussed zzzfreshterm today", null);
+    expect(before.terms.some((t) => t.term === "zzzfreshterm")).toBe(false);
+
+    // Simulate a pack install: registry content AND generation both
+    // change (setLoadedRemotePacks bumps generation — see that
+    // function's own doc, packages/core/src/detect/remotePacksRegistry.ts).
+    mockGetLoadedRemotePacks.mockReturnValue([
+      {
+        id: "__test_fresh_pack__",
+        name: "fresh pack",
+        version: 1,
+        expressions: [],
+        terms: [
+          { term: "zzzfreshterm", type: "other", gloss_en: "", gloss_zh: "刚安装的词", pack: "__test_fresh_pack__" },
+        ],
+      },
+    ]);
+    mockGetRemotePacksGeneration.mockReturnValue(1);
+
+    const after = scanDictionary("we discussed zzzfreshterm today", null);
+    expect(after.terms.some((t) => t.term === "zzzfreshterm")).toBe(true);
   });
 });
 

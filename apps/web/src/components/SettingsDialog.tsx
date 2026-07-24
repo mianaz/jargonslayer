@@ -22,13 +22,19 @@ import {
 import { packCounts, setEnabledPacks } from "@jargonslayer/core/detect/dictionary";
 import { getAllPacks } from "@jargonslayer/core/detect/packs";
 import {
+  addPackFromManifest,
   addPackSource,
   checkUpdates,
+  classifyPackOrigin,
+  compareSemver,
   listPackSources,
   loadRemotePacksIntoRegistry,
+  MAX_PACK_BYTES,
   removePackSource,
   type RemotePackSource,
 } from "@/lib/detect/remotePacks";
+import { toRawGithubUrl } from "@/lib/detect/githubUrl";
+import { fetchDictCatalog, type CatalogPackEntry } from "@/lib/detect/dictCatalog";
 import {
   buildFullBackup,
   chooseExportFolder,
@@ -673,6 +679,25 @@ function isValidBaseUrl(value: string): boolean {
   return true;
 }
 
+/** v0.6 T3: normalize + validate a pack-install URL — shared by every
+ *  entry point that hands a URL to addPackSource (词典源's manual
+ *  paste, and 词典库's own 安装/更新 button below). First silently
+ *  rewrites a pasted GitHub blob URL to its raw.githubusercontent.com
+ *  equivalent (toRawGithubUrl, lib/detect/githubUrl.ts — users paste
+ *  blob URLs constantly), THEN requires https (addPackSource itself
+ *  has no protocol opinion — this is the one gate, T3(c)). Returns the
+ *  resolved URL to install, or null — the caller shows its own zh
+ *  message via packInstallError. */
+function resolvePackInstallUrl(rawUrl: string): string | null {
+  const url = toRawGithubUrl(rawUrl.trim());
+  try {
+    if (new URL(url).protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+  return url;
+}
+
 // S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
 // lives only in the shared BASE venv; parakeet rides a fully separate,
 // airtight-isolated MLX venv (§C R1) that never has pyannote installed,
@@ -949,6 +974,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     sessions: number;
     entries: number;
     learnset: number;
+    // M3 fix (adversarial review): so the confirm step can disclose
+    // that the file contains packs at all — restoring makes the
+    // browser fetch every url-backed row.
+    packSources: number;
     hasSettings: boolean;
     hasApiKey: boolean;
   } | null>(null);
@@ -1051,7 +1080,35 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [packSourceUrl, setPackSourceUrl] = useState("");
   const [addingPackSource, setAddingPackSource] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [confirmRemoveUrl, setConfirmRemoveUrl] = useState<string | null>(null);
+  // Renamed from confirmRemoveUrl (v0.6 T5/GOTCHA): a file-imported
+  // source's own url is "" (see RemotePackSource.url's own doc), so
+  // every per-row identifier below is `s.url || s.pack.id`, never
+  // `s.url` alone — this now holds either shape.
+  const [confirmRemovePackId, setConfirmRemovePackId] = useState<string | null>(null);
+  // v0.6 T2: import a pack from a local file / pasted JSON — same
+  // collapsed-panel shape as the theme importer's own themeImportOpen/
+  // themeImportText (see handleImportThemeJson/handleImportThemeFile
+  // above, and the JSX at :4556-4599 this mirrors).
+  const [packImportOpen, setPackImportOpen] = useState(false);
+  const [packImportText, setPackImportText] = useState("");
+  // v0.6 T2/T3(b): shared inline error slot for every pack-install path
+  // below (URL/file/paste/catalog) — mirrors restoreError's own
+  // "persistent inline line, not just an ephemeral toast" idiom
+  // (:4187-4189) rather than losing a possibly-multi-sentence
+  // validation error (size caps, minAppVersion, quota, …) to a toast
+  // that's already gone by the time it's worth re-reading. Cleared at
+  // the start of every new attempt and on success.
+  const [packInstallError, setPackInstallError] = useState<string | null>(null);
+  // v0.6 T5: which installed sources currently have their 来源与许可
+  // disclosure open — keyed the same `s.url || s.pack.id` way as
+  // confirmRemovePackId above.
+  const [expandedPackNotices, setExpandedPackNotices] = useState<Set<string>>(new Set());
+  // v0.6 T6: 词典库 catalog browse — lazy-fetched (see the effect
+  // below), never on dialog mount. catalogStatus doubles as the
+  // fetch-once guard (only "idle" ever triggers a fetch).
+  const [catalogPacks, setCatalogPacks] = useState<CatalogPackEntry[] | null>(null);
+  const [catalogStatus, setCatalogStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [installingCatalogId, setInstallingCatalogId] = useState<string | null>(null);
   // 分任务模型（高级）(#56): collapsed by default — the per-domain
   // blocks below only mount (and only start fetching model lists) once
   // this is open, see TaskDomainBlock's own doc comment.
@@ -1206,6 +1263,23 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // live scanDictionary() registry as soon as the app loads, even if
   // the user never opens this dialog. Mirrors the dictionary.ts
   // registry-pattern comment (see setEnabledPacks there).
+  //
+  // SEPARATE bug fix (adversarial review, v0.6 dictpacks fix round):
+  // this used to run with `[]` deps, i.e. exactly once, using whatever
+  // `settings.enabledPacks` was in the closure at THAT render. But this
+  // dialog is mounted by page.tsx BEFORE store.hydrate() (async)
+  // resolves (#62/tag-blocker 1's own well-documented hazard), so the
+  // very first run always saw DEFAULT_SETTINGS.enabledPacks — and with
+  // an empty deps array never re-ran once hydrate() published the REAL
+  // persisted selection. The detector registry (setEnabledPacks here)
+  // and the ASR bias hint (buildMeetingLexicon, which reads the live
+  // store directly) would then permanently disagree about which packs
+  // are on for the whole session. `hydrated`/`settings.enabledPacks` in
+  // the deps array make this re-run once hydration actually publishes
+  // the persisted value (and again on any later change, e.g. 保存 or a
+  // backup restore) — loadRemotePacksIntoRegistry/listPackSources
+  // re-running alongside it is a harmless no-op/re-fetch, not a new
+  // side effect (see their own docs).
   useEffect(() => {
     setEnabledPacks(settings.enabledPacks);
     // Remote packs (#20): bootstrapped here, unconditionally on app
@@ -1229,7 +1303,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     });
     void listPackSources().then(setPackSources);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hydrated, settings.enabledPacks]);
+
+  // v0.6 T6: 词典库 catalog browse — lazy-fetched only once the AI 检测
+  // category is actually visible (never on dialog mount, unlike the
+  // packSources bootstrap above), and only once per dialog lifetime —
+  // catalogStatus's own "idle" gate makes this fire exactly once even
+  // though switching tabs back and forth re-runs the effect.
+  useEffect(() => {
+    if (!open || activeCategory !== "aiDetect" || catalogStatus !== "idle") return;
+    setCatalogStatus("loading");
+    void fetchDictCatalog()
+      .then((catalog) => {
+        setCatalogPacks(catalog.packs);
+        setCatalogStatus("loaded");
+      })
+      .catch(() => {
+        setCatalogStatus("error");
+      });
+  }, [open, activeCategory, catalogStatus]);
 
   useEffect(() => {
     if (open) {
@@ -1250,6 +1342,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setThemeEditor(null);
       setThemeImportOpen(false);
       setThemeImportText("");
+      // L1 fix (adversarial review): exactly the same "don't leak a
+      // previous open's transient panel state into a fresh one" reason
+      // as the theme importer three lines above.
+      setPackInstallError(null);
+      setPackImportOpen(false);
+      setPackImportText("");
       // FINDING 5 (S14 fix round): a 测试连接 result from a PREVIOUS
       // dialog-open must never survive into a fresh one — the freshly
       // re-seeded draft above may no longer be what was last tested.
@@ -1608,8 +1706,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const packEntryCounts = packCounts();
 
   const handleAddPackSource = async () => {
-    const url = packSourceUrl.trim();
-    if (!url) return;
+    const rawUrl = packSourceUrl.trim();
+    if (!rawUrl) return;
+    setPackInstallError(null);
+    const url = resolvePackInstallUrl(rawUrl);
+    if (!url) {
+      setPackInstallError("请输入有效的 https 链接");
+      return;
+    }
     setAddingPackSource(true);
     try {
       const { pack } = await addPackSource(url);
@@ -1617,23 +1721,123 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setPackSourceUrl("");
       showToast(`已添加词典包「${pack.name}」`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "添加词典包失败");
+      setPackInstallError(err instanceof Error ? err.message : "添加词典包失败");
     } finally {
       setAddingPackSource(false);
     }
   };
 
-  const handleRemovePackSource = async (url: string) => {
-    if (confirmRemoveUrl !== url) {
-      setConfirmRemoveUrl(url);
+  // v0.6 T2: shared parse+install tail for both the file picker and the
+  // paste-JSON textarea below — mirrors handleImportThemeJson's own
+  // JSON.parse-then-validate split, but addPackFromManifest (unlike
+  // parseTheme) never throws — it always resolves {ok, ...}, so there's
+  // no separate try/catch needed for the install half itself.
+  // N4(b) fix (adversarial review): the raw string's UTF-8 byte length
+  // is checked BEFORE JSON.parse — addPackFromManifest itself already
+  // enforces MAX_PACK_BYTES, but only after parsing an oversized paste.
+  const handleImportPackJson = async (raw: string) => {
+    if (new TextEncoder().encode(raw).length > MAX_PACK_BYTES) {
+      setPackInstallError("词典包过大：单个词典包不能超过 2 MB");
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      setPackInstallError("词典包不是有效的 JSON");
+      return;
+    }
+    setPackInstallError(null);
+    const result = await addPackFromManifest(parsed);
+    if (!result.ok) {
+      setPackInstallError(result.error);
+      return;
+    }
+    setPackSources(await listPackSources());
+    setPackImportOpen(false);
+    setPackImportText("");
+    showToast(`已导入词典「${result.pack.name}」`);
+  };
+
+  // N4(a) fix (adversarial review): File.size is checked BEFORE
+  // file.text() — buffering an oversized file into memory first, cap or
+  // not, is the exact thing this is meant to avoid.
+  const handleImportPackFile = async (file: File) => {
+    if (file.size > MAX_PACK_BYTES) {
+      setPackInstallError("词典包过大：单个词典包不能超过 2 MB");
+      return;
+    }
+    const text = await file.text();
+    await handleImportPackJson(text);
+  };
+
+  // v0.6 T6: 词典库 row action (安装/更新 both funnel through this — an
+  // addPackSource on an id that's already installed replaces it, same
+  // "last install wins" precedent as a manual URL re-add).
+  const handleInstallCatalogPack = async (row: CatalogPackEntry) => {
+    setPackInstallError(null);
+    const url = resolvePackInstallUrl(row.url);
+    if (!url) {
+      setPackInstallError("词典目录中的链接无效");
+      return;
+    }
+    setInstallingCatalogId(row.id);
+    try {
+      const { pack } = await addPackSource(url);
+      setPackSources(await listPackSources());
+      showToast(`已安装词典「${pack.name}」`);
+    } catch (err) {
+      setPackInstallError(err instanceof Error ? err.message : "安装词典包失败");
+    } finally {
+      setInstallingCatalogId(null);
+    }
+  };
+
+  // N7(d) fix (adversarial review): removePackSource itself now takes a
+  // DISCRIMINATED (url, packId) pair instead of one overloaded string —
+  // see that function's own doc (remotePacks.ts) for why a merged
+  // "s.url || s.pack.id" string can ambiguously match two different
+  // sources. This handler takes the whole source so both fields are
+  // always available; `identifier` (still `s.url || s.pack.id`) is kept
+  // ONLY for the confirm-then-click UI state / React key, which doesn't
+  // need to be collision-proof the way the actual delete call does.
+  const handleRemovePackSource = async (source: RemotePackSource) => {
+    const identifier = source.url || source.pack.id;
+    if (confirmRemovePackId !== identifier) {
+      setConfirmRemovePackId(identifier);
       setTimeout(() => {
-        setConfirmRemoveUrl((cur) => (cur === url ? null : cur));
+        setConfirmRemovePackId((cur) => (cur === identifier ? null : cur));
       }, 3000);
       return;
     }
-    await removePackSource(url);
+    const removed = await removePackSource(source.url, source.pack.id);
     setPackSources(await listPackSources());
-    setConfirmRemoveUrl(null);
+    setConfirmRemovePackId(null);
+    // N7(b) fix: report success/failure honestly instead of always
+    // toasting success regardless of whether the write actually landed.
+    if (!removed) {
+      showToast("移除词典包失败，请重试");
+      return;
+    }
+    const packId = source.pack.id;
+    // Drop the removed pack id from the LIVE draft checkbox state so it
+    // can't linger — a stale checked id would silently apply to some
+    // future pack that happens to reuse this id.
+    setCheckedPacks((prev) => {
+      if (!prev.has(packId)) return prev;
+      const next = new Set(prev);
+      next.delete(packId);
+      return next;
+    });
+    // ...and from the PERSISTED selection too, but only when it's
+    // already an explicit list — `enabledPacks: null` has nothing to
+    // clean up, and turning it explicit here would resurrect the exact
+    // commonWord-suppression bug the materializeEnabledPacks revert
+    // (H1/H2) just fixed.
+    const persisted = useApp.getState().settings.enabledPacks;
+    if (persisted !== null && persisted.includes(packId)) {
+      updateSettings({ enabledPacks: persisted.filter((pid) => pid !== packId) });
+    }
     showToast("已移除词典包");
   };
 
@@ -1641,11 +1845,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setCheckingUpdates(true);
     try {
       const updatedIds = await checkUpdates();
-      setPackSources(await listPackSources());
+      // L5 fix (adversarial review): read the REFRESHED list for the
+      // per-source report — the old code read the pre-refresh
+      // `packSources` closure, so a toast right after updating could
+      // still say "已是最新版本" for the pack it just updated.
+      const freshSources = await listPackSources();
+      setPackSources(freshSources);
       if (url) {
         // Per-source button: only report on whether this one source
         // changed, even though checkUpdates() refreshes every source.
-        const source = packSources.find((s) => s.url === url);
+        const source = freshSources.find((s) => s.url === url);
         const changed = source ? updatedIds.includes(source.pack.id) : false;
         showToast(changed ? "已更新到最新版本" : "已是最新版本");
       } else {
@@ -2177,8 +2386,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setRestoreError(null);
     const text = await file.text();
     try {
-      const { sessions, entries, learnset, hasSettings, hasApiKey } = previewBackup(text);
-      setRestorePreview({ text, sessions, entries, learnset, hasSettings, hasApiKey });
+      const { sessions, entries, learnset, packSources, hasSettings, hasApiKey } = previewBackup(text);
+      setRestorePreview({ text, sessions, entries, learnset, packSources, hasSettings, hasApiKey });
     } catch (err) {
       setRestorePreview(null);
       setRestoreError(err instanceof Error ? err.message : "备份文件解析失败");
@@ -3848,37 +4057,171 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 <ToggleSwitch checked disabled />
               </label>
-              {allPacks.filter((p) => p.id !== "core").map((p) => (
-                <label
-                  key={p.id}
-                  className="flex items-center justify-between gap-3 py-1"
-                >
-                  <div>
-                    <div className="text-sm text-fg">
-                      {p.name}
-                      {p.remote && (
-                        <span className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut">
-                          社区
-                        </span>
-                      )}
+              {allPacks.filter((p) => p.id !== "core").map((p) => {
+                // v0.6 T1: replaces the old blanket "社区" badge —
+                // every remote pack now shows whether it's an official
+                // jargonslayer-dicts release or something the user
+                // pointed at/imported themselves. Recomputed on every
+                // render via classifyPackOrigin (never a stored flag —
+                // see that function's own doc comment on why). Matched
+                // against packSources by pack id since DictPack itself
+                // carries no url; a remote pack missing its own source
+                // (should never happen — every registry entry came
+                // from one) falls back to "" -> classifyPackOrigin's
+                // own "imported" default.
+                const origin = p.remote
+                  ? classifyPackOrigin(packSources.find((s) => s.pack.id === p.id)?.url ?? "")
+                  : null;
+                return (
+                  <label
+                    key={p.id}
+                    className="flex items-center justify-between gap-3 py-1"
+                  >
+                    <div>
+                      <div className="text-sm text-fg">
+                        {/* N5 fix (adversarial review): an imported
+                           pack's name is untrusted remote content —
+                           <bdi> isolates it from bidi reordering so it
+                           can't visually swallow/reorder the 官方/已导入
+                           badge, which stays in its OWN sibling element
+                           either way (validateManifest also strips
+                           bidi/zero-width control chars at the source —
+                           this is a second, independent layer). */}
+                        <bdi>{p.name}</bdi>
+                        {origin && (
+                          <span
+                            className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut"
+                            title={
+                              origin === "official"
+                                ? "来自 JargonSlayer 官方词典库"
+                                : "由你从外部链接或文件导入，内容未经官方审核"
+                            }
+                          >
+                            {origin === "official" ? "官方" : "已导入"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-mut2">
+                        {/* H3(b) fix (adversarial review): a plain
+                           packEntryCounts[p.id] read turns an id of
+                           "__proto__" into an Object.prototype access
+                           ("Objects are not valid as a React child")
+                           instead of a real miss — validateManifest now
+                           rejects that id at install time (H3(a)), but
+                           this read-side hardening is defense in depth. */}
+                        {p.description}（{Object.hasOwn(packEntryCounts, p.id) ? packEntryCounts[p.id] : 0} 条）
+                      </div>
                     </div>
-                    <div className="text-xs text-mut2">
-                      {p.description}（{packEntryCounts[p.id] ?? 0} 条）
-                    </div>
-                  </div>
-                  <ToggleSwitch
-                    checked={checkedPacks.has(p.id)}
-                    onChange={(checked) => togglePack(p.id, checked)}
-                  />
-                </label>
-              ))}
+                    <ToggleSwitch
+                      checked={checkedPacks.has(p.id)}
+                      onChange={(checked) => togglePack(p.id, checked)}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            )}
+
+            {/* 词典库 (#20 v0.6 T6): browse/install packs from the
+               community catalog jargonslayer-dicts publishes — installs
+               go through the exact same addPackSource() as a manual URL
+               paste below, just pre-filled from the index instead of
+               requiring the user to hunt down a raw link themselves.
+               Lazy-fetched (see the effect above) only once this
+               category is actually visible, never on dialog mount. */}
+            {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPackCatalog) && (
+            <div
+              className="space-y-2 border-t border-edge pt-3"
+              data-ui-level="aiDetectPackCatalog"
+            >
+              <div className="text-xs text-mut">词典库</div>
+              {catalogStatus === "loading" && (
+                <div className="text-xs text-mut2">加载词典目录中…</div>
+              )}
+              {catalogStatus === "error" && (
+                <div className="flex items-center justify-between gap-2 text-xs leading-[1.7] text-mut2">
+                  <span>暂时无法加载词典目录，可稍后重试或用下方链接手动添加</span>
+                  {/* L2 fix (adversarial review): catalogStatus never
+                     returned to "idle" on its own, so "可稍后重试" was
+                     unkeepable — resetting to "idle" re-arms the fetch
+                     effect's own "idle" gate above. */}
+                  <button
+                    type="button"
+                    onClick={() => setCatalogStatus("idle")}
+                    className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3"
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
+              {catalogStatus === "loaded" && catalogPacks && catalogPacks.length === 0 && (
+                <div className="text-xs leading-[1.7] text-mut2">词典目录暂时是空的</div>
+              )}
+              {catalogStatus === "loaded" && catalogPacks && catalogPacks.length > 0 && (
+                <div className="space-y-1.5">
+                  {catalogPacks.map((row) => {
+                    const installedSource = packSources.find((s) => s.pack.id === row.id);
+                    // L3/N6 fix (adversarial review): id-only + String()
+                    // equality used to (a) render 更新 pointing at the
+                    // catalog's official url even when the installed
+                    // pack under this id came from a DIFFERENT source
+                    // (e.g. the user's own fork), and (b) present a
+                    // semver-OLDER catalog entry as an "update" (a stale
+                    // catalog serving a downgrade). `upToDate` is
+                    // version-only (>=, real semver ordering — never
+                    // offer anything once the installed version already
+                    // meets or exceeds the catalog's); 更新 additionally
+                    // requires the installed SOURCE to be this same
+                    // catalog url — otherwise it's an honest fresh 安装
+                    // of the official pack, not a same-lineage update.
+                    const versionCmp = installedSource
+                      ? compareSemver(String(installedSource.pack.version), String(row.version))
+                      : null;
+                    const sameSource = !!installedSource && installedSource.url === row.url;
+                    const upToDate = versionCmp !== null && versionCmp >= 0;
+                    const offersUpdate = !upToDate && sameSource;
+                    return (
+                      <div
+                        key={row.id}
+                        className="flex items-center justify-between gap-2 border border-edge bg-panel2 px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm text-fg">{row.name}</div>
+                          {row.description && (
+                            <div className="truncate text-xs text-mut2">{row.description}</div>
+                          )}
+                          <div className="text-xs text-mut2">
+                            {row.entryCount ?? "?"} 条{row.license ? ` · ${row.license}` : ""}
+                            {row.tags && row.tags.length > 0 ? ` · ${row.tags.join(" ")}` : ""}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleInstallCatalogPack(row)}
+                          disabled={installingCatalogId === row.id || upToDate}
+                          className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {installingCatalogId === row.id
+                            ? "安装中…"
+                            : upToDate
+                              ? "已安装"
+                              : offersUpdate
+                                ? "更新"
+                                : "安装"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             )}
 
             {/* 词典源 (#20): install community dictionary packs from a
-               URL. getAllPacks() above already folds loaded remote
-               packs into the checkbox list; this subsection manages
-               the underlying sources (add/remove/update-check). */}
+               URL, a local file, or pasted JSON. getAllPacks() above
+               already folds loaded remote packs into the checkbox
+               list; this subsection manages the underlying sources
+               (add/import/remove/update-check). */}
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPackSources) && (
             <div
               className="space-y-2 border-t border-edge pt-3"
@@ -3907,41 +4250,182 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </button>
               </div>
 
+              {/* v0.6 T2: mirrors the 显示 section's own 导入主题文件
+                 block exactly (:4965-5008's own shape) — a collapsed
+                 file-picker + paste-JSON panel sharing one parse+install
+                 tail (handleImportPackJson above). */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-mut">从文件导入 / 粘贴 JSON</label>
+                  <button
+                    type="button"
+                    onClick={() => setPackImportOpen((v) => !v)}
+                    className="text-xs text-act hover:underline"
+                  >
+                    {packImportOpen ? "收起" : "展开"}
+                  </button>
+                </div>
+                {packImportOpen && (
+                  <div className="mt-1 space-y-2 border border-edge bg-panel2 p-3">
+                    <label className="btn-tactile inline-block cursor-pointer border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3">
+                      选择文件
+                      <input
+                        type="file"
+                        accept="application/json,.json"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = ""; // allow re-picking the same file
+                          if (file) void handleImportPackFile(file);
+                        }}
+                      />
+                    </label>
+                    <textarea
+                      value={packImportText}
+                      onChange={(e) => setPackImportText(e.target.value)}
+                      placeholder="或粘贴词典包 JSON…"
+                      rows={3}
+                      className="w-full resize-none border border-edge bg-panel px-2.5 py-1.5 font-mono text-xs leading-[1.7] text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleImportPackJson(packImportText)}
+                      disabled={!packImportText.trim()}
+                      className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      解析并导入
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* v0.6 T2/T3(b): persistent inline error for EVERY
+                 install path above (URL/file/paste) and the 词典库 row
+                 buttons above that — mirrors restoreError's own idiom
+                 (:4596-4598) rather than losing a validation error to a
+                 toast that's already gone. */}
+              {packInstallError && (
+                <div className="text-xs leading-[1.7] text-warn-soft">{packInstallError}</div>
+              )}
+
               {packSources.length > 0 && (
                 <div className="space-y-1.5">
-                  {packSources.map((s) => (
-                    <div
-                      key={s.url}
-                      className="flex items-center justify-between gap-2 border border-edge bg-panel2 px-3 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm text-fg">{s.pack.name}</div>
-                        <div className="font-mono text-xs tabular-nums text-mut2">
-                          v{s.pack.version} ·{" "}
-                          {s.pack.expressions.length + s.pack.terms.length} 条
+                  {packSources.map((s) => {
+                    // v0.6 T5/GOTCHA: s.url is "" (not undefined) for a
+                    // file-imported pack — every identifier/key below
+                    // is `s.url || s.pack.id`, never `s.url` alone.
+                    const id = s.url || s.pack.id;
+                    const hasNotice = !!(
+                      s.pack.source ||
+                      s.pack.license ||
+                      s.pack.sourceVersion ||
+                      s.pack.citation ||
+                      s.pack.notice
+                    );
+                    const noticeOpen = expandedPackNotices.has(id);
+                    return (
+                      <div key={id} className="border border-edge bg-panel2 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm text-fg">{s.pack.name}</div>
+                            <div className="font-mono text-xs tabular-nums text-mut2">
+                              v{s.pack.version} ·{" "}
+                              {s.pack.expressions.length + s.pack.terms.length} 条
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {/* v0.6 T5: NOTICE/attribution disclosure —
+                               only rendered when there's actually
+                               something to show (a v1 pack with no
+                               attribution metadata renders no trigger
+                               at all, never an empty expanded block). */}
+                            {hasNotice && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedPackNotices((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(id)) next.delete(id);
+                                    else next.add(id);
+                                    return next;
+                                  })
+                                }
+                                className="btn-tactile px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg"
+                              >
+                                {noticeOpen ? "收起来源" : "来源与许可"}
+                              </button>
+                            )}
+                            {/* checkUpdates() itself skips file-imported
+                               sources outright (nothing to refetch) —
+                               hide the button rather than show one that
+                               always no-ops. */}
+                            {s.url && (
+                              <button
+                                type="button"
+                                onClick={() => void handleCheckUpdates(s.url)}
+                                disabled={checkingUpdates}
+                                className="btn-tactile px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                检查更新
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void handleRemovePackSource(s)}
+                              className={`btn-tactile px-2 py-1 text-xs hover:bg-panel3 ${
+                                confirmRemovePackId === id ? "text-warn-soft" : "text-mut hover:text-warn-soft"
+                              }`}
+                            >
+                              {confirmRemovePackId === id ? "确认移除?" : "移除"}
+                            </button>
+                          </div>
                         </div>
+                        {hasNotice && noticeOpen && (
+                          <div className="mt-2 space-y-1 border-t border-edge pt-2 text-xs leading-[1.7] text-mut2">
+                            {/* External pack-metadata URLs (source/
+                               license) are rendered as selectable TEXT,
+                               never a clickable link: the desktop
+                               opener plugin's own allowlist (apps/
+                               desktop/src-tauri/capabilities/
+                               default.json) only covers openrouter.ai/
+                               github.com/huggingface.co, and a pack's
+                               sourceUrl/licenseUrl can point at
+                               literally anything (raw.githubusercontent.
+                               com, choosealicense.com, an arbitrary
+                               journal/agency site, …) — see this
+                               worker's own task doc for the ruling. */}
+                            {s.pack.source && (
+                              <div>
+                                来源：{s.pack.source}
+                                {s.pack.sourceUrl && s.pack.sourceUrl.startsWith("https://") && (
+                                  <span className="ml-1 break-all">({s.pack.sourceUrl})</span>
+                                )}
+                              </div>
+                            )}
+                            {s.pack.license && (
+                              <div>
+                                许可：{s.pack.license}
+                                {s.pack.licenseUrl && s.pack.licenseUrl.startsWith("https://") && (
+                                  <span className="ml-1 break-all">({s.pack.licenseUrl})</span>
+                                )}
+                              </div>
+                            )}
+                            {s.pack.sourceVersion && <div>原始版本：{s.pack.sourceVersion}</div>}
+                            {s.pack.citation && <div>引用：{s.pack.citation}</div>}
+                            {/* notice is rendered VERBATIM as plain text
+                               (pre-clamped to 600 chars upstream,
+                               remotePacks.ts) — a plain React text child
+                               is never interpreted as HTML, so this is
+                               safe even though the string itself is
+                               untrusted remote content. */}
+                            {s.pack.notice && (
+                              <div className="whitespace-pre-wrap break-words">{s.pack.notice}</div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => void handleCheckUpdates(s.url)}
-                          disabled={checkingUpdates}
-                          className="btn-tactile px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          检查更新
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleRemovePackSource(s.url)}
-                          className={`btn-tactile px-2 py-1 text-xs hover:bg-panel3 ${
-                            confirmRemoveUrl === s.url ? "text-warn-soft" : "text-mut hover:text-warn-soft"
-                          }`}
-                        >
-                          {confirmRemoveUrl === s.url ? "确认移除?" : "移除"}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <button
                     type="button"
                     onClick={() => void handleCheckUpdates()}
@@ -3954,7 +4438,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               )}
 
               <div className="text-xs leading-[1.7] text-mut2">
-                从 GitHub raw / jsDelivr 链接安装社区词典包，JSON 格式见文档
+                从 GitHub raw / jsDelivr 链接安装社区词典包（支持粘贴 GitHub 网页链接，自动转换为 raw 链接），JSON 格式见文档
               </div>
             </div>
             )}
@@ -4195,6 +4679,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，同 ID 的已有会议将被覆盖）</li>
                     <li>个人词典：{restorePreview.entries} 条（按 ID 合并，规则同上）</li>
                     <li>学习记录：{restorePreview.learnset} 条（按记录合并，规则同上；备份不含此项时当前记录保持不变）</li>
+                    {/* M3 fix (adversarial review): disclose that the
+                       file contains dictionary packs at all — restoring
+                       makes the browser fetch every url-backed row. */}
+                    {restorePreview.packSources > 0 && (
+                      <li>词典包：{restorePreview.packSources} 个（url 来源将重新联网获取，请确认文件来源可信）</li>
+                    )}
                     <li>
                       设置：
                       {restorePreview.hasSettings
