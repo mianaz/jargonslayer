@@ -72,6 +72,21 @@ export interface DesktopWizardProps {
   onRetry: () => void;
   onRecheckHealth: () => Promise<void>;
   onReprovision: () => Promise<void>;
+  /** Field-test issue 6 (cancellable first-run model downloads) —
+   *  StepRowsScreen's own 「后台继续」 button (DOWNLOAD_MODEL/RUNNING
+   *  only): dismisses the overlay while the download keeps running.
+   *  Synchronous — mirrors onDismissConsent/onDismissTerminal above,
+   *  never onReprovision's awaited-Promise shape, since this never
+   *  touches the drive itself, only DesktopBootstrap.tsx's own
+   *  visibility bookkeeping (see that file's own userBackgrounded doc
+   *  comment) plus starting the tray row (jobsBridge.ts's trackPrewarm). */
+  onBackgroundDownload: () => void;
+  /** StepRowsScreen's own 「取消下载」 button (DOWNLOAD_MODEL/RUNNING
+   *  only): calls handle.cancelPrewarm() — see that method's own doc
+   *  comment (bootstrap.ts) for why the wizard then returns to the
+   *  model-choice/consent screen in a retriable state rather than an
+   *  error screen (cancel is not an error). */
+  onCancelPrewarm: () => Promise<void>;
 }
 
 const README_URL = "https://github.com/mianaz/jargonslayer#readme";
@@ -371,6 +386,8 @@ function StepRowsScreen({
   onRecheckHealth,
   onReprovision,
   onDismissStepError,
+  onBackgroundDownload,
+  onCancelPrewarm,
 }: {
   state: Extract<DesktopBootstrapState, { phase: "STEP" }>;
   paths: DesktopPaths;
@@ -380,6 +397,8 @@ function StepRowsScreen({
   onRecheckHealth: () => Promise<void>;
   onReprovision: () => Promise<void>;
   onDismissStepError: () => void;
+  onBackgroundDownload: () => void;
+  onCancelPrewarm: () => Promise<void>;
 }) {
   const hasError = state.status === "ERROR";
   // v0.4.0 field fix: 返回重新选择's own transient busy flag — the same
@@ -387,6 +406,15 @@ function StepRowsScreen({
   // below (this file's header comment), around the same awaited
   // onReprovision callback.
   const [returning, setReturning] = useState(false);
+  // Field-test issue 6: 取消下载's own transient busy flag — same
+  // contract as `returning` immediately above, around onCancelPrewarm.
+  const [cancelling, setCancelling] = useState(false);
+  // DOWNLOAD_MODEL is the only step 「后台继续」/「取消下载」 make sense
+  // for (both act on the prewarm_model download specifically — see each
+  // prop's own doc comment, DesktopWizardProps) — every other RUNNING
+  // step (INSTALL_PYTHON/CREATE_VENV/INSTALL_DEPS/STARTING) stays
+  // exactly as un-actionable as before this fix.
+  const downloading = state.step === "DOWNLOAD_MODEL" && state.status === "RUNNING";
   return (
     <WizardFrame>
       <div data-testid="desktop-wizard-steps" className="space-y-4">
@@ -413,6 +441,44 @@ function StepRowsScreen({
             );
           })}
         </div>
+
+        {/* Field-test issue 6: once a model download starts, the user
+           previously had no way to cancel it, go back, or background it
+           — STEP RUNNING rendered zero action buttons anywhere in this
+           file. Scoped to DOWNLOAD_MODEL/RUNNING only (see `downloading`
+           above) — 后台继续 hands the download off to the task tray
+           (jobsBridge.ts's trackPrewarm, started by DesktopBootstrap.tsx's
+           own onBackgroundDownload); 取消下载 calls cancel_prewarm and
+           returns to the consent screen (not an error screen — see
+           onCancelPrewarm's own doc comment, DesktopWizardProps). */}
+        {downloading && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              data-testid="btn-background-download"
+              onClick={onBackgroundDownload}
+              className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+            >
+              后台继续
+            </button>
+            <button
+              type="button"
+              data-testid="btn-cancel-download"
+              disabled={cancelling}
+              onClick={async () => {
+                setCancelling(true);
+                try {
+                  await onCancelPrewarm();
+                } finally {
+                  setCancelling(false);
+                }
+              }}
+              className="btn-tactile px-3 py-1.5 text-sm text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {cancelling ? WIZARD_BUSY_LABEL : "取消下载"}
+            </button>
+          </div>
+        )}
 
         {state.status === "ERROR" && (
           <div className="space-y-3 border border-warn-soft/40 bg-panel2 p-3">
@@ -535,6 +601,8 @@ export default function DesktopWizard({
   onRetry,
   onRecheckHealth,
   onReprovision,
+  onBackgroundDownload,
+  onCancelPrewarm,
 }: DesktopWizardProps) {
   // S11 osspeech blueprint (§3 Worker D, §A4): called unconditionally,
   // ahead of every early-return branch below (Rules of Hooks) — only
@@ -601,6 +669,8 @@ export default function DesktopWizard({
         onRecheckHealth={onRecheckHealth}
         onReprovision={onReprovision}
         onDismissStepError={onDismissStepError}
+        onBackgroundDownload={onBackgroundDownload}
+        onCancelPrewarm={onCancelPrewarm}
       />
     );
   }

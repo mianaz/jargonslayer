@@ -858,6 +858,23 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.correctionBusy).toBe(false);
   });
 
+  // F7 fix (Sol LOW #19, keychain-custody fix round): a stale
+  // "dictionary" left over from a PREVIOUS meeting's AI fallback must
+  // not survive into a fresh one — AiStatusPanel's useAiFallenBack
+  // (aiDetect on + detectMode==="dictionary") would otherwise falsely
+  // show the 重试 AI 检测 banner before the new meeting has attempted
+  // anything. Mirrors Header.tsx's own DetectModeBadge toggle
+  // convention (`setDetectMode(next ? "llm" : "dictionary")`).
+  it("beginMeeting resets a stale detectMode to reflect settings.aiDetect", () => {
+    useApp.setState({ detectMode: "dictionary", settings: { ...DEFAULT_SETTINGS, aiDetect: true } });
+    useApp.getState().beginMeeting();
+    expect(useApp.getState().detectMode).toBe("llm");
+
+    useApp.setState({ detectMode: "llm", settings: { ...DEFAULT_SETTINGS, aiDetect: false } });
+    useApp.getState().beginMeeting();
+    expect(useApp.getState().detectMode).toBe("dictionary");
+  });
+
   it("newMeeting resets the same three fields", () => {
     useApp.setState({
       speakerRoster: ["Alice"],

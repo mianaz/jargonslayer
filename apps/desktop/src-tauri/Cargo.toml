@@ -88,6 +88,19 @@ libc = "0.2"
 # of the crate's ~176 DEFAULT features, so no extra feature flags needed
 # (verified against the crate's own docs.rs feature list).
 objc2-foundation = "0.3.2"
+# Desktop keychain custody (v0.5.1) — secret.rs's own macOS Keychain
+# backend for API-key material moved out of the IndexedDB settings
+# blob (see that module's own header comment). Pinned to the v3 line,
+# same "pin against a churning meta-crate" precedent as rubato above:
+# keyring 4.x is a fresh major-version reshuffle of the same crate, and
+# v3's Entry/Error API (Entry::new/set_password/get_password/
+# delete_credential, Error::NoEntry) is already the exact stable shape
+# this module is written against. `apple-native` is the feature that
+# pulls in the macOS/iOS Keychain Services backend (Security.framework)
+# rather than any other platform's store — no default features exist in
+# this crate, so leaving this off would build a keystore-less Entry
+# that errors on every call.
+keyring = { version = "3", features = ["apple-native"] }
 
 # Single-instance is desktop-only (no Android/iOS support) — same
 # target gate the plugin's own setup docs recommend for `cargo add`.

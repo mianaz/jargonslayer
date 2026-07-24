@@ -1374,6 +1374,148 @@ describe("bootstrapDesktop — downloadProgress$ / currentDownloadProgress() (S4
   });
 });
 
+describe("bootstrapDesktop — cancel_prewarm / downloadWasCancelled interception (field-test issue 6)", () => {
+  it("a terminal prewarm://progress cancelled:true event lands the machine back on WIZARD_CONSENT_REQUIRED, never STEP/DOWNLOAD_MODEL/ERROR", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: 0 }), // INSTALL_PYTHON/CREATE_VENV/INSTALL_DEPS all succeed
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 500, total: 4000 });
+          // Mirrors server.rs's own cancel_prewarm contract: a terminal
+          // event carrying `cancelled: true` (outside PrewarmProgressEvent's
+          // own declared TS shape — see bootstrap.ts's onDownloadProgress
+          // wrapper for the widening cast that reads it), immediately
+          // followed by the SAME bare-null-exit-code Ok a real crash would
+          // also produce (server.rs's run_venv_python_streaming poll loop).
+          emit("prewarm://progress", { downloaded: 0, total: 0, cancelled: true });
+          return { code: null };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision("small");
+    const afterCancel = await waitForStable(handle);
+    expect(afterCancel).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" }); // retriable — NOT STEP/DOWNLOAD_MODEL/ERROR
+    expect(handle.currentDownloadProgress()).toBeNull(); // reset, same as an ordinary STEP_OK/STEP_ERROR boundary
+  });
+
+  it("a genuine crash (bare null exit code, no cancelled marker) still lands on STEP/DOWNLOAD_MODEL/ERROR — the interception is scoped to an ACTUAL cancel signal, not every null exit code", async () => {
+    const { listen, emit } = makeEmittableListen();
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: () => ({ code: 0 }),
+        prewarm_model: () => {
+          emit("prewarm://progress", { downloaded: 500, total: 4000 });
+          return { code: null }; // crash — no cancelled:true event this time
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // initial consent gate
+
+    handle.beginProvision("small");
+    const errored = await waitForStable(handle);
+    expect(errored).toMatchObject({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR" });
+  });
+
+  it("downloadWasCancelled never leaks into a later retry — a fresh beginProvision() after a cancel can still succeed", async () => {
+    const { listen, emit } = makeEmittableListen();
+    let cancelFirstAttempt = true;
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        ...successfulPipelineHandlers,
+        prewarm_model: () => {
+          if (cancelFirstAttempt) {
+            cancelFirstAttempt = false;
+            emit("prewarm://progress", { downloaded: 0, total: 0, cancelled: true });
+            return { code: null };
+          }
+          return { code: 0 };
+        },
+      }),
+      listen,
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // initial consent gate
+
+    handle.beginProvision("small");
+    const afterCancel = await waitForStable(handle);
+    expect(afterCancel).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision("small");
+    const healthy = await waitForStable(handle);
+    expect(healthy).toEqual({ phase: "HEALTHY" });
+  });
+});
+
+describe("bootstrapDesktop — cancelPrewarm() (field-test issue 6, wizard's own 「取消下载」/tray cancel on a backgrounded prewarm row)", () => {
+  it('invokes "cancel_prewarm" with no args — a thin wrapper, errors propagate to the caller', async () => {
+    let cancelPrewarmCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        cancel_prewarm: () => {
+          cancelPrewarmCalls += 1;
+          return undefined;
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    await handle.cancelPrewarm();
+    expect(cancelPrewarmCalls).toBe(1);
+  });
+
+  it("propagates a cancel_prewarm rejection to the caller", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        cancel_prewarm: () => {
+          throw new Error("server state lock was poisoned by an earlier panic");
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    await expect(handle.cancelPrewarm()).rejects.toThrow("server state lock was poisoned by an earlier panic");
+  });
+});
+
 describe("bootstrapDesktop — server://exit crash-restart policy wiring (chunk 7)", () => {
   it("a server://exit while HEALTHY auto-restarts (re-invokes start_server) and returns to HEALTHY", async () => {
     let startServerCalls = 0;
@@ -2289,6 +2431,65 @@ describe("bootstrapDesktop — first-run WIZARD parakeet provisioning (§F FB1)"
     expect(markerWrites).toBe(1); // exactly the one real, post-prewarm write
   });
 
+  // F4 (Sol MEDIUM #7, review round): first-run MLX runs ensureMlxExtras
+  // BEFORE prewarm_model, while 取消下载 is already visible — cancel_prewarm
+  // (Rust) has no child to kill yet, so a cancel click landing during
+  // that phase used to be a silent no-op and the download proceeded
+  // after minutes anyway. Fixed via prewarmCancelRequested (see that
+  // field's own doc comment, bootstrap.ts).
+  it("cancelPrewarm() while ensureMlxExtras is still running (no prewarm_model child registered yet) aborts BEFORE prewarm_model ever fires, landing back on WIZARD_CONSENT_REQUIRED", async () => {
+    let prewarmModelCalls = 0;
+    let cancelPrewarmCalls = 0;
+    let preflightCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        mlx_capabilities: () => ({ mlxSupported: true, reason: null }),
+        mlx_import_preflight: () => {
+          preflightCalls += 1;
+          return preflightCalls === 1 ? { ok: false, stderr: "" } : { ok: true, stderr: "" };
+        },
+        app_data_disk_free: () => ({ freeBytes: 20 * 1024 ** 3 }),
+        run_uv: async (args) => {
+          const a = args?.args as string[];
+          if (a[0] === "pip" && a[1] === "install" && a[3] === paths.mlxVenvPython) {
+            // The user clicks 取消下载 partway through the mlx pip-install
+            // sub-phase — cancel_prewarm (Rust) has no child to kill
+            // yet, since prewarm_model is never invoked until AFTER
+            // this whole ensureMlxExtras phase completes.
+            await handle.cancelPrewarm();
+          }
+          return { code: 0 };
+        },
+        cancel_prewarm: () => {
+          cancelPrewarmCalls += 1;
+          return undefined;
+        },
+        prewarm_model: () => {
+          prewarmModelCalls += 1;
+          return { code: 0 };
+        },
+        write_provision_marker: () => undefined,
+        start_server: () => ({ alreadyRunning: false }),
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> WIZARD_CONSENT_REQUIRED
+
+    handle.beginProvision(parakeetModel);
+    const finalState = await waitForStable(handle);
+
+    expect(finalState).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" }); // aborted, same landing as a wire-marker cancel
+    expect(prewarmModelCalls).toBe(0); // never reached — the whole point of this fix
+    expect(cancelPrewarmCalls).toBe(1); // the (no-op) Rust call still fires regardless
+  });
+
   it("a plain WHISPER-family first-run (e.g. 'medium') never triggers ANY mlx invoke at all — byte-identical order to before this fix", async () => {
     const calledCmds: string[] = [];
     let probeCalls = 0;
@@ -2602,6 +2803,185 @@ describe("bootstrapDesktop — switchModel() (S4 chunk 4, blueprint decision C)"
     expect(stopServerCalls).toBe(0);
     expect(handle.currentState()).toEqual({ phase: "HEALTHY" }); // truthful: nothing changed, old server still running
     expect(handle.currentSwitchModelProgress()).toBeNull(); // reset even on this failure path
+  });
+
+  it("download-job cancelled path (field-test issue 6): rejects with 已取消 — mirrors the error path above, but via the sidecar's new POST /jobs/{id}/cancel status instead of a genuine failure", async () => {
+    const fetchMock = vi.fn(async (input: unknown) => {
+      const url = String(input);
+      if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-cancelled" }, 202);
+      if (url.includes("/jobs/job-cancelled")) {
+        return jsonResponse({ status: "cancelled", progress: 0.3, error: null });
+      }
+      throw new Error(`unexpected fetch(${url})`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    let stopServerCalls = 0;
+    const invoke = makeFakeInvoke({
+      app_paths: () => paths,
+      read_provision_marker: () => existingMarkerJson,
+      stop_server: () => {
+        stopServerCalls += 1;
+        return undefined;
+      },
+    });
+    const deps = healthyDeps({ invoke });
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    await expect(handle.switchModel("large-v3")).rejects.toThrow("已取消");
+
+    expect(stopServerCalls).toBe(0);
+    expect(handle.currentState()).toEqual({ phase: "HEALTHY" }); // truthful: nothing changed, old server still running
+    expect(handle.currentSwitchModelProgress()).toBeNull(); // reset even on this path
+  });
+
+  describe("cancelSwitchModel() (field-test issue 6, the tray's own cancel affordance on a RUNNING switch-model row)", () => {
+    it("POSTs /jobs/{id}/cancel for the CURRENTLY in-flight download job", async () => {
+      let jobPolls = 0;
+      const cancelCalls: string[] = [];
+      const fetchMock = vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-cancel-1" }, 202);
+        if (url.endsWith("/jobs/job-cancel-1/cancel")) {
+          cancelCalls.push(url);
+          return jsonResponse({ job_id: "job-cancel-1" }, 202);
+        }
+        if (url.includes("/jobs/job-cancel-1")) {
+          jobPolls += 1;
+          return jsonResponse({ status: "running", progress: 0.2, error: null });
+        }
+        throw new Error(`unexpected fetch(${url})`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      // Freezes the poll loop right after its own first iteration (a
+      // genuinely-pending Promise, not a busy microtask spin — a plain
+      // `async () => {}` override here would starve every later `await`
+      // in this test, since the poll loop's own for(;;) never actually
+      // yields to a macrotask on an instantly-resolving sleep).
+      const deps = healthyDeps({ sleep: () => new Promise<void>(() => {}) });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle); // -> HEALTHY
+
+      void handle.switchModel("large-v3"); // deliberately not awaited — frozen mid-poll, see sleep override above
+      await vi.waitFor(() => expect(jobPolls).toBe(1));
+
+      await handle.cancelSwitchModel();
+      expect(cancelCalls).toHaveLength(1);
+      expect(cancelCalls[0]).toContain("/jobs/job-cancel-1/cancel");
+    });
+
+    it("is a no-op (no fetch call at all) when no switch-model download is currently in flight", async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+      const deps = healthyDeps({});
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle); // -> HEALTHY
+
+      await handle.cancelSwitchModel();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("treats a 404/409 cancel response as benign (nothing left to cancel) rather than throwing", async () => {
+      let jobPolls = 0;
+      const fetchMock = vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-cancel-2" }, 202);
+        if (url.endsWith("/jobs/job-cancel-2/cancel")) return jsonResponse({ error: "任务已结束，无法取消" }, 409);
+        if (url.includes("/jobs/job-cancel-2")) {
+          jobPolls += 1;
+          return jsonResponse({ status: "running", progress: 0.2, error: null });
+        }
+        throw new Error(`unexpected fetch(${url})`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const deps = healthyDeps({ sleep: () => new Promise<void>(() => {}) });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      void handle.switchModel("large-v3");
+      await vi.waitFor(() => expect(jobPolls).toBe(1));
+
+      await expect(handle.cancelSwitchModel()).resolves.toBeUndefined();
+    });
+
+    it("propagates a genuine failure (non-404/409) to the caller", async () => {
+      let jobPolls = 0;
+      const fetchMock = vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/download-model")) return jsonResponse({ job_id: "job-cancel-3" }, 202);
+        if (url.endsWith("/jobs/job-cancel-3/cancel")) return jsonResponse({ error: "boom" }, 500);
+        if (url.includes("/jobs/job-cancel-3")) {
+          jobPolls += 1;
+          return jsonResponse({ status: "running", progress: 0.2, error: null });
+        }
+        throw new Error(`unexpected fetch(${url})`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const deps = healthyDeps({ sleep: () => new Promise<void>(() => {}) });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle);
+
+      void handle.switchModel("large-v3");
+      await vi.waitFor(() => expect(jobPolls).toBe(1));
+
+      await expect(handle.cancelSwitchModel()).rejects.toThrow("boom");
+    });
+
+    // F4 (Sol MEDIUM #7, review round): the tray's cancellable row
+    // exists from the moment switchModel() is CALLED (jobsBridge.ts's
+    // trackSwitchModel) — well before postDownloadModel() has resolved
+    // a job id (isAlreadyInstalledAndValid()'s own read can itself take
+    // real time). cancelSwitchModel() used to be a silent no-op for
+    // that whole window. Fixed via switchModelCancelRequested (see that
+    // field's own doc comment, bootstrap.ts).
+    it("cancelSwitchModel() before postDownloadModel ever fires (activeSwitchModelJobId still null) settles as 已取消 — no /download-model POST", async () => {
+      let downloadPosted = false;
+      const fetchMock = vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url.endsWith("/download-model")) {
+          downloadPosted = true;
+          return jsonResponse({ job_id: "job-should-never-exist" }, 202);
+        }
+        throw new Error(`unexpected fetch(${url})`);
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      let resolveMarkerRead!: (v: string | null) => void;
+      let markerReadCalls = 0;
+      const invoke = makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => {
+          markerReadCalls += 1;
+          // 1st call = the initial adopt-path CHECKING (already resolved
+          // by the time this test calls switchModel() below); only the
+          // 2nd call (isAlreadyInstalledAndValid, inside switchModel())
+          // is held open, so the test can fire cancelSwitchModel() while
+          // it's still pending — mirroring a real tray-row click landing
+          // before postDownloadModel has resolved a job id.
+          if (markerReadCalls === 1) return existingMarkerJson;
+          return new Promise<string | null>((resolve) => {
+            resolveMarkerRead = resolve;
+          });
+        },
+      });
+      const deps = healthyDeps({ invoke });
+      const handle = await bootstrapDesktop(deps);
+      await waitForStable(handle); // -> HEALTHY
+
+      const switching = handle.switchModel("large-v3");
+      await vi.waitFor(() => expect(markerReadCalls).toBe(2));
+
+      await handle.cancelSwitchModel(); // activeSwitchModelJobId is still null here
+      resolveMarkerRead(existingMarkerJson);
+
+      await expect(switching).rejects.toThrow("已取消");
+      expect(downloadPosted).toBe(false);
+      expect(handle.currentState()).toEqual({ phase: "HEALTHY" }); // old server never touched
+    });
   });
 
   it("post-stop health-failure path: the new server never comes back healthy -> lands on STEP/POLLING_HEALTH/ERROR (the wizard's existing escape hatch); the marker already says the NEW model despite the failure (S4 review pair Finding 3)", async () => {

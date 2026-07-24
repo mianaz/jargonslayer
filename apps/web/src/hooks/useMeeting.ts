@@ -878,6 +878,26 @@ export function useMeeting(): UseMeetingResult {
     translateQueueRef.current?.backfill(toBackfill);
   }, [bilingualTranscript, status]);
 
+  // Field-test issue 8b (manual AI-detect retry): AiStatusPanel has no
+  // existing path to schedulerRef — it's a leaf component mounted with
+  // NO props at both its hosts (StatusLine's popover, SettingsDialog's
+  // AI 检测 section; verified against both call sites), and this hook's
+  // own return value (start/pause/resume/stop/startDemo) is only ever
+  // consumed by page.tsx, never threaded down to either host either. The
+  // store's aiRetryNonce is the cheapest seam instead — same monotonic-
+  // nonce shape as bitCelebrateNonce/PixelDragon just above (this ref
+  // seeds to whatever the nonce already is at mount, so an already-
+  // nonzero nonce never fires on first render, only later INCREASES do)
+  // — this is the one place that actually holds the live scheduler ref.
+  const aiRetryNonce = useApp((s) => s.aiRetryNonce);
+  const prevAiRetryNonceRef = useRef(aiRetryNonce);
+  useEffect(() => {
+    if (aiRetryNonce > prevAiRetryNonceRef.current) {
+      schedulerRef.current?.retryAi();
+    }
+    prevAiRetryNonceRef.current = aiRetryNonce;
+  }, [aiRetryNonce]);
+
   // Re-translate a segment whose text was hand-corrected (store's
   // updateSegmentText already dropped the stale translation entry —
   // see store.ts) while the toggle is on. Tracks last-seen text per

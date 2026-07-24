@@ -584,6 +584,298 @@ describe("DetectionScheduler", () => {
       expect(dictFloorEntries()).toHaveLength(2); // both wrote immediately, independently
     });
   });
+
+  // Field-test issue 8b: a generic-failure fallback (2 consecutive
+  // non-NoKeyError/non-RateLimitApiError failures) used to permanently
+  // downgrade the whole meeting to dictionary-only — recovery required
+  // starting a new meeting. It's now a 5-minute COOLDOWN: the next
+  // pushSegment batch once it elapses gets exactly ONE silent probe
+  // back through the AI path. NoKeyError stays a hard, never-auto-
+  // retried latch (retrying with no key is pointless) — only a manual
+  // retryAi() clears it.
+  describe("field-test issue 8b: generic-fallback cooldown + manual retry", () => {
+    const FALLBACK_COOLDOWN_MS = 5 * 60_000; // mirrors scheduler.ts's own (unexported) module const
+
+    /** Drives the scheduler through the ORIGINAL 2-strike generic
+     *  fallback (a plain Error — neither NoKeyError nor
+     *  RateLimitApiError) so each test below starts from "already
+     *  fallen back, cooldown armed", and asserts the existing (pre-8b)
+     *  trigger behavior — including the new "5 分钟后自动重试" hint —
+     *  still fires exactly once along the way. */
+    async function triggerGenericFallback(): Promise<void> {
+      mockDetectApi.mockRejectedValueOnce(new Error("upstream boom 1"));
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onError).not.toHaveBeenCalled(); // 1 strike: not fallen back yet
+
+      mockDetectApi.mockRejectedValueOnce(new Error("upstream boom 2"));
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(onModeChange).toHaveBeenCalledWith("dictionary");
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith("AI 检测暂时不可用，词典检测继续运行，5 分钟后自动重试");
+
+      onError.mockClear();
+      onModeChange.mockClear();
+      mockDetectApi.mockClear();
+    }
+
+    it("no re-probe before the cooldown elapses", async () => {
+      await triggerGenericFallback();
+
+      scheduler.pushSegment(makeSegment("c".repeat(140)));
+      await vi.advanceTimersByTimeAsync(60_000); // 1 minute — nowhere near 5
+      expect(mockDetectApi).not.toHaveBeenCalled();
+      expect(onModeChange).toHaveBeenCalledWith("dictionary");
+
+      // Right up to (but not past) the boundary.
+      scheduler.pushSegment(makeSegment("d".repeat(140)));
+      await vi.advanceTimersByTimeAsync(FALLBACK_COOLDOWN_MS - 60_000 - 1);
+      expect(mockDetectApi).not.toHaveBeenCalled();
+    });
+
+    it("cooldown re-probe success: mode returns to llm and fires the recovery toast", async () => {
+      await triggerGenericFallback();
+
+      await vi.advanceTimersByTimeAsync(FALLBACK_COOLDOWN_MS);
+      mockDetectApi.mockResolvedValueOnce(emptyRes());
+      scheduler.pushSegment(makeSegment("c".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockDetectApi).toHaveBeenCalledTimes(1); // exactly one probe batch
+      expect(onModeChange).toHaveBeenCalledWith("llm");
+      expect(onError).toHaveBeenCalledTimes(1);
+      expect(onError).toHaveBeenCalledWith("AI 检测已恢复");
+
+      // Latch fully cleared: the NEXT batch behaves like an entirely
+      // normal one — no leftover probing restriction.
+      onError.mockClear();
+      mockDetectApi.mockClear();
+      mockDetectApi.mockResolvedValueOnce(emptyRes());
+      scheduler.pushSegment(makeSegment("d".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("cooldown re-probe failure: stays in dictionary mode, re-arms the cooldown silently (no toast spam)", async () => {
+      await triggerGenericFallback();
+
+      await vi.advanceTimersByTimeAsync(FALLBACK_COOLDOWN_MS);
+      mockDetectApi.mockRejectedValueOnce(new Error("still down"));
+      scheduler.pushSegment(makeSegment("c".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockDetectApi).toHaveBeenCalledTimes(1); // exactly one silent re-probe
+      // Mode was already "dictionary" throughout (it only transitions
+      // on the fallback's initial trip, already asserted inside
+      // triggerGenericFallback) — a failed re-probe re-affirms nothing
+      // changed rather than redundantly re-reporting the same mode.
+      expect(onModeChange).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled(); // no repeat toast on a failed re-probe
+
+      // Re-armed, not exhausted: pushing again right away (this new
+      // cooldown hasn't elapsed yet) must NOT probe a second time.
+      mockDetectApi.mockClear();
+      scheduler.pushSegment(makeSegment("d".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).not.toHaveBeenCalled();
+
+      // A full SECOND cooldown window later, another silent probe fires
+      // — proving the re-arm genuinely rescheduled the next attempt.
+      await vi.advanceTimersByTimeAsync(FALLBACK_COOLDOWN_MS);
+      mockDetectApi.mockResolvedValueOnce(emptyRes());
+      scheduler.pushSegment(makeSegment("e".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+      expect(onModeChange).toHaveBeenCalledWith("llm");
+    });
+
+    it("NoKeyError latch never auto-re-probes, even long after the cooldown window", async () => {
+      mockDetectApi.mockRejectedValueOnce(new NoKeyError());
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onModeChange).toHaveBeenCalledWith("dictionary");
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+      mockDetectApi.mockClear();
+      onError.mockClear();
+
+      // Well past even several generic-cooldown windows — a NoKeyError
+      // latch must stay hard regardless of elapsed time.
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(FALLBACK_COOLDOWN_MS * 3);
+      expect(mockDetectApi).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    });
+
+    it("retryAi(): clears a generic cooldown latch immediately, bypassing the wait", async () => {
+      await triggerGenericFallback();
+
+      scheduler.retryAi();
+
+      mockDetectApi.mockResolvedValueOnce(emptyRes());
+      scheduler.pushSegment(makeSegment("c".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      // No cooldown wait needed — retryAi() cleared the latch outright.
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+      expect(onModeChange).toHaveBeenCalledWith("llm");
+    });
+
+    it("retryAi(): clears a NoKeyError hard latch too (user may have just pasted a key)", async () => {
+      mockDetectApi.mockRejectedValueOnce(new NoKeyError());
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onModeChange).toHaveBeenCalledWith("dictionary");
+
+      scheduler.retryAi();
+
+      mockDetectApi.mockClear();
+      mockDetectApi.mockResolvedValueOnce(emptyRes());
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+      expect(onModeChange).toHaveBeenCalledWith("llm");
+    });
+  });
+
+  // F1 (Sol MEDIUM #9, review round): retryAi() clears the latches, but
+  // a batch dispatched BEFORE that call (e.g. still carrying the old,
+  // bad key) can still be in flight — its late failure landing AFTER
+  // the retry used to re-latch the very fallback the user just manually
+  // cleared, leaving AI dead until a second retry click. Fixed via a
+  // retryEpoch counter (see that field's own doc comment, scheduler.ts).
+  describe("F1 (Sol MEDIUM #9): retry-epoch guard — a stale in-flight batch can't re-latch a fallback after retryAi()", () => {
+    it("a late NoKeyError from a batch dispatched BEFORE retryAi() does not re-latch the fallback", async () => {
+      const d1 = deferred<DetectResponse>();
+      mockDetectApi.mockImplementationOnce(() => d1.promise);
+
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+      // The user already fixed their key and clicked retry while this
+      // pre-retry batch was still in flight.
+      scheduler.retryAi();
+
+      // The stale batch's old-key rejection lands late.
+      d1.reject(new NoKeyError());
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(onModeChange).not.toHaveBeenCalledWith("dictionary");
+      expect(onError).not.toHaveBeenCalled();
+
+      // Proves the latch genuinely wasn't re-armed: the very next batch
+      // dispatches normally, with no fallback gating in the way.
+      mockDetectApi.mockClear();
+      mockDetectApi.mockResolvedValueOnce(emptyRes());
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+      expect(onModeChange).toHaveBeenCalledWith("llm");
+    });
+
+    it("a late generic failure from a batch dispatched BEFORE retryAi() adds no strike", async () => {
+      const d1 = deferred<DetectResponse>();
+      mockDetectApi.mockImplementationOnce(() => d1.promise);
+
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+      scheduler.retryAi();
+
+      d1.reject(new Error("stale upstream boom"));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(onModeChange).not.toHaveBeenCalledWith("dictionary");
+      expect(onError).not.toHaveBeenCalled();
+
+      // Proves no strike was counted: it takes 2 consecutive strikes to
+      // trip the fallback (MAX_CONSECUTIVE_FAILURES) — if the stale
+      // failure above HAD counted, this single additional real failure
+      // would be enough to trip it. It must not.
+      mockDetectApi.mockRejectedValueOnce(new Error("real boom"));
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onModeChange).not.toHaveBeenCalledWith("dictionary");
+      expect(onError).not.toHaveBeenCalled();
+    });
+  });
+
+  // F2 (Sol MEDIUM #10, review round): with MAX_INFLIGHT=2, a
+  // non-designated-probe concurrent success landing AFTER a fallback
+  // trip used to leave fellBack/cooldownUntil stuck for the rest of the
+  // 5-minute cooldown despite proving AI connectivity was fine —
+  // recovery was gated on `this.probing` (the ONE designated cooldown
+  // probe) instead of any success. Fixed by clearing on ANY success
+  // while fellBack is set (scheduler.ts's attemptDetect).
+  describe("F2 (Sol MEDIUM #10): any success clears fellBack, not only the designated probe", () => {
+    it("A fails (1 strike), B in-flight, B fails -> fallback trips, C (queued behind the MAX_INFLIGHT=2 cap, never a designated probe) succeeds -> mode restored immediately", async () => {
+      const dA = deferred<DetectResponse>();
+      const dB = deferred<DetectResponse>();
+      const dC = deferred<DetectResponse>();
+      mockDetectApi
+        .mockImplementationOnce(() => dA.promise)
+        .mockImplementationOnce(() => dB.promise)
+        .mockImplementationOnce(() => dC.promise);
+
+      // Batch A dispatches (inflight=1).
+      scheduler.pushSegment(makeSegment("a".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+
+      // Batch B dispatches (inflight=2, at the MAX_INFLIGHT cap).
+      scheduler.pushSegment(makeSegment("b".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(2);
+
+      // Batch C's text queues — inflight is already at the cap, so it
+      // is NOT dispatched yet (and, crucially, was never routed through
+      // pushSegment's fellBack/probing gate either, since fellBack is
+      // still false at this point).
+      scheduler.pushSegment(makeSegment("c".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(2);
+
+      // A fails — strike 1, not yet fallen back. Freeing a slot
+      // auto-flushes the queued text as batch C (inflight back to 2:
+      // B + C) — a perfectly ordinary dispatch, NOT a designated probe.
+      dA.reject(new Error("boom A"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(3);
+      expect(onModeChange).not.toHaveBeenCalledWith("dictionary");
+
+      // B fails — strike 2 — trips the fallback while C is still
+      // in-flight.
+      dB.reject(new Error("boom B"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onModeChange).toHaveBeenCalledWith("dictionary");
+      expect(onError).toHaveBeenCalledWith("AI 检测暂时不可用，词典检测继续运行，5 分钟后自动重试");
+
+      // C succeeds — this is NOT the designated cooldown probe
+      // (`this.probing` was never set true for it) — mode must still
+      // be restored immediately, not stuck until the 5-minute cooldown
+      // elapses.
+      onModeChange.mockClear();
+      onError.mockClear();
+      dC.resolve(emptyRes());
+      await vi.advanceTimersByTimeAsync(0);
+      expect(onModeChange).toHaveBeenCalledWith("llm");
+      expect(onError).toHaveBeenCalledWith("AI 检测已恢复");
+
+      // Proves the latch is genuinely cleared (not just the toast): the
+      // very next batch dispatches immediately, no cooldown wait needed.
+      mockDetectApi.mockClear();
+      mockDetectApi.mockResolvedValueOnce(emptyRes());
+      scheduler.pushSegment(makeSegment("d".repeat(140)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    });
+  });
 });
 
 // ---------------------------------------------------------------

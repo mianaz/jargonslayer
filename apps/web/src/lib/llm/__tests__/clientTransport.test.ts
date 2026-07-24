@@ -214,6 +214,79 @@ describe("detectApi — client transport", () => {
 });
 
 // ---------------------------------------------------------------
+// Field-debugging postmortem (v0.5.1 fieldtest B): a real desktop
+// failure ("OpenRouter key works in curl, app always fails") took
+// days to pin down because a bare fetch() rejection (no HTTP response
+// at all — proxy/TLS/DNS-level) used to log only the fixed zh category
+// message, indistinguishable from any other transport failure. This IS
+// the path that field failure actually took (desktop always uses the
+// client-transport path) — see client.ts's transportFailureCause/
+// throwForProviderError, and client.test.ts's equivalent coverage for
+// the Next.js-routed path, which shares the same helper.
+// ---------------------------------------------------------------
+
+describe("detectApi — client transport — transport-level (pre-HTTP) rejection logs a cause detail", () => {
+  it("a bare fetch() rejection (openai-compat/OpenRouter, matching the reported field failure) appends the rejection's message as cause=..., toast copy unchanged", async () => {
+    mockFetch.mockRejectedValue(new Error("connection refused by proxy"));
+
+    const err = await detectApi(
+      { context: "", new_text: "hi" },
+      makeSettings({ provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }),
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UpstreamError);
+    // User-facing toast copy is untouched — still the fixed zh phrase.
+    expect((err as Error).message).toBe("检测请求失败，请检查网络连接");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toBe("检测请求失败，请检查网络连接");
+    expect(entries[0].detail).toContain("cause=connection refused by proxy");
+  });
+
+  // F2 (Sol HIGH #6 part 2): a bare fetch() rejection's own .message can
+  // embed the failing request's URL verbatim (seen across runtimes —
+  // see transportFailureCause's own comment), and an openai-compat
+  // baseUrl the user pasted in can itself carry userinfo or a
+  // credential-shaped query param. transportFailureCause now scrubs
+  // both explicitly, on top of sanitizeProviderExcerpt doing the same
+  // internally — this proves it end-to-end through the real cause=
+  // diag detail, not just at providerCore.test.ts's unit level.
+  it("F2: a rejection message embedding a URL with userinfo/credential query params never leaks them into the cause= diag detail", async () => {
+    mockFetch.mockRejectedValue(
+      new Error(
+        "request to https://user:sk-leaked-userinfo-pass@gateway.example.com/v1/chat?api_key=sk-leaked-query-value failed",
+      ),
+    );
+
+    const err = await detectApi(
+      { context: "", new_text: "hi" },
+      makeSettings({ provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }),
+    ).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UpstreamError);
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].detail).not.toContain("sk-leaked-userinfo-pass");
+    expect(entries[0].detail).not.toContain("sk-leaked-query-value");
+    expect(entries[0].detail).toContain("cause=");
+    expect(entries[0].detail).toContain("[REDACTED]");
+  });
+
+  it("a status-carrying failure (502) is unaffected — no cause= token added, existing detail shape unchanged", async () => {
+    mockFetch.mockResolvedValue(anthropicErrorResponse(502));
+
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toBeInstanceOf(
+      UpstreamError,
+    );
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries[0].detail ?? "").not.toContain("cause=");
+  });
+});
+
+// ---------------------------------------------------------------
 // defineApi
 // ---------------------------------------------------------------
 

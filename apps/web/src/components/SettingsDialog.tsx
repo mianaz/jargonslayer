@@ -608,6 +608,70 @@ function sanitizeDraftFontValue(value: string): string {
   return sanitized ? `${CUSTOM_FONT_PREFIX}${sanitized}` : "default";
 }
 
+// FIX 2 (field-debugging postmortem, v0.5.1 fieldtest B): baseUrl
+// hygiene at the SAME kind of save boundary as sanitizeDraftFontValue
+// above — users paste base URLs from docs, sometimes through a Chinese
+// IME that silently swaps ASCII punctuation for full-width lookalikes
+// (：／．～) or leaves a stray trailing space/newline. Cleans exactly
+// that; never guesses at a path (no scheme insertion, no /v1
+// appending, no rewriting beyond these normalizations). The single
+// trailing-slash strip mirrors providerCore.ts's own
+// buildOpenAiCompatRequestInit (`baseUrl.replace(/\/$/, "")`) — kept
+// as a separate copy rather than an import since that module is
+// isomorphic/provider-side and has no reason to be pulled into this
+// dialog for one regex.
+//
+// F5 (Sol hunt-note g, fix round): this used to strip ALL whitespace,
+// including INTERNAL whitespace — `https://host/my endpoint/v1` was
+// silently mangled to `.../myendpoint/v1` with no error, no trace of
+// what happened. Only leading/trailing whitespace is a paste artifact
+// worth auto-cleaning; internal whitespace means the pasted value
+// itself is malformed and the user needs to see that (isValidBaseUrl
+// below now explicitly rejects it pre-parse instead).
+function normalizeBaseUrl(raw: string): string {
+  const trimmed = raw.trim();
+  const asciiPunctuation = trimmed
+    .replace(/：/g, ":")
+    .replace(/／/g, "/")
+    .replace(/．/g, ".")
+    .replace(/～/g, "~");
+  return asciiPunctuation.replace(/\/$/, "");
+}
+
+/** Empty stays allowed — the existing "缺少 Base URL" runtime handling
+ *  already covers a blank baseUrl downstream (providerCore.ts's
+ *  callJsonOpenAiCompat) — only a NON-empty value must actually parse
+ *  as a URL.
+ *
+ *  F3 (Sol MEDIUM #15, fix round): bare `new URL()` success was too
+ *  permissive for "is this usable as a provider base" — it happily
+ *  accepted `file:`/`mailto:`/`ftp:` schemes, and a query string/
+ *  fragment/userinfo all silently rode along into
+ *  buildOpenAiCompatRequestInit's string-concatenated `/chat/
+ *  completions` path (a query-bearing base puts the real path INSIDE
+ *  the query string). Now requires http:/https: and rejects any
+ *  search/hash/username/password component.
+ *
+ *  F5 (Sol hunt-note g, fix round): `new URL()` doesn't throw on
+ *  internal whitespace — it silently percent-encodes a space (or
+ *  drops a tab/newline outright) — so normalizeBaseUrl above no longer
+ *  strips it for the user; this explicitly rejects it pre-parse so a
+ *  malformed paste surfaces the existing error toast instead of
+ *  silently mangling the URL. */
+function isValidBaseUrl(value: string): boolean {
+  if (!value) return true;
+  if (/\s/.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.search || url.hash || url.username || url.password) return false;
+  return true;
+}
+
 // S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
 // lives only in the shared BASE venv; parakeet rides a fully separate,
 // airtight-isolated MLX venv (§C R1) that never has pyannote installed,
@@ -1594,6 +1658,56 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   };
 
   const handleSave = async () => {
+    // FIX 2 (field-debugging postmortem, v0.5.1 fieldtest B): baseUrl
+    // hygiene at the save boundary — normalize the primary field AND
+    // every configured per-task override (see normalizeBaseUrl's own
+    // doc comment), then block the save entirely on anything that
+    // still doesn't parse as a URL. Runs FIRST, before any other save
+    // side effect. No inline-field-error pattern exists anywhere in
+    // this dialog (checked every other field's validation — it's
+    // always a toast + early return, e.g. the flushSettings failure
+    // branch further down), so this follows that same convention
+    // rather than inventing a new UI pattern for one field.
+    //
+    // F4 (Sol MEDIUM #16, fix round): anthropic hides the Base URL
+    // field entirely (CredentialFields.tsx's own `provider ===
+    // "openai-compat"` gate), and resolveTaskCreds/providerCore.ts
+    // never read `baseUrl` for that provider either — normalizing or
+    // validating a stale value the user can't even see would block
+    // 保存 over an invisible field. Only openai-compat actually uses
+    // this field; a non-openai-compat provider's stale baseUrl is left
+    // completely as-is (neither normalized nor validated) below.
+    const providerUsesBaseUrl = draft.provider === "openai-compat";
+    const normalizedBaseUrl = providerUsesBaseUrl ? normalizeBaseUrl(draft.baseUrl) : draft.baseUrl;
+    if (providerUsesBaseUrl && !isValidBaseUrl(normalizedBaseUrl)) {
+      showToast("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+      return;
+    }
+    let normalizedTaskLlm = draft.taskLlm;
+    for (const { domain } of TASK_DOMAIN_META) {
+      const override = normalizedTaskLlm?.[domain];
+      // enabled:false is runtime-inert — resolveTaskCreds ignores a
+      // disabled override's baseUrl/provider/model entirely and falls
+      // back to the primary (taskConfig.ts; see its own SECURITY test
+      // in taskConfig.test.ts). Validating a value nothing will ever
+      // send would block 保存 over a stale field the user already
+      // toggled off, e.g. typed-then-abandoned while trying a preset.
+      if (!override?.enabled || !override.baseUrl) continue;
+      // F4: same provider-awareness as the primary field above — the
+      // override's EFFECTIVE provider is `t.provider ?? settings.
+      // provider` (resolveTaskCreds.ts's exact fallback — see that
+      // function), never `override.provider` alone, since an override
+      // that only sets baseUrl/model and leaves provider unset still
+      // inherits the primary's provider at runtime.
+      if ((override.provider ?? draft.provider) !== "openai-compat") continue;
+      const normalized = normalizeBaseUrl(override.baseUrl);
+      if (!isValidBaseUrl(normalized)) {
+        showToast("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+        return;
+      }
+      normalizedTaskLlm = { ...normalizedTaskLlm, [domain]: { ...override, baseUrl: normalized } };
+    }
+
     const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
     // uiMode is deliberately excluded from `draft` — the header toggle
     // above writes it straight through updateSettings the moment it's
@@ -1617,6 +1731,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // boundary — see sanitizeDraftFontValue's own doc comment.
       uiFont: sanitizeDraftFontValue(draft.uiFont),
       monoFont: sanitizeDraftFontValue(draft.monoFont),
+      // FIX 2: the normalized (trimmed/ASCII-punctuation/no-trailing-
+      // slash) forms computed above — validated already, so these are
+      // always well-formed (or empty) by this point.
+      baseUrl: normalizedBaseUrl,
+      taskLlm: normalizedTaskLlm,
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
     // getSidecarMode is only ever read once, at app start (Finding 2c)
@@ -1633,6 +1752,18 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // actual persistence boundary, closes both holes with the one
     // allowlist source of truth instead of re-deriving the check here.
     updateSettings(coercePreviewModels(toSave));
+    // Desktop keychain custody (v0.5.1 desktop keychain migration):
+    // updateSettings above already enqueued a Keychain write for any
+    // changed SECRET_NAMES field (store.ts's syncSecretCustody) — await
+    // those settling BEFORE flushSettings below, so custody is fully up
+    // to date before settingsForPersist decides what to strip from the
+    // IDB blob it's about to write. A write failure surfaces its own
+    // non-blocking warning toast from the store (never thrown here); the
+    // blocking catch further down stays reserved for genuine IDB
+    // failures. No-op on web.
+    if (IS_DESKTOP) {
+      await useApp.getState().flushSecrets();
+    }
     // Field-test fix: updateSettings' own persist above is fire-and-
     // forget (store.ts) — a key saved right before quit could still lose
     // the race against app teardown. Await the write actually committing
@@ -3226,7 +3357,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
                   onApiKeyChange={(apiKey) => patch({ apiKey })}
                   apiKeyPlaceholder="sk-…"
-                  apiKeyHint="仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                  // Desktop keychain custody (v0.5.1 desktop keychain
+                  // migration): honest per the actual threat model — the
+                  // Keychain does not make the key unreadable to this
+                  // app itself (it's how the app reads it back), only to
+                  // OTHER apps/processes without permission, so this
+                  // deliberately does NOT say "加密无法读取". Web/iOS keep
+                  // the byte-identical prior copy — the key still lives
+                  // in browser storage there, nothing changed for them.
+                  apiKeyHint={
+                    IS_DESKTOP
+                      ? "Key 存入 macOS 系统钥匙串，不再明文保存在应用存储中；其他 App 未经许可无法读取"
+                      : "仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                  }
                   // BYOK preview sprint (2026-07-21): the chip used to be
                   // suppressed wholesale under PREVIEW_TIER (a key field
                   // that couldn't be set had nothing honest to report) —

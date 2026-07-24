@@ -45,6 +45,8 @@ import { callProviderDirect, ProviderHttpError } from "./clientProvider";
 import {
   BadOutputError,
   OpenAiCompatError,
+  sanitizeProviderExcerpt,
+  scrubUrlCredentials,
   type CallJsonOptions,
   type ProviderCaller,
 } from "./providerCore";
@@ -279,6 +281,47 @@ async function throwForStatus(res: Response, ctx: RequestErrorContext): Promise<
  *  issue detail (BadOutputError's `.message` — mirrors mapLlmError's
  *  OWN BadOutputError branch, which likewise discards the issue detail
  *  before it ever reaches an HTTP body). */
+// Field-debugging postmortem (v0.5.1 fieldtest B): a real desktop
+// failure ("OpenRouter key works in curl, app always fails") took days
+// to pin down because the branch below used to log nothing beyond the
+// fixed zh category message — no hint of WHY the bare fetch() rejected
+// (it turned out to be a proxy-environment divergence: the request
+// died at the network layer, before any HTTP response ever existed to
+// carry a status code). Appends the raw rejection's own message/name
+// (e.g. "Load failed", "error sending request for url…", a bare
+// "AbortError" name when .message is empty) as one extra `cause=`
+// token, so the diag ring can finally distinguish connection-refused
+// vs timeout vs TLS vs a native transport plugin's own error text.
+// Diag-ring-only — see throwForProviderError's network branch below:
+// the THROWN UpstreamError still carries the exact same fixed
+// `messages.network` string as before this existed, so user-facing
+// toast copy is untouched.
+function transportFailureCause(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const { message, name } = err as { message?: unknown; name?: unknown };
+  const raw = (typeof message === "string" && message) || (typeof name === "string" && name) || "";
+  if (!raw) return undefined;
+  // sanitizeProviderExcerpt's header-echo pattern is defense in depth
+  // here (no known secret passed — a transport-level rejection fires
+  // before any response body exists to redact an exact key from): no
+  // provider this codebase talks to ever puts a key anywhere but an
+  // Authorization/X-Api-Key HEADER (buildOpenAiCompatRequestInit,
+  // clientProvider.ts's callAnthropicDirect), so `raw` cannot
+  // legitimately contain one that way.
+  //
+  // F2 (Sol HIGH #6 part 2, correcting the claim this comment used to
+  // make): some runtimes' fetch-failure messages DO embed the failing
+  // request's URL verbatim, and an openai-compat baseUrl the user
+  // pasted in can itself carry userinfo or a credential-shaped query
+  // param (a self-hosted gateway that authenticates via the URL rather
+  // than a header). scrubUrlCredentials is called explicitly here, on
+  // top of sanitizeProviderExcerpt already calling it internally below
+  // — belt-and-suspenders so this specific diag-ring path (the one
+  // sanitizeProviderExcerpt call site with an empty secrets list) stays
+  // covered even if it were ever refactored to skip that helper.
+  return sanitizeProviderExcerpt(scrubUrlCredentials(raw), []).slice(0, 160);
+}
+
 function throwForProviderError(
   err: unknown,
   ctx: RequestErrorContext,
@@ -303,7 +346,9 @@ function throwForProviderError(
     diagLog("error", ctx.tag, messages.timeout, errorDetail(ctx));
     throw new UpstreamError(messages.timeout);
   }
-  diagLog("error", ctx.tag, messages.network, errorDetail(ctx));
+  const cause = transportFailureCause(err);
+  const detail = cause ? `${errorDetail(ctx)} cause=${cause}` : errorDetail(ctx);
+  diagLog("error", ctx.tag, messages.network, detail);
   throw new UpstreamError(messages.network);
 }
 
@@ -354,12 +399,21 @@ async function detectViaNext(
       signal: AbortSignal.timeout(PREVIEW_TIER ? 25000 : 20000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "检测请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("检测请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "检测请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("检测请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B): routed through
+    // the shared throwForProviderError (see its own comment) rather
+    // than a hand-rolled AbortError/network branch here, so a bare
+    // fetch() rejection against /api/detect gets the same transport-
+    // cause diag detail as the direct-provider path — a raw fetch can
+    // only ever throw a DOMException (abort) or a network-level Error
+    // here, never OpenAiCompatError/ProviderHttpError/BadOutputError
+    // (those are only ever constructed AFTER a response exists), so
+    // throwForProviderError's status-carrying branches are simply
+    // unreachable dead code for this call site — byte-identical
+    // behavior for both existing branches.
+    throwForProviderError(err, ctx, {
+      timeout: "检测请求超时，请稍后重试",
+      network: "检测请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
@@ -485,12 +539,13 @@ async function summarizeApiImpl(
       signal: AbortSignal.timeout(300000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "报告生成超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("报告生成超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "报告生成失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("报告生成失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "报告生成超时，请稍后重试",
+      network: "报告生成失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
@@ -620,12 +675,13 @@ async function defineViaNext(
       signal: AbortSignal.timeout(20000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "解释请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("解释请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "解释请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("解释请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "解释请求超时，请稍后重试",
+      network: "解释请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
@@ -911,12 +967,13 @@ async function translateApiImpl(
       signal: AbortSignal.timeout(30000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "翻译请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("翻译请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "翻译请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("翻译请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "翻译请求超时，请稍后重试",
+      network: "翻译请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
@@ -1022,12 +1079,13 @@ async function correctViaNext(
       signal: AbortSignal.timeout(120000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "校正请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("校正请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "校正请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("校正请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "校正请求超时，请稍后重试",
+      network: "校正请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
