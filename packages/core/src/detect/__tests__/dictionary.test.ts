@@ -215,6 +215,68 @@ describe("scanDictionary — term matching (case sensitivity for acronyms)", () 
   });
 });
 
+describe("scanDictionary — term variants (v0.6 T2)", () => {
+  function remotePackWithTerm(term: Omit<LoadedRemotePack["terms"][number], "pack">): LoadedRemotePack {
+    return {
+      id: "__test_variant_pack__",
+      name: "variant pack",
+      version: 1,
+      expressions: [],
+      terms: [{ ...term, pack: "__test_variant_pack__" }],
+    };
+  }
+
+  it("a variant hit produces a card keyed by the entry's own headword, not the variant surface that matched", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithTerm({
+        term: "Synthetic Headword Alpha",
+        type: "other",
+        gloss_en: "",
+        gloss_zh: "测试用生造术语",
+        variants: ["SYNALPHA"],
+      }),
+    ]);
+    const res = scanDictionary("Our SYNALPHA is trending down this quarter.");
+    const hit = res.terms.find((t) => t.gloss_zh === "测试用生造术语");
+    expect(hit).toBeDefined();
+    expect(hit!.term).toBe("Synthetic Headword Alpha");
+  });
+
+  it("an all-caps variant stays case-sensitive even though the headword itself is mixed-case", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithTerm({
+        term: "Synthetic Headword Alpha",
+        type: "other",
+        gloss_en: "",
+        gloss_zh: "测试用生造术语",
+        variants: ["SYNALPHA"],
+      }),
+    ]);
+    // Lowercase "synalpha" must NOT match the all-caps variant.
+    const res = scanDictionary("the synalpha number needs review.");
+    expect(res.terms.some((t) => t.gloss_zh === "测试用生造术语")).toBe(false);
+  });
+
+  it("the headword itself still matches when the variant doesn't appear in the text", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithTerm({
+        term: "Synthetic Headword Alpha",
+        type: "other",
+        gloss_en: "",
+        gloss_zh: "测试用生造术语",
+        variants: ["SYNALPHA"],
+      }),
+    ]);
+    const res = scanDictionary("Our synthetic headword alpha is trending down.");
+    expect(res.terms.some((t) => t.gloss_zh === "测试用生造术语")).toBe(true);
+  });
+
+  it("a term without variants behaves byte-identically to today (single-candidate match)", () => {
+    const res = scanDictionary("The ARR figure is up.");
+    expect(res.terms.some((t) => t.term === "ARR")).toBe(true);
+  });
+});
+
 describe("scanDictionary — empty input", () => {
   it("returns empty expressions/terms for empty or whitespace-only text", () => {
     expect(scanDictionary("")).toEqual({ expressions: [], terms: [] });

@@ -37,6 +37,9 @@ interface ExpressionEntry {
 
 interface TermEntry {
   term: string;
+  // See DictTermEntry.variants — matched in scanDictionary's term loop
+  // below alongside `term` itself.
+  variants?: string[];
   type: TermType;
   gloss_en: string;
   gloss_zh: string;
@@ -1179,11 +1182,23 @@ export function scanDictionary(
     // Same personal-glossary shadowing as the expressions loop above
     // (enabled-pack-filtered — Finding 2 fix).
     if (shadowLookup(entry.term)) continue;
-    // All-caps acronyms match case-sensitively (\bARR\b); mixed-case
-    // terms (e.g. "Series B", "headcount") match case-insensitively.
-    const isAllCaps = /^[A-Z0-9&]+$/.test(entry.term);
-    const re = new RegExp(`\\b${escapeRe(entry.term)}\\b`, isAllCaps ? "" : "i");
-    if (re.test(text)) {
+    // T2: also try the entry's `variants` alongside its own headword
+    // (mirrors the expressions loop's candidates array above) — but
+    // terms keep their OWN existing semantics per surface: no
+    // inflection tolerance, and each CANDIDATE's case-sensitivity is
+    // judged independently (all-caps acronyms match case-sensitively,
+    // e.g. \bARR\b; anything else, e.g. "Series B"/"CAC", matches
+    // case-insensitively — a mixed-case headword can still have an
+    // all-caps variant or vice versa). First candidate to hit wins; the
+    // emitted card always reports the entry's own headword
+    // (entry.term), never the variant that actually matched.
+    const candidates = [entry.term, ...(entry.variants ?? [])];
+    const hit = candidates.some((candidate) => {
+      const isAllCaps = /^[A-Z0-9&]+$/.test(candidate);
+      const re = new RegExp(`\\b${escapeRe(candidate)}\\b`, isAllCaps ? "" : "i");
+      return re.test(text);
+    });
+    if (hit) {
       terms.push({
         term: entry.term,
         type: entry.type,
