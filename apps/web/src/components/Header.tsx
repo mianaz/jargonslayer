@@ -181,6 +181,99 @@ function DetectModeBadge() {
   );
 }
 
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — a small always-visible
+// chip mirroring EnginePostureChip's own bordered-label shape
+// immediately below, so it reads as one family of status chips rather
+// than a new visual language. Renders ONLY when inferredContext is
+// non-null (no empty-state chip); click swaps to an inline edit — the
+// smallest thing that fits this file's idiom (no popover nearby worth
+// reusing for a single short string). Header.tsx over StatusLine.tsx:
+// StatusLine's own bottom bar already documents itself as out of width
+// budget at phone widths (see that file's own S14 comments), while
+// this file already has room-gated (hidden ... sm:/md:inline-flex)
+// chips to mirror.
+const CONTEXT_CHIP_TRUNCATE = 24;
+
+function ContextChip() {
+  const inferredContext = useApp((s) => s.inferredContext);
+  const explainLanguage = useApp((s) => s.settings.explainLanguage);
+  const setInferredContext = useApp((s) => s.setInferredContext);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  // Escape unmounts the (still-focused) input, which can itself fire a
+  // native blur — without this guard that blur would re-run save() and
+  // silently persist the very edit Escape was meant to discard. Set
+  // synchronously in the Escape handler, read once at the top of
+  // onBlur, same "ref beats a state flag for same-tick reads" posture
+  // as this file's other busyRef-style guards.
+  const skipBlurSaveRef = useRef(false);
+
+  if (inferredContext === null) return null;
+
+  const label = explainLanguage === "en" ? "Context:" : "背景:";
+
+  const save = () => {
+    const trimmed = draft.trim();
+    // Empty save clears it (chip disappears, inference stays off —
+    // contextOverride is a hard stop, see store.ts's own doc); a
+    // non-empty save is the user's own value from here on.
+    setInferredContext(trimmed || null, { override: true });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <input
+        type="text"
+        data-testid="header-context-chip-input"
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.currentTarget.select()}
+        onBlur={() => {
+          if (skipBlurSaveRef.current) {
+            skipBlurSaveRef.current = false;
+            return;
+          }
+          save();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            save();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            skipBlurSaveRef.current = true;
+            setEditing(false);
+          }
+        }}
+        className="hidden h-6 w-40 border border-edge2 bg-panel2 px-1.5 text-[10px] text-fg focus:outline-none sm:inline-flex"
+      />
+    );
+  }
+
+  const truncated =
+    inferredContext.length > CONTEXT_CHIP_TRUNCATE
+      ? `${inferredContext.slice(0, CONTEXT_CHIP_TRUNCATE)}…`
+      : inferredContext;
+
+  return (
+    <button
+      type="button"
+      data-testid="header-context-chip"
+      onClick={() => {
+        setDraft(inferredContext);
+        setEditing(true);
+      }}
+      title={inferredContext}
+      className="hidden items-center gap-1 border border-edge2 px-2 py-0.5 text-[10px] whitespace-nowrap text-mut hover:border-edge hover:text-fg sm:inline-flex"
+    >
+      {label} {truncated}
+    </button>
+  );
+}
+
 function ElapsedTimer() {
   const status = useApp((s) => s.status);
   const startedAt = useApp((s) => s.startedAt);
@@ -614,6 +707,7 @@ export default function Header({
         <EnginePostureChip />
 
         <div className="ml-auto flex items-center gap-2">
+          <ContextChip />
           <DetectModeBadge />
           <ElapsedTimer />
 

@@ -46,6 +46,11 @@ export interface DetectTaskInput {
   /** Pre-rendered background-profile hint (#48 step 3) — USER message
    *  only, never affects the cached SYSTEM prompt (see prompts.ts). */
   profile?: string;
+  /** Auto meeting-context detection (field request: "need AI to auto
+   *  detect the context for better detection") — USER message only,
+   *  same posture as `profile` above (see prompts.ts's MEETING
+   *  CONTEXT splice). */
+  meetingContext?: string;
 }
 
 /** Anti-hallucination post-filter: drop any expression whose
@@ -74,7 +79,7 @@ export async function runDetectTask(
     apiKey: input.apiKey,
     model: input.model,
     system: buildDetectSystemPrompt(input.lang ?? "zh"),
-    user: buildDetectUserMessage(input.context, input.new_text, input.profile),
+    user: buildDetectUserMessage(input.context, input.new_text, input.profile, input.meetingContext),
     schema: DetectResponseSchema,
     maxTokens: 1000,
     cacheSystem: true,

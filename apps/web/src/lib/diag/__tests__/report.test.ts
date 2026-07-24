@@ -139,17 +139,25 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       // regardless of the raw default value: no key configured means
       // the report NEVER echoes the idle settings.provider string.
       expect(DEFAULT_SETTINGS.provider).toBe("openai-compat");
-      expect(report).toContain('"provider": "(未配置)"');
+      // W2: DEFAULT_SETTINGS is untouched here, so provider ALSO carries
+      // the new （默认） tag on top of this pre-existing "(未配置)" override
+      // — see the "默认 tags" describe block below for the dedicated
+      // coverage of that.
+      expect(report).toContain('"provider": "(未配置)（默认）"');
       expect(report).not.toContain(`"provider": "${DEFAULT_SETTINGS.provider}"`);
     });
 
     it("reports the real provider once a key IS configured", () => {
+      // W2: "anthropic" here (rather than "openai-compat", the
+      // DEFAULT_SETTINGS.provider value) keeps this assertion decoupled
+      // from the （默认） tagging feature below — this test is about the
+      // has-a-key override, not about default-value tagging.
       const report = buildDiagnosticReport({
         ...DEFAULT_SETTINGS,
-        provider: "openai-compat",
+        provider: "anthropic",
         apiKey: SENTINELS.apiKey,
       });
-      expect(report).toContain('"provider": "openai-compat"');
+      expect(report).toContain('"provider": "anthropic"');
       expect(report).not.toContain('"provider": "(未配置)"');
       expect(report).not.toContain(SENTINELS.apiKey); // still never the key VALUE itself
     });
@@ -168,13 +176,16 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
     it("includes previously-omitted plain settings fields verbatim — proves this is genuinely FULLER than the old allow-list, not just renamed", () => {
       const report = buildDiagnosticReport({
         ...DEFAULT_SETTINGS,
-        language: "en-US",
+        // W2: "zh-CN" (not DEFAULT_SETTINGS.language's own "en-US")
+        // keeps this a genuinely CHANGED value — untagged — decoupled
+        // from the （默认） tagging feature covered separately below.
+        language: "zh-CN",
         detectModel: "distinctive-detect-model-id",
         summaryModel: "distinctive-summary-model-id",
         minConfidence: 0.77,
         micId: "distinctive-mic-device-id",
       });
-      expect(report).toContain('"language": "en-US"');
+      expect(report).toContain('"language": "zh-CN"');
       expect(report).toContain('"detectModel": "distinctive-detect-model-id"');
       expect(report).toContain('"summaryModel": "distinctive-summary-model-id"');
       expect(report).toContain('"minConfidence": 0.77');
@@ -193,9 +204,13 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
         expect(report).toContain("ws://localhost:8765/…");
       });
 
-      it("a root-path whisperUrl (the default shape) renders as the bare origin — no '/…' marker for a path that carries nothing", () => {
-        const report = buildDiagnosticReport({ ...DEFAULT_SETTINGS, whisperUrl: "ws://localhost:8765" });
-        expect(report).toContain('"whisperUrl": "ws://localhost:8765"');
+      it("a root-path whisperUrl renders as the bare origin — no '/…' marker for a path that carries nothing", () => {
+        // W2: localhost:9999 (not DEFAULT_SETTINGS.whisperUrl's own
+        // :8765) keeps this a genuinely CHANGED value — untagged —
+        // decoupled from the （默认） tagging feature covered separately
+        // below, while still exercising the same root-path shape.
+        const report = buildDiagnosticReport({ ...DEFAULT_SETTINGS, whisperUrl: "ws://localhost:9999" });
+        expect(report).toContain('"whisperUrl": "ws://localhost:9999"');
       });
 
       it("agentUrl and baseUrl are likewise userinfo-stripped and path-collapsed, not treated as secret", () => {
@@ -311,6 +326,85 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).toContain('"hasApiKey": true');
       expect(report).toContain('"baseUrl": "https://x.example.com"'); // root path — no marker
       expect(report).toContain('"distinctive-nested-model-id"');
+    });
+  });
+
+  // W2 field-debugging postmortem: a user reading a copied report saw
+  // the default OpenRouter baseUrl and read it as deliberate custom
+  // config — nothing distinguished "still whatever the app ships with"
+  // from "I actually changed this". report.ts's tagDefaultValues closes
+  // that gap.
+  describe("（默认） tags — distinguishes factory defaults from user configuration", () => {
+    it("default settings: baseUrl/provider/detectModel lines all carry （默认）", () => {
+      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      expect(report).toContain('"baseUrl": "https://openrouter.ai/…（默认）"');
+      expect(report).toContain('"provider": "(未配置)（默认）"');
+      expect(report).toContain(`"detectModel": "${DEFAULT_SETTINGS.detectModel}（默认）"`);
+    });
+
+    it("a changed value never carries the （默认） tag", () => {
+      // Only baseUrl/detectModel are changed here — every OTHER field
+      // (provider included) stays at its own default and legitimately
+      // keeps carrying the tag elsewhere in the same report, so this
+      // checks the two CHANGED fields' own lines specifically rather
+      // than asserting "（默认）" is absent from the whole report.
+      const report = buildDiagnosticReport({
+        ...DEFAULT_SETTINGS,
+        baseUrl: "https://api.deepseek.com", // root path — bare origin, no "/…" marker to account for
+        detectModel: "distinctive-detect-model-id",
+      });
+      expect(report).toContain('"baseUrl": "https://api.deepseek.com"');
+      expect(report).not.toContain('"baseUrl": "https://api.deepseek.com（默认）"');
+      expect(report).toContain('"detectModel": "distinctive-detect-model-id"');
+      expect(report).not.toContain('"detectModel": "distinctive-detect-model-id（默认）"');
+    });
+
+    it("tags a plain boolean/number field at its own default too, not just strings", () => {
+      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      expect(report).toContain(`"minConfidence": "${DEFAULT_SETTINGS.minConfidence}（默认）"`);
+      expect(report).toContain(`"autoDetect": "${DEFAULT_SETTINGS.autoDetect}（默认）"`);
+    });
+
+    it("never tags a secret-shaped field's has<Key> presence boolean — it stays a real, untagged JSON boolean", () => {
+      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      expect(report).toContain('"hasApiKey": false');
+      expect(report).not.toContain('"hasApiKey": "false');
+    });
+
+    it("never tags an object/array field — customThemes/taskLlm carry no marker even though the whole object is untouched from default", () => {
+      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      expect(report).toContain('"customThemes": []');
+    });
+  });
+
+  // W2 desktop proxy support — proxyUrl commonly carries basic-auth
+  // userinfo (`http://user:pass@host:port`), so it rides the SAME
+  // url-shaped field policy (point 2) as baseUrl/whisperUrl/agentUrl
+  // above — this just pins that it does, and that the field name
+  // pattern picks it up automatically (proxyUrl was added after the
+  // policy itself, never touched isUrlShapedKey/sanitizeUrl).
+  describe("proxyUrl redaction (SECURITY: a manual proxy URL commonly carries user:pass@ basic-auth)", () => {
+    it("origin-only like every other url-shaped field — neither the username nor the password ever appears in the report", () => {
+      const report = buildDiagnosticReport({
+        ...DEFAULT_SETTINGS,
+        proxyUrl: "http://SENTINEL-PROXY-USER:SENTINEL-PROXY-PASS@127.0.0.1:7890",
+      });
+      expect(report).not.toContain("SENTINEL-PROXY-USER");
+      expect(report).not.toContain("SENTINEL-PROXY-PASS");
+      expect(report).toContain('"proxyUrl": "http://127.0.0.1:7890"');
+    });
+
+    it("URL.origin itself never carries userinfo — asserted directly against the WHATWG URL API sanitizeUrl is built on", () => {
+      const url = new URL("http://SENTINEL-PROXY-USER:SENTINEL-PROXY-PASS@127.0.0.1:7890/some/path");
+      expect(url.origin).not.toContain("SENTINEL-PROXY-USER");
+      expect(url.origin).not.toContain("SENTINEL-PROXY-PASS");
+      expect(url.origin).toBe("http://127.0.0.1:7890");
+    });
+
+    it("not treated as a secret field — included verbatim (sanitized), never collapsed to a hasProxyUrl presence boolean", () => {
+      const report = buildDiagnosticReport({ ...DEFAULT_SETTINGS, proxyUrl: "http://127.0.0.1:7890" });
+      expect(report).not.toContain("hasProxyUrl");
+      expect(report).toContain('"proxyUrl": "http://127.0.0.1:7890"');
     });
   });
 });

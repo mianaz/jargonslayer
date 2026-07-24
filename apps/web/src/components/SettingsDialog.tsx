@@ -672,6 +672,46 @@ function isValidBaseUrl(value: string): boolean {
   return true;
 }
 
+// W2 desktop proxy support — same trim + full-width→ASCII hygiene as
+// normalizeBaseUrl above (a sibling, not a shared/parameterized helper:
+// the two fields' validation rules genuinely diverge below — a proxy
+// URL's scheme set is wider and its userinfo is EXPECTED, not
+// rejected — so folding them into one parameterized function would
+// obscure that divergence for no real line-count win).
+function normalizeProxyUrl(raw: string): string {
+  const trimmed = raw.trim();
+  return trimmed
+    .replace(/：/g, ":")
+    .replace(/／/g, "/")
+    .replace(/．/g, ".")
+    .replace(/～/g, "~");
+}
+
+/** Empty stays allowed (= follow the system proxy, this field's own
+ *  default). Scheme set is http/https/socks5/socks5h (a manual proxy —
+ *  e.g. Clash's mixed port — commonly speaks either); userinfo
+ *  (`user:pass@`) is DELIBERATELY allowed here, unlike isValidBaseUrl's
+ *  own rejection of it, since a proxy URL is the one legitimate place
+ *  Basic-auth credentials belong (tauri-plugin-http's own ProxyConfig
+ *  forwards them as a `Proxy-Authorization` header, never sent to the
+ *  proxy TARGET). "must have host" rejects a scheme-only value like
+ *  `socks5://` (parses successfully but with an empty hostname) rather
+ *  than silently handing tauri-plugin-http a hostless proxy config. */
+function isValidProxyUrl(value: string): boolean {
+  if (!value) return true;
+  if (/\s/.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (!["http:", "https:", "socks5:", "socks5h:"].includes(url.protocol)) return false;
+  if (!url.hostname) return false;
+  if (url.search || url.hash) return false;
+  return true;
+}
+
 // S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
 // lives only in the shared BASE venv; parakeet rides a fully separate,
 // airtight-isolated MLX venv (§C R1) that never has pyannote installed,
@@ -1683,6 +1723,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       showToast("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
       return;
     }
+    // W2 desktop proxy support — same save-boundary hygiene as baseUrl
+    // above; desktop-only field, but validated unconditionally here
+    // (cheap, and IS_DESKTOP already gates the field OUT of the draft
+    // on web/iOS since nothing ever renders it there to set a non-empty
+    // value in the first place).
+    const normalizedProxyUrl = normalizeProxyUrl(draft.proxyUrl);
+    if (!isValidProxyUrl(normalizedProxyUrl)) {
+      showToast("代理地址无效，请检查格式（例如 http://127.0.0.1:7890）");
+      return;
+    }
     let normalizedTaskLlm = draft.taskLlm;
     for (const { domain } of TASK_DOMAIN_META) {
       const override = normalizedTaskLlm?.[domain];
@@ -1736,6 +1786,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // always well-formed (or empty) by this point.
       baseUrl: normalizedBaseUrl,
       taskLlm: normalizedTaskLlm,
+      // W2: same "normalized + already validated above" guarantee.
+      proxyUrl: normalizedProxyUrl,
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
     // getSidecarMode is only ever read once, at app start (Finding 2c)
@@ -3476,6 +3528,30 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     >
                       前往 openrouter.ai/keys 创建 Key
                     </button>
+                  </div>
+                )}
+
+                {/* W2 desktop proxy support — desktop-only (meaningless
+                   on web/iOS, same IS_DESKTOP gate CredentialFields'
+                   own 钥匙串 apiKeyHint above uses): tauri-plugin-http
+                   already auto-detects the macOS system proxy with no
+                   configuration at all, so this is purely the escape
+                   hatch for what that can't see (env-var-only setups a
+                   Finder-launched app never inherits, or a PAC-only
+                   network the app can't execute). */}
+                {IS_DESKTOP && (
+                  <div>
+                    <label className="text-xs text-mut">网络代理（可选）</label>
+                    <input
+                      type="text"
+                      value={draft.proxyUrl}
+                      onChange={(e) => patch({ proxyUrl: e.target.value })}
+                      placeholder="http://127.0.0.1:7890"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                    <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                      留空则自动跟随系统代理。支持 http:// 与 socks5:// （如 Clash 混合端口 7890）
+                    </div>
                   </div>
                 )}
 

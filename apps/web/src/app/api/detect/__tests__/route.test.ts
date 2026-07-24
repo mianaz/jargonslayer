@@ -60,6 +60,49 @@ describe("POST /api/detect — profile field passthrough (#48 step 3)", () => {
   });
 });
 
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — same threading
+// contract/test shape as the profile block above: `meetingContext`
+// just needs to survive zod validation and reach
+// buildDetectUserMessage's MEETING CONTEXT splice.
+describe("POST /api/detect — meetingContext field passthrough (auto meeting-context detection)", () => {
+  it("accepts a request with a meetingContext string (fails later for lack of a key, not schema validation)", async () => {
+    const res = await POST(
+      makeRequest({
+        context: "",
+        new_text: "We need to circle back on this.",
+        meetingContext: "生物信息学组会，面向研究生",
+      }),
+    );
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.code).toBe("no_key");
+  });
+
+  it("accepts a request with no meetingContext field at all (field is optional, same as `profile`)", async () => {
+    const res = await POST(
+      makeRequest({ context: "", new_text: "We need to circle back on this." }),
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("rejects a meetingContext string over 80 chars with 400 bad_request", async () => {
+    const res = await POST(
+      makeRequest({ context: "", new_text: "hi", meetingContext: "x".repeat(81) }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.code).toBe("bad_request");
+  });
+
+  it("accepts a meetingContext string at exactly 80 chars", async () => {
+    const res = await POST(
+      makeRequest({ context: "", new_text: "hi", meetingContext: "x".repeat(80) }),
+    );
+    expect(res.status).not.toBe(400);
+  });
+});
+
 // Diagnostics (item 5): every 4xx/5xx error response carries a fresh
 // requestId so a user's diag ref (client-side) can chain to this
 // exact server-side response — see lib/diag/requestId.ts.

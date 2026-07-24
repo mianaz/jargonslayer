@@ -858,6 +858,25 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.correctionBusy).toBe(false);
   });
 
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — a stale context/
+  // attempt count from a PREVIOUS meeting must never survive into a
+  // fresh one (same rationale as speakerRoster/activeSpeaker above).
+  it("beginMeeting resets inferredContext/contextOverride/contextAttempts/contextRefreshed for a fresh meeting", () => {
+    useApp.setState({
+      inferredContext: "上一场会议的背景",
+      contextOverride: true,
+      contextAttempts: 2,
+      contextRefreshed: true,
+    });
+    useApp.getState().beginMeeting();
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(false);
+    expect(s.contextAttempts).toBe(0);
+    expect(s.contextRefreshed).toBe(false);
+  });
+
   // F7 fix (Sol LOW #19, keychain-custody fix round): a stale
   // "dictionary" left over from a PREVIOUS meeting's AI fallback must
   // not survive into a fresh one — AiStatusPanel's useAiFallenBack
@@ -886,6 +905,25 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.speakerRoster).toEqual([]);
     expect(s.activeSpeaker).toBeNull();
     expect(s.correctionBusy).toBe(false);
+  });
+
+  // Auto meeting-context detection — newMeeting mirrors beginMeeting's
+  // own reset (see that test above): otherwise a stale context chip
+  // from the just-ended meeting would linger through 新会议 into the
+  // idle state that precedes the next Start.
+  it("newMeeting resets inferredContext/contextOverride/contextAttempts/contextRefreshed", () => {
+    useApp.setState({
+      inferredContext: "上一场会议的背景",
+      contextOverride: true,
+      contextAttempts: 2,
+      contextRefreshed: true,
+    });
+    useApp.getState().newMeeting();
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(false);
+    expect(s.contextAttempts).toBe(0);
+    expect(s.contextRefreshed).toBe(false);
   });
 
   it("loadSession resets activeSpeaker/correctionBusy and restores speakerRoster from the session", async () => {
@@ -1020,6 +1058,164 @@ describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.
     await useApp.getState().loadSession(stored!.id);
 
     expect(useApp.getState().speakerRoster).toEqual(["Alice", "Bob"]);
+  });
+});
+
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — mirrors the speakerRoster
+// describe block immediately above: save/snapshot carry the final
+// inferredContext, contextAttempts/contextOverride/contextRefreshed
+// stay live-only (never part of MeetingSession's own shape).
+describe("saveCurrentSession / currentSessionSnapshot persist inferredContext (auto meeting-context detection)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("saveCurrentSession persists the live inferredContext", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      inferredContext: "生物信息学组会，面向研究生",
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBe("生物信息学组会，面向研究生");
+  });
+
+  it("saveCurrentSession persists undefined (not null) when no context was ever inferred", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      inferredContext: null,
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBeUndefined();
+  });
+
+  it("currentSessionSnapshot includes the live inferredContext", () => {
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      inferredContext: "跨境电商客户评审",
+    });
+    expect(currentSessionSnapshot()?.inferredContext).toBe("跨境电商客户评审");
+  });
+});
+
+describe("setInferredContext / bumpContextAttempts / markContextRefreshed", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
+      status: "idle",
+      segments: [],
+      activeSessionId: null,
+    });
+  });
+
+  it("sets inferredContext without touching contextOverride when opts is omitted", () => {
+    useApp.getState().setInferredContext("生物信息学组会");
+    const s = useApp.getState();
+    expect(s.inferredContext).toBe("生物信息学组会");
+    expect(s.contextOverride).toBe(false);
+  });
+
+  it("opts.override:true also sets contextOverride", () => {
+    useApp.getState().setInferredContext("用户手改的背景", { override: true });
+    const s = useApp.getState();
+    expect(s.inferredContext).toBe("用户手改的背景");
+    expect(s.contextOverride).toBe(true);
+  });
+
+  it("value:null with override:true clears the context AND sets the hard-stop override (chip disappears, inference stays off)", () => {
+    useApp.setState({ inferredContext: "旧背景" });
+    useApp.getState().setInferredContext(null, { override: true });
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(true);
+  });
+
+  it("bumpContextAttempts increments contextAttempts by exactly 1 per call", () => {
+    useApp.getState().bumpContextAttempts();
+    expect(useApp.getState().contextAttempts).toBe(1);
+    useApp.getState().bumpContextAttempts();
+    expect(useApp.getState().contextAttempts).toBe(2);
+  });
+
+  it("markContextRefreshed sets contextRefreshed to true", () => {
+    useApp.getState().markContextRefreshed();
+    expect(useApp.getState().contextRefreshed).toBe(true);
+  });
+});
+
+// Post-stop top-up re-save — same idiom (and same fake-timer test
+// shape) as the "applySpeakerUpdate ... post-stop diarization linger
+// re-save" describe block above: a late-landing inference (or a manual
+// chip edit made after the meeting already stopped) must still reach
+// the ALREADY-saved session, not just the live view.
+describe("setInferredContext — post-stop top-up re-save", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    useApp.setState({
+      inferredContext: null,
+      contextOverride: false,
+      status: "idle",
+      segments: [],
+      activeSessionId: null,
+    });
+  });
+
+  it("re-saves the session when called after the meeting has already stopped", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      status: "stopped",
+      activeSessionId: "sess-1",
+    });
+
+    useApp.getState().setInferredContext("迟到的推断结果");
+
+    expect(saveSpy).not.toHaveBeenCalled(); // debounced, not immediate
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBe("迟到的推断结果");
+  });
+
+  it("does NOT schedule a re-save while a meeting is still live (status listening)", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      status: "listening",
+    });
+
+    useApp.getState().setInferredContext("生物信息学组会");
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).not.toHaveBeenCalled();
   });
 });
 

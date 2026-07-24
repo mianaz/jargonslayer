@@ -636,6 +636,222 @@ describe("Header — EnginePostureChip (v0.4.7 Lane C tri-state)", () => {
   });
 });
 
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — the header chip: renders
+// with value / hidden when null / click-to-edit sets the override.
+// typeInto mirrors CardsPanel.test.tsx's own helper (this repo has no
+// @testing-library/react — see this file's own header note) for
+// driving a controlled <input> from a plain-DOM test.
+describe("Header — ContextChip (auto meeting-context detection)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value",
+  )!.set!;
+  function typeInto(el: HTMLInputElement, value: string) {
+    nativeInputValueSetter.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      inferredContext: null,
+      contextOverride: false,
+    });
+  });
+
+  async function renderHeader() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+          onOpenTaskCenter={noop}
+        />,
+      );
+    });
+  }
+
+  it("hidden when inferredContext is null (no empty-state chip)", async () => {
+    useApp.setState({ inferredContext: null });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="header-context-chip"]')).toBeNull();
+  });
+
+  it("renders 背景: + the value (title carries the full, untruncated value)", async () => {
+    useApp.setState({
+      inferredContext: "生物信息学组会（单细胞转录组方向），面向研究生",
+      settings: { ...DEFAULT_SETTINGS, explainLanguage: "zh" },
+    });
+    await renderHeader();
+
+    const chip = container!.querySelector('[data-testid="header-context-chip"]');
+    expect(chip).not.toBeNull();
+    expect(chip!.textContent).toContain("背景:");
+    expect(chip!.getAttribute("title")).toBe("生物信息学组会（单细胞转录组方向），面向研究生");
+  });
+
+  it("truncates a long value to ~24 chars with an ellipsis in the visible label", async () => {
+    const long = "a".repeat(40);
+    useApp.setState({ inferredContext: long, settings: DEFAULT_SETTINGS });
+    await renderHeader();
+
+    const chip = container!.querySelector('[data-testid="header-context-chip"]')!;
+    expect(chip.textContent).toContain(`${"a".repeat(24)}…`);
+    expect(chip.textContent).not.toContain(long);
+  });
+
+  it("explainLanguage 'en' renders the Context: label", async () => {
+    useApp.setState({
+      inferredContext: "Bioinformatics lab meeting",
+      settings: { ...DEFAULT_SETTINGS, explainLanguage: "en" },
+    });
+    await renderHeader();
+
+    const chip = container!.querySelector('[data-testid="header-context-chip"]');
+    expect(chip!.textContent).toContain("Context:");
+  });
+
+  it("clicking the chip swaps to an inline input, focused, pre-filled with the current value", async () => {
+    useApp.setState({ inferredContext: "生物信息学组会", settings: DEFAULT_SETTINGS });
+    await renderHeader();
+
+    const chip = container!.querySelector('[data-testid="header-context-chip"]') as HTMLButtonElement;
+    await act(async () => chip.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    const input = container!.querySelector(
+      '[data-testid="header-context-chip-input"]',
+    ) as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.value).toBe("生物信息学组会");
+    expect(document.activeElement).toBe(input);
+  });
+
+  it("saving a non-empty edit on Enter calls setInferredContext(text, {override:true})", async () => {
+    useApp.setState({ inferredContext: "旧背景", settings: DEFAULT_SETTINGS });
+    await renderHeader();
+
+    await act(async () =>
+      container!
+        .querySelector('[data-testid="header-context-chip"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    const input = container!.querySelector(
+      '[data-testid="header-context-chip-input"]',
+    ) as HTMLInputElement;
+    await act(async () => typeInto(input, "用户手改的背景"));
+    await act(async () =>
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+
+    const s = useApp.getState();
+    expect(s.inferredContext).toBe("用户手改的背景");
+    expect(s.contextOverride).toBe(true);
+    // Back to the display chip, now showing the edited value.
+    expect(container!.querySelector('[data-testid="header-context-chip-input"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="header-context-chip"]')!.textContent).toContain(
+      "用户手改的背景",
+    );
+  });
+
+  it("saving an empty edit clears the context AND sets the override (chip disappears, inference stays off)", async () => {
+    useApp.setState({ inferredContext: "旧背景", settings: DEFAULT_SETTINGS });
+    await renderHeader();
+
+    await act(async () =>
+      container!
+        .querySelector('[data-testid="header-context-chip"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    const input = container!.querySelector(
+      '[data-testid="header-context-chip-input"]',
+    ) as HTMLInputElement;
+    await act(async () => typeInto(input, "   "));
+    await act(async () =>
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    );
+
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(true);
+    expect(container!.querySelector('[data-testid="header-context-chip"]')).toBeNull();
+  });
+
+  it("saving on blur behaves the same as Enter", async () => {
+    useApp.setState({ inferredContext: "旧背景", settings: DEFAULT_SETTINGS });
+    await renderHeader();
+
+    await act(async () =>
+      container!
+        .querySelector('[data-testid="header-context-chip"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    const input = container!.querySelector(
+      '[data-testid="header-context-chip-input"]',
+    ) as HTMLInputElement;
+    await act(async () => typeInto(input, "失焦保存的背景"));
+    // React's onBlur is implemented on the native "focusout" event
+    // (which bubbles, unlike "blur") — see react-dom's event plugin
+    // system; dispatching a literal "blur" here would silently never
+    // reach the handler at all.
+    await act(async () => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+    expect(useApp.getState().inferredContext).toBe("失焦保存的背景");
+  });
+
+  it("Escape cancels the edit without saving — the original value survives, override untouched", async () => {
+    useApp.setState({ inferredContext: "原始背景", settings: DEFAULT_SETTINGS, contextOverride: false });
+    await renderHeader();
+
+    await act(async () =>
+      container!
+        .querySelector('[data-testid="header-context-chip"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true })),
+    );
+    const input = container!.querySelector(
+      '[data-testid="header-context-chip-input"]',
+    ) as HTMLInputElement;
+    await act(async () => typeInto(input, "被取消的编辑"));
+    await act(async () =>
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })),
+    );
+
+    const s = useApp.getState();
+    expect(s.inferredContext).toBe("原始背景"); // unchanged — Escape never called setInferredContext
+    expect(s.contextOverride).toBe(false);
+    expect(container!.querySelector('[data-testid="header-context-chip-input"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="header-context-chip"]')!.textContent).toContain(
+      "原始背景",
+    );
+  });
+});
+
 // S14.1 field fix (item 7b): 复制诊断信息 in the ≡ menu — reachable at
 // every uiMode/width, unlike the pre-existing SettingsDialog.tsx block
 // (advanced-only, a category deep). Same navigator.clipboard stub

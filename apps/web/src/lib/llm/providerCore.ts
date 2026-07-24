@@ -25,6 +25,7 @@ import type {
   DetectedExpression,
   DetectedTerm,
   ExpressionCategory,
+  InferContextResponse,
   LlmProvider,
   MeetingSummary,
   TermType,
@@ -152,6 +153,14 @@ export const DefineResultSchema = z.object({
   termType: z.enum(TERM_TYPE_VALUES).optional(),
   gloss_en: z.string().optional(),
 }) satisfies z.ZodType<DefineResult>;
+
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — mirrors DefineResultSchema
+// immediately above: shape validation only, tasks/inferContext.ts owns
+// the trim/cap/empty-means-no-result sanitizing.
+export const InferContextResponseSchema = z.object({
+  context: z.string(),
+}) satisfies z.ZodType<InferContextResponse>;
 
 // ---------------------------------------------------------------
 // Confidence clamping — callers may also clamp again downstream;

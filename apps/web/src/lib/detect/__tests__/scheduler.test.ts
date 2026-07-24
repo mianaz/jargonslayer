@@ -1041,3 +1041,82 @@ describe("DetectionScheduler — oversized-AI-expression post-filter wiring", ()
     });
   });
 });
+
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — SchedulerOptions.
+// getMeetingContext, read at batch-dispatch time (attemptDetect) and
+// folded into the detectApi body ONLY when it returns a non-null/
+// non-empty string, mirroring how the existing tests above assert on
+// mockDetectApi's own call args.
+describe("DetectionScheduler — meetingContext threading (auto meeting-context detection)", () => {
+  let settings: Settings;
+  let meetingGen: number;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    segIndex = 0;
+    settings = makeSettings();
+    meetingGen = 0;
+    mockDetectApi.mockReset();
+    mockDetectApi.mockResolvedValue(emptyRes());
+    mockScanDictionary.mockReset();
+    mockScanDictionary.mockReturnValue(emptyRes());
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function makeScheduler(getMeetingContext?: () => string | null): DetectionScheduler {
+    return new DetectionScheduler({
+      getSettings: () => settings,
+      getMeetingGen: () => meetingGen,
+      getMeetingContext,
+      onDetection: vi.fn(),
+      onBusyChange: vi.fn(),
+      onModeChange: vi.fn(),
+      onError: vi.fn(),
+    });
+  }
+
+  it("includes meetingContext in the detectApi body when the accessor returns a non-null string", async () => {
+    const scheduler = makeScheduler(() => "生物信息学组会，面向研究生");
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+    await vi.advanceTimersByTimeAsync(0);
+    scheduler.stop();
+
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    expect(mockDetectApi.mock.calls[0][0]).toMatchObject({
+      meetingContext: "生物信息学组会，面向研究生",
+    });
+  });
+
+  it("omits meetingContext entirely when the accessor returns null (no context inferred yet)", async () => {
+    const scheduler = makeScheduler(() => null);
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+    await vi.advanceTimersByTimeAsync(0);
+    scheduler.stop();
+
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    expect("meetingContext" in mockDetectApi.mock.calls[0][0]).toBe(false);
+  });
+
+  it("omits meetingContext when the accessor returns an empty string (treated the same as null)", async () => {
+    const scheduler = makeScheduler(() => "");
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+    await vi.advanceTimersByTimeAsync(0);
+    scheduler.stop();
+
+    expect("meetingContext" in mockDetectApi.mock.calls[0][0]).toBe(false);
+  });
+
+  it("omits meetingContext when no getMeetingContext accessor was passed at all (existing/test callers keep compiling and behaving unchanged)", async () => {
+    const scheduler = makeScheduler(undefined);
+    scheduler.pushSegment(makeSegment("a".repeat(140)));
+    await vi.advanceTimersByTimeAsync(0);
+    scheduler.stop();
+
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    expect("meetingContext" in mockDetectApi.mock.calls[0][0]).toBe(false);
+  });
+});
