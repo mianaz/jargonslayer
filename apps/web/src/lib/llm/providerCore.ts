@@ -529,25 +529,64 @@ async function postChatCompletions(
  *  response body even when the echoed value doesn't byte-for-byte
  *  match a known secret (re-quoted, re-cased, or truncated). Applied
  *  IN ADDITION to the exact-secret replacement below, never instead
- *  of it. */
-const SECRET_HEADER_RE = /(authorization|x-api-key)\s*[:=]\s*\S+/gi;
+ *  of it.
+ *
+ *  F1 (Sol HIGH #6 part 1, v0.5.1 fieldtest B review): the value class
+ *  used to be `\S+` — a single non-whitespace token — so a "Bearer
+ *  <token>" echo only redacted the scheme word "Bearer" and left the
+ *  actual token sitting right after it in plain text. That's load-
+ *  bearing for client.ts's transportFailureCause: its cause= diag path
+ *  is the one call site that runs this pattern with NO known-secret
+ *  list at all (see that function's own comment), so this regex was
+ *  the ONLY thing standing between a header-echoing transport error
+ *  and a leaked key. `[^\r\n,"']+` instead consumes the ENTIRE
+ *  remainder of the credential expression — scheme word AND token(s)
+ *  — stopping only at a natural terminator (line end, a quote, or a
+ *  comma), so unrelated trailing content in the same body still
+ *  survives. */
+const SECRET_HEADER_RE = /(authorization|x-api-key)\s*[:=]\s*[^\r\n,"']+/gi;
+
+/** F2 (Sol HIGH #6 part 2): credential material embedded directly IN a
+ *  URL — userinfo (`https://user:pass@host/...`) and common
+ *  credential-shaped query params (`?api_key=…`, `&token=…`,
+ *  `&client_secret=…`, …). Neither the exact-secret pass nor
+ *  SECRET_HEADER_RE above ever touches these — they don't byte-match a
+ *  known secret string and don't look like an `Authorization:`/
+ *  `X-Api-Key:` header. A user's own pasted openai-compat baseUrl can
+ *  legitimately carry either shape (a self-hosted gateway that
+ *  authenticates via the URL rather than a header), and some runtimes'
+ *  fetch-failure messages embed the failing request's URL verbatim.
+ *  Exported so client.ts's transportFailureCause can apply it
+ *  explicitly too, on top of sanitizeProviderExcerpt calling it
+ *  internally below (belt-and-suspenders — see that call site's own
+ *  comment). */
+const URL_USERINFO_RE = /(:\/\/)[^/\s@]+@/g;
+const URL_QUERY_CRED_RE = /([?&][\w.-]*(?:key|token|secret|auth|password)[\w.-]*=)[^&#\s"']*/gi;
+
+export function scrubUrlCredentials(text: string): string {
+  return text
+    .replace(URL_USERINFO_RE, "$1[REDACTED]@")
+    .replace(URL_QUERY_CRED_RE, "$1[REDACTED]");
+}
 
 /** Redact every occurrence of each non-empty entry in `secrets` from
- *  `text`, then strip Authorization/X-Api-Key header-shaped patterns.
- *  Every call site that turns a raw provider response body into an
- *  Error message must route the text through this FIRST, on the FULL
- *  (untruncated) text — sanitizing before the caller's char-count cap
- *  is applied, rather than after, so a secret that straddles or falls
- *  past that cap boundary is still caught, and the cap never leaves a
- *  partial-but-recognizable secret fragment visible. Plain string
- *  split/join (not RegExp) for the exact-secret pass, so a key
- *  containing regex metacharacters never needs escaping. */
+ *  `text`, then scrub URL-embedded credentials (F2), then strip
+ *  Authorization/X-Api-Key header-shaped patterns. Every call site that
+ *  turns a raw provider response body into an Error message must route
+ *  the text through this FIRST, on the FULL (untruncated) text —
+ *  sanitizing before the caller's char-count cap is applied, rather
+ *  than after, so a secret that straddles or falls past that cap
+ *  boundary is still caught, and the cap never leaves a partial-but-
+ *  recognizable secret fragment visible. Plain string split/join (not
+ *  RegExp) for the exact-secret pass, so a key containing regex
+ *  metacharacters never needs escaping. */
 export function sanitizeProviderExcerpt(text: string, secrets: readonly string[]): string {
   let sanitized = text;
   for (const secret of secrets) {
     if (!secret) continue;
     sanitized = sanitized.split(secret).join("[REDACTED]");
   }
+  sanitized = scrubUrlCredentials(sanitized);
   return sanitized.replace(SECRET_HEADER_RE, "$1: [REDACTED]");
 }
 

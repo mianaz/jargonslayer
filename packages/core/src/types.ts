@@ -780,6 +780,22 @@ export interface Settings {
   // provider credential itself (see agent_server.py's Origin-gate
   // comment for the full threat model this closes).
   agentToken: string;
+  // v0.5.1 desktop keychain custody, F2 fix (Sol HIGH #4, review round
+  // cited in store.ts's syncSecretCustody doc): names (a subset of
+  // secret.ts's SECRET_NAMES) whose Keychain DELETE most recently
+  // FAILED — this blob's own field is already cleared, but the OS
+  // Keychain still holds the old value until a retry actually lands.
+  // secret.ts's hydrateSecrets consults this FIRST on every boot and
+  // retries the delete instead of ever adopting whatever's still
+  // sitting there for a listed name; store.ts's syncSecretCustody adds
+  // a name here on a live delete failure and clears it again the
+  // moment ANY later writeSecret set/delete for that name succeeds.
+  // Deliberately NOT a SECRET_NAMES entry and NOT touched by any strip
+  // logic (settingsForPersist/stripKeyMaterial) — this is bookkeeping
+  // about Keychain state, never key material itself, so it's safe to
+  // ride in the plaintext IDB blob (and a full-tier backup) like any
+  // other ordinary Settings field.
+  secretDeletePending?: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -867,6 +883,7 @@ export const DEFAULT_SETTINGS: Settings = {
   subscriptionProvider: "claude-sub",
   agentUrl: "http://127.0.0.1:8767",
   agentToken: "",
+  secretDeletePending: [],
 };
 
 /** Headers that carry LLM provider config from browser to routes.

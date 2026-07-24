@@ -15,7 +15,12 @@ import { completeTask, failTask, startTask, updateTaskProgress, useTasks } from 
 import { useApp } from "../store";
 import { probeSidecar } from "../stt/sidecarHealth";
 import { MODEL_CATALOG } from "./modelCatalog";
-import { MLX_INSTALL_STAGE_LABELS, type DesktopBootstrapHandle, type SwitchModelProgress } from "./bootstrap";
+import {
+  MLX_INSTALL_STAGE_LABELS,
+  type DesktopBootstrapHandle,
+  type DesktopBootstrapState,
+  type SwitchModelProgress,
+} from "./bootstrap";
 
 // Side-table: which model a given model-download task was FOR — never
 // folded into TaskState itself (its shape stays exactly what #58
@@ -145,6 +150,89 @@ export function trackSwitchModel(handle: DesktopBootstrapHandle, model: string):
       failTask(id, message);
     })
     .finally(() => unsubscribe());
+
+  return id;
+}
+
+/** Field-test issue 6 (cancellable first-run model downloads) —
+ *  DesktopBootstrap.tsx's own 「后台继续」 handler (STEP/DOWNLOAD_MODEL/
+ *  RUNNING) calls this the instant the user backgrounds the wizard,
+ *  giving the download a live tray surface for the REST of the drive —
+ *  through to either HEALTHY (success) or a genuine STEP/ERROR
+ *  (failure), see bootstrap.ts's own downloadWasCancelled interception
+ *  for why a user-cancelled download never reaches STEP/ERROR at all.
+ *  `model` is the wizard's own <ModelPicker> pick at beginProvision()
+ *  time (DesktopBootstrap.tsx stashes it in a ref for exactly this
+ *  call), used only for modelLabel(model) — the row's display label.
+ *
+ *  Unlike trackSwitchModel/trackInstallDiar above (each subscribes a
+ *  Promise-returning DesktopBootstrapHandle action itself), this is a
+ *  PUSH-style driver mirroring trackOsSpeechAsset's own shape: first-run
+ *  provisioning's beginProvision()/drive() loop is fire-and-forget from
+ *  this handle's own vantage point (no one Promise whose resolution IS
+ *  the outcome), so this instead watches handle.state$ for whichever
+ *  terminal-ish transition happens first —
+ *    HEALTHY                      -> completeTask
+ *    STEP + status "ERROR"        -> failTask(state.error) — a genuine
+ *      crash/failure (e.g. disk full), never a cancel (see above)
+ *    any OTHER phase left "STEP"  -> failTask("已取消") — in practice
+ *      the cancel_prewarm/「取消下载」 landing spot (WIZARD_CONSENT_
+ *      REQUIRED), but also covers any other exotic bounce-back;
+ *      mirrors trackOsSpeechAsset's settle()'s own "neutral message
+ *      when the flow ends some OTHER way" precedent. A rare, narrow
+ *      imprecision: a REAL TERMINAL_ERROR (repeated crash-restart,
+ *      unrelated to this download) landing here too would ALSO read
+ *      "已取消" rather than its own reason — accepted rather than adding
+ *      a third branch for an interaction this unlikely.
+ *
+ *  Deliberately never registered in modelByTaskId (unlike
+ *  trackSwitchModel) — TaskCenterDrawer's own 重试 button is gated on
+ *  modelForTask(task.id) precisely so it never renders for THIS row: a
+ *  first-run download's own retry path is reopening the wizard (帮助
+ *  menu), never a bare switchModel(model) call, which requires an
+ *  already-HEALTHY sidecar — the opposite of what just failed here.
+ *  The SAME absence is also what tray cancel (TaskCenterDrawer.tsx)
+ *  reads to route a running row's cancel click to handle.cancelPrewarm()
+ *  instead of handle.cancelSwitchModel(). */
+export function trackPrewarm(handle: DesktopBootstrapHandle, model: string): string {
+  const id = newId();
+  startTask(id, "model-download", modelLabel(model));
+
+  // F5 (Sol LOW #21, review round): state$ is non-replaying (see
+  // DesktopBootstrapHandle's own contract) — a caller invoked in a
+  // stale render, after the drive already reached a terminal state
+  // (HEALTHY / STEP+ERROR / bounced off STEP entirely) BEFORE this
+  // function ever subscribed, would otherwise never see another
+  // notification and the tray row would stay "running" until the next
+  // reload. Shares its settle logic with the state$ subscription below
+  // (same three-way branch) so both paths agree on what counts as
+  // terminal.
+  function settleFromState(state: DesktopBootstrapState): boolean {
+    if (state.phase === "HEALTHY") {
+      completeTask(id);
+    } else if (state.phase === "STEP" && state.status === "ERROR") {
+      failTask(id, state.error);
+    } else if (state.phase !== "STEP") {
+      failTask(id, "已取消");
+    } else {
+      return false; // still an in-flight STEP (RUNNING/POLLING, non-ERROR) — keep waiting
+    }
+    return true;
+  }
+
+  if (settleFromState(handle.currentState())) {
+    return id; // already terminal at track time — never even subscribe
+  }
+
+  const unsubProgress = handle.downloadProgress$((progress) => {
+    if (!progress) return;
+    updateTaskProgress(id, progress.total > 0 ? progress.downloaded / progress.total : undefined, "下载中");
+  });
+  const unsubState = handle.state$((state) => {
+    if (!settleFromState(state)) return;
+    unsubProgress();
+    unsubState();
+  });
 
   return id;
 }

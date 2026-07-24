@@ -165,9 +165,25 @@ export function describeProviderModel(resolved: ResolvedTaskCreds): string {
   return `${describeProvider(resolved)} · ${resolved.model || "服务端默认"}`;
 }
 
+// Field-test issue 8b (manual AI-detect retry): the seam this panel
+// already had — DetectionScheduler's onModeChange writes store.detectMode
+// (useMeeting.ts) — happens to also be enough to detect "fallen back",
+// no new plumbing needed for VISIBILITY (only the retryAi() call itself
+// needed a new one, see store.ts's aiRetryNonce + useMeeting.ts). Per
+// pushSegment (scheduler.ts): onModeChange("dictionary") fires for
+// exactly two reasons — settings.aiDetect is off, or the scheduler's
+// fellBack latch is up. Reading BOTH live store fields excludes the
+// first reason, leaving only fellBack.
+function useAiFallenBack(): boolean {
+  const detectMode = useApp((s) => s.detectMode);
+  const aiDetectOn = useApp((s) => s.settings.aiDetect);
+  return aiDetectOn && detectMode === "dictionary";
+}
+
 export default function AiStatusPanel() {
   const [settings] = useState<Settings>(() => useApp.getState().settings);
   const telemetry = useLlmTelemetry();
+  const aiFallenBack = useAiFallenBack();
 
   // F6 (Sol+Opus review, MINOR): gating on settings.apiKey (primary)
   // alone missed a user who left the primary key empty but set a
@@ -224,6 +240,16 @@ export default function AiStatusPanel() {
                 上次失败：{AI_STATUS_ERROR_KIND_LABEL[stat.lastErrorKind]} ——{" "}
                 {describeErrorKind(stat.lastErrorKind, resolved.apiKey)}
               </div>
+            )}
+            {row.telemetryDomain === "detect" && aiFallenBack && (
+              <button
+                type="button"
+                data-testid="ai-status-retry-detect"
+                onClick={() => useApp.getState().requestAiRetry()}
+                className="mt-1 border border-edge px-2 py-0.5 font-mono text-xs text-act hover:bg-panel3"
+              >
+                重试 AI 检测
+              </button>
             )}
           </div>
         );

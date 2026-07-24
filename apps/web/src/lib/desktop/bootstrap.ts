@@ -750,6 +750,47 @@ export interface DesktopBootstrapHandle {
    *  UI caller through this one already-proven-safe gateway keeps that
    *  guarantee to exactly one call site, this file's own. */
   readSidecarLog: (tailLines: number) => Promise<string>;
+  /** Field-test issue 6 (cancellable first-run model downloads) —
+   *  DesktopWizard's own 「取消下载」 button (STEP/DOWNLOAD_MODEL/RUNNING)
+   *  and the task tray's cancel affordance on a backgrounded prewarm row
+   *  (jobsBridge.ts's trackPrewarm) both call this. Invokes Rust's
+   *  cancel_prewarm (server.rs) directly — a thin wrapper, same posture
+   *  as stopServer()/getAppPaths (provisionRunner.ts): no generation/
+   *  latch guard of its own, since it never mutates `current`/ctx itself
+   *  — the ALREADY-in-flight drive() loop is what reacts (see
+   *  downloadWasCancelled's own doc comment above) once the kill is
+   *  observed. A no-op (resolves cleanly) when no prewarm download is
+   *  actually in flight — mirrors cancel_prewarm's own Rust-side no-op
+   *  contract. Errors (e.g. a poisoned lock) propagate to the caller,
+   *  same "let the caller decide toast/etc" posture as reprovision()'s
+   *  own external error handling (DesktopBootstrap.tsx). F4 (review
+   *  round): also records the request locally (prewarmCancelRequested)
+   *  regardless of whether a child is registered yet, so a click landing
+   *  BEFORE prewarm_model has even been invoked — e.g. still inside an
+   *  mlx-family first run's own ensureMlxExtras() phase — still takes
+   *  effect at the next DOWNLOAD_MODEL checkpoint, instead of the Rust
+   *  no-op silently swallowing it for however long that phase takes; see
+   *  that flag's own doc comment above. */
+  cancelPrewarm: () => Promise<void>;
+  /** Field-test issue 6 — the tray's cancel affordance on a RUNNING
+   *  "model-download" task started by jobsBridge.ts's trackSwitchModel
+   *  (the SETTINGS 更换模型 path, :8766 POST /download-model job — NOT
+   *  first-run's prewarm_model; see cancelPrewarm above for that one).
+   *  POSTs the sidecar's own POST /jobs/{id}/cancel (whisper_server.py)
+   *  for whichever download job performSwitchModel's own poll loop is
+   *  CURRENTLY awaiting (an internal job id this handle stashes itself —
+   *  never exposed any other way, since switchModel()'s whole download+
+   *  poll sequence is otherwise a black box to every caller). A no-op
+   *  when no switch-model download is currently in flight (mirrors
+   *  cancelPrewarm's own no-op contract) — F4 (review round): more
+   *  precisely, no LONGER a bare no-op in that case; see
+   *  switchModelCancelRequested's own doc comment above for what a call
+   *  THAT early (before postDownloadModel has even resolved a job id)
+   *  now does instead. Settling itself happens entirely through the
+   *  EXISTING poll loop inside performSwitchModel once it observes the
+   *  job's status flip to "cancelled" — this method only fires the
+   *  cancel request, it doesn't await the outcome. */
+  cancelSwitchModel: () => Promise<void>;
 }
 
 const NOT_DESKTOP_PATHS: DesktopPaths = {
@@ -787,6 +828,8 @@ const NOT_DESKTOP_HANDLE: DesktopBootstrapHandle = {
   currentSwitchModelProgress: () => null,
   installDiarization: async () => {},
   readSidecarLog: async () => "",
+  cancelPrewarm: async () => {},
+  cancelSwitchModel: async () => {},
 };
 
 function describeError(error: unknown): string {
@@ -1012,6 +1055,43 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     notifyDownloadProgress();
   }
 
+  // Field-test issue 6 (cancellable first-run model downloads): set by
+  // runnerDeps.onDownloadProgress below the instant it observes server.
+  // rs's own terminal `cancelled: true` prewarm://progress marker (see
+  // that Rust struct's own doc comment) — read by drive()'s own
+  // DOWNLOAD_MODEL branch further down to tell a user-initiated
+  // cancel_prewarm() apart from a genuine crash, both of which otherwise
+  // resolve the SAME prewarm_model invoke() shape (a bare null/None
+  // exit code -> STEP_ERROR). Reset at the same DOWNLOAD_MODEL entry
+  // point resetDownloadProgress() itself is (a fresh attempt must never
+  // inherit a stale cancellation from an earlier one), and consumed
+  // (read then reset back to false) the one place it's actually acted
+  // on, rather than folded into resetDownloadProgress() itself — the two
+  // flags reset at different moments (see each call site below).
+  let downloadWasCancelled = false;
+
+  // F4 (Sol MEDIUM #7, review round): the SIBLING of downloadWasCancelled
+  // just above, for the gap that one can't cover — a cancel click that
+  // lands BEFORE prewarm_model has even been invoked. An mlx-family
+  // first run always runs ensureMlxExtras() first (see drive()'s own
+  // DOWNLOAD_MODEL branch below), which can itself take real time (venv
+  // create + pip install + preflight) — 取消下载 is already visible the
+  // instant DOWNLOAD_MODEL/RUNNING is entered, well before that.
+  // cancel_prewarm (Rust) only ever kills a REGISTERED child process; with
+  // nothing yet spawned it silently no-ops, and downloadWasCancelled (fed
+  // by prewarm://progress, which never fires until prewarm_model actually
+  // starts) never sees anything either — the download would otherwise
+  // proceed once ensureMlxExtras finishes, unaware a cancel was ever
+  // requested. Set by cancelPrewarm() below whenever it's called (see
+  // that method's own doc comment); consulted at the ONE checkpoint that
+  // covers both an mlx-family target (right after ensureMlxExtras()
+  // returns) and a plain whisper-family one (nothing else happens
+  // between DOWNLOAD_MODEL's own entry and the prewarmModel invoke for
+  // that path either) — see drive()'s own DOWNLOAD_MODEL branch. Reset
+  // alongside downloadWasCancelled at every fresh/retry DOWNLOAD_MODEL
+  // entry, same "never inherit an earlier attempt's flag" contract.
+  let prewarmCancelRequested = false;
+
   // S4 chunk 4 — mirrors downloadProgress/notifyDownloadProgress just
   // above exactly (same listener-Set-+-snapshot shape), for
   // switchModel()'s own :8766 /download-model job instead of first-run's
@@ -1023,6 +1103,38 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     switchModelProgress = progress;
     for (const listener of switchModelProgressListeners) listener(switchModelProgress);
   }
+
+  // Field-test issue 6 (cancellable model downloads) — the sidecar job
+  // id performSwitchModel's own download-poll loop below is CURRENTLY
+  // awaiting, or null outside that window. Never exposed on
+  // SwitchModelProgress itself (that's a value handed to LISTENERS;
+  // this is read once, on-demand, by cancelSwitchModel() below) — set
+  // right before the poll loop starts, cleared in a `finally` around it
+  // so a job that finishes/fails/throws never leaves a stale id behind
+  // for a LATER, unrelated switchModel() call to accidentally cancel.
+  let activeSwitchModelJobId: string | null = null;
+
+  // F4 (Sol MEDIUM #7, review round): the SIBLING gap on the switch-model
+  // side — cancelSwitchModel() used to be a silent no-op whenever
+  // activeSwitchModelJobId was still null, which is true for the WHOLE
+  // window between the tray row appearing (jobsBridge.ts's
+  // trackSwitchModel, wired the instant switchModel() is CALLED) and
+  // postDownloadModel() actually resolving a job id — the
+  // isAlreadyInstalledAndValid() check and an mlx-family target's own
+  // ensureMlxExtras() phase both run inside that window and can both
+  // take real time. Set by cancelSwitchModel() below in exactly that
+  // no-job-yet case; consulted at the two checkpoints performSwitchModel
+  // straddles ensureMlxExtras with, right before postDownloadModel fires.
+  // ponytail: not sub-divided any further INSIDE ensureMlxExtras itself
+  // — its mlx-venv/mlx-pip/mlx-preflight sub-phases stay one
+  // uninterruptible unit (that function is shared with the first-run
+  // drive loop above, which has its own, differently-scoped cancel flag
+  // — threading a cancellation callback through would entangle the two);
+  // thread one through ensureMlxExtras if that narrower latency window
+  // ever needs closing too. Reset at the top of every performSwitchModel()
+  // attempt, same "never inherit an earlier call's flag" contract as
+  // prewarmCancelRequested above.
+  let switchModelCancelRequested = false;
 
   const runnerDeps = {
     invoke: deps.invoke,
@@ -1049,6 +1161,17 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     onDownloadProgress: (progress: PrewarmProgressEvent) => {
       downloadProgress = progress;
       notifyDownloadProgress();
+      // Field-test issue 6: server.rs's cancel_prewarm emits ONE
+      // terminal prewarm://progress event carrying `cancelled: true` —
+      // a field OUTSIDE PrewarmProgressEvent's own declared shape here
+      // (provisionRunner.ts stays untouched by this fix, same "no
+      // re-plumbing a pure interpreter for one caller" posture
+      // runCreateVenvStep's own doc comment already established for
+      // CREATE_VENV's --clear self-heal) but very much present on the
+      // real wire payload — read via a narrow local widening cast.
+      if ((progress as PrewarmProgressEvent & { cancelled?: boolean }).cancelled) {
+        downloadWasCancelled = true;
+      }
     },
     probeSidecarFn: deps.probeSidecarFn,
     now: deps.now,
@@ -1221,6 +1344,14 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         // the failed attempt.
         if (current.state.step === "DOWNLOAD_MODEL") {
           resetDownloadProgress();
+          // Field-test issue 6: a fresh entry OR a RETRY re-entry must
+          // never inherit a stale cancellation flag from an earlier
+          // attempt — see downloadWasCancelled's own doc comment above.
+          downloadWasCancelled = false;
+          // F4 (review round): same "never inherit an earlier attempt's
+          // flag" contract — see prewarmCancelRequested's own doc
+          // comment above.
+          prewarmCancelRequested = false;
           // S12b fix round (§F FB1, BLOCKER) — the first-run WIZARD's
           // own counterpart of performSwitchModel's leading
           // ensureMlxExtras phase. Without this, an mlx-family
@@ -1292,6 +1423,25 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
             }
             if (generation !== myGeneration) return;
           }
+          // F4 (review round): the ONE checkpoint that closes the
+          // "cancel during the pre-download phase silently does
+          // nothing" gap — see prewarmCancelRequested's own doc comment
+          // above. Sits right after ensureMlxExtras() returns (mlx-
+          // family target) AND immediately before the prewarmModel
+          // invoke that follows this whole block, at runEffects()
+          // further down (BOTH target kinds — nothing else happens in
+          // between for a plain whisper-family target either, which
+          // skips the block above entirely). Aborts exactly like a
+          // wire-marker cancel (downloadWasCancelled below) — back to
+          // WIZARD_CONSENT_REQUIRED, retriable, no marker/ctx ever
+          // written for this attempt.
+          if (prewarmCancelRequested) {
+            prewarmCancelRequested = false;
+            resetDownloadProgress();
+            awaitingConsent = true;
+            notify();
+            return;
+          }
         }
       }
       // CREATE_VENV routes through runCreateVenvStep's own --clear
@@ -1303,6 +1453,33 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
           ? await runCreateVenvStep(current.state, current.effects)
           : await runEffects(current.state, current.effects, runnerDeps);
       if (generation !== myGeneration) return; // superseded — apply nothing further.
+      // Field-test issue 6: a cancel_prewarm()-killed download resolves
+      // runEffects' prewarmModel case into an ordinary STEP_ERROR
+      // (server.rs's own processResultToEvent equivalent has no way to
+      // tell "killed on purpose" apart from "crashed" from the exit code
+      // alone — see PrewarmProgressEvent.cancelled's own doc comment) —
+      // downloadWasCancelled is the out-of-band signal that disambiguates
+      // it. Intercepted HERE, before transition() ever sees the event,
+      // so the machine never lands on a visible DOWNLOAD_MODEL/ERROR at
+      // all for a deliberate cancel: this returns the SAME way
+      // isFreshProvisionEntry's own osspeechDormant/awaitingConsent
+      // branches below do (never calling transition() for this step),
+      // landing the wizard back on the model-choice/consent screen in a
+      // retriable state — cancel is not an error (spec). No marker/
+      // ctx/settings write has ever happened for DOWNLOAD_MODEL at this
+      // point (that only happens on its OWN STEP_OK, at the DOWNLOAD_
+      // MODEL -> STARTING boundary — provisionRunner.ts's writeMarker
+      // bundle), so there is nothing to unwind: re-entering via a fresh
+      // beginProvision() below simply re-drives INSTALL_PYTHON onward
+      // (fast/idempotent — see runCreateVenvStep's own precedent for why
+      // rerunning already-satisfied uv steps is an accepted cost).
+      if (event.type === "STEP_ERROR" && event.step === "DOWNLOAD_MODEL" && downloadWasCancelled) {
+        resetDownloadProgress();
+        downloadWasCancelled = false;
+        awaitingConsent = true;
+        notify();
+        return;
+      }
       current = transition(ctx, current.state, event);
       if (event.type === "CHECK_RESULT" && event.mlxUsability) {
         // S12a (§C Provision, F14 / Store coercion; redesigned §D F2,
@@ -1747,6 +1924,11 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     // wizard-mid-switch interleave impossible even if that latch were
     // somehow bypassed.
     const myGeneration = generation;
+    // F4 (review round): reset for THIS attempt — see
+    // switchModelCancelRequested's own doc comment (near
+    // activeSwitchModelJobId, above) for why a fresh call must never
+    // inherit an earlier one's cancel click.
+    switchModelCancelRequested = false;
     try {
       // S12b fix round (§F FB8, MED) — the SAME-TARGET no-op, checked
       // FIRST (before even the mlx-extras bucket below): deliberately
@@ -1767,6 +1949,9 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         return;
       }
       if (generation !== myGeneration) return;
+      // F4 (review round): before the possibly-slow ensureMlxExtras
+      // phase below — see switchModelCancelRequested's own doc comment.
+      if (switchModelCancelRequested) throw new Error("已取消");
       // S12a (§C Provision, Q5's two-phase flow): Phase 1, only for an
       // mlx-family target — a plain whisper-family switchModel() call
       // never enters this branch, so its own bucket 1 (below) stays
@@ -1777,6 +1962,15 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         await ensureMlxExtras();
         if (generation !== myGeneration) return;
       }
+      // F4 (review round): and again here, immediately before
+      // postDownloadModel below — the checkpoint that matters for a
+      // plain whisper-family target too (which skipped the mlx block
+      // above entirely) and closes the window ensureMlxExtras just
+      // spent real time in for an mlx-family one. Thrown the same "old
+      // server/marker never touched" way a genuine bucket-1 failure
+      // already does — jobsBridge.ts's trackSwitchModel forwards this
+      // message straight into failTask, settling the row as 已取消.
+      if (switchModelCancelRequested) throw new Error("已取消");
 
       // ---- bucket 1: download (old server untouched throughout — a
       // failure here rethrows as-is, current.state is never touched) ----
@@ -1784,14 +1978,36 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       const jobId = await postDownloadModel(model);
       if (generation !== myGeneration) return;
       const sleep = deps.sleep ?? defaultSleep;
-      for (;;) {
-        const job = await pollJob(jobId, runnerDeps.settings);
-        if (generation !== myGeneration) return;
-        if (job.status === "error") throw new Error(job.error ?? "模型下载失败");
-        notifySwitchModelProgress({ phase: "downloading", progress: job.progress });
-        if (job.status === "done") break;
-        await sleep(SWITCH_DOWNLOAD_POLL_INTERVAL_MS);
-        if (generation !== myGeneration) return;
+      // Field-test issue 6: stashed for cancelSwitchModel() (the tray's
+      // own cancel affordance on this row, jobsBridge.ts's
+      // trackSwitchModel) to POST the sidecar's cancel route against —
+      // cleared in the finally below regardless of how this loop ends,
+      // so a later, unrelated switchModel() call never inherits a stale
+      // id (see activeSwitchModelJobId's own doc comment above).
+      activeSwitchModelJobId = jobId;
+      try {
+        for (;;) {
+          const job = await pollJob(jobId, runnerDeps.settings);
+          if (generation !== myGeneration) return;
+          if (job.status === "error") throw new Error(job.error ?? "模型下载失败");
+          // "cancelled" (field-test issue 6) is OUTSIDE JobStatus's own
+          // declared status union (lib/stt/upload.ts, off this fix's
+          // touch list — see whisper_server.py's new POST
+          // /jobs/{id}/cancel route) but a real value the sidecar can
+          // now send; a narrow local widening cast reads it without
+          // touching that shared type. Thrown message doubles as the
+          // registry's own "已取消" label (jobsBridge.ts's trackSwitchModel
+          // just forwards whatever this rejects with straight into
+          // failTask) — least-surgery choice over a new TaskStatus, see
+          // that file's own doc comment.
+          if ((job.status as string) === "cancelled") throw new Error("已取消");
+          notifySwitchModelProgress({ phase: "downloading", progress: job.progress });
+          if (job.status === "done") break;
+          await sleep(SWITCH_DOWNLOAD_POLL_INTERVAL_MS);
+          if (generation !== myGeneration) return;
+        }
+      } finally {
+        activeSwitchModelJobId = null;
       }
 
       // S4 review pair Finding 2: the meetingActive check SettingsDialog
@@ -2200,6 +2416,51 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     },
     async readSidecarLog(tailLines: number) {
       return deps.invoke<string>("read_sidecar_log", { tailLines });
+    },
+    async cancelPrewarm() {
+      // F4 (review round): recorded unconditionally, regardless of
+      // whether a child is actually registered yet — see
+      // prewarmCancelRequested's own doc comment above for the gap this
+      // closes and the checkpoint that consults it. A harmless no-op
+      // once prewarm_model IS already running (this generation's
+      // DOWNLOAD_MODEL work has already moved past the one checkpoint
+      // that reads it), so this never changes behavior for the
+      // pre-existing case this method already handled correctly.
+      prewarmCancelRequested = true;
+      await deps.invoke<void>("cancel_prewarm");
+    },
+    async cancelSwitchModel() {
+      if (!activeSwitchModelJobId) {
+        // F4 (review round): this used to be a silent no-op for the
+        // WHOLE window before postDownloadModel() resolves a job id
+        // (isAlreadyInstalledAndValid()'s own check, and an mlx-family
+        // target's own ensureMlxExtras() phase, can both take real
+        // time) — the tray row (jobsBridge.ts's trackSwitchModel) is
+        // cancellable from the moment switchModel() is CALLED, well
+        // before that. Recorded instead — see
+        // switchModelCancelRequested's own doc comment above for the
+        // checkpoints that consult it.
+        switchModelCancelRequested = true;
+        return;
+      }
+      const base = httpBaseFromWs(DEFAULT_SETTINGS.whisperUrl);
+      const res = await fetch(`${base}/jobs/${activeSwitchModelJobId}/cancel`, { method: "POST" });
+      if (!res.ok && res.status !== 404 && res.status !== 409) {
+        // 404/409 (unknown/already-terminal job — whisper_server.py's
+        // own do_POST /jobs/{id}/cancel route conventions) are treated
+        // as a benign "nothing left to cancel", same as
+        // performSwitchModel's own poll loop simply observing whatever
+        // terminal status the job already reached; any OTHER failure
+        // (network error, 5xx) surfaces to the caller.
+        let message = `取消下载请求失败（${res.status}）`;
+        try {
+          const body = (await res.json()) as { error?: string };
+          if (body?.error) message = body.error;
+        } catch {
+          // keep the generic message
+        }
+        throw new Error(message);
+      }
     },
   };
 }

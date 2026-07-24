@@ -2122,7 +2122,7 @@ def new_job(
     upload path's own concurrency (unlimited, same as before)."""
     return {
         "id": uuid.uuid4().hex,
-        "status": "queued",  # queued | running | done | error
+        "status": "queued",  # queued | running | done | error | cancelled
         "progress": 0.0,
         "status_detail": None,  # e.g. "diarizing", "下载中" (URL import)
         "segments": [],  # [{"start","end","text","speaker"?}]
@@ -2166,9 +2166,15 @@ def active_download_job_id(jobs: dict[str, dict[str, Any]]) -> Optional[str]:
     acted on inside the SAME critical section as the create (see
     start_download_job), so no such window exists here. Pure (just
     scans a dict) so it's callable under the lock the caller already
-    holds, without any extra I/O — mirrors count_active_url_jobs."""
+    holds, without any extra I/O — mirrors count_active_url_jobs.
+
+    "cancelled" (field-test issue 6: cancellable model downloads) joins
+    "done"/"error" as a third terminal status here — a cancelled job
+    must free up the single-flight slot exactly like a finished/failed
+    one, or a cancel would permanently wedge every FUTURE download
+    attempt behind a job that will never move again."""
     for job in jobs.values():
-        if job.get("kind") == "download" and job.get("status") not in ("done", "error"):
+        if job.get("kind") == "download" and job.get("status") not in ("done", "error", "cancelled"):
             return job["id"]
     return None
 
@@ -2325,6 +2331,19 @@ class JobManager:
         self.last_request_token: Optional[str] = None
         self.jobs: dict[str, dict[str, Any]] = {}
         self.lock = threading.Lock()
+        # Field-test issue 6 (cancellable model downloads): one
+        # threading.Event per in-flight download-kind job, keyed by job
+        # id — deliberately NOT a field on the job dict itself (self.
+        # jobs), since GET /jobs and /jobs/{id} json.dumps() that dict
+        # verbatim and an Event isn't JSON-serializable. Guarded by the
+        # SAME self.lock as self.jobs (request_cancel_download/
+        # start_download_job/_run_download_job's own finally all take it
+        # briefly) — the Event object itself is thread-safe once handed
+        # out, only the DICT's own membership needs the lock. Entries
+        # are removed once their job reaches ANY terminal status (see
+        # _run_download_job's finally), so this never grows unbounded
+        # across a long-running sidecar process's lifetime.
+        self._cancel_events: dict[str, threading.Event] = {}
 
     def _set(self, job_id: str, **patch: Any) -> None:
         with self.lock:
@@ -2605,16 +2624,82 @@ class JobManager:
             job = new_job(False, display_name=model, kind="download")
             job_id = job["id"]
             self.jobs[job_id] = job
+            # Field-test issue 6: this job's own cancel flag, created
+            # inside the SAME locked section as the job itself so
+            # request_cancel_download can never observe a "download"-
+            # kind job in self.jobs with no matching entry here yet.
+            cancel_event = threading.Event()
+            self._cancel_events[job_id] = cancel_event
 
         thread = threading.Thread(
             target=self._run_download_job,
-            args=(job_id, model),
+            args=(job_id, model, cancel_event),
             daemon=True,
         )
-        thread.start()
+        try:
+            thread.start()
+        except Exception as exc:  # noqa: BLE001 - report any failure to the client
+            # F4 (review-round fix, Sol LOW #17): the job + cancel_event
+            # are already recorded above (self.jobs/self._cancel_events)
+            # by the time thread.start() runs — if start() itself fails
+            # (e.g. the process is out of OS threads), the worker that
+            # would normally set a terminal status never runs at all,
+            # leaving this job stuck "queued" forever. active_download_
+            # job_id treats queued/running as "still active," so every
+            # future /download-model call would 409 against a job that
+            # can never move again — wedging the single-flight slot
+            # permanently. Land it on "error" right here instead, same
+            # terminal-status shape _run_download_job's own except-
+            # Exception branch already uses for an in-flight failure,
+            # and drop the now-orphaned cancel event exactly like that
+            # method's own finally does.
+            self._set(job_id, status="error", error=str(exc))
+            with self.lock:
+                self._cancel_events.pop(job_id, None)
         return job_id, None
 
-    def _run_download_job(self, job_id: str, model: str) -> None:
+    def request_cancel_download(self, job_id: str) -> str:
+        """Field-test issue 6 (POST /jobs/{id}/cancel's real work):
+        requests cancellation of a queued/running download-kind job.
+        Returns one of three strings, which do_POST maps to a status
+        code exactly the way validate_download_model/
+        download_conflict_response's own return shapes already do
+        (see this module's do_POST for the actual HTTPStatus mapping —
+        not re-tested at the live-handler level here, same "thin
+        handler assertion" posture as those two):
+          "not_found" — no such job, or it isn't kind=="download" (an
+            upload/url job has no cancel mechanism at all) -> 404.
+          "terminal"  — the job already reached done/error/cancelled;
+            nothing left to cancel -> 409.
+          "ok"        — the cancel flag is now set -> 202. This is
+            NOT a promise the job has already stopped: the download's
+            own background thread only observes the flag at its next
+            tqdm progress-callback/loop boundary (see DownloadCancelled's
+            own doc comment for the latency this implies) — a client
+            polling GET /jobs/{id} afterward will see status flip to
+            "cancelled" once that happens, not immediately.
+
+        Partial files already written to disk are left exactly as-is
+        (hf_hub's own resumable-download behavior picks them back up on
+        a later retry) — this function itself does no filesystem work
+        at all, only sets the flag."""
+        with self.lock:
+            job = self.jobs.get(job_id)
+            if job is None or job.get("kind") != "download":
+                return "not_found"
+            if job.get("status") in ("done", "error", "cancelled"):
+                return "terminal"
+            event = self._cancel_events.get(job_id)
+        if event is None:
+            # Shouldn't happen — start_download_job always creates one
+            # in the same locked section as the job itself, removed
+            # only once terminal (already excluded above). Defensive
+            # fallback rather than a KeyError.
+            return "terminal"
+        event.set()
+        return "ok"
+
+    def _run_download_job(self, job_id: str, model: str, cancel_event: threading.Event) -> None:
         def on_progress(downloaded: int, total: int) -> None:
             progress = min(downloaded / total, 1.0) if total else 0.0
             self._set(job_id, progress=progress)
@@ -2626,10 +2711,21 @@ class JobManager:
             # see __init__) into the download itself — previously NO
             # token reached downloads at all (s12-mlx-blueprint.md §B
             # finding 10/§C R1).
-            download_model_snapshot(model, on_progress, hf_token=self.hf_token)
+            download_model_snapshot(model, on_progress, hf_token=self.hf_token, cancel_event=cancel_event)
             self._set(job_id, status="done", progress=1.0, status_detail=None)
+        except DownloadCancelled:
+            # Field-test issue 6: a deliberate cancel is NOT an error —
+            # its own terminal status, job.error stays None throughout.
+            self._set(job_id, status="cancelled", status_detail=None)
         except Exception as exc:  # noqa: BLE001 - report any failure to the client
             self._set(job_id, status="error", error=str(exc))
+        finally:
+            # Cleanup mirrors this dict's own doc comment (__init__) —
+            # every terminal path (done/cancelled/error alike) removes
+            # its own entry so self._cancel_events never grows unbounded
+            # across a long-running sidecar process.
+            with self.lock:
+                self._cancel_events.pop(job_id, None)
 
     def _download_via_ytdlp(self, job_id: str, url: str, tmp_dir: str) -> tuple[str, Optional[str]]:
         """Run yt-dlp synchronously (this method itself runs inside the
@@ -3078,6 +3174,23 @@ def make_job_http_handler(
                 self._send_json(HTTPStatus.ACCEPTED, {"job_id": job_id})
                 return
 
+            # Field-test issue 6 (cancellable model downloads) —
+            # POST /jobs/{job_id}/cancel. `parts`-based routing mirrors
+            # do_GET's own /jobs/{id} shape below rather than a second
+            # urlparse-only check, since this is the one POST route with
+            # a path SEGMENT (not just a fixed literal like
+            # /download-model or /ingest-url above/below).
+            parts = [p for p in parsed.path.split("/") if p]
+            if len(parts) == 3 and parts[0] == "jobs" and parts[2] == "cancel":
+                result = job_manager.request_cancel_download(parts[1])
+                if result == "not_found":
+                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "job not found"})
+                elif result == "terminal":
+                    self._send_json(HTTPStatus.CONFLICT, {"error": "任务已结束，无法取消"})
+                else:
+                    self._send_json(HTTPStatus.ACCEPTED, {"job_id": parts[1]})
+                return
+
             if parsed.path != "/ingest-url":
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
                 return
@@ -3455,7 +3568,45 @@ def _allow_patterns_for_model(model: str) -> list[str]:
     return MODEL_DOWNLOAD_ALLOW_PATTERNS
 
 
-def _make_progress_bar_class(total: int, on_progress):
+class DownloadCancelled(Exception):
+    """Raised from _raise_if_cancelled — called both from _ProgressBar.
+    update() (see _make_progress_bar_class below) once a download job's
+    cancel_event has been set, AND from three explicit checkpoints
+    download_model_snapshot adds around its own two huggingface_hub
+    calls (F3, review-round fix, Sol MEDIUM #8, live-verified ~12s
+    latency — see that function's own call sites): immediately before
+    HfApi().model_info(), immediately before snapshot_download(), and
+    immediately after snapshot_download() returns. The tqdm-update()
+    path alone (pre-F3, the ONLY checkpoint) left two dead stretches
+    cancel_event was never observed in: the leading model_info metadata
+    round trip (no bar exists yet to call update() on) and the gap
+    between snapshot_download's own LAST update() call and the moment
+    it actually returns — a cancel landing in that second gap used to
+    let the job finish as "done" even though POST /jobs/{id}/cancel had
+    already answered 202 (a 202-then-done race). Checked at every tqdm
+    update() call across all THREE bar roles that function's own
+    docstring documents (not just the "Reconstructing" bytes bar), so
+    the effective latency a cancel can still see is bounded by
+    whichever role's own update() cadence is tightest in practice — the
+    per-chunk "Downloading bytes" transfer bar, typically — or now, one
+    of the three explicit checkpoints, whichever gap this download
+    happens to be in. Caught by JobManager._run_download_job, which
+    turns it into the job's "cancelled" terminal status — never
+    "error"; a deliberate cancel is not a failure."""
+
+
+def _raise_if_cancelled(cancel_event: Optional[threading.Event]) -> None:
+    """Single shared checkpoint — raises DownloadCancelled iff
+    `cancel_event` is not None and set, else a no-op. Called from
+    _ProgressBar.update() below AND from download_model_snapshot's own
+    three explicit checkpoints (F3, review-round fix) — one helper, not
+    four copies of the same two-line check, so every call site agrees
+    on exactly what "cancelled" means."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise DownloadCancelled("download cancelled")
+
+
+def _make_progress_bar_class(total: int, on_progress, cancel_event: Optional[threading.Event] = None, devnull=None):
     """Build a `tqdm_class` for huggingface_hub.snapshot_download's
     `tqdm_class=` kwarg — verified LIVE against the pinned
     huggingface-hub version (see requirements-sidecar.txt) by actually
@@ -3491,20 +3642,46 @@ def _make_progress_bar_class(total: int, on_progress):
     freezing every bar's progress at 0. Redirecting `file=` to a null
     sink suppresses the actual bar output instead, without touching
     that bookkeeping.
+
+    `cancel_event` (field-test issue 6): checked at the TOP of every
+    update() call (via _raise_if_cancelled) — see DownloadCancelled's
+    own doc comment for why this is unconditional (every bar role), not
+    gated behind `self._is_bytes` the way the on_progress forward below
+    is. `None` (every pre-cancel caller, e.g. run_download_only's
+    first-run --download-only path, which is killed at the OS-process
+    level by Rust's cancel_prewarm instead — see server.rs) never
+    raises.
+
+    `devnull` (F6, review-round fix): an already-open write-mode file
+    object every bar's own `file=` kwarg redirects to (see "Must NOT set
+    disable=True" above for why redirecting output, rather than
+    disabling, is how this class silences rendering) — shared by every
+    bar instance THIS one `tqdm_class=` produces (snapshot_download
+    constructs several, see this docstring's own "THREE distinct
+    roles"). Threaded in rather than opened here so the CALLER
+    (download_model_snapshot, the only production call site — a
+    long-lived sidecar process makes many downloads over its lifetime)
+    owns closing it exactly once, in its own finally, instead of this
+    function leaking one os.devnull fd per download with no owner ever
+    closing it. `None` (every direct test-only caller in
+    test_download.py, none of which run inside a long-lived process)
+    falls back to opening+leaving-open a private handle, byte-identical
+    to this function's behavior before this fix.
     """
     from tqdm.auto import tqdm as _tqdm
 
-    devnull = open(os.devnull, "w")
+    devnull_handle = devnull if devnull is not None else open(os.devnull, "w")
 
     class _ProgressBar(_tqdm):
         def __init__(self, *args, **kwargs):
-            kwargs.setdefault("file", devnull)
+            kwargs.setdefault("file", devnull_handle)
             super().__init__(*args, **kwargs)
             self._is_bytes = kwargs.get("unit") == "B" and str(
                 kwargs.get("desc", "")
             ).startswith("Reconstructing")
 
         def update(self, n=1):
+            _raise_if_cancelled(cancel_event)
             result = super().update(n)
             if self._is_bytes:
                 on_progress(self.n, total)
@@ -3514,7 +3691,10 @@ def _make_progress_bar_class(total: int, on_progress):
 
 
 def download_model_snapshot(
-    model: str, on_progress=None, hf_token: Optional[str] = None
+    model: str,
+    on_progress=None,
+    hf_token: Optional[str] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> str:
     """Download one model's snapshot from the Hugging Face Hub —
     faster-whisper's CT2 snapshot, or (S12a) parakeet's config.json +
@@ -3561,7 +3741,22 @@ def download_model_snapshot(
     (checked BEFORE any write — see check_disk_space), or re-raises
     whatever huggingface_hub/httpx raises on a network/repo failure —
     the caller (JobManager._run_download_job or run_download_only)
-    turns either into job.error / a download_error line."""
+    turns either into job.error / a download_error line.
+
+    `cancel_event` (field-test issue 6, JobManager.start_download_job
+    only — run_download_only never passes one; see that function's own
+    doc comment) is threaded straight into _make_progress_bar_class,
+    which raises DownloadCancelled from inside hf_snapshot_download's
+    own tqdm_class callbacks the next time the flag is observed set —
+    propagates straight out of this function uncaught (the caller,
+    JobManager._run_download_job, is what catches it). F3 (review-round
+    fix, Sol MEDIUM #8): the tqdm-callback path alone left two dead
+    stretches where a cancel was never observed — this function ALSO
+    checks cancel_event (via _raise_if_cancelled) immediately before
+    the model_info metadata call, immediately before snapshot_download,
+    and immediately after snapshot_download returns — see those three
+    call sites below, and DownloadCancelled's own doc comment for the
+    202-then-done race the third one closes."""
     from huggingface_hub import HfApi
     from huggingface_hub import constants as hf_constants
     from huggingface_hub import snapshot_download as hf_snapshot_download
@@ -3569,6 +3764,10 @@ def download_model_snapshot(
     repo_id = _repo_id_for_model(model)
     allow_patterns = _allow_patterns_for_model(model)
 
+    # F3 checkpoint (a): before the metadata round trip even starts —
+    # the dead stretch _ProgressBar.update() (pre-fix, the only
+    # checkpoint) could never observe, since no bar exists yet.
+    _raise_if_cancelled(cancel_event)
     info = HfApi().model_info(repo_id, files_metadata=True, token=hf_token)
     total = sum(
         sibling.size or 0
@@ -3589,13 +3788,38 @@ def download_model_snapshot(
     # finding 12), so this ×1.2 precheck floor is honest too.
     check_disk_space(total, hf_constants.HF_HUB_CACHE)
 
-    progress_bar_cls = _make_progress_bar_class(total, on_progress or (lambda d, t: None))
-    hf_snapshot_download(
-        repo_id,
-        allow_patterns=allow_patterns,
-        token=hf_token,
-        tqdm_class=progress_bar_cls,
-    )
+    # F6 (review-round fix): devnull is THIS function's own resource —
+    # opened right before the first bar can possibly be constructed,
+    # closed in the finally below on every exit path (success,
+    # DownloadCancelled, or any other snapshot_download failure) —
+    # see _make_progress_bar_class's own `devnull` param doc for why
+    # the handle is threaded in rather than left for that function to
+    # open (and never close) itself once per download.
+    devnull = open(os.devnull, "w")
+    try:
+        progress_bar_cls = _make_progress_bar_class(
+            total, on_progress or (lambda d, t: None), cancel_event=cancel_event, devnull=devnull
+        )
+        # F3 checkpoint (b): immediately before the actual transfer
+        # starts.
+        _raise_if_cancelled(cancel_event)
+        hf_snapshot_download(
+            repo_id,
+            allow_patterns=allow_patterns,
+            token=hf_token,
+            tqdm_class=progress_bar_cls,
+        )
+        # F3 checkpoint (c): AFTER snapshot_download returns, before
+        # this function ever reports success back to its caller
+        # (JobManager._run_download_job marks the job "done" right
+        # after this call returns normally) — closes the 202-then-done
+        # race: a cancel landing after the last tqdm update() callback
+        # but before hf_snapshot_download actually returns must still
+        # end the job "cancelled," never "done."
+        _raise_if_cancelled(cancel_event)
+    finally:
+        devnull.close()
+
     if on_progress is not None:
         on_progress(total, total)
     return repo_id

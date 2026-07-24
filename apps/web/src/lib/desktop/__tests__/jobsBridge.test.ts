@@ -29,9 +29,10 @@ vi.mock("../../stt/sidecarHealth", () => ({
   probeSidecar: (settings: unknown) => mockProbeSidecar(settings),
 }));
 
-import { modelForTask, trackInstallDiar, trackOsSpeechAsset, trackSwitchModel } from "../jobsBridge";
+import { modelForTask, trackInstallDiar, trackOsSpeechAsset, trackPrewarm, trackSwitchModel } from "../jobsBridge";
 import { completeTask, dismissTask, startTask, useTasks, type TaskState } from "../../tasks/registry";
-import type { DesktopBootstrapHandle, SwitchModelProgress } from "../bootstrap";
+import type { DesktopBootstrapHandle, DesktopBootstrapState, SwitchModelProgress } from "../bootstrap";
+import type { PrewarmProgressEvent } from "../provisionRunner";
 import type { DesktopPaths } from "../uvCommands";
 
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
@@ -75,6 +76,8 @@ function fakeHandle(overrides: Partial<DesktopBootstrapHandle> = {}): DesktopBoo
     currentSwitchModelProgress: () => null,
     installDiarization: async () => {},
     readSidecarLog: async () => "",
+    cancelPrewarm: async () => {},
+    cancelSwitchModel: async () => {},
     ...overrides,
   };
 }
@@ -397,6 +400,225 @@ describe("trackSwitchModel", () => {
 
     expect(task(id).status).toBe("error");
     expect(task(id).error).toBe("plain string failure");
+  });
+});
+
+describe("trackPrewarm (field-test issue 6 — first-run download background-and-track)", () => {
+  beforeEach(() => {
+    useTasks.setState({ tasks: {} });
+    mockSettings = { ...DEFAULT_SETTINGS };
+    mockSetSidecarUp.mockClear();
+    mockPostTaskWebhook.mockClear();
+    mockProbeSidecar.mockReset();
+  });
+
+  /** Mirrors trackSwitchModel's own "subscribes to switchModelProgress$
+   *  before calling switchModel" test's pattern (capturing a listener via
+   *  a custom override) — trackPrewarm is PUSH-driven (no Promise of its
+   *  own to await), so its tests drive it by calling the captured
+   *  state$/downloadProgress$ listeners directly, exactly like the real
+   *  DesktopBootstrapHandle would. */
+  function fakeTrackableHandle(overrides: Partial<DesktopBootstrapHandle> = {}) {
+    const listeners: {
+      state: ((s: DesktopBootstrapState) => void) | null;
+      progress: ((p: PrewarmProgressEvent | null) => void) | null;
+    } = { state: null, progress: null };
+    const unsubCounts = { state: 0, progress: 0 };
+    const handle = fakeHandle({
+      // F5 (Sol LOW #21, review round): defaults to a genuinely
+      // in-flight snapshot — the realistic state at the one real call
+      // site (DesktopBootstrap.tsx's onBackgroundDownload, always mid
+      // STEP/DOWNLOAD_MODEL/RUNNING) — so trackPrewarm's own new
+      // currentState() seed-check (see jobsBridge.ts) doesn't
+      // immediately settle every OTHER test in this block, which drives
+      // the flow via emitState() instead. The dedicated describe block
+      // below overrides this to exercise the seed-check itself.
+      currentState: () => ({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" }),
+      // Unsubscribing actually clears the reference (not just a
+      // counter bump) — mirrors bootstrap.ts's own real Set.delete()
+      // behavior, so a stray emitState/emitProgress call AFTER
+      // trackPrewarm settles is a genuine no-op in these tests too,
+      // exactly like it would be against the real handle.
+      state$: (l) => {
+        listeners.state = l;
+        return () => {
+          unsubCounts.state += 1;
+          listeners.state = null;
+        };
+      },
+      downloadProgress$: (l) => {
+        listeners.progress = l;
+        return () => {
+          unsubCounts.progress += 1;
+          listeners.progress = null;
+        };
+      },
+      ...overrides,
+    });
+    return {
+      handle,
+      emitState: (s: DesktopBootstrapState) => listeners.state?.(s),
+      emitProgress: (p: PrewarmProgressEvent | null) => listeners.progress?.(p),
+      unsubCounts,
+    };
+  }
+
+  it("registers a running model-download task immediately, labeled from MODEL_CATALOG", () => {
+    const { handle } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+    expect(task(id)).toMatchObject({
+      kind: "model-download",
+      label: "均衡·推荐 (zh-en)",
+      status: "running",
+    });
+  });
+
+  it("falls back to the raw model id as the label when it's not in MODEL_CATALOG", () => {
+    const { handle } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "custom-ct2-dir");
+    expect(task(id).label).toBe("custom-ct2-dir");
+  });
+
+  it("is NEVER registered in modelByTaskId — unlike trackSwitchModel, so TaskCenterDrawer's 重试 button (gated on modelForTask) never renders for a first-run download row", () => {
+    const { handle } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+    expect(modelForTask(id)).toBeUndefined();
+  });
+
+  it("forwards downloadProgress$ ticks as a downloaded/total fraction with a 下载中 stage", () => {
+    const { handle, emitProgress } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitProgress({ downloaded: 25, total: 100 });
+
+    expect(task(id)).toMatchObject({ progress: 0.25, stage: "下载中" });
+  });
+
+  it("a zero/unknown total omits progress (undefined) rather than dividing by zero", () => {
+    const { handle, emitProgress } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitProgress({ downloaded: 0, total: 0 });
+
+    expect(task(id).progress).toBeUndefined();
+  });
+
+  it("a null progress tick (no active phase) is ignored, never overwriting the last real tick", () => {
+    const { handle, emitProgress } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitProgress({ downloaded: 25, total: 100 });
+    emitProgress(null);
+
+    expect(task(id).progress).toBe(0.25);
+  });
+
+  it("HEALTHY completes the task and unsubscribes both listeners", () => {
+    const { handle, emitState, unsubCounts } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitState({ phase: "HEALTHY" });
+
+    expect(task(id).status).toBe("done");
+    expect(unsubCounts).toEqual({ state: 1, progress: 1 });
+  });
+
+  it("STEP/ERROR fails the task with the machine's own error message — a genuine crash, e.g. disk full", () => {
+    const { handle, emitState, unsubCounts } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitState({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR", error: "磁盘空间不足", retriable: true });
+
+    expect(task(id)).toMatchObject({ status: "error", error: "磁盘空间不足" });
+    expect(unsubCounts).toEqual({ state: 1, progress: 1 });
+  });
+
+  it("leaving STEP any other way (in practice: cancel_prewarm's own WIZARD_CONSENT_REQUIRED landing spot, bootstrap.ts's downloadWasCancelled interception) fails the task with 已取消", () => {
+    const { handle, emitState, unsubCounts } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitState({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    expect(task(id)).toMatchObject({ status: "error", error: "已取消" });
+    expect(unsubCounts).toEqual({ state: 1, progress: 1 });
+  });
+
+  it("an in-flight STEP transition (still RUNNING/POLLING, non-ERROR) never settles the task early", () => {
+    const { handle, emitState } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitState({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" });
+    emitState({ phase: "STEP", step: "STARTING", status: "RUNNING" });
+    emitState({ phase: "STEP", step: "POLLING_HEALTH", status: "POLLING", attempts: 1 });
+
+    expect(task(id).status).toBe("running");
+  });
+
+  it("settles exactly once — a stray notification after HEALTHY never re-fires (both listeners already unsubscribed)", () => {
+    const { handle, emitState, unsubCounts } = fakeTrackableHandle();
+    const id = trackPrewarm(handle, "medium");
+
+    emitState({ phase: "HEALTHY" });
+    expect(unsubCounts).toEqual({ state: 1, progress: 1 }); // unsubscribed after the first settle — a later emitState call below is a no-op precisely because nothing is listening anymore
+    emitState({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR", error: "should never apply", retriable: true });
+
+    expect(task(id).status).toBe("done"); // unchanged
+  });
+
+  // F5 (Sol LOW #21, review round): trackPrewarm used to subscribe to
+  // the non-replaying state$ WITHOUT ever seeding from currentState() —
+  // a caller invoked in a stale render, after the drive already
+  // delivered HEALTHY/ERROR/etc. before trackPrewarm ever subscribed,
+  // would see no further notification and the tray row got stuck
+  // "running" until reload. Fixed by checking currentState() at track
+  // time and settling immediately when it's already terminal.
+  describe("currentState() seed check (F5) — a stale render started AFTER the drive already went terminal", () => {
+    it("HEALTHY at track time settles the task immediately instead of subscribing", () => {
+      const { handle, unsubCounts } = fakeTrackableHandle({ currentState: () => ({ phase: "HEALTHY" }) });
+      const id = trackPrewarm(handle, "medium");
+
+      expect(task(id).status).toBe("done");
+      expect(unsubCounts).toEqual({ state: 0, progress: 0 }); // never even subscribed
+    });
+
+    it("a STEP/ERROR snapshot at track time fails the task immediately with the machine's own error message", () => {
+      const { handle, unsubCounts } = fakeTrackableHandle({
+        currentState: () => ({
+          phase: "STEP",
+          step: "DOWNLOAD_MODEL",
+          status: "ERROR",
+          error: "磁盘空间不足",
+          retriable: true,
+        }),
+      });
+      const id = trackPrewarm(handle, "medium");
+
+      expect(task(id)).toMatchObject({ status: "error", error: "磁盘空间不足" });
+      expect(unsubCounts).toEqual({ state: 0, progress: 0 });
+    });
+
+    it("a non-STEP snapshot (e.g. WIZARD_CONSENT_REQUIRED — cancel_prewarm's own landing spot) fails the task immediately with 已取消", () => {
+      const { handle, unsubCounts } = fakeTrackableHandle({
+        currentState: () => ({ phase: "WIZARD_CONSENT_REQUIRED" }),
+      });
+      const id = trackPrewarm(handle, "medium");
+
+      expect(task(id)).toMatchObject({ status: "error", error: "已取消" });
+      expect(unsubCounts).toEqual({ state: 0, progress: 0 });
+    });
+
+    it("an in-flight STEP snapshot at track time subscribes normally, exactly like before this fix", () => {
+      const { handle, emitState, unsubCounts } = fakeTrackableHandle({
+        currentState: () => ({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" }),
+      });
+      const id = trackPrewarm(handle, "medium");
+
+      expect(task(id).status).toBe("running");
+      expect(unsubCounts).toEqual({ state: 0, progress: 0 }); // subscribed, nothing settled yet
+
+      emitState({ phase: "HEALTHY" });
+      expect(task(id).status).toBe("done");
+    });
   });
 });
 

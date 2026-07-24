@@ -533,6 +533,15 @@ interface AppState {
   // teardown). See pendingSettingsSave's own doc above the store for
   // the tracked-promise mechanics both of these lean on.
   flushSettings: () => Promise<void>;
+  // Desktop keychain custody (v0.5.1 desktop keychain migration) —
+  // resolves once every Keychain write updateSettings has enqueued so
+  // far has settled (success OR failure — see syncSecretCustody's own
+  // doc above pendingSecretWrites). SettingsDialog's handleSave awaits
+  // this BEFORE flushSettings, so custody is up to date before
+  // settingsForPersist decides what to strip from the IDB blob. A no-op
+  // (pre-resolved) on web — nothing is ever enqueued there. Never
+  // rejects, same discipline as flushSettings' own pendingSettingsSave.
+  flushSecrets: () => Promise<unknown>;
   // Demo-overlay stash (field-test round, extends S14.1) — begin/end the
   // live "demo" overlay described on demoOverlayPrevEngine above.
   // beginDemoOverlay is idempotent (a second call while already
@@ -699,6 +708,16 @@ interface AppState {
   // reset write is needed from the consumer side.
   bitCelebrateNonce: number;
   celebrateBit: () => void;
+  // AI-detect manual retry (field-test issue 8b): same transient,
+  // NEVER-persisted monotonic-nonce shape as bitCelebrateNonce right
+  // above — useMeeting.ts subscribes (the one place that actually holds
+  // the live DetectionScheduler ref) and calls its retryAi() on each
+  // increment. AiStatusPanel (a leaf component with no other path to
+  // the scheduler — neither of its hosts, StatusLine's popover or
+  // SettingsDialog, threads any meeting-layer callback down to it)
+  // bumps this from its 「重试 AI 检测」 button.
+  aiRetryNonce: number;
+  requestAiRetry: () => void;
   setFocusMode: (v: boolean) => void;
   setCaptionMode: (v: boolean) => void;
   setSidecarUp: (up: boolean | null) => void;
@@ -1280,6 +1299,163 @@ export function pauseIntervalsForSnapshot(
 // so the very first flushSettings call has nothing to wait on.
 let pendingSettingsSave: Promise<void> = Promise.resolve();
 
+// Desktop keychain custody (v0.5.1 desktop keychain migration, apps/
+// desktop/src-tauri/src/secret.rs's own header has the full design) —
+// `secretCustody` holds every Settings field name currently confirmed
+// written to the OS Keychain (or its debug-build file fallback — see
+// that Rust module), populated by hydrateSecrets() at boot — F5 fix
+// (Sol MEDIUM #13, keychain-custody fix round): REPLACED wholesale on
+// every hydrate (see that call site below), never merely added to, so
+// stale custody from an EARLIER hydrate can't outlive a restore/
+// re-hydrate that no longer confirms it and wrongly strip a fail-open
+// plaintext key forever after — and kept current by syncSecretCustody
+// below on every later change. Plain module-level state, not store
+// data: settingsForPersist reads it SYNCHRONOUSLY (see that function
+// below) to decide which fields to blank before a save ever reaches
+// storage.saveSettings, and a set of bare names has no reason to
+// round-trip through zustand's own set()/get(). `pendingSecretWrites`
+// mirrors pendingSettingsSave immediately above — the same "track the
+// in-flight promise so a later caller can await everything settling"
+// shape, one level down (Keychain writes rather than the IDB settings
+// write itself) — F4 fix (Sol MEDIUM #12, keychain-custody fix round):
+// syncSecretCustody below now DEFERS its own work inside the `.then()`
+// callback rather than starting it eagerly and merely chaining the
+// ALREADY-RUNNING promise on top — the old shape tracked concurrent
+// writes without ever truly serializing them, so two rapid patches
+// could land their Keychain writes out of enqueue order. Starts
+// pre-resolved so the very first flushSecrets() call has nothing to
+// wait on. Web builds never populate either — IS_DESKTOP gates every
+// write site.
+const secretCustody = new Set<string>();
+let pendingSecretWrites: Promise<unknown> = Promise.resolve();
+
+/** F2 fix (Sol HIGH #4, keychain-custody fix round) — settings.
+ *  secretDeletePending bookkeeping (packages/core/src/types.ts's own
+ *  field doc has the full design; secret.ts's hydrateSecrets is the
+ *  consult-first reader). Mutates the live store's settings DIRECTLY
+ *  (bypassing updateSettings' own patch/persist/theme-side-effect
+ *  machinery — this is internal retry bookkeeping, not a user-facing
+ *  settings change) and reports whether it actually changed anything,
+ *  so the caller (runSecretCustodySync below) knows whether a follow-up
+ *  persist is worth kicking. */
+function addSecretDeleteTombstone(name: string): boolean {
+  const { settings } = useApp.getState();
+  const pending = settings.secretDeletePending ?? [];
+  if (pending.includes(name)) return false;
+  useApp.setState({ settings: { ...settings, secretDeletePending: [...pending, name] } });
+  return true;
+}
+
+/** The clearing half of addSecretDeleteTombstone above — "a later
+ *  successful writeSecret set/delete for that name clears its
+ *  tombstone" (F2's own design). */
+function clearSecretDeleteTombstone(name: string): boolean {
+  const { settings } = useApp.getState();
+  const pending = settings.secretDeletePending ?? [];
+  if (!pending.includes(name)) return false;
+  useApp.setState({ settings: { ...settings, secretDeletePending: pending.filter((n) => n !== name) } });
+  return true;
+}
+
+/** Desktop-only Keychain sync for one updateSettings patch — for every
+ *  SECRET_NAMES field the patch touches with a value that actually
+ *  CHANGED (vs `prev`), writes it to the Keychain regardless of
+ *  updateSettings' own opts.persist (a key must reach custody the
+ *  moment it changes, independent of whether THIS particular call also
+ *  persists the rest of the settings blob). F4 fix (Sol MEDIUM #12,
+ *  keychain-custody fix round): the actual work is deferred to
+ *  runSecretCustodySync below, only invoked once whatever's already
+ *  chained onto pendingSecretWrites has settled — see that let's own
+ *  doc above for why this, not the old "chain an already-started
+ *  promise" shape, is what actually serializes writes across separate
+ *  calls in enqueue order.
+ *
+ *  Success updates custody (non-empty value -> add the name; cleared to
+ *  "" -> remove it) and clears any leftover delete-tombstone for that
+ *  name (F2). Failure removes the name from custody — so
+ *  settingsForPersist below never strips a key that ISN'T actually IN
+ *  the Keychain. A SET failure (a non-empty value that couldn't be
+ *  written) surfaces the existing non-blocking warning toast and leaves
+ *  the value wherever updateSettings' own IDB persist path already put
+ *  it (fail-open, retried idempotently on the next change or the next
+ *  hydrate()). A DELETE failure (F2, Sol HIGH #4) is worse — the OLD
+ *  credential is still sitting in the Keychain and would otherwise
+ *  silently resurrect on the next hydrate — so it ALSO tombstones the
+ *  name (addSecretDeleteTombstone above; secret.ts's hydrateSecrets
+ *  consults it first and retries instead of adopting) and shows its own
+ *  distinct warning. F1 fix (Sol HIGH #3, keychain-custody fix round):
+ *  whenever custody membership OR the tombstone actually changes for a
+ *  name, this ALSO kicks flushSettings() — the SAME chokepoint
+ *  SettingsDialog's own handleSave already awaits — so a non-dialog
+ *  writer (OnboardingByokStep/OnboardingDiarizeStep, the desktop OAuth
+ *  callback in oauth/openrouterDesktop.ts — every one of them a bare
+ *  updateSettings({apiKey / hfToken: ...}) with no flushSettings of its
+ *  own) still gets a durable, correctly-stripped-or-fail-open persist
+ *  without needing one, and a mid-write failure on an already-custodied
+ *  name doesn't strand its new plaintext value un-persisted with a
+ *  since-cleared custody entry (a missed pagehide would otherwise
+ *  silently revert to the old value on the next boot). Every write is
+ *  folded into the shared pendingSecretWrites chain so flushSecrets()
+ *  can await the lot; this function's own promise NEVER rejects (same
+ *  "never poison the shared chain" discipline pendingSettingsSave's own
+ *  doc documents above), so pendingSecretWrites is always safe to
+ *  unconditionally `.then()` onto. */
+function syncSecretCustody(patch: Partial<Settings>, prev: Settings, next: Settings): void {
+  pendingSecretWrites = pendingSecretWrites.then(() => runSecretCustodySync(patch, prev, next));
+}
+
+async function runSecretCustodySync(patch: Partial<Settings>, prev: Settings, next: Settings): Promise<void> {
+  try {
+    const { SECRET_NAMES, writeSecret } = await import("./desktop/secret");
+    for (const name of SECRET_NAMES) {
+      if (!(name in patch)) continue;
+      const value = next[name];
+      if (value === prev[name]) continue;
+      const wasCustodied = secretCustody.has(name);
+      const ok = await writeSecret(name, value);
+      let tombstoneChanged = false;
+      if (ok) {
+        if (value) secretCustody.add(name);
+        else secretCustody.delete(name);
+        tombstoneChanged = clearSecretDeleteTombstone(name);
+      } else {
+        secretCustody.delete(name);
+        diagLog(
+          "warn",
+          "secret-persist",
+          `keychain write failed for ${name}; value stays in local settings storage (fail-open, retried on next change)`,
+        );
+        if (value) {
+          useApp.getState().showToast("API Key 未能存入系统钥匙串，已临时保存在本地");
+        } else {
+          tombstoneChanged = addSecretDeleteTombstone(name);
+          useApp.getState().showToast("钥匙串中的旧 Key 删除失败，重启后可能重新出现，请重试清除");
+        }
+      }
+      if (tombstoneChanged || secretCustody.has(name) !== wasCustodied) {
+        await useApp.getState().flushSettings();
+      }
+    }
+  } catch (err) {
+    diagLog(
+      "warn",
+      "secret-persist",
+      "lib/desktop/secret.ts failed to load; keychain sync skipped for this settings change",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+/** Test-only reset — clears secretCustody/pendingSecretWrites. Mirrors
+ *  tauriApi.ts's own resetTauriApiCache / captionWindow.ts's
+ *  resetCaptionWindowStateForTests convention for module-level state
+ *  that must never leak between independent `it()` blocks (neither is
+ *  part of AppState, so `useApp.setState()` can't reach them). */
+export function resetSecretCustodyForTests(): void {
+  secretCustody.clear();
+  pendingSecretWrites = Promise.resolve();
+}
+
 // Installed-once guard for the quit-time listeners hydrate() adds below
 // — hydrate() can run more than once (dev/StrictMode double-invoke, a
 // manual re-hydrate) and must never stack a second pair of pagehide/
@@ -1309,11 +1485,34 @@ const globalFlags = globalThis as unknown as Record<symbol, boolean | undefined>
  *  existed. Takes a `Pick` rather than the full AppState so it stays
  *  callable with a plain `{ settings, demoOverlayPrevEngine }` literal
  *  (updateSettings needs the FRESHLY computed pair, not whatever `get()`
- *  would still return mid-call) as well as `get()` itself (flushSettings). */
+ *  would still return mid-call) as well as `get()` itself (flushSettings).
+ *
+ *  Desktop keychain custody (v0.5.1): AFTER the demo-overlay engine
+ *  substitution above, also blanks every field currently IN
+ *  secretCustody — never a field merely NAMED in SECRET_NAMES, only one
+ *  syncSecretCustody has actually confirmed landed in the Keychain. That
+ *  custody-gated condition is exactly why iterating secretCustody itself
+ *  (rather than SECRET_NAMES + a membership check) is enough: custody
+ *  only ever holds a subset of SECRET_NAMES to begin with. A field whose
+ *  Keychain write failed stays OUT of custody and therefore un-stripped
+ *  here — the plaintext value keeps riding in the persisted blob on
+ *  purpose (fail-open) until a later write succeeds. Web never populates
+ *  secretCustody at all (IS_DESKTOP gates every write site), so this is
+ *  a no-op there regardless of the redundant IS_DESKTOP check below.
+ *  NOTE: taskLlm.*.apiKey (the per-task LLM overrides, #56) intentionally
+ *  stays OUT of keychain custody for this v1 — it's deliberately still
+ *  persisted in the IDB blob like every other pre-migration Settings
+ *  field; only the five top-level SECRET_NAMES fields ever move. */
 function settingsForPersist(
   state: Pick<AppState, "settings" | "demoOverlayPrevEngine">,
 ): Settings {
-  return { ...state.settings, engine: state.demoOverlayPrevEngine ?? state.settings.engine };
+  const settings = { ...state.settings, engine: state.demoOverlayPrevEngine ?? state.settings.engine };
+  if (!IS_DESKTOP || secretCustody.size === 0) return settings;
+  const stripped = { ...settings };
+  for (const name of secretCustody) {
+    (stripped as Record<string, unknown>)[name] = "";
+  }
+  return stripped;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -1401,7 +1600,50 @@ export const useApp = create<AppState>((set, get) => ({
       learnset.loadLearnset(),
     ]);
     const learned = await learnset.refreshStaleSuppressedLearnset();
-    const settings = migrateSettings(saved);
+    const migratedSettings = migrateSettings(saved);
+    // Desktop keychain custody (v0.5.1 desktop keychain migration) —
+    // dynamic-imports lib/desktop/secret.ts (see that module's own
+    // header + syncSecretCustody's own doc above for why this store
+    // never statically imports it) to read whatever's already in the
+    // Keychain, copy up any plaintext SECRET_NAMES field this freshly-
+    // loaded blob still carries, and populate secretCustody so
+    // settingsForPersist strips correctly from the very first save
+    // onward. `settings` below defaults to the pre-hydration value and
+    // is only ever reassigned on IS_DESKTOP; a hydrateSecrets() failure
+    // (the dynamic import itself throwing — hydrateSecrets/readSecrets'
+    // own internals never throw, see their docs) is logged and left
+    // fail-open: secret fields simply stay wherever `migratedSettings`
+    // already had them for this session, retried on the next hydrate().
+    let settings = migratedSettings;
+    let secretMigratedAndClean = false;
+    if (IS_DESKTOP) {
+      try {
+        const { hydrateSecrets } = await import("./desktop/secret");
+        const result = await hydrateSecrets(migratedSettings);
+        settings = result.settings;
+        // F5 fix (Sol MEDIUM #13, keychain-custody fix round): REPLACE,
+        // never merely add to — a stale name from an EARLIER hydrate
+        // (dev/StrictMode double-invoke, or a genuine re-hydrate after a
+        // restore whose own routing left this boot's Keychain without
+        // that entry) must not linger in custody once this fresh result
+        // no longer confirms it, or settingsForPersist would keep
+        // stripping a fail-open plaintext value that is no longer
+        // actually IN the Keychain, silently losing it on the next save.
+        // Only reached once hydrateSecrets has actually resolved (never
+        // on the catch path below), so a transient failure never wipes
+        // an EARLIER, still-good custody set out from under a live app.
+        secretCustody.clear();
+        for (const name of result.custodyNames) secretCustody.add(name);
+        secretMigratedAndClean = result.migratedAndClean;
+      } catch (err) {
+        diagLog(
+          "warn",
+          "secret-persist",
+          "keychain hydration failed; secret fields stay wherever the loaded settings blob already had them this session (fail-open)",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
     // Hydration atomicity (Codex/#48 s1 review item 2a): the UI is
     // interactive (zustand store already exists) before this async
     // hydrate() resolves — a markKnown/gradeReview/addCustomEntry that
@@ -1421,6 +1663,15 @@ export const useApp = create<AppState>((set, get) => ({
       learnset: mergedLearnset,
       hydrated: true,
     });
+    // Keychain migration cleanup (v0.5.1) — only true when EVERY secret
+    // field this boot's loaded blob carried was successfully copied to
+    // the Keychain (hydrateSecrets' own all-or-nothing contract, see its
+    // doc) — writes the now-stripped blob back so the plaintext doesn't
+    // survive a second boot. Must run AFTER hydrated:true is set above:
+    // flushSettings no-ops pre-hydration (F1 fix, see that action's own
+    // doc) — fire-and-forget, same posture as the subscription-direct
+    // kill-check further below.
+    if (secretMigratedAndClean) void get().flushSettings();
     // Item 2b: re-run suppression over whatever cards/terms are live
     // right now — a suppressed-term detection landing in the same
     // window would have been filtered against the starting (empty)
@@ -1503,7 +1754,8 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   updateSettings: (patch, opts) => {
-    const settings = { ...get().settings, ...patch };
+    const prevSettings = get().settings;
+    const settings = { ...prevSettings, ...patch };
     // Overlay supersession (demo-overlay stash design): an explicit
     // engine pick other than "demo" while an overlay is active is the
     // user's REAL choice winning over the stash — clear it so that pick
@@ -1545,6 +1797,16 @@ export const useApp = create<AppState>((set, get) => ({
             err instanceof Error ? err.message : String(err),
           );
         });
+    }
+    // Desktop keychain custody (v0.5.1 desktop keychain migration) —
+    // independent of the IDB persist branch above and of opts.persist:
+    // a changed SECRET_NAMES field must reach the Keychain the moment
+    // it changes, not only on a call that also persists everything
+    // else. See syncSecretCustody's own doc (module scope, above
+    // pendingSettingsSave) for the full write/custody/toast contract.
+    // No-op on web (IS_DESKTOP false) — nothing is ever enqueued there.
+    if (IS_DESKTOP) {
+      syncSecretCustody(patch, prevSettings, settings);
     }
     // Display settings (v0.2.1, extended v0.5.1): live-apply a theme/
     // font change immediately (rather than waiting for a reload) and
@@ -1642,6 +1904,14 @@ export const useApp = create<AppState>((set, get) => ({
     return settled;
   },
 
+  // Desktop keychain custody (v0.5.1 desktop keychain migration) — see
+  // AppState.flushSecrets' own doc + syncSecretCustody's module-level
+  // doc above pendingSettingsSave. A bare passthrough — every actual
+  // write/custody/toast/chaining concern already lives in
+  // syncSecretCustody and pendingSecretWrites; this action exists only
+  // so a caller (SettingsDialog's handleSave) has something to await.
+  flushSecrets: () => pendingSecretWrites,
+
   // Demo-overlay stash — see AppState's own doc on both actions and on
   // demoOverlayPrevEngine above; useMeeting.ts's startDemo (begin) and
   // doStop/runStopFlow (end) own doc comments have the exact call-site
@@ -1691,6 +1961,19 @@ export const useApp = create<AppState>((set, get) => ({
       speakerRoster: [],
       activeSpeaker: null,
       translations: {},
+      // F7 fix (Sol LOW #19, keychain-custody fix round): a stale
+      // "dictionary" left over from a PREVIOUS meeting's AI fallback
+      // otherwise survives into this fresh one — AiStatusPanel's own
+      // useAiFallenBack (aiDetect on + detectMode==="dictionary") would
+      // then falsely show the 重试 AI 检测 banner before this meeting has
+      // even attempted its first AI batch. Mirrors Header.tsx's own
+      // DetectModeBadge toggle convention (`setDetectMode(next ? "llm" :
+      // "dictionary")`) rather than the scheduler's third value ("off",
+      // pushSegment's own !autoDetect branch) — the scheduler re-reads
+      // live settings and corrects this on the very first segment
+      // regardless, same as that toggle's own echo-then-scheduler-wins
+      // posture.
+      detectMode: state.settings.aiDetect ? "llm" : "dictionary",
       cards: [],
       terms: [],
       summary: null,
@@ -2465,6 +2748,8 @@ export const useApp = create<AppState>((set, get) => ({
   showToast: (toast) => set({ toast }),
   bitCelebrateNonce: 0,
   celebrateBit: () => set((s) => ({ bitCelebrateNonce: s.bitCelebrateNonce + 1 })),
+  aiRetryNonce: 0,
+  requestAiRetry: () => set((s) => ({ aiRetryNonce: s.aiRetryNonce + 1 })),
   clearToast: () => set({ toast: null }),
   setFocusMode: (focusMode) => set({ focusMode }),
   setCaptionMode: (captionMode) => set({ captionMode }),

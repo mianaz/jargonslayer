@@ -19,6 +19,12 @@ import { isBitCostumeId } from "../bitCostumes";
 import { parseTheme, type ThemeDefinition } from "../theme/schema";
 import { CUSTOM_THEME_ID_PREFIX, mintCustomThemeId } from "../theme/resolve";
 import { CUSTOM_FONT_PREFIX, sanitizeFontFamily } from "../theme/fonts";
+import { IS_DESKTOP } from "../platform/desktop";
+// Desktop keychain custody (v0.5.1 desktop keychain migration) — static
+// import (unlike store.ts, which dynamic-imports this same leaf; see
+// secret.ts's own header for why either style is safe here: it never
+// imports back from store.ts, so there's no cycle to avoid either way).
+import { readSecrets, writeSecret, type SecretName } from "../desktop/secret";
 
 const EXPORT_DIR_KEY = "jargonslayer:export-dir";
 
@@ -269,6 +275,25 @@ function stripKeyMaterial(settings: Settings): Settings {
   };
 }
 
+/** Desktop keychain custody (v0.5.1) — fills in a Keychain value for any
+ *  SECRET_NAMES field `settings` itself left BLANK; a field `settings`
+ *  already has a non-empty value for is left completely untouched. Same
+ *  "IDB wins on conflict" rule secret.ts's own hydrateSecrets uses (see
+ *  that function's doc for the rationale: the loaded blob's own
+ *  non-empty value is the most recently saved one, e.g. mid fail-open
+ *  before a retry finishes migrating it — a possibly-stale Keychain read
+ *  must never silently overwrite it). buildFullBackup below is the one
+ *  caller. */
+function overlaySecrets(settings: Settings, keychainValues: Partial<Record<SecretName, string>>): Settings {
+  const merged = { ...settings };
+  for (const [name, value] of Object.entries(keychainValues)) {
+    if (!merged[name as SecretName]) {
+      (merged as Record<string, unknown>)[name] = value;
+    }
+  }
+  return merged;
+}
+
 /** Serialize sessions + glossary + learn-set + settings into one backup
  *  JSON. `includeKeys: false` (the Settings dialog's default-checked
  *  "不包含 API Key" option) strips apiKey/taskLlm[*].apiKey/hfToken/
@@ -301,7 +326,23 @@ export async function buildFullBackup(
   const customPacks = glossary.getCustomPacks();
   const learnsetRecords = await learnset.loadLearnset();
   const rawSettings = await storage.loadSettings();
-  const settings = rawSettings && !includeKeys ? stripKeyMaterial(rawSettings) : rawSettings;
+  // Desktop keychain custody (v0.5.1): post-migration, storage.
+  // loadSettings() no longer carries the SECRET_NAMES fields already in
+  // custody (settingsForPersist's own strip, store.ts) — overlay
+  // whatever's actually in the Keychain onto the loaded blob BEFORE the
+  // includeKeys strip below, so a "包含 API Key" backup still carries
+  // real key material instead of silently exporting blanks. Only worth
+  // reading the Keychain at all when the export is actually going to
+  // KEEP keys — includeKeys:false strips them right back out below
+  // regardless, so skip the read entirely in that case. IDB wins on
+  // conflict — same rule hydrateSecrets uses (that function's own doc):
+  // a NON-EMPTY rawSettings field is the most-recently-saved value (e.g.
+  // mid fail-open, before a retry finishes migrating it) and must not be
+  // silently overwritten by a possibly-stale Keychain read; the overlay
+  // only ever FILLS IN a field rawSettings itself left blank.
+  const settingsWithSecrets =
+    rawSettings && IS_DESKTOP && includeKeys ? overlaySecrets(rawSettings, await readSecrets()) : rawSettings;
+  const settings = settingsWithSecrets && !includeKeys ? stripKeyMaterial(settingsWithSecrets) : settingsWithSecrets;
   return JSON.stringify(
     {
       schemaVersion: 1,
@@ -493,6 +534,71 @@ export function sanitizeRestoredCustomPack(raw: unknown): CustomPack | null {
   return { id: r.id, name: r.name, enabled: r.enabled, createdAt: r.createdAt };
 }
 
+/** Desktop keychain custody (v0.5.1) — for every non-empty restored
+ *  apiKey/hfToken/sonioxKey/deepgramKey, writes it to the Keychain
+ *  (overwriting whatever's already there — restoring a backup is an
+ *  explicit "make this device match the backup" action, same
+ *  IDB-wins-on-conflict posture hydrateSecrets uses for an ordinary
+ *  boot-time migration) and blanks that field on the returned object,
+ *  so the IDB write in restoreFullBackup below never re-introduces
+ *  plaintext. A write failure leaves that one field's plaintext value in
+ *  the returned object instead of blanking it (fail-open — the value
+ *  still lands somewhere rather than being silently dropped; the next
+ *  hydrate()'s own migration sweep picks it up like any other
+ *  pre-migration field). The caller's own re-hydrate (SettingsDialog's
+ *  handleConfirmRestore) reads the Keychain values back via
+ *  hydrateSecrets, same as any other boot.
+ *
+ *  F6 fix (Opus LOW, keychain-custody fix round): agentToken is force-
+ *  cleared in the BLOB by sanitizeRestoredSettings before this ever
+ *  runs (the machine-local pairing/kill-switch trio, Codex v0.2.3
+ *  MEDIUM) — so there's never a non-empty value here to route the
+ *  ordinary way above — but a STALE Keychain agentToken from this
+ *  machine's PREVIOUS pairing survives that blanking untouched and gets
+ *  silently re-adopted by the very next hydrateSecrets, undoing the
+ *  sanitizer's own reset. Deleted explicitly (writeSecret(name, ""))
+ *  instead of skipped.
+ *
+ *  F2 fix (Sol HIGH #4, migration/backup interplay): `priorPending` is
+ *  this MACHINE's own pre-restore secretDeletePending (see
+ *  restoreFullBackup below) — a restore REPLACES the whole settings
+ *  blob wholesale, and a donor backup has no reason to know (or agree
+ *  with) this machine's own unresolved Keychain deletes, so that
+ *  bookkeeping must be carried forward across the restore rather than
+ *  silently dropped (dropping it would un-track a still-undeleted stale
+ *  entry, which hydrateSecrets' own tombstone-first check — secret.ts —
+ *  would then silently re-adopt on the very next hydrate, the exact bug
+ *  this mechanism exists to close). Every name this function
+ *  successfully writes below (a fresh, deliberate value, OR the
+ *  agentToken delete) clears its own entry from that carried-forward
+ *  set — same "a later successful writeSecret set/delete clears its
+ *  tombstone" rule hydrateSecrets/syncSecretCustody (store.ts) both
+ *  already apply; a FAILED agentToken delete conversely ADDS to it, so
+ *  that stale entry gets the same retry-on-next-hydrate tracking any
+ *  other failed delete would. */
+async function routeRestoredSecretsToKeychain(settings: Settings, priorPending: string[]): Promise<Settings> {
+  const RESTORE_SECRET_NAMES: readonly SecretName[] = ["apiKey", "hfToken", "sonioxKey", "deepgramKey"];
+  const next = { ...settings };
+  const pending = new Set(priorPending);
+  for (const name of RESTORE_SECRET_NAMES) {
+    const value = settings[name];
+    if (!value) continue;
+    const ok = await writeSecret(name, value);
+    if (ok) {
+      next[name] = "";
+      pending.delete(name);
+    }
+  }
+  const agentTokenOk = await writeSecret("agentToken", "");
+  if (agentTokenOk) {
+    pending.delete("agentToken");
+  } else {
+    pending.add("agentToken"); // fail-open — tombstoned so the NEXT hydrate retries it too
+  }
+  next.secretDeletePending = [...pending];
+  return next;
+}
+
 export async function restoreFullBackup(json: string): Promise<{
   sessions: number;
   entries: number;
@@ -545,6 +651,17 @@ export async function restoreFullBackup(json: string): Promise<{
     // Cast: the sanitizer returns a Partial (unknown keys dropped),
     // and the caller immediately re-hydrates, whose migrateSettings
     // fold fills every missing field from DEFAULT_SETTINGS.
+    const sanitized = sanitizeRestoredSettings(parsed.settings) as Settings;
+    // Desktop keychain custody (v0.5.1): route the restored key material
+    // straight to the Keychain (see routeRestoredSecretsToKeychain's own
+    // doc) instead of ever letting it land back in the IDB blob below.
+    // F2 fix (Sol HIGH #4, migration/backup interplay): read THIS
+    // machine's pre-restore secretDeletePending before it gets replaced
+    // by the line below — see routeRestoredSecretsToKeychain's own doc
+    // for why it must be carried forward across the restore.
+    const settingsToSave = IS_DESKTOP
+      ? await routeRestoredSecretsToKeychain(sanitized, (await storage.loadSettings())?.secretDeletePending ?? [])
+      : sanitized;
     //
     // F2 caller-audit fix (store.ts/storage.ts review batch):
     // storage.saveSettings now rethrows on a write failure instead of
@@ -565,7 +682,7 @@ export async function restoreFullBackup(json: string): Promise<{
     // in the sense that matters, since console.warn already fires inside
     // saveSettings itself).
     try {
-      await storage.saveSettings(sanitizeRestoredSettings(parsed.settings) as Settings);
+      await storage.saveSettings(settingsToSave);
     } catch (err) {
       console.warn("[autoExport] restoreFullBackup: settings write failed", err);
     }

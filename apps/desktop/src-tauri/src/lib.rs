@@ -50,6 +50,8 @@ mod paths;
 #[cfg(desktop)]
 mod provision;
 #[cfg(desktop)]
+mod secret;
+#[cfg(desktop)]
 mod server;
 #[cfg(desktop)]
 mod uv;
@@ -130,6 +132,7 @@ pub fn run() {
             server::prewarm_model,
             server::start_server,
             server::stop_server,
+            server::cancel_prewarm,
             provision::read_provision_marker,
             provision::write_provision_marker,
             provision::read_sidecar_log,
@@ -150,6 +153,9 @@ pub fn run() {
             mlxcaps::mlx_capabilities,
             uv::mlx_import_preflight,
             diskspace::app_data_disk_free,
+            secret::secret_set,
+            secret::secret_get,
+            secret::secret_delete,
         ])
         // v0.4 S9.1 (docs/design-explorations/s9-app-audio-tap-blueprint.md)
         // — the audiocap TCC-attribution spike rig: inert unless

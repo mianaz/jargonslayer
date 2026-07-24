@@ -123,6 +123,7 @@ import {
   testConnection,
   NoKeyError,
   RateLimitApiError,
+  UpstreamError,
   resetSubscriptionToastLatch,
 } from "../client";
 import { clearDiag, getDiagEntries } from "../../diag/log";
@@ -498,6 +499,56 @@ describe("detectApi — Next.js path status-code failures log to the diag ring b
       expect(entries[0].message).toBe("API Key 无效或未配置");
       expect(entries[0].message).not.toContain(SENTINEL);
     });
+  });
+});
+
+// ---------------------------------------------------------------
+// Field-debugging postmortem (v0.5.1 fieldtest B): a real desktop
+// failure ("OpenRouter key works in curl, app always fails") took
+// days to pin down because a bare fetch() rejection (no HTTP response
+// at all — proxy/TLS/DNS-level) used to log only the fixed zh category
+// message, indistinguishable from any other transport failure. See
+// client.ts's transportFailureCause/throwForProviderError (the SAME
+// shared helper the client-transport path uses — see
+// clientTransport.test.ts's equivalent coverage for that path).
+// ---------------------------------------------------------------
+
+describe("detectApi — Next.js path transport-level (pre-HTTP) rejection logs a cause detail", () => {
+  it("a bare fetch() rejection appends the rejection's message to the diag detail as cause=..., toast copy unchanged", async () => {
+    mockFetch.mockRejectedValue(new Error("connection refused by proxy"));
+
+    const err = await detectApi({ context: "", new_text: "hi" }, makeSettings()).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UpstreamError);
+    // User-facing toast copy is untouched — still the fixed zh phrase.
+    expect((err as Error).message).toBe("检测请求失败，请检查网络连接");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toBe("检测请求失败，请检查网络连接");
+    expect(entries[0].detail).toContain("cause=connection refused by proxy");
+  });
+
+  it("truncates a long rejection message to 160 chars in the cause detail", async () => {
+    mockFetch.mockRejectedValue(new Error("x".repeat(500)));
+
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toBeInstanceOf(
+      UpstreamError,
+    );
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    const causeMatch = entries[0].detail?.match(/cause=(.*)$/);
+    expect(causeMatch).not.toBeNull();
+    expect(causeMatch![1].length).toBeLessThanOrEqual(160);
+  });
+
+  it("a status-carrying failure (e.g. 502) is unaffected — no cause= token, existing detail shape unchanged", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
+
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries[0].detail ?? "").not.toContain("cause=");
   });
 });
 
