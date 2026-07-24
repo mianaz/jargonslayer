@@ -28,6 +28,31 @@ describe("COMPILED_PACK_TERMS — data integrity", () => {
   });
 });
 
+describe("packCounts() — installed remote packs are counted too", () => {
+  // Live-verification catch: a freshly imported pack rendered "0 条"
+  // next to its toggle because packCounts only walked the compile-time
+  // dictionary, so every install looked like it had silently failed.
+  it("adds an installed pack's own expressions + terms under its id", async () => {
+    const registry = await import("../remotePacksRegistry");
+    const mocked = vi.mocked(registry.getLoadedRemotePacks);
+    mocked.mockReturnValueOnce([
+      {
+        id: "installed-probe",
+        name: "probe",
+        version: "1.0.0",
+        expressions: [{ expression: "probe phrase" }],
+        terms: [{ term: "PROBEA" }, { term: "PROBEB" }],
+      },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any);
+    expect(packCounts()["installed-probe"]).toBe(3);
+  });
+
+  it("reports nothing for a pack id that is not installed", () => {
+    expect(packCounts()["installed-probe"]).toBeUndefined();
+  });
+});
+
 describe("packCounts() — compiled packs registered with real post-dedupe counts", () => {
   it("includes stats/ml-stats/bioinformatics-edam with the actual post-dedupe counts", () => {
     const counts = packCounts();

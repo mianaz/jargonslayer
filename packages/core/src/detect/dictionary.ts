@@ -973,14 +973,23 @@ const TERM_DICTIONARY: TermEntry[] = dedupeByKey(
 );
 
 /** Entry counts per pack id, for the Settings dialog (shows how many
- *  items a pack contributes before the user decides to disable it). */
+ *  items a pack contributes before the user decides to disable it).
+ *  Counts INSTALLED remote packs too, from the same registry
+ *  scanDictionary reads — without that, every installed pack renders
+ *  "0 条" next to its toggle and the install looks like it silently
+ *  failed. (Null-prototype so a pack id of "__proto__" can never make
+ *  a lookup return Object.prototype; validateManifest also rejects
+ *  such ids, but this map is read by UI that predates that gate.) */
 export function packCounts(): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = Object.create(null);
   for (const entry of EXPRESSIONS) {
     counts[entry.pack] = (counts[entry.pack] ?? 0) + 1;
   }
   for (const entry of TERM_DICTIONARY) {
     counts[entry.pack] = (counts[entry.pack] ?? 0) + 1;
+  }
+  for (const pack of getLoadedRemotePacks()) {
+    counts[pack.id] = (counts[pack.id] ?? 0) + pack.expressions.length + pack.terms.length;
   }
   return counts;
 }
