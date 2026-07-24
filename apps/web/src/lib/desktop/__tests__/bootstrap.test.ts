@@ -347,6 +347,101 @@ describe("bootstrapDesktop — NEEDS_PROVISION surfaces a wizard-required (STEP/
   });
 });
 
+// v0.5.1 field-test fix — CREATE_VENV's own `--clear` self-heal: an app
+// closed mid `uv venv` leaves a half-written venvDir behind, so the NEXT
+// launch's CREATE_VENV attempt exits code 2 ("a virtual environment
+// already exists") against it. Mirrors ensureMlxExtras' own retry tests
+// (see "bootstrapDesktop — switchModel() to an mlx-family model" further
+// below) for the BASE venv instead of the separate mlx one.
+describe("bootstrapDesktop — CREATE_VENV's own --clear self-heal (v0.5.1 field-test fix)", () => {
+  it("a first CREATE_VENV attempt failing self-heals with exactly ONE --clear retry, which succeeds — never surfaces as STEP/ERROR, no retryStep() needed", async () => {
+    const venvCreateCalls: string[][] = [];
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: (args) => {
+          const a = args?.args as string[];
+          if (a[0] === "venv") {
+            venvCreateCalls.push(a);
+            return { code: venvCreateCalls.length === 1 ? 2 : 0 }; // fails attempt 1 (code 2, "already exists"), succeeds attempt 2 (post --clear)
+          }
+          return { code: 0 }; // INSTALL_PYTHON / INSTALL_DEPS
+        },
+        prewarm_model: () => ({ code: 0 }),
+        write_provision_marker: () => undefined,
+        start_server: () => ({ alreadyRunning: false }),
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        // 1st call = CHECKING's own probe (must be dead to enter
+        // NEEDS_PROVISION at all); every call after (POLLING_HEALTH) is
+        // healthy immediately — same shape as the full-pipeline test
+        // above.
+        return { up: probeCalls > 1 };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
+    const finalState = await waitForStable(handle);
+
+    expect(finalState).toEqual({ phase: "HEALTHY" }); // self-healed silently — never parked on STEP/ERROR
+    expect(venvCreateCalls).toHaveLength(2);
+    expect(venvCreateCalls[0]).not.toContain("--clear");
+    expect(venvCreateCalls[1]).toContain("--clear");
+  });
+
+  it("double failure: the --clear retry ALSO fails -> propagates the RETRY attempt's own STEP_ERROR unchanged (same shape as a plain single-attempt failure)", async () => {
+    const venvCreateCalls: string[][] = [];
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        run_uv: (args) => {
+          const a = args?.args as string[];
+          if (a[0] === "venv") {
+            venvCreateCalls.push(a);
+            return { code: 2 }; // fails BOTH attempts
+          }
+          return { code: 0 };
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    handle.beginProvision();
+    const finalState = await waitForStable(handle);
+
+    // Same STEP_ERROR shape processResultToEvent would have produced for
+    // a single, non-retried failure (provisionRunner.ts's own
+    // "exited with code X" message) — the retry is invisible except for
+    // the SECOND run_uv call actually carrying --clear.
+    expect(finalState).toEqual({
+      phase: "STEP",
+      step: "CREATE_VENV",
+      status: "ERROR",
+      error: "exited with code 2",
+      retriable: true,
+    });
+    expect(venvCreateCalls).toHaveLength(2);
+    expect(venvCreateCalls[0]).not.toContain("--clear");
+    expect(venvCreateCalls[1]).toContain("--clear");
+  });
+});
+
 // S12a (v0.4.4, docs/design-explorations/s12-mlx-blueprint.md, §C
 // Provision, F14) — a persisted parakeet marker this app already knows
 // can't be trusted (wrong hardware, OR a missing/broken mlx venv) must
@@ -1022,6 +1117,11 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
     await expect(handle.installDiarization()).resolves.toBeUndefined();
   });
 
+  it("requestProvisionCheck() is an inert no-op outside a desktop build too (field-test fix B)", async () => {
+    const handle = await initDesktop();
+    await expect(handle.requestProvisionCheck()).resolves.toBeUndefined();
+  });
+
   it("is idempotent: two calls return the exact same cached promise, resolving to the exact same handle", async () => {
     const p1 = initDesktop();
     const p2 = initDesktop();
@@ -1448,6 +1548,116 @@ describe("bootstrapDesktop — reprovision() (chunk 7 SettingsDialog「重新运
     const handle = await bootstrapDesktop(deps);
     await waitForStable(handle); // -> HEALTHY
     await expect(handle.reprovision()).rejects.toThrow("boom");
+  });
+});
+
+describe("bootstrapDesktop — requestProvisionCheck() (field-test fix B: useMeeting.ts session-start preflight)", () => {
+  it("from an already-healthy managed sidecar: re-enters CHECKING and lands right back on HEALTHY — never calls stop_server or write_provision_marker (non-destructive, unlike reprovision())", async () => {
+    let stopServerCalls = 0;
+    let writeMarkerCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => {
+          stopServerCalls += 1;
+          return undefined;
+        },
+        write_provision_marker: () => {
+          writeMarkerCalls += 1;
+          return undefined;
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }), // stays healthy throughout — no server was ever stopped
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY (adopted)
+
+    await handle.requestProvisionCheck();
+    const after = await waitForStable(handle);
+    expect(after).toEqual({ phase: "HEALTHY" });
+    expect(stopServerCalls).toBe(0);
+    expect(writeMarkerCalls).toBe(0);
+  });
+
+  it("from a dismissed/unprovisioned WIZARD_CONSENT_REQUIRED: re-enters CHECKING and lands back on WIZARD_CONSENT_REQUIRED — same non-destructive contract, useMeeting.ts's own 'genuinely unprovisioned' branch", async () => {
+    let writeMarkerCalls = 0;
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        write_provision_marker: () => {
+          writeMarkerCalls += 1;
+          return undefined;
+        },
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: false }), // never actually provisioned
+    };
+    const handle = await bootstrapDesktop(deps);
+    const gated = await waitForStable(handle);
+    expect(gated).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+
+    await handle.requestProvisionCheck();
+    const after = await waitForStable(handle);
+    expect(after).toEqual({ phase: "WIZARD_CONSENT_REQUIRED" });
+    expect(writeMarkerCalls).toBe(0);
+  });
+
+  it("rejects while another sidecar-lifecycle operation (reprovision()) is in flight — the SAME shared latch, not a separate one", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        stop_server: () => undefined,
+        write_provision_marker: () => undefined,
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle); // -> HEALTHY
+
+    const reprovisionPromise = handle.reprovision();
+    await expect(handle.requestProvisionCheck()).rejects.toThrow("另一项本地服务操作正在进行");
+    await reprovisionPromise; // cleanup — let the winning call settle
+  });
+
+  it("F3 field-test round 2 (Sol/Opus review): an external-boot handle no-ops instead of driving the managed loop — sidecarMode can't have changed for THIS handle without a restart, even if the LIVE setting now says managed", async () => {
+    const invokeCalls: string[] = [];
+    let probeCalls = 0;
+    const deps: BootstrapDeps = {
+      // read_provision_marker/run_uv/etc. are deliberately absent from
+      // the handlers map — makeFakeInvoke throws on any unexpected
+      // invoke(), so this doubles as an assertion that no managed-mode
+      // drive step ever runs.
+      invoke: makeFakeInvoke({ app_paths: () => paths }, (cmd) => invokeCalls.push(cmd)),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      getSidecarMode: async () => "external",
+      probeSidecarFn: async () => {
+        probeCalls += 1;
+        return { up: false };
+      },
+    };
+    const handle = await bootstrapDesktop(deps);
+    const parked = await waitForStable(handle);
+    expect(parked).toEqual({ phase: "EXTERNAL_UNMANAGED" });
+    expect(probeCalls).toBe(1); // the one-shot boot-time probe only
+
+    await handle.requestProvisionCheck();
+
+    expect(handle.currentState()).toEqual({ phase: "EXTERNAL_UNMANAGED" }); // no transition out of it
+    expect(probeCalls).toBe(1); // no additional health probe fired
+    expect(invokeCalls).toEqual(["app_paths"]); // no state reset, no drive
   });
 });
 

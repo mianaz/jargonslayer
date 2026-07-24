@@ -27,6 +27,7 @@ import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
 import { checkAppUpdate } from "@/lib/desktop/updateCheck";
 import { initIos } from "@/lib/desktop/bootstrap";
 import { enterDesktopCaptionMode, exitDesktopCaptionMode } from "@/lib/captionWindow";
+import { nextHelpOpenForWizardTransition } from "./wizardHelpTransition";
 
 type RightTab = "cards" | "summary" | "glossary";
 
@@ -72,6 +73,10 @@ export default function Home() {
   const setFocusMode = useApp((s) => s.setFocusMode);
   const captionMode = useApp((s) => s.captionMode);
   const setCaptionMode = useApp((s) => s.setCaptionMode);
+  // Field-test fix (desktop first-run onboarding never seen): mirrored
+  // from DesktopBootstrap.tsx's own effect — see store.ts's wizardVisible
+  // doc for the full contract. Permanently false on a web build.
+  const wizardVisible = useApp((s) => s.wizardVisible);
 
   const [tab, setTab] = useState<RightTab>("cards");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -166,7 +171,20 @@ export default function Home() {
     // ring buffer, registered once right alongside hydrate() — see
     // lib/diag/globalHandlers.ts's own doc comment.
     installGlobalDiagHandlers();
-    if (shouldShowTutorial()) setHelpOpen(true);
+    // Field-test fix (desktop first-run onboarding never seen — verified
+    // root cause): skip the auto-open while the desktop provisioning
+    // wizard is covering the screen (wizardVisible — see store.ts's own
+    // doc). This mount-time gate alone can't catch a TRUE first-run
+    // wizard on its own: wizardVisible is still its just-mounted default
+    // (false) at this exact tick on every platform, since
+    // DesktopBootstrap's initDesktop() call is inherently async and
+    // can't have reported a real value yet — the watcher effect below
+    // (which reopens the tutorial the moment wizardVisible actually
+    // transitions back to false) is what closes that gap. This gate's
+    // own job is simpler: web builds and any desktop launch that never
+    // needs the wizard at all, where wizardVisible just never leaves
+    // `false` — byte-equivalent to the old unconditional open for both.
+    if (shouldShowTutorial() && !wizardVisible) setHelpOpen(true);
     // S10 field-fix #8: on-launch update check, desktop only, quiet —
     // no toast/banner, Header's 后台任务 dot + TaskCenterDrawer's own
     // system-status row are the only surfacing (Q2 verdict). Fires
@@ -216,6 +234,43 @@ export default function Home() {
     }
     prevCaptionMode.current = captionMode;
   }, [captionMode]);
+
+  // Field-test fix (desktop first-run onboarding never seen): once the
+  // desktop wizard (or its optional post-install onboarding steps — both
+  // fold into wizardVisible, see DesktopBootstrap.tsx's own doc) stops
+  // covering the screen, open the first-run tutorial THEN — see the
+  // mount-time gate's own comment above for why this transition watcher
+  // is the half that actually catches a true first-run wizard. Also
+  // fires on an ordinary dismiss (稍后再说 etc.): any transition off
+  // "covering the screen" is a fair "the user can see the tutorial now"
+  // moment, not just a completed install. prevWizardVisible starts at
+  // wizardVisible's own initial (false) value, so there's no false->false
+  // no-op misfire the instant this effect first subscribes — same
+  // "compare against the previous value" shape as prevSummary/
+  // prevCaptionMode above.
+  //
+  // F3 fix (Sol MEDIUM / Opus LOW, fieldtest-a review): symmetric
+  // false->true arm added. The mount-time gate above can only see
+  // wizardVisible's just-mounted default (false), so on a real desktop
+  // first run it opens the tutorial BEFORE DesktopBootstrap's async
+  // initDesktop() has had a chance to report wizardVisible:true — for
+  // one render window BOTH full-screen overlays are mounted (the wizard
+  // paints on top by DOM order, but the tutorial stays mounted
+  // underneath with focus/tab-order still reachable into its now-
+  // invisible controls). Closing the tutorial the instant wizardVisible
+  // flips true shrinks that window to nothing; shouldShowTutorial()'s
+  // own re-check in the other arm still reopens it once the wizard is
+  // done. NOT handled: a user who manages to click 跳过 inside that
+  // sub-second pre-wizard window still permanently marks the tutorial
+  // done (markTutorialDone writes localStorage synchronously in
+  // TutorialOverlay's finish()) — accepted residual, not chased here.
+  const prevWizardVisible = useRef(wizardVisible);
+  useEffect(() => {
+    setHelpOpen((cur) =>
+      nextHelpOpenForWizardTransition(prevWizardVisible.current, wizardVisible, cur, shouldShowTutorial()),
+    );
+    prevWizardVisible.current = wizardVisible;
+  }, [wizardVisible]);
 
   const summaryReady = status === "stopped" && segments.length > 0;
 

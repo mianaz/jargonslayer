@@ -134,6 +134,7 @@ import {
   pipInstallDiar,
   pipCheckMlx,
   pipInstallMlxLock,
+  venvCreate,
   venvCreateMlx,
   type DesktopPaths,
 } from "./uvCommands";
@@ -150,6 +151,8 @@ import {
   POLLING_HEALTH_ATTEMPT_CAP,
   QUARANTINE_FALLBACK_MODEL,
   RESTART_WINDOW_MS,
+  type Effect,
+  type MachineEvent,
   type MachineState,
   type ProvisionContext,
   type ProvisionMarker,
@@ -558,6 +561,36 @@ export interface DesktopBootstrapHandle {
    *  resolve as if the SECOND caller's own action had happened, which
    *  it hadn't. */
   reprovision: () => Promise<void>;
+  /** Field-test fix B (verified root cause): the NON-destructive sibling
+   *  of reprovision() above — useMeeting.ts's session-start preflight
+   *  for a sidecar-only engine (whisper/appaudio) calls this instead of
+   *  reprovision() when the sidecar isn't currently HEALTHY, so a
+   *  transient probe blip (or a launch that just hasn't finished its
+   *  first CHECKING yet) never wipes an already-good install record —
+   *  it re-enters the SAME fresh CHECKING flow reprovision() lands on
+   *  AFTER its own stop_server + write_provision_marker(null), just
+   *  without ever calling either: genuinely unprovisioned -> lands back
+   *  on WIZARD_CONSENT_REQUIRED (or the engine re-choice screen, same as
+   *  reprovision()); already healthy -> lands right back on HEALTHY,
+   *  the wizard shows nothing (DesktopBootstrap.tsx's own `visible`
+   *  computation already treats HEALTHY as "nothing to show"). Also
+   *  resets the S11 osspeechDormant park + re-arms forceEngineSetupOnce
+   *  (mirrors reprovision()'s identical reset): without this, a stale
+   *  boot-time persistedEngine of "osspeech" would silently re-park
+   *  dormant instead of ever showing the wizard this call exists to
+   *  surface. Single-flighted via the SAME shared latch reprovision()/
+   *  switchModel() use (S4 review pair Finding 1a) for the SYNCHRONOUS
+   *  reset + drive() kickoff only (F4 field-test round 2 correction —
+   *  Sol review: this used to claim the latch covers the whole check,
+   *  which it doesn't): driveGuarded() never awaits drive() itself, so
+   *  the returned promise — and the latch with it — settles on the
+   *  next microtask, well before the CHECKING probe it just kicked off
+   *  actually resolves. Overlap safety for that ASYNC drive against a
+   *  second, later reprovision()/requestProvisionCheck()/switchModel()
+   *  call comes from the `generation` counter instead (a superseded
+   *  drive silently no-ops on its own next await — see that variable's
+   *  own doc comment above), not from this latch still being held. */
+  requestProvisionCheck: () => Promise<void>;
   /** SettingsDialog's 转录引擎 desktop-managed block (S4 chunk 4): the
    *  TRUTHFUL installed model, read fresh from the provision marker
    *  (deps.invoke("read_provision_marker") + parseMarker — both
@@ -747,6 +780,7 @@ const NOT_DESKTOP_HANDLE: DesktopBootstrapHandle = {
   paths: NOT_DESKTOP_PATHS,
   recheckHealth: async () => {},
   reprovision: async () => {},
+  requestProvisionCheck: async () => {},
   installedModel: async () => null,
   switchModel: async () => {},
   switchModelProgress$: () => () => {},
@@ -1148,6 +1182,32 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
     return state.phase === "STEP" && state.step === "INSTALL_PYTHON" && state.status === "RUNNING";
   }
 
+  /** Field-test self-heal (v0.5.1 fix round) — an app closed mid
+   *  CREATE_VENV leaves a half-written `venvDir` behind; on the NEXT
+   *  launch, a bare `uv venv` against that SAME half-written directory
+   *  exits code 2 ("a virtual environment already exists") every time,
+   *  and — before this fix — the wizard's own 重试 button just re-ran
+   *  the identical failing command forever (venvCreate had no `--clear`
+   *  arm at all). Mirrors ensureMlxExtras' own `--clear` retry-once
+   *  below, for the BASE venv instead of the separate mlx one: run the
+   *  step's ORIGINAL effects first via runEffects (byte-identical to
+   *  before this fix whenever CREATE_VENV succeeds on the first try),
+   *  and only on a STEP_ERROR, retry EXACTLY once with a fresh
+   *  `venvCreate(paths, {clear:true})` effect. Deliberately just calls
+   *  runEffects a second time rather than duplicating its {args,env} ->
+   *  invoke("run_uv") -> ProcessResult -> MachineEvent plumbing here
+   *  (provisionRunner.ts stays untouched) — so a successful self-heal is
+   *  invisible to transition()/the wizard UI (never surfaced as an
+   *  intermediate failure), and a genuine second failure propagates with
+   *  the exact same STEP_ERROR shape runEffects would have produced on
+   *  its own (same error surface as today). */
+  async function runCreateVenvStep(state: MachineState, effects: Effect[]): Promise<MachineEvent> {
+    const event = await runEffects(state, effects, runnerDeps);
+    if (event.type !== "STEP_ERROR") return event;
+    const retryEffects: Effect[] = [{ kind: "runUv", command: venvCreate(paths, { clear: true }) }];
+    return runEffects(state, retryEffects, runnerDeps);
+  }
+
   async function drive(): Promise<void> {
     // Finding 3 — see `generation`'s own doc comment above.
     const myGeneration = generation;
@@ -1209,16 +1269,20 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
               // INSTALL_DEPS have ALREADY succeeded — retrying via
               // "re-enter CHECKING" would blindly re-attempt
               // CREATE_VENV against an already-existing base-venv
-              // directory (venvCreate has no --clear arm) and fail a
-              // SECOND, more confusing way. DOWNLOAD_MODEL's own
-              // EXISTING retry semantic (handleRetry's generic
-              // fallback: re-enter DOWNLOAD_MODEL directly, never
-              // CHECKING) is the "closest existing shape" that
-              // actually behaves correctly here — and since THIS hook
-              // re-fires on EVERY DOWNLOAD_MODEL entry (fresh OR
-              // retried, re-checked fresh above), retrying naturally
-              // re-runs ensureMlxExtras first, which self-heals via
-              // its own `--clear` arm on a second failure.
+              // directory. (v0.5.1 fix round: CREATE_VENV's own
+              // drive()-loop step now self-heals that exact case with a
+              // `--clear` retry too — see runCreateVenvStep above and
+              // venvCreate's own doc comment, uvCommands.ts — so this
+              // would no longer fail outright, but re-verifying three
+              // steps that never actually failed is still needless
+              // work.) DOWNLOAD_MODEL's own EXISTING retry semantic
+              // (handleRetry's generic fallback: re-enter DOWNLOAD_MODEL
+              // directly, never CHECKING) is the "closest existing
+              // shape" that actually behaves correctly here — and since
+              // THIS hook re-fires on EVERY DOWNLOAD_MODEL entry (fresh
+              // OR retried, re-checked fresh above), retrying naturally
+              // re-runs ensureMlxExtras first, which self-heals via its
+              // own `--clear` arm on a second failure.
               current = {
                 state: { phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR", error: message, retriable: true },
                 effects: [],
@@ -1230,7 +1294,14 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
           }
         }
       }
-      const event = await runEffects(current.state, current.effects, runnerDeps);
+      // CREATE_VENV routes through runCreateVenvStep's own --clear
+      // self-heal wrapper (see that function's own doc comment above)
+      // instead of calling runEffects directly — every other step stays
+      // byte-identical to before this fix.
+      const event =
+        current.state.phase === "STEP" && current.state.step === "CREATE_VENV" && current.state.status === "RUNNING"
+          ? await runCreateVenvStep(current.state, current.effects)
+          : await runEffects(current.state, current.effects, runnerDeps);
       if (generation !== myGeneration) return; // superseded — apply nothing further.
       current = transition(ctx, current.state, event);
       if (event.type === "CHECK_RESULT" && event.mlxUsability) {
@@ -1996,6 +2067,57 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
         // back into the (managed) drive loop below — externalState()
         // checks this flag FIRST, ahead of current.state, so leaving it
         // true would mask the fresh drive's real progress entirely.
+        externalUnmanaged = false;
+        current = initial();
+        notify();
+        driveGuarded();
+      })();
+      sidecarLifecycleInFlight = run.finally(() => {
+        sidecarLifecycleInFlight = null;
+      });
+      return sidecarLifecycleInFlight;
+    },
+    async requestProvisionCheck() {
+      // F3 field-test round 2 (Sol/Opus review): a user can flip
+      // sidecarMode external->managed in Settings without the required
+      // restart, then hit Start — start()'s/resume()'s own preflight
+      // (useMeeting.ts) reads LIVE settings, so it calls this method
+      // believing "managed" applies, but THIS handle still booted
+      // external. `sidecarMode` (the const captured once above, at the
+      // top of bootstrapDesktop, from deps.getSidecarMode()) is the
+      // authoritative record of which mode THIS handle actually booted
+      // in — unlike the live setting, it can't have silently drifted.
+      // An external-boot handle ran driveExternalGuarded()'s one-shot
+      // probe at startup, never the managed drive loop below, and never
+      // installed the server://exit crash-restart supervisor (see the
+      // `if (sidecarMode === "external")` branch at the end of
+      // bootstrapDesktop) — driving the managed loop on it here would
+      // silently start acting like a managed handle without ever having
+      // done that setup. No-op instead (no state reset, no drive) — the
+      // existing restart-required UX (SettingsDialog's own copy) owns
+      // getting the user a genuine managed handle. Checked FIRST, same
+      // ordering as switchModel()'s/installDiarization()'s own
+      // identical leading check.
+      if (sidecarMode === "external") {
+        diagLog(
+          "info",
+          "desktop-provision",
+          "外部模式下的 handle 收到重新检测请求，已忽略（需重启应用以切换到本地托管模式）",
+        );
+        return;
+      }
+      // Field-test fix B — see this method's own doc comment on
+      // DesktopBootstrapHandle above. Same shared-latch contract as
+      // reprovision()/switchModel() immediately above/below.
+      if (sidecarLifecycleInFlight) {
+        return Promise.reject(new Error(SIDECAR_LIFECYCLE_BUSY_MESSAGE));
+      }
+      const run = (async () => {
+        generation++; // supersedes whatever drive is currently running.
+        restartState = initialRestartState();
+        awaitingConsent = false;
+        osspeechDormant = false;
+        forceEngineSetupOnce = true;
         externalUnmanaged = false;
         current = initial();
         notify();

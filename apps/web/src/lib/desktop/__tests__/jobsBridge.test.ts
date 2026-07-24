@@ -68,6 +68,7 @@ function fakeHandle(overrides: Partial<DesktopBootstrapHandle> = {}): DesktopBoo
     paths: fakePaths,
     recheckHealth: async () => {},
     reprovision: async () => {},
+    requestProvisionCheck: async () => {},
     installedModel: async () => null,
     switchModel: async () => {},
     switchModelProgress$: () => () => {},

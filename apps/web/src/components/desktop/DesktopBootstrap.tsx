@@ -43,6 +43,7 @@ function describeError(error: unknown): string {
 
 export default function DesktopBootstrap() {
   const showToast = useApp((s) => s.showToast);
+  const setWizardVisible = useApp((s) => s.setWizardVisible);
   const [handle, setHandle] = useState<DesktopBootstrapHandle | null>(null);
   const [state, setState] = useState<DesktopBootstrapState | null>(null);
   const [logLines, setLogLines] = useState<DesktopLogLine[]>([]);
@@ -188,6 +189,39 @@ export default function DesktopBootstrap() {
     const entry = diagLog("error", "desktop-server", "本地服务已停止", redactHomePath(terminalReason));
     showToast({ message: "本地语音识别服务反复异常退出，已停止自动重启", ref: entry.ref });
   }, [terminalReason, showToast]);
+
+  // Field-test fix (desktop first-run onboarding never seen — verified
+  // root cause): mirrors `visible`/`showOnboarding` below into
+  // store.ts's wizardVisible, so page.tsx can sequence the first-run
+  // tutorial's auto-open AFTER this component stops covering the screen
+  // instead of racing it (both this and TutorialOverlay.tsx render
+  // `fixed inset-0 z-50`; this component mounts LATER in page.tsx's own
+  // JSX, so equal z-index + later DOM always won that tie before this
+  // fix). ALSO folds in showOnboarding — DesktopOnboardingSteps renders
+  // the exact same WizardFrame chrome (see that component's own header
+  // comment), so it's every bit as much "covering the screen" as the
+  // wizard itself; omitting it here would just move the same race to the
+  // STEP -> HEALTHY handoff into those two optional steps. Computed here
+  // (duplicating `visible`'s own phase ternary below, not reusing that
+  // const directly) because every hook — including this effect — must
+  // run unconditionally, ahead of the `!state` early return just below
+  // (Rules of Hooks); `!!state` keeps it a safe `false` before
+  // initDesktop() has resolved rather than reading `state.phase` on a
+  // possibly-null `state`.
+  const wizardOverlayVisible =
+    !!state &&
+    (showOnboarding ||
+      (state.phase === "WIZARD_CONSENT_REQUIRED"
+        ? !consentDismissed
+        : state.phase === "TERMINAL_ERROR"
+          ? !terminalDismissed
+          : state.phase === "EXTERNAL_UNMANAGED"
+            ? false
+            : state.phase === "STEP" && !(state.status === "ERROR" && stepErrorDismissed)));
+  useEffect(() => {
+    setWizardVisible(wizardOverlayVisible);
+    return () => setWizardVisible(false);
+  }, [wizardOverlayVisible, setWizardVisible]);
 
   if (!IS_DESKTOP || !handle || !state) return null;
 

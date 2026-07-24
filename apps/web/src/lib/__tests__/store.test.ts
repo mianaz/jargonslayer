@@ -1994,6 +1994,324 @@ describe("updateSettings — persist opt-out (S14.1 演示 fix)", () => {
   });
 });
 
+// Quit-time settings durability (field fix — real desktop/Tauri report:
+// an API key saved shortly before quitting the app was lost).
+// updateSettings' own persist is fire-and-forget (see store.ts's
+// pendingSettingsSave doc) — flushSettings is the durable-commit escape
+// hatch a caller can actually await (SettingsDialog's 保存 handler does
+// exactly this before closing/toasting; hydrate()'s own quit-time
+// pagehide/visibilitychange listener calls it unawaited — see WebKit bug
+// 199854, mirrors useMeeting.ts's own live-draft flush). These pin the
+// promise-chaining contract directly; the DOM-side listener wiring
+// itself is covered separately in store.quitFlush.test.ts (jsdom).
+describe("flushSettings — durable-commit guarantee for the quit-time flush", () => {
+  beforeEach(() => {
+    // F1 fix (Sol + Opus review, BLOCK): flushSettings is now a guarded
+    // no-op pre-hydration (see store.ts's own doc) — every test below
+    // simulates a caller reachable only post-hydration in the real app
+    // (SettingsDialog's 保存, the quit-time listeners once hydrate()
+    // resolves), same posture store.quitFlush.test.ts's own tests take.
+    useApp.setState({ hydrated: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
+  });
+
+  it("resolves only after storage.saveSettings resolves, writing the CURRENT live settings", async () => {
+    let resolveWrite: (() => void) | undefined;
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockImplementation(
+      () => new Promise<void>((resolve) => { resolveWrite = resolve; }),
+    );
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+
+    let landed = false;
+    const flushed = useApp.getState().flushSettings().then(() => { landed = true; });
+
+    // The underlying write hasn't resolved yet — flushSettings must not
+    // have settled either, no matter how many microtask ticks pass.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(landed).toBe(false);
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "webspeech" }));
+
+    resolveWrite!();
+    await flushed;
+    expect(landed).toBe(true);
+  });
+
+  it("supersedes/awaits an ALREADY in-flight updateSettings write — resolves only once BOTH have landed", async () => {
+    let resolveFirst: (() => void) | undefined;
+    const saveSpy = vi
+      .spyOn(storageModule, "saveSettings")
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce(undefined); // flushSettings' own fresh write
+
+    useApp.getState().updateSettings({ engine: "webspeech" }); // fires the first (still-pending) write
+
+    let landed = false;
+    const flushed = useApp.getState().flushSettings().then(() => { landed = true; });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(landed).toBe(false); // the EARLIER write is still in flight
+
+    resolveFirst!();
+    await flushed;
+    expect(landed).toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(2); // updateSettings' write + flushSettings' own write
+  });
+
+  it("is safe to call with nothing changed since the last write (idempotent)", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    for (const call of saveSpy.mock.calls) {
+      expect(call[0]).toEqual(useApp.getState().settings);
+    }
+  });
+});
+
+// F1 fix (Sol + Opus review, BLOCK — fieldtest-a batch): hydrate()
+// installs the quit-time pagehide/visibilitychange listeners BEFORE the
+// async `await Promise.all([storage.loadSettings(), ...])` resolves and
+// `hydrated:true` is set — during that window get().settings is still
+// DEFAULT_SETTINGS, so a pre-hydration pagehide/visibilitychange used to
+// overwrite the user's real saved settings blob with defaults. Guarding
+// inside flushSettings itself (rather than only at the listener install
+// site) covers the listeners AND any other early caller — this pins the
+// direct call-level contract; store.quitFlush.test.ts pins the actual
+// pagehide dispatch racing hydrate() (needs a real DOM event, and is
+// "exactly how this was missed": every pre-existing test there awaits
+// hydrate() first).
+describe("flushSettings — F1 pre-hydration guard (BLOCK fix)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
+  });
+
+  it("is a guarded no-op — never calls storage.saveSettings — while hydrated is still false", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: false });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("resumes writing once hydrated flips true (the listeners stay installed the whole time, unchanged)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: false });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+    expect(saveSpy).not.toHaveBeenCalled();
+
+    useApp.setState({ hydrated: true });
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "webspeech" }));
+  });
+});
+
+// F2 fix (Sol MEDIUM review — fieldtest-a batch): storage.saveSettings
+// now propagates a write failure instead of always resolving (see that
+// function's own doc) — these pin the two halves of the caller-audit:
+// (a) updateSettings' fire-and-forget persist branch must swallow the
+// rejection (no unhandled rejection) AND must not leave
+// pendingSettingsSave itself rejected, since flushSettings/the next
+// updateSettings chain onto it; (b) flushSettings' OWN write failure
+// must reach ITS caller (SettingsDialog's handleSave — see that
+// component's own test for the toast/close half) while ALSO not
+// poisoning pendingSettingsSave for whichever save runs next.
+describe("updateSettings / flushSettings — F2 fix: a failed write doesn't poison later saves", () => {
+  beforeEach(() => {
+    useApp.setState({ hydrated: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
+  });
+
+  it("updateSettings' fire-and-forget persist swallows a rejected write — no unhandled rejection", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockRejectedValueOnce(new Error("quota exceeded"));
+    const onUnhandledRejection = vi.fn();
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      useApp.getState().updateSettings({ engine: "webspeech" });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
+  });
+
+  it("a failed updateSettings write does not poison pendingSettingsSave — a later flushSettings still resolves", async () => {
+    const saveSpy = vi
+      .spyOn(storageModule, "saveSettings")
+      .mockRejectedValueOnce(new Error("quota exceeded")) // updateSettings' own fire-and-forget write
+      .mockResolvedValueOnce(undefined); // flushSettings' own later write
+
+    useApp.getState().updateSettings({ engine: "webspeech" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(useApp.getState().flushSettings()).resolves.toBeUndefined();
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("flushSettings propagates a write failure to its own caller (rejects)", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(useApp.getState().flushSettings()).rejects.toThrow("disk full");
+  });
+
+  it("a flushSettings rejection does not poison pendingSettingsSave — a later flushSettings still resolves", async () => {
+    const saveSpy = vi
+      .spyOn(storageModule, "saveSettings")
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(useApp.getState().flushSettings()).rejects.toThrow("disk full");
+    await expect(useApp.getState().flushSettings()).resolves.toBeUndefined();
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Demo-overlay stash (field-test round, extends S14.1): the two describe
+// blocks above pin S14.1's OWN single write (startDemo's persist:false)
+// and the general updateSettings/flushSettings persist contract in
+// isolation — neither covers the leak S14.1 left open: an ORDINARY
+// persist:true save (or the quit-time flushSettings/pagehide flush)
+// firing while a demo is live merges + persists the WHOLE settings
+// object, re-baking engine:"demo" back into storage. These pin
+// beginDemoOverlay/endDemoOverlay + the settingsForPersist chokepoint
+// that closes it — see AppState.demoOverlayPrevEngine's own doc, store.ts,
+// for the full design. store.quitFlush.test.ts pins the pagehide/
+// visibilitychange half specifically (needs a real DOM event).
+describe("demo-overlay stash (field-test round, extends S14.1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, demoOverlayPrevEngine: null, hydrated: false });
+  });
+
+  it("beginDemoOverlay stashes the real engine and flips live engine to demo, without persisting", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().beginDemoOverlay();
+
+    expect(useApp.getState().settings.engine).toBe("demo");
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("webspeech");
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("beginDemoOverlay is idempotent — a second call while already overlaid doesn't re-stash the live \"demo\" value over the real one", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+
+    useApp.getState().beginDemoOverlay();
+
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("webspeech");
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("an ordinary persist:true save during the overlay writes the STASHED engine to storage — live state stays demo", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ aiDetect: false });
+
+    expect(saveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ engine: "webspeech", aiDetect: false }),
+    );
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("flushSettings during the overlay writes the stashed engine", async () => {
+    // F1 fix: flushSettings is a guarded no-op pre-hydration now.
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "tabaudio" }, hydrated: true });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "tabaudio" }));
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("an explicit engine pick during the overlay clears the stash and persists the pick", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ engine: "whisper" });
+
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    expect(useApp.getState().settings.engine).toBe("whisper");
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "whisper" }));
+  });
+
+  it("endDemoOverlay restores the live engine and never touches storage", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().endDemoOverlay();
+
+    expect(useApp.getState().settings.engine).toBe("webspeech");
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("endDemoOverlay is a safe no-op when no overlay is active", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, demoOverlayPrevEngine: null });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().endDemoOverlay();
+
+    expect(useApp.getState().settings.engine).toBe("webspeech");
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("stashing \"demo\" itself (a fresh install's first-ever ≡ 演示) still restores correctly through endDemoOverlay", () => {
+    // DEFAULT_SETTINGS.engine is "demo" — a brand-new user's first demo
+    // stashes "demo" as the "real" prior value, which IS correct (they
+    // never picked anything else yet). Exercises the exact gap
+    // endDemoOverlay's own doc comment calls out: updateSettings' overlay
+    // supersession only clears the stash for a patch whose engine !==
+    // "demo", so restoring a stash that IS "demo" needs endDemoOverlay's
+    // own explicit clear, not that side effect.
+    useApp.setState({ settings: DEFAULT_SETTINGS, demoOverlayPrevEngine: null });
+    useApp.getState().beginDemoOverlay();
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("demo");
+
+    useApp.getState().endDemoOverlay();
+
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("fresh-default case (no overlay): an ordinary save persists engine:\"demo\" unchanged, exactly as today", () => {
+    expect(DEFAULT_SETTINGS.engine).toBe("demo");
+    useApp.setState({ settings: DEFAULT_SETTINGS, demoOverlayPrevEngine: null });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ aiDetect: false });
+
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "demo", aiDetect: false }));
+  });
+});
+
 describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coercion", () => {
   function withEngine(engine: Settings["engine"]): Settings {
     return { ...DEFAULT_SETTINGS, engine };

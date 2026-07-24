@@ -114,6 +114,43 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     expect(container!.querySelector('[data-testid="segment-select-s1"]')).toBeNull();
   });
 
+  it("全选 selects every visible segment; clicking it again (取消全选) clears the selection", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" }), seg({ id: "s2" }), seg({ id: "s3" })],
+      status: "stopped",
+      settings: makeSettings(),
+    });
+    await renderPanel();
+
+    await act(async () =>
+      (container!.querySelector('[data-testid="btn-select-mode"]') as HTMLButtonElement).dispatchEvent(
+        new MouseEvent("click", { bubbles: true }),
+      ),
+    );
+
+    const selectAllBtn = container!.querySelector('[data-testid="btn-select-all"]') as HTMLButtonElement;
+    expect(selectAllBtn.textContent).toBe("全选");
+
+    await act(async () => selectAllBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    for (const id of ["s1", "s2", "s3"]) {
+      expect(
+        (container!.querySelector(`[data-testid="segment-select-${id}"]`) as HTMLInputElement).checked,
+      ).toBe(true);
+    }
+    expect(container!.querySelector('[data-testid="btn-select-all"]')?.textContent).toBe("取消全选");
+
+    // Toggles back to 全选 and clears — same button, now labeled 取消全选.
+    await act(async () => selectAllBtn.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+
+    for (const id of ["s1", "s2", "s3"]) {
+      expect(
+        (container!.querySelector(`[data-testid="segment-select-${id}"]`) as HTMLInputElement).checked,
+      ).toBe(false);
+    }
+    expect(container!.querySelector('[data-testid="btn-select-all"]')?.textContent).toBe("全选");
+  });
+
   it("bulk assign via 指派给… calls assignSegmentsSpeaker(selectedIds, name) and exits selection mode after", async () => {
     useApp.setState({
       segments: [seg({ id: "s1" }), seg({ id: "s2" }), seg({ id: "s3" })],

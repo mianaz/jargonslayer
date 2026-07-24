@@ -70,6 +70,7 @@ import { trackInstallDiar, trackSwitchModel } from "@/lib/desktop/jobsBridge";
 import { useTasks } from "@/lib/tasks/registry";
 import { connectOpenRouterDesktop } from "@/lib/oauth/openrouterDesktop";
 import { describeOAuthFailure } from "@/components/desktop/onboardingSettings";
+import { isEngineControlBusy } from "@/components/Header";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import {
   isSectionVisible,
@@ -179,7 +180,7 @@ const ALL_ENGINE_CARDS: {
   {
     value: "whisper",
     label: "本地 Whisper",
-    hint: "音频只在本机处理，不出设备",
+    hint: "麦克风收音，本地 Whisper 模型识别，音频不出设备",
     sidecarOnly: true,
   },
   // D7 desktop tabaudio replacement (docs/design-explorations/
@@ -199,7 +200,7 @@ const ALL_ENGINE_CARDS: {
     ? {
         value: "appaudio",
         label: "系统/App 音频",
-        hint: "会议中对方的声音，也含 Mac 播放的其他声音，不含你的麦克风",
+        hint: "捕获 Mac 系统/App 播放的声音（对方语音，不含你的麦克风），同样由本地 Whisper 识别",
         sidecarOnly: true,
       }
     : {
@@ -817,6 +818,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const meetingStatus = useApp((s) => s.status);
   const meetingActive =
     meetingStatus === "connecting" || meetingStatus === "listening" || meetingStatus === "paused";
+  // Field-test fix: the bottom bar (StatusLine) already disables engine
+  // switching the moment a meeting is connecting/listening via
+  // isEngineControlBusy (Header.tsx) — a mid-session engine change is
+  // silently ignored, not applied (useMeeting.ts's attachEngine only
+  // snapshots settings.engine at Start), so this dialog's own engine
+  // cards need the same gate. Deliberately isEngineControlBusy, not
+  // meetingActive above: "paused" must stay unlocked, since resuming
+  // from pause genuinely reconciles an engine change (useMeeting.ts:586).
+  const engineLockedByMeeting = isEngineControlBusy(meetingStatus);
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   // v0.5.1 appearance sprint (D4): non-null while the 显示 section shows
@@ -1583,7 +1593,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
     // uiMode is deliberately excluded from `draft` — the header toggle
     // above writes it straight through updateSettings the moment it's
@@ -1623,6 +1633,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // actual persistence boundary, closes both holes with the one
     // allowlist source of truth instead of re-deriving the check here.
     updateSettings(coercePreviewModels(toSave));
+    // Field-test fix: updateSettings' own persist above is fire-and-
+    // forget (store.ts) — a key saved right before quit could still lose
+    // the race against app teardown. Await the write actually committing
+    // before this dialog closes/toasts "已保存".
+    //
+    // F2 fix (Sol MEDIUM review): flushSettings can now reject (storage.
+    // saveSettings propagates IndexedDB failures instead of always
+    // resolving — see both functions' own docs) — on failure, show an
+    // explicit error toast and KEEP the dialog open instead of falling
+    // through to the success toast + onClose, so the user isn't told
+    // "已保存" (and the dialog doesn't vanish) over a write that didn't
+    // actually land. Only the parts that CLAIM success — enabling the
+    // just-checked packs, the success toast, closing — are gated; the
+    // live in-memory settings update above already happened regardless
+    // (matches updateSettings' own fire-and-forget persist, unaffected
+    // by this).
+    try {
+      await useApp.getState().flushSettings();
+    } catch {
+      showToast("设置保存失败，请重试（存储不可用或空间不足）");
+      return;
+    }
     setEnabledPacks(enabledPacks);
     showToast(sidecarModeChanged ? "已保存，重启应用后生效" : "设置已保存");
     onClose();
@@ -2277,7 +2309,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <button
                     key={opt.value}
                     type="button"
-                    disabled={opt.disabled || previewLocked || floorLocked}
+                    disabled={opt.disabled || previewLocked || floorLocked || engineLockedByMeeting}
                     onClick={() => patch({ engine: opt.value })}
                     title={
                       previewLocked
@@ -2337,6 +2369,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 );
               })}
             </div>
+
+            {/* Field-test fix: standing (not hover-only) explanation for
+               why every card above just went disabled/dim —
+               engineLockedByMeeting's own doc comment has the why. */}
+            {engineLockedByMeeting && (
+              <div className="text-xs text-mut2">会议进行中，无法切换引擎；暂停或结束会议后可切换</div>
+            )}
 
             {/* S11 osspeech blueprint (§3 Worker D, §Q5): 预下载模型 —
                background-preinstalls the SpeechAnalyzer asset for

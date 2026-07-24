@@ -101,8 +101,26 @@ export function pythonInstall(paths: DesktopPaths): UvCommand {
   return { args: ["python", "install", PINNED_PYTHON_MINOR], env: uvEnv(paths) };
 }
 
-export function venvCreate(paths: DesktopPaths): UvCommand {
-  return { args: ["venv", paths.venvDir, "--python", PINNED_PYTHON_MINOR], env: uvEnv(paths) };
+/** `uv venv <venvDir> --python 3.12 [--clear]` — the base whisper venv's
+ *  own CREATE_VENV build step (provisionMachine.ts's STEP_ORDER):
+ *  `clear:true` is the RETRY arm (`--clear` wipes and recreates the
+ *  target directory instead of erroring on an already-populated one),
+ *  used only when a PRIOR attempt already failed — see bootstrap.ts's
+ *  own drive() loop (v0.5.1 field-test fix: an app closed mid `uv venv`
+ *  leaves a half-written venvDir behind, so a bare retry against it
+ *  exits code 2, "a virtual environment already exists", forever), which
+ *  self-heals the SAME way bootstrap.ts's own ensureMlxExtras already
+ *  does for the separate mlx venv: trying once WITHOUT --clear, then
+ *  once WITH it.
+ *  `clear` defaults to false (a fresh install never needs it — the
+ *  target directory doesn't exist yet). Mirrors venvCreateMlx below —
+ *  same opts shape, same doc-comment structure — kept as two separate
+ *  functions (not a shared helper) since they target two different
+ *  DesktopPaths fields. */
+export function venvCreate(paths: DesktopPaths, opts: { clear?: boolean } = {}): UvCommand {
+  const args = ["venv", paths.venvDir, "--python", PINNED_PYTHON_MINOR];
+  if (opts.clear) args.push("--clear");
+  return { args, env: uvEnv(paths) };
 }
 
 export function pipInstall(paths: DesktopPaths): UvCommand {
@@ -139,16 +157,21 @@ export function pipInstallDiar(paths: DesktopPaths): UvCommand {
 // `mlxVenvPython` — a wholly separate venv (§C F8's redesign: airtight
 // isolation from the base whisper venv, no shared numpy/numba pins to
 // conflict over). CROSS-LANE CONTRACT pinned for worker A1 (Rust,
-// uv.rs's validate_uv_args): venvCreateMlx's optional trailing
-// `--clear` arg and pipCheckMlx's new `pip check` subcommand shape are
-// BOTH new call shapes run_uv's validator doesn't accept yet — this
-// file only builds {args,env}; A1's uv.rs is what actually has to grow
-// matching match arms before either of these can spawn for real. `uv
-// venv --help`/`uv pip check --help` verified live against the same
-// pinned 0.11.28 uv this repo's other builders were verified against
-// (see this file's own header comment): `-c, --clear` is a bare flag
-// (no value) on `uv venv`; `uv pip check` takes `-p/--python <PYTHON>`,
-// no positional operand.
+// uv.rs's validate_uv_args) at S12a implementation time: venvCreateMlx's
+// optional trailing `--clear` arg and pipCheckMlx's new `pip check`
+// subcommand shape were both new call shapes run_uv's validator didn't
+// accept yet — this file only builds {args,env}; A1's uv.rs grew the
+// matching match arms before either could spawn for real. Both landed
+// since: uv.rs's own `--clear` match arm validates GENERICALLY (any
+// `venv_dir` under app-data, not just the mlx one — `[sub, venv_dir,
+// flag, version, clear_flag]`), so the BASE venvCreate() builder above
+// picked up the identical optional `{clear}` retry arg (v0.5.1
+// field-test self-heal fix — see its own doc comment) with zero further
+// Rust changes needed. `uv venv --help`/`uv pip check --help` verified
+// live against the same pinned 0.11.28 uv this repo's other builders
+// were verified against (see this file's own header comment): `-c,
+// --clear` is a bare flag (no value) on `uv venv`; `uv pip check` takes
+// `-p/--python <PYTHON>`, no positional operand.
 // ---------------------------------------------------------------------
 
 /** `uv venv <mlxVenvDir> --python 3.12 [--clear]` — §C Provision's

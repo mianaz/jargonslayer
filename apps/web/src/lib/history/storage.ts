@@ -57,12 +57,29 @@ async function migrateLegacyOnce(): Promise<void> {
   return migrationPromise;
 }
 
+// F2 fix (Sol MEDIUM review, fieldtest-a batch): this used to catch and
+// swallow every write failure, always resolving — so store.ts's
+// flushSettings/updateSettings (and SettingsDialog's 「设置已保存」 toast)
+// reported success even when nothing was durably written, the same
+// silent-key-loss class this whole batch exists to kill. Now rethrows
+// after logging, so a caller can actually tell "persisted" apart from
+// "silently did nothing" — see store.ts's own flushSettings/
+// updateSettings for how each of its callers now handles that (a
+// fire-and-forget caller catches+diag-logs; the durable-commit
+// flushSettings escape hatch propagates it to ITS OWN caller). Every
+// OTHER caller of this function (autoExport.ts's restoreFullBackup) is
+// audited there too. Unlike saveSession below, this does NOT switch to a
+// boolean-return contract — flushSettings' signature (Promise<void>,
+// already awaited by SettingsDialog's handleSave) fits a reject/try-catch
+// contract more directly than threading a new boolean through every
+// existing call site would.
 export async function saveSettings(s: Settings): Promise<void> {
   if (!hasIndexedDb()) return;
   try {
     await set(SETTINGS_KEY, s);
   } catch (err) {
     console.warn("[storage] saveSettings failed", err);
+    throw err;
   }
 }
 
