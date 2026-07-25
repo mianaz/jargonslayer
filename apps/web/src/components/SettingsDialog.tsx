@@ -3177,10 +3177,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div>
               <label className="text-xs text-mut">识别语言</label>
+              {/* S3 fix (v0.6 round-2 review): locked while a meeting is
+                 active (listening OR paused — same meetingActive signal
+                 the model-switch controls above already gate on, reused
+                 here rather than engineLockedByMeeting's narrower
+                 "paused stays unlocked" carve-out, since THAT carve-out
+                 only holds for the STT engine — resume() reconciles an
+                 engine change but never re-primes the translate
+                 provider's own lastPair, see providers.ts's own
+                 translate() doc). Changing the source language mid-
+                 meeting used to silently corrupt translation: a hard
+                 resume reattaches STT with the NEW source language, but
+                 DesktopSystemTranslationProvider.translate() only
+                 compares the TARGET against lastPair, so text kept
+                 flowing through the OLD source-language session. */}
               <select
                 value={draft.language}
                 onChange={(e) => patch({ language: e.target.value })}
-                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                disabled={meetingActive}
+                title={meetingActive ? "会议进行中，结束会议后可修改识别语言" : undefined}
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -3188,6 +3204,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </option>
                 ))}
               </select>
+              {meetingActive && (
+                <div className="mt-1 text-xs text-mut2">会议进行中，结束会议后可修改识别语言</div>
+              )}
             </div>
 
             {/* 托管模式 (v0.4 S3 chunk 6, desktop build only, blueprint
@@ -3980,12 +3999,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div data-ui-level="aiDetectExplainLanguage">
               <label className="text-xs text-mut">解释语言</label>
+              {/* S3 fix (v0.6 round-2 review): this IS the translation
+                 target — locked while a meeting is active for the same
+                 reason 识别语言 above is (see that field's own comment).
+                 Changing it mid-meeting makes queue.ts pass a NEW target
+                 to a provider still holding the OLD pair, which rejects
+                 every batch until the provider is re-primed (never
+                 happens mid-meeting), silently dropping pending
+                 translations. */}
               <select
                 value={draft.explainLanguage}
                 onChange={(e) =>
                   patch({ explainLanguage: e.target.value as ExplainLanguage })
                 }
-                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                disabled={meetingActive}
+                title={meetingActive ? "会议进行中，结束会议后可修改解释语言" : undefined}
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {EXPLAIN_LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -3995,6 +4024,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </select>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
                 卡片解释的语言；English 模式给不需要中文的用户，界面文字仍为中文
+                {meetingActive && "；会议进行中，结束会议后可修改"}
               </div>
             </div>
 

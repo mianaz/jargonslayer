@@ -248,6 +248,27 @@ describe("the shared core registry receives loaded packs", () => {
   });
 });
 
+describe("loadPacksIntoRegistry never poisons its own promise on failure (LOW fix, v0.6 round-2 review)", () => {
+  // Fails against pre-fix loadPacksIntoRegistry, where `loadingPromise =
+  // null` sat AFTER the await with no try/finally — a rejection left it
+  // set forever, so this SECOND call would return the SAME dead
+  // rejected promise instead of a genuine retry, even after the
+  // injected failure stopped happening. Mirrors apps/web's identical
+  // fix + test.
+  it("a failed load does not poison later calls — a later call (after the failure clears) succeeds instead of reusing the same rejected promise", async () => {
+    const store = createMemoryStore();
+    const registry = await import("@jargonslayer/core/detect/remotePacksRegistry");
+    const spy = vi.spyOn(registry, "setLoadedRemotePacks").mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+
+    await expect(loadPacksIntoRegistry(true, store)).rejects.toThrow("boom");
+
+    spy.mockRestore(); // the injected failure is now gone — a real retry should succeed
+    await expect(loadPacksIntoRegistry(true, store)).resolves.toBeUndefined();
+  });
+});
+
 describe("origin classification", () => {
   it("classifies the official raw.githubusercontent.com path with a 'main' ref as official", () => {
     expect(

@@ -3,11 +3,12 @@
 // are being spent on. Covers both provider families providerCore.ts can
 // observe a completed call for: openai-compat (full response, real
 // token counts, recorded in callJsonOpenAiCompat) and the Anthropic
-// family (call-count only, recorded generically in parseJsonContent —
-// see that function's own header comment for why). Kept separate from
-// providerCore.test.ts (sanitizeProviderExcerpt/key-leak focused) so
-// this file's own idb-keyval mock + `indexedDB` global stub never
-// perturbs that one.
+// family (recorded in anthropic.ts's own callJson at its messages.parse
+// success point — S6 fix, v0.6 round-2 review — plus generically in
+// parseJsonContent for the manual-extraction fallback path; see each
+// site's own doc comment). Kept separate from providerCore.test.ts
+// (sanitizeProviderExcerpt/key-leak focused) so this file's own
+// idb-keyval mock + `indexedDB` global stub never perturbs that one.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as z from "zod";
 import type { CallJsonOptions } from "../providerCore";
@@ -23,6 +24,33 @@ vi.mock("idb-keyval", () => ({
     memStore.delete(key);
   }),
 }));
+
+// S6 fix (v0.6 round-2 review) — no existing test in this repo mocks
+// @anthropic-ai/sdk at all, so anthropic.ts's own callJson (the
+// messages.parse primary path) had zero unit coverage of its own
+// internal logic. Minimal mock: a constructable default export whose
+// `.messages.parse`/`.messages.create` are plain vi.fn()s, plus
+// placeholder AuthenticationError/RateLimitError classes (callJson's
+// own catch block does `instanceof` checks against them — undefined
+// would throw a TypeError there instead of falling through to the
+// fallback path). zodOutputFormat is left real/un-mocked — it's a pure
+// schema transform with no network/side effects.
+const { mockMessagesParse, mockMessagesCreate } = vi.hoisted(() => ({
+  mockMessagesParse: vi.fn(),
+  mockMessagesCreate: vi.fn(),
+}));
+
+vi.mock("@anthropic-ai/sdk", () => {
+  class AuthenticationError extends Error {}
+  class RateLimitError extends Error {}
+  class MockAnthropic {
+    messages = { parse: mockMessagesParse, create: mockMessagesCreate };
+    constructor(_opts: { apiKey: string }) {}
+  }
+  return {
+    default: Object.assign(MockAnthropic, { AuthenticationError, RateLimitError }),
+  };
+});
 
 // Every recordUsage() call is deliberately fire-and-forget (T2 — never
 // awaited by callJsonOpenAiCompat/parseJsonContent, so a ledger write
@@ -106,7 +134,16 @@ describe("providerCore.ts — usage-ledger instrumentation (T2)", () => {
       expect(records.every((r) => r.provider === "openrouter.ai" && r.kind === "llm")).toBe(true);
     });
 
-    it("records once per completed call even when a repair retry was needed — not twice", async () => {
+    // S6 fix (v0.6 round-2 review): records BOTH completed HTTP
+    // responses — the first (billable-but-malformed) attempt AND the
+    // retry — not just the retry's. Fails against pre-fix
+    // callJsonOpenAiCompat, which only recorded usage inside the
+    // try's SUCCESS path: a parse failure on the first attempt used to
+    // discard its already-billed usage entirely, undercounting by
+    // exactly one completed call every time a repair retry fired. This
+    // is not double-counting — two separate provider requests really
+    // were made and really were billed.
+    it("records BOTH completed calls when a repair retry was needed — the first attempt's usage is never dropped", async () => {
       const { callJsonOpenAiCompat } = await import("../providerCore");
       const ledger = await import("../../usage/ledger");
       const fetchMock = vi
@@ -126,14 +163,20 @@ describe("providerCore.ts — usage-ledger instrumentation (T2)", () => {
       await flush();
 
       const records = await ledger.getUsage();
-      expect(records.find((r) => r.metric === "calls")?.value).toBe(1);
-      // Uses the RETRY's own usage (the attempt that actually produced
-      // the returned result) — not the first, discarded attempt's.
-      expect(records.find((r) => r.metric === "inputTokens")?.value).toBe(40);
-      expect(records.find((r) => r.metric === "outputTokens")?.value).toBe(8);
+      expect(records.find((r) => r.metric === "calls")?.value).toBe(2);
+      // Both attempts' token counts SUM into the same bucket (10+40,
+      // 5+8) — the ledger aggregates by (day, provider, kind, metric),
+      // not per-call.
+      expect(records.find((r) => r.metric === "inputTokens")?.value).toBe(50);
+      expect(records.find((r) => r.metric === "outputTokens")?.value).toBe(13);
     });
 
-    it("never records a failed call — both attempts exhausted records nothing", async () => {
+    // S6 fix: a response that never produces valid JSON is still TWO
+    // real, completed, billable provider calls — "failed to parse" is
+    // not "never happened". Fails against pre-fix code, which recorded
+    // nothing at all here (both attempts' usage was discarded, since
+    // neither one's own try-block success path was ever reached).
+    it("still records both completed calls even when BOTH attempts fail to parse (the overall call still throws)", async () => {
       const { callJsonOpenAiCompat, BadOutputError } = await import("../providerCore");
       const ledger = await import("../../usage/ledger");
       vi.stubGlobal(
@@ -145,7 +188,9 @@ describe("providerCore.ts — usage-ledger instrumentation (T2)", () => {
       );
 
       await expect(callJsonOpenAiCompat(baseOpts())).rejects.toBeInstanceOf(BadOutputError);
-      expect(await ledger.getUsage()).toEqual([]);
+      await flush();
+      const records = await ledger.getUsage();
+      expect(records.find((r) => r.metric === "calls")?.value).toBe(2);
     });
 
     it("records only `calls` (no token rows) when the response carries no usage block", async () => {
@@ -227,6 +272,68 @@ describe("providerCore.ts — usage-ledger instrumentation (T2)", () => {
       await flush();
 
       expect(await ledger.getUsage()).toEqual([]);
+    });
+  });
+
+  // S6 fix (v0.6 round-2 review): anthropic.ts's callJson — the
+  // messages.parse() PRIMARY path (the common case: every normal
+  // Anthropic structured-output call that doesn't need the manual-
+  // extraction fallback) used to return message.parsed_output directly
+  // on success WITHOUT ever reaching parseJsonContent (the SDK already
+  // validated it server-side) — so it recorded NOTHING at all. Only the
+  // rarer fallback path (callJsonViaFallback, which DOES funnel through
+  // parseJsonContent) ever recorded anything. Fails against pre-fix
+  // anthropic.ts: ledger.getUsage() would be empty after a successful
+  // call here.
+  describe("Anthropic family — anthropic.ts's own messages.parse() primary-path recording", () => {
+    beforeEach(() => {
+      mockMessagesParse.mockReset();
+      mockMessagesCreate.mockReset();
+    });
+
+    it("records real token counts (not just call-count) at the messages.parse() success point", async () => {
+      mockMessagesParse.mockResolvedValue({
+        parsed_output: { ok: true },
+        usage: { input_tokens: 200, output_tokens: 50 },
+      });
+      const { callJson } = await import("../anthropic");
+      const ledger = await import("../../usage/ledger");
+
+      const result = await callJson(baseOpts({ provider: "anthropic", baseUrl: undefined }));
+
+      expect(result).toEqual({ ok: true });
+      expect(mockMessagesCreate).not.toHaveBeenCalled(); // fallback never engaged
+      await flush();
+
+      const records = await ledger.getUsage();
+      const byMetric = Object.fromEntries(records.map((r) => [r.metric, r.value]));
+      expect(byMetric).toEqual({ calls: 1, inputTokens: 200, outputTokens: 50 });
+      expect(records.every((r) => r.provider === "anthropic")).toBe(true);
+    });
+
+    it("a null parsed_output falls through to the manual-extraction fallback, which records itself via parseJsonContent (no double-count from the primary path)", async () => {
+      mockMessagesParse.mockResolvedValue({
+        parsed_output: null,
+        usage: { input_tokens: 999, output_tokens: 999 }, // must NOT be recorded — this path never reaches the primary success point
+      });
+      mockMessagesCreate.mockResolvedValue({
+        content: [{ type: "text", text: '{"ok":true}' }],
+      });
+      const { callJson } = await import("../anthropic");
+      const ledger = await import("../../usage/ledger");
+
+      const result = await callJson(baseOpts({ provider: "anthropic", baseUrl: undefined }));
+
+      expect(result).toEqual({ ok: true });
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+      await flush();
+
+      // Exactly ONE calls:1 row (the fallback's own, via parseJsonContent)
+      // — never the primary path's 999/999 tokens.
+      const records = await ledger.getUsage();
+      expect(records).toEqual([
+        expect.objectContaining({ provider: "anthropic", kind: "llm", metric: "calls", value: 1 }),
+      ]);
     });
   });
 });

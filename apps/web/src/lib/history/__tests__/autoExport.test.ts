@@ -1053,6 +1053,62 @@ describe("sanitizeRestoredSettings — v0.5.1 customThemes/uiFont/monoFont/overl
   });
 });
 
+// S9 fix (v0.6 round-2 review): same F11 boolean-coercion trap as
+// overlayGlass above, now closed for usageTracking/packAutoUpdate too
+// (both allow-listed straight through the generic pick with no type
+// check at all before this fix — a hand-edited backup's
+// `usageTracking: "false"` restored as ON, `packAutoUpdate: "false"`
+// restored as ON); plus a new numeric-shape check for
+// packAutoUpdateCheckedAt/packsSchemaVersion, whose corrupted values
+// used to poison downstream NaN arithmetic rather than merely reading
+// wrong. Every assertion below fails against pre-fix
+// sanitizeRestoredSettings.
+describe("sanitizeRestoredSettings — S9 fix: usageTracking/packAutoUpdate/packAutoUpdateCheckedAt/packsSchemaVersion", () => {
+  it("accepts only an actual boolean for usageTracking, falling back to the default for anything else (including the string \"false\")", async () => {
+    const autoExport = await import("../autoExport");
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, usageTracking: true } as never).usageTracking).toBe(true);
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, usageTracking: false } as never).usageTracking).toBe(false);
+    expect(
+      autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, usageTracking: "false" } as never).usageTracking,
+    ).toBe(DEFAULT_SETTINGS.usageTracking);
+    expect(
+      autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, usageTracking: undefined } as never).usageTracking,
+    ).toBe(DEFAULT_SETTINGS.usageTracking);
+  });
+
+  it("accepts only an actual boolean for packAutoUpdate, falling back to the default for anything else (including the string \"false\")", async () => {
+    const autoExport = await import("../autoExport");
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, packAutoUpdate: true } as never).packAutoUpdate).toBe(true);
+    expect(autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, packAutoUpdate: false } as never).packAutoUpdate).toBe(false);
+    expect(
+      autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, packAutoUpdate: "false" } as never).packAutoUpdate,
+    ).toBe(DEFAULT_SETTINGS.packAutoUpdate);
+  });
+
+  it("keeps a genuine finite non-negative packAutoUpdateCheckedAt, and drops anything else entirely (never a poisoned NaN downstream)", async () => {
+    const autoExport = await import("../autoExport");
+    expect(
+      autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, packAutoUpdateCheckedAt: 1_700_000_000_000 } as never)
+        .packAutoUpdateCheckedAt,
+    ).toBe(1_700_000_000_000);
+    for (const bad of ["1_700_000_000_000", -1, NaN, Infinity, null]) {
+      const out = autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, packAutoUpdateCheckedAt: bad } as never);
+      expect("packAutoUpdateCheckedAt" in out).toBe(false);
+    }
+  });
+
+  it("keeps a genuine finite non-negative packsSchemaVersion, and falls back to the CURRENT default for anything else", async () => {
+    const autoExport = await import("../autoExport");
+    expect(
+      autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, packsSchemaVersion: 1 } as never).packsSchemaVersion,
+    ).toBe(1);
+    for (const bad of ["1", -1, NaN, Infinity, null, undefined]) {
+      const out = autoExport.sanitizeRestoredSettings({ ...DEFAULT_SETTINGS, packsSchemaVersion: bad } as never);
+      expect(out.packsSchemaVersion).toBe(DEFAULT_SETTINGS.packsSchemaVersion);
+    }
+  });
+});
+
 describe("postTaskWebhook — task.* envelope (#58 task center connector hook)", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
 

@@ -28,6 +28,7 @@ import { checkAppUpdate } from "@/lib/desktop/updateCheck";
 import { initIos } from "@/lib/desktop/bootstrap";
 import { enterDesktopCaptionMode, exitDesktopCaptionMode } from "@/lib/captionWindow";
 import { checkUpdates as checkPackUpdates, listPackSources } from "@/lib/detect/remotePacks";
+import { warmSystemTranslateProbeForStartup } from "@/lib/translate/providers";
 import { nextHelpOpenForWizardTransition } from "./wizardHelpTransition";
 import { triggerDictPackAutoUpdate } from "./dictPackAutoUpdateTrigger";
 
@@ -174,7 +175,8 @@ export default function Home() {
   };
 
   useEffect(() => {
-    void hydrate();
+    const hydration = hydrate();
+    void hydration;
     // Diagnostics (item 2): window error/unhandledrejection -> diag
     // ring buffer, registered once right alongside hydrate() — see
     // lib/diag/globalHandlers.ts's own doc comment.
@@ -201,7 +203,15 @@ export default function Home() {
     // no-op on a web build, never throws — see that module's own doc
     // comment); the check here just skips the call outright on web
     // rather than relying on that internal guard alone.
-    if (IS_DESKTOP) void checkAppUpdate();
+    if (IS_DESKTOP) {
+      void checkAppUpdate();
+      // HIGH-1 fix (v0.6 round-2 review): warm the Apple-translate probe
+      // once hydration resolves, so the FIRST meeting after a cold app
+      // launch already sees a warm cache when translateEngine is
+      // "system" — see warmSystemTranslateProbeForStartup's own doc
+      // comment in lib/translate/providers.ts.
+      void hydration.then(() => warmSystemTranslateProbeForStartup(useApp.getState().settings));
+    }
     // S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/D6) —
     // iOS init: ONLY the LLM transport wiring (bootstrap.ts's own
     // initIos() doc comment) — no wizard/update-check chrome, so unlike
@@ -237,16 +247,22 @@ export default function Home() {
   // not a different one.
   useEffect(() => {
     if (!hydrated) return;
+    const isMeetingActive = () => {
+      const s = useApp.getState().status;
+      return s === "connecting" || s === "listening" || s === "paused";
+    };
     const runCheck = () => {
       void triggerDictPackAutoUpdate({
         getSettings: () => useApp.getState().settings,
         isOnline: () => navigator.onLine,
-        isMeetingActive: () => {
-          const s = useApp.getState().status;
-          return s === "connecting" || s === "listening" || s === "paused";
-        },
+        isMeetingActive,
         listPackSources,
-        checkUpdates: checkPackUpdates,
+        // MEDIUM-2 fix (v0.6 round-2 review): threads the SAME
+        // isMeetingActive predicate into checkUpdates' own shouldContinue
+        // param — its multi-second refetch loop needs its own re-check
+        // right before writing, not just the entry-time one above (see
+        // remotePacks.ts's own checkUpdates doc comment).
+        checkUpdates: () => checkPackUpdates(() => !isMeetingActive()),
         recordCheckedAt: (checkedAt) =>
           useApp.getState().updateSettings({ packAutoUpdateCheckedAt: checkedAt }),
       });

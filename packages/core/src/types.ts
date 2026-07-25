@@ -625,6 +625,22 @@ export interface Settings {
   explainLanguage: "zh" | "en";
   // dictionary theme packs: null = all packs enabled
   enabledPacks: string[] | null;
+  // MEDIUM-5 fix (v0.6 round-2 review) — the packs-schema version this
+  // settings blob's own enabledPacks was last reconciled against (see
+  // detect/packs.ts's CURRENT_PACKS_SCHEMA_VERSION/PACKS_ADDED_AT_VERSION
+  // + store.ts's migrateSettings). A NEW built-in pack added in a LATER
+  // release would otherwise be permanently invisible to anyone who ever
+  // saved an explicit (non-null) enabledPacks array before it existed —
+  // migrateSettings unions newly-introduced pack ids into an old
+  // explicit array on load, keyed off this field, so the user's own
+  // explicit EXCLUSIONS survive while genuinely new packs default on
+  // like a fresh install. Always a concrete number post-migration
+  // (never absent) — DEFAULT_SETTINGS seeds CURRENT_PACKS_SCHEMA_VERSION
+  // directly: this file has zero imports of its own (dictionary-data.ts's
+  // header comment describes it as "a dependency-free leaf" for the
+  // identical reason DetectedTerm.senses[].domain stays loosely typed
+  // here), so that literal is mirrored by hand, not imported.
+  packsSchemaVersion: number;
   // Round-2 dict-pack auto-update: quiet daily background refresh of
   // every INSTALLED remote pack (lib/detect/remotePacks.ts's own
   // checkUpdates(), reused wholesale — see lib/detect/packAutoUpdate.ts),
@@ -973,6 +989,10 @@ export const DEFAULT_SETTINGS: Settings = {
   ankiConnect: { enabled: false, deckName: "JargonSlayer", port: 8765 },
   explainLanguage: "zh",
   enabledPacks: null,
+  // Must match detect/packs.ts's own CURRENT_PACKS_SCHEMA_VERSION
+  // literal — see packsSchemaVersion's own field doc above for why this
+  // file can't import it directly.
+  packsSchemaVersion: 1,
   packAutoUpdate: true,
   hfToken: "",
   sonioxKey: "",

@@ -18,11 +18,19 @@ const attachStreamMock = vi.fn((..._args: unknown[]) => Promise.resolve());
 const transportStopMock = vi.fn(() => Promise.resolve());
 vi.mock("../deepgramTransport", () => ({
   DeepgramTransport: class {
+    private events: { onStatus: (status: string) => void };
     constructor(...args: unknown[]) {
       deepgramTransportCtor(...args);
+      this.events = (args[0] as { events: { onStatus: (status: string) => void } }).events;
     }
-    attachStream(...args: unknown[]) {
-      return attachStreamMock(...args);
+    async attachStream(...args: unknown[]) {
+      const result = await attachStreamMock(...args);
+      // S7 fix (v0.6 round-2 review): the real transport fires
+      // onStatus("listening") once the WebSocket actually opens —
+      // DeepgramEngine's own streamStartedAt now hooks THAT, not
+      // attachStream()'s own resolution, so this mock simulates it.
+      this.events.onStatus("listening");
+      return result;
     }
     stop() {
       return transportStopMock();
@@ -73,7 +81,16 @@ describe("DeepgramEngine.start()", () => {
     await startP;
 
     expect(deepgramTransportCtor).toHaveBeenCalledTimes(1);
-    expect(deepgramTransportCtor).toHaveBeenCalledWith({ events, settings });
+    // S7 fix (v0.6 round-2 review): events is wrapped now — onInterim/
+    // onFinal forward through unchanged (same references), onStatus is
+    // intercepted (a new closure) to stamp streamStartedAt on
+    // "listening" before forwarding — see the usage-ledger describe
+    // block below for that behavior itself.
+    const ctorArgs = deepgramTransportCtor.mock.calls[0][0] as { events: STTEvents; settings: unknown };
+    expect(ctorArgs.settings).toBe(settings);
+    expect(ctorArgs.events.onInterim).toBe(events.onInterim);
+    expect(ctorArgs.events.onFinal).toBe(events.onFinal);
+    expect(ctorArgs.events.onStatus).not.toBe(events.onStatus);
     expect(attachStreamMock).toHaveBeenCalledWith(stream);
   });
 
@@ -218,5 +235,32 @@ describe("DeepgramEngine usage-ledger instrumentation (T2)", () => {
     await engine.stop();
 
     expect(recordSttSecondsMock).toHaveBeenCalledTimes(1);
+  });
+
+  // S7 fix (v0.6 round-2 review): stop() must not bill
+  // transport.stop()'s own drain wait as additional streaming time.
+  // Fails against pre-fix code, which read Date.now() AFTER
+  // transport.stop() resolved — this would report 8 (5+3), not 5.
+  it("does not bill transport.stop()'s own drain wait as additional streaming time", async () => {
+    vi.useFakeTimers();
+    transportStopMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 3000); // simulates the transport's own multi-second drain ack wait
+        }),
+    );
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new DeepgramEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "deepgram" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    vi.advanceTimersByTime(5000);
+    const stopP = engine.stop();
+    await vi.advanceTimersByTimeAsync(3000); // let the drain-wait promise inside stop() resolve
+    await stopP;
+
+    expect(recordSttSecondsMock).toHaveBeenCalledWith("deepgram", 5); // NOT 8
   });
 });

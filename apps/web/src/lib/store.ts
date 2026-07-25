@@ -22,6 +22,7 @@ import {
 } from "@jargonslayer/core/types";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
 import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
+import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonslayer/core/detect/packs";
 import { sanitizeDomains } from "./llm/tasks/inferContext";
 import type { DetectMode } from "./detect/scheduler";
 import type { OnDeviceMode } from "./stt/onDeviceSpeech";
@@ -1173,6 +1174,34 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
     settings.aiDetect = !legacy.dictionaryOnly;
   }
   delete (settings as { dictionaryOnly?: boolean }).dictionaryOnly;
+  // MEDIUM-5 fix (v0.6 round-2 review): union newly-introduced built-in
+  // pack ids into an OLD explicit enabledPacks array. SettingsDialog.tsx's
+  // own 保存 writes enabledPacks as an explicit array the moment a user
+  // has ever unchecked even ONE pack — that array is frozen at whatever
+  // packs existed at that moment, so a genuinely NEW built-in pack
+  // (added in a LATER release, e.g. v0.6's modern-usage/finance-consumer
+  // /daily-idiom) silently never fires for that user, forever
+  // (isPackEnabled treats "not in the array" as excluded). A null
+  // enabledPacks (nobody's ever customized packs — the common case)
+  // needs no migration: null already means "everything on", new packs
+  // included. Keyed off packsSchemaVersion so the user's own explicit
+  // EXCLUSIONS (packs they genuinely unchecked) survive untouched — only
+  // ids that didn't exist yet at their last-saved version get added —
+  // and running this twice is a no-op (packsSchemaVersion is already
+  // CURRENT_PACKS_SCHEMA_VERSION after the first pass, so the filter
+  // below finds nothing newer to union in).
+  const savedPacksVersion = legacy.packsSchemaVersion ?? 0;
+  if (settings.enabledPacks !== null) {
+    const explicitPacks = settings.enabledPacks;
+    const newlyIntroducedIds = Object.entries(PACKS_ADDED_AT_VERSION)
+      .filter(([version]) => Number(version) > savedPacksVersion)
+      .flatMap(([, ids]) => ids)
+      .filter((id) => !explicitPacks.includes(id));
+    if (newlyIntroducedIds.length > 0) {
+      settings.enabledPacks = [...explicitPacks, ...newlyIntroducedIds];
+    }
+  }
+  settings.packsSchemaVersion = CURRENT_PACKS_SCHEMA_VERSION;
   // S9/D7 platform coercion runs FIRST — see applyPlatformEngineDefaults'
   // own doc for why (an engine value must be legal for THIS platform
   // before preview-tier legality is even meaningful to ask about).

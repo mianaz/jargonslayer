@@ -102,6 +102,33 @@ export const PACKS: DictPack[] = [
   },
 ];
 
+/** Packs-schema version (MEDIUM-5 fix, v0.6 round-2 review) — bumped
+ *  whenever a NEW built-in pack is added to PACKS above. store.ts's
+ *  migrateSettings() reads this (via PACKS_ADDED_AT_VERSION below) to
+ *  union newly-introduced pack ids into an OLD saved EXPLICIT
+ *  enabledPacks array (SettingsDialog.tsx's own 保存 writes one the
+ *  moment a user unchecks even a single pack — see PACKS_ADDED_AT_
+ *  VERSION's own doc for the "explicit exclusions survive, genuinely
+ *  new packs default on" contract this backs). Settings.
+ *  packsSchemaVersion (types.ts) mirrors this exact literal value —
+ *  types.ts is a dependency-free leaf (see its own header comment) and
+ *  cannot import this constant, so keep the two in sync by hand
+ *  whenever this bumps. */
+export const CURRENT_PACKS_SCHEMA_VERSION = 1;
+
+/** Built-in pack ids introduced AT each packs-schema version, keyed by
+ *  the version they first appeared in. Version 1 is this mechanism's
+ *  own introduction (v0.6 round-2 fix round): the three field-agnostic
+ *  packs added earlier in v0.6 (see PACKS' own "v0.6: field-agnostic
+ *  vocabulary" comment above) — exactly what a pre-this-fix saved
+ *  enabledPacks array (frozen before they existed) is missing.
+ *  migrateSettings unions every entry strictly newer than whatever
+ *  version a saved settings blob last recorded; a future pack addition
+ *  bumps CURRENT_PACKS_SCHEMA_VERSION and adds its own entry here. */
+export const PACKS_ADDED_AT_VERSION: Record<number, string[]> = {
+  1: ["modern-usage", "finance-consumer", "daily-idiom"],
+};
+
 /** v0.6 T5 (multi-sense terms): a CONSERVATIVE built-in-pack ->
  *  DomainTag map, feeding apps/web's senseContext.ts derivation ("domains
  *  of explicitly-enabled packs" contribute 0.5 weight — see that file's

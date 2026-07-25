@@ -222,6 +222,25 @@ async function ensureLoaded(): Promise<void> {
  *  throws, so a write failure (or a disabled Settings.usageTracking,
  *  default true) can never break a meeting or an LLM call.
  *
+ *  S4 fix (v0.6 round-2 review): no-ops immediately when there's no
+ *  IndexedDB (llm/providerCore.ts is isomorphic and imported from
+ *  Next.js route handlers — on the hosted FULL tier every LLM call
+ *  routes server-side through /api/*, see llm/client.ts's own
+ *  useDirectTransport doc — so its recordLlmCallUsage call used to run
+ *  in a Node process with no real ledger to write to). Previously this
+ *  still mutated `cachedRecords` (an in-memory module-level array)
+ *  before the storage-layer `hasIndexedDb()` check inside persist()
+ *  caught it: on a long-lived Node server (not a fresh-per-request
+ *  serverless instance) that grew UNBOUNDED for the life of the
+ *  process — `pruneOldUsage` only runs at first-load, and `loaded`
+ *  latches true after that one load, so nothing ever pruned it again —
+ *  invisible to the user's own browser ledger the whole time regardless
+ *  (a completely separate JS realm). client.ts's own /api/* success
+ *  paths now record real call-count usage from the BROWSER instead
+ *  (see resolveLlmProviderId's own doc in providerCore.ts) — this
+ *  server-side path is dead weight, not a second source of truth to
+ *  keep in sync, so it's dropped here rather than threaded through.
+ *
  *  Concurrent calls are safe without an explicit write queue: the
  *  in-memory cache is mutated SYNCHRONOUSLY (inside persist(), before
  *  its own first `await`) as part of each call's own synchronous run —
@@ -230,11 +249,23 @@ async function ensureLoaded(): Promise<void> {
  *  its own, the same invariant history/glossary.ts's persist() already
  *  relies on. */
 export async function recordUsage(entry: Omit<UsageRecord, "day">): Promise<void> {
+  if (!hasIndexedDb()) return;
   try {
     const settings = await storage.loadSettings();
     if (settings?.usageTracking === false) return;
     await ensureLoaded();
-    const next = aggregateUsage(cachedRecords, { ...entry, day: dateKey(new Date()) });
+    // S10 fix (v0.6 round-2 review): pruneOldUsage used to run ONLY
+    // inside ensureLoaded(), which is itself guarded by `if (loaded)
+    // return` — so retention was actually enforced exactly once per
+    // module lifetime (once per page/app load), never again for the
+    // rest of that session. A tab/app instance kept open across the
+    // 90-day boundary would keep accumulating day-buckets forever
+    // instead of ever trimming back down. Re-applied here, on every
+    // write, right when the array is already being touched — cheap (a
+    // single .filter() over an array this module's own header already
+    // keeps small: "a year of heavy multi-provider use is still at
+    // most a few hundred rows").
+    const next = pruneOldUsage(aggregateUsage(cachedRecords, { ...entry, day: dateKey(new Date()) }));
     await persist(next);
   } catch (err) {
     console.warn("[usage] recordUsage failed", err);

@@ -29,9 +29,11 @@ import {
   SystemTranslatorUnavailableError,
   getSystemTranslateProbeSnapshot,
   probeSystemTranslateSupport,
+  resetSystemTranslateGenerationForTests,
   resetSystemTranslateProbeCacheForTests,
   resolveTranslationProvider,
   stopSystemTranslator,
+  warmSystemTranslateProbeForStartup,
 } from "../providers";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
@@ -68,6 +70,7 @@ const pair = { source: "en", target: "zh" };
 
 afterEach(() => {
   resetSystemTranslateProbeCacheForTests();
+  resetSystemTranslateGenerationForTests();
 });
 
 describe("DesktopSystemTranslationProvider", () => {
@@ -348,18 +351,76 @@ describe("resolveTranslationProvider on IS_DESKTOP (macOS 26+)", () => {
   });
 });
 
+describe("warmSystemTranslateProbeForStartup (HIGH-1 fix: first-meeting-after-launch warm-up)", () => {
+  it("cold cache + hydrated settings with translateEngine 'system' -> fires the probe at startup, and resolveTranslationProvider returns the desktop provider on the very FIRST call once warm", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      system_translate_probe: () => ({ osSupported: true, status: "installed" }),
+    });
+    currentInvoke = invoke;
+    const settings = makeSettings({ translateEngine: "system", language: "en-US", explainLanguage: "zh" });
+
+    expect(getSystemTranslateProbeSnapshot(pair)).toBeNull();
+
+    warmSystemTranslateProbeForStartup(settings);
+    expect(calls).toEqual([]); // fire-and-forget — not yet, getInvoke() itself is async
+
+    await flush();
+    expect(calls).toEqual([{ cmd: "system_translate_probe", args: { source: "en", target: "zh" } }]);
+    expect(getSystemTranslateProbeSnapshot(pair)).toEqual({ osSupported: true, status: "installed" });
+
+    // The bug: without the startup warm-up above, this FIRST
+    // resolveTranslationProvider call of the session would see a cold
+    // cache and silently fall back to LlmTranslationProvider for the
+    // whole meeting (only a SECOND call, after resolveTranslationProvider's
+    // own background probe settled, would ever get the desktop provider).
+    const provider = resolveTranslationProvider(() => settings);
+    expect(provider).toBeInstanceOf(DesktopSystemTranslationProvider);
+  });
+
+  it("translateEngine:'llm' -> never fires the probe", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      system_translate_probe: () => ({ osSupported: true, status: "installed" }),
+    });
+    currentInvoke = invoke;
+
+    warmSystemTranslateProbeForStartup(makeSettings({ translateEngine: "llm" }));
+    await flush();
+
+    expect(calls).toEqual([]);
+  });
+});
+
 describe("stopSystemTranslator (IS_DESKTOP)", () => {
-  it("calls invoke('system_translate_stop')", async () => {
+  it("calls invoke('system_translate_stop') with generation:null before any prepare() ever ran", async () => {
     const { invoke, calls } = makeFakeInvoke({ system_translate_stop: () => undefined });
     currentInvoke = invoke;
 
-    stopSystemTranslator();
-    await flush();
+    await stopSystemTranslator();
 
-    expect(calls).toEqual([{ cmd: "system_translate_stop", args: undefined }]);
+    expect(calls).toEqual([{ cmd: "system_translate_stop", args: { generation: null } }]);
   });
 
-  it("swallows an invoke() rejection — best-effort, never throws", async () => {
+  it("returns its promise now (S1 fix) — awaiting it actually waits for the invoke to settle", async () => {
+    let resolveStop!: () => void;
+    const { invoke, calls } = makeFakeInvoke({
+      system_translate_stop: () => new Promise((res) => { resolveStop = () => res(undefined); }),
+    });
+    currentInvoke = invoke;
+
+    let settled = false;
+    const stopPromise = stopSystemTranslator().then(() => {
+      settled = true;
+    });
+    await flush();
+    expect(settled).toBe(false); // still in flight
+    expect(calls).toHaveLength(1);
+
+    resolveStop();
+    await stopPromise;
+    expect(settled).toBe(true);
+  });
+
+  it("swallows an invoke() rejection — best-effort, never throws/rejects", async () => {
     const { invoke } = makeFakeInvoke({
       system_translate_stop: () => {
         throw new Error("already stopped");
@@ -367,7 +428,39 @@ describe("stopSystemTranslator (IS_DESKTOP)", () => {
     });
     currentInvoke = invoke;
 
-    expect(() => stopSystemTranslator()).not.toThrow();
+    await expect(stopSystemTranslator()).resolves.toBeUndefined();
+  });
+
+  // S1 regression test (v0.6 round-2 review): "a delayed stop from the
+  // previous meeting can kill the NEXT meeting's translator" — fails
+  // against pre-fix code, where stopSystemTranslator() took no
+  // generation argument at all (invoke("system_translate_stop") with no
+  // args), so the Rust side had no way to tell an old meeting's stop
+  // apart from a fresh one's.
+  it("passes the generation the MOST RECENT prepare() call warmed — a second meeting's prepare() changes what a later stop targets", async () => {
+    const prepareOk = makeFakeInvoke({ system_translate_prepare: () => 5 });
+    currentInvoke = prepareOk.invoke;
+    const provider = new DesktopSystemTranslationProvider();
+    provider.prepare(pair);
     await flush();
+
+    const stop1 = makeFakeInvoke({ system_translate_stop: () => undefined });
+    currentInvoke = stop1.invoke;
+    await stopSystemTranslator();
+    expect(stop1.calls).toEqual([{ cmd: "system_translate_stop", args: { generation: 5 } }]);
+
+    // A second meeting's own prepare() (possibly for the SAME pair, via
+    // a fresh provider instance — mirrors resolveTranslationProvider
+    // being called again at the next start()) warms a NEW generation.
+    const prepareOk2 = makeFakeInvoke({ system_translate_prepare: () => 6 });
+    currentInvoke = prepareOk2.invoke;
+    const provider2 = new DesktopSystemTranslationProvider();
+    provider2.prepare(pair);
+    await flush();
+
+    const stop2 = makeFakeInvoke({ system_translate_stop: () => undefined });
+    currentInvoke = stop2.invoke;
+    await stopSystemTranslator();
+    expect(stop2.calls).toEqual([{ cmd: "system_translate_stop", args: { generation: 6 } }]);
   });
 });

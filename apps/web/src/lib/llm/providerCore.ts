@@ -457,8 +457,19 @@ export function buildAnthropicMessagesRequestBody<T>(opts: CallJsonOptions<T>) {
  *  openai-compat vendors sees them broken out in the usage panel
  *  instead of collapsed into one generic "openai-compat" bucket. Falls
  *  back to the literal "openai-compat" when baseUrl is missing or
- *  fails to parse. */
-function resolveLlmProviderId(opts: Pick<CallJsonOptions<unknown>, "provider" | "baseUrl">): string {
+ *  fails to parse.
+ *
+ *  S4 fix (v0.6 round-2 review): exported — client.ts's own /api/*
+ *  success paths (detectViaNext/summarizeApiImpl/defineViaNext/
+ *  translateApiImpl/correctViaNext/inferContextViaNext) now record their
+ *  OWN call-count usage at the browser boundary using this SAME
+ *  resolution, since this file's own recordLlmCallUsage below never
+ *  actually reaches the user's browser ledger when it runs inside a
+ *  Next.js route handler (see ../usage/ledger.ts's own recordUsage doc
+ *  for the hasIndexedDb() guard that makes that call a clean no-op
+ *  server-side now, instead of silently writing to a process-global
+ *  nobody ever reads). */
+export function resolveLlmProviderId(opts: Pick<CallJsonOptions<unknown>, "provider" | "baseUrl">): string {
   if (opts.provider !== "openai-compat") return "anthropic";
   try {
     return new URL(opts.baseUrl ?? "").hostname || "openai-compat";
@@ -472,8 +483,17 @@ function resolveLlmProviderId(opts: Pick<CallJsonOptions<unknown>, "provider" | 
  *  only; see requestChatContent below — self-hosted/local openai-compat
  *  servers routinely omit the usage block entirely, hence the presence
  *  checks). Never awaited by its callers — a ledger write must never
- *  slow down or fail a real provider call. */
-function recordLlmCallUsage(
+ *  slow down or fail a real provider call.
+ *
+ *  S6 fix (v0.6 round-2 review): exported — anthropic.ts's own
+ *  `messages.parse()` primary path (callJson) returns `parsed_output`
+ *  directly on success without ever reaching parseJsonContent below
+ *  (the SDK already validated it server-side), so it used to record
+ *  NOTHING for the common case — only the rarer manual-extraction
+ *  fallback path (which DOES funnel through parseJsonContent) ever
+ *  recorded anything. anthropic.ts now calls this directly at its own
+ *  success point. */
+export function recordLlmCallUsage(
   provider: string,
   usage?: { inputTokens?: number; outputTokens?: number },
 ): void {
@@ -771,16 +791,21 @@ export async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise
   }
 
   const first = await requestChatContent(opts, opts.system);
+  // S6 fix (v0.6 round-2 review): recorded HERE, at RECEIPT — the
+  // token counts requestChatContent already parsed off the response
+  // body — rather than only on a successful parse below. The old code
+  // recorded usage only inside the try's success path: a billable-but-
+  // malformed response (BadOutputError) that then got repaired by the
+  // retry below used to record ONLY the retry's tokens, silently
+  // dropping this already-billed first call's own usage from the
+  // ledger (undercounting, not double-counting — this and the retry's
+  // own recordLlmCallUsage below are two DIFFERENT completed HTTP
+  // responses, each recorded exactly once regardless of what happens
+  // to it afterward).
+  recordLlmCallUsage(resolveLlmProviderId(opts), first.usage);
 
   try {
-    const result = parseJsonContent(first.content, opts);
-    // Usage-ledger instrumentation (v0.6 T2) — recorded HERE, at the
-    // successful return, with the real token counts requestChatContent
-    // already parsed off the response body (see ChatContentResult's own
-    // doc comment for why this doesn't live inside requestChatContent
-    // itself).
-    recordLlmCallUsage(resolveLlmProviderId(opts), first.usage);
-    return result;
+    return parseJsonContent(first.content, opts);
   } catch (err) {
     if (!(err instanceof BadOutputError)) throw err;
     // Extraction/parse/schema failure — give the model exactly one
@@ -793,7 +818,10 @@ export async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise
     opts,
     opts.system + OPENAI_COMPAT_JSON_REMINDER,
   );
-  const result = parseJsonContent(retry.content, opts);
+  // S6 fix: same "record at receipt" posture as the first attempt
+  // above — even if THIS parse also fails and the thrown BadOutputError
+  // propagates out of this function, the retry was still a real,
+  // completed, billable call.
   recordLlmCallUsage(resolveLlmProviderId(opts), retry.usage);
-  return result;
+  return parseJsonContent(retry.content, opts);
 }

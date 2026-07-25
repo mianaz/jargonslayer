@@ -119,6 +119,59 @@ describe("scanDictionary — last-word inflection AS IMPLEMENTED", () => {
   });
 });
 
+// S11 fix (v0.6 round-2 review): buildExpressionRegex's trailing `\b`
+// used to be unconditional — `\b` only satisfies when EXACTLY ONE of
+// its two neighboring characters is a word character, so placed right
+// after a non-word edge character (e.g. "100%") it can never match once
+// that symbol is itself followed by whitespace/punctuation/end-of-string
+// (both neighbors end up non-word) — the overwhelmingly common way such
+// a token actually appears in real text. Every assertion below fails
+// against pre-fix buildExpressionRegex.
+describe("scanDictionary — S11 fix: an expression ending in a non-word character can actually match", () => {
+  function remotePackWithExpression(expression: string) {
+    return {
+      id: "__test_symbol_pack__",
+      name: "symbol pack",
+      version: 1,
+      expressions: [
+        {
+          expression,
+          category: "phrase" as const,
+          meaning: "entirely",
+          chinese_explanation: "百分之百",
+          plain_english: "completely",
+          tone: "neutral",
+          confidence: 0.9,
+          pack: "__test_symbol_pack__",
+        },
+      ],
+      terms: [],
+    };
+  }
+
+  it("matches a trailing-symbol expression ('100%') followed by punctuation", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWithExpression("100%")]);
+    const res = scanDictionary("We hit 100% of the target.");
+    expect(res.expressions.some((e) => e.expression === "100%")).toBe(true);
+  });
+
+  it("matches a trailing-symbol expression at the very end of the text (no trailing character at all)", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWithExpression("100%")]);
+    const res = scanDictionary("We are at 100%");
+    expect(res.expressions.some((e) => e.expression === "100%")).toBe(true);
+  });
+
+  it("still matches an ordinary word-ending expression exactly as before (byte-identical regression guard)", () => {
+    const res = scanDictionary("Let's circle back tomorrow.");
+    expect(res.expressions.some((e) => e.expression === "circle back")).toBe(true);
+  });
+
+  it("still respects the leading word boundary for an ordinary entry — 'bandwidth' does not match inside 'broadband width'-style false substrings", () => {
+    const res = scanDictionary("The megabandwidth metric is unofficial.");
+    expect(res.expressions.some((e) => e.expression === "bandwidth")).toBe(false);
+  });
+});
+
 describe("scanDictionary — source_sentence extraction", () => {
   it("extracts only the sentence containing the match, not the whole text", () => {
     const res = scanDictionary(
@@ -757,6 +810,32 @@ describe("scanDictionary — multi-sense term selection (v0.6 T3)", () => {
       expect(hitWithBonus.senses![0].score).toBeCloseTo(hitWithout.senses![0].score! + 0.15, 5);
     });
 
+    // LOW fix (v0.6 round-2 review): an EMPTY domainWeights map (`{}`,
+    // not `undefined`) — this app's actual starting state every
+    // meeting, before any domain is inferred (useMeeting.ts always
+    // calls setSenseContext with a real object, never null in
+    // practice) — used to make the domain-zero-weight ambiguity
+    // trigger fire UNCONDITIONALLY, since "this sense's domain has
+    // zero weight" is trivially true of every domain when nothing has
+    // non-zero weight. Fails against pre-fix selectSense, where this
+    // assertion would see `true`.
+    it("an EMPTY domainWeights map ({}) does NOT trip the domain-zero-weight ambiguity trigger — no real domain signal to disagree with yet", () => {
+      setSenseContext({}); // present (non-null), but no domain has any weight at all
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "high", gloss_en: "high prior", gloss_zh: "高先验", domain: "genomics", prior: 1.0 },
+          { senseId: "low", gloss_en: "low prior", gloss_zh: "低先验", domain: "biomed", prior: 0.0 },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      const hit = res.terms.find((t) => t.term === "EMT");
+      // Wide margin (score gap 0.15, not < 0.15) so this isolates the
+      // domain-zero-weight condition, same isolation the sibling
+      // "sales"-weighted test above uses.
+      expect(hit!.gloss_en).toBe("high prior");
+      expect(hit!.ambiguous).toBe(false);
+    });
+
     it("ambiguous purely from zero domain weight (scored path only), even when the score margin is wide", () => {
       setSenseContext({ domainWeights: { sales: 1.0 } }); // neither candidate domain
       mockGetLoadedRemotePacks.mockReturnValue([
@@ -844,12 +923,55 @@ describe("longest-match-wins across overlapping term surfaces", () => {
     expect(surfaces).toContain("variance");
   });
 
-  it("does not drop a term that merely shares a prefix, without a word boundary", () => {
-    // "vest" must not be swallowed by "vesting" — \b-bounded containment
-    // only, never bare substring matching.
-    expect(dropSubsumedTermsForTests([{ term: "vest" }, { term: "vesting" }]).map((t) => t.term)).toEqual([
-      "vest",
-      "vesting",
-    ]);
+  // S8 fix (v0.6 round-2 review): a STANDALONE occurrence of the
+  // shorter surface, entirely separate from the compound one, must
+  // survive — the old label-based containment check couldn't tell
+  // these apart (it compared "vesting" against "vesting cliff" as bare
+  // strings, with no idea WHERE in the text either one actually
+  // matched) and dropped the legitimate standalone card too. Fails
+  // against pre-fix dropSubsumedTerms.
+  it("keeps a standalone occurrence of the shorter surface that is entirely separate from a LATER compound occurrence", () => {
+    const res = scanDictionary(
+      "Let's talk about vesting first, then get into the one-year vesting cliff.",
+      null,
+    );
+    const surfaces = res.terms.map((t) => t.term);
+    expect(surfaces).toContain("vesting"); // the standalone mention
+    expect(surfaces).toContain("vesting cliff"); // the compound mention
+  });
+
+  describe("dropSubsumedTerms (pure, span-based)", () => {
+    function hit(term: string, matchStart: number, matchEnd: number) {
+      return { term, matchStart, matchEnd };
+    }
+
+    it("drops a shorter span fully contained within a STRICTLY longer one", () => {
+      // "vesting" (7 chars) at [17,24) is fully inside "vesting cliff"
+      // (14 chars) at [17,31) — same start, contained end.
+      const result = dropSubsumedTermsForTests([hit("vesting", 17, 24), hit("vesting cliff", 17, 31)]);
+      expect(result.map((h) => h.term)).toEqual(["vesting cliff"]);
+    });
+
+    it("keeps both when the spans don't overlap at all, even if one label textually contains the other", () => {
+      const result = dropSubsumedTermsForTests([hit("vesting", 0, 7), hit("vesting cliff", 40, 54)]);
+      expect(result.map((h) => h.term)).toEqual(["vesting", "vesting cliff"]);
+    });
+
+    it("equal-length spans never subsume each other, even at the exact same position", () => {
+      const result = dropSubsumedTermsForTests([hit("a", 0, 5), hit("b", 0, 5)]);
+      expect(result.map((h) => h.term)).toEqual(["a", "b"]);
+    });
+
+    it("never allocates a RegExp per comparison and never disables filtering above 64 hits (the old guard's own bug) — 100 non-overlapping hits all survive, and a genuinely subsumed one among them still gets dropped", () => {
+      const hits = Array.from({ length: 100 }, (_, i) => hit(`term${i}`, i * 10, i * 10 + 5));
+      // Insert one genuinely subsumed pair, positioned well past every
+      // original hit's own span (0..995) so it can't accidentally
+      // collide with one of them.
+      hits.push(hit("short", 2000, 2005), hit("short-but-longer", 2000, 2016));
+      const result = dropSubsumedTermsForTests(hits);
+      expect(result.length).toBe(101); // 100 originals + the longer of the subsumed pair, minus the shorter
+      expect(result.some((h) => h.term === "short")).toBe(false);
+      expect(result.some((h) => h.term === "short-but-longer")).toBe(true);
+    });
   });
 });

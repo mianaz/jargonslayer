@@ -287,9 +287,10 @@ export class ChromeTranslatorProvider implements TranslationProvider {
 // its own header comment):
 //   invoke("system_translate_probe", {source,target})
 //     -> {osSupported: boolean; status: "installed"|"supported"|"unsupported"}
-//   invoke("system_translate_prepare", {source,target}) -> void   (spawns/warms the native child)
+//   invoke("system_translate_prepare", {source,target}) -> number   (spawns/warms
+//     the native child, returns its generation — S1 fix, v0.6 round-2 review)
 //   invoke("system_translate", {items:{id,text}[],source,target}) -> {id,text}[]  (order-preserving)
-//   invoke("system_translate_stop") -> void
+//   invoke("system_translate_stop", {generation: number|null}) -> void
 // ---------------------------------------------------------------
 
 export interface SystemTranslateProbeResult {
@@ -365,6 +366,26 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// S1 fix (v0.6 round-2 review): the generation the most recent
+// SUCCESSFUL system_translate_prepare call returned — read by
+// stopSystemTranslator below so a stop can only ever kill the exact
+// child it was issued for. stopSystemTranslator() is fire-and-forget on
+// the JS side (and even now that useMeeting.ts's own teardown paths
+// await it, the Rust-side invoke itself can still resolve arbitrarily
+// late), so without this a stop issued when one meeting ends could
+// resolve AFTER a brand-new meeting's own prepare() has already
+// registered its own child, killing the WRONG one. Module-level rather
+// than per-provider-instance for the same reason sessionCache/
+// systemProbeCache above are: only one DesktopSystemTranslationProvider
+// is ever live across the whole app at a time (one meeting at a time),
+// so "the generation the last prepare() call warmed" and "this specific
+// instance's own generation" are always the same value in practice.
+let lastDesktopTranslateGeneration: number | null = null;
+
+export function resetSystemTranslateGenerationForTests(): void {
+  lastDesktopTranslateGeneration = null;
+}
+
 export class DesktopSystemTranslationProvider implements TranslationProvider {
   readonly kind: Settings["translateEngine"] = "system";
 
@@ -387,7 +408,14 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
     void (async () => {
       try {
         const invoke = await getInvoke();
-        await invoke("system_translate_prepare", { source: pair.source, target: pair.target });
+        const generation = await invoke<number>("system_translate_prepare", {
+          source: pair.source,
+          target: pair.target,
+        });
+        // S1 fix: stash the generation this call warmed (or reused) so a
+        // LATER stopSystemTranslator() call can scope its kill to it —
+        // see lastDesktopTranslateGeneration's own doc comment above.
+        if (typeof generation === "number") lastDesktopTranslateGeneration = generation;
       } catch {
         this.prepareFailed = true;
       }
@@ -446,9 +474,20 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
  *  to call even when no system-translate child was ever spawned this
  *  meeting (translateEngine !== "system", or prepare() never ran), so
  *  callers don't need to track whether "system" was actually the
- *  resolved provider. No-op outside a desktop build. Fire-and-forget
- *  (void, not Promise) — matches every call site's own un-awaited
- *  `translateQueueRef.current?.stop()` sibling call in useMeeting.ts.
+ *  resolved provider. No-op outside a desktop build.
+ *
+ *  S1 fix (v0.6 round-2 review): now RETURNS its promise (used to be
+ *  `void`-only fire-and-forget) — useMeeting.ts's own teardown paths
+ *  (runStopFlow/doStop) await it now, so a stop is fully applied before
+ *  those flows move on. Passes lastDesktopTranslateGeneration along so
+ *  the Rust side can scope the kill to the exact child this call was
+ *  issued for — even awaited, the underlying invoke() can still resolve
+ *  arbitrarily late relative to a BRAND NEW meeting's own prepare() (a
+ *  slow IPC round trip, a caller that doesn't await this after all —
+ *  the component-unmount cleanup below still can't, since React effect
+ *  cleanups aren't async), so scoping by generation is what actually
+ *  closes "a delayed stop from the previous meeting kills the next
+ *  meeting's translator", not the await alone.
  *
  *  Scope (do NOT call this from just anywhere an engine.stop() happens
  *  to live): this provider — like translateQueueRef itself — is a
@@ -461,12 +500,12 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
  *  the component-unmount safety net) — never next to pause()'s own
  *  teardown-pause engine.stop() call, which would permanently kill
  *  translation for the rest of a meeting the user only meant to pause. */
-export function stopSystemTranslator(): void {
-  if (!IS_DESKTOP) return;
-  void (async () => {
+export function stopSystemTranslator(): Promise<void> {
+  if (!IS_DESKTOP) return Promise.resolve();
+  return (async () => {
     try {
       const invoke = await getInvoke();
-      await invoke("system_translate_stop");
+      await invoke("system_translate_stop", { generation: lastDesktopTranslateGeneration });
     } catch {
       // best-effort — mirrors osSpeech.ts/appAudio.ts's own stop_* calls
     }
@@ -492,6 +531,28 @@ export function stopSystemTranslator(): void {
  *  every batch, same as before this abstraction existed; the provider
  *  KIND itself is decided once, here, matching how engine kind is
  *  already frozen for a session (useMeeting.ts's attachEngine). */
+/** Startup warm-up (v0.6 round-2 review, HIGH-1 fix): resolveTranslationProvider's
+ *  IS_DESKTOP branch above only returns the desktop provider once
+ *  getSystemTranslateProbeSnapshot(pair) is already populated, and
+ *  systemProbeCache is memory-only — the only thing that used to warm it
+ *  was TranslationEngineRow's own Settings-row mount effect, which never
+ *  mounts unless the user opens Settings first (SettingsDialog.tsx's own
+ *  `if (!open) return null` gate). A user who launches the app with
+ *  translateEngine:"system" already selected and hits Start straight
+ *  away got LlmTranslationProvider for the WHOLE meeting instead —
+ *  exactly the no-API-key-needed case this engine exists for. Called
+ *  once from page.tsx's own mount effect, right after hydrate()
+ *  resolves, so the cache is already warm before the user's first Start
+ *  click. Fire-and-forget, same posture as every other startup probe in
+ *  that effect (checkAppUpdate/initIos) — a failed/slow probe changes
+ *  nothing here: resolveTranslationProvider already falls back to LLM on
+ *  a cold/negative cache. */
+export function warmSystemTranslateProbeForStartup(settings: Settings): void {
+  if (IS_DESKTOP && settings.translateEngine === "system") {
+    void probeSystemTranslateSupport(langPairFromSettings(settings));
+  }
+}
+
 export function resolveTranslationProvider(getSettings: () => Settings): TranslationProvider {
   const settings = getSettings();
   if (settings.translateEngine === "system") {

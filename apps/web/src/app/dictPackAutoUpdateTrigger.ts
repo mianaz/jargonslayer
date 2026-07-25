@@ -41,6 +41,20 @@ function logResult(result: PackAutoUpdateResult): void {
   );
 }
 
+// MEDIUM-1 fix (v0.6 round-2 review): module-level in-flight guard —
+// runPackAutoUpdate's own checkUpdates() can run ~200s (20 packs x
+// 10s), and page.tsx calls triggerDictPackAutoUpdate again on EVERY
+// browser "online" event, not just once at hydration. Flaky wifi can
+// fire several "online" events inside that one window; without this
+// guard each one starts its OWN full round, all queued behind the
+// first by remotePacks.ts's own enqueueSourcesOp serialization — 8
+// queued rounds x 20 packs would mean 160 requests instead of 20. A
+// call that arrives while one is still pending just reuses that SAME
+// in-flight promise instead of starting a new round; cleared the
+// moment it settles (success or failure alike), so the NEXT due check
+// still runs normally.
+let inFlight: Promise<void> | null = null;
+
 /** Fire-and-forget entry point — page.tsx calls this as `void
  *  triggerDictPackAutoUpdate(realDeps)`, both once hydration settles
  *  and again on every "online" event. NEVER rejects, regardless of
@@ -49,26 +63,33 @@ function logResult(result: PackAutoUpdateResult): void {
  *  checkUpdates/recordCheckedAt are already never-throw by
  *  construction, see that function's own doc), so a `void`-fired call
  *  here can never surface as an unhandled promise rejection. */
-export async function triggerDictPackAutoUpdate(deps: DictPackAutoUpdateTriggerDeps): Promise<void> {
-  try {
-    const settings = deps.getSettings();
-    let hasInstalledPacks = false;
+export function triggerDictPackAutoUpdate(deps: DictPackAutoUpdateTriggerDeps): Promise<void> {
+  if (inFlight) return inFlight;
+  const run = (async () => {
     try {
-      hasInstalledPacks = (await deps.listPackSources()).length > 0;
+      const settings = deps.getSettings();
+      let hasInstalledPacks = false;
+      try {
+        hasInstalledPacks = (await deps.listPackSources()).length > 0;
+      } catch (err) {
+        console.warn("[dictPackAutoUpdateTrigger] listPackSources failed", err);
+      }
+      const result = await runPackAutoUpdate({
+        enabled: settings.packAutoUpdate,
+        online: deps.isOnline(),
+        lastCheckedAt: settings.packAutoUpdateCheckedAt,
+        hasInstalledPacks,
+        isMeetingActive: deps.isMeetingActive,
+        checkUpdates: deps.checkUpdates,
+        recordCheckedAt: deps.recordCheckedAt,
+      });
+      logResult(result);
     } catch (err) {
-      console.warn("[dictPackAutoUpdateTrigger] listPackSources failed", err);
+      console.warn("[dictPackAutoUpdateTrigger] failed", err);
     }
-    const result = await runPackAutoUpdate({
-      enabled: settings.packAutoUpdate,
-      online: deps.isOnline(),
-      lastCheckedAt: settings.packAutoUpdateCheckedAt,
-      hasInstalledPacks,
-      isMeetingActive: deps.isMeetingActive,
-      checkUpdates: deps.checkUpdates,
-      recordCheckedAt: deps.recordCheckedAt,
-    });
-    logResult(result);
-  } catch (err) {
-    console.warn("[dictPackAutoUpdateTrigger] failed", err);
-  }
+  })();
+  inFlight = run.finally(() => {
+    inFlight = null;
+  });
+  return inFlight;
 }

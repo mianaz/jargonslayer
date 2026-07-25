@@ -947,8 +947,18 @@ export async function loadRemotePacksIntoRegistry(force = false): Promise<void> 
     setLoadedRemotePacks(sources.map((s) => s.pack));
     registryLoaded = true;
   })();
-  await loadingPromise;
-  loadingPromise = null;
+  // LOW fix (v0.6 round-2 review): `finally`, not a bare statement after
+  // the await — a readSources() failure used to leave `loadingPromise`
+  // pointing at the now-rejected promise FOREVER (the line clearing it
+  // never ran), so every later call for the rest of the session hit the
+  // `if (loadingPromise && !force)` reuse branch above and returned that
+  // SAME dead rejected promise, even long after whatever caused the
+  // original failure (a transient IDB error, say) had passed.
+  try {
+    await loadingPromise;
+  } finally {
+    loadingPromise = null;
+  }
 }
 
 // ---------------------------------------------------------------
@@ -1132,8 +1142,20 @@ export async function listPackSources(): Promise<RemotePackSource[]> {
  *  skipped (one broken source shouldn't block the rest). The whole
  *  read-modify-write runs inside enqueueSourcesOp (M1 fix) so this
  *  can't race a concurrent install/removal over its own multi-second
- *  refetch window. */
-export async function checkUpdates(): Promise<string[]> {
+ *  refetch window.
+ *
+ *  `shouldContinue` (MEDIUM-2 fix, v0.6 round-2 review): optional —
+ *  SettingsDialog's own manual 检查全部更新 button never passes it (an
+ *  explicit user click always proceeds, meeting or not, unchanged).
+ *  lib/detect/packAutoUpdate.ts's background auto-checker DOES pass one
+ *  (page.tsx's own wiring), re-checked right here, immediately before
+ *  writeSources/loadRemotePacksIntoRegistry, because the fetch loop
+ *  above can itself run for several seconds (one fetch per installed
+ *  source) — packAutoUpdate.ts's own entry-time "not during a meeting"
+ *  check alone can't catch a meeting that started WHILE this was still
+ *  refetching. Returns `[]` (no updates applied) without writing
+ *  anything when it fires. */
+export async function checkUpdates(shouldContinue?: () => boolean): Promise<string[]> {
   return enqueueSourcesOp(async () => {
     const sources = await readSources();
     if (sources.length === 0) return [];
@@ -1174,8 +1196,20 @@ export async function checkUpdates(): Promise<string[]> {
     // and keep the previous (already-valid) array on failure rather
     // than persisting an over-cap write.
     assertWithinTotalCapsForUpdate(next);
+
+    // MEDIUM-2 fix: see this function's own doc comment above.
+    if (shouldContinue && !shouldContinue()) return [];
+
     await writeSources(next);
-    await loadRemotePacksIntoRegistry(true);
+    // MEDIUM-2 fix: only reload the registry — which bumps its
+    // generation and wipes BOTH scanDictionary regex caches
+    // (dictionary.ts's own refreshRegexCachesIfStale) — when something
+    // actually changed. This used to run unconditionally, forcing every
+    // surface to recompile its regex on the next finalized segment even
+    // on a no-op check where every source was already current.
+    if (updatedIds.length > 0) {
+      await loadRemotePacksIntoRegistry(true);
+    }
     return updatedIds;
   });
 }

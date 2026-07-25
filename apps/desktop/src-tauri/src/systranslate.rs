@@ -229,26 +229,46 @@ struct RunningTranslate {
     generation: u64,
 }
 
+/// One in-flight `system_translate` request, tagged with the generation
+/// it was actually dispatched against (S2 fix, v0.6 round-2 review) —
+/// NOT necessarily `state.running`'s CURRENT generation by the time a
+/// reply (or a supersede, or a timeout) resolves it. This is what lets
+/// `fail_pending_for_generation` fail exactly the right in-flight
+/// requests when a child is replaced or a wedged one is killed, without
+/// ever touching a DIFFERENT (newer OR older) generation's own still-
+/// live requests sharing the same map.
+struct PendingEntry {
+    generation: u64,
+    sender: oneshot::Sender<Result<Vec<TranslateItem>, String>>,
+}
+
 /// Managed Tauri state (`.manage(SystemTranslateState::default())`,
 /// lib.rs). `pending`'s keys are request ids minted by `next_request_id`
 /// — a single process-wide monotonic counter NEVER reset across a
-/// generation change, which is what makes keying pending replies by id
-/// ALONE (no generation tag needed on `pending` itself) safe: an id can
-/// never collide across two different `--translate` children's own
-/// requests (see `finish_generation`'s own doc comment for the one place
-/// that DOES still need the separate `generation` guard — the `running`
-/// slot itself, not `pending`).
+/// generation change, so an id can never collide across two different
+/// `--translate` children's own requests. Each entry also carries its
+/// own generation (`PendingEntry`, S2 fix) — a request dispatched
+/// against one generation can outlive that generation (superseded,
+/// wedged-and-killed, or a natural crash) while a NEWER generation's own
+/// requests are already flowing through this SAME map, so failing
+/// "everyone" on any one of those events would wrongly fail the newer
+/// generation's still-live requests too.
 #[derive(Default)]
 pub struct SystemTranslateState {
     generation: AtomicU64,
     running: Mutex<Option<RunningTranslate>>,
-    pending: Mutex<HashMap<String, oneshot::Sender<Result<Vec<TranslateItem>, String>>>>,
+    pending: Mutex<HashMap<String, PendingEntry>>,
     next_request_id: AtomicU64,
 }
 
 /// Registers `running` as the new slot occupant, first taking + killing
-/// whatever child (if any) was ALREADY there. Returns whether a stale
-/// child was found (so the caller, which holds the real
+/// whatever child (if any) was ALREADY there, and immediately failing
+/// THAT child's own pending requests (S2 fix: the old code left them for
+/// the superseded reader task's own `finish_generation` call, which —
+/// correctly — refuses to touch `pending` once it notices it's no longer
+/// the current generation, silently stranding those callers to each wait
+/// out a full `TRANSLATE_TIMEOUT` instead of failing fast). Returns
+/// whether a stale child was found (so the caller, which holds the real
 /// `tauri::AppHandle` this fn deliberately doesn't take, can log it) —
 /// byte-for-byte the same shape as server.rs's own `register_prewarm_
 /// child` (that fn's own doc comment covers the exact race this closes:
@@ -256,13 +276,39 @@ pub struct SystemTranslateState {
 /// registration while an earlier call's own just-spawned child is still
 /// in the slot must not silently orphan it via a bare `*guard =
 /// Some(running)`).
+///
+/// S2 fix, second half: also REJECTS an older generation arriving late.
+/// `state.generation` is incremented in `system_translate_prepare`
+/// BEFORE the (possibly slow) child spawn, so two concurrent `prepare()`
+/// calls can finish spawning out of order — without this check, an
+/// older call finishing SECOND would blindly clobber (and kill) a newer,
+/// already-current child with a stale one. The rejected child is killed
+/// immediately (it was never registered, so nothing else will ever tear
+/// it down) and the caller gets a clear `Err` instead of a silently-wrong
+/// `Ok`.
 fn register_running_child(state: &SystemTranslateState, running: RunningTranslate) -> Result<bool, String> {
     let mut guard = state.running.lock().map_err(poison_err)?;
+    if let Some(existing) = guard.as_ref() {
+        if existing.generation > running.generation {
+            drop(guard);
+            let _ = running.child.kill();
+            return Err(
+                "system_translate_prepare: superseded by a newer prepare() call before this one finished spawning"
+                    .to_string(),
+            );
+        }
+    }
     let stale = guard.replace(running);
     drop(guard);
     let had_stale = stale.is_some();
     if let Some(stale) = stale {
+        let generation = stale.generation;
         let _ = stale.child.kill();
+        fail_pending_for_generation(
+            state,
+            generation,
+            "jargonslayer-audiocap --translate was superseded by a newer prepare() call",
+        );
     }
     Ok(had_stale)
 }
@@ -270,12 +316,12 @@ fn register_running_child(state: &SystemTranslateState, running: RunningTranslat
 /// Clears `state.running` IFF `generation` is still its own occupant — a
 /// stale reader task (superseded by a later `register_running_child`
 /// call) must never clear a NEWER child's own slot entry. Also fails
-/// every currently pending request when (and only when) this WAS the
-/// current occupant: nobody will ever get a reply for them now that the
-/// child that would have answered is gone. Takes `&SystemTranslateState`
-/// directly (not a live `tauri::AppHandle`) purely for testability —
-/// same "shape-only split" precedent as server.rs's own `register_
-/// prewarm_child`/`poll_prewarm_slot`.
+/// that SAME generation's own pending requests when (and only when) this
+/// WAS the current occupant: nobody will ever get a reply for them now
+/// that the child that would have answered is gone. Takes
+/// `&SystemTranslateState` directly (not a live `tauri::AppHandle`)
+/// purely for testability — same "shape-only split" precedent as
+/// server.rs's own `register_prewarm_child`/`poll_prewarm_slot`.
 fn finish_generation(state: &SystemTranslateState, generation: u64) {
     let was_current = match state.running.lock() {
         Ok(mut guard) => {
@@ -288,7 +334,37 @@ fn finish_generation(state: &SystemTranslateState, generation: u64) {
         Err(_) => false,
     };
     if was_current {
-        fail_all_pending(state, "jargonslayer-audiocap --translate exited");
+        fail_pending_for_generation(state, generation, "jargonslayer-audiocap --translate exited");
+    }
+}
+
+/// Clears+kills `state.running` IFF it's still occupied by `generation`,
+/// and fails that generation's own pending requests — shared by (a)
+/// `system_translate`'s own timeout arm (MEDIUM-3 fix, v0.6 round-2
+/// review: a wedged child must not keep passing `system_translate_
+/// prepare`'s own reuse check, which matches on source/target only, as
+/// if it were healthy) and (b) `system_translate_stop` (S1 fix: a STALE
+/// stop call — issued for a meeting that has already ended and been
+/// superseded by a new one's own `prepare()` — must only ever be able to
+/// kill the child it was actually issued for, never whatever happens to
+/// be current by the time it finally executes). Silent no-op if
+/// `generation` is no longer current (already superseded or already
+/// cleared) — same "nothing left to report a further failure to"
+/// posture as `resolve_pending`'s own doc comment.
+fn kill_running_if_generation(state: &SystemTranslateState, generation: u64, message: &str) {
+    let stale = match state.running.lock() {
+        Ok(mut guard) => {
+            if matches!(guard.as_ref(), Some(running) if running.generation == generation) {
+                guard.take()
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
+    };
+    if let Some(running) = stale {
+        let _ = running.child.kill();
+        fail_pending_for_generation(state, generation, message);
     }
 }
 
@@ -298,20 +374,34 @@ fn finish_generation(state: &SystemTranslateState, generation: u64) {
 /// "nothing left to report a further failure to" posture as
 /// force_kill_pid's own ESRCH case (audiocap.rs).
 fn resolve_pending(state: &SystemTranslateState, id: &str, result: Result<Vec<TranslateItem>, String>) {
-    let sender = state.pending.lock().ok().and_then(|mut guard| guard.remove(id));
+    let sender = state
+        .pending
+        .lock()
+        .ok()
+        .and_then(|mut guard| guard.remove(id))
+        .map(|entry| entry.sender);
     if let Some(sender) = sender {
         let _ = sender.send(result);
     }
 }
 
-/// Drains and fails every currently pending request — request ids are
-/// process-wide monotonic and never reused (`next_request_id`), so
-/// draining the WHOLE map here is always safe even across a generation
-/// change (see `SystemTranslateState`'s own doc comment).
-fn fail_all_pending(state: &SystemTranslateState, message: &str) {
+/// Drains and fails every pending request tagged with `generation` — S2
+/// fix (v0.6 round-2 review): the old `fail_all_pending` drained EVERY
+/// pending request regardless of which child it was dispatched against,
+/// which was only safe under the old (buggy) assumption that exactly one
+/// generation's requests could ever be in flight at a time. Leaves every
+/// OTHER generation's own entries untouched.
+fn fail_pending_for_generation(state: &SystemTranslateState, generation: u64, message: &str) {
     if let Ok(mut guard) = state.pending.lock() {
-        for (_, sender) in guard.drain() {
-            let _ = sender.send(Err(message.to_string()));
+        let ids: Vec<String> = guard
+            .iter()
+            .filter(|(_, entry)| entry.generation == generation)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            if let Some(entry) = guard.remove(&id) {
+                let _ = entry.sender.send(Err(message.to_string()));
+            }
         }
     }
 }
@@ -374,44 +464,80 @@ pub async fn system_translate_probe(app: tauri::AppHandle, source: String, targe
         .shell()
         .sidecar(AUDIOCAP_SIDECAR_PROGRAM)
         .map_err(|e| format!("could not resolve the jargonslayer-audiocap sidecar: {e}"))?;
-    let (mut rx, _child) = command
+    let (mut rx, child) = command
         .args(["--probe-translate", "--source", source.as_str(), "--target", target.as_str()])
         .spawn()
         .map_err(|e| format!("failed to spawn jargonslayer-audiocap --probe-translate: {e}"))?;
 
-    let mut stderr_lines = LineReassembler::new();
-    let mut result: Option<SystemTranslateProbe> = None;
-    while let Some(event) = rx.recv().await {
-        match event {
-            CommandEvent::Stderr(bytes) => {
-                for line in stderr_lines.feed(&bytes) {
-                    emit_uv_log(&app, "stderr", format!("[systranslate-probe] {line}"));
-                    if let ParsedTranslateLine::Probe { os_supported, status } = parse_translate_line(&line) {
-                        result = Some(SystemTranslateProbe { os_supported, status });
+    // HIGH-2 fix (v0.6 round-2 review): this used to be a bare `while let
+    // Some(event) = rx.recv().await` with no deadline — the path most
+    // likely to hang, since a cold `LanguageAvailability().status(...)`
+    // goes through the Swift side's new run-loop pump (main.swift's
+    // `runOnMainRunLoop`, see MEDIUM-3's own fix there). A wedged probe
+    // used to wedge this whole `await` forever: the caller
+    // (resolveTranslationProvider's own probeSystemTranslateSupport, on
+    // the JS side) stores the never-settling promise in a single-flight
+    // map whose `finally` never runs, so every LATER probe for that pair
+    // returned the same dead promise for the rest of the app session,
+    // while the orphaned child (CommandChild has no Drop impl — see this
+    // module's own header comment on kill_held_translate_on_exit only
+    // ever touching the `running` slot, which a probe child never
+    // enters) survived until quit. Bound the whole read loop by the same
+    // TRANSLATE_TIMEOUT system_translate_prepare/system_translate already
+    // use, and kill the child on expiry so nothing is left running.
+    let read_probe = async {
+        let mut stderr_lines = LineReassembler::new();
+        let mut result: Option<SystemTranslateProbe> = None;
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stderr(bytes) => {
+                    for line in stderr_lines.feed(&bytes) {
+                        emit_uv_log(&app, "stderr", format!("[systranslate-probe] {line}"));
+                        if let ParsedTranslateLine::Probe { os_supported, status } = parse_translate_line(&line) {
+                            result = Some(SystemTranslateProbe { os_supported, status });
+                        }
                     }
                 }
+                CommandEvent::Error(message) => {
+                    emit_uv_log(&app, "stderr", format!("[systranslate-probe] shell error: {message}"));
+                }
+                _ => {}
             }
-            CommandEvent::Error(message) => {
-                emit_uv_log(&app, "stderr", format!("[systranslate-probe] shell error: {message}"));
-            }
-            _ => {}
+        }
+        if let Some(line) = stderr_lines.flush() {
+            emit_uv_log(&app, "stderr", format!("[systranslate-probe] {line}"));
+        }
+        result
+    };
+
+    match tokio::time::timeout(TRANSLATE_TIMEOUT, read_probe).await {
+        Ok(Some(result)) => Ok(result),
+        Ok(None) => Err("jargonslayer-audiocap --probe-translate produced no result".to_string()),
+        Err(_) => {
+            let _ = child.kill();
+            Err(format!(
+                "timed out after {}s waiting for jargonslayer-audiocap --probe-translate to respond",
+                TRANSLATE_TIMEOUT.as_secs()
+            ))
         }
     }
-    if let Some(line) = stderr_lines.flush() {
-        emit_uv_log(&app, "stderr", format!("[systranslate-probe] {line}"));
-    }
-    result.ok_or_else(|| "jargonslayer-audiocap --probe-translate produced no result".to_string())
 }
 
 // ---- system_translate_prepare ----
 
+/// S1 fix (v0.6 round-2 review): returns the generation this call either
+/// spawned or reused, instead of plain `()` — `DesktopSystemTranslationProvider
+/// .prepare()` (providers.ts) stashes it and hands it back to
+/// `system_translate_stop` later, so a stop can only ever kill the exact
+/// child it was issued for (see `system_translate_stop`'s own doc
+/// comment for the race this closes).
 #[tauri::command]
 pub async fn system_translate_prepare(
     app: tauri::AppHandle,
     state: tauri::State<'_, SystemTranslateState>,
     source: String,
     target: String,
-) -> Result<(), String> {
+) -> Result<u64, String> {
     // Runtime re-check (D6-style "UI gating is not a boundary" posture,
     // osspeech.rs's own start_os_speech/preinstall_os_speech precedent).
     if !is_macos_26_or_later(macos_version()) {
@@ -419,11 +545,14 @@ pub async fn system_translate_prepare(
     }
 
     // Reuse: already warmed for this exact pair (T2: "spawns (or reuses)
-    // the warm --translate child for this pair").
+    // the warm --translate child for this pair") — returns its EXISTING
+    // generation, whether or not THIS call actually spawned anything.
     {
         let guard = state.running.lock().map_err(poison_err)?;
-        if matches!(guard.as_ref(), Some(running) if running.source == source && running.target == target) {
-            return Ok(());
+        if let Some(running) = guard.as_ref() {
+            if running.source == source && running.target == target {
+                return Ok(running.generation);
+            }
         }
     }
 
@@ -442,7 +571,10 @@ pub async fn system_translate_prepare(
     // F1-style fix (register_running_child's own doc comment): closes the
     // "two concurrent prepare() calls" race, on top of the ordinary
     // "a pair change must tear down and respawn" case this same call
-    // handles too (T2's own rule) — one mechanism for both.
+    // handles too (T2's own rule) — one mechanism for both. S2 fix: this
+    // can now also come back Err when THIS call itself lost the race to
+    // a newer one (see register_running_child's own doc comment) — that
+    // propagates straight out via `?`, same as every other Err here.
     if register_running_child(&state, RunningTranslate { child, source, target, generation })? {
         emit_uv_log(
             &app,
@@ -454,7 +586,7 @@ pub async fn system_translate_prepare(
     spawn_translate_reader_task(app, generation, rx, Some(ready_tx));
 
     match tokio::time::timeout(TRANSLATE_TIMEOUT, ready_rx).await {
-        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Ok(()))) => Ok(generation),
         Ok(Ok(Err(message))) => Err(message),
         Ok(Err(_)) => Err("jargonslayer-audiocap --translate exited before becoming ready".to_string()),
         Err(_) => Err(format!(
@@ -473,27 +605,8 @@ pub async fn system_translate(
     source: String,
     target: String,
 ) -> Result<Vec<TranslateItem>, String> {
-    // A dead/absent child (or one warmed for a DIFFERENT pair) must
-    // return a clear Err rather than hang waiting for a reply that will
-    // never come (T2's own rule). This is a defensive re-check, not a
-    // spawn: callers are expected to have already awaited
-    // system_translate_prepare(source, target) — system_translate itself
-    // never spawns, the warm-session lifecycle lives entirely in
-    // prepare/stop.
-    {
-        let guard = state.running.lock().map_err(poison_err)?;
-        match guard.as_ref() {
-            Some(running) if running.source == source && running.target == target => {}
-            Some(_) => {
-                return Err("system_translate: a different language pair is currently warmed — call system_translate_prepare first".to_string())
-            }
-            None => return Err("system_translate: no --translate child is running — call system_translate_prepare first".to_string()),
-        }
-    }
-
     let request_id = state.next_request_id.fetch_add(1, Ordering::SeqCst).to_string();
     let (tx, rx) = oneshot::channel();
-    state.pending.lock().map_err(poison_err)?.insert(request_id.clone(), tx);
 
     let mut line = serde_json::to_vec(&WireRequest {
         id: request_id.clone(),
@@ -502,20 +615,61 @@ pub async fn system_translate(
     .map_err(|e| format!("failed to encode translate request: {e}"))?;
     line.push(b'\n');
 
-    let write_result = {
+    // S2 fix (v0.6 round-2 review, TOCTOU): pair validation and the
+    // stdin write now happen inside ONE `running` lock acquisition — the
+    // old code validated the pair, dropped the lock, then re-acquired it
+    // to write, leaving a window where a concurrent
+    // system_translate_prepare() for a DIFFERENT pair could swap
+    // `running` in between: this request's text would then silently go
+    // to a wrong-language session instead of failing. `generation` is
+    // whichever child is current RIGHT NOW that matches this pair — it
+    // tags the pending entry (PendingEntry) so a LATER supersede/timeout
+    // can fail exactly this request without touching a newer
+    // generation's own in-flight ones.
+    // ponytail: this still holds `running`'s std Mutex across the
+    // blocking `child.write()` call — if the child ever stops draining
+    // stdin, a full pipe blocks this write for as long as
+    // system_translate_stop/kill_held_translate_on_exit also need this
+    // SAME lock to reach the child and kill it, which is what would
+    // unblock the write. tauri-plugin-shell's CommandChild exposes no
+    // way to reach a cloneable/independent write handle or a
+    // shared-reference kill (write takes &mut self, kill consumes
+    // self, no try_clone/Arc accessor — verified against the vendored
+    // crate source), so releasing the lock before writing would require
+    // taking RunningTranslate out of the slot for the write's duration,
+    // which opens a DIFFERENT window where a concurrent
+    // system_translate_prepare's own reuse check sees an empty slot and
+    // spawns a redundant, never-tracked (never killed) duplicate child
+    // — a worse trade for what MEDIUM-3's Swift-side fix already bounds
+    // to a several-second window (a wedged Translation-framework call
+    // can no longer permanently starve the stdin read loop, so the pipe
+    // always drains again within that bound). Upgrade path if a small
+    // JSON batch ever legitimately fills the OS pipe buffer in practice:
+    // fork tauri-plugin-shell's CommandChild to expose a cloneable
+    // stdin handle, or move the whole running-child lifecycle onto a
+    // dedicated actor task reachable via a channel instead of a shared
+    // Mutex.
+    let generation = {
         let mut guard = state.running.lock().map_err(poison_err)?;
-        match guard.as_mut() {
-            Some(running) => running
-                .child
-                .write(&line)
-                .map_err(|e| format!("failed to write to jargonslayer-audiocap --translate stdin: {e}")),
-            None => Err("system_translate: the --translate child disappeared before the request could be sent".to_string()),
-        }
+        let running = match guard.as_mut() {
+            Some(running) if running.source == source && running.target == target => running,
+            Some(_) => {
+                return Err("system_translate: a different language pair is currently warmed — call system_translate_prepare first".to_string())
+            }
+            None => return Err("system_translate: no --translate child is running — call system_translate_prepare first".to_string()),
+        };
+        running
+            .child
+            .write(&line)
+            .map_err(|e| format!("failed to write to jargonslayer-audiocap --translate stdin: {e}"))?;
+        running.generation
     };
-    if let Err(e) = write_result {
-        state.pending.lock().map_err(poison_err)?.remove(&request_id);
-        return Err(e);
-    }
+
+    state
+        .pending
+        .lock()
+        .map_err(poison_err)?
+        .insert(request_id.clone(), PendingEntry { generation, sender: tx });
 
     match tokio::time::timeout(TRANSLATE_TIMEOUT, rx).await {
         Ok(Ok(result)) => result,
@@ -524,6 +678,14 @@ pub async fn system_translate(
         Ok(Err(_)) => Err("system_translate: the --translate child exited before replying".to_string()),
         Err(_) => {
             state.pending.lock().map_err(poison_err)?.remove(&request_id);
+            // MEDIUM-3 fix: a wedged child that never replies must not
+            // keep passing system_translate_prepare's own reuse check
+            // (matches on source/target only) as if it were healthy —
+            // clear the slot (generation-guarded, so this can't clobber
+            // a DIFFERENT child that has since taken over) so the next
+            // prepare() call for this pair respawns instead of reusing
+            // the dead one forever.
+            kill_running_if_generation(&state, generation, "system_translate: timed out waiting for a reply");
             Err(format!(
                 "system_translate: timed out after {}s waiting for a reply",
                 TRANSLATE_TIMEOUT.as_secs()
@@ -534,22 +696,49 @@ pub async fn system_translate(
 
 // ---- system_translate_stop ----
 
+/// S1 fix (v0.6 round-2 review): `generation` is whatever the CALLER's
+/// own `system_translate_prepare` call last returned (providers.ts's
+/// `lastDesktopTranslateGeneration`) — `stopSystemTranslator()` is
+/// fire-and-forget on the JS side, so a stop issued when one meeting
+/// ends can resolve AFTER a BRAND NEW meeting's own `prepare()` has
+/// already registered its own child. Scoping the kill to the exact
+/// generation this stop was issued for (via `kill_running_if_
+/// generation`) means a stale stop can only ever be a no-op against a
+/// newer generation, never kill it — closing "a delayed stop from the
+/// previous meeting kills the next meeting's translator". `None` (no
+/// `prepare()` has ever succeeded yet this session, so the caller has no
+/// generation to scope to) falls back to the old unconditional-kill
+/// behavior; `running` should already be empty in that case anyway.
 #[tauri::command]
-pub async fn system_translate_stop(state: tauri::State<'_, SystemTranslateState>) -> Result<(), String> {
-    let stale = state.running.lock().map_err(poison_err)?.take();
-    if let Some(running) = stale {
-        // Immediate kill (tauri-plugin-shell's own CommandChild::kill —
-        // SIGKILL, consumes the handle), NOT the graceful drop-to-close-
-        // stdin-then-grace-period-watchdog dance audiocap.rs/osspeech.rs
-        // use for THEIR stop paths: unlike a capture/transcribe session,
-        // --translate holds no audio device and no in-flight asset
-        // download to let finish gracefully, so a grace period would buy
-        // nothing here — mirrors server.rs's own immediate `kill_and_reap`
-        // posture for the whisper_server.py child, one file over, for
-        // the identical "no teardown work worth waiting for" reason.
-        let _ = running.child.kill();
+pub async fn system_translate_stop(
+    state: tauri::State<'_, SystemTranslateState>,
+    generation: Option<u64>,
+) -> Result<(), String> {
+    match generation {
+        Some(generation) => {
+            // Same immediate-kill posture as the unconditional branch
+            // below (no grace period — see this function's own original
+            // rationale, preserved there), just generation-guarded.
+            kill_running_if_generation(&state, generation, "system_translate_stop: the --translate child was stopped");
+        }
+        None => {
+            let stale = state.running.lock().map_err(poison_err)?.take();
+            if let Some(running) = stale {
+                // Immediate kill (tauri-plugin-shell's own CommandChild::kill —
+                // SIGKILL, consumes the handle), NOT the graceful drop-to-close-
+                // stdin-then-grace-period-watchdog dance audiocap.rs/osspeech.rs
+                // use for THEIR stop paths: unlike a capture/transcribe session,
+                // --translate holds no audio device and no in-flight asset
+                // download to let finish gracefully, so a grace period would buy
+                // nothing here — mirrors server.rs's own immediate `kill_and_reap`
+                // posture for the whisper_server.py child, one file over, for
+                // the identical "no teardown work worth waiting for" reason.
+                let generation = running.generation;
+                let _ = running.child.kill();
+                fail_pending_for_generation(&state, generation, "system_translate_stop: the --translate child was stopped");
+            }
+        }
     }
-    fail_all_pending(&state, "system_translate_stop: the --translate child was stopped");
     Ok(())
 }
 
@@ -823,16 +1012,24 @@ mod tests {
     // context needed (channel construction/send/try_recv are all plain
     // sync operations — see this module's own header comment on why
     // finish_generation/handle_translate_line/resolve_pending/
-    // fail_all_pending all take &SystemTranslateState directly rather
-    // than a live AppHandle). ----
+    // fail_pending_for_generation all take &SystemTranslateState
+    // directly rather than a live AppHandle). ----
+
+    /// Test-only convenience — every production call site builds one of
+    /// these implicitly via `PendingEntry { generation, sender }`
+    /// wherever a real `system_translate` request is dispatched; tests
+    /// insert them directly since there's no real dispatch happening.
+    fn pending_entry(generation: u64, sender: oneshot::Sender<Result<Vec<TranslateItem>, String>>) -> PendingEntry {
+        PendingEntry { generation, sender }
+    }
 
     #[test]
     fn resolve_pending_routes_a_reply_to_the_matching_id_only() {
         let state = SystemTranslateState::default();
         let (tx1, mut rx1) = oneshot::channel();
         let (tx2, mut rx2) = oneshot::channel();
-        state.pending.lock().unwrap().insert("1".to_string(), tx1);
-        state.pending.lock().unwrap().insert("2".to_string(), tx2);
+        state.pending.lock().unwrap().insert("1".to_string(), pending_entry(1, tx1));
+        state.pending.lock().unwrap().insert("2".to_string(), pending_entry(1, tx2));
 
         resolve_pending(&state, "2", Ok(vec![TranslateItem { id: "seg".to_string(), text: "你好".to_string() }]));
 
@@ -851,9 +1048,9 @@ mod tests {
         let (tx1, mut rx1) = oneshot::channel();
         let (tx2, mut rx2) = oneshot::channel();
         let (tx3, mut rx3) = oneshot::channel();
-        state.pending.lock().unwrap().insert("1".to_string(), tx1);
-        state.pending.lock().unwrap().insert("2".to_string(), tx2);
-        state.pending.lock().unwrap().insert("3".to_string(), tx3);
+        state.pending.lock().unwrap().insert("1".to_string(), pending_entry(1, tx1));
+        state.pending.lock().unwrap().insert("2".to_string(), pending_entry(1, tx2));
+        state.pending.lock().unwrap().insert("3".to_string(), pending_entry(1, tx3));
 
         // Swift/the reader task has no reason to reply in request order —
         // resolve 3, then 1, then 2, and confirm every receiver still
@@ -872,7 +1069,7 @@ mod tests {
     fn resolve_pending_is_a_noop_for_an_unknown_id() {
         let state = SystemTranslateState::default();
         let (tx1, mut rx1) = oneshot::channel();
-        state.pending.lock().unwrap().insert("1".to_string(), tx1);
+        state.pending.lock().unwrap().insert("1".to_string(), pending_entry(1, tx1));
 
         // A reply for an id nobody registered (already timed out and gave
         // up, or a stray/duplicate line) must not panic and must not
@@ -884,25 +1081,73 @@ mod tests {
     }
 
     #[test]
-    fn fail_all_pending_drains_and_fails_every_entry() {
+    fn fail_pending_for_generation_drains_and_fails_every_entry_tagged_with_that_generation() {
         let state = SystemTranslateState::default();
         let (tx1, mut rx1) = oneshot::channel();
         let (tx2, mut rx2) = oneshot::channel();
-        state.pending.lock().unwrap().insert("1".to_string(), tx1);
-        state.pending.lock().unwrap().insert("2".to_string(), tx2);
+        state.pending.lock().unwrap().insert("1".to_string(), pending_entry(7, tx1));
+        state.pending.lock().unwrap().insert("2".to_string(), pending_entry(7, tx2));
 
-        fail_all_pending(&state, "child gone");
+        fail_pending_for_generation(&state, 7, "child gone");
 
         assert_eq!(rx1.try_recv().unwrap(), Err("child gone".to_string()));
         assert_eq!(rx2.try_recv().unwrap(), Err("child gone".to_string()));
         assert!(state.pending.lock().unwrap().is_empty());
     }
 
+    /// S2 regression test (v0.6 round-2 review): the whole point of
+    /// tagging PendingEntry with its own generation — a supersede/
+    /// timeout/crash affecting generation 7 must never fail a DIFFERENT,
+    /// still-live generation's own in-flight requests just because they
+    /// happen to share the same `pending` map. Fails against the
+    /// pre-fix `fail_all_pending`, which drained unconditionally.
     #[test]
-    fn fail_all_pending_is_a_noop_when_nothing_is_pending() {
+    fn fail_pending_for_generation_never_touches_a_different_generations_entries() {
         let state = SystemTranslateState::default();
-        fail_all_pending(&state, "unused");
-        assert!(state.pending.lock().unwrap().is_empty());
+        let (tx_old, mut rx_old) = oneshot::channel();
+        let (tx_new, mut rx_new) = oneshot::channel();
+        state.pending.lock().unwrap().insert("old-1".to_string(), pending_entry(7, tx_old));
+        state.pending.lock().unwrap().insert("new-1".to_string(), pending_entry(8, tx_new));
+
+        fail_pending_for_generation(&state, 7, "generation 7 superseded");
+
+        assert_eq!(rx_old.try_recv().unwrap(), Err("generation 7 superseded".to_string()));
+        assert!(rx_new.try_recv().is_err(), "generation 8's own pending request must be untouched");
+        assert!(
+            state.pending.lock().unwrap().contains_key("new-1"),
+            "a different generation's entry must stay pending"
+        );
+    }
+
+    #[test]
+    fn fail_pending_for_generation_is_a_noop_when_nothing_matches() {
+        let state = SystemTranslateState::default();
+        let (tx, mut rx) = oneshot::channel();
+        state.pending.lock().unwrap().insert("1".to_string(), pending_entry(1, tx));
+
+        fail_pending_for_generation(&state, 999, "unused");
+
+        assert!(rx.try_recv().is_err(), "an unrelated generation must be untouched");
+        assert!(state.pending.lock().unwrap().contains_key("1"));
+    }
+
+    // ---- kill_running_if_generation: the "not current" no-op arm. The
+    // "still current -> kills + fails" arm needs a real RunningTranslate,
+    // which needs a real CommandChild — CommandChild has no test-
+    // reachable constructor (same limitation finish_generation's own
+    // tests below document), so that arm is verified live instead (this
+    // worker's own report covers a real --translate round trip). ----
+
+    #[test]
+    fn kill_running_if_generation_is_a_noop_against_an_empty_slot_and_never_touches_pending() {
+        let state = SystemTranslateState::default();
+        let (tx, mut rx) = oneshot::channel();
+        state.pending.lock().unwrap().insert("1".to_string(), pending_entry(1, tx));
+
+        kill_running_if_generation(&state, 1, "unused");
+
+        assert!(rx.try_recv().is_err(), "an empty slot must never fail an unrelated pending entry");
+        assert!(state.pending.lock().unwrap().contains_key("1"));
     }
 
     // ---- handle_translate_line: ready/result/error routing ----
@@ -923,7 +1168,7 @@ mod tests {
     fn handle_translate_line_routes_a_result_line_to_the_pending_map_not_ready_tx() {
         let state = SystemTranslateState::default();
         let (pending_tx, mut pending_rx) = oneshot::channel();
-        state.pending.lock().unwrap().insert("req-1".to_string(), pending_tx);
+        state.pending.lock().unwrap().insert("req-1".to_string(), pending_entry(1, pending_tx));
         let (ready_tx, mut ready_rx) = oneshot::channel();
         let mut ready_tx = Some(ready_tx);
 
@@ -942,7 +1187,7 @@ mod tests {
     fn handle_translate_line_routes_a_per_request_error_to_the_pending_map() {
         let state = SystemTranslateState::default();
         let (pending_tx, mut pending_rx) = oneshot::channel();
-        state.pending.lock().unwrap().insert("req-1".to_string(), pending_tx);
+        state.pending.lock().unwrap().insert("req-1".to_string(), pending_entry(1, pending_tx));
         let mut ready_tx: Option<oneshot::Sender<Result<(), String>>> = None;
 
         let line = r#"{"kind":"error","id":"req-1","code":"not-installed","message":"pack missing"}"#;
@@ -990,7 +1235,7 @@ mod tests {
     fn finish_generation_is_a_noop_against_an_empty_slot() {
         let state = SystemTranslateState::default();
         let (tx, mut rx) = oneshot::channel();
-        state.pending.lock().unwrap().insert("1".to_string(), tx);
+        state.pending.lock().unwrap().insert("1".to_string(), pending_entry(1, tx));
 
         finish_generation(&state, 1);
 

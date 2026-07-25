@@ -24,6 +24,51 @@ function baseDeps(overrides: Partial<DictPackAutoUpdateTriggerDeps> = {}): DictP
   };
 }
 
+describe("triggerDictPackAutoUpdate — MEDIUM-1 fix (v0.6 round-2 review): module-level in-flight guard", () => {
+  // Fails against pre-fix code, where every call started its own fresh
+  // run — checkUpdates would have been called twice here, one queued
+  // behind the other by remotePacks.ts's own enqueueSourcesOp
+  // serialization, exactly the "flaky wifi -> 8 queued rounds x 20
+  // packs" hazard this fix closes.
+  it("two OVERLAPPING calls (neither awaited before the next fires) share ONE in-flight run — checkUpdates is called only once", async () => {
+    let resolveCheck!: () => void;
+    const checkUpdates = vi.fn(
+      () =>
+        new Promise<string[]>((res) => {
+          resolveCheck = () => res(["a"]);
+        }),
+    );
+    const recordCheckedAt = vi.fn();
+
+    const p1 = triggerDictPackAutoUpdate(baseDeps({ checkUpdates, recordCheckedAt }));
+    const p2 = triggerDictPackAutoUpdate(baseDeps({ checkUpdates, recordCheckedAt }));
+
+    // triggerDictPackAutoUpdate's own async body awaits listPackSources()
+    // before runPackAutoUpdate ever reaches checkUpdates() — drain
+    // microtasks until it's actually been invoked (so resolveCheck is
+    // assigned) rather than assuming it happens within this same tick.
+    for (let i = 0; i < 10 && checkUpdates.mock.calls.length === 0; i++) {
+      await Promise.resolve();
+    }
+    expect(checkUpdates).toHaveBeenCalledTimes(1); // the second call never started a second round
+
+    resolveCheck();
+    await Promise.all([p1, p2]);
+
+    expect(checkUpdates).toHaveBeenCalledTimes(1); // still just once after both settle
+    expect(recordCheckedAt).toHaveBeenCalledTimes(1);
+  });
+
+  it("a call that arrives AFTER the previous one has already settled starts a genuinely NEW round", async () => {
+    const checkUpdates = vi.fn(async () => ["a"]);
+
+    await triggerDictPackAutoUpdate(baseDeps({ checkUpdates }));
+    await triggerDictPackAutoUpdate(baseDeps({ checkUpdates }));
+
+    expect(checkUpdates).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("triggerDictPackAutoUpdate — page.tsx startup/online-event wiring", () => {
   it("gathers real deps into runPackAutoUpdate, records checkedAt, and diagLogs the outcome", async () => {
     const recordCheckedAt = vi.fn();

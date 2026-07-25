@@ -36,6 +36,7 @@ import {
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
+import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonslayer/core/detect/packs";
 import * as learnsetModule from "../learn/store";
 import * as storageModule from "../history/storage";
 import * as liveDraftModule from "../history/liveDraft";
@@ -2105,6 +2106,63 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
     expect(s.language).toBe("en-GB");
     expect(s.aiDetect).toBe(false);
     expect(s.engine).toBe("demo"); // default preserved
+  });
+});
+
+// MEDIUM-5 fix (v0.6 round-2 review) — the v0.6 new-built-in-packs (
+// modern-usage/finance-consumer/daily-idiom, packsSchemaVersion 1) used
+// to be permanently invisible to anyone who had ever unchecked even ONE
+// pack: SettingsDialog.tsx's own 保存 freezes enabledPacks into an
+// explicit array the moment that happens, and a pack added in a LATER
+// release is simply absent from it (isPackEnabled treats "absent" as
+// excluded). Every test in this block fails against pre-fix
+// migrateSettings, which never touched enabledPacks/packsSchemaVersion
+// at all.
+describe("migrateSettings — MEDIUM-5: unions newly-introduced built-in packs into an old explicit enabledPacks", () => {
+  const NEW_V06_PACK_IDS = PACKS_ADDED_AT_VERSION[1];
+
+  it("an explicit list missing the new ids contains them after migration, and stamps packsSchemaVersion", () => {
+    const s = migrateSettings({ enabledPacks: ["core", "meeting-flow"] } as Partial<Settings>);
+    for (const id of NEW_V06_PACK_IDS) {
+      expect(s.enabledPacks).toContain(id);
+    }
+    expect(s.enabledPacks).toEqual(expect.arrayContaining(["core", "meeting-flow", ...NEW_V06_PACK_IDS]));
+    expect(s.packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+  });
+
+  it("a user who explicitly excluded an OLD (pre-existing) pack still has it excluded after migration", () => {
+    // "academic" is an original (pre-v0.6) pack — never named here, so
+    // it stays excluded exactly like the user intended; only the NEW
+    // v0.6 ids get unioned in.
+    const s = migrateSettings({ enabledPacks: ["core", "meeting-flow"] } as Partial<Settings>);
+    expect(s.enabledPacks).not.toContain("academic");
+  });
+
+  it("a null enabledPacks (never customized) needs no migration — stays null, still stamps the version", () => {
+    const s = migrateSettings({ enabledPacks: null } as Partial<Settings>);
+    expect(s.enabledPacks).toBeNull();
+    expect(s.packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+  });
+
+  it("running migration twice is idempotent — the second pass adds nothing further", () => {
+    const once = migrateSettings({ enabledPacks: ["core"] } as Partial<Settings>);
+    const twice = migrateSettings(once);
+    expect(twice.enabledPacks).toEqual(once.enabledPacks);
+    expect(twice.packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+  });
+
+  it("a saved blob that already explicitly EXCLUDED a new v0.6 pack id at the CURRENT version keeps excluding it (only a version BEHIND current gets unioned)", () => {
+    const excluded = NEW_V06_PACK_IDS[0];
+    const s = migrateSettings({
+      enabledPacks: ["core"], // deliberately missing `excluded`
+      packsSchemaVersion: CURRENT_PACKS_SCHEMA_VERSION, // already up to date
+    } as Partial<Settings>);
+    expect(s.enabledPacks).not.toContain(excluded);
+  });
+
+  it("fresh install (null saved) gets packsSchemaVersion defaulted to CURRENT via the plain defaults-fold", () => {
+    expect(migrateSettings(null).packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+    expect(migrateSettings(undefined).packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
   });
 });
 

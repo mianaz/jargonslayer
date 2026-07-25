@@ -103,11 +103,16 @@ export class SonioxEngine implements STTEngine {
   private stream: MediaStream | null = null;
   private stopping = false;
   // Usage-ledger instrumentation (T2, lib/usage/ledger.ts) — stamped
-  // once attachStream() has actually succeeded (never on a failed
-  // attach: no real streaming happened, nothing to bill), read back at
-  // stop() to record a SINGLE wall-clock-elapsed seconds figure rather
-  // than accumulating per audio chunk (cheaper, and just as accurate
-  // for a local approximate ledger).
+  // once the transport's own "listening" status fires (S7 fix, v0.6
+  // round-2 review: SonioxTransport confirms this once it has actually
+  // sent its config over an open, authenticated socket — see
+  // sonioxTransport.ts's own onStatus("listening") call site — NOT
+  // merely once attachStream() resolves below, which only means the
+  // LOCAL audio graph is wired up; the WebSocket connect + any
+  // preview-lane token mint + config send all still happen AFTER
+  // that), read back at stop() to record a SINGLE wall-clock-elapsed
+  // seconds figure rather than accumulating per audio chunk (cheaper,
+  // and just as accurate for a local approximate ledger).
   private streamStartedAt: number | null = null;
 
   async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
@@ -141,12 +146,24 @@ export class SonioxEngine implements STTEngine {
     // deliberate BYOK choice must never be silently rerouted through
     // the shared server credential instead.
     const mintToken = SONIOX_PREVIEW_LANE && !settings.sonioxKey ? mintPreviewToken : undefined;
-    const transport = new SonioxTransport({ events, settings, mintToken, lexicon });
+    // S7 fix (v0.6 round-2 review): intercepts the transport's own
+    // onStatus("listening") — the actual authenticated/streaming start
+    // — to stamp streamStartedAt, then forwards the call through
+    // unchanged. See that field's own doc comment above for why.
+    const wrappedEvents: STTEvents = {
+      ...events,
+      onStatus: (status, detail) => {
+        if (status === "listening" && this.streamStartedAt === null) {
+          this.streamStartedAt = Date.now();
+        }
+        events.onStatus(status, detail);
+      },
+    };
+    const transport = new SonioxTransport({ events: wrappedEvents, settings, mintToken, lexicon });
     this.transport = transport;
 
     try {
       await transport.attachStream(stream);
-      this.streamStartedAt = Date.now();
     } catch {
       events.onStatus("error", "无法初始化音频处理，请刷新页面重试");
       stream.getTracks().forEach((t) => t.stop());
@@ -176,6 +193,13 @@ export class SonioxEngine implements STTEngine {
     if (this.stopping) return;
     this.stopping = true;
 
+    // S7 fix (v0.6 round-2 review): captured BEFORE transport.stop(),
+    // which can take up to its own drain-wait timeout waiting on the
+    // server's own ack — the user already said "stop" and local audio
+    // capture ends at THIS instant; the drain wait afterward is
+    // teardown bookkeeping, not more billable streaming time.
+    const endedAt = Date.now();
+
     const transport = this.transport;
     this.transport = null;
     if (transport) {
@@ -188,7 +212,7 @@ export class SonioxEngine implements STTEngine {
     }
 
     if (this.streamStartedAt !== null) {
-      recordSttSeconds(this.kind, (Date.now() - this.streamStartedAt) / 1000);
+      recordSttSeconds(this.kind, (endedAt - this.streamStartedAt) / 1000);
       this.streamStartedAt = null;
     }
   }

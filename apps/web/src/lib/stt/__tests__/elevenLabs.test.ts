@@ -19,16 +19,30 @@ const attachStreamMock = vi.fn((..._args: unknown[]) => Promise.resolve());
 const transportStopMock = vi.fn(() => Promise.resolve());
 vi.mock("../elevenLabsTransport", () => ({
   ElevenLabsTransport: class {
+    private events: { onStatus: (status: string) => void };
     constructor(...args: unknown[]) {
       elevenLabsTransportCtor(...args);
+      this.events = (args[0] as { events: { onStatus: (status: string) => void } }).events;
     }
-    attachStream(...args: unknown[]) {
-      return attachStreamMock(...args);
+    async attachStream(...args: unknown[]) {
+      const result = await attachStreamMock(...args);
+      // S7 fix (v0.6 round-2 review): the real transport fires
+      // onStatus("listening") once the server actually confirms the
+      // session (session_started) — ElevenLabsEngine's own
+      // streamStartedAt now hooks THAT, not attachStream()'s own
+      // resolution, so this mock simulates it.
+      this.events.onStatus("listening");
+      return result;
     }
     stop() {
       return transportStopMock();
     }
   },
+}));
+
+const recordSttSecondsMock = vi.fn();
+vi.mock("../usageTracking", () => ({
+  recordSttSeconds: (...args: unknown[]) => recordSttSecondsMock(...args),
 }));
 
 import { ElevenLabsEngine } from "../elevenLabs";
@@ -51,7 +65,9 @@ afterEach(() => {
   elevenLabsTransportCtor.mockClear();
   attachStreamMock.mockClear();
   transportStopMock.mockClear();
+  recordSttSecondsMock.mockClear();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it("reports kind: elevenlabs", () => {
@@ -71,7 +87,21 @@ describe("ElevenLabsEngine.start()", () => {
     await startP;
 
     expect(elevenLabsTransportCtor).toHaveBeenCalledTimes(1);
-    expect(elevenLabsTransportCtor).toHaveBeenCalledWith({ events, settings, lexicon: undefined });
+    // S7 fix (v0.6 round-2 review): events is wrapped now — onInterim/
+    // onFinal forward through unchanged (same references), onStatus is
+    // intercepted (a new closure) to stamp streamStartedAt on
+    // "listening" before forwarding — see the dedicated usage-ledger
+    // describe block below for that behavior itself.
+    const ctorArgs = elevenLabsTransportCtor.mock.calls[0][0] as {
+      events: STTEvents;
+      settings: unknown;
+      lexicon: unknown;
+    };
+    expect(ctorArgs.settings).toBe(settings);
+    expect(ctorArgs.lexicon).toBeUndefined();
+    expect(ctorArgs.events.onInterim).toBe(events.onInterim);
+    expect(ctorArgs.events.onFinal).toBe(events.onFinal);
+    expect(ctorArgs.events.onStatus).not.toBe(events.onStatus);
     expect(attachStreamMock).toHaveBeenCalledWith(stream);
   });
 
@@ -183,5 +213,105 @@ describe("ElevenLabsEngine.stop()", () => {
     await engine.stop();
 
     expect(transportStopMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// S7 fix (v0.6 round-2 review): streamStartedAt now stamps on the
+// transport's own onStatus("listening") — the actual authenticated/
+// streaming start — instead of at attachStream()'s own resolution,
+// and stop() now captures the END timestamp BEFORE transport.stop()'s
+// own (up to several seconds) drain wait, instead of after it. Mirrors
+// soniox.test.ts/deepgram.test.ts's identical coverage of their own
+// siblings' matching fix.
+describe("ElevenLabsEngine usage-ledger instrumentation (T2, S7 fix)", () => {
+  it("records wall-clock elapsed streaming seconds via recordSttSeconds at stop()", async () => {
+    vi.useFakeTimers();
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new ElevenLabsEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "elevenlabs" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    vi.advanceTimersByTime(5000);
+    await engine.stop();
+
+    expect(recordSttSecondsMock).toHaveBeenCalledTimes(1);
+    expect(recordSttSecondsMock).toHaveBeenCalledWith("elevenlabs", 5);
+  });
+
+  it("never records when attachStream never succeeded (mic permission denied)", async () => {
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new ElevenLabsEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "elevenlabs" as const });
+    gumCalls[0].reject(new Error("permission denied"));
+    await startP;
+
+    await engine.stop();
+
+    expect(recordSttSecondsMock).not.toHaveBeenCalled();
+  });
+
+  it("never records when attachStream itself throws (never reaches onStatus('listening'))", async () => {
+    attachStreamMock.mockImplementationOnce(() => Promise.reject(new Error("no worklet")));
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new ElevenLabsEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "elevenlabs" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    await engine.stop();
+
+    expect(recordSttSecondsMock).not.toHaveBeenCalled();
+  });
+
+  it("a second stop() call never double-records", async () => {
+    vi.useFakeTimers();
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new ElevenLabsEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "elevenlabs" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    vi.advanceTimersByTime(1000);
+    await engine.stop();
+    await engine.stop();
+
+    expect(recordSttSecondsMock).toHaveBeenCalledTimes(1);
+  });
+
+  // The actual S7 regression: stop() must not bill the drain wait as
+  // more streaming time. Fails against pre-fix code, which read
+  // Date.now() AFTER transport.stop() resolved — that mocked
+  // transportStopMock resolves instantly here, so this test alone can't
+  // observe seconds directly, but it pins the CONTRACT precisely:
+  // recordSttSeconds is computed from the instant stop() was CALLED
+  // (5000ms after start), not from whenever transport.stop() happens
+  // to finish (simulated as taking an extra 3000ms below via fake
+  // timers) — pre-fix code would report 8 (5+3), not 5.
+  it("does not bill transport.stop()'s own drain wait as additional streaming time", async () => {
+    vi.useFakeTimers();
+    transportStopMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, 3000); // simulates the up-to-8s server drain ack
+        }),
+    );
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new ElevenLabsEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "elevenlabs" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    vi.advanceTimersByTime(5000);
+    const stopP = engine.stop();
+    await vi.advanceTimersByTimeAsync(3000); // let the drain-wait promise inside stop() resolve
+    await stopP;
+
+    expect(recordSttSecondsMock).toHaveBeenCalledWith("elevenlabs", 5); // NOT 8
   });
 });

@@ -988,5 +988,48 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
   const normalizedProxyUrl =
     typeof picked.proxyUrl === "string" ? normalizeProxyUrl(picked.proxyUrl) : "";
   picked.proxyUrl = isValidProxyUrl(normalizedProxyUrl) ? normalizedProxyUrl : "";
+  // S9 fix (v0.6 round-2 review): same F11 boolean-coercion trap as
+  // overlayGlass above — a hand-edited backup's usageTracking:"false"
+  // (a STRING, truthy in JS despite reading like an explicit opt-out)
+  // used to sail straight through the generic allow-list pick, silently
+  // keeping usage recording ON; packAutoUpdate:"false" is the same trap
+  // for the auto-updater. Only an actual boolean is trusted.
+  picked.usageTracking =
+    typeof picked.usageTracking === "boolean" ? picked.usageTracking : DEFAULT_SETTINGS.usageTracking;
+  picked.packAutoUpdate =
+    typeof picked.packAutoUpdate === "boolean" ? picked.packAutoUpdate : DEFAULT_SETTINGS.packAutoUpdate;
+  // packAutoUpdateCheckedAt (no meaningful default — DEFAULT_SETTINGS
+  // omits it, see the allow-list's own comment above): a non-finite or
+  // negative value (a string, NaN, -1, …) would poison
+  // shouldCheckForPackUpdates' own `now - lastCheckedAt >= INTERVAL`
+  // arithmetic — e.g. a string coerces the WHOLE comparison to NaN,
+  // which is never `>= INTERVAL`, permanently suppressing the
+  // auto-update check. Only a genuine finite non-negative epoch-ms
+  // survives; anything else is dropped entirely (absent = "never
+  // auto-checked", the same honest state a fresh install starts in)
+  // rather than persisting a value that would wedge the check forever.
+  if (
+    typeof picked.packAutoUpdateCheckedAt !== "number" ||
+    !Number.isFinite(picked.packAutoUpdateCheckedAt) ||
+    picked.packAutoUpdateCheckedAt < 0
+  ) {
+    delete picked.packAutoUpdateCheckedAt;
+  }
+  // packsSchemaVersion (MEDIUM-5, v0.6 round-2 review): same class of
+  // trap — a corrupted value (e.g. a string) would poison
+  // migrateSettings' own `Number(version) > savedPacksVersion` compare
+  // with NaN, which silently disables the whole new-pack-union
+  // migration (NaN never compares > anything). Falls back to the
+  // CURRENT version — same posture as overlayGlass/bitCostume above —
+  // rather than dropping it outright, since (unlike
+  // packAutoUpdateCheckedAt) this field always has a meaningful
+  // default and "already up to date" is the safe assumption for a
+  // corrupted value.
+  picked.packsSchemaVersion =
+    typeof picked.packsSchemaVersion === "number" &&
+    Number.isFinite(picked.packsSchemaVersion) &&
+    picked.packsSchemaVersion >= 0
+      ? picked.packsSchemaVersion
+      : DEFAULT_SETTINGS.packsSchemaVersion;
   return picked as Partial<Settings>;
 }

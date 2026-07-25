@@ -427,16 +427,71 @@ func runPreinstall(locale: String) -> Never {
 // ONLY the two Translation-framework call sites below
 // (runProbeTranslate/handleTranslateRequestLine) — every other async
 // bridge in this file is unchanged.
+/// MEDIUM-3 fix (v0.6 round-2 review): a lock-protected box for
+/// `runOnMainRunLoop`'s own result, same `@unchecked Sendable` + NSLock
+/// shape as SpeechAnalyzerSession.swift's own `ResultsErrorBox`/
+/// `StopReasonBox`/`FatalErrorBox`/`DownloadOutcomeBox` (this file's own
+/// established pattern for "a value written once from an escaping Task
+/// closure, read from elsewhere with no other synchronization"), just
+/// generic over `T` since this one's shared by two different result
+/// types (`LanguageAvailability.Status` in `runProbeTranslate`,
+/// `TranslationOutcome` in `handleTranslateRequestLine`). Fixes a real
+/// data race (c): the OLD code's bare `var result: T?`, captured by the
+/// escaping `Task` below and polled from the `while` loop with no
+/// synchronization at all, since `body()`'s own internal `await` can
+/// resume the Task off the main thread while the `while` loop reads
+/// `result` synchronously ON the main thread.
 @available(macOS 26.0, *)
-func runOnMainRunLoop<T>(_ body: @escaping () async -> T) -> T {
-    var result: T?
+private final class RunLoopPumpBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: T?
+    func record(_ value: T) {
+        lock.lock(); defer { lock.unlock() }
+        if stored == nil { stored = value }
+    }
+    var value: T? {
+        lock.lock(); defer { lock.unlock() }
+        return stored
+    }
+}
+
+/// Bounded now (MEDIUM-3 fix, v0.6 round-2 review) — the old version was
+/// a bare `while result == nil { RunLoop.current.run(...) }` with two
+/// real problems on top of the data race `RunLoopPumpBox` above closes:
+/// (a) `RunLoop.run(mode:before:)` returns IMMEDIATELY, without actually
+/// waiting, whenever this mode has no input source attached to it yet —
+/// so a `body()` that hasn't resumed could busy-spin this loop at 100%
+/// of a core instead of idling (the `Thread.sleep` below caps that); (b)
+/// there was no DEADLINE at all — if `body()` never resumes (a cold
+/// `LanguageAvailability`/`TranslationSession` call that never completes
+/// its own XPC round trip), this call never returned, and since it
+/// always runs on the MAIN thread, that permanently stopped
+/// `--translate`'s own stdin read loop too (`runTranslate` below),
+/// leaving the child alive-but-deaf forever — a hung request took the
+/// whole warm session down with it, not just itself. Returns `nil` on
+/// timeout instead of hanging forever; both call sites below emit their
+/// own `{"kind":"error"}` record and continue (`runProbeTranslate` exits
+/// non-zero since it has no loop to keep alive; `handleTranslateRequestLine`
+/// simply returns, so `runTranslate`'s stdin loop keeps reading the NEXT
+/// request line). Default kept safely under Rust's own systranslate.rs
+/// `TRANSLATE_TIMEOUT` (10s) so this process's own clean error record
+/// reaches Rust before Rust's hard `child.kill()` would.
+@available(macOS 26.0, *)
+func runOnMainRunLoop<T>(timeout: TimeInterval = 8.0, _ body: @escaping () async -> T) -> T? {
+    let box = RunLoopPumpBox<T>()
     Task {
-        result = await body()
+        box.record(await body())
     }
-    while result == nil {
+    let deadline = Date().addingTimeInterval(timeout)
+    while box.value == nil {
+        if Date() >= deadline { return nil }
         RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        // See (a) above — RunLoop.run(mode:before:) can return instantly
+        // with nothing to wait on; this keeps a not-yet-resumed body()
+        // from busy-spinning a full core in the meantime.
+        Thread.sleep(forTimeInterval: 0.005)
     }
-    return result!
+    return box.value
 }
 
 // v0.6 (Apple on-device translate lane) — `--probe-translate`: one shot,
@@ -447,11 +502,21 @@ func runOnMainRunLoop<T>(_ body: @escaping () async -> T) -> T {
 // for why).
 @available(macOS 26.0, *)
 func runProbeTranslate(source: String, target: String) -> Never {
-    let status = runOnMainRunLoop {
+    let outcome = runOnMainRunLoop {
         await LanguageAvailability().status(
             from: Locale.Language(identifier: source),
             to: Locale.Language(identifier: target)
         )
+    }
+    // MEDIUM-3 fix: runOnMainRunLoop now returns nil on its own bounded
+    // timeout instead of hanging forever — a one-shot mode like this one
+    // has no stdin loop to keep alive either way, so timing out here
+    // just means reporting a clean error and exiting non-zero (Rust's
+    // own system_translate_probe also has its own timeout now, as a
+    // second, independent backstop — see that command's own doc comment).
+    guard let status = outcome else {
+        TranslateEvents.emitError(id: nil, code: "timeout", message: "timed out waiting for LanguageAvailability().status(...)")
+        exit(1)
     }
     // osSupported is unconditionally true here: this function only ever
     // runs once the dispatch switch below has already confirmed macOS
@@ -564,7 +629,7 @@ func handleTranslateRequestLine(_ line: String, session: TranslationSession) {
         case notInstalled
         case failed(String)
     }
-    let outcome = runOnMainRunLoop { () -> TranslationOutcome in
+    let pumpResult = runOnMainRunLoop { () -> TranslationOutcome in
         do {
             return .ok(try await session.translations(from: requests))
         } catch TranslationError.notInstalled {
@@ -574,6 +639,17 @@ func handleTranslateRequestLine(_ line: String, session: TranslationSession) {
         } catch {
             return .failed("\(error)")
         }
+    }
+    // MEDIUM-3 fix: runOnMainRunLoop now returns nil on its own bounded
+    // timeout instead of hanging forever (which — since it always runs
+    // on the main thread — used to also permanently stop THIS loop's own
+    // caller, runTranslate's stdin read loop below, wedging the whole
+    // warm session over one stuck request). On timeout, report a clean
+    // per-request error and `return` (not `exit`) — runTranslate's own
+    // `while true` loop keeps reading the NEXT stdin line right after.
+    guard let outcome = pumpResult else {
+        TranslateEvents.emitError(id: request.id, code: "timeout", message: "timed out waiting for session.translations(from:)")
+        return
     }
 
     let responses: [TranslationSession.Response]

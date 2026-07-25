@@ -51,6 +51,27 @@ describe("inferDomainsFromKeywords — ranking + cap", () => {
   });
 });
 
+// LOW fix (v0.6 round-2 review): only the trailing ~800 chars are
+// scanned now — useMeeting.ts calls this on every finalized segment for
+// a whole meeting (keyless users only), so an unbounded scan over the
+// whole transcript-so-far would re-lowercase + re-run all ~70 keyword
+// .includes() checks against an ever-growing string, permanently, for
+// the rest of the meeting. Fails against pre-fix inferDomainsFromKeywords,
+// which had no cap at all.
+describe("inferDomainsFromKeywords — LOW fix: only scans a trailing window, not the whole transcript", () => {
+  it("ignores a keyword that falls OUTSIDE the trailing scan window", () => {
+    const stale = "clinical trial "; // a real keyword, but about to fall out of the window
+    const filler = "x".repeat(900); // pushes `stale` well past the 800-char trailing cap
+    expect(inferDomainsFromKeywords(stale + filler)).toEqual([]);
+  });
+
+  it("still detects a keyword that falls WITHIN the trailing scan window, no matter how long the text before it is", () => {
+    const filler = "x".repeat(5000); // an hours-long meeting's worth of irrelevant prior text
+    const recent = "we just started a clinical trial";
+    expect(inferDomainsFromKeywords(filler + recent)).toEqual(["clinical"]);
+  });
+});
+
 describe("inferDomainsFromKeywords — domain coverage", () => {
   // One known keyword per DomainTag except "general" (the catch-all —
   // nothing maps TO it by design, see the module's own doc).

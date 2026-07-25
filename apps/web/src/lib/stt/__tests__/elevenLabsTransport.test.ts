@@ -68,6 +68,24 @@ describe("mintElevenLabsToken", () => {
     );
   });
 
+  // S7 fix (v0.6 round-2 review): threads an optional AbortSignal
+  // straight into fetch() — what actually lets ElevenLabsTransport
+  // bound + cancel the mint (see that file's own TOKEN_MINT_TIMEOUT_MS
+  // doc comment). Fails against pre-fix mintElevenLabsToken, which
+  // accepted no signal param at all.
+  it("threads an optional AbortSignal straight into fetch()", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ token: "sutkn_abc123" }, 200));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+
+    await mintElevenLabsToken("sk-real", controller.signal);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://api.elevenlabs.io/v1/single-use-token/realtime_scribe",
+      expect.objectContaining({ signal: controller.signal }),
+    );
+  });
+
   it("classifies a 401 as the bad-key zh message", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => jsonResponse({ detail: "unauthorized" }, 401)));
     await expect(mintElevenLabsToken("sk-bad")).rejects.toThrow("ElevenLabs API Key 无效或无权限");
@@ -301,7 +319,10 @@ describe("ElevenLabsTransport", () => {
     await transport.attachStream(fakeMediaStream());
     await flushMicrotasks();
 
-    expect(mintToken).toHaveBeenCalledWith("sk-real");
+    // S7 fix (v0.6 round-2 review): mintToken now also receives an
+    // AbortSignal (bounds the mint + lets stop() cancel it — see
+    // elevenLabsTransport.ts's own TOKEN_MINT_TIMEOUT_MS doc comment).
+    expect(mintToken).toHaveBeenCalledWith("sk-real", expect.any(AbortSignal));
     const ws = wsInstances[wsInstances.length - 1];
     expect(new URL(ws.url).searchParams.get("token")).toBe("minted:sk-real");
   });
@@ -344,6 +365,56 @@ describe("ElevenLabsTransport", () => {
     await flushMicrotasks();
     await stopP;
     expect(wsInstances.length).toBe(0); // connect()'s own post-mint stopping check bails first
+  });
+
+  // S7 fix (v0.6 round-2 review): stop() must be able to CANCEL a
+  // still-in-flight mint (via the AbortSignal it's now called with),
+  // not just wait for it to eventually settle on its own. Fails
+  // against pre-fix code, where mintToken was never called with a
+  // signal at all (this test's own mock would just hang forever, since
+  // its promise only ever settles on an abort event).
+  it("stop() aborts a still-in-flight mint via the AbortSignal mintToken is called with", async () => {
+    const mintToken = vi.fn(
+      (_key: string, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const transport = makeTransport({}, { mintToken });
+    await transport.attachStream(fakeMediaStream());
+    await flushMicrotasks();
+
+    expect(mintToken).toHaveBeenCalledTimes(1);
+    const signalArg = mintToken.mock.calls[0][1] as AbortSignal;
+    expect(signalArg.aborted).toBe(false);
+
+    await transport.stop();
+
+    expect(signalArg.aborted).toBe(true);
+    expect(wsInstances.length).toBe(0); // never got far enough to open a socket
+  });
+
+  // S7 fix: a mint that never settles on its own (network stall, dead
+  // endpoint) must not leave the meeting stuck on "connecting" forever
+  // — TOKEN_MINT_TIMEOUT_MS bounds it. Fails against pre-fix code,
+  // which had no timeout at all (this test's own mock never resolves
+  // except on an abort event, so onStatus("error") would never fire
+  // without one).
+  it("times out a stalled mint after TOKEN_MINT_TIMEOUT_MS instead of hanging forever", async () => {
+    vi.useFakeTimers();
+    const mintToken = vi.fn(
+      (_key: string, signal?: AbortSignal) =>
+        new Promise<string>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(new Error("网络错误")));
+        }),
+    );
+    const transport = makeTransport({}, { mintToken });
+    await transport.attachStream(fakeMediaStream());
+
+    await vi.advanceTimersByTimeAsync(10000); // TOKEN_MINT_TIMEOUT_MS
+
+    expect(wsInstances.length).toBe(0);
+    expect(onStatus).toHaveBeenCalledWith("error", "网络错误");
   });
 
   it("a mint failure surfaces its own classified message verbatim (never a generic fallback) and never constructs a socket", async () => {

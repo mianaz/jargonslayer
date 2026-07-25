@@ -206,6 +206,29 @@ describe("usage/ledger.ts", () => {
       expect(await ledger.getUsage()).toEqual([]);
     });
 
+    // S4 fix (v0.6 round-2 review): llm/providerCore.ts is isomorphic
+    // and its own recordLlmCallUsage call used to run unguarded inside
+    // Next.js /api/* route handlers (no indexedDB there) — it never
+    // reached storage.loadSettings()'s early-return check first, so it
+    // still mutated the in-memory cache before persist()'s own
+    // hasIndexedDb() guard caught it, unboundedly growing for the life
+    // of a long-lived Node server process. Fails against pre-fix code,
+    // where this assertion would see the entry that snuck into the
+    // cache before the (until-now-only) persist()-level guard.
+    it("is a no-op with no IndexedDB at all — never even touches the in-memory cache", async () => {
+      delete (globalThis as { indexedDB?: unknown }).indexedDB;
+      const ledger = await import("../ledger");
+      await ledger.recordUsage({ provider: "anthropic", kind: "llm", metric: "calls", value: 1 });
+
+      // Restore indexedDB to read the cache back out through the SAME
+      // module instance (getUsage's own ensureLoaded call would
+      // otherwise re-derive an empty cache from "no IDB" rather than
+      // actually proving recordUsage skipped the mutation).
+      (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+      expect(await ledger.getUsage()).toEqual([]);
+      expect(memStore.get("jargonslayer:usage")).toBeUndefined();
+    });
+
     it("records when no Settings blob exists yet (fresh install defaults to on)", async () => {
       // No "jargonslayer:settings" key seeded at all.
       const ledger = await import("../ledger");
@@ -242,6 +265,30 @@ describe("usage/ledger.ts", () => {
       expect(await ledger.getUsage()).toEqual([]);
       // The prune is also persisted back, not just filtered in memory.
       expect(memStore.get("jargonslayer:usage")).toEqual([]);
+    });
+
+    // S10 fix (v0.6 round-2 review): retention used to be enforced ONLY
+    // inside ensureLoaded()'s own one-time load — a tab/app kept open
+    // across the 90-day boundary (no fresh module load in between)
+    // never pruned again for the rest of that session. Fails against
+    // pre-fix recordUsage(), which would still report the January row
+    // here.
+    it("retention is re-applied on EVERY write, not just at initial load — a record that ages past 90 days during a long-lived session gets pruned on the next recordUsage() call", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01"));
+      const ledger = await import("../ledger");
+      await ledger.recordUsage({ provider: "soniox", kind: "stt", metric: "seconds", value: 10 });
+      expect(await ledger.getUsage()).toHaveLength(1);
+
+      // Jump forward well past the 90-day window WITHOUT a fresh module
+      // load — ensureLoaded's own `loaded` guard stays true throughout,
+      // simulating a long-lived tab/app instance.
+      vi.setSystemTime(new Date("2026-06-01"));
+      await ledger.recordUsage({ provider: "deepgram", kind: "stt", metric: "seconds", value: 5 });
+
+      const records = await ledger.getUsage();
+      expect(records.map((r) => r.provider)).toEqual(["deepgram"]); // the January row is gone
+      vi.useRealTimers();
     });
 
     it("getUsage({since}) filters to the requested window", async () => {

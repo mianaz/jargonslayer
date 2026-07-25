@@ -124,14 +124,31 @@ const DOMAIN_KEYWORDS: readonly [string, DomainTag][] = [
  *  if that ever matters: weight each keyword hit by inverse document
  *  frequency, or just let the real LLM inference (which this only
  *  covers for BEFORE it lands / no key at all) settle it. */
+// LOW fix (v0.6 round-2 review): caps the scanned text to its own
+// trailing window instead of the WHOLE transcript-so-far — useMeeting.ts
+// calls this on EVERY finalized segment for as long as inferredDomains
+// stays empty, i.e. for a WHOLE meeting, permanently, for exactly the
+// keyless users this fallback targets (a real key resolves
+// inferredDomains from the LLM instead — see this function's own header
+// — this path only ever runs for THEM); without a cap, the lowercase +
+// ~70-keyword .includes() scan below re-ran over an ever-GROWING string
+// every single segment. Mirrors scheduler.ts's own private
+// CONTEXT_TAIL_MAX_CHARS (not imported — that constant belongs to a
+// different module's own LLM-context-tail concern; same VALUE, same
+// "how much recent transcript context is enough" reasoning) — domain
+// inference only cares about what's being discussed RECENTLY anyway, so
+// a tail is the semantically right cap, not merely a perf one.
+const KEYWORD_SCAN_MAX_CHARS = 800;
+
 export function inferDomainsFromKeywords(text: string): DomainTag[] {
-  const lower = text.toLowerCase();
+  const recent = text.slice(-KEYWORD_SCAN_MAX_CHARS);
+  const lower = recent.toLowerCase();
   const counts = new Map<DomainTag, number>();
   for (const [keyword, domain] of DOMAIN_KEYWORDS) {
     // CJK Unified Ideographs block, U+4E00-U+9FFF — same range/literal
     // form as spanQc.ts's own CJK_RE.
     const isCjk = /[一-鿿]/.test(keyword);
-    const hit = isCjk ? text.includes(keyword) : lower.includes(keyword);
+    const hit = isCjk ? recent.includes(keyword) : lower.includes(keyword);
     if (hit) counts.set(domain, (counts.get(domain) ?? 0) + 1);
   }
   return [...counts.entries()]

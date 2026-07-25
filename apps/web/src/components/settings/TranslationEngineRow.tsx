@@ -194,8 +194,12 @@ function DesktopTranslationEngineRow({ value, onChange, langPair }: TranslationE
   // whenever the language pair itself changes (e.g. explainLanguage
   // edited in this same dialog). Shares providers.ts's module-level
   // probe cache with resolveTranslationProvider's own background
-  // warm-up, so this mount doubles as the cache-warming trigger a cold
-  // app boot needs before the FIRST meeting Start can pick this engine.
+  // warm-up, so this mount ALSO warms it — but only redundantly: this
+  // component only ever mounts once Settings is open (SettingsDialog.tsx's
+  // own `if (!open) return null` gate), so it can't be relied on before
+  // the FIRST meeting Start. page.tsx's own mount effect is what
+  // actually warms the cache at app launch (see providers.ts's
+  // warmSystemTranslateProbeForStartup, called once hydration resolves).
   useEffect(() => {
     let cancelled = false;
     setHint("checking");

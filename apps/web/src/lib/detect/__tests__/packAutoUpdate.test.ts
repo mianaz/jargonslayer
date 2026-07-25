@@ -172,6 +172,29 @@ describe("runPackAutoUpdate", () => {
     expect(recordCheckedAt).not.toHaveBeenCalled();
   });
 
+  // MEDIUM-2 fix (v0.6 round-2 review): re-checks isMeetingActive()
+  // AGAIN right before recordCheckedAt — deps.checkUpdates() itself can
+  // run for several seconds; a meeting that started WHILE it was
+  // running must bail without stamping, or the NEXT due-check (once
+  // the meeting ends) would be robbed of its due-ness for a full
+  // PACK_UPDATE_INTERVAL_MS. Fails against pre-fix code, which only
+  // ever checked isMeetingActive() once, at entry.
+  it("re-checks isMeetingActive() right before stamping — a meeting that started mid-checkUpdates() bails without recording", async () => {
+    let calls = 0;
+    const isMeetingActive = vi.fn(() => {
+      calls += 1;
+      return calls > 1; // false on the entry check, true on the pre-stamp re-check
+    });
+    const checkUpdates = vi.fn(async () => ["pack-a"]);
+    const recordCheckedAt = vi.fn();
+
+    const result = await runPackAutoUpdate(baseDeps({ isMeetingActive, checkUpdates, recordCheckedAt }));
+
+    expect(checkUpdates).toHaveBeenCalledTimes(1); // the check itself still ran to completion
+    expect(recordCheckedAt).not.toHaveBeenCalled(); // but never stamped
+    expect(result).toEqual({ checked: false, updated: [], failed: 0 });
+  });
+
   it("never throws when isMeetingActive() itself throws synchronously", async () => {
     const isMeetingActive = vi.fn(() => {
       throw new Error("store not ready");

@@ -134,6 +134,19 @@ const ELEVENLABS_MODEL = "scribe_v2_realtime";
 // button forever.
 const STOP_DRAIN_TIMEOUT_MS = 8000;
 
+// S7 fix (v0.6 round-2 review): the token mint (mintElevenLabsToken
+// below) used to have neither a timeout nor a way to cancel it — a
+// stalled POST left the meeting stuck on "connecting" forever with the
+// microphone already acquired, and stop() (which never awaited or
+// aborted the mint) could only prevent a LATE socket from opening, not
+// actually cancel the in-flight request. Bounds the mint the same
+// AbortController+setTimeout shape sidecarHealth.ts's own probeSidecar
+// already uses, EXCEPT the controller here is also held by
+// ElevenLabsTransport itself (see its own mintAbortController field) so
+// stop() can abort a still-in-flight mint immediately, not just wait
+// out this timeout.
+const TOKEN_MINT_TIMEOUT_MS = 10000;
+
 const ELEVENLABS_AUTH_ERROR = "ElevenLabs API Key 无效或无权限";
 const ELEVENLABS_CONNECT_ERROR =
   "无法连接 ElevenLabs 云端识别服务，请检查网络连接和 API Key 后重试";
@@ -152,13 +165,21 @@ const ELEVENLABS_MINT_FAILURE = "无法准备 ElevenLabs 连接（获取密钥�
  *  token is consumed on first use, so it is never cached/reused across
  *  reconnects. Classifies the failure the same way an in-band auth_error
  *  message would (see formatElevenLabsError) so a bad key reads
- *  identically whichever way it actually surfaces. */
-export async function mintElevenLabsToken(apiKey: string): Promise<string> {
+ *  identically whichever way it actually surfaces.
+ *
+ *  `signal` (S7 fix, v0.6 round-2 review): optional — ElevenLabsTransport
+ *  .connect() below always passes one, combining TOKEN_MINT_TIMEOUT_MS
+ *  with stop()'s own cancellation into a single AbortController; a
+ *  caller that omits it (e.g. a standalone script) simply gets the old
+ *  unbounded-fetch behavior. An abort surfaces through the same generic
+ *  ELEVENLABS_CONNECT_ERROR catch below — no special-casing needed. */
+export async function mintElevenLabsToken(apiKey: string, signal?: AbortSignal): Promise<string> {
   let res: Response;
   try {
     res = await fetch(ELEVENLABS_TOKEN_URL, {
       method: "POST",
       headers: { "xi-api-key": apiKey },
+      signal,
     });
   } catch {
     throw new Error(ELEVENLABS_CONNECT_ERROR);
@@ -377,7 +398,7 @@ export interface ElevenLabsTransportCallbacks {
    *  gets the real mintElevenLabsToken, which itself never touches our
    *  server — only a test ever substitutes this, to avoid a real network
    *  call. */
-  mintToken?: (key: string) => Promise<string>;
+  mintToken?: (key: string, signal?: AbortSignal) => Promise<string>;
   /** v0.6 round 2 (mirrors soniox.ts's own D8 lexicon threading): the
    *  ONE lexicon snapshot built at the meeting-start callsite. */
   lexicon?: MeetingLexicon;
@@ -392,7 +413,7 @@ export interface ElevenLabsTransportCallbacks {
 export class ElevenLabsTransport {
   private events: STTEvents;
   private settings: Settings;
-  private mintToken: (key: string) => Promise<string>;
+  private mintToken: (key: string, signal?: AbortSignal) => Promise<string>;
   private lexicon?: MeetingLexicon;
 
   private ws: WebSocket | null = null;
@@ -416,6 +437,11 @@ export class ElevenLabsTransport {
   // precedes the server closing the socket on its own right after).
   private erroredOut = false;
   private stopDrainResolve: (() => void) | null = null;
+  // S7 fix (v0.6 round-2 review): non-null only while a token mint is
+  // actually in flight — stop() aborts it immediately via this same
+  // controller rather than only being able to prevent a LATE socket
+  // from opening once the mint eventually settles on its own.
+  private mintAbortController: AbortController | null = null;
 
   constructor(cb: ElevenLabsTransportCallbacks) {
     this.events = cb.events;
@@ -467,18 +493,34 @@ export class ElevenLabsTransport {
     if (this.stopping) return;
     this.events.onStatus("connecting");
 
+    // S7 fix (v0.6 round-2 review): bounds the mint by
+    // TOKEN_MINT_TIMEOUT_MS AND gives stop() a live handle to abort it
+    // immediately (see stop() below) — a stalled mint used to leave the
+    // meeting stuck on "connecting" forever with the mic already
+    // acquired, and stop() had no way to cancel the in-flight request.
+    const controller = new AbortController();
+    this.mintAbortController = controller;
+    const mintTimeout = setTimeout(() => controller.abort(), TOKEN_MINT_TIMEOUT_MS);
     let token: string;
     try {
-      token = await this.mintToken(this.settings.elevenLabsKey);
+      token = await this.mintToken(this.settings.elevenLabsKey, controller.signal);
     } catch (err) {
+      // stop() (a deliberate abort, not a real failure) already tore
+      // down everything else this session needs — never surface a
+      // spurious error toast for a mint the user themselves cancelled.
+      if (this.stopping) return;
       // A classified Error from mintElevenLabsToken (bad key / network /
-      // generic mint failure) is already a real, user-readable zh
+      // generic mint failure, including a timeout abort — see that
+      // function's own doc) is already a real, user-readable zh
       // message — surface it verbatim rather than a one-size-fits-all
       // fallback (mirrors sonioxTransport.ts's own sendConfig catch,
       // which does the same for its preview-lane mint failures).
       const message = err instanceof Error && err.message ? err.message : ELEVENLABS_MINT_FAILURE;
       this.emitError(message);
       return;
+    } finally {
+      clearTimeout(mintTimeout);
+      this.mintAbortController = null;
     }
     // stop() can land while the mint above was in flight — never open a
     // socket for a session that's already done. There is no `ws` yet at
@@ -585,6 +627,13 @@ export class ElevenLabsTransport {
   async stop(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
+
+    // S7 fix (v0.6 round-2 review): cancel a still-in-flight token mint
+    // immediately, rather than only being able to prevent the socket it
+    // would have opened — see connect()'s own doc for the full
+    // rationale. No-op (the field is only ever non-null while a mint is
+    // actually pending) once connect() has moved past it.
+    this.mintAbortController?.abort();
 
     const ws = this.ws;
     this.ws = null;

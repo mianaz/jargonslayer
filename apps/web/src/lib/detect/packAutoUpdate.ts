@@ -119,6 +119,20 @@ export async function runPackAutoUpdate(deps: RunPackAutoUpdateDeps): Promise<Pa
       console.warn("[packAutoUpdate] checkUpdates failed", err);
       failed = 1;
     }
+    // MEDIUM-2 fix (v0.6 round-2 review): re-checked AGAIN here, right
+    // before stamping — deps.checkUpdates() itself can run for several
+    // seconds (one fetch per installed source; see remotePacks.ts's own
+    // checkUpdates, which independently re-checks a `shouldContinue`
+    // right before its own write, protecting the registry-generation
+    // bump specifically). This second check is what protects the STAMP:
+    // an attempt that started mid-meeting-start must not stamp
+    // packAutoUpdateCheckedAt, or the NEXT due-check (once the meeting
+    // ends) would be robbed of its due-ness for a full
+    // PACK_UPDATE_INTERVAL_MS. Bails the same shape as the entry-time
+    // guard above — checked:false, nothing recorded.
+    if (deps.isMeetingActive()) {
+      return { checked: false, updated: [], failed: 0 };
+    }
     try {
       deps.recordCheckedAt(now);
     } catch (err) {

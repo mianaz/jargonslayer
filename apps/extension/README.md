@@ -128,19 +128,34 @@ picking up saved changes.
 
 - `sidePanel` — required to open/configure the side panel
 - `storage` — `chrome.storage.local`, backing the 收藏 list above
+- `host_permissions` (v0.6 remote dictionary packs — S13 fix, v0.6
+  round-2 review: this doc previously claimed there were none at all,
+  drifted out of sync when this was added) — scoped to exactly the two
+  jargonslayer-dicts catalog hosts, path-prefixed to this project's own
+  repo, never the bare host and never `<all_urls>`:
+  - `https://raw.githubusercontent.com/mianaz/jargonslayer-dicts/*`
+  - `https://cdn.jsdelivr.net/gh/mianaz/jargonslayer-dicts@*`
 
-**Still exactly these two.** The microphone needs **no manifest
-permission** — it uses the standard web `getUserMedia` permission model
-via the one-time grant page (no install-time warning); history uses
-IndexedDB (no `unlimitedStorage`); exports are Blob downloads (no
-`downloads`); the grant tab opens via `chrome.tabs.create` (no `tabs`).
+  `storage/dictCatalog.ts`/`storage/remotePacks.ts` fetch() the catalog
+  index and pack manifests from these two hosts only. Both already serve
+  `access-control-allow-origin: *`, so this isn't strictly required for
+  the fetch to succeed (ordinary CORS already allows it) — it's the
+  honest, least-privilege declaration of what this app actually reaches
+  over the network. See `manifest.config.ts`'s own comment for the same
+  rationale at the source of truth.
 
-No `host_permissions`, no content scripts, no remote code — matches
-PLAN-v0.4 §1C's "side panel is the app, the service worker is a stateless
-coordinator" decision, and PRODUCT.md's "not a word-by-word lookup
-extension" stance (content-script select→explain on arbitrary pages is v2,
-out of scope here). The manifest carries no `content_security_policy`
-override, so MV3's default (no remote code, no eval) applies as-is.
+The microphone needs **no manifest permission** — it uses the standard
+web `getUserMedia` permission model via the one-time grant page (no
+install-time warning); history uses IndexedDB (no `unlimitedStorage`);
+exports are Blob downloads (no `downloads`); the grant tab opens via
+`chrome.tabs.create` (no `tabs`).
+
+No content scripts, no remote code execution — matches PLAN-v0.4 §1C's
+"side panel is the app, the service worker is a stateless coordinator"
+decision, and PRODUCT.md's "not a word-by-word lookup extension" stance
+(content-script select→explain on arbitrary pages is v2, out of scope
+here). The manifest carries no `content_security_policy` override, so
+MV3's default (no remote code, no eval) applies as-is.
 
 ## Architecture notes
 

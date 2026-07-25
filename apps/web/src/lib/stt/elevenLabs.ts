@@ -23,6 +23,14 @@ export class ElevenLabsEngine implements STTEngine {
   private transport: ElevenLabsTransport | null = null;
   private stream: MediaStream | null = null;
   private stopping = false;
+  // Usage-ledger instrumentation (T2, lib/usage/ledger.ts) — stamped
+  // once the transport's own "listening" status fires (S7 fix, v0.6
+  // round-2 review: the transport confirms this once the server
+  // actually acks the session — ElevenLabs' session_started message —
+  // not merely once attachStream() resolves below, which only means the
+  // LOCAL audio graph is wired up; the token mint + WebSocket connect +
+  // server round trip all still happen AFTER that). Read back at stop()
+  // to record a SINGLE wall-clock-elapsed seconds figure.
   private streamStartedAt: number | null = null;
 
   async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
@@ -49,12 +57,24 @@ export class ElevenLabsEngine implements STTEngine {
     }
     this.stream = stream;
 
-    const transport = new ElevenLabsTransport({ events, settings, lexicon });
+    // S7 fix: intercepts the transport's own onStatus("listening") —
+    // the actual authenticated/streaming start — to stamp
+    // streamStartedAt, then forwards the call through unchanged.
+    const wrappedEvents: STTEvents = {
+      ...events,
+      onStatus: (status, detail) => {
+        if (status === "listening" && this.streamStartedAt === null) {
+          this.streamStartedAt = Date.now();
+        }
+        events.onStatus(status, detail);
+      },
+    };
+
+    const transport = new ElevenLabsTransport({ events: wrappedEvents, settings, lexicon });
     this.transport = transport;
 
     try {
       await transport.attachStream(stream);
-      this.streamStartedAt = Date.now();
     } catch {
       events.onStatus("error", "无法初始化音频处理，请刷新页面重试");
       stream.getTracks().forEach((t) => t.stop());
@@ -85,6 +105,13 @@ export class ElevenLabsEngine implements STTEngine {
     this.stopping = true;
     diagLog("info", "stt-elevenlabs", "ElevenLabs 引擎停止");
 
+    // S7 fix (v0.6 round-2 review): captured BEFORE transport.stop(),
+    // which can take up to STOP_DRAIN_TIMEOUT_MS (8s) waiting on the
+    // server's own drain ack — the user already said "stop" and local
+    // audio capture ends at THIS instant; the drain wait afterward is
+    // teardown bookkeeping, not more billable streaming time.
+    const endedAt = Date.now();
+
     const transport = this.transport;
     this.transport = null;
     if (transport) {
@@ -92,7 +119,7 @@ export class ElevenLabsEngine implements STTEngine {
     }
 
     if (this.streamStartedAt !== null) {
-      recordSttSeconds(this.kind, (Date.now() - this.streamStartedAt) / 1000);
+      recordSttSeconds(this.kind, (endedAt - this.streamStartedAt) / 1000);
       this.streamStartedAt = null;
     }
 

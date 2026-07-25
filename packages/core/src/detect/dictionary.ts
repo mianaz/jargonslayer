@@ -1158,16 +1158,34 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** S11 fix (v0.6 round-2 review): `\b` only makes sense adjacent to a
+ *  word character — it asserts "exactly one of the two neighboring
+ *  characters is a word character", so placed right next to a NON-word
+ *  edge character (e.g. the trailing "%" in "100%") it can never
+ *  actually match once that symbol is itself followed by whitespace,
+ *  punctuation, or the end of the string — the overwhelmingly common
+ *  case for how such a token appears in real text (both neighbors end
+ *  up non-word). An expression edge like that needs no `\b` at all: the
+ *  "don't match a substring of a longer word" concern `\b` exists for
+ *  (e.g. "cat" inside "category") only applies when the edge itself IS
+ *  a word character. */
+function boundaryFor(edgeChar: string): string {
+  return /\w/.test(edgeChar) ? "\\b" : "";
+}
+
 /** Build a case-insensitive, whitespace/inflection-tolerant regex for
  *  a multi-word expression. The last word may carry a common suffix
  *  (s, es, ed, d, ing) so "circling back" matches "circle back". */
 function buildExpressionRegex(phrase: string): RegExp {
   const words = phrase.trim().split(/\s+/);
+  const first = words[0];
   const last = words[words.length - 1];
   const head = words.slice(0, -1).map(escapeRe);
   const lastEscaped = escapeRe(last);
   const parts = [...head, `${lastEscaped}(?:s|es|ed|d|ing)?`];
-  const source = `\\b${parts.join("\\s+")}\\b`;
+  const leadingBoundary = boundaryFor(first[0]);
+  const trailingBoundary = boundaryFor(last[last.length - 1]);
+  const source = `${leadingBoundary}${parts.join("\\s+")}${trailingBoundary}`;
   return new RegExp(source, "i");
 }
 
@@ -1245,7 +1263,11 @@ function getCachedTermRegex(candidate: string): RegExp {
 // synchronously on every finalized segment).
 // ---------------------------------------------------------------
 
-const AMBIGUOUS_MARGIN = 0.15;
+// Exported (MEDIUM-4 fix, v0.6 round-2 review): dedupe.ts's own
+// dictionary-to-dictionary term merge reuses this SAME margin to gate
+// an in-place sense swap on an existing card, rather than a second,
+// independently-tunable copy — see that file's own mergeTerms doc.
+export const AMBIGUOUS_MARGIN = 0.15;
 
 interface RankedSense {
   senseId: string;
@@ -1274,9 +1296,26 @@ interface SenseSelection {
  *
  *  `ambiguous`: true when the top two scores are within
  *  AMBIGUOUS_MARGIN of each other, OR — only on the scored path, since
- *  there is no domainWeights to consult on the fallback path — the
+ *  there is no domainWeights to consult on the fallback path, AND only
+ *  when domainWeights actually carries at least one real entry — the
  *  chosen sense's own domain carries zero weight in the current
- *  context. */
+ *  context.
+ *
+ *  Fix (LOW, v0.6 round-2 review): that second trigger used to fire
+ *  whenever `ctx.domainWeights` was EMPTY (`{}`, not `undefined`) too
+ *  — which in practice is every meeting's own starting state (before
+ *  any domain is inferred) — because "this sense's own domain has zero
+ *  weight" is trivially true of every domain when NOTHING has non-zero
+ *  weight. That's not a real ambiguity signal ("we have context and it
+ *  disagrees with this pick"), it's "we have no context at all yet",
+ *  which made `ambiguous` effectively always true in-app (this app
+ *  ALWAYS calls setSenseContext with a real, if often still-empty,
+ *  object — see useMeeting.ts's own wiring — so the `ctx === null`
+ *  fallback path right above is unreachable there in practice; the
+ *  scored-but-empty path was the one that actually mattered). Gating
+ *  on a non-empty domainWeights map restores the intended meaning:
+ *  ambiguous only from a genuine domain mismatch, never from simply not
+ *  knowing the domain yet. */
 function selectSense(
   entry: { pack: string; senses: DictSense[] },
   enabledPacks: string[] | null,
@@ -1298,9 +1337,11 @@ function selectSense(
   const top1 = scored[0];
   const top2 = scored[1];
   const marginAmbiguous = top2 !== undefined && top1.score - top2.score < AMBIGUOUS_MARGIN;
-  const ambiguous = ctx
-    ? marginAmbiguous || (ctx.domainWeights?.[top1.sense.domain] ?? 0) === 0
-    : marginAmbiguous;
+  const domainMismatchAmbiguous =
+    ctx !== null &&
+    Object.keys(ctx.domainWeights ?? {}).length > 0 &&
+    (ctx.domainWeights?.[top1.sense.domain] ?? 0) === 0;
+  const ambiguous = marginAmbiguous || domainMismatchAmbiguous;
 
   return {
     chosen: top1.sense,
@@ -1350,7 +1391,16 @@ export function scanDictionary(
   if (sentences.length === 0) return { expressions: [], terms: [] };
 
   const expressions: DetectedExpression[] = [];
-  const terms: DetectedTerm[] = [];
+  // S8 fix (v0.6 round-2 review): each hit carries its own match SPAN
+  // now (matchStart/matchEnd, the candidate's actual position in
+  // `text`) alongside the DetectedTerm — dropSubsumedTerms below needs
+  // it to tell a genuinely SEPARATE, non-overlapping occurrence of a
+  // shorter surface (e.g. a standalone "vesting" elsewhere in the same
+  // segment) apart from one that's truly subsumed inside a longer
+  // match (e.g. "vesting" inside "vesting cliff", same position) — see
+  // that function's own doc comment. Stripped back down to plain
+  // DetectedTerm[] at this function's own return statement.
+  const termHits: { term: DetectedTerm; matchStart: number; matchEnd: number }[] = [];
 
   refreshRegexCachesIfStale();
   const remotePacks = getLoadedRemotePacks();
@@ -1419,8 +1469,19 @@ export function scanDictionary(
     // emitted card always reports the entry's own headword
     // (entry.term), never the variant that actually matched.
     const candidates = [entry.term, ...(entry.variants ?? [])];
-    const hit = candidates.some((candidate) => getCachedTermRegex(candidate).test(text));
-    if (!hit) continue;
+    // S8 fix: finds the actual match (position, not just a boolean) for
+    // whichever candidate hits first — getCachedTermRegex carries no
+    // g/y flag (see its own doc comment), so .exec() is safe here
+    // without mutating any shared lastIndex state. Same "first candidate
+    // to hit wins" precedent the emitted headword already follows.
+    let match: RegExpExecArray | null = null;
+    for (const candidate of candidates) {
+      match = getCachedTermRegex(candidate).exec(text);
+      if (match) break;
+    }
+    if (!match) continue;
+    const matchStart = match.index;
+    const matchEnd = matchStart + match[0].length;
 
     // v0.6 T3 (multi-sense terms): cardinality is UNCHANGED — still
     // exactly one DetectedTerm per matched entry — but when the entry
@@ -1434,53 +1495,87 @@ export function scanDictionary(
         { pack: entry.pack, senses: entry.senses },
         enabledPacks,
       );
-      terms.push({
-        term: entry.term,
-        type: chosen.type ?? entry.type,
-        gloss_en: chosen.gloss_en,
-        gloss_zh: chosen.gloss_zh,
-        senseId: chosen.senseId,
-        senses: ranked,
-        ambiguous,
+      termHits.push({
+        term: {
+          term: entry.term,
+          type: chosen.type ?? entry.type,
+          gloss_en: chosen.gloss_en,
+          gloss_zh: chosen.gloss_zh,
+          senseId: chosen.senseId,
+          senses: ranked,
+          ambiguous,
+        },
+        matchStart,
+        matchEnd,
       });
     } else {
-      terms.push({
-        term: entry.term,
-        type: entry.type,
-        gloss_en: entry.gloss_en,
-        gloss_zh: entry.gloss_zh,
+      termHits.push({
+        term: {
+          term: entry.term,
+          type: entry.type,
+          gloss_en: entry.gloss_en,
+          gloss_zh: entry.gloss_zh,
+        },
+        matchStart,
+        matchEnd,
       });
     }
   }
 
-  return { expressions, terms: dropSubsumedTerms(terms) };
+  return { expressions, terms: dropSubsumedTerms(termHits).map((h) => h.term) };
+}
+
+/** Span-shaped hit dropSubsumedTerms below consumes — matchStart/matchEnd
+ *  are the candidate's actual character positions in the scanned `text`
+ *  (see scanDictionary's own termHits construction). Generic over `T`
+ *  purely so dropSubsumedTermsForTests can exercise this with plain
+ *  fixtures instead of a real DetectedTerm. */
+interface SpannedHit<T> {
+  term: T;
+  matchStart: number;
+  matchEnd: number;
 }
 
 /** Longest-match-wins across overlapping term surfaces. "vesting cliff"
  *  contains "vesting" as a word-bounded substring, so both entries match
  *  the same phrase and the user gets two cards for one thing — the
- *  shorter one always the less informative. Drops a hit whose surface is
- *  a whole-word substring of another hit's surface in the SAME scan.
+ *  shorter one always the less informative. Drops a hit whose match SPAN
+ *  is fully contained within another, STRICTLY LONGER hit's own match
+ *  span in the SAME scan.
  *
- *  Deliberately compares only the matched surfaces against each other,
- *  not against the transcript: two entries that both matched this text
- *  and stand in a containment relation are redundant by construction,
- *  whichever sentence produced them. Case-insensitive, because a term
- *  entry may be matched case-insensitively; the all-caps case-sensitive
- *  rule already ran at match time, so anything reaching here is a real
- *  hit. O(n²) on a list that is almost always under ~10 — the guard
- *  below keeps a pathological pack from making that matter. */
-export function dropSubsumedTermsForTests<T extends { term: string }>(hits: T[]): T[] {
+ *  S8 fix (v0.6 round-2 review): compares actual match POSITIONS now,
+ *  not the matched surface strings against each other — the old
+ *  string-containment check couldn't tell a genuinely subsumed
+ *  occurrence ("vesting" inside "vesting cliff", same position) apart
+ *  from a completely separate, non-overlapping occurrence of the
+ *  shorter surface elsewhere in the same segment (e.g. a standalone
+ *  "vesting" mentioned earlier, plus a later "vesting cliff") — the old
+ *  code dropped the legitimate standalone occurrence too, since it only
+ *  ever compared LABELS. Equal-length spans never subsume each other
+ *  (mirrors the old code's own `<=` tie rule) — two different entries
+ *  matching the exact same span both survive.
+ *
+ *  Also drops the old per-comparison `new RegExp` entirely (pure integer
+ *  span comparison instead) — the previous `hits.length > 64` guard
+ *  existed specifically to bound that regex-allocation cost and, as a
+ *  side effect, silently DISABLED filtering outright above 64 hits
+ *  (the opposite of what a safety guard should do). With comparisons
+ *  this cheap, O(n²) is trivial at the realistic scale here (hits
+ *  matched within ONE finalized segment — always a handful in
+ *  practice), so no upper bound is needed at all. */
+export function dropSubsumedTermsForTests<T>(hits: SpannedHit<T>[]): SpannedHit<T>[] {
   return dropSubsumedTerms(hits);
 }
 
-function dropSubsumedTerms<T extends { term: string }>(hits: T[]): T[] {
-  if (hits.length < 2 || hits.length > 64) return hits;
-  const lowered = hits.map((h) => h.term.toLowerCase());
-  return hits.filter((_, i) => {
+function dropSubsumedTerms<T>(hits: SpannedHit<T>[]): SpannedHit<T>[] {
+  if (hits.length < 2) return hits;
+  return hits.filter((hit, i) => {
+    const hitLen = hit.matchEnd - hit.matchStart;
     for (let j = 0; j < hits.length; j++) {
-      if (i === j || lowered[j].length <= lowered[i].length) continue;
-      if (new RegExp(`\\b${escapeRe(lowered[i])}\\b`).test(lowered[j])) return false;
+      if (i === j) continue;
+      const other = hits[j];
+      if (other.matchEnd - other.matchStart <= hitLen) continue; // only a STRICTLY longer span can subsume
+      if (hit.matchStart >= other.matchStart && hit.matchEnd <= other.matchEnd) return false;
     }
     return true;
   });

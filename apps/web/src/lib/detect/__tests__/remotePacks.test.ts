@@ -1008,6 +1008,112 @@ describe("remotePacks — M2: checkUpdates re-checks the total caps before writi
   });
 });
 
+describe("remotePacks — MEDIUM-2: checkUpdates' shouldContinue param + only reloading the registry on a real change (v0.6 round-2 review)", () => {
+  beforeEach(() => {
+    memStore.clear();
+    vi.resetModules();
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  // Fails against pre-fix checkUpdates(), which took no shouldContinue
+  // param at all and always wrote a genuine update through.
+  it("shouldContinue() returning false bails WITHOUT writing — even when a real update was found", async () => {
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 2 });
+    const updated = await remotePacks.checkUpdates(() => false);
+
+    expect(updated).toEqual([]);
+    const sources = await remotePacks.listPackSources();
+    expect(sources.find((s) => s.pack.id === "pack-a")!.pack.version).toBe(1); // unchanged — never written
+  });
+
+  it("shouldContinue() returning true proceeds exactly like passing nothing at all", async () => {
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 2 });
+    const updated = await remotePacks.checkUpdates(() => true);
+
+    expect(updated).toEqual(["pack-a"]);
+    const sources = await remotePacks.listPackSources();
+    expect(sources.find((s) => s.pack.id === "pack-a")!.pack.version).toBe(2);
+  });
+
+  // Fails against pre-fix checkUpdates(), which called
+  // loadRemotePacksIntoRegistry(true) unconditionally — the generation
+  // would bump here even though nothing changed.
+  it("a no-op check (every source already current) never bumps the remote-packs registry generation", async () => {
+    const { getRemotePacksGeneration } = await import("@jargonslayer/core/detect/remotePacksRegistry");
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+    await remotePacks.loadRemotePacksIntoRegistry(true);
+    const before = getRemotePacksGeneration();
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 }); // SAME version — no-op
+    const updated = await remotePacks.checkUpdates();
+
+    expect(updated).toEqual([]);
+    expect(getRemotePacksGeneration()).toBe(before);
+  });
+
+  it("a REAL update still bumps the registry generation, same as before this fix", async () => {
+    const { getRemotePacksGeneration } = await import("@jargonslayer/core/detect/remotePacksRegistry");
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+    await remotePacks.loadRemotePacksIntoRegistry(true);
+    const before = getRemotePacksGeneration();
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 2 });
+    const updated = await remotePacks.checkUpdates();
+
+    expect(updated).toEqual(["pack-a"]);
+    expect(getRemotePacksGeneration()).toBeGreaterThan(before);
+  });
+});
+
+describe("remotePacks — LOW fix: loadRemotePacksIntoRegistry never poisons its own promise on failure (v0.6 round-2 review)", () => {
+  beforeEach(() => {
+    memStore.clear();
+    vi.resetModules();
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  // Fails against pre-fix loadRemotePacksIntoRegistry, where the
+  // `loadingPromise = null` line sat AFTER the await with no
+  // try/finally — a rejection left it set forever, so this SECOND call
+  // would return the SAME dead rejected promise instead of a genuine
+  // retry, even after the injected failure stopped happening.
+  it("a failed load does not poison later calls — a later call (after the failure clears) succeeds instead of reusing the same rejected promise", async () => {
+    const remotePacks = await import("../remotePacks");
+    const registry = await import("@jargonslayer/core/detect/remotePacksRegistry");
+    const spy = vi.spyOn(registry, "setLoadedRemotePacks").mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+
+    await expect(remotePacks.loadRemotePacksIntoRegistry()).rejects.toThrow("boom");
+
+    spy.mockRestore(); // the injected failure is now gone — a real retry should succeed
+    await expect(remotePacks.loadRemotePacksIntoRegistry()).resolves.toBeUndefined();
+  });
+});
+
 // v0.6 multi-sense-terms sprint (T1) — NOT the "v0.6 T1-T6" labels used
 // elsewhere in this file, which name the earlier/unrelated remote-packs
 // sprint (variants, commonWord, manifest v2, size caps, catalog browse).

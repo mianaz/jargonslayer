@@ -797,8 +797,19 @@ export async function loadPacksIntoRegistry(
     setLoadedRemotePacks(sources.map((s) => s.pack));
     registryLoaded = true;
   })();
-  await loadingPromise;
-  loadingPromise = null;
+  // LOW fix (v0.6 round-2 review): `finally`, not a bare statement after
+  // the await — a readSources() failure used to leave `loadingPromise`
+  // pointing at the now-rejected promise FOREVER (the line clearing it
+  // never ran), so every later call for the rest of the session hit the
+  // `if (loadingPromise && !force)` reuse branch above and returned that
+  // SAME dead rejected promise, even long after whatever caused the
+  // original failure (a transient IDB error, say) had passed. Mirrors
+  // apps/web/src/lib/detect/remotePacks.ts's identical fix.
+  try {
+    await loadingPromise;
+  } finally {
+    loadingPromise = null;
+  }
 }
 
 // ---------------------------------------------------------------
