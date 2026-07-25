@@ -27,9 +27,13 @@ describe("runInferContextTask — happy path", () => {
   it("returns the trimmed context unchanged when well within budget", async () => {
     const res = await runInferContextTask(
       baseInput(),
-      makeCall({ context: "生物信息学组会（单细胞转录组方向），面向研究生" }),
+      makeCall({
+        context: "生物信息学组会（单细胞转录组方向），面向研究生",
+        domains: ["genomics", "biomed"],
+      }),
     );
     expect(res.context).toBe("生物信息学组会（单细胞转录组方向），面向研究生");
+    expect(res.domains).toEqual(["genomics", "biomed"]);
   });
 
   it("forwards the excerpt into the provider call's user message via EXCERPT:", async () => {
@@ -71,39 +75,88 @@ describe("runInferContextTask — happy path", () => {
 
 describe("runInferContextTask — empty-context passthrough", () => {
   it("a genuinely empty model reply passes through as an empty string (caller's job to treat as 'no result')", async () => {
-    const res = await runInferContextTask(baseInput(), makeCall({ context: "" }));
+    const res = await runInferContextTask(baseInput(), makeCall({ context: "", domains: [] }));
     expect(res.context).toBe("");
   });
 
   it("a whitespace-only model reply trims down to empty", async () => {
-    const res = await runInferContextTask(baseInput(), makeCall({ context: "   " }));
+    const res = await runInferContextTask(baseInput(), makeCall({ context: "   ", domains: [] }));
     expect(res.context).toBe("");
   });
 });
 
 describe("runInferContextTask — overlong sanitize (trim + hard-cap at 80 chars)", () => {
   it("trims leading/trailing whitespace", async () => {
-    const res = await runInferContextTask(baseInput(), makeCall({ context: "  生物信息学组会  " }));
+    const res = await runInferContextTask(
+      baseInput(),
+      makeCall({ context: "  生物信息学组会  ", domains: [] }),
+    );
     expect(res.context).toBe("生物信息学组会");
   });
 
   it("hard-caps a reply over 80 chars at exactly 80", async () => {
     const overlong = "a".repeat(120);
-    const res = await runInferContextTask(baseInput(), makeCall({ context: overlong }));
+    const res = await runInferContextTask(baseInput(), makeCall({ context: overlong, domains: [] }));
     expect(res.context).toBe("a".repeat(80));
     expect(res.context.length).toBe(80);
   });
 
   it("leaves a reply at exactly 80 chars unchanged", async () => {
     const exact = "a".repeat(80);
-    const res = await runInferContextTask(baseInput(), makeCall({ context: exact }));
+    const res = await runInferContextTask(baseInput(), makeCall({ context: exact, domains: [] }));
     expect(res.context).toBe(exact);
   });
 
   it("trims THEN caps (a padded-then-overlong reply is trimmed before the 80-char slice)", async () => {
     const padded = `  ${"b".repeat(90)}  `;
-    const res = await runInferContextTask(baseInput(), makeCall({ context: padded }));
+    const res = await runInferContextTask(baseInput(), makeCall({ context: padded, domains: [] }));
     expect(res.context).toBe("b".repeat(80));
+  });
+});
+
+// v0.6 multi-sense-terms sprint (T5): sanitizeDomains coverage —
+// mirrors the context-sanitize describe blocks above in shape.
+describe("runInferContextTask — domains sanitize (v0.6 T5)", () => {
+  it("passes through a well-formed domains array unchanged (order preserved)", async () => {
+    const res = await runInferContextTask(
+      baseInput(),
+      makeCall({ context: "", domains: ["genomics", "stats", "biomed"] }),
+    );
+    expect(res.domains).toEqual(["genomics", "stats", "biomed"]);
+  });
+
+  it("an empty domains array passes through as empty (no confident domain)", async () => {
+    const res = await runInferContextTask(baseInput(), makeCall({ context: "", domains: [] }));
+    expect(res.domains).toEqual([]);
+  });
+
+  it("drops any value not in the fixed DomainTag enum, keeping the recognized ones", async () => {
+    const res = await runInferContextTask(
+      baseInput(),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      makeCall({ context: "", domains: ["biomed", "not-a-real-domain", "stats"] as any }),
+    );
+    expect(res.domains).toEqual(["biomed", "stats"]);
+  });
+
+  it("caps at 3 domains even when the model returns more", async () => {
+    const res = await runInferContextTask(
+      baseInput(),
+      makeCall({
+        context: "",
+        domains: ["biomed", "clinical", "pharma", "genomics", "stats"],
+      }),
+    );
+    expect(res.domains).toHaveLength(3);
+    expect(res.domains).toEqual(["biomed", "clinical", "pharma"]);
+  });
+
+  it("dedupes a repeated domain without consuming a slot twice", async () => {
+    const res = await runInferContextTask(
+      baseInput(),
+      makeCall({ context: "", domains: ["biomed", "biomed", "clinical", "pharma"] }),
+    );
+    expect(res.domains).toEqual(["biomed", "clinical", "pharma"]);
   });
 });
 

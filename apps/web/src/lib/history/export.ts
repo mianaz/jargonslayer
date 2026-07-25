@@ -28,6 +28,9 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
   // Lane D): second cloud engine, terse noun form matching soniox above.
   deepgram: "Deepgram 云端识别",
+  // v0.6 round 2: third BYOK cloud engine, terse noun form matching
+  // soniox/deepgram above.
+  elevenlabs: "ElevenLabs 云端识别",
   // v0.5 Wave-1 Foundation (F4 tab-audio-cloud kind, not yet a
   // selectable engine — see STTEngineKind's own doc comment in
   // types.ts). Terse noun form matching every other entry here.

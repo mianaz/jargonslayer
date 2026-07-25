@@ -1,6 +1,6 @@
 // v0.5.1 desktop keychain custody design — API-key material (Settings.
-// apiKey/hfToken/sonioxKey/deepgramKey/agentToken, see packages/core/src/
-// types.ts's own field docs) moves out of the plaintext IndexedDB
+// apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/agentToken, see
+// packages/core/src/types.ts's own field docs) moves out of the plaintext IndexedDB
 // settings blob into the macOS Keychain. This module owns exactly the
 // Rust half of that: three thin app-owned commands (secret_set/
 // secret_get/secret_delete) that read/write/delete ONE named secret at a
@@ -43,7 +43,7 @@ use crate::paths::resolve_app_paths;
 /// Keychain "service" (macOS calls it the credential's _name_ attribute)
 /// every Entry in this module is created under — see keyring::Entry::
 /// new's own (service, user) pair; `name` (one of ALLOWED below) is the
-/// _user_ (macOS's _account_ attribute), so each of the 5 allowed fields
+/// _user_ (macOS's _account_ attribute), so each of the 6 allowed fields
 /// becomes its own distinct Keychain item, all grouped under this one
 /// service. Verified directly against keyring 3.6.3's own vendored
 /// source (~/.cargo/registry/src/.../keyring-3.6.3/src/macos.rs) before
@@ -60,7 +60,14 @@ const SERVICE: &str = "com.bioinfospace.jargonslayer";
 /// rs's own DiskFreeResult shape). Rejecting anything else keeps this
 /// from ever becoming an arbitrary keychain-write primitive for a
 /// compromised renderer.
-const ALLOWED: [&str; 5] = ["apiKey", "hfToken", "sonioxKey", "deepgramKey", "agentToken"];
+const ALLOWED: [&str; 6] = [
+    "apiKey",
+    "hfToken",
+    "sonioxKey",
+    "deepgramKey",
+    "elevenLabsKey",
+    "agentToken",
+];
 
 fn check_allowed(name: &str) -> Result<(), String> {
     if ALLOWED.contains(&name) {

@@ -21,6 +21,9 @@ import {
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
+import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
+import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonslayer/core/detect/packs";
+import { sanitizeDomains } from "./llm/tasks/inferContext";
 import type { DetectMode } from "./detect/scheduler";
 import type { OnDeviceMode } from "./stt/onDeviceSpeech";
 import * as storage from "./history/storage";
@@ -753,6 +756,19 @@ interface AppState {
   setInferredContext: (value: string | null, opts?: { override?: boolean }) => void;
   bumpContextAttempts: () => void;
   markContextRefreshed: () => void;
+  // v0.6 multi-sense-terms sprint (T5): the domain tags inferred
+  // alongside inferredContext above (InferContextResponse.domains) —
+  // same reset/persistence posture as that field (see its own doc):
+  // reset in beginMeeting/newMeeting, persisted with the session (see
+  // MeetingSession.inferredDomains, saveCurrentSession/
+  // currentSessionSnapshot below). Feeds detect/senseContext.ts's
+  // deriveSenseContext via useMeeting.ts's wiring effect. Narrowed to
+  // the real DomainTag union HERE (not left as the wire's loose
+  // string[]) — setInferredDomains below is the one write-time guard
+  // every caller routes through, same posture as setInferredContext's
+  // own MEETING_CONTEXT_MAX_CHARS clamp just above.
+  inferredDomains: DomainTag[];
+  setInferredDomains: (domains: string[]) => void;
   setFocusMode: (v: boolean) => void;
   setCaptionMode: (v: boolean) => void;
   setSidecarUp: (up: boolean | null) => void;
@@ -1110,6 +1126,7 @@ export function modeForPersistedEngine(
     case "whisper":
     case "soniox":
     case "deepgram":
+    case "elevenlabs":
       return "mic";
     case "appaudio":
       return "system-audio";
@@ -1157,6 +1174,34 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
     settings.aiDetect = !legacy.dictionaryOnly;
   }
   delete (settings as { dictionaryOnly?: boolean }).dictionaryOnly;
+  // MEDIUM-5 fix (v0.6 round-2 review): union newly-introduced built-in
+  // pack ids into an OLD explicit enabledPacks array. SettingsDialog.tsx's
+  // own 保存 writes enabledPacks as an explicit array the moment a user
+  // has ever unchecked even ONE pack — that array is frozen at whatever
+  // packs existed at that moment, so a genuinely NEW built-in pack
+  // (added in a LATER release, e.g. v0.6's modern-usage/finance-consumer
+  // /daily-idiom) silently never fires for that user, forever
+  // (isPackEnabled treats "not in the array" as excluded). A null
+  // enabledPacks (nobody's ever customized packs — the common case)
+  // needs no migration: null already means "everything on", new packs
+  // included. Keyed off packsSchemaVersion so the user's own explicit
+  // EXCLUSIONS (packs they genuinely unchecked) survive untouched — only
+  // ids that didn't exist yet at their last-saved version get added —
+  // and running this twice is a no-op (packsSchemaVersion is already
+  // CURRENT_PACKS_SCHEMA_VERSION after the first pass, so the filter
+  // below finds nothing newer to union in).
+  const savedPacksVersion = legacy.packsSchemaVersion ?? 0;
+  if (settings.enabledPacks !== null) {
+    const explicitPacks = settings.enabledPacks;
+    const newlyIntroducedIds = Object.entries(PACKS_ADDED_AT_VERSION)
+      .filter(([version]) => Number(version) > savedPacksVersion)
+      .flatMap(([, ids]) => ids)
+      .filter((id) => !explicitPacks.includes(id));
+    if (newlyIntroducedIds.length > 0) {
+      settings.enabledPacks = [...explicitPacks, ...newlyIntroducedIds];
+    }
+  }
+  settings.packsSchemaVersion = CURRENT_PACKS_SCHEMA_VERSION;
   // S9/D7 platform coercion runs FIRST — see applyPlatformEngineDefaults'
   // own doc for why (an engine value must be legal for THIS platform
   // before preview-tier legality is even meaningful to ask about).
@@ -2003,6 +2048,9 @@ export const useApp = create<AppState>((set, get) => ({
       contextOverride: false,
       contextAttempts: 0,
       contextRefreshed: false,
+      // v0.6 multi-sense-terms sprint: same "must not survive into a
+      // fresh meeting" rationale as inferredContext just above.
+      inferredDomains: [],
       // F7 fix (Sol LOW #19, keychain-custody fix round): a stale
       // "dictionary" left over from a PREVIOUS meeting's AI fallback
       // otherwise survives into this fresh one — AiStatusPanel's own
@@ -2422,6 +2470,11 @@ export const useApp = create<AppState>((set, get) => ({
       // contextRefreshed are live-only bookkeeping (see AppState's own
       // doc), never part of MeetingSession's own shape.
       inferredContext: s.inferredContext ?? undefined,
+      // v0.6 multi-sense-terms sprint: same "final value only" posture
+      // as inferredContext above; omit-when-empty like speakerAliases/
+      // translations (no meaningful "never inferred" vs. "inferred
+      // empty" distinction for this field — see AppState's own doc).
+      inferredDomains: s.inferredDomains.length > 0 ? s.inferredDomains : undefined,
     };
     // H1 fix (Sol adversarial review): storage.saveSession now reports
     // whether the write actually landed — a failed local save must
@@ -2544,6 +2597,13 @@ export const useApp = create<AppState>((set, get) => ({
       contextOverride: false,
       contextAttempts: 0,
       contextRefreshed: false,
+      // v0.6 multi-sense-terms sprint: same "this session's own
+      // archived value, not the previous live meeting's" rationale as
+      // inferredContext just above. Re-validated through the same
+      // sanitizeDomains a fresh inference result goes through — a
+      // hand-edited backup/export file must not smuggle an arbitrary
+      // string into a field this store treats as a closed enum.
+      inferredDomains: sanitizeDomains(session.inferredDomains ?? []),
     }));
   },
 
@@ -2801,6 +2861,8 @@ export const useApp = create<AppState>((set, get) => ({
       contextOverride: false,
       contextAttempts: 0,
       contextRefreshed: false,
+      // v0.6 multi-sense-terms sprint: mirrors beginMeeting's own reset.
+      inferredDomains: [],
       cards: [],
       terms: [],
       summary: null,
@@ -2820,6 +2882,7 @@ export const useApp = create<AppState>((set, get) => ({
   contextOverride: false,
   contextAttempts: 0,
   contextRefreshed: false,
+  inferredDomains: [],
   setInferredContext: (value, opts) => {
     set((s) => ({
       // F2 fix (field-test batch C): defensive clamp — the header
@@ -2847,6 +2910,14 @@ export const useApp = create<AppState>((set, get) => ({
   },
   bumpContextAttempts: () => set((s) => ({ contextAttempts: s.contextAttempts + 1 })),
   markContextRefreshed: () => set({ contextRefreshed: true }),
+  // v0.6 multi-sense-terms sprint (T5): called ONLY from useMeeting.ts's
+  // auto-inference success path, right alongside setInferredContext
+  // (never from the header chip's manual context edit — a hand-edited
+  // context string carries no domain guess of its own, so this is left
+  // untouched rather than guessed at). sanitizeDomains is the same
+  // backstop-clamp EVERY caller (an inference result, a restored
+  // session in loadSession) routes through — see its own doc.
+  setInferredDomains: (domains) => set({ inferredDomains: sanitizeDomains(domains) }),
   clearToast: () => set({ toast: null }),
   setFocusMode: (focusMode) => set({ focusMode }),
   setCaptionMode: (captionMode) => set({ captionMode }),
@@ -2884,5 +2955,8 @@ export function currentSessionSnapshot(): MeetingSession | null {
     // Auto meeting-context detection: same "final value only" posture
     // as saveCurrentSession above.
     inferredContext: s.inferredContext ?? undefined,
+    // v0.6 multi-sense-terms sprint: same posture as saveCurrentSession's
+    // own inferredDomains handling above.
+    inferredDomains: s.inferredDomains.length > 0 ? s.inferredDomains : undefined,
   };
 }

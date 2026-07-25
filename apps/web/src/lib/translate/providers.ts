@@ -21,6 +21,8 @@
 import { translateApi } from "../llm/client";
 import { diagLog } from "../diag/log";
 import { IS_TAURI } from "../platform/ios";
+import { IS_DESKTOP } from "../platform/desktop";
+import { getInvoke } from "../desktop/tauriApi";
 import type { Settings, TranslateRequest, TranslateResponse } from "@jargonslayer/core/types";
 
 export interface TranslationLangPair {
@@ -278,24 +280,295 @@ export class ChromeTranslatorProvider implements TranslationProvider {
 }
 
 // ---------------------------------------------------------------
+// Desktop Apple-translate provider (v0.6, macOS 26+, on-device, no LLM
+// key) — the Rust side (owned by a concurrent lane, not this module)
+// exposes a closed 4-command surface, ALL through tauriApi.ts's
+// getInvoke() (the only module that ever imports `@tauri-apps/*` — see
+// its own header comment):
+//   invoke("system_translate_probe", {source,target})
+//     -> {osSupported: boolean; status: "installed"|"supported"|"unsupported"}
+//   invoke("system_translate_prepare", {source,target}) -> number   (spawns/warms
+//     the native child, returns its generation — S1 fix, v0.6 round-2 review)
+//   invoke("system_translate", {items:{id,text}[],source,target}) -> {id,text}[]  (order-preserving)
+//   invoke("system_translate_stop", {generation: number|null}) -> void
+// ---------------------------------------------------------------
+
+export interface SystemTranslateProbeResult {
+  osSupported: boolean;
+  status: "installed" | "supported" | "unsupported";
+}
+
+const SYSTEM_TRANSLATE_UNSUPPORTED: SystemTranslateProbeResult = { osSupported: false, status: "unsupported" };
+
+// Module-level, keyed by pairKey — separate from ChromeTranslatorProvider's
+// own sessionCache above (different question, different platform; the two
+// never coexist since IS_DESKTOP/plain-web are mutually exclusive builds).
+// Shared by TranslationEngineRow's own read-only hint (T2) and
+// resolveTranslationProvider's synchronous read below (T1) — single
+// source of truth so a probe fired from either caller benefits the other.
+const systemProbeCache = new Map<string, SystemTranslateProbeResult>();
+const systemProbeInFlight = new Map<string, Promise<SystemTranslateProbeResult>>();
+
+/** Synchronous snapshot of the last SUCCESSFULLY-resolved probe for
+ *  `pair` — null before probeSystemTranslateSupport() has ever resolved
+ *  for real (a failed probe is deliberately not cached, same policy as
+ *  osspeechCaps.ts's own probeOsSpeechCapabilitiesWith — see that
+ *  function's own doc). resolveTranslationProvider (itself synchronous,
+ *  per this module's own A6 header comment) reads this — it never
+ *  awaits a probe inline. */
+export function getSystemTranslateProbeSnapshot(pair: TranslationLangPair): SystemTranslateProbeResult | null {
+  return systemProbeCache.get(pairKey(pair)) ?? null;
+}
+
+/** Runs system_translate_probe for `pair`, caching a successful result.
+ *  Single-flighted per pair (a Settings-row mount racing a meeting
+ *  Start's own background warm-up share one round trip). Never throws —
+ *  outside a desktop build, or on any invoke()/getInvoke() failure
+ *  (including the SYNCHRONOUS throw tauriApi.ts's getInvoke() raises
+ *  outside a Tauri build), resolves the fail-closed SYSTEM_TRANSLATE_
+ *  UNSUPPORTED shape instead, deliberately NOT cached so a later call
+ *  gets to retry for real. */
+export function probeSystemTranslateSupport(pair: TranslationLangPair): Promise<SystemTranslateProbeResult> {
+  const key = pairKey(pair);
+  const cached = systemProbeCache.get(key);
+  if (cached) return Promise.resolve(cached);
+  const inFlight = systemProbeInFlight.get(key);
+  if (inFlight) return inFlight;
+
+  const promise = (async (): Promise<SystemTranslateProbeResult> => {
+    try {
+      const invoke = await getInvoke();
+      const result = await invoke<SystemTranslateProbeResult>("system_translate_probe", {
+        source: pair.source,
+        target: pair.target,
+      });
+      systemProbeCache.set(key, result);
+      return result;
+    } catch {
+      return SYSTEM_TRANSLATE_UNSUPPORTED;
+    } finally {
+      systemProbeInFlight.delete(key);
+    }
+  })();
+  systemProbeInFlight.set(key, promise);
+  return promise;
+}
+
+export function resetSystemTranslateProbeCacheForTests(): void {
+  systemProbeCache.clear();
+  systemProbeInFlight.clear();
+}
+
+/** err instanceof Error ? err.message : String(err) — same idiom this
+ *  app already repeats per-module (jobsBridge.ts, provisionRunner.ts,
+ *  bootstrap.ts) rather than a shared helper. */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+// S1 fix (v0.6 round-2 review): the generation the most recent
+// SUCCESSFUL system_translate_prepare call returned — read by
+// stopSystemTranslator below so a stop can only ever kill the exact
+// child it was issued for. stopSystemTranslator() is fire-and-forget on
+// the JS side (and even now that useMeeting.ts's own teardown paths
+// await it, the Rust-side invoke itself can still resolve arbitrarily
+// late), so without this a stop issued when one meeting ends could
+// resolve AFTER a brand-new meeting's own prepare() has already
+// registered its own child, killing the WRONG one. Module-level rather
+// than per-provider-instance for the same reason sessionCache/
+// systemProbeCache above are: only one DesktopSystemTranslationProvider
+// is ever live across the whole app at a time (one meeting at a time),
+// so "the generation the last prepare() call warmed" and "this specific
+// instance's own generation" are always the same value in practice.
+let lastDesktopTranslateGeneration: number | null = null;
+
+export function resetSystemTranslateGenerationForTests(): void {
+  lastDesktopTranslateGeneration = null;
+}
+
+export class DesktopSystemTranslationProvider implements TranslationProvider {
+  readonly kind: Settings["translateEngine"] = "system";
+
+  // Mirrors ChromeTranslatorProvider's own lastPair field/rationale —
+  // translate(items, lang) only ever receives the TARGET lang.
+  private lastPair: TranslationLangPair | null = null;
+  // Set by a FAILED prepare() call; a fresh prepare() clears it first —
+  // same "a later prepare() is a real retry, never a permanent latch"
+  // shape as ChromeTranslatorProvider's own "failed" SessionEntry.
+  private prepareFailed = false;
+
+  prepare(pair: TranslationLangPair): void {
+    this.lastPair = pair;
+    this.prepareFailed = false;
+    // Fire-and-forget (T1: "catch -> mark unavailable") — wrapped in an
+    // async IIFE so even a SYNCHRONOUS throw from getInvoke() (outside a
+    // Tauri build) never escapes this call site; prepare() itself stays
+    // callable synchronously inside the caller's own user gesture either
+    // way, matching this module's A6 header contract.
+    void (async () => {
+      try {
+        const invoke = await getInvoke();
+        const generation = await invoke<number>("system_translate_prepare", {
+          source: pair.source,
+          target: pair.target,
+        });
+        // S1 fix: stash the generation this call warmed (or reused) so a
+        // LATER stopSystemTranslator() call can scope its kill to it —
+        // see lastDesktopTranslateGeneration's own doc comment above.
+        if (typeof generation === "number") lastDesktopTranslateGeneration = generation;
+      } catch {
+        this.prepareFailed = true;
+      }
+    })();
+  }
+
+  async translate(
+    items: TranslateRequest["segments"],
+    lang: string,
+  ): Promise<TranslateResponse["translations"]> {
+    const pair = this.lastPair;
+    if (!pair || pair.target !== lang) {
+      throw new SystemTranslatorUnavailableError("unavailable", "系统翻译未就绪");
+    }
+    if (this.prepareFailed) {
+      throw new SystemTranslatorUnavailableError("unavailable", "系统翻译不可用");
+    }
+
+    let res: { id: string; text: string }[];
+    try {
+      const invoke = await getInvoke();
+      res = await invoke<{ id: string; text: string }[]>("system_translate", {
+        items,
+        source: pair.source,
+        target: pair.target,
+      });
+    } catch (err) {
+      // "not-installed" (the language pair's model isn't downloaded on
+      // this Mac) self-heals once the user downloads it via 系统设置 —
+      // queue.ts's existing "downloading" branch pauses+retries instead
+      // of giving up; everything else (child dead, IPC failure, any
+      // other native error) is treated as a flat unavailable.
+      if (errorMessage(err).includes("not-installed")) {
+        throw new SystemTranslatorUnavailableError("downloading", "系统翻译语言包未安装，下载中");
+      }
+      throw new SystemTranslatorUnavailableError("unavailable", "系统翻译不可用");
+    }
+
+    // Map back by id, not by array position (defensive even though the
+    // native side preserves order) — a missing id just leaves that ONE
+    // item untranslated rather than failing the whole batch, same
+    // failed-soft contract queue.ts already applies to the LLM route's
+    // own partial responses.
+    const byId = new Map(res.map((r) => [r.id, r.text]));
+    const out: TranslateResponse["translations"] = [];
+    for (const it of items) {
+      const text = byId.get(it.id);
+      if (text !== undefined) out.push({ id: it.id, text });
+    }
+    return out;
+  }
+}
+
+/** Best-effort teardown of the native Apple-translate child — mirrors
+ *  stt/osSpeech.ts's own invoke("stop_os_speech") idiom: safe/idempotent
+ *  to call even when no system-translate child was ever spawned this
+ *  meeting (translateEngine !== "system", or prepare() never ran), so
+ *  callers don't need to track whether "system" was actually the
+ *  resolved provider. No-op outside a desktop build.
+ *
+ *  S1 fix (v0.6 round-2 review): now RETURNS its promise (used to be
+ *  `void`-only fire-and-forget) — useMeeting.ts's own teardown paths
+ *  (runStopFlow/doStop) await it now, so a stop is fully applied before
+ *  those flows move on. Passes lastDesktopTranslateGeneration along so
+ *  the Rust side can scope the kill to the exact child this call was
+ *  issued for — even awaited, the underlying invoke() can still resolve
+ *  arbitrarily late relative to a BRAND NEW meeting's own prepare() (a
+ *  slow IPC round trip, a caller that doesn't await this after all —
+ *  the component-unmount cleanup below still can't, since React effect
+ *  cleanups aren't async), so scoping by generation is what actually
+ *  closes "a delayed stop from the previous meeting kills the next
+ *  meeting's translator", not the await alone.
+ *
+ *  Scope (do NOT call this from just anywhere an engine.stop() happens
+ *  to live): this provider — like translateQueueRef itself — is a
+ *  per-MEETING resource, primed once by start()'s own prepare() call and
+ *  otherwise untouched across a pause/resume cycle (resume() never
+ *  re-resolves/re-primes a provider, even when it tears down and
+ *  reattaches a FRESH STT engine instance — see resume()'s own
+ *  kind-mismatch branch). So this belongs ONLY next to a genuine
+ *  meeting-END teardown (useMeeting.ts's doStop()/runStopFlow(), plus
+ *  the component-unmount safety net) — never next to pause()'s own
+ *  teardown-pause engine.stop() call, which would permanently kill
+ *  translation for the rest of a meeting the user only meant to pause. */
+export function stopSystemTranslator(): Promise<void> {
+  if (!IS_DESKTOP) return Promise.resolve();
+  return (async () => {
+    try {
+      const invoke = await getInvoke();
+      await invoke("system_translate_stop", { generation: lastDesktopTranslateGeneration });
+    } catch {
+      // best-effort — mirrors osSpeech.ts/appAudio.ts's own stop_* calls
+    }
+  })();
+}
+
+// ---------------------------------------------------------------
 // Resolution
 // ---------------------------------------------------------------
 
-/** settings.translateEngine==="system" AND plain web (never Tauri
- *  desktop/iOS — those have no on-device Translator today) AND the API
- *  is actually present -> Chrome provider; otherwise LLM, silently
- *  (one diagLog line when the user DID ask for "system" but it isn't
- *  available here — never a toast, never a thrown error: the meeting
- *  just starts on the LLM engine instead). Takes a live getter (not a
- *  settings snapshot) so the constructed LlmTranslationProvider keeps
- *  reading FRESH settings on every batch, same as before this
- *  abstraction existed; the provider KIND itself is decided once, here,
- *  matching how engine kind is already frozen for a session
- *  (useMeeting.ts's attachEngine). */
+/** settings.translateEngine==="system" branches three ways: IS_DESKTOP
+ *  (macOS 26+, v0.6) -> DesktopSystemTranslationProvider, but ONLY when
+ *  a cached system_translate_probe already says osSupported && status
+ *  !== "unsupported" (a cold/negative cache falls back to LLM for THIS
+ *  meeting, same as before, while a background probe warms the cache
+ *  for the NEXT resolution — see probeSystemTranslateSupport); plain web
+ *  with the Chrome Translator API present -> ChromeTranslatorProvider;
+ *  everything else (iOS, an unsupported browser, a not-yet-known/
+ *  unsupported desktop probe) -> LLM, silently (one diagLog line — never
+ *  a toast, never a thrown error: the meeting just starts on the LLM
+ *  engine instead). Takes a live getter (not a settings snapshot) so the
+ *  constructed LlmTranslationProvider keeps reading FRESH settings on
+ *  every batch, same as before this abstraction existed; the provider
+ *  KIND itself is decided once, here, matching how engine kind is
+ *  already frozen for a session (useMeeting.ts's attachEngine). */
+/** Startup warm-up (v0.6 round-2 review, HIGH-1 fix): resolveTranslationProvider's
+ *  IS_DESKTOP branch above only returns the desktop provider once
+ *  getSystemTranslateProbeSnapshot(pair) is already populated, and
+ *  systemProbeCache is memory-only — the only thing that used to warm it
+ *  was TranslationEngineRow's own Settings-row mount effect, which never
+ *  mounts unless the user opens Settings first (SettingsDialog.tsx's own
+ *  `if (!open) return null` gate). A user who launches the app with
+ *  translateEngine:"system" already selected and hits Start straight
+ *  away got LlmTranslationProvider for the WHOLE meeting instead —
+ *  exactly the no-API-key-needed case this engine exists for. Called
+ *  once from page.tsx's own mount effect, right after hydrate()
+ *  resolves, so the cache is already warm before the user's first Start
+ *  click. Fire-and-forget, same posture as every other startup probe in
+ *  that effect (checkAppUpdate/initIos) — a failed/slow probe changes
+ *  nothing here: resolveTranslationProvider already falls back to LLM on
+ *  a cold/negative cache. */
+export function warmSystemTranslateProbeForStartup(settings: Settings): void {
+  if (IS_DESKTOP && settings.translateEngine === "system") {
+    void probeSystemTranslateSupport(langPairFromSettings(settings));
+  }
+}
+
 export function resolveTranslationProvider(getSettings: () => Settings): TranslationProvider {
   const settings = getSettings();
   if (settings.translateEngine === "system") {
-    if (!IS_TAURI && isSystemTranslatorSupported()) {
+    if (IS_DESKTOP) {
+      const pair = langPairFromSettings(settings);
+      const probe = getSystemTranslateProbeSnapshot(pair);
+      if (probe && probe.osSupported && probe.status !== "unsupported") {
+        return new DesktopSystemTranslationProvider();
+      }
+      // Cold cache only — a cached DEFINITIVE answer (even a negative
+      // one) needs no re-probe; probeSystemTranslateSupport would just
+      // short-circuit on it anyway, but skipping the call entirely here
+      // keeps a session that's already confirmed unsupported from
+      // spawning a throwaway promise on every single resolution.
+      if (!probe) void probeSystemTranslateSupport(pair);
+    } else if (!IS_TAURI && isSystemTranslatorSupported()) {
       return new ChromeTranslatorProvider();
     }
     diagLog("info", "translate-provider", "系统翻译不可用，已回退到 AI 模型翻译");

@@ -71,6 +71,18 @@ percent-encoding = "2"
 # directly against its own docs.rs API (not assumed) before writing
 # audiocap_resample.rs against it.
 rubato = "0.16.2"
+# v0.6 (Apple on-device translate lane) — systranslate.rs's own request/
+# reply correlation (`oneshot::channel` — a monotonic request id maps to
+# a one-shot reply sender in a shared HashMap, per <request id> ->
+# <oneshot sender>) plus its `tokio::time::timeout` bound on both the
+# --translate child's own ready-wait and a single translate call's
+# reply-wait (a wedged/dead child must return a clear Err rather than
+# hang a live meeting forever). Already resolved transitively (tauri's
+# own async runtime is tokio — see Cargo.lock) at 1.52.3; made explicit
+# now that this crate's own code calls tokio::sync::oneshot/tokio::time
+# directly, same "already-transitive, made explicit for direct use"
+# precedent as url/percent-encoding/objc2-foundation/libc above.
+tokio = { version = "1", features = ["sync", "time"] }
 # S9.2 — stop_app_audio's SIGKILL fallback. tauri-plugin-shell's
 # CommandChild (2.3.5) exposes only kill(self) (SIGKILL, consumes the
 # handle) or write(&mut self) — no partial "close just stdin, keep the

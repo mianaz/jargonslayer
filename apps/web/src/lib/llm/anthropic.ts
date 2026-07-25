@@ -36,6 +36,8 @@ import {
   MeetingSummarySchema,
   OpenAiCompatError,
   parseJsonContent,
+  recordLlmCallUsage,
+  resolveLlmProviderId,
   TranslateSegmentsSchema,
   TranslationsSchema,
   type CallJsonOptions,
@@ -382,6 +384,19 @@ export async function callJson<T>(opts: CallJsonOptions<T>): Promise<T> {
     });
 
     if (message.parsed_output != null) {
+      // S6 fix (v0.6 round-2 review): this is the PRIMARY, common-case
+      // success path — it never reaches parseJsonContent below (the SDK
+      // already validated parsed_output server-side), so it used to
+      // record NOTHING; only the rarer manual-extraction fallback path
+      // recorded anything at all. `message.usage` is optionally-chained
+      // even though the SDK's own type declares it required — defensive
+      // against any response shape that omits it, same posture
+      // requestChatContent's own openai-compat usage read already takes
+      // (self-hosted/local servers routinely omit the usage block).
+      recordLlmCallUsage(resolveLlmProviderId(opts), {
+        inputTokens: message.usage?.input_tokens,
+        outputTokens: message.usage?.output_tokens,
+      });
       return message.parsed_output;
     }
     // parsed_output came back null (e.g. refusal/stop before JSON

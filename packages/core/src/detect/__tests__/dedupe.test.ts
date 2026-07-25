@@ -361,6 +361,280 @@ describe("mergeDetections — dictionary -> llm content upgrade", () => {
   });
 });
 
+describe("mergeDetections — multi-sense terms (v0.6 T4)", () => {
+  function sense(senseId: string, domain = "biomed", score = 0.5) {
+    return { senseId, gloss_en: `gloss for ${senseId}`, gloss_zh: `释义 ${senseId}`, domain, score };
+  }
+
+  it("a new dictionary-sourced card carries senseId/senses/ambiguous straight through", () => {
+    const res = makeDetectResponse({
+      terms: [makeTerm({ senseId: "s1", senses: [sense("s1"), sense("s2")], ambiguous: true })],
+    });
+    const { terms } = mergeDetections([], [], res, "dictionary", 0.5, 1000);
+    expect(terms).toHaveLength(1);
+    expect(terms[0].senseId).toBe("s1");
+    expect(terms[0].senses).toEqual([sense("s1"), sense("s2")]);
+    expect(terms[0].ambiguous).toBe(true);
+  });
+
+  it("dictionary -> dictionary re-hit with the SAME senseId leaves glosses untouched (falls through to the plain bump path)", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({ gloss_en: "original gloss", senseId: "s1", senses: [sense("s1")], ambiguous: false }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({
+      terms: [makeTerm({ gloss_en: "would-be new gloss", senseId: "s1", senses: [sense("s1")] })],
+    });
+    const { terms } = mergeDetections([], existingTerms, res, "dictionary", 0.5, 2000);
+    expect(terms[0].gloss_en).toBe("original gloss"); // untouched — same senseId, no re-score to apply
+    expect(terms[0].count).toBe(2); // still bumps normally
+  });
+
+  it("dictionary -> dictionary re-hit with a DIFFERENT senseId that clears AMBIGUOUS_MARGIN replaces glosses IN PLACE — same card, not a second one", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({
+          term: "EMT",
+          type: "other",
+          gloss_en: "ITK gene",
+          gloss_zh: "ITK 基因",
+          senseId: "itk",
+          senses: [sense("itk", "biomed", 0.3)],
+          ambiguous: false,
+        }),
+        id: "term-1",
+        normKey: "EMT",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 3,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({
+      terms: [
+        makeTerm({
+          term: "EMT",
+          type: "acronym",
+          gloss_en: "epithelial-mesenchymal transition",
+          gloss_zh: "上皮间质转化",
+          senseId: "emt",
+          // MEDIUM-4 fix (v0.6 round-2 review): the new top score (0.8)
+          // beats the card's OLD "itk" score (0.3) by 0.5 — well past
+          // AMBIGUOUS_MARGIN (0.15), so the swap goes through. See the
+          // sibling "insufficient margin" test below for the blocked case.
+          senses: [sense("emt", "biomed", 0.8), sense("itk", "biomed", 0.3)],
+          ambiguous: true,
+        }),
+      ],
+    });
+    const { terms } = mergeDetections([], existingTerms, res, "dictionary", 0.5, 5000);
+
+    expect(terms).toHaveLength(1); // same card, not a second one for the same surface
+    const term = terms[0];
+    expect(term.id).toBe("term-1");
+    expect(term.firstSeenAt).toBe(1000); // preserved
+    expect(term.count).toBe(4); // still bumped
+    expect(term.source).toBe("dictionary"); // NOT upgraded to llm
+    expect(term.type).toBe("acronym");
+    expect(term.gloss_en).toBe("epithelial-mesenchymal transition");
+    expect(term.gloss_zh).toBe("上皮间质转化");
+    expect(term.senseId).toBe("emt");
+    expect(term.senses).toEqual([sense("emt", "biomed", 0.8), sense("itk", "biomed", 0.3)]);
+    expect(term.ambiguous).toBe(true);
+  });
+
+  // MEDIUM-4 fix (v0.6 round-2 review): a margin now gates the swap —
+  // without one, senseContext.ts's growing cooccurrence denominator lets
+  // a card's meaning flip A->B->A as unrelated terms accumulate, which is
+  // worse than staying wrong once. Fails against pre-fix dedupe.ts, which
+  // swapped unconditionally on any senseId change.
+  it("dictionary -> dictionary re-hit with a DIFFERENT senseId but an INSUFFICIENT score gap does NOT swap the winner", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({
+          gloss_en: "ITK gene",
+          senseId: "itk",
+          senses: [sense("itk", "biomed", 0.5)],
+          ambiguous: false,
+        }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 3,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({
+      terms: [
+        makeTerm({
+          gloss_en: "epithelial-mesenchymal transition",
+          senseId: "emt",
+          // Gap is exactly 0.10 — under AMBIGUOUS_MARGIN (0.15).
+          senses: [sense("emt", "biomed", 0.6), sense("itk", "biomed", 0.5)],
+          ambiguous: true,
+        }),
+      ],
+    });
+    const { terms } = mergeDetections([], existingTerms, res, "dictionary", 0.5, 5000);
+
+    const term = terms[0];
+    expect(term.count).toBe(4); // still bumps normally
+    expect(term.senseId).toBe("itk"); // winner untouched
+    expect(term.gloss_en).toBe("ITK gene"); // glosses untouched
+    // S12 fix: the ranked snapshot/ambiguous flag itself DOES still
+    // refresh even though the winner didn't move — see the dedicated
+    // S12 test below for why that's a separate, always-on refresh.
+    expect(term.senses).toEqual([sense("emt", "biomed", 0.6), sense("itk", "biomed", 0.5)]);
+    expect(term.ambiguous).toBe(true);
+  });
+
+  // MEDIUM-4 fix — explicit oscillation scenario: the SAME two senses
+  // trade the lead by a margin too thin to ever clear AMBIGUOUS_MARGIN,
+  // across three consecutive re-hits (A, then B, then A again). The
+  // card's WINNER must never move at all across this sequence — not
+  // "ends up back on A after visibly flipping", genuinely never flips.
+  it("A->B->A oscillation with a thin margin never actually swaps the winner across the whole sequence", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({ gloss_en: "gloss A", senseId: "a", senses: [sense("a", "biomed", 0.52)], ambiguous: false }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+
+    const hitFor = (winner: "a" | "b") =>
+      makeDetectResponse({
+        terms: [
+          makeTerm({
+            gloss_en: `gloss ${winner.toUpperCase()}`,
+            senseId: winner,
+            // "b" edges out "a" by 0.05 (or vice versa) — always under
+            // AMBIGUOUS_MARGIN (0.15), same shape a growing cooccurrence
+            // denominator's own small nudges would actually produce.
+            senses:
+              winner === "b"
+                ? [sense("b", "biomed", 0.57), sense("a", "biomed", 0.52)]
+                : [sense("a", "biomed", 0.52), sense("b", "biomed", 0.47)],
+            ambiguous: true,
+          }),
+        ],
+      });
+
+    let terms = existingTerms;
+    ({ terms } = mergeDetections([], terms, hitFor("b"), "dictionary", 0.5, 2000));
+    expect(terms[0].senseId).toBe("a"); // still A — "b"'s 0.05 edge never clears the margin
+    ({ terms } = mergeDetections([], terms, hitFor("a"), "dictionary", 0.5, 3000));
+    expect(terms[0].senseId).toBe("a");
+    ({ terms } = mergeDetections([], terms, hitFor("b"), "dictionary", 0.5, 4000));
+    expect(terms[0].senseId).toBe("a");
+
+    expect(terms[0].gloss_en).toBe("gloss A"); // never touched across the whole sequence
+    expect(terms[0].count).toBe(4);
+  });
+
+  // S12 fix (v0.6 round-2 review): dedupe.ts used to only refresh
+  // senses/ambiguous when senseId ALSO changed — a context change that
+  // shifts scores (or flips ambiguous) while the winner stays the same
+  // left the OLD ranked snapshot on the card forever. Fails against
+  // pre-fix dedupe.ts, where this assertion would still see the
+  // original (stale) senses/ambiguous.
+  it("same-winner re-hit still refreshes the ranked senses snapshot and ambiguous flag (S12 fix)", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({
+          gloss_en: "original gloss",
+          senseId: "s1",
+          senses: [sense("s1", "biomed", 0.5), sense("s2", "biomed", 0.2)],
+          ambiguous: false,
+        }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({
+      terms: [
+        makeTerm({
+          gloss_en: "would-be new gloss",
+          senseId: "s1",
+          // Same winner (s1), but the score gap has narrowed enough to
+          // flip `ambiguous` true — a real context shift (e.g. a newly
+          // inferred domain nudging s2 up) that must still show up.
+          senses: [sense("s1", "biomed", 0.5), sense("s2", "biomed", 0.42)],
+          ambiguous: true,
+        }),
+      ],
+    });
+    const { terms } = mergeDetections([], existingTerms, res, "dictionary", 0.5, 2000);
+
+    expect(terms[0].senseId).toBe("s1");
+    expect(terms[0].gloss_en).toBe("original gloss"); // identity fields untouched — winner never changed
+    expect(terms[0].senses).toEqual([sense("s1", "biomed", 0.5), sense("s2", "biomed", 0.42)]); // refreshed
+    expect(terms[0].ambiguous).toBe(true); // refreshed
+  });
+
+  it("dictionary -> llm upgrade CLEARS senses/ambiguous (the LLM's live judgement supersedes the heuristic)", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({
+          gloss_en: "old dict gloss",
+          senseId: "s1",
+          senses: [sense("s1"), sense("s2")],
+          ambiguous: true,
+        }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    // An llm hit never carries senseId/senses/ambiguous at all.
+    const res = makeDetectResponse({ terms: [makeTerm({ gloss_en: "llm gloss" })] });
+    const { terms } = mergeDetections([], existingTerms, res, "llm", 0.5, 5000);
+
+    expect(terms[0].source).toBe("llm");
+    expect(terms[0].gloss_en).toBe("llm gloss");
+    expect(terms[0].senses).toBeUndefined();
+    expect(terms[0].ambiguous).toBeUndefined();
+  });
+
+  it("dictionary -> llm upgrade does NOT clear senseId (only senses/ambiguous, per spec) — inert once source has flipped to llm", () => {
+    const existingTerms: TermCard[] = [
+      {
+        ...makeTerm({ senseId: "s1", senses: [sense("s1")], ambiguous: false }),
+        id: "term-1",
+        normKey: "ARR",
+        firstSeenAt: 1000,
+        lastSeenAt: 1000,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    const res = makeDetectResponse({ terms: [makeTerm({ gloss_en: "llm gloss" })] });
+    const { terms } = mergeDetections([], existingTerms, res, "llm", 0.5, 5000);
+    expect(terms[0].senseId).toBe("s1"); // left as-is — the dictionary->dictionary
+    // branch above requires existing.source === "dictionary", which can
+    // never be true again for this card once source has flipped to llm.
+  });
+});
+
 describe("mergeDetections — custom-source protection", () => {
   it("a later llm hit on a custom expression normKey mutates NOTHING (zero mutation)", () => {
     const customCard: ExpressionCard = {

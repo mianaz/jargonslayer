@@ -8,7 +8,7 @@ import { useApp, currentSessionSnapshot } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
-import { langPairFromSettings, resolveTranslationProvider } from "../lib/translate/providers";
+import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
@@ -20,6 +20,11 @@ import { IS_DESKTOP } from "../lib/platform/desktop";
 import { initDesktop } from "../lib/desktop/bootstrap";
 import { inferContextApi } from "../lib/llm/client";
 import { resolveTaskCreds } from "../lib/llm/taskConfig";
+import { setSenseContext } from "@jargonslayer/core/detect/dictionary";
+import type { SenseContextInput } from "@jargonslayer/core/detect/dictionary";
+import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
+import { deriveSenseContext } from "../lib/detect/senseContext";
+import { inferDomainsFromKeywords } from "../lib/detect/domainKeywords";
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
@@ -238,6 +243,49 @@ export function shouldDropContextResult(
   return dispatchGen !== currentGen || contextOverrideNow;
 }
 
+/** Pure — the sense-selection context (dictionary.ts's setSenseContext)
+ *  BOTH the reactive effect below and onFinal's own synchronous call
+ *  (S5 fix, v0.6 round-2 review) resolve into. Falls back to the
+ *  keyless keyword guess (domainKeywords.ts) only while
+ *  `inferredDomains` is still empty (no API key, or the LLM inference
+ *  hasn't landed yet) — dictionary detection must keep working with
+ *  zero key. Extracted so it's directly unit-testable with plain
+ *  inputs, same posture as sumFinalTextLength/buildContextExcerpt
+ *  above (this file has no component test harness of its own — see
+ *  app/wizardHelpTransition.ts's header comment for why that pattern
+ *  already applies here).
+ *
+ *  S5 fix: onFinal (below) calls this SYNCHRONOUSLY, right after
+ *  addFinal, BEFORE scheduler.pushSegment's own synchronous
+ *  scanDictionary call reads whatever context is currently registered.
+ *  Before this fix, only the REACTIVE effect (React-scheduled, so it
+ *  runs AFTER this same tick) ever called setSenseContext — the very
+ *  FIRST segment of a meeting (which typically carries both the domain
+ *  evidence and the ambiguous term itself) was scanned against
+ *  stale/empty context, with no later rescore unless the term recurred.
+ *  The reactive effect stays in place as well (unchanged) — it's what
+ *  picks up a LATER context change (the LLM inference resolving,
+ *  enabledPacks changing) that isn't tied to any one segment's own
+ *  onFinal call; calling this twice for the same segment is harmless,
+ *  same idempotent-set posture registeredEnabledPacks/registeredSenseContext
+ *  already have. */
+export function resolveSenseContext(input: {
+  segments: { text: string }[];
+  terms: { senses?: { domain: string }[] }[];
+  enabledPacks: string[] | null;
+  inferredDomains: DomainTag[];
+}): SenseContextInput {
+  const effectiveDomains =
+    input.inferredDomains.length > 0
+      ? input.inferredDomains
+      : inferDomainsFromKeywords(input.segments.map((s) => s.text).join(" "));
+  return deriveSenseContext({
+    inferredDomains: effectiveDomains,
+    enabledPacks: input.enabledPacks,
+    terms: input.terms,
+  });
+}
+
 export interface UseMeetingResult {
   start: () => Promise<void>;
   pause: () => Promise<void>;
@@ -365,6 +413,15 @@ export function useMeeting(): UseMeetingResult {
       // call site further down for why that race matters).
       const wasDemo = engine.kind === "demo";
       await engine.stop();
+      // v0.6: tear down the native Apple-translate child alongside the
+      // STT engine's own — see providers.ts's own doc comment for why
+      // this is safe/idempotent to call unconditionally (no-op outside
+      // desktop, or when "system" was never the resolved provider). S1
+      // fix (v0.6 round-2 review): now awaited — stopSystemTranslator()
+      // returns its promise so this flow doesn't move on (and, at the
+      // very next start(), warm a NEW child) before the old one is
+      // actually torn down.
+      await stopSystemTranslator();
       // Stop-drain belt (STT protocol v2): the drain final's own
       // onFinal already clears interim when one arrives, but a stop
       // with no trailing final must not leave a stale gray interim on
@@ -431,6 +488,23 @@ export function useMeeting(): UseMeetingResult {
       onFinal: (text, opts) => {
         const seg = useApp.getState().addFinal(text, opts);
         useApp.getState().setInterim(null);
+        // S5 fix (v0.6 round-2 review): apply the sense-selection
+        // context synchronously — reading state that already includes
+        // `seg` (addFinal's own set() above already ran) — BEFORE
+        // scheduler.pushSegment's own synchronous scanDictionary call
+        // reads whatever context is currently registered. See
+        // resolveSenseContext's own doc comment for the race this
+        // closes (the reactive effect further down still covers a
+        // LATER context change not tied to this one segment).
+        const senseState = useApp.getState();
+        setSenseContext(
+          resolveSenseContext({
+            segments: senseState.segments,
+            terms: senseState.terms,
+            enabledPacks: senseState.settings.enabledPacks,
+            inferredDomains: senseState.inferredDomains,
+          }),
+        );
         scheduler.pushSegment(seg);
         translateQueue.pushSegment(seg);
       },
@@ -611,6 +685,10 @@ export function useMeeting(): UseMeetingResult {
     if (engine) {
       await engine.stop();
     }
+    // v0.6: same teardown as runStopFlow's matching call above — see
+    // providers.ts's own doc comment on why this is unconditional. S1
+    // fix (v0.6 round-2 review): awaited, same reason as runStopFlow's.
+    await stopSystemTranslator();
     // Stop-drain belt (STT protocol v2): the drain final's own onFinal
     // already clears interim when one arrives (WsTransport.stop() now
     // waits for the sidecar's drain ack before resolving — see
@@ -918,6 +996,10 @@ export function useMeeting(): UseMeetingResult {
       void engineRef.current?.stop();
       schedulerRef.current?.stop();
       translateQueueRef.current?.stop();
+      // React effect cleanups can't be async — same fire-and-forget
+      // posture as engineRef.current?.stop() above (unlike
+      // runStopFlow/doStop, which now await this).
+      void stopSystemTranslator();
     };
   }, []);
 
@@ -1166,6 +1248,13 @@ export function useMeeting(): UseMeetingResult {
         contextInFlightRef.current = false;
         const now = useApp.getState();
         if (shouldDropContextResult(dispatchGen, now.meetingGen, now.contextOverride)) return;
+        // v0.6 multi-sense-terms sprint (T5): domains is an independent
+        // signal from the SAME inference call — set unconditionally on
+        // every successful resolve (context empty or not, refresh or
+        // not), same posture as context's own refresh handling just
+        // below. Feeds dictionary.ts's sense-scoring via the wiring
+        // effect further down this hook.
+        now.setInferredDomains(res.domains);
         if (res.context) {
           now.setInferredContext(res.context);
         } else if (action !== "refresh") {
@@ -1193,6 +1282,44 @@ export function useMeeting(): UseMeetingResult {
         }
       });
   }, [segments, contextAttempts]);
+
+  // Multi-sense dictionary terms (v0.6 multi-sense-terms sprint, T5):
+  // recompute the sense-selection context (dictionary.ts's
+  // setSenseContext) whenever its three inputs change — inferred
+  // domains, the user's pack selection, or the detected-term set
+  // (cooccurrence) — see resolveSenseContext's own doc comment for the
+  // actual weighting/fallback. ONE reactive effect covers every trigger
+  // the spec names, INCLUDING a fresh meeting's reset (beginMeeting/
+  // newMeeting zero out terms/inferredDomains, which this effect picks
+  // up like any other dependency change) — no separate reset call
+  // needed at those call sites. Cheap (O(terms.length) plus a
+  // ~70-keyword scan over the transcript so far) and runs OUTSIDE
+  // scanDictionary's own hot loop, so this never touches the ~ms
+  // per-segment scan budget T2/T3 protect.
+  //
+  // S5 fix (v0.6 round-2 review): this effect alone used to be the
+  // ONLY thing that ever called setSenseContext — React schedules an
+  // effect AFTER the render that changed its dependencies commits, so
+  // it never ran in time for the SAME segment's own synchronous
+  // scanDictionary call (onFinal above, via scheduler.pushSegment).
+  // onFinal now applies the context synchronously for its own segment;
+  // this effect is still what picks up a context change NOT tied to
+  // any one segment (the LLM inference resolving later, enabledPacks
+  // changing via Settings) — unchanged otherwise, still reuses the SAME
+  // resolveSenseContext derivation.
+  const senseTerms = useApp((s) => s.terms);
+  const enabledPacksForSense = useApp((s) => s.settings.enabledPacks);
+  const inferredDomains = useApp((s) => s.inferredDomains);
+  useEffect(() => {
+    setSenseContext(
+      resolveSenseContext({
+        segments,
+        terms: senseTerms,
+        enabledPacks: enabledPacksForSense,
+        inferredDomains,
+      }),
+    );
+  }, [senseTerms, enabledPacksForSense, inferredDomains, segments]);
 
   return { start, pause, resume, stop, startDemo };
 }

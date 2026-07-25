@@ -112,6 +112,7 @@ import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
 import TranslationEngineRow from "@/components/settings/TranslationEngineRow";
 import AnkiConnectSection from "@/components/settings/AnkiConnectSection";
+import UsagePanel from "@/components/settings/UsagePanel";
 import ThemeEditor from "@/components/settings/ThemeEditor";
 import { langPairFromSettings } from "@/lib/translate/providers";
 import ModelPicker from "@/components/desktop/ModelPicker";
@@ -304,6 +305,21 @@ const ALL_ENGINE_CARDS: {
     value: "deepgram",
     label: "Deepgram 云端识别",
     hint: "BYOK 按量计费、音频经 Deepgram 云端、仅英文（中英混说请用 Soniox）",
+    byokOnly: true,
+  },
+  // v0.6 round 2 — third BYOK cloud engine (ElevenLabs Scribe realtime).
+  // The 云端·不留存/云端·可能留存 badge under this card is derived
+  // automatically from engineCapabilities.ts's own "elevenlabs" row
+  // (ITEM 2 fix precedent, this array's own header comment) — that row
+  // is honestly "cloud-stored" here (可能留存), NOT "cloud-transient"
+  // like Soniox/Deepgram: ElevenLabs' own zero-retention opt-out is
+  // enterprise-tier-gated (verified against their docs — see
+  // elevenLabsTransport.ts's header), so this card's own hint spells
+  // that out explicitly rather than letting the badge alone carry it.
+  {
+    value: "elevenlabs",
+    label: "ElevenLabs 云端识别",
+    hint: "BYOK 按量计费、音频经 ElevenLabs 云端（Scribe）识别、默认留存供 History 查看（企业版账户可关闭留存）；按单一语言识别，中英混说请用 Soniox",
     byokOnly: true,
   },
 ];
@@ -698,6 +714,22 @@ function resolvePackInstallUrl(rawUrl: string): string | null {
   return url;
 }
 
+/** Round-2 dict-pack auto-update — relative "last checked" label for
+ *  the 自动更新词典 row below (词典源 section); pure so it needs no
+ *  render-triggering state of its own. `now` defaults to Date.now(),
+ *  overridable only by a test. Bucketed 刚刚 / N 分钟前 / N 小时前 / N
+ *  天前; `checkedAt` undefined (auto-update never ran) renders as a
+ *  bare "尚未检查" — the one case with no "上次检查：" prefix. */
+function formatLastPackCheck(checkedAt: number | undefined, now: number = Date.now()): string {
+  if (checkedAt === undefined) return "尚未检查";
+  const minutes = Math.floor(Math.max(0, now - checkedAt) / 60_000);
+  if (minutes < 1) return "上次检查：刚刚";
+  if (minutes < 60) return `上次检查：${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `上次检查：${hours} 小时前`;
+  return `上次检查：${Math.floor(hours / 24)} 天前`;
+}
+
 // S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
 // lives only in the shared BASE venv; parakeet rides a fully separate,
 // airtight-isolated MLX venv (§C R1) that never has pyannote installed,
@@ -1069,6 +1101,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // scoped to 转录引擎 since the field itself only renders when
   // draft.engine === "deepgram".
   const [showDeepgramKey, setShowDeepgramKey] = useState(false);
+  // ElevenLabs API Key masked-input toggle (v0.6 round 2) — same idiom,
+  // scoped to 转录引擎 since the field itself only renders when
+  // draft.engine === "elevenlabs".
+  const [showElevenLabsKey, setShowElevenLabsKey] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -1947,6 +1983,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       enabledPacks,
       uiMode: useApp.getState().settings.uiMode,
       customThemes: useApp.getState().settings.customThemes,
+      // Round-2 dict-pack auto-update: same class of staleness bug
+      // uiMode/customThemes already had (see this object's own leading
+      // comment above) — packAutoUpdateCheckedAt is written by
+      // background code (app/dictPackAutoUpdateTrigger.ts) any time
+      // while this dialog happens to be open, never through `draft`;
+      // spreading draft's dialog-open-time snapshot here would silently
+      // roll back a fresher background-recorded timestamp on ANY 保存.
+      packAutoUpdateCheckedAt: useApp.getState().settings.packAutoUpdateCheckedAt,
       // F5 fix: sanitize custom: font values at this same persistence
       // boundary — see sanitizeDraftFontValue's own doc comment.
       uiFont: sanitizeDraftFontValue(draft.uiFont),
@@ -2978,6 +3022,64 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
+            {/* ElevenLabs API Key (v0.6 round 2): engine-conditional,
+               mirrors the Soniox/Deepgram API Key blocks above field-for-
+               field (same hand-rolled masked-input pattern, same S14
+               no-probe KeyStatusChip honesty). The key never rides the
+               websocket at all — it's used ONLY to mint a short-lived,
+               single-use token client-side (POST api.elevenlabs.io/v1/
+               single-use-token/realtime_scribe), and that derived token
+               is what actually authenticates the connection (see
+               elevenLabsTransport.ts's own header for the verified wire
+               shape). */}
+            {draft.engine === "elevenlabs" && (
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs text-mut">ElevenLabs API Key</label>
+                  {/* S14: no probe exists for ElevenLabs either (same
+                     no-telemetry posture as Soniox/Deepgram above). */}
+                  <KeyStatusChip status={deriveKeyStatus(draft.elevenLabsKey)} />
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type={showElevenLabsKey ? "text" : "password"}
+                    value={draft.elevenLabsKey}
+                    onChange={(e) => patch({ elevenLabsKey: e.target.value })}
+                    placeholder="粘贴你的 ElevenLabs API Key"
+                    className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowElevenLabsKey((v) => !v)}
+                    aria-label={showElevenLabsKey ? "隐藏" : "显示"}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {showElevenLabsKey ? (
+                      <EyeSlash size={18} weight="regular" />
+                    ) : (
+                      <Eye size={18} weight="regular" />
+                    )}
+                  </button>
+                </div>
+                <div className="mt-1 text-xs text-mut2">
+                  按量计费；Key 仅在浏览器本地用于向 ElevenLabs 换取一次性 Token（api.elevenlabs.io），识别连接只携带该 Token，Key 本身不经我们的服务器
+                </div>
+                {!draft.elevenLabsKey && (
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    前往{" "}
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://elevenlabs.io/app/developers/api-keys")}
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      elevenlabs.io
+                    </button>{" "}
+                    创建 API Key
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 标签页音频·云端 provider picker (v0.5 Wave-1 Feature 4, §5
                A4; ITEM 3 fix, fix round Opus#1): unlike Soniox/Deepgram
                above, this card has no key input of its own — it rides
@@ -3075,10 +3177,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div>
               <label className="text-xs text-mut">识别语言</label>
+              {/* S3 fix (v0.6 round-2 review): locked while a meeting is
+                 active (listening OR paused — same meetingActive signal
+                 the model-switch controls above already gate on, reused
+                 here rather than engineLockedByMeeting's narrower
+                 "paused stays unlocked" carve-out, since THAT carve-out
+                 only holds for the STT engine — resume() reconciles an
+                 engine change but never re-primes the translate
+                 provider's own lastPair, see providers.ts's own
+                 translate() doc). Changing the source language mid-
+                 meeting used to silently corrupt translation: a hard
+                 resume reattaches STT with the NEW source language, but
+                 DesktopSystemTranslationProvider.translate() only
+                 compares the TARGET against lastPair, so text kept
+                 flowing through the OLD source-language session. */}
               <select
                 value={draft.language}
                 onChange={(e) => patch({ language: e.target.value })}
-                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                disabled={meetingActive}
+                title={meetingActive ? "会议进行中，结束会议后可修改识别语言" : undefined}
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -3086,6 +3204,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </option>
                 ))}
               </select>
+              {meetingActive && (
+                <div className="mt-1 text-xs text-mut2">会议进行中，结束会议后可修改识别语言</div>
+              )}
             </div>
 
             {/* 托管模式 (v0.4 S3 chunk 6, desktop build only, blueprint
@@ -3878,12 +3999,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div data-ui-level="aiDetectExplainLanguage">
               <label className="text-xs text-mut">解释语言</label>
+              {/* S3 fix (v0.6 round-2 review): this IS the translation
+                 target — locked while a meeting is active for the same
+                 reason 识别语言 above is (see that field's own comment).
+                 Changing it mid-meeting makes queue.ts pass a NEW target
+                 to a provider still holding the OLD pair, which rejects
+                 every batch until the provider is re-primed (never
+                 happens mid-meeting), silently dropping pending
+                 translations. */}
               <select
                 value={draft.explainLanguage}
                 onChange={(e) =>
                   patch({ explainLanguage: e.target.value as ExplainLanguage })
                 }
-                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                disabled={meetingActive}
+                title={meetingActive ? "会议进行中，结束会议后可修改解释语言" : undefined}
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {EXPLAIN_LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -3893,6 +4024,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </select>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
                 卡片解释的语言；English 模式给不需要中文的用户，界面文字仍为中文
+                {meetingActive && "；会议进行中，结束会议后可修改"}
               </div>
             </div>
 
@@ -4437,6 +4569,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
               )}
 
+              {/* Round-2: quiet daily auto-refresh — supplements 检查全部
+                 更新 above, never replaces it (that button still runs the
+                 SAME checkUpdates() on demand, see lib/detect/
+                 packAutoUpdate.ts). packAutoUpdateCheckedAt is written by
+                 background code outside this dialog's draft/保存 flow
+                 (app/dictPackAutoUpdateTrigger.ts), so this reads the
+                 LIVE `settings` value, never `draft`'s dialog-open-time
+                 snapshot — see handleSave's own
+                 toSave.packAutoUpdateCheckedAt for the matching "always
+                 take the live value" fix on the save side. */}
+              <label className="flex items-center justify-between gap-3 py-1">
+                <div className="text-sm text-fg">自动更新词典（联网时每天检查一次）</div>
+                <ToggleSwitch
+                  checked={draft.packAutoUpdate}
+                  onChange={(checked) => patch({ packAutoUpdate: checked })}
+                />
+              </label>
+              <div className="text-xs text-mut2">{formatLastPackCheck(settings.packAutoUpdateCheckedAt)}</div>
+
               <div className="text-xs leading-[1.7] text-mut2">
                 从 GitHub raw / jsDelivr 链接安装社区词典包（支持粘贴 GitHub 网页链接，自动转换为 raw 链接），JSON 格式见文档
               </div>
@@ -4595,6 +4746,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               }
             />
 
+            {/* v0.6: local usage ledger for BYOK users — what your own
+               keys are being spent on. Local-only by construction (idb,
+               nothing leaves the device); the panel owns its own on/off
+               toggle, same self-contained shape as AnkiConnectSection. */}
+            <UsagePanel
+              value={draft.usageTracking}
+              onChange={(usageTracking) => patch({ usageTracking })}
+            />
+
             <label className="flex items-center justify-between gap-3 py-1">
               <div>
                 <div className="text-sm text-fg">Frontmatter</div>
@@ -4636,7 +4796,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
                     取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Soniox Key /
-                    Deepgram Key / Webhook / 连接码），请妥善保管
+                    Deepgram Key / ElevenLabs Key / Webhook / 连接码），请妥善保管
                   </div>
                 </div>
                 <ToggleSwitch

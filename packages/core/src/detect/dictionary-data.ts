@@ -18,6 +18,69 @@ export interface DictExpressionEntry {
   pack: string; // theme pack id, see packs.ts — matches the // ===== 主题 ===== block below
 }
 
+// v0.6 T1 — multi-sense terms: a surface like "EMT" is genuinely
+// ambiguous across domains (epithelial-mesenchymal transition vs. the
+// ITK gene) — DictSense lets one DictTermEntry carry several ranked
+// candidate glosses instead of picking just one at content-authoring
+// time. `domain` feeds dictionary.ts's setSenseContext/selectSense
+// scoring (T2/T3); `prior` is the domain-agnostic base rate used both
+// as one scoring term and as the sole ranking signal when no sense
+// context is available yet (keyless, or before an inference lands).
+// `senseId` is a stable per-sense key (used by dedupe.ts's T4 in-place
+// gloss replacement when a re-scored sense wins mid-meeting) — must be
+// unique within one entry's own `senses` array, not globally.
+export type DomainTag =
+  | "biomed"
+  | "clinical"
+  | "pharma"
+  | "genomics"
+  | "stats"
+  | "ml"
+  | "software"
+  | "infra"
+  | "finance"
+  | "sales"
+  | "hr"
+  | "legal"
+  | "ops"
+  | "edu"
+  | "media"
+  | "general";
+
+/** Canonical enumeration of DomainTag's values, for any consumer that
+ *  needs to validate/iterate them at runtime (a `type` alone has no
+ *  runtime representation) — e.g. remotePacks.ts's wire validation,
+ *  the keyword-based keyless domain fallback. Mirrors this codebase's
+ *  existing convention for other wire-contract unions (see
+ *  providerCore.ts's EXPRESSION_CATEGORY_VALUES/TERM_TYPE_VALUES). */
+export const DOMAIN_TAGS: readonly DomainTag[] = [
+  "biomed",
+  "clinical",
+  "pharma",
+  "genomics",
+  "stats",
+  "ml",
+  "software",
+  "infra",
+  "finance",
+  "sales",
+  "hr",
+  "legal",
+  "ops",
+  "edu",
+  "media",
+  "general",
+];
+
+export interface DictSense {
+  gloss_en: string;
+  gloss_zh: string;
+  type?: TermType; // absent = inherit the parent entry's own `type`
+  domain: DomainTag;
+  prior: number; // 0..1, domain-agnostic base rate for this sense
+  senseId: string;
+}
+
 export interface DictTermEntry {
   term: string;
   // v0.6 dict packs (T2): alternate surfaces that should also match this
@@ -33,9 +96,21 @@ export interface DictTermEntry {
   // A handful of compiled domain-pack terms are also everyday English
   // words ("mean", "precision", "epoch"...). Flagged here so scanDictionary
   // can keep them opt-in: they only match once the user has actively
-  // customized their pack selection (enabledPacks is an explicit list),
+  // customized their pack selection to include this term's own pack,
   // never under the default all-on state. Set by gen-compiled-packs.mjs.
   commonWord?: boolean;
+  // v0.6 T1 (multi-sense terms, additive/zero-migration): ranked
+  // candidate glosses for a genuinely ambiguous surface — see DictSense
+  // above. INVARIANT (enforced by a test, dictionary.test.ts): when
+  // present, senses[0].gloss_en/gloss_zh MUST equal this entry's own
+  // top-level gloss_en/gloss_zh, so every consumer that doesn't know
+  // about `senses` at all (packTermsForBias, remote-pack installs that
+  // predate this field, every one of the ~750 existing built-ins) keeps
+  // seeing today's single, correct default gloss. dictionary.ts's
+  // scanDictionary is the only reader that actually re-ranks by
+  // meeting context (see its own doc for the scoring formula) — absent/
+  // empty `senses` behaves byte-identically to today.
+  senses?: DictSense[];
 }
 
 // ---------------------------------------------------------------

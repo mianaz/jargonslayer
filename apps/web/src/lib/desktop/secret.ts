@@ -23,7 +23,14 @@ import type { Settings } from "@jargonslayer/core/types";
  *  mirrors secret.rs's own ALLOWED array byte-for-byte (that's the
  *  enforcement point; this list is the TS-side source of truth it's kept
  *  in sync with by hand). */
-export const SECRET_NAMES = ["apiKey", "hfToken", "sonioxKey", "deepgramKey", "agentToken"] as const;
+export const SECRET_NAMES = [
+  "apiKey",
+  "hfToken",
+  "sonioxKey",
+  "deepgramKey",
+  "elevenLabsKey",
+  "agentToken",
+] as const;
 export type SecretName = (typeof SECRET_NAMES)[number];
 
 // A locked/unavailable Keychain must never hang app boot — hydrateSecrets

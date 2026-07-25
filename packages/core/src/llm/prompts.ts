@@ -131,16 +131,17 @@ You are given:
 
 Return ONLY a single JSON object, nothing else. No markdown, no code fences, no commentary, no leading or trailing text. The first character of your reply must be "{" and the last must be "}".
 
-Schema (exactly one field):
-{"context": "<ONE short sentence, <=60 characters, or empty string>"}
+Schema (two fields, both required):
+{"context": "<ONE short sentence, <=60 characters, or empty string>", "domains": ["<=3 tags, most-relevant first, or [] — see rule 5 for the fixed list>"]}
 
 The context sentence must name, as concisely as possible: (1) the domain/field, e.g. 生物信息学 / 跨境电商 / 云计算基础设施; (2) the meeting type, e.g. 组会 / 客户评审 / 季度业务复盘; (3) a short audience/register hint when the excerpt makes one clear, e.g. 面向研究生 / 面向高管. Example: "生物信息学组会（单细胞转录组方向），面向研究生".
 
 Rules:
 1. Base the context ONLY on EXCERPT — never invent facts not evidenced in it.
 2. NEVER list specific jargon/terms/acronyms and NEVER include any speaker's name — this is a one-line domain summary, not a glossary or a transcript recap.
-3. If EXCERPT is too generic/ambiguous to confidently name a domain (e.g. pure opening logistics chatter), return exactly {"context": ""} rather than guessing — a wrong guess is worse than none.
+3. If EXCERPT is too generic/ambiguous to confidently name a domain (e.g. pure opening logistics chatter), return exactly {"context": "", "domains": []} rather than guessing — a wrong guess is worse than none.
 4. Write the sentence in natural Chinese, <=60 characters. Put a half-width space between Chinese characters and any English words or digits (e.g. "单细胞 RNA 测序", not "单细胞RNA测序").
+5. domains: up to 3 tags, ranked most-relevant first, from this FIXED list only — biomed (biology/life sciences), clinical (patient care/clinical trials), pharma (drug development/regulatory), genomics (sequencing/omics), stats (statistics), ml (machine learning/AI), software (software engineering), infra (infrastructure/cloud/ops tooling), finance (finance/accounting), sales (sales/growth/marketing funnel), hr (human resources/people ops), legal (legal/compliance), ops (operations/supply chain/logistics), edu (academic/teaching/research), media (content/publishing/audience), general (no specific domain applies). Return [] when EXCERPT doesn't confidently fit any of them. NEVER invent a tag outside this list.
 Output the JSON object now.`;
 
 export function buildInferContextUserMessage(excerpt: string): string {

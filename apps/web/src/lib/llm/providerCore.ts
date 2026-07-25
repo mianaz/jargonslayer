@@ -32,6 +32,7 @@ import type {
   TranslateResponse,
 } from "@jargonslayer/core/types";
 import { getTransport } from "./llmTransport";
+import { recordUsage } from "../usage/ledger";
 
 // ---------------------------------------------------------------
 // Shared zod schemas — mirror the wire types in ../types.ts exactly.
@@ -157,9 +158,16 @@ export const DefineResultSchema = z.object({
 // Auto meeting-context detection (field request: "need AI to auto
 // detect the context for better detection") — mirrors DefineResultSchema
 // immediately above: shape validation only, tasks/inferContext.ts owns
-// the trim/cap/empty-means-no-result sanitizing.
+// the trim/cap/empty-means-no-result sanitizing. `domains` (v0.6 multi-
+// sense-terms sprint, T5) is likewise shape-only here (any string array)
+// — tasks/inferContext.ts validates each entry against the real
+// DomainTag enum and drops anything unrecognized, same lenient-drop
+// posture as every other enum-shaped field this codebase validates
+// downstream of its schema rather than inside it (see remotePacks.ts's
+// validateTerms for the same division of responsibility).
 export const InferContextResponseSchema = z.object({
   context: z.string(),
+  domains: z.array(z.string()),
 }) satisfies z.ZodType<InferContextResponse>;
 
 // ---------------------------------------------------------------
@@ -414,6 +422,90 @@ export function buildAnthropicMessagesRequestBody<T>(opts: CallJsonOptions<T>) {
   };
 }
 
+// ---------------------------------------------------------------
+// Local usage-ledger instrumentation (v0.6 T2 — see usage/ledger.ts's
+// own header for the full local-only design). Fire-and-forget from
+// every call site below: recordUsage() itself never throws and already
+// no-ops when Settings.usageTracking is off, so nothing here needs its
+// own try/catch.
+//
+// This is the ONE isomorphic file every LLM call — server route or
+// client-direct — funnels through (this file's own header), which is
+// what makes it the single instrumentation point, but the two provider
+// families are observable at DIFFERENT depths here: callJsonOpenAiCompat
+// below owns the full openai-compat HTTP response (requestChatContent's
+// `payload`, including `usage`), so it records itself, WITH real token
+// counts, at its own two success returns. The Anthropic family's
+// response envelope is parsed in anthropic.ts (server, SDK) and
+// clientProvider.ts (client, callAnthropicDirect) — both outside this
+// file — so parseJsonContent below (the one function EVERY Anthropic
+// path funnels its extracted text through) is the only place their
+// completion is observable at all; call-count only, never tokens (that
+// envelope never reaches this function). Gated on
+// `opts.provider !== "openai-compat"` so it never double-counts the
+// two openai-compat call sites above, which already record themselves —
+// relies on both real dispatchers (anthropic.ts's callJson,
+// clientProvider.ts's callProviderDirect) always setting
+// opts.provider:"openai-compat" before ever reaching
+// callJsonOpenAiCompat, which they do.
+// ---------------------------------------------------------------
+
+/** "Resolved provider id" for the ledger: "anthropic" for the
+ *  Anthropic family, or the openai-compat baseUrl's hostname (e.g.
+ *  "openrouter.ai", "api.deepseek.com") — so a BYOK user pointing
+ *  different tasks (taskLlm per-domain overrides) at different
+ *  openai-compat vendors sees them broken out in the usage panel
+ *  instead of collapsed into one generic "openai-compat" bucket. Falls
+ *  back to the literal "openai-compat" when baseUrl is missing or
+ *  fails to parse.
+ *
+ *  S4 fix (v0.6 round-2 review): exported — client.ts's own /api/*
+ *  success paths (detectViaNext/summarizeApiImpl/defineViaNext/
+ *  translateApiImpl/correctViaNext/inferContextViaNext) now record their
+ *  OWN call-count usage at the browser boundary using this SAME
+ *  resolution, since this file's own recordLlmCallUsage below never
+ *  actually reaches the user's browser ledger when it runs inside a
+ *  Next.js route handler (see ../usage/ledger.ts's own recordUsage doc
+ *  for the hasIndexedDb() guard that makes that call a clean no-op
+ *  server-side now, instead of silently writing to a process-global
+ *  nobody ever reads). */
+export function resolveLlmProviderId(opts: Pick<CallJsonOptions<unknown>, "provider" | "baseUrl">): string {
+  if (opts.provider !== "openai-compat") return "anthropic";
+  try {
+    return new URL(opts.baseUrl ?? "").hostname || "openai-compat";
+  } catch {
+    return "openai-compat";
+  }
+}
+
+/** Records one completed LLM call — always `calls:1`, plus
+ *  inputTokens/outputTokens when the caller has them (openai-compat
+ *  only; see requestChatContent below — self-hosted/local openai-compat
+ *  servers routinely omit the usage block entirely, hence the presence
+ *  checks). Never awaited by its callers — a ledger write must never
+ *  slow down or fail a real provider call.
+ *
+ *  S6 fix (v0.6 round-2 review): exported — anthropic.ts's own
+ *  `messages.parse()` primary path (callJson) returns `parsed_output`
+ *  directly on success without ever reaching parseJsonContent below
+ *  (the SDK already validated it server-side), so it used to record
+ *  NOTHING for the common case — only the rarer manual-extraction
+ *  fallback path (which DOES funnel through parseJsonContent) ever
+ *  recorded anything. anthropic.ts now calls this directly at its own
+ *  success point. */
+export function recordLlmCallUsage(
+  provider: string,
+  usage?: { inputTokens?: number; outputTokens?: number },
+): void {
+  void recordUsage({ provider, kind: "llm", metric: "calls", value: 1 });
+  if (usage?.inputTokens) {
+    void recordUsage({ provider, kind: "llm", metric: "inputTokens", value: usage.inputTokens });
+  }
+  if (usage?.outputTokens) {
+    void recordUsage({ provider, kind: "llm", metric: "outputTokens", value: usage.outputTokens });
+  }
+}
+
 /** Extract + parse + schema-validate a chat-completion's content
  *  string. Throws BadOutputError on any failure — callers use this to
  *  decide whether a single repair retry (openai-compat) applies, or
@@ -439,6 +531,12 @@ export function parseJsonContent<T>(content: string, opts: CallJsonOptions<T>): 
       `模型输出解析失败：${result.error.issues[0]?.message ?? "schema mismatch"}`,
       result.error,
     );
+  }
+
+  // Usage-ledger instrumentation — see this section's own header above
+  // for why this only fires for the NON-openai-compat family.
+  if (opts.provider !== "openai-compat") {
+    recordLlmCallUsage(resolveLlmProviderId(opts));
   }
 
   return result.data;
@@ -467,6 +565,12 @@ export class OpenAiCompatError extends Error {
 
 interface OpenAiChatResponse {
   choices?: { message?: { content?: string | null } }[];
+  // Usage-ledger instrumentation (v0.6 T2) — the standard OpenAI-
+  // compatible usage block every real openai-compat backend this app
+  // talks to (OpenRouter/DeepSeek/Ollama, …) emits. Read off this SAME
+  // already-parsed payload in requestChatContent below — no second
+  // parse pass. Optional: some self-hosted/local servers omit it.
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
 /** Pure request-shaping: URL + RequestInit for a `/chat/completions`
@@ -606,12 +710,26 @@ export function sanitizeProviderExcerpt(text: string, secrets: readonly string[]
 export const OPENAI_COMPAT_JSON_REMINDER =
   "\n\nCRITICAL: Respond with ONLY a raw JSON value that matches the required shape. No markdown code fences, no <think> blocks, no commentary before or after.";
 
+/** requestChatContent's return shape — `usage` (v0.6 T2, see
+ *  OpenAiChatResponse.usage above) rides alongside `content` rather
+ *  than requestChatContent recording usage itself, because a caller
+ *  (callJsonOpenAiCompat below) may discard this attempt entirely (the
+ *  repair-retry path) — only the attempt that actually produces the
+ *  FINAL returned result should ever be recorded, exactly once. */
+interface ChatContentResult {
+  content: string;
+  usage?: { inputTokens?: number; outputTokens?: number };
+}
+
 /** POST to `/chat/completions` (retrying once without `response_format`
  *  if the server 400s on it) and return the message content string.
  *  Non-2xx responses throw OpenAiCompatError — this must NOT be
  *  retried as a parse failure, so callers should let it propagate
  *  untouched rather than folding it into the repair-retry loop. */
-async function requestChatContent(opts: CallJsonOptions<unknown>, system: string): Promise<string> {
+async function requestChatContent(
+  opts: CallJsonOptions<unknown>,
+  system: string,
+): Promise<ChatContentResult> {
   const baseRequest = {
     ...(opts.extraBody ?? {}),
     model: opts.model,
@@ -659,7 +777,12 @@ async function requestChatContent(opts: CallJsonOptions<unknown>, system: string
     throw new BadOutputError("模型未返回文本内容");
   }
 
-  return content;
+  return {
+    content,
+    usage: payload.usage
+      ? { inputTokens: payload.usage.prompt_tokens, outputTokens: payload.usage.completion_tokens }
+      : undefined,
+  };
 }
 
 export async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise<T> {
@@ -667,10 +790,22 @@ export async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise
     throw new OpenAiCompatError("缺少 Base URL", 400);
   }
 
-  const content = await requestChatContent(opts, opts.system);
+  const first = await requestChatContent(opts, opts.system);
+  // S6 fix (v0.6 round-2 review): recorded HERE, at RECEIPT — the
+  // token counts requestChatContent already parsed off the response
+  // body — rather than only on a successful parse below. The old code
+  // recorded usage only inside the try's success path: a billable-but-
+  // malformed response (BadOutputError) that then got repaired by the
+  // retry below used to record ONLY the retry's tokens, silently
+  // dropping this already-billed first call's own usage from the
+  // ledger (undercounting, not double-counting — this and the retry's
+  // own recordLlmCallUsage below are two DIFFERENT completed HTTP
+  // responses, each recorded exactly once regardless of what happens
+  // to it afterward).
+  recordLlmCallUsage(resolveLlmProviderId(opts), first.usage);
 
   try {
-    return parseJsonContent(content, opts);
+    return parseJsonContent(first.content, opts);
   } catch (err) {
     if (!(err instanceof BadOutputError)) throw err;
     // Extraction/parse/schema failure — give the model exactly one
@@ -679,9 +814,14 @@ export async function callJsonOpenAiCompat<T>(opts: CallJsonOptions<T>): Promise
     // OpenAiCompatError for those, which propagates untouched above.
   }
 
-  const retryContent = await requestChatContent(
+  const retry = await requestChatContent(
     opts,
     opts.system + OPENAI_COMPAT_JSON_REMINDER,
   );
-  return parseJsonContent(retryContent, opts);
+  // S6 fix: same "record at receipt" posture as the first attempt
+  // above — even if THIS parse also fails and the thrown BadOutputError
+  // propagates out of this function, the retry was still a real,
+  // completed, billable call.
+  recordLlmCallUsage(resolveLlmProviderId(opts), retry.usage);
+  return parseJsonContent(retry.content, opts);
 }

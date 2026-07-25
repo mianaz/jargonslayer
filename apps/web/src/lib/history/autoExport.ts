@@ -282,6 +282,9 @@ function stripKeyMaterial(settings: Settings): Settings {
     // v0.4.7 (Lane D): Deepgram BYOK key — same hand-listed strip,
     // mirroring sonioxKey's own precedent immediately above.
     deepgramKey: "",
+    // v0.6 round 2: ElevenLabs BYOK key — same hand-listed strip,
+    // mirroring sonioxKey/deepgramKey's own precedent above.
+    elevenLabsKey: "",
     agentToken: "",
     // Webhook URLs routinely embed capability tokens in the path
     // (n8n/飞书 style) — credential-like, stripped with the rest
@@ -638,8 +641,8 @@ export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry 
 }
 
 /** Desktop keychain custody (v0.5.1) — for every non-empty restored
- *  apiKey/hfToken/sonioxKey/deepgramKey, writes it to the Keychain
- *  (overwriting whatever's already there — restoring a backup is an
+ *  apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey, writes it to the
+ *  Keychain (overwriting whatever's already there — restoring a backup is an
  *  explicit "make this device match the backup" action, same
  *  IDB-wins-on-conflict posture hydrateSecrets uses for an ordinary
  *  boot-time migration) and blanks that field on the returned object,
@@ -680,7 +683,13 @@ export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry 
  *  that stale entry gets the same retry-on-next-hydrate tracking any
  *  other failed delete would. */
 async function routeRestoredSecretsToKeychain(settings: Settings, priorPending: string[]): Promise<Settings> {
-  const RESTORE_SECRET_NAMES: readonly SecretName[] = ["apiKey", "hfToken", "sonioxKey", "deepgramKey"];
+  const RESTORE_SECRET_NAMES: readonly SecretName[] = [
+    "apiKey",
+    "hfToken",
+    "sonioxKey",
+    "deepgramKey",
+    "elevenLabsKey",
+  ];
   const next = { ...settings };
   const pending = new Set(priorPending);
   for (const name of RESTORE_SECRET_NAMES) {
@@ -920,7 +929,13 @@ function sanitizeRestoredFontValue(v: unknown, fallback: string): string {
 }
 
 export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settings> {
-  const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), "taskLlm"]);
+  // "taskLlm"/"packAutoUpdateCheckedAt": both optional Settings fields
+  // DEFAULT_SETTINGS deliberately omits (no meaningful non-undefined
+  // default — see each field's own doc in @jargonslayer/core/types), so
+  // Object.keys(DEFAULT_SETTINGS) alone would silently strip them from
+  // every restored backup. Everything else stays governed by the
+  // generic allow-list below.
+  const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), "taskLlm", "packAutoUpdateCheckedAt"]);
   const picked: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (allowed.has(k)) picked[k] = v;
@@ -973,5 +988,48 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
   const normalizedProxyUrl =
     typeof picked.proxyUrl === "string" ? normalizeProxyUrl(picked.proxyUrl) : "";
   picked.proxyUrl = isValidProxyUrl(normalizedProxyUrl) ? normalizedProxyUrl : "";
+  // S9 fix (v0.6 round-2 review): same F11 boolean-coercion trap as
+  // overlayGlass above — a hand-edited backup's usageTracking:"false"
+  // (a STRING, truthy in JS despite reading like an explicit opt-out)
+  // used to sail straight through the generic allow-list pick, silently
+  // keeping usage recording ON; packAutoUpdate:"false" is the same trap
+  // for the auto-updater. Only an actual boolean is trusted.
+  picked.usageTracking =
+    typeof picked.usageTracking === "boolean" ? picked.usageTracking : DEFAULT_SETTINGS.usageTracking;
+  picked.packAutoUpdate =
+    typeof picked.packAutoUpdate === "boolean" ? picked.packAutoUpdate : DEFAULT_SETTINGS.packAutoUpdate;
+  // packAutoUpdateCheckedAt (no meaningful default — DEFAULT_SETTINGS
+  // omits it, see the allow-list's own comment above): a non-finite or
+  // negative value (a string, NaN, -1, …) would poison
+  // shouldCheckForPackUpdates' own `now - lastCheckedAt >= INTERVAL`
+  // arithmetic — e.g. a string coerces the WHOLE comparison to NaN,
+  // which is never `>= INTERVAL`, permanently suppressing the
+  // auto-update check. Only a genuine finite non-negative epoch-ms
+  // survives; anything else is dropped entirely (absent = "never
+  // auto-checked", the same honest state a fresh install starts in)
+  // rather than persisting a value that would wedge the check forever.
+  if (
+    typeof picked.packAutoUpdateCheckedAt !== "number" ||
+    !Number.isFinite(picked.packAutoUpdateCheckedAt) ||
+    picked.packAutoUpdateCheckedAt < 0
+  ) {
+    delete picked.packAutoUpdateCheckedAt;
+  }
+  // packsSchemaVersion (MEDIUM-5, v0.6 round-2 review): same class of
+  // trap — a corrupted value (e.g. a string) would poison
+  // migrateSettings' own `Number(version) > savedPacksVersion` compare
+  // with NaN, which silently disables the whole new-pack-union
+  // migration (NaN never compares > anything). Falls back to the
+  // CURRENT version — same posture as overlayGlass/bitCostume above —
+  // rather than dropping it outright, since (unlike
+  // packAutoUpdateCheckedAt) this field always has a meaningful
+  // default and "already up to date" is the safe assumption for a
+  // corrupted value.
+  picked.packsSchemaVersion =
+    typeof picked.packsSchemaVersion === "number" &&
+    Number.isFinite(picked.packsSchemaVersion) &&
+    picked.packsSchemaVersion >= 0
+      ? picked.packsSchemaVersion
+      : DEFAULT_SETTINGS.packsSchemaVersion;
   return picked as Partial<Settings>;
 }

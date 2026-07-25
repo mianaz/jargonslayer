@@ -47,11 +47,13 @@ import { callProviderDirect, ProviderHttpError } from "./clientProvider";
 import {
   BadOutputError,
   OpenAiCompatError,
+  resolveLlmProviderId,
   sanitizeProviderExcerpt,
   scrubUrlCredentials,
   type CallJsonOptions,
   type ProviderCaller,
 } from "./providerCore";
+import { recordUsage } from "../usage/ledger";
 import { DEFAULT_DETECT_MODEL, runDetectTask } from "./tasks/detect";
 import { DEFAULT_DEFINE_MODEL, runDefineTask } from "./tasks/define";
 import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "./tasks/translate";
@@ -226,6 +228,41 @@ function errorDetail(ctx: RequestErrorContext, status?: number, requestId?: stri
 // used.
 function ctxProvider(creds: { provider: LlmProvider; apiKey: string }): string {
   return creds.apiKey ? creds.provider : "server";
+}
+
+// S4 fix (v0.6 round-2 review): usage-ledger instrumentation for the
+// /api/*-routed paths (detectViaNext/summarizeApiImpl/defineViaNext/
+// translateApiImpl/correctViaNext/inferContextViaNext below) — the
+// client-direct paths (detectViaClient etc.) already record themselves
+// correctly, from inside providerCore.ts, since THEY run entirely in
+// the browser (see that file's own recordLlmCallUsage). The /api/*
+// paths instead run providerCore.ts's request-shaping SERVER-side
+// (inside the Next.js route handler), where usage/ledger.ts's own
+// recordUsage now no-ops (no IndexedDB there — see that function's own
+// doc) rather than writing to a process-global nobody ever reads. This
+// records the one thing client.ts CAN see honestly from here — that a
+// call completed — at the browser boundary instead, once per successful
+// response. Deliberately calls-only, not token counts: the /api/*
+// response shapes (DetectResponse/SummaryResult/…) don't carry the
+// upstream usage block back to the browser, and widening every route's
+// wire contract just for this is a bigger change than this fix
+// warrants — the desktop/PREVIEW-BYOK direct paths still get real
+// token counts via providerCore.ts's own instrumentation, unchanged.
+//
+// Same keyless/keyed split as ctxProvider above, but resolved through
+// resolveLlmProviderId for the keyED case so openai-compat calls land
+// in the SAME per-vendor-hostname buckets providerCore.ts's own ledger
+// writes already use, rather than one generic "openai-compat" bucket —
+// a keyless request is served by the ROUTE's own server-managed
+// credential (see ctxProvider's own doc), which this client has no way
+// to resolve a real provider id for, so it's recorded under the same
+// "server" label ctxProvider already uses for diag purposes.
+function ledgerProviderId(creds: Pick<ResolvedTaskCreds, "provider" | "baseUrl" | "apiKey">): string {
+  return creds.apiKey ? resolveLlmProviderId(creds) : "server";
+}
+
+function recordApiCallUsage(creds: Pick<ResolvedTaskCreds, "provider" | "baseUrl" | "apiKey">): void {
+  void recordUsage({ provider: ledgerProviderId(creds), kind: "llm", metric: "calls", value: 1 });
 }
 
 // Diagnostics privacy (tag-blocker BLOCKER 2): body.error is NOT safe
@@ -423,6 +460,7 @@ async function detectViaNext(
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as DetectResponse;
 }
 
@@ -556,6 +594,7 @@ async function summarizeApiImpl(
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as SummaryResult;
 }
 
@@ -692,6 +731,7 @@ async function defineViaNext(
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as DefineResult;
 }
 
@@ -984,6 +1024,7 @@ async function translateApiImpl(
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(translateCreds);
   return (await res.json()) as TranslateResponse;
 }
 
@@ -1096,6 +1137,7 @@ async function correctViaNext(
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as CorrectResponse;
 }
 
@@ -1195,6 +1237,7 @@ async function inferContextViaNext(
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as InferContextResponse;
 }
 

@@ -20,7 +20,13 @@ vi.mock("../remotePacksRegistry", () => ({
 import { findEntryBySurface } from "../../history/glossaryLookup";
 import { getLoadedRemotePacks, getRemotePacksGeneration } from "../remotePacksRegistry";
 import type { LoadedRemotePack } from "../remotePacksRegistry";
-import { packTermsForBias, scanDictionary, setEnabledPacks } from "../dictionary";
+import {
+  dropSubsumedTermsForTests,
+  packTermsForBias,
+  scanDictionary,
+  setEnabledPacks,
+  setSenseContext,
+} from "../dictionary";
 
 const mockFindEntryBySurface = vi.mocked(findEntryBySurface);
 const mockGetLoadedRemotePacks = vi.mocked(getLoadedRemotePacks);
@@ -43,6 +49,12 @@ afterEach(() => {
   // it would leak into scanDictionary's OWN default-enabledPacks tests
   // above (which rely on the "null = every pack on" default).
   setEnabledPacks(null);
+  // v0.6 multi-sense-terms sprint (T2/T3): same real-module-state leak
+  // risk as setEnabledPacks above — the sense-selection tests below
+  // call setSenseContext() and must not leak a scored context into
+  // every OTHER test in this file (which all assume the "no context"
+  // fallback, since they never call it themselves).
+  setSenseContext(null);
 });
 
 describe("scanDictionary — base entry matching, word boundary", () => {
@@ -104,6 +116,59 @@ describe("scanDictionary — last-word inflection AS IMPLEMENTED", () => {
     const res2 = scanDictionary("There was a lot of pushback internally.");
     expect(res1.expressions.some((e) => e.expression === "push back")).toBe(true);
     expect(res2.expressions.some((e) => e.expression === "push back")).toBe(true);
+  });
+});
+
+// S11 fix (v0.6 round-2 review): buildExpressionRegex's trailing `\b`
+// used to be unconditional — `\b` only satisfies when EXACTLY ONE of
+// its two neighboring characters is a word character, so placed right
+// after a non-word edge character (e.g. "100%") it can never match once
+// that symbol is itself followed by whitespace/punctuation/end-of-string
+// (both neighbors end up non-word) — the overwhelmingly common way such
+// a token actually appears in real text. Every assertion below fails
+// against pre-fix buildExpressionRegex.
+describe("scanDictionary — S11 fix: an expression ending in a non-word character can actually match", () => {
+  function remotePackWithExpression(expression: string) {
+    return {
+      id: "__test_symbol_pack__",
+      name: "symbol pack",
+      version: 1,
+      expressions: [
+        {
+          expression,
+          category: "phrase" as const,
+          meaning: "entirely",
+          chinese_explanation: "百分之百",
+          plain_english: "completely",
+          tone: "neutral",
+          confidence: 0.9,
+          pack: "__test_symbol_pack__",
+        },
+      ],
+      terms: [],
+    };
+  }
+
+  it("matches a trailing-symbol expression ('100%') followed by punctuation", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWithExpression("100%")]);
+    const res = scanDictionary("We hit 100% of the target.");
+    expect(res.expressions.some((e) => e.expression === "100%")).toBe(true);
+  });
+
+  it("matches a trailing-symbol expression at the very end of the text (no trailing character at all)", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWithExpression("100%")]);
+    const res = scanDictionary("We are at 100%");
+    expect(res.expressions.some((e) => e.expression === "100%")).toBe(true);
+  });
+
+  it("still matches an ordinary word-ending expression exactly as before (byte-identical regression guard)", () => {
+    const res = scanDictionary("Let's circle back tomorrow.");
+    expect(res.expressions.some((e) => e.expression === "circle back")).toBe(true);
+  });
+
+  it("still respects the leading word boundary for an ordinary entry — 'bandwidth' does not match inside 'broadband width'-style false substrings", () => {
+    const res = scanDictionary("The megabandwidth metric is unofficial.");
+    expect(res.expressions.some((e) => e.expression === "bandwidth")).toBe(false);
   });
 });
 
@@ -431,5 +496,482 @@ describe("packTermsForBias", () => {
     const result = packTermsForBias();
     expect(result.some((e) => e.pack === "__test_pack_a__")).toBe(true);
     expect(result.some((e) => e.pack === "__test_pack_b__")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.6 T6 fix round: commonWord PER-ENTRY semantics test matrix — null /
+// explicit-list-containing-the-pack / explicit-list-WITHOUT-it ×
+// commonWord true/false, for BOTH scanDictionary and packTermsForBias.
+// (Distinct from the earlier "H1/H2 doc fix pin" describe above, which
+// only covered null vs. "an explicit list that happens to include the
+// pack" — this block adds the THIRD, previously-untested cell: an
+// explicit list that does NOT include the entry's own pack.)
+// ---------------------------------------------------------------
+
+describe("commonWord guard — v0.6 T6 per-entry test matrix", () => {
+  const PACK_ID = "__test_t6_pack__";
+  const OTHER_PACK_ID = "__test_t6_other_pack__";
+
+  function packWithTerm(commonWord: boolean): LoadedRemotePack {
+    return {
+      id: PACK_ID,
+      name: "t6 matrix pack",
+      version: 1,
+      expressions: [],
+      terms: [
+        { term: "t6word", type: "other", gloss_en: "", gloss_zh: "T6 矩阵测试词", commonWord, pack: PACK_ID },
+      ],
+    };
+  }
+
+  describe("scanDictionary", () => {
+    it("commonWord: true, enabledPacks: null -> SUPPRESSED", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(true)]);
+      const res = scanDictionary("we discussed t6word today", null);
+      expect(res.terms.some((t) => t.term === "t6word")).toBe(false);
+    });
+
+    it("commonWord: true, enabledPacks: [own pack] -> FIRES", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(true)]);
+      const res = scanDictionary("we discussed t6word today", [PACK_ID]);
+      expect(res.terms.some((t) => t.term === "t6word")).toBe(true);
+    });
+
+    it("commonWord: true, enabledPacks: [a DIFFERENT pack, not this one] -> SUPPRESSED", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(true)]);
+      const res = scanDictionary("we discussed t6word today", [OTHER_PACK_ID]);
+      expect(res.terms.some((t) => t.term === "t6word")).toBe(false);
+    });
+
+    it("commonWord: false, enabledPacks: null -> FIRES (guard only applies to commonWord entries)", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(false)]);
+      const res = scanDictionary("we discussed t6word today", null);
+      expect(res.terms.some((t) => t.term === "t6word")).toBe(true);
+    });
+
+    it("commonWord: false, enabledPacks: [own pack] -> FIRES", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(false)]);
+      const res = scanDictionary("we discussed t6word today", [PACK_ID]);
+      expect(res.terms.some((t) => t.term === "t6word")).toBe(true);
+    });
+
+    it("commonWord: false, enabledPacks: [a different pack] -> SUPPRESSED (isPackEnabled excludes the whole entry, unrelated to commonWord)", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(false)]);
+      const res = scanDictionary("we discussed t6word today", [OTHER_PACK_ID]);
+      expect(res.terms.some((t) => t.term === "t6word")).toBe(false);
+    });
+  });
+
+  describe("packTermsForBias", () => {
+    it("commonWord: true, enabledPacks: null -> SUPPRESSED", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(true)]);
+      expect(packTermsForBias(null).some((e) => e.term === "t6word")).toBe(false);
+    });
+
+    it("commonWord: true, enabledPacks: [own pack] -> FIRES", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(true)]);
+      expect(packTermsForBias([PACK_ID]).some((e) => e.term === "t6word")).toBe(true);
+    });
+
+    it("commonWord: true, enabledPacks: [a different pack] -> SUPPRESSED", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(true)]);
+      expect(packTermsForBias([OTHER_PACK_ID]).some((e) => e.term === "t6word")).toBe(false);
+    });
+
+    it("commonWord: false, enabledPacks: null -> FIRES", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(false)]);
+      expect(packTermsForBias(null).some((e) => e.term === "t6word")).toBe(true);
+    });
+
+    it("commonWord: false, enabledPacks: [own pack] -> FIRES", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(false)]);
+      expect(packTermsForBias([PACK_ID]).some((e) => e.term === "t6word")).toBe(true);
+    });
+
+    it("commonWord: false, enabledPacks: [a different pack] -> SUPPRESSED", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([packWithTerm(false)]);
+      expect(packTermsForBias([OTHER_PACK_ID]).some((e) => e.term === "t6word")).toBe(false);
+    });
+  });
+
+  // The one case where this fix actually changes OBSERVABLE behavior —
+  // every other pack id is already filtered out by isPackEnabled before
+  // the commonWord check ever runs (the matrix above), but isPackEnabled
+  // always treats "core" as enabled regardless of the list, so a
+  // commonWord entry tagged "core" used to fire under ANY explicit
+  // selection, even one that never named "core" at all.
+  describe("the 'core' pack special case (why this fix matters at all)", () => {
+    function corePackWithCommonWordTerm(): LoadedRemotePack {
+      return {
+        id: "core",
+        name: "core (test double, injected directly into the registry mock)",
+        version: 1,
+        expressions: [],
+        terms: [
+          {
+            term: "t6coreword",
+            type: "other",
+            gloss_en: "",
+            gloss_zh: "核心包常见词测试",
+            commonWord: true,
+            pack: "core",
+          },
+        ],
+      };
+    }
+
+    it("enabledPacks explicit but NOT naming 'core' -> now SUPPRESSED (was: fired, pre-T6)", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([corePackWithCommonWordTerm()]);
+      const res = scanDictionary("we discussed t6coreword today", ["__unrelated_pack__"]);
+      expect(res.terms.some((t) => t.term === "t6coreword")).toBe(false);
+    });
+
+    it("enabledPacks explicit AND naming 'core' -> FIRES", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([corePackWithCommonWordTerm()]);
+      const res = scanDictionary("we discussed t6coreword today", ["core"]);
+      expect(res.terms.some((t) => t.term === "t6coreword")).toBe(true);
+    });
+
+    it("enabledPacks: null -> SUPPRESSED (unchanged by this fix)", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([corePackWithCommonWordTerm()]);
+      const res = scanDictionary("we discussed t6coreword today", null);
+      expect(res.terms.some((t) => t.term === "t6coreword")).toBe(false);
+    });
+  });
+});
+
+// ---------------------------------------------------------------
+// v0.6 multi-sense-terms sprint (T3) — scanDictionary sense selection.
+// setSenseContext() is real module state (see T2's own doc, dictionary.
+// ts) — reset to null in this file's shared afterEach above so these
+// tests never leak a scored context into any other test in this file.
+// ---------------------------------------------------------------
+
+describe("scanDictionary — multi-sense term selection (v0.6 T3)", () => {
+  function remotePackWithSenses(
+    senses: NonNullable<LoadedRemotePack["terms"][number]["senses"]>,
+  ): LoadedRemotePack {
+    return {
+      id: "__test_sense_pack__",
+      name: "sense pack",
+      version: 1,
+      expressions: [],
+      terms: [
+        {
+          term: "EMT",
+          type: "other",
+          gloss_en: "top-level default gloss",
+          gloss_zh: "顶层默认释义",
+          pack: "__test_sense_pack__",
+          senses,
+        },
+      ],
+    };
+  }
+
+  it("an entry without `senses` at all emits byte-identical to today — no senseId/senses/ambiguous keys", () => {
+    const res = scanDictionary("Our ARR grew this quarter.");
+    const hit = res.terms.find((t) => t.term === "ARR");
+    expect(hit).toEqual({
+      term: "ARR",
+      type: "metric",
+      gloss_en: "Annual Recurring Revenue",
+      gloss_zh: "年度经常性收入",
+    });
+    expect(hit).not.toHaveProperty("senseId");
+    expect(hit).not.toHaveProperty("senses");
+    expect(hit).not.toHaveProperty("ambiguous");
+  });
+
+  it("an entry with an EMPTY senses array also falls through to the no-senses branch, byte-identical", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([remotePackWithSenses([])]);
+    const res = scanDictionary("Discussing EMT today.");
+    const hit = res.terms.find((t) => t.term === "EMT");
+    expect(hit).toEqual({
+      term: "EMT",
+      type: "other",
+      gloss_en: "top-level default gloss",
+      gloss_zh: "顶层默认释义",
+    });
+  });
+
+  it("emits exactly ONE DetectedTerm for a multi-sense entry — cardinality never changes", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithSenses([
+        { senseId: "s1", gloss_en: "sense one", gloss_zh: "释义一", domain: "biomed", prior: 0.5 },
+        { senseId: "s2", gloss_en: "sense two", gloss_zh: "释义二", domain: "genomics", prior: 0.5 },
+      ]),
+    ]);
+    const res = scanDictionary("Discussing EMT today.");
+    expect(res.terms.filter((t) => t.term === "EMT")).toHaveLength(1);
+  });
+
+  describe("no sense context at all — falls back to plain prior ordering", () => {
+    it("the higher-prior sense wins", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "itk", gloss_en: "ITK gene", gloss_zh: "ITK 基因", domain: "genomics", prior: 0.3 },
+          {
+            senseId: "emt-transition",
+            gloss_en: "epithelial-mesenchymal transition",
+            gloss_zh: "上皮间质转化",
+            domain: "biomed",
+            prior: 0.7,
+          },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      const hit = res.terms.find((t) => t.term === "EMT");
+      expect(hit!.gloss_en).toBe("epithelial-mesenchymal transition");
+      expect(hit!.senseId).toBe("emt-transition");
+    });
+
+    it("ambiguous: true when the top two priors are within 0.15", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "a", gloss_en: "a", gloss_zh: "甲", domain: "biomed", prior: 0.55 },
+          { senseId: "b", gloss_en: "b", gloss_zh: "乙", domain: "genomics", prior: 0.5 },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      expect(res.terms.find((t) => t.term === "EMT")!.ambiguous).toBe(true);
+    });
+
+    it("ambiguous: false when the top two priors differ by >= 0.15", () => {
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "a", gloss_en: "a", gloss_zh: "甲", domain: "biomed", prior: 0.7 },
+          { senseId: "b", gloss_en: "b", gloss_zh: "乙", domain: "genomics", prior: 0.3 },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      expect(res.terms.find((t) => t.term === "EMT")!.ambiguous).toBe(false);
+    });
+  });
+
+  describe("with a sense context — weighted scoring", () => {
+    it("domainWeights (0.45 weight) can flip the winner away from the higher-prior sense", () => {
+      setSenseContext({ domainWeights: { biomed: 1.0 } });
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "itk", gloss_en: "ITK gene", gloss_zh: "ITK 基因", domain: "genomics", prior: 0.6 },
+          {
+            senseId: "emt",
+            gloss_en: "epithelial-mesenchymal transition",
+            gloss_zh: "上皮间质转化",
+            domain: "biomed",
+            prior: 0.4,
+          },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      const hit = res.terms.find((t) => t.term === "EMT");
+      // score(itk) = 0.15*0.6 = 0.09; score(emt) = 0.45 + 0.15*0.4 = 0.51.
+      expect(hit!.gloss_en).toBe("epithelial-mesenchymal transition");
+      expect(hit!.senseId).toBe("emt");
+    });
+
+    it("cooccurrence (0.25 weight) can also flip the winner", () => {
+      setSenseContext({ cooccurrence: { genomics: 1.0 } });
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "itk", gloss_en: "ITK gene", gloss_zh: "ITK 基因", domain: "genomics", prior: 0.3 },
+          {
+            senseId: "emt",
+            gloss_en: "epithelial-mesenchymal transition",
+            gloss_zh: "上皮间质转化",
+            domain: "biomed",
+            prior: 0.6,
+          },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      const hit = res.terms.find((t) => t.term === "EMT");
+      // score(itk) = 0.25 + 0.15*0.3 = 0.295; score(emt) = 0.15*0.6 = 0.09.
+      expect(hit!.gloss_en).toBe("ITK gene");
+      expect(hit!.senseId).toBe("itk");
+    });
+
+    it("the pack-explicitly-enabled bonus (0.15) shifts every sense's score equally — never changes which sense wins within one entry", () => {
+      setSenseContext({}); // present (non-null) context, forces the scored branch
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "a", gloss_en: "a", gloss_zh: "甲", domain: "biomed", prior: 0.7 },
+          { senseId: "b", gloss_en: "b", gloss_zh: "乙", domain: "genomics", prior: 0.3 },
+        ]),
+      ]);
+      const resWithoutBonus = scanDictionary("Discussing EMT today.", null);
+      const resWithBonus = scanDictionary("Discussing EMT today.", ["__test_sense_pack__"]);
+      const hitWithout = resWithoutBonus.terms.find((t) => t.term === "EMT")!;
+      const hitWithBonus = resWithBonus.terms.find((t) => t.term === "EMT")!;
+      expect(hitWithout.senseId).toBe("a");
+      expect(hitWithBonus.senseId).toBe("a"); // same winner either way
+      expect(hitWithBonus.senses![0].score).toBeCloseTo(hitWithout.senses![0].score! + 0.15, 5);
+    });
+
+    // LOW fix (v0.6 round-2 review): an EMPTY domainWeights map (`{}`,
+    // not `undefined`) — this app's actual starting state every
+    // meeting, before any domain is inferred (useMeeting.ts always
+    // calls setSenseContext with a real object, never null in
+    // practice) — used to make the domain-zero-weight ambiguity
+    // trigger fire UNCONDITIONALLY, since "this sense's domain has
+    // zero weight" is trivially true of every domain when nothing has
+    // non-zero weight. Fails against pre-fix selectSense, where this
+    // assertion would see `true`.
+    it("an EMPTY domainWeights map ({}) does NOT trip the domain-zero-weight ambiguity trigger — no real domain signal to disagree with yet", () => {
+      setSenseContext({}); // present (non-null), but no domain has any weight at all
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "high", gloss_en: "high prior", gloss_zh: "高先验", domain: "genomics", prior: 1.0 },
+          { senseId: "low", gloss_en: "low prior", gloss_zh: "低先验", domain: "biomed", prior: 0.0 },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      const hit = res.terms.find((t) => t.term === "EMT");
+      // Wide margin (score gap 0.15, not < 0.15) so this isolates the
+      // domain-zero-weight condition, same isolation the sibling
+      // "sales"-weighted test above uses.
+      expect(hit!.gloss_en).toBe("high prior");
+      expect(hit!.ambiguous).toBe(false);
+    });
+
+    it("ambiguous purely from zero domain weight (scored path only), even when the score margin is wide", () => {
+      setSenseContext({ domainWeights: { sales: 1.0 } }); // neither candidate domain
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "high", gloss_en: "high prior", gloss_zh: "高先验", domain: "genomics", prior: 1.0 },
+          { senseId: "low", gloss_en: "low prior", gloss_zh: "低先验", domain: "biomed", prior: 0.0 },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      const hit = res.terms.find((t) => t.term === "EMT");
+      // score(high) = 0.15; score(low) = 0. Margin is exactly 0.15 (NOT
+      // < 0.15), so this isolates the domain-zero-weight condition.
+      expect(hit!.gloss_en).toBe("high prior");
+      expect(hit!.ambiguous).toBe(true);
+    });
+
+    it("NOT ambiguous when the chosen sense's domain has real weight, even with the same wide margin", () => {
+      setSenseContext({ domainWeights: { genomics: 1.0 } });
+      mockGetLoadedRemotePacks.mockReturnValue([
+        remotePackWithSenses([
+          { senseId: "high", gloss_en: "high prior", gloss_zh: "高先验", domain: "genomics", prior: 1.0 },
+          { senseId: "low", gloss_en: "low prior", gloss_zh: "低先验", domain: "biomed", prior: 0.0 },
+        ]),
+      ]);
+      const res = scanDictionary("Discussing EMT today.");
+      expect(res.terms.find((t) => t.term === "EMT")!.ambiguous).toBe(false);
+    });
+  });
+
+  it("emits the full ranked `senses` array (chosen first), one entry per DictSense, each carrying its own score", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithSenses([
+        { senseId: "itk", gloss_en: "ITK gene", gloss_zh: "ITK 基因", domain: "genomics", prior: 0.3 },
+        {
+          senseId: "emt",
+          gloss_en: "epithelial-mesenchymal transition",
+          gloss_zh: "上皮间质转化",
+          domain: "biomed",
+          prior: 0.7,
+        },
+      ]),
+    ]);
+    const res = scanDictionary("Discussing EMT today.");
+    const hit = res.terms.find((t) => t.term === "EMT");
+    expect(hit!.senses).toHaveLength(2);
+    expect(hit!.senses![0].senseId).toBe("emt"); // chosen first
+    expect(hit!.senses![1].senseId).toBe("itk");
+    expect(hit!.senses!.every((s) => typeof s.score === "number")).toBe(true);
+  });
+
+  it("a sense with its own `type` overrides the entry's top-level type", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithSenses([
+        { senseId: "s1", gloss_en: "s1", gloss_zh: "甲", domain: "biomed", type: "acronym", prior: 0.9 },
+      ]),
+    ]);
+    const res = scanDictionary("Discussing EMT today.");
+    expect(res.terms.find((t) => t.term === "EMT")!.type).toBe("acronym");
+  });
+
+  it("a sense WITHOUT its own `type` inherits the entry's top-level type", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithSenses([{ senseId: "s1", gloss_en: "s1", gloss_zh: "甲", domain: "biomed", prior: 0.9 }]),
+    ]);
+    const res = scanDictionary("Discussing EMT today.");
+    // remotePackWithSenses' own top-level type is "other".
+    expect(res.terms.find((t) => t.term === "EMT")!.type).toBe("other");
+  });
+});
+
+describe("longest-match-wins across overlapping term surfaces", () => {
+  it("drops a term whose surface is a whole-word substring of another matched term", () => {
+    // Real case from the v0.6 content round: saying "vesting cliff"
+    // produced BOTH a "vesting" card and a "vesting cliff" card.
+    const res = scanDictionary("There is a one-year vesting cliff.", null);
+    const surfaces = res.terms.map((t) => t.term);
+    expect(surfaces).toContain("vesting cliff");
+    expect(surfaces).not.toContain("vesting");
+  });
+
+  it("keeps both when neither surface contains the other", () => {
+    const res = scanDictionary("The sample mean and variance were computed.", ["stats"]);
+    const surfaces = res.terms.map((t) => t.term);
+    expect(surfaces).toContain("sample mean");
+    expect(surfaces).toContain("variance");
+  });
+
+  // S8 fix (v0.6 round-2 review): a STANDALONE occurrence of the
+  // shorter surface, entirely separate from the compound one, must
+  // survive — the old label-based containment check couldn't tell
+  // these apart (it compared "vesting" against "vesting cliff" as bare
+  // strings, with no idea WHERE in the text either one actually
+  // matched) and dropped the legitimate standalone card too. Fails
+  // against pre-fix dropSubsumedTerms.
+  it("keeps a standalone occurrence of the shorter surface that is entirely separate from a LATER compound occurrence", () => {
+    const res = scanDictionary(
+      "Let's talk about vesting first, then get into the one-year vesting cliff.",
+      null,
+    );
+    const surfaces = res.terms.map((t) => t.term);
+    expect(surfaces).toContain("vesting"); // the standalone mention
+    expect(surfaces).toContain("vesting cliff"); // the compound mention
+  });
+
+  describe("dropSubsumedTerms (pure, span-based)", () => {
+    function hit(term: string, matchStart: number, matchEnd: number) {
+      return { term, matchStart, matchEnd };
+    }
+
+    it("drops a shorter span fully contained within a STRICTLY longer one", () => {
+      // "vesting" (7 chars) at [17,24) is fully inside "vesting cliff"
+      // (14 chars) at [17,31) — same start, contained end.
+      const result = dropSubsumedTermsForTests([hit("vesting", 17, 24), hit("vesting cliff", 17, 31)]);
+      expect(result.map((h) => h.term)).toEqual(["vesting cliff"]);
+    });
+
+    it("keeps both when the spans don't overlap at all, even if one label textually contains the other", () => {
+      const result = dropSubsumedTermsForTests([hit("vesting", 0, 7), hit("vesting cliff", 40, 54)]);
+      expect(result.map((h) => h.term)).toEqual(["vesting", "vesting cliff"]);
+    });
+
+    it("equal-length spans never subsume each other, even at the exact same position", () => {
+      const result = dropSubsumedTermsForTests([hit("a", 0, 5), hit("b", 0, 5)]);
+      expect(result.map((h) => h.term)).toEqual(["a", "b"]);
+    });
+
+    it("never allocates a RegExp per comparison and never disables filtering above 64 hits (the old guard's own bug) — 100 non-overlapping hits all survive, and a genuinely subsumed one among them still gets dropped", () => {
+      const hits = Array.from({ length: 100 }, (_, i) => hit(`term${i}`, i * 10, i * 10 + 5));
+      // Insert one genuinely subsumed pair, positioned well past every
+      // original hit's own span (0..995) so it can't accidentally
+      // collide with one of them.
+      hits.push(hit("short", 2000, 2005), hit("short-but-longer", 2000, 2016));
+      const result = dropSubsumedTermsForTests(hits);
+      expect(result.length).toBe(101); // 100 originals + the longer of the subsumed pair, minus the shorter
+      expect(result.some((h) => h.term === "short")).toBe(false);
+      expect(result.some((h) => h.term === "short-but-longer")).toBe(true);
+    });
   });
 });

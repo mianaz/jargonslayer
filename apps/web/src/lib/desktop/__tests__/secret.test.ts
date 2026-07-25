@@ -11,8 +11,15 @@ import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import { hydrateSecrets, readSecrets, SECRET_NAMES, writeSecret } from "../secret";
 
 describe("secret.ts — IS_DESKTOP guard (ambient, IS_DESKTOP false in this test env)", () => {
-  it("SECRET_NAMES pins the exact 5 field names secret.rs's own ALLOWED list mirrors", () => {
-    expect(SECRET_NAMES).toEqual(["apiKey", "hfToken", "sonioxKey", "deepgramKey", "agentToken"]);
+  it("SECRET_NAMES pins the exact 6 field names secret.rs's own ALLOWED list mirrors", () => {
+    expect(SECRET_NAMES).toEqual([
+      "apiKey",
+      "hfToken",
+      "sonioxKey",
+      "deepgramKey",
+      "elevenLabsKey",
+      "agentToken",
+    ]);
   });
 
   it("readSecrets() resolves {} immediately, never reaching getInvoke()", async () => {

@@ -35,6 +35,9 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   // same key from whichever lane owns that copy; sync if the actual
   // copy differs.
   deepgram: "Deepgram 云端识别",
+  // v0.6 round 2: third BYOK cloud engine, terse noun form matching
+  // soniox/deepgram above.
+  elevenlabs: "ElevenLabs 云端识别",
   // v0.5 Wave-1 Foundation (F4 tab-audio-cloud kind, not yet a
   // selectable engine — see STTEngineKind's own doc comment): same
   // placeholder-pending-sync posture as "deepgram" immediately above.

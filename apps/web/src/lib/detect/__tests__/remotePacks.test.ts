@@ -1007,3 +1007,289 @@ describe("remotePacks — M2: checkUpdates re-checks the total caps before writi
     expect(afterVersions).toEqual(beforeVersions);
   });
 });
+
+describe("remotePacks — MEDIUM-2: checkUpdates' shouldContinue param + only reloading the registry on a real change (v0.6 round-2 review)", () => {
+  beforeEach(() => {
+    memStore.clear();
+    vi.resetModules();
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  // Fails against pre-fix checkUpdates(), which took no shouldContinue
+  // param at all and always wrote a genuine update through.
+  it("shouldContinue() returning false bails WITHOUT writing — even when a real update was found", async () => {
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 2 });
+    const updated = await remotePacks.checkUpdates(() => false);
+
+    expect(updated).toEqual([]);
+    const sources = await remotePacks.listPackSources();
+    expect(sources.find((s) => s.pack.id === "pack-a")!.pack.version).toBe(1); // unchanged — never written
+  });
+
+  it("shouldContinue() returning true proceeds exactly like passing nothing at all", async () => {
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 2 });
+    const updated = await remotePacks.checkUpdates(() => true);
+
+    expect(updated).toEqual(["pack-a"]);
+    const sources = await remotePacks.listPackSources();
+    expect(sources.find((s) => s.pack.id === "pack-a")!.pack.version).toBe(2);
+  });
+
+  // Fails against pre-fix checkUpdates(), which called
+  // loadRemotePacksIntoRegistry(true) unconditionally — the generation
+  // would bump here even though nothing changed.
+  it("a no-op check (every source already current) never bumps the remote-packs registry generation", async () => {
+    const { getRemotePacksGeneration } = await import("@jargonslayer/core/detect/remotePacksRegistry");
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+    await remotePacks.loadRemotePacksIntoRegistry(true);
+    const before = getRemotePacksGeneration();
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 }); // SAME version — no-op
+    const updated = await remotePacks.checkUpdates();
+
+    expect(updated).toEqual([]);
+    expect(getRemotePacksGeneration()).toBe(before);
+  });
+
+  it("a REAL update still bumps the registry generation, same as before this fix", async () => {
+    const { getRemotePacksGeneration } = await import("@jargonslayer/core/detect/remotePacksRegistry");
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 1 });
+    const remotePacks = await import("../remotePacks");
+    await remotePacks.addPackSource("https://example.com/pack-a.json");
+    await remotePacks.loadRemotePacksIntoRegistry(true);
+    const before = getRemotePacksGeneration();
+
+    mockFetchOnce({ id: "pack-a", name: "Pack A", version: 2 });
+    const updated = await remotePacks.checkUpdates();
+
+    expect(updated).toEqual(["pack-a"]);
+    expect(getRemotePacksGeneration()).toBeGreaterThan(before);
+  });
+});
+
+describe("remotePacks — LOW fix: loadRemotePacksIntoRegistry never poisons its own promise on failure (v0.6 round-2 review)", () => {
+  beforeEach(() => {
+    memStore.clear();
+    vi.resetModules();
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.restoreAllMocks();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  // Fails against pre-fix loadRemotePacksIntoRegistry, where the
+  // `loadingPromise = null` line sat AFTER the await with no
+  // try/finally — a rejection left it set forever, so this SECOND call
+  // would return the SAME dead rejected promise instead of a genuine
+  // retry, even after the injected failure stopped happening.
+  it("a failed load does not poison later calls — a later call (after the failure clears) succeeds instead of reusing the same rejected promise", async () => {
+    const remotePacks = await import("../remotePacks");
+    const registry = await import("@jargonslayer/core/detect/remotePacksRegistry");
+    const spy = vi.spyOn(registry, "setLoadedRemotePacks").mockImplementationOnce(() => {
+      throw new Error("boom");
+    });
+
+    await expect(remotePacks.loadRemotePacksIntoRegistry()).rejects.toThrow("boom");
+
+    spy.mockRestore(); // the injected failure is now gone — a real retry should succeed
+    await expect(remotePacks.loadRemotePacksIntoRegistry()).resolves.toBeUndefined();
+  });
+});
+
+// v0.6 multi-sense-terms sprint (T1) — NOT the "v0.6 T1-T6" labels used
+// elsewhere in this file, which name the earlier/unrelated remote-packs
+// sprint (variants, commonWord, manifest v2, size caps, catalog browse).
+// clampSenses' own wire-validation coverage: a term MAY declare
+// `senses`, validated like a term itself, lenient-drop per malformed
+// sense (never fatal to the whole term/pack).
+describe("remotePacks — term senses (v0.6 multi-sense-terms sprint)", () => {
+  beforeEach(() => {
+    memStore.clear();
+    vi.resetModules();
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  it("installs a well-formed senses array, filling in defaults (prior 0.5, generated senseId) where absent", async () => {
+    mockFetchOnce({
+      id: "senses-pack",
+      name: "Senses Pack",
+      version: 1,
+      terms: [
+        {
+          term: "EMT",
+          gloss_zh: "顶层默认释义",
+          senses: [
+            { gloss_en: "epithelial-mesenchymal transition", gloss_zh: "上皮间质转化", domain: "biomed", prior: 0.7 },
+            { gloss_en: "ITK gene", gloss_zh: "ITK 基因", domain: "genomics" }, // no senseId, no prior
+          ],
+        },
+      ],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/senses.json");
+
+    const term = pack.terms.find((t) => t.term === "EMT");
+    expect(term?.senses).toHaveLength(2);
+    expect(term?.senses?.[0]).toEqual({
+      gloss_en: "epithelial-mesenchymal transition",
+      gloss_zh: "上皮间质转化",
+      type: undefined,
+      domain: "biomed",
+      prior: 0.7,
+      senseId: "sense-0",
+    });
+    // Absent prior -> defaults to 0.5; absent senseId -> generated from index.
+    expect(term?.senses?.[1].prior).toBe(0.5);
+    expect(term?.senses?.[1].senseId).toBe("sense-1");
+  });
+
+  it("caps at 6 senses even when the manifest declares more", async () => {
+    const senses = Array.from({ length: 9 }, (_, i) => ({
+      gloss_en: `sense ${i}`,
+      gloss_zh: `释义 ${i}`,
+      domain: "general",
+    }));
+    mockFetchOnce({
+      id: "many-senses-pack",
+      name: "Many Senses",
+      version: 1,
+      terms: [{ term: "OVERLOADED", gloss_zh: "顶层释义", senses }],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/many-senses.json");
+    expect(pack.terms[0].senses).toHaveLength(6);
+  });
+
+  it("drops a sense missing gloss_en/gloss_zh but keeps the other senses and the term itself", async () => {
+    mockFetchOnce({
+      id: "malformed-sense-pack",
+      name: "Malformed Sense",
+      version: 1,
+      terms: [
+        {
+          term: "PARTIAL",
+          gloss_zh: "顶层释义",
+          senses: [
+            { gloss_en: "good sense", gloss_zh: "正常释义", domain: "software" },
+            { gloss_en: "", gloss_zh: "缺少英文释义", domain: "software" }, // dropped
+            { gloss_zh: "缺少英文字段", domain: "software" }, // dropped (no gloss_en key at all)
+          ],
+        },
+      ],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/malformed-sense.json");
+    expect(pack.terms).toHaveLength(1); // the TERM survives
+    expect(pack.terms[0].senses).toHaveLength(1);
+    expect(pack.terms[0].senses?.[0].gloss_en).toBe("good sense");
+  });
+
+  it("drops a sense whose domain is not a recognized DomainTag", async () => {
+    mockFetchOnce({
+      id: "bad-domain-pack",
+      name: "Bad Domain",
+      version: 1,
+      terms: [
+        {
+          term: "BADDOMAIN",
+          gloss_zh: "顶层释义",
+          senses: [
+            { gloss_en: "ok", gloss_zh: "正常", domain: "biomed" },
+            { gloss_en: "bad", gloss_zh: "不合法域", domain: "not-a-real-domain" },
+          ],
+        },
+      ],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/bad-domain.json");
+    expect(pack.terms[0].senses).toHaveLength(1);
+    expect(pack.terms[0].senses?.[0].domain).toBe("biomed");
+  });
+
+  it("clamps prior to the 0..1 range", async () => {
+    mockFetchOnce({
+      id: "prior-range-pack",
+      name: "Prior Range",
+      version: 1,
+      terms: [
+        {
+          term: "PRIORRANGE",
+          gloss_zh: "顶层释义",
+          senses: [
+            { gloss_en: "too high", gloss_zh: "过高", domain: "finance", prior: 5 },
+            { gloss_en: "too low", gloss_zh: "过低", domain: "sales", prior: -3 },
+          ],
+        },
+      ],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/prior-range.json");
+    expect(pack.terms[0].senses?.[0].prior).toBe(1);
+    expect(pack.terms[0].senses?.[1].prior).toBe(0);
+  });
+
+  it("clamps an over-long senseId to 40 chars", async () => {
+    mockFetchOnce({
+      id: "long-senseid-pack",
+      name: "Long SenseId",
+      version: 1,
+      terms: [
+        {
+          term: "LONGID",
+          gloss_zh: "顶层释义",
+          senses: [{ gloss_en: "x", gloss_zh: "x", domain: "hr", senseId: "s".repeat(80) }],
+        },
+      ],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/long-senseid.json");
+    expect(pack.terms[0].senses?.[0].senseId).toHaveLength(40);
+  });
+
+  it("a term with senses entirely malformed (all dropped) installs with `senses: undefined`, not an empty array", async () => {
+    mockFetchOnce({
+      id: "all-malformed-pack",
+      name: "All Malformed",
+      version: 1,
+      terms: [{ term: "ALLBAD", gloss_zh: "顶层释义", senses: [{ domain: "not-real" }, { gloss_en: "x" }] }],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/all-malformed.json");
+    expect(pack.terms[0].senses).toBeUndefined();
+  });
+
+  it("a term with no `senses` field at all installs with `senses: undefined` — unaffected by this feature", async () => {
+    mockFetchOnce({
+      id: "no-senses-pack",
+      name: "No Senses",
+      version: 1,
+      terms: [{ term: "NOSENSES", gloss_zh: "顶层释义" }],
+    });
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/no-senses.json");
+    expect(pack.terms[0].senses).toBeUndefined();
+  });
+});

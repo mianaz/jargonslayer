@@ -19,6 +19,7 @@ vi.mock("@jargonslayer/core/detect/dictionary", () => ({
 import { packTermsForBias } from "@jargonslayer/core/detect/dictionary";
 import {
   buildMeetingLexicon,
+  projectForElevenLabsKeyterms,
   projectForInitialPrompt,
   projectForOsSpeechContextualJson,
   projectForSonioxContext,
@@ -264,6 +265,32 @@ describe("projectForSonioxContext", () => {
     const longWord = "测".repeat(170);
     const terms = Array.from({ length: 50 }, (_, i) => `${longWord}${i}`);
     const result = projectForSonioxContext({ terms });
+    const encoded = new TextEncoder().encode(JSON.stringify(result));
+    expect(encoded.length).toBeLessThanOrEqual(4 * 1024);
+  });
+});
+
+describe("projectForElevenLabsKeyterms", () => {
+  it("returns an empty array for an empty lexicon", () => {
+    expect(projectForElevenLabsKeyterms({ terms: [] })).toEqual([]);
+  });
+
+  it("returns a plain term array, priority order preserved (a prefix, never reordered)", () => {
+    expect(projectForElevenLabsKeyterms({ terms: ["a", "b", "c"] })).toEqual(["a", "b", "c"]);
+  });
+
+  it("caps at 100 terms, keeping the FIRST (highest-priority) 100 in order — no documented ElevenLabs limit exists, so this mirrors soniox's own conservative cap (see lexicon.ts's own doc comment)", () => {
+    const terms = Array.from({ length: 150 }, (_, i) => `term-${i}`);
+    const result = projectForElevenLabsKeyterms({ terms });
+    expect(result).toHaveLength(100);
+    expect(result[0]).toBe("term-0");
+    expect(result[99]).toBe("term-99");
+  });
+
+  it("caps the JSON-array-encoded byte size at 4KB", () => {
+    const longWord = "测".repeat(170);
+    const terms = Array.from({ length: 50 }, (_, i) => `${longWord}${i}`);
+    const result = projectForElevenLabsKeyterms({ terms });
     const encoded = new TextEncoder().encode(JSON.stringify(result));
     expect(encoded.length).toBeLessThanOrEqual(4 * 1024);
   });

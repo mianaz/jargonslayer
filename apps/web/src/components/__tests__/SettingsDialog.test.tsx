@@ -1239,6 +1239,116 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS lock while a meeting is c
   });
 });
 
+// ---------------------------------------------------------------
+// S3 fix (v0.6 round-2 review): 识别语言/解释语言 used to stay editable
+// while a meeting was listening/paused — 保存 while active would apply
+// a language change straight into a LIVE meeting, silently corrupting
+// translation (a target change makes queue.ts pass a new target to a
+// provider still holding the old pair, which rejects it; a source
+// change is worse — DesktopSystemTranslationProvider.translate() only
+// compares the TARGET against lastPair, so text keeps flowing through
+// the OLD source-language session after a hard resume reattaches STT
+// with the new one — see providers.ts's own doc). Locked here with
+// meetingActive (not the narrower engineLockedByMeeting the 转录引擎
+// cards above use) — unlike the STT engine, "paused" is UNSAFE for
+// these two fields too, since resume() never re-primes the translate
+// provider.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 识别语言/解释语言 lock while a meeting is active (S3 fix, v0.6 round-2 review)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findSelectByLabel(text: string): HTMLSelectElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === text);
+    const select = label?.parentElement?.querySelector("select");
+    if (!select) throw new Error(`${text} select not found`);
+    return select as HTMLSelectElement;
+  }
+
+  function clickAiDetectNav(): void {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ status: "idle" }); // resetStore() doesn't cover this field — avoid leaking into later tests
+  });
+
+  it("识别语言 is disabled while listening, and stays disabled while paused too", async () => {
+    useApp.setState({ status: "listening" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findSelectByLabel("识别语言").disabled).toBe(true);
+
+    await act(async () => {
+      useApp.setState({ status: "paused" });
+    });
+    expect(findSelectByLabel("识别语言").disabled).toBe(true);
+  });
+
+  it("识别语言 is enabled while idle", async () => {
+    useApp.setState({ status: "idle" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findSelectByLabel("识别语言").disabled).toBe(false);
+  });
+
+  it("解释语言 is disabled while listening, and stays disabled while paused too", async () => {
+    useApp.setState({ status: "listening" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(findSelectByLabel("解释语言").disabled).toBe(true);
+
+    await act(async () => {
+      useApp.setState({ status: "paused" });
+    });
+    expect(findSelectByLabel("解释语言").disabled).toBe(true);
+  });
+
+  it("解释语言 is enabled while stopped", async () => {
+    useApp.setState({ status: "stopped" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(findSelectByLabel("解释语言").disabled).toBe(false);
+  });
+});
+
 describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox Key (v0.4 S4 chunk 6)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
