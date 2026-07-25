@@ -423,7 +423,7 @@ npm run dev
       <p>For a production-like local run, use <code>npm run build</code> and <code>npm start</code>.</p>
 
       <h3>Chrome extension (JargonSlayer Lite)</h3>
-      <p>Download the zip from <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases</a>, unzip it, then <code>chrome://extensions</code> → enable <strong>Developer mode</strong> → <strong>Load unpacked</strong> → select the unzipped folder. Chrome Web Store submission is pending, so load-unpacked is the only install path for now. Lite does live mic capture plus the built-in dictionary and on-device translation in a side panel — no LLM detection, no tab/system audio, no account; see the <a href="#deployment">Deployment</a> table for the full capability split.</p>
+      <p>Download the zip from <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases</a>, unzip it, then <code>chrome://extensions</code> → enable <strong>Developer mode</strong> → <strong>Load unpacked</strong> → select the unzipped folder. The extension is not listed on the Chrome Web Store for now — load-unpacked from the release zip is the supported install path (the same way many developer tools ship). Lite does live mic capture plus the built-in dictionary and on-device translation in a side panel — no LLM detection, no tab/system audio, no account; see the <a href="#deployment">Deployment</a> table for the full capability split.</p>
     </section>
 
     <section id="workflow">
@@ -973,7 +973,7 @@ npm run build</code></pre>
           <tr><td>Local web app</td><td>Available</td><td>Full local-first build</td></tr>
           <tr><td>PWA install</td><td>Available</td><td>Uses existing manifest and icons</td></tr>
           <tr><td>macOS desktop app (Tauri)</td><td>Available</td><td>Signed, notarized DMG on <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>; Apple Silicon only, no Intel build</td></tr>
-          <tr><td>Chrome extension (Lite)</td><td>Available, load-unpacked</td><td>Zip on releases; Chrome Web Store submission pending</td></tr>
+          <tr><td>Chrome extension (Lite)</td><td>Available, load-unpacked</td><td>Zip on releases; load-unpacked is the supported path (no Web Store listing for now)</td></tr>
           <tr><td>iOS / iPadOS (beta)</td><td>TestFlight, by invite</td><td>Get in touch for an invite; iOS 26+, on-device system speech recognition. No Android or store listing planned — the PWA covers most mobile use cases</td></tr>
         </tbody>
       </table>
@@ -1041,7 +1041,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Hosted preview's limited trial:</strong> a built-in Soniox cloud-recognition trial (no key, up to 3 clips per person per day, ~10 minutes max per clip, shared first-come quota); tab audio is back in the hosted preview on the same trial quota.</li>
       </ol>
       <p>The appearance system has since expanded — see <a href="#appearance">Appearance</a>: two more built-in themes (nine total), a custom theme editor with live contrast hints and JSON import/export, separate UI and monospace font pickers, and an optional frosted-glass overlay.</p>
-      <p><strong>Pending:</strong> Chrome Web Store submission for the extension (load-unpacked is the only install path until then).</p>
+      <p><strong>Note:</strong> the extension ships as a zip on releases and installs via load-unpacked; there is no Chrome Web Store listing planned for now.</p>
       <p>Parked items include browser-Whisper realtime streaming and select-to-web-search.</p>
     </section>
 
