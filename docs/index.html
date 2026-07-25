@@ -467,6 +467,7 @@ npm run dev
           <tr><td><strong>Tab audio</strong></td><td>Same local sidecar</td><td>Local machine</td><td>Capturing the other side of an online meeting</td></tr>
           <tr><td><strong>Soniox (experimental)</strong></td><td>Soniox API key (BYOK)</td><td>Soniox realtime API, direct WSS under your key (cloud)</td><td>Live code-switched zh-en; stays 实验 until it clears the in-house benchmark; the hosted preview also offers a limited trial — see below</td></tr>
           <tr><td><strong>Deepgram</strong></td><td>Deepgram API key (BYOK)</td><td>Cloud processing (Deepgram, under your key)</td><td>English-only meetings prioritizing cloud recognition quality</td></tr>
+          <tr><td><strong>ElevenLabs</strong></td><td>ElevenLabs API key (BYOK)</td><td>Cloud processing (ElevenLabs, under your key); ElevenLabs retains transcripts by default unless you're on an enterprise no-retention plan</td><td>An additional BYOK cloud STT option, billed per use</td></tr>
         </tbody>
       </table>
       <div class="callout info"><strong>Online meetings:</strong> your microphone only captures you. For Zoom, Teams, or Meet, use tab audio where available, or route system audio through a virtual device such as BlackHole on macOS or VB-Cable on Windows and use local Whisper.</div>
@@ -614,6 +615,7 @@ python whisper_server.py --model small</code></pre>
       <p>Dictionary packs let users narrow detection by topic. Fourteen built-in packs ship today: core expressions, meeting flow, project execution, feedback, sales and growth, softening/criticism, academic meetings, chitchat, business terms, tech terms, pharma/biotech, and — added in v0.4.6 — statistics, machine learning, and bioinformatics (about 226 terms across the three, with English and Chinese glosses sourced from Wikipedia, the EDAM ontology, and Google's ML Glossary). The full built-in dictionary is 650+ entries. Every pack toggles on or off per meeting; <code>core</code> is always on. A handful of everyday-English headwords in the stats/ML packs (mean, prior, attention, precision, …) stay opt-in — they only fire once you customize the enabled-pack list, so casual speech is never flagged under the default all-on state.</p>
       <h3>Community Packs</h3>
       <p>Remote packs are JSON manifests installed from a GitHub raw or jsDelivr URL. They can contain expression entries and term entries; acronyms are <code>terms</code> with <code>type: "acronym"</code>.</p>
+      <p>Settings also has an official catalog you can browse and install from with one click — six specialized packs (medicine, biopharma, AI/ML, law, finance, engineering; 4,300+ terms total) published at <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>, alongside file or GitHub-URL import for any third-party pack. Installed packs auto-check for updates once a day.</p>
       <pre><code>{
   "id": "biotech-terms",
   "name": "Biotech Terms",
@@ -1034,7 +1036,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Crash recovery:</strong> the meeting is auto-drafted in real time; after a page refresh or a browser crash, history offers a one-click 「恢复到历史记录」 restore.</li>
         <li><strong>Background term lookup:</strong> a selection lookup's explanation keeps generating in the background and lands in the card list even if you close the popup.</li>
         <li><strong>Exports and integrations:</strong> a new docx export; AnkiConnect syncs new cards into your local Anki in one click with dedup; the personal glossary can split into multiple named custom packs.</li>
-        <li><strong>Translation engine choice:</strong> bilingual subtitles and full-transcript translation default to the LLM; Chrome 138+ can switch to the browser's built-in on-device translator instead (no key required).</li>
+        <li><strong>Translation engine choice:</strong> bilingual subtitles and full-transcript translation default to the LLM; Chrome 138+ can switch to the browser's built-in on-device translator instead (no key required). The desktop app now also offers Apple's on-device translation (macOS 26+), another local, key-free option.</li>
         <li><strong>Deepgram cloud recognition (BYOK, English):</strong> a new cloud STT engine option for English-only meetings.</li>
         <li><strong>Hosted preview's limited trial:</strong> a built-in Soniox cloud-recognition trial (no key, up to 3 clips per person per day, ~10 minutes max per clip, shared first-come quota); tab audio is back in the hosted preview on the same trial quota.</li>
       </ol>

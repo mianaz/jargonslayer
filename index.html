@@ -715,8 +715,16 @@
       <div class="feat c-green reveal">
         <div class="feat-key">real-time transcription</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>实时转录</b>：浏览器识别 / 本地 Whisper / 标签页音频（后两者音频不出本机），每个引擎带「本地 / 云端」数据去向标识；Chrome 139+ 浏览器识别优先走设备端——音频留在本机，状态栏亮起绿色「音频在本地处理」；另有实验性 Soniox 实时引擎（自备 Key），面向中英夹杂场景。浏览器识别由 VAD 监督器把关——轮换只切真停顿、恢复不丢缓冲、语言不匹配给一次提示而非悄悄丢句。内置演示零依赖看完整流程。桌面版的转录引擎不同，见下方「系统/App 音频」。</span>
-          <span class="lang-en">Browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled <b>local / cloud</b> so the data path is visible at a glance; on Chrome 139+ browser recognition prefers <b>on-device</b> — audio stays local and the status line shows the green chip — and an experimental <b>Soniox</b> realtime engine (BYOK) targets code-switched zh-en. Browser recognition is guarded by a voice-activity supervisor — rotations land in real pauses, recovery never discards buffered speech, a language mismatch gets one hint instead of silent loss. A zero-dependency demo shows the whole flow. The desktop app has a different engine lineup — see 系统/App 音频 below.</span>
+          <span class="lang-zh"><b>实时转录</b>：浏览器识别 / 本地 Whisper / 标签页音频（后两者音频不出本机），每个引擎带「本地 / 云端」数据去向标识；Chrome 139+ 浏览器识别优先走设备端——音频留在本机，状态栏亮起绿色「音频在本地处理」；另有实验性 Soniox 实时引擎（自备 Key），面向中英夹杂场景；新增 ElevenLabs 云端引擎（自备 Key，按量计费）。浏览器识别由 VAD 监督器把关——轮换只切真停顿、恢复不丢缓冲、语言不匹配给一次提示而非悄悄丢句。内置演示零依赖看完整流程。桌面版的转录引擎不同，见下方「系统/App 音频」。</span>
+          <span class="lang-en">Browser speech recognition, local Whisper, or tab audio (the latter two never leave the machine). Every engine is labeled <b>local / cloud</b> so the data path is visible at a glance; on Chrome 139+ browser recognition prefers <b>on-device</b> — audio stays local and the status line shows the green chip — and an experimental <b>Soniox</b> realtime engine (BYOK) targets code-switched zh-en; a new <b>ElevenLabs</b> cloud engine (BYOK, pay-per-use) joins the lineup. Browser recognition is guarded by a voice-activity supervisor — rotations land in real pauses, recovery never discards buffered speech, a language mismatch gets one hint instead of silent loss. A zero-dependency demo shows the whole flow. The desktop app has a different engine lineup — see 系统/App 音频 below.</span>
+        </div>
+      </div>
+
+      <div class="feat c-red reveal">
+        <div class="feat-key">elevenlabs stt, local usage, keychain (v0.6.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>ElevenLabs 识别 · 本地用量 · 钥匙串</b>：语音识别新增 ElevenLabs 云端引擎，自带 Key 按量计费；用量统计记在本机，设置里随时可查，不上传服务器；API Key 现在存进 macOS 钥匙串，首次启动自动迁移旧存储。</span>
+          <span class="lang-en"><b>ElevenLabs STT · local usage · Keychain</b>: a new speech recognition engine, ElevenLabs cloud STT — bring your own key, pay per use. Usage stats are tracked locally, viewable anytime in Settings, never uploaded. API keys now live in macOS Keychain, auto-migrated on first launch.</span>
         </div>
       </div>
 
@@ -763,8 +771,16 @@
       <div class="feat c-cyan reveal">
         <div class="feat-key">translation engine choice (v0.5.0)</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>翻译引擎可选</b>：双语字幕和全文翻译默认用 LLM；Chrome 138+ 可以在设置里切到浏览器内置的本地翻译，翻译完全在这台机器上跑，不用配 API Key，代价是措辞不如 LLM 精细。</span>
-          <span class="lang-en"><b>Translation engine choice</b>: bilingual subtitles and full-transcript translation default to the LLM; on Chrome 138+ you can switch to the browser's built-in on-device translator in Settings instead — it runs entirely on this machine, no API key required, at the cost of some phrasing nuance versus the LLM.</span>
+          <span class="lang-zh"><b>翻译引擎可选</b>：双语字幕和全文翻译默认用 LLM；Chrome 138+ 可以在设置里切到浏览器内置的本地翻译，翻译完全在这台机器上跑，不用配 API Key，代价是措辞不如 LLM 精细；桌面版 macOS 26+ 还能选 Apple 系统翻译，同样本机运行、无需 Key（见下）。</span>
+          <span class="lang-en"><b>Translation engine choice</b>: bilingual subtitles and full-transcript translation default to the LLM; on Chrome 138+ you can switch to the browser's built-in on-device translator in Settings instead — it runs entirely on this machine, no API key required, at the cost of some phrasing nuance versus the LLM; on desktop, macOS 26+ also offers Apple's on-device translation as another key-free, fully local option (see below).</span>
+        </div>
+      </div>
+
+      <div class="feat c-yellow reveal">
+        <div class="feat-key">apple on-device translation (desktop, v0.6.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>Apple 系统翻译（桌面版，macOS 26+）</b>：翻译引擎新增一项——跑在 macOS 系统翻译框架上，完全本机处理，不需要配置 API Key，文本不出这台 Mac。</span>
+          <span class="lang-en"><b>Apple on-device translation (desktop, macOS 26+)</b>: a new translation engine option running on macOS's own translation framework, fully local — no API key required, and text never leaves the Mac.</span>
         </div>
       </div>
 
@@ -781,6 +797,14 @@
         <div class="feat-body">
           <span class="lang-zh"><b>实时表达检测</b>：LLM 结合前后语境判断，只解释"字面意思 ≠ 实际意思"的表达，专有名词/缩写单独成术语条。内置词典（650+ 条、14 个主题包，含医药生物科技、统计学、机器学习、生物信息学）是始终在线的即时底层——命中立刻出卡，AI 再就地升级解释；关掉 AI 就是纯离线模式，还能从 GitHub 安装社区词典包，也能自己建多个自定义命名词包分开管理。解释语言可切中文或英文。</span>
           <span class="lang-en"><b>Real-time expression detection</b>: an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether <i>table this</i> means shelving a topic or furniture); proper nouns get separate term cards. A built-in dictionary (650+ entries, 14 topic packs incl. pharma/biotech, statistics, ML and bioinformatics) is the always-on instant layer — hits render immediately and the AI upgrades them in place; with AI off it works fully offline. Community packs install from GitHub, and you can also create your own named custom packs to keep topics separate.</span>
+        </div>
+      </div>
+
+      <div class="feat c-green reveal">
+        <div class="feat-key">dictionary pack catalog, multi-sense ranking (v0.6.0)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>词典包目录 · 多义词排序</b>：设置里可从官方目录一键安装 6 个专业词典包——医学、生物医药、AI/ML、法律、金融商务、工程计算机，共 4300+ 词条；也能从文件或 GitHub 链接导入第三方包，已装的包每天自动检查更新。内置词典另新增三个通用包共 271 条：新兴用法（harness、agent、RAG…）、钱与福利（保险/薪酬/股权）、日常口语与俗语。多义词按语境排序——像 EMT 这种在不同领域含义不同的词，会自动把当前会议最可能的解释排前面。词典包目录见 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>。</span>
+          <span class="lang-en"><b>Dictionary pack catalog · multi-sense ranking</b>: install 6 specialized packs from the official catalog in Settings — medicine, biopharma, AI/ML, law, finance, engineering — 4,300+ terms total; import third-party packs from a file or GitHub link too, and installed packs auto-check for updates daily. Three new built-in general packs add 271 more terms: emerging usage (harness, agent, RAG…), money &amp; benefits, and everyday idioms &amp; slang. Multi-sense terms now sort by context — a word like EMT that means different things in different fields gets the most likely definition for the current meeting ranked first. Catalog: <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>.</span>
         </div>
       </div>
 
@@ -978,6 +1002,14 @@
           </tr>
           <tr>
             <td class="data-col">
+              <span class="lang-zh">音频（ElevenLabs 引擎，自备 Key，实验）</span><span class="lang-en">Audio (ElevenLabs engine, BYOK, experimental)</span>
+            </td>
+            <td class="dest-col"><span class="dot cloud"></span>
+              <span class="lang-zh">用你自己的 Key 经 WSS 直连 ElevenLabs 实时接口（Scribe）；转写内容默认会被 ElevenLabs 留存，适用其隐私条款</span><span class="lang-en">Directly to ElevenLabs' realtime API (Scribe) over WSS under your own key; transcripts are retained by ElevenLabs by default — their privacy terms apply</span>
+            </td>
+          </tr>
+          <tr>
+            <td class="data-col">
               <span class="lang-zh">音频（体验版：Soniox 试用 / 标签页音频）</span><span class="lang-en">Audio (preview tier: Soniox trial / tab audio)</span>
             </td>
             <td class="dest-col"><span class="dot cloud"></span>
@@ -1034,10 +1066,10 @@
           </tr>
           <tr>
             <td class="data-col">
-              <span class="lang-zh">会议历史、设置、API Key</span><span class="lang-en">History, settings, API key</span>
+              <span class="lang-zh">会议历史、设置、API Key、用量统计</span><span class="lang-en">History, settings, API keys, usage stats</span>
             </td>
             <td class="dest-col"><span class="dot local"></span>
-              <span class="lang-zh">仅本机浏览器（IndexedDB / localStorage）</span><span class="lang-en">Local browser only (IndexedDB / localStorage)</span>
+              <span class="lang-zh">仅本机浏览器（IndexedDB / localStorage）；桌面版的 API Key 存进 macOS 钥匙串；用量统计只记在本机，不上传</span><span class="lang-en">Local browser only (IndexedDB / localStorage); on desktop, API keys live in the macOS Keychain; usage stats are recorded locally and never uploaded</span>
             </td>
           </tr>
         </tbody>

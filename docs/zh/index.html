@@ -441,6 +441,7 @@ npm run dev
           <tr><td><strong>标签页音频</strong></td><td>同一个本地 sidecar</td><td>本机</td><td>捕获线上会议中对方的声音</td></tr>
           <tr><td><strong>Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>中英夹杂实时场景；通过内部基准测试前保持「实验」标记；在线体验另有限量试用，见下方说明</td></tr>
           <tr><td><strong>Deepgram</strong></td><td>Deepgram API Key（自备）</td><td>云端处理（Deepgram，你自己的 Key）</td><td>纯英文会议，追求云端识别质量</td></tr>
+          <tr><td><strong>ElevenLabs</strong></td><td>ElevenLabs API Key（自备）</td><td>云端处理（ElevenLabs，你自己的 Key）；默认会留存转录内容，企业版才有免留存选项</td><td>另一个按量计费的云端识别选项</td></tr>
         </tbody>
       </table>
       <div class="callout info"><strong>线上会议注意：</strong>麦克风通常只听得到你自己。Zoom、Teams、Meet 等场景如果要听到对方声音，可使用标签页音频；或在 macOS 用 BlackHole、Windows 用 VB-Cable 把系统音频路由成输入，再配合本地 Whisper。</div>
@@ -588,6 +589,7 @@ python whisper_server.py --model small</code></pre>
       <p>词典包按主题控制检测范围。目前内置 14 个包：基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药与生物科技，以及 v0.4.6 新增的统计学、机器学习、生物信息学（三个包合计约 226 个术语，中英释义取自 Wikipedia、EDAM 本体和 Google ML Glossary）。内置词典整体 650+ 条。每个包都能按会议单独开关，<code>core</code> 始终开启。统计学/机器学习包里有几个日常英语高频词（mean、prior、attention、precision 等）默认不触发，只有你自己定制过启用列表后才会命中，平时闲聊不会被误标。</p>
       <h3>社区词典包</h3>
       <p>远程词典包是从 GitHub raw 或 jsDelivr URL 安装的 JSON manifest。它可以包含表达条目和术语条目；缩写用 <code>terms</code> 且 <code>type: "acronym"</code>。</p>
+      <p>设置里还有一个官方词典包目录，可以直接浏览安装——医学、生物医药、AI/ML、法律、金融商务、工程计算机六个专业包，共 4300+ 词条，发布在 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>；第三方包同样可以从文件或 GitHub 链接导入。已安装的包每天自动检查一次更新。</p>
       <pre><code>{
   "id": "biotech-terms",
   "name": "Biotech Terms",
@@ -1009,7 +1011,7 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>崩溃恢复：</strong>会议实时写自动草稿，页面刷新或浏览器崩溃后，历史里一键「恢复到历史记录」。</li>
         <li><strong>划词解释后台生成：</strong>选中文本的解释在后台完成、自动并入卡片列表，关掉弹窗也不会丢。</li>
         <li><strong>导出与联动：</strong>新增 docx 导出；AnkiConnect 一键把生词卡同步进本地 Anki（自动去重）；个人词典可拆成多个自定义命名词包。</li>
-        <li><strong>翻译引擎可选：</strong>双语字幕和全文翻译默认用 LLM，Chrome 138+ 可切到浏览器内置的本地翻译（免 Key）。</li>
+        <li><strong>翻译引擎可选：</strong>双语字幕和全文翻译默认用 LLM，Chrome 138+ 可切到浏览器内置的本地翻译（免 Key）；桌面版现在还能选 Apple 系统翻译（macOS 26+），同样本机运行、免 Key。</li>
         <li><strong>Deepgram 云端识别（BYOK，英文）：</strong>新增一个纯英文场景的云端识别引擎选项。</li>
         <li><strong>在线体验的限量试用：</strong>内置 Soniox 云端识别限量试用（免 Key，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得）；标签页音频回归在线体验，走同一试用额度。</li>
       </ol>
