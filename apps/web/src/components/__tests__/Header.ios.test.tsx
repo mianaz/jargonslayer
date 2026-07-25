@@ -116,6 +116,35 @@ describe("Header ≡ menu — iOS BottomSheet variant (S15)", () => {
     expect(document.body.querySelector('[data-testid="header-menu-sheet"]')).toBeNull();
   });
 
+  // Sim-caught REGRESSION pin (post-FIX-6): a real tap fires mousedown
+  // BEFORE click. Once the sheet portaled out of rootRef, Header's
+  // outside-mousedown listener treated every row tap as "outside" and
+  // unmounted the sheet between the two events — the click never landed
+  // and every menu item was dead ON DEVICE while the bare-click tests
+  // above stayed green. The listener is now IS_IOS-skipped (the sheet
+  // owns its own dismissal); this test replays the full event sequence
+  // so the gap can't reopen.
+  it("real tap sequence (mousedown then click) on 设置 still lands — outside-mousedown must not eat portaled rows", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "stopped", activeSessionId: "session-1" });
+    const onOpenSettings = vi.fn();
+    await renderAndOpenMenu(onOpenSettings);
+
+    const settingsBtn = document.body.querySelector('[data-testid="btn-settings"]') as HTMLButtonElement;
+    expect(settingsBtn).not.toBeNull();
+    await act(async () => {
+      settingsBtn.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    // The sheet (and the row) must survive the mousedown for the click
+    // to land — this is the exact assertion the regression failed.
+    expect(document.body.querySelector('[data-testid="header-menu-sheet"]')).not.toBeNull();
+    await act(async () => {
+      settingsBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(onOpenSettings).toHaveBeenCalledTimes(1);
+    expect(document.body.querySelector('[data-testid="header-menu-sheet"]')).toBeNull();
+  });
+
   // #58 fix round FIX 6 (both reviewers, Opus proved concrete overlaps):
   // BottomSheet used to render straight into Header's own sticky/z-20
   // subtree, so its z-40/z-50 layers lost to root-level z-30/z-40

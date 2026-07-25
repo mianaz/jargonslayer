@@ -478,6 +478,16 @@ function HamburgerMenu({
 
   useEffect(() => {
     if (!open) return;
+    // iOS fix-round REGRESSION FIX (sim-caught, post-FIX-6): BottomSheet
+    // now PORTALS to document.body, so its rows are no longer inside
+    // rootRef — this outside-mousedown listener then fired on EVERY row
+    // tap and unmounted the sheet before the row's own click could land
+    // (menu items all dead; jsdom tests missed it because they dispatch
+    // bare click without the preceding mousedown). On iOS the sheet owns
+    // its dismissal (backdrop tap + Escape inside BottomSheet.tsx), and
+    // the floating dropdown this listener serves never renders there —
+    // skip the whole effect. Desktop/web byte-identical.
+    if (IS_IOS) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
