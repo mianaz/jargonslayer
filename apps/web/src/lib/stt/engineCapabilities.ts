@@ -69,6 +69,25 @@ export interface EngineCapability {
   osFloor?: "macos26" | "macos144"; // declarative tag only (D5) — NOT consumed by engineOptionGate
 }
 
+/** iOS engine matrix — THE single source (iOS-cloud fix round, Opus
+ *  F3): osspeech (zero-config default, FIRST) + the BYOK cloud mic
+ *  trio. Four surfaces used to hand-copy this list (engineOptions.ts's
+ *  IOS_ENGINE_OPTIONS, store.ts's applyPlatformEngineDefaults
+ *  allow-set, SettingsDialog's ENGINE_CARDS filter, TutorialOverlay's
+ *  onboarding grid) and the round proved the hazard — the tutorial
+ *  copy was missed. All four project off this const now; `satisfies`
+ *  keeps every member a real LiveEngineKind so a typo or a renamed
+ *  kind fails `tsc`, not silently. Lives HERE because this module is a
+ *  verified leaf (only `import type` from core) — store.ts can import
+ *  it with no cycle (engineOptions.ts imports store.ts, so the list
+ *  could never live there). */
+export const IOS_ENGINE_KINDS = [
+  "osspeech",
+  "soniox",
+  "deepgram",
+  "elevenlabs",
+] as const satisfies readonly LiveEngineKind[];
+
 /** `posture` is DERIVED (D5), never stored — the coarse two-way split
  *  the existing 本地/云端 chip needs; `retentionClass` is the richer
  *  axis Lane C's tri-state label reads instead. */

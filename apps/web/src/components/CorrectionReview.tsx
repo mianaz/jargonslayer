@@ -308,7 +308,12 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
       aria-modal="true"
       aria-label="AI 校正"
       data-testid="correction-review-overlay"
-      className="fixed inset-0 z-50 flex flex-col bg-ink/95"
+      // iOS-cloud round fix (Sol F1, BLOCKER): full-bleed webview
+      // (viewportFit cover + native .never) puts this frame under the
+      // system status bar — without the top inset its toolbar's close
+      // button sits in the status-bar touch zone, unreachable. env() is
+      // 0 everywhere else, so this is iOS-only in effect.
+      className="fixed inset-0 z-50 flex flex-col bg-ink/95 pt-[env(safe-area-inset-top)]"
     >
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge bg-panel px-4 py-3">
         <div className="text-sm font-medium text-fg">AI 校正</div>
@@ -336,7 +341,7 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
         </div>
       </div>
 
-      <div className="scroll-thin flex-1 overflow-y-auto px-4 py-4">
+      <div className="scroll-thin flex-1 overflow-y-auto px-4 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
         {correctionBusy && (
           <div className="flex flex-col items-center gap-3 py-24 text-center">
             <span className="h-6 w-6 animate-spin rounded-full border-2 border-lab-cyan border-t-transparent" />

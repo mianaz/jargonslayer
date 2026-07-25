@@ -221,7 +221,7 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
           </button>
         </div>
 
-        <div className="scroll-thin flex-1 overflow-y-auto px-3 py-3">
+        <div className="scroll-thin flex-1 overflow-y-auto px-3 py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
           {IS_DESKTOP && (
             <div className="mb-4 space-y-2">
               <div className="px-1 font-mono text-[11px] text-mut">系统状态</div>

@@ -119,4 +119,21 @@ describe("StatusLine — iOS build (engine picker)", () => {
 
     expect(engineSelect().className).toContain("text-warn-soft");
   });
+
+  // iOS-cloud round fix (Sol F6): while the select shows the 选择引擎
+  // placeholder (demo/import — no live capture engine named), the text
+  // stays neutral — coloring it by the HIDDEN sentinel engine's
+  // retention class (demo → green) would assign privacy meaning to a
+  // control that names no engine.
+  it("placeholder states (demo/import) render neutral text-fg, not the sentinel engine's retention color", async () => {
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(engineSelect().className).toContain("text-fg");
+    expect(engineSelect().className).not.toContain("text-lab-green");
+    expect(engineSelect().className).not.toContain("text-warn-soft");
+  });
 });

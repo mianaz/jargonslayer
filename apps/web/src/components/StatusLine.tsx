@@ -101,9 +101,15 @@ function EngineDropdown() {
   // keeps instead: the select's TEXT carries the active engine's
   // retention color (green=本地 / amber=云端, RETENTION_COPY) — the
   // privacy sentence to the left is hidden below sm, so on a phone this
-  // color is the bar's only always-visible audio-path signal.
+  // color is the bar's only always-visible audio-path signal. While the
+  // select shows the 选择引擎 placeholder (demo/import — no live capture
+  // engine), it stays neutral text-fg (Sol F6): coloring a placeholder
+  // by the HIDDEN sentinel engine's retention class would assign privacy
+  // meaning to a control that names no engine at all.
   const iosTextClass = IS_IOS
-    ? RETENTION_COPY[resolveEngineRetentionClass(engine, sttEngineMode)].textClass
+    ? engine === "demo" || engine === "import"
+      ? "text-fg"
+      : RETENTION_COPY[resolveEngineRetentionClass(engine, sttEngineMode)].textClass
     : "text-fg";
 
   return (
@@ -234,7 +240,12 @@ function AiStatusChip() {
           // are taller than the space above the bar. sm+ (tablet/
           // desktop, where this was never reported broken): reverts to
           // the exact original chip-anchored box, untouched.
-          className="scroll-thin fixed inset-x-2 bottom-8 z-30 max-h-[60vh] overflow-y-auto border border-edge bg-panel2 glassable p-3 shadow-lg sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+4px)] sm:left-0 sm:w-72 sm:max-h-none sm:overflow-visible"
+          // bottom offset rides the safe-area inset (iOS-cloud round,
+          // Sol F3): the bar sits 34pt higher on a full-bleed iOS
+          // webview (page.tsx's spacer), so a plain bottom-8 would
+          // cover its controls; env() is 0 elsewhere (identical to the
+          // old bottom-8).
+          className="scroll-thin fixed inset-x-2 bottom-[calc(2rem+env(safe-area-inset-bottom))] z-30 max-h-[60vh] overflow-y-auto border border-edge bg-panel2 glassable p-3 shadow-lg sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+4px)] sm:left-0 sm:w-72 sm:max-h-none sm:overflow-visible"
         >
           <AiStatusPanel />
         </div>

@@ -52,7 +52,7 @@ export default function ReviewPage() {
     // + a single internal scroller — component-level, NOT html/body
     // overflow, which FIX 11 in globals.css bans for hit-testing
     // reasons). Web/desktop keep the document-scroll layout untouched.
-    <div className={IS_IOS ? "flex h-screen flex-col overflow-hidden" : "min-h-screen"}>
+    <div className={IS_IOS ? "flex h-[var(--app-vvh,100vh)] flex-col overflow-hidden" : "min-h-screen"}>
       <header
         className={`flex shrink-0 items-center gap-3 border-b border-edge px-4 ${
           IS_IOS

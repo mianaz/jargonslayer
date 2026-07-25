@@ -61,7 +61,16 @@ export const viewport: Viewport = {
 // setProperty calls, not worth a dependency). Built at module scope
 // (not per-request) since BUILTIN_THEMES is a static compile-time
 // registry.
-const foucScript = buildFoucScript(BUILTIN_THEMES);
+// iOS-cloud fix round (Opus F6b): the ios-shell class (globals.css's
+// gesture/overscroll lock block) used to be stamped only by
+// bootstrapIos(), which runs from page.tsx's mount effect — a cold load
+// or WebKit process-recovery reload on /review (reachable from the iOS
+// menu) ran with the whole gesture lock off. Stamping here rides the
+// same pre-first-paint inline script as the theme, on EVERY route;
+// bootstrapIos()'s own add stays as an idempotent belt.
+const foucScript =
+  buildFoucScript(BUILTIN_THEMES) +
+  (IS_IOS_BUILD ? 'document.documentElement.classList.add("ios-shell");' : "");
 
 export default function RootLayout({
   children,

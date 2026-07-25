@@ -26,6 +26,10 @@ import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonsla
 import { sanitizeDomains } from "./llm/tasks/inferContext";
 import type { DetectMode } from "./detect/scheduler";
 import type { OnDeviceMode } from "./stt/onDeviceSpeech";
+// Verified leaf (only `import type` from core) — no cycle with
+// engineOptions.ts, which imports THIS module; see IOS_ENGINE_KINDS'
+// own comment.
+import { IOS_ENGINE_KINDS } from "./stt/engineCapabilities";
 import * as storage from "./history/storage";
 import * as liveDraft from "./history/liveDraft";
 import * as glossary from "./history/glossary";
@@ -846,12 +850,13 @@ interface AppState {
  *  this line is ever reached. */
 export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean, isIos = false): Settings {
   if (isIos) {
+    // Allow-set = IOS_ENGINE_KINDS (the shared single source,
+    // engineCapabilities.ts — Opus F3) + "demo" (a scripted preview,
+    // not a picker engine, so it deliberately stays a visible carve-out
+    // here rather than hiding inside the shared list).
     if (
-      settings.engine === "osspeech" ||
-      settings.engine === "demo" ||
-      settings.engine === "soniox" ||
-      settings.engine === "deepgram" ||
-      settings.engine === "elevenlabs"
+      (IOS_ENGINE_KINDS as readonly Settings["engine"][]).includes(settings.engine) ||
+      settings.engine === "demo"
     ) {
       return settings;
     }

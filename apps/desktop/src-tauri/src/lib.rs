@@ -256,12 +256,21 @@ pub fn run() {
         .on_page_load(|webview, _payload| {
             #[cfg(target_os = "ios")]
             {
-                let _ = webview.with_webview(|pw| unsafe {
+                // Err is LOGGED, not discarded (fix round, Opus F7): a
+                // silent dispatch failure reproduces the exact bug this
+                // hook removes (native 62pt shift + whole-page drag)
+                // with zero diagnostic — and the .setup() attempt this
+                // replaced failed silently in exactly that way. The web
+                // layer's own --sai-top probe (bootstrap.ts) is the
+                // matching in-app health check.
+                if let Err(e) = webview.with_webview(|pw| unsafe {
                     let wk = pw.inner() as *mut objc2::runtime::AnyObject;
                     let scroll: *mut objc2::runtime::AnyObject =
                         objc2::msg_send![wk, scrollView];
                     let () = objc2::msg_send![scroll, setContentInsetAdjustmentBehavior: 2isize];
-                });
+                }) {
+                    eprintln!("[ios-shell] contentInsetAdjustmentBehavior dispatch failed (on_page_load): {e}");
+                }
             }
         });
 
@@ -315,12 +324,16 @@ pub fn run() {
         if matches!(event, tauri::RunEvent::Ready) {
             use tauri::Manager;
             if let Some(w) = app_handle.get_webview_window("main") {
-                let _ = w.with_webview(|pw| unsafe {
+                // Err logged, not discarded — see on_page_load's own
+                // comment (fix round, Opus F7).
+                if let Err(e) = w.with_webview(|pw| unsafe {
                     let wk = pw.inner() as *mut objc2::runtime::AnyObject;
                     let scroll: *mut objc2::runtime::AnyObject =
                         objc2::msg_send![wk, scrollView];
                     let () = objc2::msg_send![scroll, setContentInsetAdjustmentBehavior: 2isize];
-                });
+                }) {
+                    eprintln!("[ios-shell] contentInsetAdjustmentBehavior dispatch failed (Ready): {e}");
+                }
             }
         }
         // no non-iOS arm: cfg(mobile) && !ios is already a compile_error

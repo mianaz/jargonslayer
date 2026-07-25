@@ -2836,6 +2836,73 @@ async function bootstrapIos(): Promise<void> {
   // on IS_IOS builds).
   document.documentElement.classList.add("ios-shell");
 
+  // iOS-cloud fix round (Opus F4, sim-reproduced): the software
+  // keyboard re-opens the "whole UI slides" door the native .never fix
+  // closed — WebKit's scroll-to-reveal-caret shifts the NATIVE scroll
+  // offset for keyboard avoidance (contentInsetAdjustmentBehavior does
+  // not govern keyboard insets), so focusing the main page's filter
+  // input slides the whole shell up ~62pt while typing (it restores
+  // cleanly on dismiss — sim-verified both ways). The pin below is the
+  // standard PWA half of the fix: while the keyboard is up,
+  // --app-vvh = visualViewport.height compresses the flex shells
+  // (page.tsx and /review roots read h-[var(--app-vvh,100vh)]) above
+  // the keyboard and window.scrollTo(0,0) cancels the caret-reveal
+  // offset. KNOWN LIMIT (sim-verified on this build): Tauri's embedded
+  // WKWebView does NOT shrink visualViewport when the keyboard shows —
+  // the 50px threshold never trips, so this listener is currently
+  // INERT there and the transient shift remains. The full fix is
+  // native: observe UIKeyboardWillShow/Hide in lib.rs (objc2
+  // NSNotificationCenter), emit the keyboard height to JS, and feed it
+  // into this same --app-vvh mechanism — next-train item, recorded in
+  // the handoff doc. Kept (not reverted) because it is the correct
+  // web-standard behavior wherever vv DOES report the keyboard, and
+  // it is the ready-made consumer for the native event when it lands.
+  // rAF batches the writes off the resize storm.
+  const vv = window.visualViewport;
+  if (vv) {
+    let raf = 0;
+    const apply = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const keyboardUp = window.innerHeight - vv.height > 50;
+        if (keyboardUp) {
+          document.documentElement.style.setProperty("--app-vvh", `${Math.round(vv.height)}px`);
+          window.scrollTo(0, 0);
+        } else {
+          document.documentElement.style.removeProperty("--app-vvh");
+        }
+      });
+    };
+    vv.addEventListener("resize", apply);
+    vv.addEventListener("scroll", apply);
+  }
+
+  // iOS-cloud fix round (Opus F6b): layout.tsx's FOUC script ALSO
+  // stamps ios-shell now (route-independent, pre-first-paint — a cold
+  // load on /review never runs THIS function, which lives behind
+  // page.tsx's mount effect). This stamp stays as the belt for any
+  // path that bypasses the inline script; classList.add is idempotent.
+
+  // iOS-cloud fix round (Opus F7/F6a): health probe for the native
+  // contentInsetAdjustmentBehavior=.never fix (lib.rs). With
+  // viewport-fit=cover active, a full-bleed iPhone webview must report
+  // a non-zero top inset through the --sai-top mirror (globals.css) —
+  // reading 0px after first paint means the native dispatch silently
+  // failed and the whole page is back to sliding under native insets
+  // (the exact regression the fix removes). Deferred a tick so the
+  // Ready-event dispatch has landed; diag-only (never throws, never
+  // blocks boot).
+  setTimeout(() => {
+    try {
+      const sat = getComputedStyle(document.documentElement).getPropertyValue("--sai-top").trim();
+      if (sat === "0px" || sat === "") {
+        diagLog("warn", "ios-shell", `safe-area top inset reads ${sat || "empty"} — native contentInset fix may not have applied (lib.rs Ready/on_page_load hooks)`);
+      }
+    } catch {
+      // getComputedStyle unavailable — nothing to probe
+    }
+  }, 3000);
+
   const tauriFetch = await getTauriFetch();
   setTransport(tauriFetch);
 

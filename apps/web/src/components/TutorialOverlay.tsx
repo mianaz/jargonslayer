@@ -9,6 +9,7 @@ import { useState } from "react";
 import { CaretRight, CheckCircle } from "@phosphor-icons/react";
 import { modeForPersistedEngine, useApp, type ModePlatform } from "@/lib/store";
 import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
+import { IOS_ENGINE_KINDS } from "@/lib/stt/engineCapabilities";
 import type { STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
@@ -100,18 +101,48 @@ const STEP_COUNT = 5;
 // runs. Resolved once at module load (mirrors IS_DESKTOP/IS_IOS above).
 const TAB_CARD_ENGINE: Exclude<STTEngineKind, "demo"> = PREVIEW_TIER ? "tabaudio-cloud" : "tabaudio";
 
+// Per-card onboarding copy for the iOS matrix — Record over the shared
+// IOS_ENGINE_KINDS so adding an engine there without copy here fails
+// `tsc` (Opus F3's completeness discipline, same shape as
+// ENGINE_CAPABILITIES itself).
+const IOS_TUTORIAL_CARD_COPY: Record<
+  (typeof IOS_ENGINE_KINDS)[number],
+  { label: string; hint: string }
+> = {
+  osspeech: {
+    label: "麦克风 · 系统识别",
+    hint: "无需下载模型，音频不离开设备，开箱即用",
+  },
+  soniox: {
+    label: "麦克风 · Soniox 云端",
+    hint: "BYOK 按量计费，中英混说场景的候选引擎",
+  },
+  deepgram: {
+    label: "麦克风 · Deepgram 云端",
+    hint: "BYOK 按量计费，仅英文",
+  },
+  elevenlabs: {
+    label: "麦克风 · ElevenLabs 云端",
+    hint: "BYOK 按量计费，默认在其云端留存记录",
+  },
+};
+
 const ENGINE_OPTIONS: {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
   hint: string;
 }[] = IS_IOS
-  ? [
-      {
-        value: "osspeech",
-        label: "麦克风 · 系统识别",
-        hint: "无需下载模型，音频不离开设备，开箱即用",
-      },
-    ]
+  ? // iOS-cloud round fix (Sol F2 + Opus F3): this onboarding picker was
+    // the one engine surface still pinned to the superseded
+    // osspeech-only matrix. It now PROJECTS off IOS_ENGINE_KINDS (the
+    // shared single source, engineCapabilities.ts) with per-card copy in
+    // a Record — the type-checker forces a copy entry for every member,
+    // so the next matrix change can't silently skip onboarding again.
+    // Keyless cloud picks fail honestly at start (D3 posture); the
+    // tri-state retention badge below renders the amber cloud truth from
+    // the shared resolver automatically. osspeech stays FIRST (the
+    // zero-config default) via the list's own order.
+    IOS_ENGINE_KINDS.map((kind) => ({ value: kind, ...IOS_TUTORIAL_CARD_COPY[kind] }))
   : [
       {
         value: "webspeech",
@@ -247,13 +278,17 @@ export default function TutorialOverlay({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    // Safe-area padding on the WRAPPER (Sol F5): the panel below caps at
+    // max-h-full of this padded box, so on a full-bleed iOS webview its
+    // controls can never extend under the status bar / home indicator;
+    // env() is 0 elsewhere, leaving the plain 1rem gutter.
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
       {/* iOS-cloud round (shell audit): this was the one overlay in the
          app with NO height cap or scroller — a step taller than the
          viewport (short/landscape phones) just clipped with no way to
          reach the buttons. Same scroll-thin internal-scroller contract
          every other overlay already follows; inert when content fits. */}
-      <div className="scroll-thin max-h-[calc(100dvh-2rem)] w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-6">
+      <div className="scroll-thin max-h-full w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-6">
         <div className="flex items-center justify-center gap-2 font-mono text-xs tabular-nums text-mut">
           <span className="text-fg">
             [{step + 1}/{STEP_COUNT}]

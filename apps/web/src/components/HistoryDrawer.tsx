@@ -206,7 +206,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
           />
         </div>
 
-        <div className="scroll-thin flex-1 overflow-y-auto px-3 pb-4">
+        <div className="scroll-thin flex-1 overflow-y-auto px-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           {importRows.length > 0 && (
             <div className="mb-3 space-y-2">
               {importRows.map((task) => (

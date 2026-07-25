@@ -51,7 +51,10 @@ export default function Toast() {
     // clipped offscreen). Fix: center with a full-width flex wrapper so
     // no transform is needed at all — fade-up keeps animating the inner
     // box freely. max-w + px keep long messages wrapping on phones.
-    <div className="pointer-events-none fixed inset-x-0 bottom-9 z-50 flex justify-center px-3">
+    // bottom offset rides the safe-area inset (iOS-cloud round, Sol F3):
+    // keeps the toast clear of the raised StatusLine on a full-bleed
+    // iOS webview; env() is 0 elsewhere (identical to the old bottom-9).
+    <div className="pointer-events-none fixed inset-x-0 bottom-[calc(2.25rem+env(safe-area-inset-bottom))] z-50 flex justify-center px-3">
       <div className="fade-up pointer-events-auto flex max-w-full items-center gap-3 border border-edge bg-panel2 px-4 py-2 text-sm text-fg shadow-lg">
       <span>
         {message}

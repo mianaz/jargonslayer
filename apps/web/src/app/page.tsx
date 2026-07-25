@@ -353,7 +353,16 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
+    // iOS reads --app-vvh (bootstrap.ts's visualViewport keyboard pin,
+    // Opus F4): while the software keyboard is up the shell compresses
+    // to the visual viewport instead of letting WebKit slide the whole
+    // page; falls back to 100vh (identical to h-screen) otherwise.
+    // Web/desktop keep the literal h-screen.
+    <div
+      className={`flex flex-col overflow-hidden ${
+        IS_IOS ? "h-[var(--app-vvh,100vh)]" : "h-screen"
+      }`}
+    >
       <Header
         onStart={() => void start()}
         onPause={() => void pause()}
@@ -479,7 +488,10 @@ export default function Home() {
           data-testid="btn-exit-focus"
           onClick={() => setFocusMode(false)}
           title="退出专注模式"
-          className="btn-tactile fixed right-4 top-[100px] z-40 flex h-9 w-9 items-center justify-center border border-edge bg-panel text-mut shadow-lg hover:bg-panel3 hover:text-fg"
+          // top offset rides the safe-area inset (iOS-cloud round, Sol
+          // F3): the header is taller by the top inset on a full-bleed
+          // iOS webview; env() is 0 elsewhere (identical to top-[100px]).
+          className="btn-tactile fixed right-4 top-[calc(100px+env(safe-area-inset-top))] z-40 flex h-9 w-9 items-center justify-center border border-edge bg-panel text-mut shadow-lg hover:bg-panel3 hover:text-fg"
         >
           <SidebarSimple size={18} weight="fill" />
         </button>

@@ -56,6 +56,7 @@ import {
 import {
   derivePosture,
   ENGINE_CAPABILITIES,
+  IOS_ENGINE_KINDS,
   resolveWebspeechRetentionClass,
   type LiveEngineKind,
   type RetentionClass,
@@ -135,13 +136,13 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   ...(IS_DESKTOP ? [toEngineOption("osspeech")] : []),
   toEngineOption("soniox"),
   // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,
-  // Lane D) — second BYOK cloud engine, web + desktop only (no iOS v1
-  // capture path — see engineCapabilities.ts's own doc comment); same
-  // byokOnly preview-tier lock as soniox above.
+  // Lane D) — second BYOK cloud engine; on iOS it ships via
+  // IOS_ENGINE_OPTIONS below (iOS-cloud round — this array is never
+  // read there); same byokOnly preview-tier lock as soniox above.
   toEngineOption("deepgram"),
-  // v0.6 round 2 — third BYOK cloud engine, same web + desktop only
-  // scope as deepgram above (no iOS v1 capture path); same byokOnly
-  // posture (no server-minted preview lane for this one — BYOK only).
+  // v0.6 round 2 — third BYOK cloud engine, same scope as deepgram
+  // above (iOS via IOS_ENGINE_OPTIONS); same byokOnly posture (no
+  // server-minted preview lane for this one — BYOK only).
   toEngineOption("elevenlabs"),
 ];
 
@@ -158,12 +159,10 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
 // (getDisplayMedia's tab picker doesn't exist on iOS — D7's own
 // rationale, doubly true here). osspeech stays FIRST: it remains the
 // zero-config default deriveEngineForMode's iOS mic branch derives.
-const IOS_ENGINE_OPTIONS: EngineOption[] = [
-  toEngineOption("osspeech"),
-  toEngineOption("soniox"),
-  toEngineOption("deepgram"),
-  toEngineOption("elevenlabs"),
-];
+// Projected off IOS_ENGINE_KINDS (engineCapabilities.ts) — the single
+// source all four iOS engine-matrix surfaces share (Opus F3, fix
+// round); see that const's comment for the hand-copy hazard it closes.
+const IOS_ENGINE_OPTIONS: EngineOption[] = IOS_ENGINE_KINDS.map(toEngineOption);
 
 /** PINNED CONTRACT (S10 blueprint wave 2): StatusLine's engine dropdown
  *  and Header's EnginePostureChip both consume this exact list — see
@@ -394,7 +393,9 @@ export interface DeriveEnginePlatform {
  *    deliberately not attempted, same "let the surface explain" posture
  *    ImportHub's own url tab already takes for an analogous
  *    unknowable-synchronously case.
- *  - "mic": iOS is osspeech unconditionally (v1's only engine). Desktop
+ *  - "mic": iOS is osspeech UNLESS the current pick is a BYOK cloud
+ *    engine with its own matching key (iOS-cloud round — see the
+ *    branch's own comment). Desktop
  *    is osspeech-if-floor else whisper (deliberately never appaudio —
  *    that is SYSTEM audio, not a mic substitute; mirrors store.ts's own
  *    desktop webspeech->whisper coercion precedent). Web defaults to

@@ -170,7 +170,9 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
       aria-modal="true"
       aria-label="康奈尔笔记"
       data-testid="cornell-overlay"
-      className="fixed inset-0 z-50 flex flex-col bg-ink/95"
+      // iOS-cloud round fix (Sol F1, BLOCKER): same full-bleed top-inset
+      // rule as CorrectionReview — see that frame's comment.
+      className="fixed inset-0 z-50 flex flex-col bg-ink/95 pt-[env(safe-area-inset-top)]"
     >
       {/* Toolbar: sticky top, outside the exported sheet. */}
       <div className="flex shrink-0 items-center justify-between gap-2 border-b border-edge bg-panel px-4 py-3">
@@ -214,7 +216,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
         </div>
       </div>
 
-      <div className="scroll-thin flex-1 overflow-y-auto px-4 py-8 sm:px-8">
+      <div className="scroll-thin flex-1 overflow-y-auto px-4 py-8 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:px-8">
         {model.empty ? (
           <div className="mx-auto flex max-w-md flex-col items-center gap-3 py-24 text-center">
             <div className="text-lg font-medium text-fg">
