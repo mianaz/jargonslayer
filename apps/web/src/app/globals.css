@@ -166,8 +166,13 @@ body {
    desktop (the class is never added there). */
 html.ios-shell,
 html.ios-shell body {
-  height: 100%;
-  overflow: hidden;
+  /* overscroll-behavior ONLY — sim-caught: the fuller
+     height:100% + overflow:hidden variant changed WKWebView's
+     scroll/clip containers and native-layer hit-testing so taps over
+     the app's bottom-panel region stopped reaching fixed overlays
+     stacked above it (BottomSheet rows painted but dead). Rubber-band
+     lock needs none of that: overscroll-behavior:none alone disables
+     WKWebView's document bounce (WebKit supports it since iOS 16). */
   overscroll-behavior: none;
 }
 

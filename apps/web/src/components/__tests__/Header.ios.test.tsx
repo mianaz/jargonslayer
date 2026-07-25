@@ -80,7 +80,7 @@ describe("Header ≡ menu — iOS BottomSheet variant (S15)", () => {
     useApp.setState({ settings: DEFAULT_SETTINGS, status: "stopped", activeSessionId: "session-1" });
     await renderAndOpenMenu();
 
-    // #58 FIX 6: BottomSheet now portals to document.body — no longer a
+    // #58 FIX 6 (rev): sheet mounts in-tree as a sibling of <header> — not
     // descendant of `container` (Header's own sticky/z-20 subtree), so
     // these queries run against document.body instead.
     expect(document.body.querySelector('[data-testid="header-menu-sheet"]')).not.toBeNull();
@@ -97,6 +97,23 @@ describe("Header ≡ menu — iOS BottomSheet variant (S15)", () => {
     const sheet = document.body.querySelector('[data-testid="header-menu-sheet"]')!;
     for (const label of ["演示", "学习中心", "设置", "帮助", "复制诊断信息", "新会议"]) {
       expect(sheet.textContent).toContain(label);
+    }
+  });
+
+  // Sim-caught (rect-probed live): a display:flex <button> sizes to its
+  // content — without w-full each row's tappable area was ~90pt of a
+  // 402pt-wide row, so taps right of the label silently hit the
+  // container. jsdom does no layout, so the honest pin is the class
+  // itself on every row-shaped item in the sheet.
+  it("every sheet row is full-width tappable (w-full pinned on the row class)", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "stopped", activeSessionId: "session-1" });
+    await renderAndOpenMenu();
+
+    const sheet = document.body.querySelector('[data-testid="header-menu-sheet"]')!;
+    const rows = Array.from(sheet.querySelectorAll('[role="menuitem"]'));
+    expect(rows.length).toBeGreaterThanOrEqual(5);
+    for (const row of rows) {
+      expect(row.className).toContain("w-full");
     }
   });
 
@@ -145,20 +162,26 @@ describe("Header ≡ menu — iOS BottomSheet variant (S15)", () => {
     expect(document.body.querySelector('[data-testid="header-menu-sheet"]')).toBeNull();
   });
 
-  // #58 fix round FIX 6 (both reviewers, Opus proved concrete overlaps):
-  // BottomSheet used to render straight into Header's own sticky/z-20
-  // subtree, so its z-40/z-50 layers lost to root-level z-30/z-40
-  // overlays mounted from page.tsx (touch-lookup-bar, btn-exit-focus,
-  // drawers). createPortal(..., document.body) restores the "mounts at
-  // page.tsx root" posture every other overlay in this app gets for
-  // free.
-  it("BottomSheet portals to document.body — not nested inside Header's own sticky stacking context (FIX 6)", async () => {
+  // #58 fix round FIX 6 + sim-caught follow-up: the sheet must escape
+  // Header's sticky/z-20 stacking context (its z-40/50 layers lost to
+  // root-level z-30/40 overlays — Opus proved the overlaps) WITHOUT a
+  // document.body portal (WKWebView composited the app's draggable
+  // bottom panel above body-portaled fixed layers and swallowed every
+  // row tap — painted-but-dead, invisible to jsdom). The landing spot:
+  // in-tree, as a SIBLING of the sticky <header> element (IosMenuSheet
+  // in Header.tsx). This pins both halves.
+  it("BottomSheet mounts in-tree as a sibling of <header> — outside its sticky stacking context, NOT a body portal (FIX 6)", async () => {
     useApp.setState({ settings: DEFAULT_SETTINGS, status: "stopped", activeSessionId: "session-1" });
     await renderAndOpenMenu();
 
     const dialog = document.body.querySelector('[role="dialog"]');
     expect(dialog).not.toBeNull();
-    expect(dialog!.parentElement).toBe(document.body);
-    expect(container!.contains(dialog)).toBe(false);
+    // In-tree (inside the React container), not portaled to body:
+    expect(container!.contains(dialog)).toBe(true);
+    expect(dialog!.parentElement).not.toBe(document.body);
+    // ...but OUTSIDE the sticky <header> element's subtree:
+    const header = container!.querySelector("header");
+    expect(header).not.toBeNull();
+    expect(header!.contains(dialog)).toBe(false);
   });
 });
