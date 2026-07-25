@@ -468,7 +468,13 @@ export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = 
 // categoryVisible on iOS below, Part A #1), and subscriptionDirect only
 // ever shows up here when visibleCategories itself already includes it
 // (build flag + isSectionVisible, unchanged) — no separate gate needed.
-const IOS_COMMON_CATEGORY_IDS: SettingsCategoryId[] = ["engine", "aiDetect", "dataIntegration", "display"];
+//
+// #58 fix round FIX 5 (Opus MEDIUM): 常用 has no list of its own below —
+// it's everything in visibleCategories NOT tagged advanced here. A twin
+// hardcoded 常用 array used to exist alongside this one; a category added
+// to SETTINGS_CATEGORIES later without a matching entry in EITHER array
+// would have silently vanished from the iOS root list. Exclusion can't
+// have that failure mode: an untagged category defaults into 常用.
 const IOS_ADVANCED_CATEGORY_IDS: SettingsCategoryId[] = ["taskLlm", "subscriptionDirect"];
 
 // "AI 检测" is settingsSections.ts's one MIXED section (tagged row-by-
@@ -619,6 +625,30 @@ function coercePreviewModels(draft: Settings): Settings {
     patch.summaryModel = PREVIEW_SUMMARY_MODELS[0];
   }
   return Object.keys(patch).length > 0 ? { ...draft, ...patch } : draft;
+}
+
+// #58 fix round FIX 2 (Sol LOW): JSON.stringify with object keys sorted
+// recursively (arrays keep their own order — only object KEYS are
+// unordered in JS, so only those need normalizing) before comparing.
+// Used ONLY by the iOS draftDirty check below — plain JSON.stringify(a)
+// !== JSON.stringify(b) reads two deeply-equal objects as different the
+// moment either one's keys were built in a different order (e.g.
+// TaskDomainBlock reconstructing a taskLlm override object), producing
+// a phantom "unsaved edit" the sticky save bar then wrongly shows.
+function stableStringify(value: unknown): string {
+  const sortKeys = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(sortKeys);
+    if (input && typeof input === "object") {
+      return Object.keys(input as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, key) => {
+          acc[key] = sortKeys((input as Record<string, unknown>)[key]);
+          return acc;
+        }, {});
+    }
+    return input;
+  };
+  return JSON.stringify(sortKeys(value));
 }
 
 // F5 fix (v0.5.1 appearance sprint, GPT-5.6 Sol adversarial review): the
@@ -1433,6 +1463,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // open would jump straight back into the editor instead of the
       // normal 显示 grid.
       setThemeEditor(null);
+      // #58 fix round FIX 4: activeCategory is iOS's own root/detail nav
+      // state (Part B #1) and, like themeEditor just above, survives a
+      // close because this whole component instance never unmounts —
+      // without this reset, closing from a detail page and reopening
+      // landed back on that same stale detail instead of the root list.
+      if (IS_IOS) setActiveCategory(null);
       setThemeImportOpen(false);
       setThemeImportText("");
       // L1 fix (adversarial review): exactly the same "don't leak a
@@ -2215,6 +2251,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           // unconditionally, while still resyncing an untouched draft
           // field to whatever the live remap decided.
           {
+            // #58 fix round FIX 3 note: savedSnapshot is deliberately NOT
+            // resynced here, unlike handleConfirmRestore's own full
+            // resync above — this is a partial field merge (provider/
+            // baseUrl/apiKey/±model only) that must still read as dirty
+            // until 保存, not a wholesale replace. This whole branch is
+            // also IS_DESKTOP-only (unreachable on iOS) besides. Don't
+            // "fix" this symmetrically with the restore path.
             const live = useApp.getState().settings;
             setDraft((d) => ({
               ...d,
@@ -2516,7 +2559,21 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // draft is a local snapshot taken when the dialog opened — resync
       // it to the just-restored (and now re-hydrated) live settings so
       // 保存 doesn't stomp the restore with the stale pre-restore draft.
-      setDraft(coercePreviewModels(useApp.getState().settings));
+      //
+      // #58 fix round FIX 3 (both reviewers): savedSnapshot must resync
+      // from this SAME value too, or the iOS sticky-save-bar's draftDirty
+      // check permanently reads this as an unsaved edit after a restore
+      // that actually already landed. checkedPacks must resync as well
+      // (same seeding expression the dialog-open effect above uses) — 保存
+      // otherwise derives enabledPacks from the PRE-restore pack
+      // selection still sitting in that Set, silently undoing the
+      // restored one the next time the user clicks 保存.
+      const resynced = coercePreviewModels(useApp.getState().settings);
+      setDraft(resynced);
+      setSavedSnapshot(resynced);
+      setCheckedPacks(
+        new Set(resynced.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
+      );
     } catch (err) {
       setRestoreError(err instanceof Error ? err.message : "恢复失败");
     } finally {
@@ -2614,14 +2671,41 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
   // S13 iOS mobile-UX round (Part B #2): root-list grouping — desktop/
   // web never read these (the nav rail below stays a flat
-  // visibleCategories.map, unchanged).
-  const iosCommonCategories = visibleCategories.filter((c) => IOS_COMMON_CATEGORY_IDS.includes(c.id));
+  // visibleCategories.map, unchanged). #58 FIX 5: 常用 is derived by
+  // EXCLUSION (everything not tagged advanced) — see
+  // IOS_ADVANCED_CATEGORY_IDS's own doc comment above.
+  const iosCommonCategories = visibleCategories.filter((c) => !IOS_ADVANCED_CATEGORY_IDS.includes(c.id));
   const iosAdvancedCategories = visibleCategories.filter((c) => IOS_ADVANCED_CATEGORY_IDS.includes(c.id));
   // Part B: detail view's own header label — desktop/web never read this.
   const activeCategoryLabel = SETTINGS_CATEGORIES.find((c) => c.id === activeCategory)?.label ?? "";
   // Part B #4: drives the iOS sticky save bar's visibility only —
   // desktop/web keep today's always-visible footer, unaffected by this.
-  const draftDirty = JSON.stringify(draft) !== JSON.stringify(savedSnapshot);
+  //
+  // #58 fix round FIX 1 (BLOCKER, both reviewers, repro-confirmed):
+  // enabledPacks is derived from `checkedPacks`, a Set kept OUTSIDE
+  // `draft` (see that state's own doc comment above) — handleSave below
+  // only folds it into Settings at save time, so a plain draft/
+  // savedSnapshot stringify-compare could never see a pack toggle: the
+  // sticky bar never showed, and the toggle silently reverted on close.
+  // Compared set-wise (checkedPacks/enabledPacks order is not canonical),
+  // not via the stringify below. enabledPacks is the ONE thing handleSave
+  // persists that does not live in draft — any future non-draft field
+  // handleSave writes must join this signal too.
+  const nextEnabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
+  const savedEnabledPacks = savedSnapshot.enabledPacks;
+  const packsDirty =
+    (savedEnabledPacks === null) !== (nextEnabledPacks === null) ||
+    (savedEnabledPacks !== null &&
+      nextEnabledPacks !== null &&
+      (savedEnabledPacks.length !== nextEnabledPacks.length ||
+        nextEnabledPacks.some((id) => !savedEnabledPacks.includes(id))));
+  // FIX 2 (Sol LOW, folded in here): stableStringify (module scope,
+  // recursively sorted object keys) instead of a raw JSON.stringify —
+  // TaskDomainBlock reconstructs a taskLlm override object in a
+  // different key order than the one this dialog last saved, which a
+  // plain stringify compare reads as a phantom edit despite being the
+  // same value.
+  const draftDirty = IS_IOS && (packsDirty || stableStringify(draft) !== stableStringify(savedSnapshot));
 
   return (
     <div
@@ -2759,7 +2843,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       onClick={() => setActiveCategory(c.id)}
                       className="btn-tactile flex min-h-[52px] w-full items-center justify-between gap-3 border-b border-edge px-4 text-left text-sm text-fg hover:bg-panel3"
                     >
-                      <span>{c.label}</span>
+                      <span>{c.label.replace("（高级）", "")}</span>
                       <span className="text-mut2" aria-hidden>
                         ›
                       </span>

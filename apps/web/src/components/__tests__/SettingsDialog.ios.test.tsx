@@ -110,6 +110,27 @@ describe("SettingsDialog — iOS build", () => {
     return Array.from(container!.querySelectorAll("label")).some((l) => l.textContent === text);
   }
 
+  // Mirrors SettingsDialog.dictPacks.test.tsx's own helper of the same
+  // name byte-for-byte (independent test files — same "mirror, don't
+  // hand-duplicate a DIFFERENT rule" posture that file's own comment
+  // documents). Pack rows are a <label> wrapping the name/description
+  // text plus a ToggleSwitch (a real <button role="switch">).
+  function findSwitchByLabel(labelText: string): HTMLButtonElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) =>
+      l.textContent?.includes(labelText),
+    );
+    if (!label) throw new Error(`label containing "${labelText}" not found`);
+    const btn = label.querySelector('button[role="switch"]');
+    if (!btn) throw new Error(`no switch inside label "${labelText}"`);
+    return btn as HTMLButtonElement;
+  }
+
+  // Sticky 保存 bar is IS_IOS-only (draftDirty-gated) — absent whenever
+  // nothing differs from savedSnapshot.
+  function hasSaveBar(): boolean {
+    return findExact("保存") !== undefined;
+  }
+
   it("root list shows 常用/高级 groups with the expected category labels; diarization excluded entirely", async () => {
     await render();
     // 常用
@@ -118,7 +139,11 @@ describe("SettingsDialog — iOS build", () => {
     expect(findRow("数据与联动")).toBeTruthy();
     expect(findRow("显示")).toBeTruthy();
     // 高级
-    expect(findRow("分任务模型（高级）")).toBeTruthy();
+    // Row label drops the （高级） suffix on iOS — redundant under the
+    // 高级 group header it sits in (design-polish pass); the canonical
+    // SETTINGS_CATEGORIES label keeps it for desktop/web.
+    expect(findRow("分任务模型")).toBeTruthy();
+    expect(buttons().some((b) => b.textContent?.includes("（高级）"))).toBe(false);
     // Part A #1: 说话人分离 (pyannote+sidecar) is impossible on iOS —
     // nowhere in the rendered nav/list.
     expect(container!.textContent).not.toContain("说话人分离");
@@ -174,5 +199,53 @@ describe("SettingsDialog — iOS build", () => {
     });
     expect(container!.textContent).not.toContain("一键连接 OpenRouter 账号");
     expect(container!.textContent).toContain("在电脑浏览器完成 OpenRouter 授权后，把 API Key 粘贴到这里");
+  });
+
+  // #58 fix round FIX 1 (BLOCKER, both reviewers, repro-confirmed):
+  // enabledPacks lives in `checkedPacks`, a Set kept outside `draft` —
+  // a pack toggle used to never surface the sticky 保存 bar at all.
+  it("toggling a dictionary pack surfaces the sticky 保存 bar (FIX 1)", async () => {
+    await render();
+    act(() => {
+      findRow("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // No edit yet — the bar stays absent (nothing to save).
+    expect(hasSaveBar()).toBe(false);
+
+    // "会议流程与推进" (meeting-flow) is a built-in, checked-by-default
+    // non-core pack (packages/core/src/detect/packs.ts) — no remote
+    // pack/catalog setup needed to exercise it.
+    act(() => {
+      findSwitchByLabel("会议流程与推进").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(hasSaveBar()).toBe(true);
+  });
+
+  // #58 fix round FIX 4: the dialog-open effect never reset
+  // activeCategory — closing from a detail page and reopening used to
+  // land back on that same stale detail instead of the root list.
+  it("reopening after closing from a detail page lands back on the root list (FIX 4)", async () => {
+    await render();
+    act(() => {
+      findRow("转录引擎").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(hasLabel("识别语言")).toBe(true);
+
+    // Close from the detail page (no back-button tap) then reopen — same
+    // mounted component instance (page.tsx's own always-mounted contract,
+    // mirrored by SettingsDialog.dictPacks.test.tsx's own L1 case).
+    await act(async () => {
+      root!.render(<SettingsDialog open={false} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findRow("转录引擎")).toBeTruthy();
+    expect(hasLabel("识别语言")).toBe(false);
   });
 });

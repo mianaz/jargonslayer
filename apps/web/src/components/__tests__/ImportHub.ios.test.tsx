@@ -33,12 +33,13 @@ vi.mock("@/lib/store", () => {
 });
 
 vi.mock("@/lib/stt/upload", () => ({
-  fetchSidecarHealth: async () => null,
+  fetchSidecarHealth: vi.fn(async () => null),
   importAndTrack: vi.fn(),
   importUrlAndTrack: vi.fn(),
   withSidecarHint: (msg: string) => msg,
 }));
 
+import { fetchSidecarHealth } from "@/lib/stt/upload";
 import ImportHub from "../ImportHub";
 
 describe("ImportHub — iOS full-screen page (S15)", () => {
@@ -54,6 +55,7 @@ describe("ImportHub — iOS full-screen page (S15)", () => {
       container.remove();
       container = null;
     }
+    vi.clearAllMocks();
   });
 
   async function renderOpen(): Promise<void> {
@@ -104,5 +106,18 @@ describe("ImportHub — iOS full-screen page (S15)", () => {
 
     expect(container!.textContent).toContain("此设备不支持");
     expect(container!.textContent).not.toContain("需启动本地 Whisper");
+  });
+
+  // #58 fix round FIX 8 (Sol HIGH): lib/tasks/videoRouting.ts's
+  // decideVideoRouting treats a pre-probe `undefined` health value as
+  // "sidecar available" (the correct optimistic default on desktop/web,
+  // where the probe might still resolve reachable) — on iOS there is no
+  // sidecar to ever reach, so the probe must never even fire (leaving
+  // diarizationHealth pinned at its iOS-only `null` initial value
+  // instead of ever passing through that optimistic `undefined`).
+  it("never fires the sidecar health probe on iOS", async () => {
+    vi.mocked(fetchSidecarHealth).mockClear();
+    await renderOpen();
+    expect(fetchSidecarHealth).not.toHaveBeenCalled();
   });
 });

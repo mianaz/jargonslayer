@@ -80,17 +80,21 @@ describe("Header ≡ menu — iOS BottomSheet variant (S15)", () => {
     useApp.setState({ settings: DEFAULT_SETTINGS, status: "stopped", activeSessionId: "session-1" });
     await renderAndOpenMenu();
 
-    expect(container!.querySelector('[data-testid="header-menu-sheet"]')).not.toBeNull();
+    // #58 FIX 6: BottomSheet now portals to document.body — no longer a
+    // descendant of `container` (Header's own sticky/z-20 subtree), so
+    // these queries run against document.body instead.
+    expect(document.body.querySelector('[data-testid="header-menu-sheet"]')).not.toBeNull();
     // Exactly one role="menu" in the tree — the desktop dropdown branch
     // is `{!IS_IOS && open && (...)}`, so it must not ALSO be present.
-    expect(container!.querySelectorAll('[role="menu"]').length).toBe(1);
+    expect(document.body.querySelectorAll('[role="menu"]').length).toBe(1);
   });
 
   it("all six items are present — labels byte-identical to the desktop dropdown", async () => {
     useApp.setState({ settings: DEFAULT_SETTINGS, status: "stopped", activeSessionId: "session-1" });
     await renderAndOpenMenu();
 
-    const sheet = container!.querySelector('[data-testid="header-menu-sheet"]')!;
+    // #58 FIX 6: portaled to document.body — see the test above.
+    const sheet = document.body.querySelector('[data-testid="header-menu-sheet"]')!;
     for (const label of ["演示", "学习中心", "设置", "帮助", "复制诊断信息", "新会议"]) {
       expect(sheet.textContent).toContain(label);
     }
@@ -101,13 +105,31 @@ describe("Header ≡ menu — iOS BottomSheet variant (S15)", () => {
     const onOpenSettings = vi.fn();
     await renderAndOpenMenu(onOpenSettings);
 
-    const settingsBtn = container!.querySelector('[data-testid="btn-settings"]') as HTMLButtonElement;
+    // #58 FIX 6: portaled to document.body — see the first test above.
+    const settingsBtn = document.body.querySelector('[data-testid="btn-settings"]') as HTMLButtonElement;
     expect(settingsBtn).not.toBeNull();
     await act(async () => {
       settingsBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(onOpenSettings).toHaveBeenCalledTimes(1);
-    expect(container!.querySelector('[data-testid="header-menu-sheet"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="header-menu-sheet"]')).toBeNull();
+  });
+
+  // #58 fix round FIX 6 (both reviewers, Opus proved concrete overlaps):
+  // BottomSheet used to render straight into Header's own sticky/z-20
+  // subtree, so its z-40/z-50 layers lost to root-level z-30/z-40
+  // overlays mounted from page.tsx (touch-lookup-bar, btn-exit-focus,
+  // drawers). createPortal(..., document.body) restores the "mounts at
+  // page.tsx root" posture every other overlay in this app gets for
+  // free.
+  it("BottomSheet portals to document.body — not nested inside Header's own sticky stacking context (FIX 6)", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "stopped", activeSessionId: "session-1" });
+    await renderAndOpenMenu();
+
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(dialog!.parentElement).toBe(document.body);
+    expect(container!.contains(dialog)).toBe(false);
   });
 });

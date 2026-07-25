@@ -2823,6 +2823,19 @@ export function resetDesktopBootstrap(): void {
 let cachedIosPromise: Promise<void> | null = null;
 
 async function bootstrapIos(): Promise<void> {
+  // iOS mobile-UX round — app-shell scroll lock: WKWebView lets the BODY
+  // rubber-band/scroll behind the app's own internal scroll regions, and
+  // once the full-screen iOS surfaces (settings page, ImportHub, sheet)
+  // are open a stray swipe scrolls the page BEHIND them and sticks —
+  // sim-reproduced as the app header bleeding into the status-bar zone.
+  // The app is an app-shell (every scrollable area is an inner
+  // overflow-y-auto container; the body itself has nothing to scroll),
+  // so lock it outright on iOS. Class hook + globals.css rule rather
+  // than inline styles so the rule is visible next to the app's other
+  // root-level CSS. Web/desktop untouched (this function only ever runs
+  // on IS_IOS builds).
+  document.documentElement.classList.add("ios-shell");
+
   const tauriFetch = await getTauriFetch();
   setTransport(tauriFetch);
 

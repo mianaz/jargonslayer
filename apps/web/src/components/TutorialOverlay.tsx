@@ -304,7 +304,17 @@ export default function TutorialOverlay({
                 <div className="rounded-none border border-edge p-3">
                   <div className="text-sm font-medium text-fg">全离线</div>
                   <div className="mt-2 text-xs leading-[1.7] text-mut">
-                    本地 Whisper + Ollama，音频和内容完全不出本机。
+                    {/* #58 fix round FIX 9 (Sol MEDIUM): the desktop/web
+                       copy names 本地 Whisper + Ollama — neither exists
+                       on iOS v1 (no Python sidecar at all, see ios.ts's
+                       own header comment). iOS's actual offline story is
+                       narrower: 系统识别 transcribes on-device, 词典检测
+                       works with no network, but AI 解释 still needs a
+                       key — an honest replacement, not a claim iOS can't
+                       back up. */}
+                    {IS_IOS
+                      ? "系统识别全程本机转录，词典检测离线可用，AI 解释需配置 API Key。"
+                      : "本地 Whisper + Ollama，音频和内容完全不出本机。"}
                   </div>
                 </div>
               </div>

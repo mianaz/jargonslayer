@@ -117,10 +117,17 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
 
   // 本地 Whisper sidecar reachability — fetched lazily each time the
   // hub opens (not on mount), same posture as the old popover. Preview
-  // tier never probes (showroom rule: no probing to unlock).
+  // tier never probes (showroom rule: no probing to unlock). #58 fix
+  // round FIX 8 (Sol HIGH): iOS never probes either (no Python sidecar
+  // exists there AT ALL — see the effect below) — initial value is
+  // `null` there, not `undefined`, since decideVideoRouting (lib/tasks/
+  // videoRouting.ts) reads pre-probe `undefined` as optimistically
+  // available (the correct default for the platforms that might still
+  // resolve reachable), which would let a fast iOS user confirm a file
+  // into the impossible sidecar route before this ever settles.
   const [diarizationHealth, setDiarizationHealth] = useState<
     { diarization_ready: boolean } | null | undefined
-  >(undefined);
+  >(IS_IOS ? null : undefined);
 
   // ---- 文件 tab state ----
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -156,7 +163,11 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
     // ModeSelector's 导入/链接 tiles (initialTab) — every other caller
     // leaves this undefined, so the tab stays "file" exactly as before.
     setTab(initialTab ?? "file");
-    if (PREVIEW_TIER) return;
+    // FIX 8: gated on IS_IOS too, not just PREVIEW_TIER — see
+    // diarizationHealth's own doc comment above for why the pre-probe
+    // value must stay pinned at `null` there instead of ever passing
+    // through `undefined`.
+    if (PREVIEW_TIER || IS_IOS) return;
     setDiarizationHealth(undefined);
     let cancelled = false;
     void fetchSidecarHealth(settings).then((health) => {
