@@ -23,7 +23,8 @@
 // below), never into #js-results, so switching between typing/pasting
 // and live listening can never clobber the other's on-screen state.
 
-import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { packCounts, scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { getAllPacks } from "@jargonslayer/core/detect/packs";
 import type {
   DetectedExpression,
   DetectedTerm,
@@ -87,6 +88,22 @@ const captureEmptyHint = document.querySelector<HTMLParagraphElement>("#js-captu
 const historyMount = document.querySelector<HTMLElement>("#js-history-mount")!;
 const packsMount = document.querySelector<HTMLElement>("#js-packs-mount")!;
 const lockedMount = document.querySelector<HTMLElement>("#js-locked-mount")!;
+
+// Footer built-in count, computed not hardcoded (the static "428/11
+// packs" string went stale when v0.6 grew the built-ins to 14 packs).
+// Runs at boot BEFORE any remote pack loads, and filters to !remote
+// ids anyway, so installed catalog packs never inflate the "built-in"
+// number.
+{
+  const builtinIds = new Set(getAllPacks().filter((p) => !p.remote).map((p) => p.id));
+  const counts = packCounts();
+  let entries = 0;
+  for (const [pack, n] of Object.entries(counts)) {
+    if (builtinIds.has(pack)) entries += n;
+  }
+  const el = document.querySelector<HTMLElement>("#js-builtin-count");
+  if (el) el.textContent = `内置词典 · ${entries}/${builtinIds.size} packs`;
+}
 
 let lastScannedText = "";
 let savedHeadwords = new Set<string>();

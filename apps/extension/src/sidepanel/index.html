@@ -76,7 +76,10 @@
       <div id="js-locked-mount"></div>
 
       <footer class="js-footer">
-        <span>内置词典 · 428/11 packs</span>
+        <!-- Filled at boot from core's packCounts()/getAllPacks() — the
+             old hardcoded "428/11 packs" went stale the moment v0.6
+             added three built-in packs; a computed count can't drift. -->
+        <span id="js-builtin-count">内置词典</span>
         <span class="js-footer-sep">·</span>
         <span>数据仅存本机；音频路径见上方提示</span>
         <span class="js-footer-sep">·</span>
