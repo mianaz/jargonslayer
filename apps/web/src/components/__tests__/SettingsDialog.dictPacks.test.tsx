@@ -1030,3 +1030,112 @@ describe("SettingsDialog — N7(b): pack removal toasts success/failure honestly
     expect(useApp.getState().toast).toBe("移除词典包失败，请重试");
   });
 });
+
+// ---------------------------------------------------------------
+// Round-2: dict-pack auto-update checkbox + last-checked line (词典源
+// section, lib/detect/packAutoUpdate.ts). findSwitchByLabel mirrors
+// SettingsDialog.test.tsx's own helper of the same name byte-for-byte
+// (that file's own doc: a real <label> click forwards to the nested
+// <button role="switch">) — duplicated rather than cross-imported,
+// since these are independent test files; same "mirror, don't
+// hand-duplicate a DIFFERENT rule" posture the app code itself already
+// uses for the meetingActive predicate across bootstrap.ts/
+// SettingsDialog.tsx/page.tsx.
+// ---------------------------------------------------------------
+
+function findSwitchByLabel(container: HTMLDivElement, labelText: string): HTMLButtonElement {
+  const label = Array.from(container.querySelectorAll("label")).find((l) =>
+    l.textContent?.includes(labelText),
+  );
+  if (!label) throw new Error(`label containing "${labelText}" not found`);
+  const btn = label.querySelector('button[role="switch"]');
+  if (!btn) throw new Error(`no switch inside label "${labelText}"`);
+  return btn as HTMLButtonElement;
+}
+
+describe("SettingsDialog — round 2: 自动更新词典 checkbox + last-checked line", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    resetStore();
+    vi.mocked(remotePacks.listPackSources).mockResolvedValue([]);
+    vi.mocked(dictCatalog.fetchDictCatalog).mockResolvedValue({ packs: [] });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.clearAllMocks();
+  });
+
+  it("checkbox reflects settings.packAutoUpdate (true) and toggles the draft on click", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, packAutoUpdate: true }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory(container!);
+    await flush();
+
+    const label = "自动更新词典（联网时每天检查一次）";
+    expect(findSwitchByLabel(container!, label).getAttribute("aria-checked")).toBe("true");
+
+    await act(async () => {
+      findSwitchByLabel(container!, label).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(findSwitchByLabel(container!, label).getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("checkbox reflects settings.packAutoUpdate (false) on open", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, packAutoUpdate: false }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory(container!);
+    await flush();
+
+    expect(
+      findSwitchByLabel(container!, "自动更新词典（联网时每天检查一次）").getAttribute("aria-checked"),
+    ).toBe("false");
+  });
+
+  it("last-checked line renders 尚未检查 when packAutoUpdateCheckedAt is absent", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, packAutoUpdateCheckedAt: undefined },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory(container!);
+    await flush();
+
+    expect(container!.textContent).toContain("尚未检查");
+  });
+
+  it("last-checked line renders a relative time (上次检查：2 小时前) when packAutoUpdateCheckedAt is set", async () => {
+    const twoHoursAgo = Date.now() - 2 * 60 * 60 * 1000;
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, packAutoUpdateCheckedAt: twoHoursAgo },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectCategory(container!);
+    await flush();
+
+    expect(container!.textContent).toContain("上次检查：2 小时前");
+  });
+});

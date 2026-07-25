@@ -20,9 +20,17 @@ import {
 } from "../engineOptions";
 
 describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
-  it("keeps webspeech (web never drops it) and tabaudio (D7: desktop-only swaps to appaudio), adds tabaudio-cloud (v0.5 Wave-1 F4: web-only), and lists deepgram alongside soniox (v0.4.7 Lane D: web + desktop, no iOS v1)", () => {
+  it("keeps webspeech (web never drops it) and tabaudio (D7: desktop-only swaps to appaudio), adds tabaudio-cloud (v0.5 Wave-1 F4: web-only), and lists deepgram/elevenlabs alongside soniox (both web + desktop, no iOS v1)", () => {
     const values = ENGINE_OPTIONS.map((o) => o.value);
-    expect(values).toEqual(["webspeech", "whisper", "tabaudio", "tabaudio-cloud", "soniox", "deepgram"]);
+    expect(values).toEqual([
+      "webspeech",
+      "whisper",
+      "tabaudio",
+      "tabaudio-cloud",
+      "soniox",
+      "deepgram",
+      "elevenlabs",
+    ]);
   });
 
   it("every option carries a zh label, a local/cloud posture, and a matching retentionClass", () => {

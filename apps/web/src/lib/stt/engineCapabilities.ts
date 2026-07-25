@@ -163,6 +163,24 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     biasSupport: "keyterms", // D1: paid add-on, opt-in only — see deepgramTransport.ts
     byokOnly: true,
   },
+  // v0.6 round 2 — third BYOK cloud engine (ElevenLabs Scribe realtime).
+  // RETENTION HONESTY (verified against elevenlabs.io/docs/api-
+  // reference/speech-to-text/v-1-speech-to-text-realtime +
+  // elevenlabs.io/docs/changelog/2026/6/8, 2026-07-24): unlike Deepgram's
+  // mip_opt_out=true (which genuinely earns "cloud-transient" for every
+  // account tier — D7), ElevenLabs' own zero-retention opt-out
+  // (`enable_logging:false`) is documented as enterprise-tier-gated — a
+  // typical (non-enterprise) BYOK session's audio/transcript IS retained
+  // in ElevenLabs' own History by default, so this row is honestly
+  // "cloud-stored" (可能留存), not "cloud-transient" — see
+  // elevenLabsTransport.ts's own header for the full doc trail.
+  elevenlabs: {
+    kind: "elevenlabs",
+    label: "ElevenLabs 云端识别",
+    retentionClass: "cloud-stored",
+    biasSupport: "keyterms", // default-on (D1 free-mechanism posture) — see lexicon.ts's own projectForElevenLabsKeyterms doc for why this differs from Deepgram's billed opt-in-only "keyterms"
+    byokOnly: true,
+  },
   // v0.5 Wave-1 Foundation (F4 tab-audio-cloud, docs/design-
   // explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4): STATIC
   // DEFAULT row — required because ENGINE_CAPABILITIES is

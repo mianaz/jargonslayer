@@ -20,6 +20,7 @@ import type {
 import { withBase } from "../basePath";
 import { SONIOX_PREVIEW_LANE } from "../deployTier";
 import { SonioxTransport } from "./sonioxTransport";
+import { recordSttSeconds } from "./usageTracking";
 
 // Preview lane fallback (no server error body to read a message off
 // at all — a network drop, or a non-JSON 5xx) — never leaks the raw
@@ -101,6 +102,13 @@ export class SonioxEngine implements STTEngine {
   private transport: SonioxTransport | null = null;
   private stream: MediaStream | null = null;
   private stopping = false;
+  // Usage-ledger instrumentation (T2, lib/usage/ledger.ts) — stamped
+  // once attachStream() has actually succeeded (never on a failed
+  // attach: no real streaming happened, nothing to bill), read back at
+  // stop() to record a SINGLE wall-clock-elapsed seconds figure rather
+  // than accumulating per audio chunk (cheaper, and just as accurate
+  // for a local approximate ledger).
+  private streamStartedAt: number | null = null;
 
   async start(events: STTEvents, settings: Settings, lexicon?: MeetingLexicon): Promise<void> {
     this.stopping = false;
@@ -138,6 +146,7 @@ export class SonioxEngine implements STTEngine {
 
     try {
       await transport.attachStream(stream);
+      this.streamStartedAt = Date.now();
     } catch {
       events.onStatus("error", "无法初始化音频处理，请刷新页面重试");
       stream.getTracks().forEach((t) => t.stop());
@@ -176,6 +185,11 @@ export class SonioxEngine implements STTEngine {
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
+    }
+
+    if (this.streamStartedAt !== null) {
+      recordSttSeconds(this.kind, (Date.now() - this.streamStartedAt) / 1000);
+      this.streamStartedAt = null;
     }
   }
 }

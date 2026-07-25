@@ -27,6 +27,7 @@
 
 import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { DeepgramTransport } from "./deepgramTransport";
+import { recordSttSeconds } from "./usageTracking";
 
 export class DeepgramEngine implements STTEngine {
   readonly kind: STTEngineKind = "deepgram";
@@ -34,6 +35,9 @@ export class DeepgramEngine implements STTEngine {
   private transport: DeepgramTransport | null = null;
   private stream: MediaStream | null = null;
   private stopping = false;
+  // Usage-ledger instrumentation (T2, lib/usage/ledger.ts) — see
+  // soniox.ts's identical field for the full rationale.
+  private streamStartedAt: number | null = null;
 
   async start(events: STTEvents, settings: Settings): Promise<void> {
     this.stopping = false;
@@ -66,6 +70,7 @@ export class DeepgramEngine implements STTEngine {
 
     try {
       await transport.attachStream(stream);
+      this.streamStartedAt = Date.now();
     } catch {
       events.onStatus("error", "无法初始化音频处理，请刷新页面重试");
       stream.getTracks().forEach((t) => t.stop());
@@ -104,6 +109,11 @@ export class DeepgramEngine implements STTEngine {
     if (this.stream) {
       this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
+    }
+
+    if (this.streamStartedAt !== null) {
+      recordSttSeconds(this.kind, (Date.now() - this.streamStartedAt) / 1000);
+      this.streamStartedAt = null;
     }
   }
 }

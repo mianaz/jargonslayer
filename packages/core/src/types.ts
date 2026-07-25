@@ -57,6 +57,16 @@ export type STTEngineKind =
   // zh-en code-switching engine); lights up web + desktop from the one
   // browser-WS adapter (deepgramTransport.ts), no iOS v1 capture path.
   | "deepgram"
+  // v0.6 round 2: ElevenLabs Scribe realtime STT — third BYOK cloud
+  // engine, same triple gate as soniox/deepgram above (ENGINE_CARDS
+  // byokOnly + store.ts applyTierDefaults survives-preview posture + key
+  // field disabled). Single-language (whatever settings.language names,
+  // ISO 639-1) — no verified zh-en code-switching claim, so soniox stays
+  // the code-switching engine. No server-minted preview trial (BYOK
+  // only, unlike soniox's SONIOX_PREVIEW_LANE). Lights up web + desktop
+  // from the one browser-WS adapter (elevenLabsTransport.ts), no iOS v1
+  // capture path.
+  | "elevenlabs"
   // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D7):
   // desktop-only native app/system audio capture via a CoreAudio
   // process tap (apps/desktop/src-tauri's audiocap helper) — the
@@ -615,6 +625,27 @@ export interface Settings {
   explainLanguage: "zh" | "en";
   // dictionary theme packs: null = all packs enabled
   enabledPacks: string[] | null;
+  // Round-2 dict-pack auto-update: quiet daily background refresh of
+  // every INSTALLED remote pack (lib/detect/remotePacks.ts's own
+  // checkUpdates(), reused wholesale — see lib/detect/packAutoUpdate.ts),
+  // supplementing (never replacing) SettingsDialog's manual 检查全部更新
+  // button. Default true — plainly better freshness at negligible cost
+  // (gated on being online, having at least one pack installed, and no
+  // live meeting; see shouldCheckForPackUpdates/runPackAutoUpdate for the
+  // exact gate).
+  packAutoUpdate: boolean;
+  // Epoch ms of the last COMPLETED auto-update attempt — success or
+  // failure alike (see runPackAutoUpdate's own doc for why a failed
+  // attempt still stamps this: otherwise one persistently-dead source
+  // would re-run the whole check on every single launch) — so the 24h
+  // interval survives an app restart. Absent/undefined = never
+  // auto-checked yet, treated as immediately due. Written by app/
+  // dictPackAutoUpdateTrigger.ts, OUTSIDE SettingsDialog's own draft/
+  // 保存 flow — that dialog always reads/writes it against the LIVE
+  // settings object, never draft's dialog-open-time snapshot (see
+  // SettingsDialog.tsx's 词典源 row + handleSave's own
+  // toSave.packAutoUpdateCheckedAt).
+  packAutoUpdateCheckedAt?: number;
   // Hugging Face token for the local Whisper sidecar's speaker
   // diarization (pyannote); "" = disabled. Never leaves the browser
   // except over localhost to the sidecar (see upload.ts).
@@ -636,6 +667,21 @@ export interface Settings {
   // stripKeyMaterial is a HAND-LISTED strip — deepgramKey is added there
   // too, mirroring sonioxKey's own precedent immediately above.
   deepgramKey: string;
+  // v0.6 round 2: ElevenLabs BYOK API key for the "elevenlabs" cloud
+  // engine (Scribe realtime STT); "" = engine unavailable. Unlike
+  // sonioxKey/deepgramKey, this value never rides the WebSocket itself —
+  // ElevenLabs' realtime endpoint authenticates via a `token` query
+  // param, so elevenLabsTransport.ts uses this key ONLY to mint a
+  // short-lived (15 min), single-use token client-side (POST
+  // https://api.elevenlabs.io/v1/single-use-token/realtime_scribe with
+  // an `xi-api-key` header carrying this value) — the raw key never
+  // transits our server, and never reaches ElevenLabs' own websocket at
+  // all, only the derived token does. diag/report.ts's SECRET_KEY_RE
+  // catches the name automatically (→ hasElevenLabsKey), but
+  // history/autoExport.ts's stripKeyMaterial is a HAND-LISTED strip —
+  // elevenLabsKey is added there too, mirroring sonioxKey/deepgramKey's
+  // own precedent above.
+  elevenLabsKey: string;
   // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
   // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
   // A4): which BYOK cloud backend the "tabaudio-cloud" engine (see
@@ -709,6 +755,19 @@ export interface Settings {
     weakDomains?: string;
     enabled: boolean;
   };
+
+  // Local usage ledger (v0.6, BYOK spend-visibility ask — apps/web/src/
+  // lib/usage/ledger.ts): records STT seconds streamed / LLM calls +
+  // tokens per day+provider, entirely on-device. NO TELEMETRY — nothing
+  // here ever leaves the browser/desktop app (see that file's own
+  // header); this is a local aggregate, not analytics. Default true
+  // (unlike profile.enabled above): the ledger is local-only and costs
+  // nothing to leave on, and an off-by-default toggle would make the
+  // settings UsagePanel useless out of the box for the fleet-wide
+  // "simple"-mode user it's meant to serve; the panel's own 清除使用记录
+  // button is the actual escape hatch. false makes every recordUsage()
+  // call a no-op (existing history is left alone, not cleared).
+  usageTracking: boolean;
 
   // ---- display settings (v0.2.1) — independent of theme; surviving a
   // theme switch is the whole point, so these live as their own
@@ -914,9 +973,11 @@ export const DEFAULT_SETTINGS: Settings = {
   ankiConnect: { enabled: false, deckName: "JargonSlayer", port: 8765 },
   explainLanguage: "zh",
   enabledPacks: null,
+  packAutoUpdate: true,
   hfToken: "",
   sonioxKey: "",
   deepgramKey: "",
+  elevenLabsKey: "",
   tabAudioCloudProvider: "soniox",
   realtimeDiarize: false,
   partials: true,
@@ -924,6 +985,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bilingualTranscript: false,
   translateEngine: "llm",
   profile: { enabled: false },
+  usageTracking: true,
   themeId: "terminal",
   customThemes: [],
   fontSize: "md",

@@ -14,9 +14,9 @@ vi.mock("@/lib/platform/desktop", () => ({ IS_DESKTOP: true }));
 import { ENGINE_OPTIONS } from "../engineOptions";
 
 describe("ENGINE_OPTIONS (desktop build)", () => {
-  it("swaps tabaudio for appaudio (D7) AND adds osspeech (S11), dropping webspeech (S10 field-fix #1), and lists deepgram alongside soniox (v0.4.7 Lane D)", () => {
+  it("swaps tabaudio for appaudio (D7) AND adds osspeech (S11), dropping webspeech (S10 field-fix #1), and lists deepgram/elevenlabs alongside soniox", () => {
     const values = ENGINE_OPTIONS.map((o) => o.value);
-    expect(values).toEqual(["whisper", "appaudio", "osspeech", "soniox", "deepgram"]);
+    expect(values).toEqual(["whisper", "appaudio", "osspeech", "soniox", "deepgram", "elevenlabs"]);
   });
 
   it("osspeech carries the S11-pinned label, local posture, and is NOT sidecarOnly (zero-install, no local Whisper sidecar)", () => {

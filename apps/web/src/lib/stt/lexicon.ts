@@ -203,6 +203,33 @@ export function projectForSonioxContext(lexicon: MeetingLexicon): string[] {
   return capTermsByCountAndBytes(lexicon.terms, SONIOX_MAX_CONTEXT_TERMS, SONIOX_MAX_CONTEXT_BYTES);
 }
 
+// elevenlabs (Scribe realtime, v0.6 round 2): the `keyterms` query param
+// docs (elevenlabs.io/docs/api-reference/speech-to-text/v-1-speech-to-
+// text-realtime, verified 2026-07-24) declare NO count/byte limit at
+// all — "List of keyterms the model is biased towards", plain string
+// array, no maxItems/maxLength in the AsyncAPI schema. Default-on (same
+// D1 "free mechanism" posture as soniox's own context.terms above,
+// NOT deepgram's billed opt-in-only keyterms — nothing in ElevenLabs'
+// docs prices this as a paid add-on the way Deepgram's own keyterm
+// prompting is).
+// ponytail: with no documented ceiling to size against, these mirror
+// soniox's own conservative cap (same order of magnitude as a
+// verified-safe sibling engine) rather than a number derived from any
+// ElevenLabs-specific limit — upgrade path: tighten or loosen once a
+// real ceiling is ever documented or field-tested against a live 429/
+// chunk_size_exceeded response.
+export const ELEVENLABS_MAX_KEYTERMS_TERMS = 100;
+export const ELEVENLABS_MAX_KEYTERMS_BYTES = 4 * 1024;
+
+/** Projects onto the realtime websocket's repeated `keyterms` query
+ *  param (one value per term, capTermsByCountAndBytes returning [] when
+ *  nothing survives the cap — elevenLabsTransport.ts's buildElevenLabsUrl
+ *  simply appends zero params in that case, same "omit rather than send
+ *  empty" posture as every other adapter here). */
+export function projectForElevenLabsKeyterms(lexicon: MeetingLexicon): string[] {
+  return capTermsByCountAndBytes(lexicon.terms, ELEVENLABS_MAX_KEYTERMS_TERMS, ELEVENLABS_MAX_KEYTERMS_BYTES);
+}
+
 // whisper/tabaudio/appaudio (faster-whisper sidecar): generous but
 // bounded — faster-whisper's own get_prompt() truncates the tokenized
 // prompt to its LAST (max_length // 2 - 1) tokens (verified against

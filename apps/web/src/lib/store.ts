@@ -1125,6 +1125,7 @@ export function modeForPersistedEngine(
     case "whisper":
     case "soniox":
     case "deepgram":
+    case "elevenlabs":
       return "mic";
     case "appaudio":
       return "system-audio";

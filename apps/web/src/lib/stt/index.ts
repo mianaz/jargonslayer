@@ -9,6 +9,7 @@ import { OsSpeechEngine } from "./osSpeech";
 import { DemoEngine } from "./demo";
 import { SonioxEngine } from "./soniox";
 import { DeepgramEngine } from "./deepgram";
+import { ElevenLabsEngine } from "./elevenLabs";
 import { TabAudioCloudEngine } from "./tabAudioCloud";
 
 export function createEngine(kind: STTEngineKind): STTEngine {
@@ -45,6 +46,12 @@ export function createEngine(kind: STTEngineKind): STTEngine {
       // above (ENGINE_CARDS/ENGINE_OPTIONS byokOnly + store.ts
       // applyTierDefaults coercion + key field disabled).
       return new DeepgramEngine();
+    case "elevenlabs":
+      // v0.6 round 2 — third BYOK cloud engine, same triple gate as
+      // soniox/deepgram above (ENGINE_CARDS/ENGINE_OPTIONS byokOnly +
+      // store.ts applyTierDefaults survives-preview posture + key field
+      // disabled). No server-minted preview lane (BYOK only).
+      return new ElevenLabsEngine();
     case "tabaudio-cloud":
       // v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-
       // blueprint.md §1 Feature 4 + §5 A4) — getDisplayMedia capture

@@ -30,6 +30,11 @@ vi.mock("../deepgramTransport", () => ({
   },
 }));
 
+const recordSttSecondsMock = vi.fn();
+vi.mock("../usageTracking", () => ({
+  recordSttSeconds: (...args: unknown[]) => recordSttSecondsMock(...args),
+}));
+
 import { DeepgramEngine } from "../deepgram";
 import { DEFAULT_SETTINGS, type STTEvents } from "@jargonslayer/core/types";
 
@@ -46,7 +51,9 @@ afterEach(() => {
   deepgramTransportCtor.mockClear();
   attachStreamMock.mockClear();
   transportStopMock.mockClear();
+  recordSttSecondsMock.mockClear();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 it("reports kind: deepgram", () => {
@@ -150,5 +157,66 @@ describe("DeepgramEngine.stop()", () => {
     await engine.stop();
 
     expect(transportStopMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("DeepgramEngine usage-ledger instrumentation (T2)", () => {
+  it("records wall-clock elapsed streaming seconds via recordSttSeconds at stop()", async () => {
+    vi.useFakeTimers();
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new DeepgramEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "deepgram" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    vi.advanceTimersByTime(5000);
+    await engine.stop();
+
+    expect(recordSttSecondsMock).toHaveBeenCalledTimes(1);
+    expect(recordSttSecondsMock).toHaveBeenCalledWith("deepgram", 5);
+  });
+
+  it("never records when attachStream never succeeded (mic permission denied)", async () => {
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new DeepgramEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "deepgram" as const });
+    gumCalls[0].reject(new Error("permission denied"));
+    await startP;
+
+    await engine.stop();
+
+    expect(recordSttSecondsMock).not.toHaveBeenCalled();
+  });
+
+  it("never records when attachStream itself throws", async () => {
+    attachStreamMock.mockImplementationOnce(() => Promise.reject(new Error("no worklet")));
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new DeepgramEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "deepgram" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    await engine.stop();
+
+    expect(recordSttSecondsMock).not.toHaveBeenCalled();
+  });
+
+  it("a second stop() call never double-records", async () => {
+    vi.useFakeTimers();
+    const { gumCalls } = installFakeMediaDevices();
+    const engine = new DeepgramEngine();
+
+    const startP = engine.start(noopEvents(), { ...DEFAULT_SETTINGS, engine: "deepgram" as const });
+    gumCalls[0].resolve(new FakeMediaStream());
+    await startP;
+
+    vi.advanceTimersByTime(1000);
+    await engine.stop();
+    await engine.stop();
+
+    expect(recordSttSecondsMock).toHaveBeenCalledTimes(1);
   });
 });
