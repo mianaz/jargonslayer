@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS } from "@/lib/platform/ios";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
 import {
   ENGINE_OPTIONS,
@@ -89,6 +90,37 @@ function EngineDropdown() {
   const osspeechCaps = useOsSpeechCaps();
   const selectedOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
   const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps, osspeechCaps) : undefined;
+
+  // iOS (mobile-UX sprint): ENGINE_OPTIONS is a single entry there
+  // (osspeech, engineOptions.ts's IS_IOS branch) — a one-option native
+  // select renders a dead picker chevron, pure web-noise. Static chip
+  // instead; demo/import keep the same placeholder duty the select's
+  // own "" option carries below, and the gate title still surfaces the
+  // locked reason (e.g. sim/isAvailable-false).
+  if (IS_IOS) {
+    return (
+      <span
+        aria-label="转录引擎"
+        // #58 fix round FIX 10 (Opus LOW): the <select> this static chip
+        // replaced on iOS carried its own `disabled` styling for free —
+        // restore the same busy feedback (a meeting connecting/live/
+        // paused locks engine switching, isEngineControlBusy above) so
+        // the chip doesn't look interactive when it silently isn't.
+        aria-disabled={disabled || undefined}
+        data-testid="statusline-engine-static"
+        title={selectedGate?.title}
+        className={`flex h-full max-w-[6.5rem] shrink-0 items-center border-x border-edge bg-panel2 px-1.5 font-mono text-fg sm:max-w-[8.5rem] sm:px-2 ${
+          disabled ? "opacity-50" : ""
+        }`}
+      >
+        <span className="truncate">
+          {engine === "demo" || engine === "import"
+            ? ENGINE_SELECT_PLACEHOLDER
+            : (selectedOpt?.label ?? ENGINE_SELECT_PLACEHOLDER)}
+        </span>
+      </span>
+    );
+  }
 
   return (
     <select

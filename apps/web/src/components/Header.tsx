@@ -45,6 +45,7 @@ import { selectRunningCount, useTasks } from "@/lib/tasks/registry";
 import { useUpdateCheck } from "@/lib/desktop/updateCheck";
 import { useCaptionPip } from "@/lib/captionWindow";
 import { copyDiagnosticReport } from "@/lib/diag/report";
+import BottomSheet from "@/components/BottomSheet";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -436,7 +437,16 @@ function HamburgerMenu({
   onDemo,
   onOpenSettings,
   onOpenHelp,
-}: Pick<HeaderProps, "onDemo" | "onOpenSettings" | "onOpenHelp">) {
+  onIosMenu,
+}: Pick<HeaderProps, "onDemo" | "onOpenSettings" | "onOpenHelp"> & {
+  /** iOS only (sim-caught WKWebView fix): the sheet now mounts from
+   *  Header as a SIBLING of the sticky <header> — outside its z-20
+   *  stacking context AND inside the app root (a document.body portal
+   *  lost hit-testing to the composited bottom-panel layer: rows were
+   *  painted but untappable). The ☰ button therefore just signals
+   *  Header instead of toggling the local dropdown state. */
+  onIosMenu?: () => void;
+}) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const status = useApp((s) => s.status);
@@ -477,6 +487,16 @@ function HamburgerMenu({
 
   useEffect(() => {
     if (!open) return;
+    // iOS fix-round REGRESSION FIX (sim-caught, post-FIX-6): BottomSheet
+    // now PORTALS to document.body, so its rows are no longer inside
+    // rootRef — this outside-mousedown listener then fired on EVERY row
+    // tap and unmounted the sheet before the row's own click could land
+    // (menu items all dead; jsdom tests missed it because they dispatch
+    // bare click without the preceding mousedown). On iOS the sheet owns
+    // its dismissal (backdrop tap + Escape inside BottomSheet.tsx), and
+    // the floating dropdown this listener serves never renders there —
+    // skip the whole effect. Desktop/web byte-identical.
+    if (IS_IOS) return;
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
@@ -501,7 +521,7 @@ function HamburgerMenu({
       <button
         type="button"
         data-testid="btn-menu"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => (IS_IOS && onIosMenu ? onIosMenu() : setOpen((v) => !v))}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="菜单"
@@ -510,7 +530,7 @@ function HamburgerMenu({
         <List size={18} weight="regular" />
       </button>
 
-      {open && (
+      {!IS_IOS && open && (
         <div
           role="menu"
           className="absolute right-0 top-[calc(100%+4px)] z-30 flex w-56 flex-col border border-edge bg-panel2 glassable py-1 shadow-lg"
@@ -651,6 +671,168 @@ function HamburgerMenu({
   );
 }
 
+
+// iOS menu sheet (sim-caught WKWebView fix): mounted from Header as a
+// SIBLING of the sticky <header> element — NOT inside it (its z-20
+// position:sticky creates a stacking context that clamps the sheet
+// under root-level z-30/40 overlays), and NOT via a document.body
+// portal (WKWebView composited the app's draggable bottom panel ABOVE
+// body-portaled fixed layers regardless of z-index — the sheet painted
+// but every row tap fell through to the panel underneath; in-tree
+// fixed overlays like ImportHub/HistoryDrawer hit-test correctly, so
+// in-tree-but-outside-<header> is the reliable spot). Rows/handlers/
+// labels stay byte-identical to the desktop dropdown's items.
+function IosMenuSheet({
+  open,
+  onClose,
+  onDemo,
+  onOpenSettings,
+  onOpenHelp,
+}: Pick<HeaderProps, "onDemo" | "onOpenSettings" | "onOpenHelp"> & {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const status = useApp((s) => s.status);
+  const activeSessionId = useApp((s) => s.activeSessionId);
+  const newMeeting = useApp((s) => s.newMeeting);
+  const showToast = useApp((s) => s.showToast);
+  const meetingActive =
+    status === "connecting" || status === "listening" || status === "paused";
+
+  // Same bundle/helper as HamburgerMenu's own copy — see that
+  // component's S14.1 comment.
+  const handleCopyDiagnostics = async () => {
+    const ok = await copyDiagnosticReport(useApp.getState().settings);
+    showToast(ok ? "诊断信息已复制到剪贴板" : "复制失败，请检查浏览器剪贴板权限");
+  };
+
+  // iOS row styling (S15 mobile-UX sprint): same handlers/labels/order
+  // as itemCls above, just sized for a tap target inside BottomSheet
+  // instead of a dense desktop dropdown row — ~52px (h-[52px]) with
+  // .btn-tactile's existing press feedback (reused, not reinvented —
+  // same idiom as every other tappable control in this app). Hairline
+  // separators come from the wrapping list's own divide-y, not a
+  // per-row border, so every row (including 新会议) gets one uniformly.
+  // w-full is LOAD-BEARING (sim-caught the hard way): a display:flex
+  // <button> sizes to its CONTENT — without it each row's tappable area
+  // was only as wide as icon+label (~90pt of a 402pt row; rect-probed
+  // live), so taps anywhere right of the text hit the container and
+  // silently did nothing. A "row" must be tappable across its full
+  // painted width.
+  const iosItemCls =
+    "btn-tactile flex h-[52px] w-full items-center gap-3 px-4 text-left font-mono text-sm text-fg hover:bg-panel3 whitespace-nowrap";
+
+  return (
+    <>
+      {/* iOS (S15 mobile-UX sprint, Miana: "交互还是太网页化了...考虑诸如
+          claude手机版如何交互"): the SAME six items — order/handlers/
+          labels byte-identical to the dropdown above — inside
+          BottomSheet.tsx instead of a floating absolute dropdown
+          (native-mobile idiom, not a web popover). 悬浮字幕 is never a
+          seventh item here: showCaptionItem (above) is already
+          unconditionally false whenever IS_IOS, so it's not duplicated
+          into this branch at all. */}
+      <BottomSheet open={open} onClose={onClose}>
+          <div data-testid="header-menu-sheet" role="menu" className="divide-y divide-edge">
+            {!meetingActive && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="btn-demo"
+                onClick={() => {
+                  onClose();
+                  onDemo();
+                }}
+                className={iosItemCls}
+              >
+                <Play size={18} weight="regular" />
+                演示
+              </button>
+            )}
+            {meetingActive ? (
+              <div
+                role="menuitem"
+                aria-disabled="true"
+                data-testid="btn-review"
+                title="会议进行中，结束后可进入学习中心"
+                className={`${iosItemCls} cursor-not-allowed opacity-50`}
+              >
+                <GraduationCap size={18} weight="regular" />
+                学习中心
+              </div>
+            ) : (
+              <Link
+                href="/review"
+                role="menuitem"
+                data-testid="btn-review"
+                onClick={onClose}
+                className={iosItemCls}
+              >
+                <GraduationCap size={18} weight="regular" />
+                学习中心
+              </Link>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-settings"
+              onClick={() => {
+                onClose();
+                onOpenSettings();
+              }}
+              className={iosItemCls}
+            >
+              <GearSix size={18} weight="regular" />
+              设置
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-help"
+              onClick={() => {
+                onClose();
+                onOpenHelp();
+              }}
+              className={iosItemCls}
+            >
+              <Question size={18} weight="regular" />
+              帮助
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-copy-diagnostics"
+              onClick={() => {
+                onClose();
+                void handleCopyDiagnostics();
+              }}
+              className={iosItemCls}
+            >
+              <ClipboardText size={18} weight="regular" />
+              复制诊断信息
+            </button>
+
+            {activeSessionId && status === "stopped" && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onClose();
+                  newMeeting();
+                }}
+                className={iosItemCls}
+              >
+                <span className="text-lab-orange">●</span>
+                新会议
+              </button>
+            )}
+          </div>
+      </BottomSheet>
+
+    </>
+  );
+}
+
 export default function Header({
   onStart,
   onPause,
@@ -667,14 +849,20 @@ export default function Header({
   const activeSessionId = useApp((s) => s.activeSessionId);
   const engine = useApp((s) => s.settings.engine);
   const realtimeDiarize = useApp((s) => s.settings.realtimeDiarize);
+  // iOS menu sheet state — lives HERE (not in HamburgerMenu) so the
+  // sheet can mount as a sibling of the sticky <header> below; see
+  // IosMenuSheet's own header comment for the two dead-ends this
+  // placement fixes (stacky-header clamp + body-portal hit-test loss).
+  const [iosMenuOpen, setIosMenuOpen] = useState(false);
 
   return (
-    // Single-row header (Miana's v0.2.2 E2E feedback: the old h-9
-    // terminal title strip above this row duplicated every piece of
-    // information on screen — "jargonslayer" (wordmark), engine·posture
-    // (pills + chip), "N cards" (StatusLine) — and made the frame feel
-    // heavy. The strip and its ⌘K placeholder chip are gone; the brand
-    // row below is now the whole header. docs/DESIGN.md updated.)
+    <>
+    {/* Single-row header (Miana's v0.2.2 E2E feedback: the old h-9
+       terminal title strip above this row duplicated every piece of
+       information on screen — "jargonslayer" (wordmark), engine·posture
+       (pills + chip), "N cards" (StatusLine) — and made the frame feel
+       heavy. The strip and its ⌘K placeholder chip are gone; the brand
+       row below is now the whole header. docs/DESIGN.md updated. */}
     <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel px-4">
         <div className="flex items-center gap-2 whitespace-nowrap">
           {/* Scheme-aware brand mark (v0.2.4): transparent-background
@@ -806,8 +994,19 @@ export default function Header({
             onDemo={onDemo}
             onOpenSettings={onOpenSettings}
             onOpenHelp={onOpenHelp}
+            onIosMenu={IS_IOS ? () => setIosMenuOpen(true) : undefined}
           />
         </div>
     </header>
+    {IS_IOS && (
+      <IosMenuSheet
+        open={iosMenuOpen}
+        onClose={() => setIosMenuOpen(false)}
+        onDemo={onDemo}
+        onOpenSettings={onOpenSettings}
+        onOpenHelp={onOpenHelp}
+      />
+    )}
+    </>
   );
 }

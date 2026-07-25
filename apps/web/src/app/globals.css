@@ -159,6 +159,23 @@ body {
   height: 100%;
 }
 
+/* #58 fix round FIX 11 — iOS app-shell scroll lock: lib/desktop/
+   bootstrap.ts's bootstrapIos() stamps `ios-shell` on <html> (that
+   file owns the JS side; this is the CSS half it was missing). WKWebView
+   rubber-band scroll lock for the iOS app-shell; no effect on web/
+   desktop (the class is never added there). */
+html.ios-shell,
+html.ios-shell body {
+  /* overscroll-behavior ONLY — sim-caught: the fuller
+     height:100% + overflow:hidden variant changed WKWebView's
+     scroll/clip containers and native-layer hit-testing so taps over
+     the app's bottom-panel region stopped reaching fixed overlays
+     stacked above it (BottomSheet rows painted but dead). Rubber-band
+     lock needs none of that: overscroll-behavior:none alone disables
+     WKWebView's document bounce (WebKit supports it since iOS 16). */
+  overscroll-behavior: none;
+}
+
 body {
   @apply bg-ink text-fg antialiased;
   font-feature-settings: "cv02", "cv03";
