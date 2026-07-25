@@ -4,7 +4,7 @@
 // Edits a local draft; only committed to the store on 保存.
 
 import { useEffect, useState } from "react";
-import { Eye, EyeSlash } from "@phosphor-icons/react";
+import { Eye, EyeSlash, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
@@ -461,6 +461,15 @@ export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = 
   { id: "subscriptionDirect", label: "订阅直连（实验性）" },
   { id: "display", label: "显示" },
 ];
+
+// S13 iOS mobile-UX round (Part B #2) — iOS's two-level root list groups
+// visibleCategories into 常用/高级 instead of the desktop nav-rail's flat
+// list. diarization never appears in either group (already excluded from
+// categoryVisible on iOS below, Part A #1), and subscriptionDirect only
+// ever shows up here when visibleCategories itself already includes it
+// (build flag + isSectionVisible, unchanged) — no separate gate needed.
+const IOS_COMMON_CATEGORY_IDS: SettingsCategoryId[] = ["engine", "aiDetect", "dataIntegration", "display"];
+const IOS_ADVANCED_CATEGORY_IDS: SettingsCategoryId[] = ["taskLlm", "subscriptionDirect"];
 
 // "AI 检测" is settingsSections.ts's one MIXED section (tagged row-by-
 // row, not one whole-section key) — every row-level key that lives
@@ -951,6 +960,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const engineLockedByMeeting = isEngineControlBusy(meetingStatus);
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
+  // S13 iOS mobile-UX round (Part B #4): frozen baseline for the iOS
+  // sticky-save-bar dirty check below — re-seeded alongside `draft` in
+  // the SAME open effect (never independently), so a background
+  // settings mutation unrelated to the user's own draft edits (the
+  // uiMode auto-promote effect, a live ThemeEditor write) can never
+  // make `draftDirty` false-positive by drifting `settings` itself
+  // instead of anything the user actually typed.
+  const [savedSnapshot, setSavedSnapshot] = useState<Settings>(() => coercePreviewModels(settings));
   // v0.5.1 appearance sprint (D4): non-null while the 显示 section shows
   // the ThemeEditor sub-panel instead of its normal grid. customThemes
   // CRUD (save/delete/import below) always reads/writes `settings.
@@ -1231,7 +1248,27 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // categories can never lose an unsaved edit. Default "engine": the
   // first entry in SETTINGS_CATEGORIES, always visible (its own
   // section level is "simple").
-  const [activeCategory, setActiveCategory] = useState<SettingsCategoryId>("engine");
+  //
+  // S13 iOS mobile-UX round (Part B #1/#2): `null` is the iOS-only
+  // ROOT LIST state (no such state exists on desktop/web — this widens
+  // the TYPE for both platforms, since the two must share one state
+  // slot, but the VALUE is null-initialized only on IS_IOS; desktop
+  // keeps today's "engine" initial and this never becomes null there —
+  // desktop's own nav rail has no root-list concept to return to).
+  const [activeCategory, setActiveCategory] = useState<SettingsCategoryId | null>(
+    IS_IOS ? null : "engine",
+  );
+
+  // S13 iOS mobile-UX round (Part B #3): no 简单/高级 control exists on
+  // iOS (a completely different navigation shell, see the IS_IOS return
+  // branch far below) — every uiMode-gated category/row must still be
+  // reachable there, so this pins the EFFECTIVE level read by
+  // categoryVisible below (and by `level` further down, reused as-is)
+  // to "advanced" on iOS, without touching the persisted
+  // settings.uiMode value itself (the header toggle / auto-promote
+  // effect elsewhere still read/write the real value; only VISIBILITY
+  // decisions route through this).
+  const uiVisibilityLevel: Settings["uiMode"] = IS_IOS ? "advanced" : settings.uiMode;
 
   // Nav-rail visibility per category — reuses isSectionVisible/
   // SETTINGS_UI_LEVELS exactly as every row below already does (never
@@ -1240,16 +1277,23 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // matching key (the one mixed section) so it's visible whenever ANY
   // of its own rows would be, mirroring the general "a category whose
   // every row is advanced-only disappears from the nav" rule.
+  //
+  // S13 (Part A #1): diarization is pyannote+sidecar-only — genuinely
+  // impossible on iOS (no Python sidecar there at all, v1 mic-only
+  // osspeech) — force-excluded regardless of uiVisibilityLevel above
+  // pinning everything ELSE to advanced, so this is the one category
+  // that must stay hidden even though its own section level would
+  // otherwise now read as visible.
   const categoryVisible: Record<SettingsCategoryId, boolean> = {
-    engine: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.engine),
-    diarization: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.diarization),
-    aiDetect: AI_DETECT_ROW_LEVELS.some((l) => isSectionVisible(settings.uiMode, l)),
-    taskLlm: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.taskLlm),
-    dataIntegration: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.dataIntegration),
+    engine: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.engine),
+    diarization: !IS_IOS && isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.diarization),
+    aiDetect: AI_DETECT_ROW_LEVELS.some((l) => isSectionVisible(uiVisibilityLevel, l)),
+    taskLlm: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.taskLlm),
+    dataIntegration: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.dataIntegration),
     subscriptionDirect:
       process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" &&
-      isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.subscriptionDirect),
-    display: isSectionVisible(settings.uiMode, SETTINGS_UI_LEVELS.display),
+      isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.subscriptionDirect),
+    display: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.display),
   };
   const visibleCategories = SETTINGS_CATEGORIES.filter((c) => categoryVisible[c.id]);
 
@@ -1261,8 +1305,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // ever change categoryVisible/visibleCategories at runtime (the
   // category list and the build-time env flag never do), so that's the
   // only real dependency.
+  //
+  // S13 iOS mobile-UX round: null-guarded — activeCategory===null is
+  // iOS's own ROOT LIST state (Part B #1), never itself an "invisible
+  // category" to redirect away from; without this guard,
+  // categoryVisible[null] reads `undefined` (a Record has no entry for
+  // it), and `!undefined` is true, which would immediately kick the
+  // user out of the root list back into whatever visibleCategories[0]
+  // is the instant this effect's dependency changed.
   useEffect(() => {
-    if (!categoryVisible[activeCategory]) {
+    if (activeCategory !== null && !categoryVisible[activeCategory]) {
       setActiveCategory(visibleCategories[0]?.id ?? "engine");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1364,7 +1416,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // Preview tier (#61): coerce an off-list persisted detectModel/
       // summaryModel to the first allowed option as soon as the dialog
       // (re)opens — see coercePreviewModels' own doc comment.
-      setDraft(coercePreviewModels(settings));
+      // savedSnapshot (Part B #4): re-seeded from the SAME computed
+      // value, every time draft itself re-seeds — see that state's own
+      // doc comment above for why this must never drift independently.
+      const seededDraft = coercePreviewModels(settings);
+      setDraft(seededDraft);
+      setSavedSnapshot(seededDraft);
       // v0.5.1: SettingsDialog is mounted unconditionally by page.tsx
       // (this whole component instance survives an open/close cycle —
       // `if (!open) return null` above is only a render-output guard,
@@ -2519,8 +2576,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // the LIVE settings (not draft) — the header toggle below writes
   // straight through updateSettings, outside the draft/保存 flow (a
   // pure view preference, same posture as themeId's live-apply-on-
-  // write, see updateSettings' own side effects).
-  const level = settings.uiMode;
+  // write, see updateSettings' own side effects). S13: reuses
+  // uiVisibilityLevel (pinned to "advanced" on iOS, see that const's
+  // own doc comment above) rather than settings.uiMode directly, so
+  // every isSectionVisible(level, ...) row-level check below this point
+  // (and the segmented control's own `level === opt.value` highlight,
+  // desktop-only) inherits the iOS pin automatically — identical to
+  // settings.uiMode on desktop/web, where uiVisibilityLevel is just an
+  // alias for it.
+  const level = uiVisibilityLevel;
 
   // Sol #7 fix (BYOK preview sprint, 2026-07-21): the AI 检测 banner
   // below (aiDetectPreviewBanner) states ONE posture off draft.apiKey
@@ -2548,9 +2612,30 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     IS_DESKTOP && normalizeProxyUrl(draft.proxyUrl) !== normalizeProxyUrl(settings.proxyUrl);
   const proxyDraftDirtyHint = "代理设置已修改，保存后再测试/连接";
 
+  // S13 iOS mobile-UX round (Part B #2): root-list grouping — desktop/
+  // web never read these (the nav rail below stays a flat
+  // visibleCategories.map, unchanged).
+  const iosCommonCategories = visibleCategories.filter((c) => IOS_COMMON_CATEGORY_IDS.includes(c.id));
+  const iosAdvancedCategories = visibleCategories.filter((c) => IOS_ADVANCED_CATEGORY_IDS.includes(c.id));
+  // Part B: detail view's own header label — desktop/web never read this.
+  const activeCategoryLabel = SETTINGS_CATEGORIES.find((c) => c.id === activeCategory)?.label ?? "";
+  // Part B #4: drives the iOS sticky save bar's visibility only —
+  // desktop/web keep today's always-visible footer, unaffected by this.
+  const draftDirty = JSON.stringify(draft) !== JSON.stringify(savedSnapshot);
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      // S13 iOS mobile-UX round (Part B #1): iOS replaces the floating-
+      // dialog-over-backdrop shell with a full-screen page — fixed
+      // inset-0 either way, but no centering/dimming, and its own
+      // safe-area-aware top padding. onMouseDown click-outside-to-close
+      // is a desktop/web-only affordance (there is no visible backdrop
+      // on iOS to click outside of).
+      className={
+        IS_IOS
+          ? "fixed inset-0 z-50 flex flex-col bg-ink pt-[env(safe-area-inset-top)]"
+          : "fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      }
       // Click-outside-to-close (E2E feedback 2026-07-11): mousedown
       // (not click) + target===currentTarget, so a drag that starts
       // inside the panel and ends on the backdrop (text selection,
@@ -2561,36 +2646,130 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // 取消 uses) — no confirmation, matches that button's behavior
       // exactly — wrapped (v0.5.1) to also revert a ThemeEditor preview
       // in flight (see that handler's own doc comment).
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) handleDialogClose();
-      }}
+      onMouseDown={
+        IS_IOS
+          ? undefined
+          : (e) => {
+              if (e.target === e.currentTarget) handleDialogClose();
+            }
+      }
     >
-      <div className="flex max-h-[85vh] w-[700px] max-w-[92vw] flex-col rounded-none border border-edge2 bg-panel glassable-panel">
-        <div className="flex shrink-0 items-center justify-between border-b border-edge p-5">
-          <div className="text-lg font-semibold text-fg">设置</div>
-          {/* 简单/高级 segmented control (#62): applied + persisted
-             immediately via updateSettings, deliberately OUT of the
-             draft/保存 flow — this toggles what's currently RENDERED in
-             this already-open dialog, so it can't wait for 保存 the way
-             every other field here does; it behaves like a pure view
-             preference (same immediate-apply posture Header.tsx's own
-             direct updateSettings calls already use for engine). */}
-          <div className="flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
-            {UI_MODE_OPTIONS.map((opt) => (
+      <div
+        className={
+          IS_IOS
+            ? "flex min-h-0 w-full flex-1 flex-col"
+            : "flex max-h-[85vh] w-[700px] max-w-[92vw] flex-col rounded-none border border-edge2 bg-panel glassable-panel"
+        }
+      >
+        {IS_IOS ? (
+          activeCategory === null ? (
+            // ROOT LIST header (Part B #2): title top-left + close ✕
+            // top-right — ✕ is the SAME discard-draft close path the
+            // desktop/web footer's own 取消 button below uses (no
+            // confirmation), matching that button's existing behavior.
+            <div className="flex shrink-0 items-center justify-between border-b border-edge p-4">
+              <div className="text-lg font-semibold text-fg">设置</div>
               <button
-                key={opt.value}
                 type="button"
-                onClick={() => updateSettings({ uiMode: opt.value })}
-                className={`px-2.5 py-1 text-xs transition-colors ${
-                  level === opt.value ? "bg-panel3 text-fg" : "text-mut hover:text-fg"
-                }`}
+                onClick={handleDialogClose}
+                aria-label="关闭"
+                className="btn-tactile flex h-10 w-10 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
               >
-                {opt.label}
+                <X size={18} weight="regular" />
               </button>
-            ))}
+            </div>
+          ) : (
+            // DETAIL header (Part B #2): ‹ 设置 back button navigates to
+            // the root list (activeCategory=null) — a pure navigation
+            // action, never a save/discard (mirrors the desktop nav
+            // rail's own "switching categories never loses a draft
+            // edit" contract) — plus the active category's own label.
+            <div className="flex shrink-0 items-center gap-1 border-b border-edge px-2 py-2">
+              <button
+                type="button"
+                onClick={() => setActiveCategory(null)}
+                className="btn-tactile flex items-center gap-0.5 px-2 py-2 text-sm text-fg hover:bg-panel3"
+              >
+                <span aria-hidden>‹</span>设置
+              </button>
+              <div className="truncate px-2 text-sm font-semibold text-fg">{activeCategoryLabel}</div>
+            </div>
+          )
+        ) : (
+          <div className="flex shrink-0 items-center justify-between border-b border-edge p-5">
+            <div className="text-lg font-semibold text-fg">设置</div>
+            {/* 简单/高级 segmented control (#62): applied + persisted
+               immediately via updateSettings, deliberately OUT of the
+               draft/保存 flow — this toggles what's currently RENDERED in
+               this already-open dialog, so it can't wait for 保存 the way
+               every other field here does; it behaves like a pure view
+               preference (same immediate-apply posture Header.tsx's own
+               direct updateSettings calls already use for engine). */}
+            <div className="flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
+              {UI_MODE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => updateSettings({ uiMode: opt.value })}
+                  className={`px-2.5 py-1 text-xs transition-colors ${
+                    level === opt.value ? "bg-panel3 text-fg" : "text-mut hover:text-fg"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
+        {/* S13 iOS mobile-UX round (Part B #2): iOS's ROOT LIST replaces
+           the nav-rail + content-pane row entirely while
+           activeCategory===null — grouped 常用/高级 rows instead of the
+           desktop nav rail's flat strip. Detail view (activeCategory
+           set) falls through to the SAME nav-rail+content-pane row
+           desktop/web always used (with the nav itself hidden on iOS,
+           see !IS_IOS below) — the huge per-category panel sequence
+           inside is completely unchanged either way (Part B #5). */}
+        {IS_IOS && activeCategory === null ? (
+          <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto max-w-xl pb-4">
+              <div className="px-4 pb-1 pt-4 text-xs uppercase tracking-wide text-mut">常用</div>
+              <div className="border-t border-edge" aria-hidden />
+              {iosCommonCategories.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setActiveCategory(c.id)}
+                  className="btn-tactile flex min-h-[52px] w-full items-center justify-between gap-3 border-b border-edge px-4 text-left font-mono text-sm text-fg hover:bg-panel3"
+                >
+                  <span>{c.label.replace("（高级）", "")}</span>
+                  <span className="text-mut2" aria-hidden>
+                    ›
+                  </span>
+                </button>
+              ))}
+              {iosAdvancedCategories.length > 0 && (
+                <>
+                  <div className="px-4 pb-1 pt-4 text-xs uppercase tracking-wide text-mut">高级</div>
+                  <div className="border-t border-edge" aria-hidden />
+                  {iosAdvancedCategories.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => setActiveCategory(c.id)}
+                      className="btn-tactile flex min-h-[52px] w-full items-center justify-between gap-3 border-b border-edge px-4 text-left text-sm text-fg hover:bg-panel3"
+                    >
+                      <span>{c.label}</span>
+                      <span className="text-mut2" aria-hidden>
+                        ›
+                      </span>
+                    </button>
+                  ))}
+                </>
+              )}
+            </div>
+          </div>
+        ) : (
         <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
           {/* Nav rail (owner ask 2026-07-11: "side navbar for each
              category") — one entry per category, each mapping to the
@@ -2601,7 +2780,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              horizontal scrollable strip above the content pane; sm: and
              up: a fixed-width vertical rail to its left. The content
              pane below is the ONLY scrolling region either way — 保存/
-             取消 in the footer stay pinned outside of it. */}
+             取消 in the footer stay pinned outside of it. S13: hidden on
+             iOS entirely — Part B #2's own detail-header back button is
+             the iOS equivalent of this rail's own tab-switching. */}
+          {!IS_IOS && (
           <nav
             aria-label="设置分类"
             className="flex shrink-0 flex-row gap-0.5 overflow-x-auto border-b border-edge p-2 sm:w-[168px] sm:flex-col sm:overflow-x-visible sm:border-b-0 sm:border-r"
@@ -2625,9 +2807,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               );
             })}
           </nav>
+          )}
 
           <div className="scroll-thin min-h-0 flex-1 overflow-y-auto p-5">
-        <div className="space-y-6">
+        <div className={IS_IOS ? "mx-auto max-w-xl space-y-6" : "space-y-6"}>
           {activeCategory === "engine" && (
           <>
           {/* 转录引擎 — simple */}
@@ -3158,6 +3341,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
+            {/* S13 iOS mobile-UX round (Part A #2): device-picker only
+               ever affects the local Whisper sidecar capture path (hint
+               below says so verbatim) — there is no sidecar on iOS v1
+               (osspeech captures straight off the OS), so this whole
+               row is dead UI there. */}
+            {!IS_IOS && (
             <div>
               <label className="text-xs text-mut">麦克风</label>
               <select
@@ -3174,6 +3363,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </select>
               <div className="mt-1 text-xs text-mut2">仅本地 Whisper 生效</div>
             </div>
+            )}
 
             <div>
               <label className="text-xs text-mut">识别语言</label>
@@ -3344,6 +3534,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
+            {/* S13 iOS mobile-UX round (Part A #2): whisper_server.py's
+               own ws:// address — meaningless without a local sidecar,
+               which doesn't exist on iOS (no Python sidecar there). */}
+            {!IS_IOS && (
             <div>
               <div className="flex items-center gap-2">
                 <label className="text-xs text-mut">Whisper 地址</label>
@@ -3358,6 +3552,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
+            )}
 
             {/* 实时转录预览 (STT protocol v2): app-controlled per-session
                override of the sidecar's --partials CLI default — see
@@ -3365,7 +3560,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                _partials_enabled. Same row pattern as 实时说话人分离
                below, but unconditionally enabled (no engine/token gate)
                — mirrors 麦克风/识别语言's own "always shown, hint
-               explains scope" posture in this same section. */}
+               explains scope" posture in this same section.
+               S13 iOS mobile-UX round (Part A #2): own copy says "仅本地
+               Whisper 引擎生效" — genuinely inert on iOS's osspeech-only
+               engine, so hidden there like the two rows just above. */}
+            {!IS_IOS && (
             <label className="flex items-center justify-between gap-3 border-t border-edge pt-3 py-1">
               <div>
                 <div className="text-sm text-fg">实时转录预览</div>
@@ -3375,6 +3574,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
               <ToggleSwitch checked={draft.partials} onChange={(checked) => patch({ partials: checked })} />
             </label>
+            )}
 
             {/* 设备端识别 (docs/research/stt-live-engines-2026-07.md
                item #1): Chrome 139+ processLocally — recognition runs
@@ -3715,13 +3915,21 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   // Keychain does not make the key unreadable to this
                   // app itself (it's how the app reads it back), only to
                   // OTHER apps/processes without permission, so this
-                  // deliberately does NOT say "加密无法读取". Web/iOS keep
+                  // deliberately does NOT say "加密无法读取". Web keeps
                   // the byte-identical prior copy — the key still lives
-                  // in browser storage there, nothing changed for them.
+                  // in browser storage there, nothing changed for it.
+                  // S13 iOS mobile-UX round (Part A #4): iOS gets its own
+                  // hint instead — onConnectOpenRouter is omitted below
+                  // (no OAuth loopback possible in a WKWebView, see that
+                  // prop's own doc comment for why), so this is the ONE
+                  // caller-owned slot under the Key field where the
+                  // paste-first replacement instruction can go.
                   apiKeyHint={
                     IS_DESKTOP
                       ? "Key 存入 macOS 系统钥匙串，不再明文保存在应用存储中；其他 App 未经许可无法读取"
-                      : "仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                      : IS_IOS
+                        ? "在电脑浏览器完成 OpenRouter 授权后，把 API Key 粘贴到这里；仅存本机，不上传"
+                        : "仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
                   }
                   // BYOK preview sprint (2026-07-21): the chip used to be
                   // suppressed wholesale under PREVIEW_TIER (a key field
@@ -3763,7 +3971,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     ) : undefined
                   }
                   presets={PROVIDER_PRESETS}
-                  onConnectOpenRouter={() => void handleConnectOpenRouter()}
+                  // S13 iOS mobile-UX round (Part A #4): the web-redirect
+                  // OAuth flow (handleConnectOpenRouter's own non-desktop
+                  // branch) navigates the WHOLE WKWebView to
+                  // openrouter.ai, stranding the user on the hosted web
+                  // app — desktop's native loopback is also unreachable
+                  // (the Rust oauth module is #[cfg(desktop)]-only).
+                  // Omitting this prop entirely (rather than passing a
+                  // no-op) hides both the button AND its explainer line —
+                  // CredentialFields' own `{onConnectOpenRouter && (...)}"
+                  // gate already does that with zero changes there; the
+                  // apiKeyHint above carries the paste-first instruction
+                  // instead.
+                  onConnectOpenRouter={IS_IOS ? undefined : () => void handleConnectOpenRouter()}
                   connectingOpenRouter={connectingOpenRouter}
                   connectDisabledHint={proxyDraftDirty ? proxyDraftDirtyHint : undefined}
                   models={[
@@ -4685,6 +4905,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           >
             <SectionHeading>数据与联动</SectionHeading>
 
+            {/* S13 iOS mobile-UX round (Part A #5): 选择导出文件夹 rides
+               window.showDirectoryPicker — the File System Access API,
+               which WebKit has never implemented on ANY platform
+               (verified against caniuse: Safari desktop AND iOS Safari
+               both read "not supported", every version) — not a
+               Tauri-plugin gap, a WKWebView/WebKit gap, so chooseExportFolder
+               (lib/history/autoExport.ts) can never actually resolve a
+               folder there; the 自动导出 toggle alone is then a no-op
+               (exportSessionToFolder silently skips with no folder
+               configured). Whole block hidden rather than left as a
+               dead toggle + a button that can never succeed. */}
+            {!IS_IOS && (
+            <>
             <label className="flex items-center justify-between gap-3 py-1">
               <span className="text-sm text-fg">自动导出</span>
               <ToggleSwitch checked={draft.autoExport} onChange={(checked) => patch({ autoExport: checked })} />
@@ -4717,6 +4950,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 仓库 / 任意目录
               </div>
             </div>
+            </>
+            )}
 
             <div>
               <label className="text-xs text-mut">Webhook URL</label>
@@ -4968,10 +5203,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             {/* S14: understated cross-platform availability note — no
                button, no emphasis. This dialog has no dedicated 关于/
                版本 area today, so it sits beside 诊断信息 (the closest
-               existing "about this build" cluster). */}
+               existing "about this build" cluster). S13 iOS mobile-UX
+               round (Part A #3): aimed at web/desktop users who don't
+               yet have the iOS app — noise inside the iOS app itself. */}
+            {!IS_IOS && (
             <div className="border-t border-edge pt-3 text-xs leading-[1.7] text-mut2">
               iOS 测试版已上线 TestFlight（受邀测试，联系作者获取邀请）；手机浏览器也可直接使用网页版。
             </div>
+            )}
           </section>
           )}
 
@@ -5468,28 +5707,55 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         </div>
           </div>
         </div>
+        )}
 
         {/* Sticky footer (owner ask 2026-07-11: "freeze 保存/取消 so the
            user can click anytime") — a normal flex-col sibling OUTSIDE
            the scrolling content pane above, so it's always visible
            regardless of scroll position or which category is active.
-           Exact same handlers/semantics as before. */}
-        <div className="flex shrink-0 justify-end gap-2 border-t border-edge p-4">
+           Exact same handlers/semantics as before.
+           S13 iOS mobile-UX round (Part B #4): on iOS this bar is
+           conditional on draftDirty instead of always-rendered — shows
+           on BOTH the root list and the detail view whenever there's an
+           actual unsaved edit (root's own ✕ / detail's own ‹ 设置 back
+           button above are the "nothing to save" affordances the rest
+           of the time) — desktop/web keep the unconditional bar. Same
+           handleDialogClose/handleSave handlers either way (semantics
+           unchanged); only the wrapper/button classNames differ
+           (full-width flex-1 buttons + safe-area-inset-bottom padding
+           on iOS vs the existing right-aligned/auto-width pair). */}
+        {(!IS_IOS || draftDirty) && (
+        <div
+          className={
+            IS_IOS
+              ? "flex shrink-0 gap-2 border-t border-edge p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
+              : "flex shrink-0 justify-end gap-2 border-t border-edge p-4"
+          }
+        >
           <button
             type="button"
             onClick={handleDialogClose}
-            className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+            className={
+              IS_IOS
+                ? "btn-tactile flex-1 border border-edge px-4 py-2.5 text-sm text-mut hover:bg-panel3 hover:text-fg"
+                : "btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+            }
           >
             取消
           </button>
           <button
             type="button"
             onClick={handleSave}
-            className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
+            className={
+              IS_IOS
+                ? "btn-terminal flex-1 rounded-none bg-act px-4 py-2.5 font-mono text-sm font-semibold text-ink hover:bg-act/85"
+                : "btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
+            }
           >
             保存
           </button>
         </div>
+        )}
       </div>
     </div>
   );

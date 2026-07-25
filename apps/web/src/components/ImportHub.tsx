@@ -40,6 +40,7 @@ import {
 } from "@/lib/ingest/parseTranscript";
 import { runTracked, runTrackedAsync, type TaskKind } from "@/lib/tasks/registry";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS } from "@/lib/platform/ios";
 import { decideVideoRouting, resolveImportPath, type ImportPath } from "@/lib/tasks/videoRouting";
 
 const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 Whisper";
@@ -94,11 +95,18 @@ export interface ImportHubProps {
 // Exported for ModeSelector.tsx/page.tsx (the initialTab prop above).
 export type HubTab = "file" | "text" | "url";
 
-const TABS: { key: HubTab; label: string; icon: typeof FileAudio }[] = [
+const ALL_TABS: { key: HubTab; label: string; icon: typeof FileAudio }[] = [
   { key: "file", label: "文件", icon: FileAudio },
   { key: "text", label: "文稿", icon: FileText },
   { key: "url", label: "链接", icon: LinkSimple },
 ];
+
+// iOS v1: 链接 (yt-dlp via the sidecar) can never work at all — no
+// Python sidecar on iOS — so it's dropped from the tab list entirely
+// rather than rendered locked, mirroring ModeSelector.tsx's own
+// visibleModeTileKeys, which already drops the identical url mode tile
+// there ("no sidecar to reach for 链接").
+const TABS = IS_IOS ? ALL_TABS.filter((t) => t.key !== "url") : ALL_TABS;
 
 export default function ImportHub({ open, onClose, initialTab }: ImportHubProps) {
   const settings = useApp((s) => s.settings);
@@ -315,6 +323,323 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
     onClose();
   };
 
+  // Shared between both presentations below (centered modal on web/
+  // desktop, full-screen page on iOS — S15 mobile-UX sprint) so the
+  // three tab bodies exist exactly once; only the surrounding chrome
+  // (backdrop+centered panel vs. full-screen header/segmented tab bar)
+  // differs per platform.
+  const tabPanels = (
+    <>
+      {tab === "file" && (
+        <div className="space-y-4">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={FILE_ACCEPT}
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              handleFilesPicked(e.target.files);
+              e.target.value = "";
+            }}
+          />
+
+          {stagedFiles.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="btn-tactile flex w-full items-center justify-center gap-2 border border-dashed border-edge2 px-3 py-8 text-sm text-mut hover:bg-panel3 hover:text-fg"
+            >
+              <FileAudio size={20} weight="regular" />
+              选择音频或视频文件（支持多选）
+            </button>
+          ) : (
+            <>
+              <div className="space-y-1">
+                {stagedFiles.map((f, i) => (
+                  <div key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 text-xs text-mut">
+                    <span className="truncate">{f.name}</span>
+                    <span className="shrink-0 text-mut2">{isVideoFile(f) ? "视频" : "音频"}</span>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setStagedFiles([])}
+                  className="text-xs text-mut2 underline-offset-2 hover:text-mut hover:underline"
+                >
+                  重新选择
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setFilePath("browser")}
+                  className={`border p-3 text-left text-sm transition-colors ${
+                    effectiveFilePath === "browser"
+                      ? "border-act bg-panel3 text-fg"
+                      : "border-edge text-fg hover:bg-panel3"
+                  }`}
+                >
+                  {/* v0.4.4 field ruling (finding round 2, item 1): calling
+                     this path "浏览器" inside the DESKTOP app is a misframe —
+                     to a desktop user it's all just "the app", so the card
+                     reads 内置轻量转录 there; the web PWA keeps 浏览器转录,
+                     where the browser really is the runtime the user chose. */}
+                  <div className="font-medium">
+                    {IS_DESKTOP ? "内置轻量转录（不出本机）" : "浏览器转录（不出本机）"}
+                  </div>
+                  <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                    内置小型 Whisper 模型（base），质量低于本地大模型·文件不上传·音频与视频均支持（自动提取音轨）·首次需下载模型
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  disabled={!routing.sidecarAvailable}
+                  title={routing.sidecarLocked ? PREVIEW_SIDECAR_TITLE : undefined}
+                  onClick={() => setFilePath("sidecar")}
+                  className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    effectiveFilePath === "sidecar"
+                      ? "border-act bg-panel3 text-fg"
+                      : "border-edge text-fg hover:bg-panel3"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-medium">
+                    本地 Whisper（推荐）
+                    {routing.sidecarLocked && <PreviewLockedBadge />}
+                  </div>
+                  <div className="mt-0.5 text-xs leading-[1.7] text-mut">
+                    {/* iOS v1: there is no Python sidecar to reach AT ALL
+                       (not merely "currently unreachable") — telling the
+                       user to "start local Whisper" implies an action
+                       they could actually take, which doesn't exist on
+                       iOS. This card is always disabled here on iOS
+                       (routing.sidecarAvailable can never be true —
+                       decideVideoRouting/fetchSidecarHealth always
+                       resolves null, nothing to reach). */}
+                    {IS_IOS ? "此设备不支持" : "需启动本地 Whisper·音频与视频均支持"}
+                  </div>
+                  {routing.sidecarAvailable && diarizationHealth !== undefined && (
+                    <div className="mt-0.5 text-[10px] leading-[1.7]">
+                      {diarizationHealth?.diarization_ready ? (
+                        <span className="text-lab-cyan">说话人分离已就绪</span>
+                      ) : (
+                        <span className="text-mut2">说话人分离未启用 · 在设置中配置 HF Token</span>
+                      )}
+                    </div>
+                  )}
+                </button>
+              </div>
+
+              <div className="flex justify-end gap-2 border-t border-edge pt-4">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmFile}
+                  className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
+                >
+                  开始导入
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {tab === "text" && (
+        <div className="space-y-4">
+          <div>
+            <label className="text-xs text-mut">粘贴文稿内容</label>
+            <textarea
+              value={raw}
+              onChange={(e) => {
+                setRaw(e.target.value);
+                setFilename(undefined);
+              }}
+              rows={10}
+              placeholder={
+                "粘贴会议文字记录，支持纯文本、SRT、VTT（Zoom/Otter 导出）格式\n" +
+                "可选说话人前缀，如 Alice: 今天先同步一下进度"
+              }
+              className="mt-1 w-full resize-y border border-edge bg-panel2 px-3 py-2 font-mono text-sm text-fg placeholder:text-mut2 focus:outline-none"
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <input
+              ref={textFileInputRef}
+              type="file"
+              accept=".txt,.srt,.vtt,text/plain"
+              className="hidden"
+              onChange={(e) => {
+                void handleTextFilePicked(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => textFileInputRef.current?.click()}
+              className="btn-tactile flex items-center gap-2 border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+            >
+              <FileText size={16} weight="regular" />
+              选择文件
+            </button>
+            {filename && <span className="truncate text-xs text-mut">{filename}</span>}
+          </div>
+
+          {raw.trim().length > 0 && (
+            <div className="text-xs leading-[1.7]">
+              {parseError ? (
+                <span className="text-warn-soft">{parseError}</span>
+              ) : parsed ? (
+                <>
+                  <span className="text-lab-cyan">
+                    格式 {FORMAT_LABEL[parsed.format]} · {parsed.segments.length} 段 ·{" "}
+                    {speakerCount(parsed)} 位说话人
+                  </span>
+                  {parsed.warnings.map((w, i) => (
+                    <div key={i} className="mt-1 text-warn-soft">
+                      {w}
+                    </div>
+                  ))}
+                </>
+              ) : (
+                <span className="text-mut2">解析中…</span>
+              )}
+            </div>
+          )}
+
+          <label className="flex items-center justify-between gap-3 py-1">
+            <div>
+              <div className="text-sm text-fg">同时生成中文对照</div>
+              <div className="text-xs text-mut2">逐句翻译，导入后可在转录面板查看</div>
+            </div>
+            <input
+              type="checkbox"
+              checked={translate}
+              onChange={(e) => setTranslate(e.target.checked)}
+              className="h-4 w-4 accent-act"
+            />
+          </label>
+
+          <div className="flex justify-end gap-2 border-t border-edge pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={!canConfirmText}
+              onClick={handleConfirmText}
+              className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              导入并分析
+            </button>
+          </div>
+        </div>
+      )}
+
+      {tab === "url" && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-2 text-sm text-fg">
+            <LinkSimple size={16} weight="regular" />
+            从视频链接导入
+            {urlLocked && PREVIEW_TIER && <PreviewLockedBadge />}
+          </div>
+          <div className="text-xs leading-[1.7] text-mut">
+            {PREVIEW_TIER
+              ? "需本地 Whisper（体验版不提供）"
+              : sidecarReachable
+                ? "通过本地 Whisper 下载并转录，仅限本地版·请确保你有权处理该内容"
+                : "需本地 Whisper，未检测到运行中的本地服务"}
+          </div>
+          <input
+            type="text"
+            disabled={urlLocked}
+            value={urlValue}
+            onChange={(e) => setUrlValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleConfirmUrl();
+            }}
+            placeholder="https://..."
+            className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          />
+          <div className="flex justify-end gap-2 border-t border-edge pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={urlLocked || !urlValue.trim()}
+              onClick={handleConfirmUrl}
+              className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              开始导入
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  // iOS (S15 mobile-UX sprint, Miana: "交互还是太网页化了...claude手机版
+  // 如何交互"): a full-screen page instead of a floating centered modal
+  // — native-mobile idiom. Header row (title + ✕, same onClose handler)
+  // + a segmented 文件/文稿 control (TABS already dropped 链接 above)
+  // replace the modal's title row + inline tab strip; tabPanels (above)
+  // is unchanged either way.
+  if (IS_IOS) {
+    return (
+      <div
+        data-testid="import-hub-fullscreen"
+        className="fixed inset-0 z-50 flex flex-col bg-panel pt-[env(safe-area-inset-top)]"
+      >
+        <div className="flex items-center justify-between gap-2 border-b border-edge px-4 py-3">
+          <span className="text-lg font-semibold text-fg">导入</span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="关闭"
+            className="btn-tactile -my-1 flex h-11 w-11 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg"
+          >
+            <X size={18} weight="regular" />
+          </button>
+        </div>
+
+        <div className="flex border-b border-edge">
+          {TABS.map(({ key, label, icon: Icon }, i) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex flex-1 items-center justify-center gap-1.5 py-3 font-mono text-xs uppercase tracking-wide transition-colors ${
+                i > 0 ? "border-l border-edge" : ""
+              } ${tab === key ? "bg-act text-ink" : "text-mut hover:text-fg"}`}
+            >
+              <Icon size={14} weight="regular" />
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="scroll-thin flex-1 overflow-y-auto p-5">{tabPanels}</div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
@@ -367,260 +692,7 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
           ))}
         </div>
 
-        {tab === "file" && (
-          <div className="space-y-4">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept={FILE_ACCEPT}
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                handleFilesPicked(e.target.files);
-                e.target.value = "";
-              }}
-            />
-
-            {stagedFiles.length === 0 ? (
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="btn-tactile flex w-full items-center justify-center gap-2 border border-dashed border-edge2 px-3 py-8 text-sm text-mut hover:bg-panel3 hover:text-fg"
-              >
-                <FileAudio size={20} weight="regular" />
-                选择音频或视频文件（支持多选）
-              </button>
-            ) : (
-              <>
-                <div className="space-y-1">
-                  {stagedFiles.map((f, i) => (
-                    <div key={`${f.name}-${i}`} className="flex items-center justify-between gap-2 text-xs text-mut">
-                      <span className="truncate">{f.name}</span>
-                      <span className="shrink-0 text-mut2">{isVideoFile(f) ? "视频" : "音频"}</span>
-                    </div>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => setStagedFiles([])}
-                    className="text-xs text-mut2 underline-offset-2 hover:text-mut hover:underline"
-                  >
-                    重新选择
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setFilePath("browser")}
-                    className={`border p-3 text-left text-sm transition-colors ${
-                      effectiveFilePath === "browser"
-                        ? "border-act bg-panel3 text-fg"
-                        : "border-edge text-fg hover:bg-panel3"
-                    }`}
-                  >
-                    {/* v0.4.4 field ruling (finding round 2, item 1): calling
-                       this path "浏览器" inside the DESKTOP app is a misframe —
-                       to a desktop user it's all just "the app", so the card
-                       reads 内置轻量转录 there; the web PWA keeps 浏览器转录,
-                       where the browser really is the runtime the user chose. */}
-                    <div className="font-medium">
-                      {IS_DESKTOP ? "内置轻量转录（不出本机）" : "浏览器转录（不出本机）"}
-                    </div>
-                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      内置小型 Whisper 模型（base），质量低于本地大模型·文件不上传·音频与视频均支持（自动提取音轨）·首次需下载模型
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={!routing.sidecarAvailable}
-                    title={routing.sidecarLocked ? PREVIEW_SIDECAR_TITLE : undefined}
-                    onClick={() => setFilePath("sidecar")}
-                    className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                      effectiveFilePath === "sidecar"
-                        ? "border-act bg-panel3 text-fg"
-                        : "border-edge text-fg hover:bg-panel3"
-                    }`}
-                  >
-                    <div className="flex items-center gap-1.5 font-medium">
-                      本地 Whisper（推荐）
-                      {routing.sidecarLocked && <PreviewLockedBadge />}
-                    </div>
-                    <div className="mt-0.5 text-xs leading-[1.7] text-mut">
-                      需启动本地 Whisper·音频与视频均支持
-                    </div>
-                    {routing.sidecarAvailable && diarizationHealth !== undefined && (
-                      <div className="mt-0.5 text-[10px] leading-[1.7]">
-                        {diarizationHealth?.diarization_ready ? (
-                          <span className="text-lab-cyan">说话人分离已就绪</span>
-                        ) : (
-                          <span className="text-mut2">说话人分离未启用 · 在设置中配置 HF Token</span>
-                        )}
-                      </div>
-                    )}
-                  </button>
-                </div>
-
-                <div className="flex justify-end gap-2 border-t border-edge pt-4">
-                  <button
-                    type="button"
-                    onClick={onClose}
-                    className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
-                  >
-                    取消
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleConfirmFile}
-                    className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85"
-                  >
-                    开始导入
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {tab === "text" && (
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs text-mut">粘贴文稿内容</label>
-              <textarea
-                value={raw}
-                onChange={(e) => {
-                  setRaw(e.target.value);
-                  setFilename(undefined);
-                }}
-                rows={10}
-                placeholder={
-                  "粘贴会议文字记录，支持纯文本、SRT、VTT（Zoom/Otter 导出）格式\n" +
-                  "可选说话人前缀，如 Alice: 今天先同步一下进度"
-                }
-                className="mt-1 w-full resize-y border border-edge bg-panel2 px-3 py-2 font-mono text-sm text-fg placeholder:text-mut2 focus:outline-none"
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                ref={textFileInputRef}
-                type="file"
-                accept=".txt,.srt,.vtt,text/plain"
-                className="hidden"
-                onChange={(e) => {
-                  void handleTextFilePicked(e.target.files);
-                  e.target.value = "";
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => textFileInputRef.current?.click()}
-                className="btn-tactile flex items-center gap-2 border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
-              >
-                <FileText size={16} weight="regular" />
-                选择文件
-              </button>
-              {filename && <span className="truncate text-xs text-mut">{filename}</span>}
-            </div>
-
-            {raw.trim().length > 0 && (
-              <div className="text-xs leading-[1.7]">
-                {parseError ? (
-                  <span className="text-warn-soft">{parseError}</span>
-                ) : parsed ? (
-                  <>
-                    <span className="text-lab-cyan">
-                      格式 {FORMAT_LABEL[parsed.format]} · {parsed.segments.length} 段 ·{" "}
-                      {speakerCount(parsed)} 位说话人
-                    </span>
-                    {parsed.warnings.map((w, i) => (
-                      <div key={i} className="mt-1 text-warn-soft">
-                        {w}
-                      </div>
-                    ))}
-                  </>
-                ) : (
-                  <span className="text-mut2">解析中…</span>
-                )}
-              </div>
-            )}
-
-            <label className="flex items-center justify-between gap-3 py-1">
-              <div>
-                <div className="text-sm text-fg">同时生成中文对照</div>
-                <div className="text-xs text-mut2">逐句翻译，导入后可在转录面板查看</div>
-              </div>
-              <input
-                type="checkbox"
-                checked={translate}
-                onChange={(e) => setTranslate(e.target.checked)}
-                className="h-4 w-4 accent-act"
-              />
-            </label>
-
-            <div className="flex justify-end gap-2 border-t border-edge pt-4">
-              <button
-                type="button"
-                onClick={onClose}
-                className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                disabled={!canConfirmText}
-                onClick={handleConfirmText}
-                className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                导入并分析
-              </button>
-            </div>
-          </div>
-        )}
-
-        {tab === "url" && (
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 text-sm text-fg">
-              <LinkSimple size={16} weight="regular" />
-              从视频链接导入
-              {urlLocked && PREVIEW_TIER && <PreviewLockedBadge />}
-            </div>
-            <div className="text-xs leading-[1.7] text-mut">
-              {PREVIEW_TIER
-                ? "需本地 Whisper（体验版不提供）"
-                : sidecarReachable
-                  ? "通过本地 Whisper 下载并转录，仅限本地版·请确保你有权处理该内容"
-                  : "需本地 Whisper，未检测到运行中的本地服务"}
-            </div>
-            <input
-              type="text"
-              disabled={urlLocked}
-              value={urlValue}
-              onChange={(e) => setUrlValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleConfirmUrl();
-              }}
-              placeholder="https://..."
-              className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-            />
-            <div className="flex justify-end gap-2 border-t border-edge pt-4">
-              <button
-                type="button"
-                onClick={onClose}
-                className="btn-tactile px-4 py-2 text-sm text-mut hover:bg-panel3 hover:text-fg"
-              >
-                取消
-              </button>
-              <button
-                type="button"
-                disabled={urlLocked || !urlValue.trim()}
-                onClick={handleConfirmUrl}
-                className="btn-terminal rounded-none bg-act px-4 py-2 font-mono text-sm font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                开始导入
-              </button>
-            </div>
-          </div>
-        )}
+        {tabPanels}
       </div>
     </div>
   );

@@ -45,6 +45,7 @@ import { selectRunningCount, useTasks } from "@/lib/tasks/registry";
 import { useUpdateCheck } from "@/lib/desktop/updateCheck";
 import { useCaptionPip } from "@/lib/captionWindow";
 import { copyDiagnosticReport } from "@/lib/diag/report";
+import BottomSheet from "@/components/BottomSheet";
 
 export interface HeaderProps {
   onStart: () => void;
@@ -496,6 +497,16 @@ function HamburgerMenu({
   const itemCls =
     "flex items-center gap-2.5 px-3 py-2 text-left font-mono text-xs text-fg hover:bg-panel3 whitespace-nowrap";
 
+  // iOS row styling (S15 mobile-UX sprint): same handlers/labels/order
+  // as itemCls above, just sized for a tap target inside BottomSheet
+  // instead of a dense desktop dropdown row — ~52px (h-[52px]) with
+  // .btn-tactile's existing press feedback (reused, not reinvented —
+  // same idiom as every other tappable control in this app). Hairline
+  // separators come from the wrapping list's own divide-y, not a
+  // per-row border, so every row (including 新会议) gets one uniformly.
+  const iosItemCls =
+    "btn-tactile flex h-[52px] items-center gap-3 px-4 text-left font-mono text-sm text-fg hover:bg-panel3 whitespace-nowrap";
+
   return (
     <div ref={rootRef} className="relative">
       <button
@@ -510,7 +521,7 @@ function HamburgerMenu({
         <List size={18} weight="regular" />
       </button>
 
-      {open && (
+      {!IS_IOS && open && (
         <div
           role="menu"
           className="absolute right-0 top-[calc(100%+4px)] z-30 flex w-56 flex-col border border-edge bg-panel2 glassable py-1 shadow-lg"
@@ -639,6 +650,113 @@ function HamburgerMenu({
             </button>
           )}
         </div>
+      )}
+
+      {/* iOS (S15 mobile-UX sprint, Miana: "交互还是太网页化了...考虑诸如
+          claude手机版如何交互"): the SAME six items — order/handlers/
+          labels byte-identical to the dropdown above — inside
+          BottomSheet.tsx instead of a floating absolute dropdown
+          (native-mobile idiom, not a web popover). 悬浮字幕 is never a
+          seventh item here: showCaptionItem (above) is already
+          unconditionally false whenever IS_IOS, so it's not duplicated
+          into this branch at all. */}
+      {IS_IOS && (
+        <BottomSheet open={open} onClose={() => setOpen(false)}>
+          <div data-testid="header-menu-sheet" role="menu" className="divide-y divide-edge">
+            {!meetingActive && (
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="btn-demo"
+                onClick={() => {
+                  setOpen(false);
+                  onDemo();
+                }}
+                className={iosItemCls}
+              >
+                <Play size={18} weight="regular" />
+                演示
+              </button>
+            )}
+            {meetingActive ? (
+              <div
+                role="menuitem"
+                aria-disabled="true"
+                data-testid="btn-review"
+                title="会议进行中，结束后可进入学习中心"
+                className={`${iosItemCls} cursor-not-allowed opacity-50`}
+              >
+                <GraduationCap size={18} weight="regular" />
+                学习中心
+              </div>
+            ) : (
+              <Link
+                href="/review"
+                role="menuitem"
+                data-testid="btn-review"
+                onClick={() => setOpen(false)}
+                className={iosItemCls}
+              >
+                <GraduationCap size={18} weight="regular" />
+                学习中心
+              </Link>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-settings"
+              onClick={() => {
+                setOpen(false);
+                onOpenSettings();
+              }}
+              className={iosItemCls}
+            >
+              <GearSix size={18} weight="regular" />
+              设置
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-help"
+              onClick={() => {
+                setOpen(false);
+                onOpenHelp();
+              }}
+              className={iosItemCls}
+            >
+              <Question size={18} weight="regular" />
+              帮助
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              data-testid="btn-copy-diagnostics"
+              onClick={() => {
+                setOpen(false);
+                void handleCopyDiagnostics();
+              }}
+              className={iosItemCls}
+            >
+              <ClipboardText size={18} weight="regular" />
+              复制诊断信息
+            </button>
+
+            {activeSessionId && status === "stopped" && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setOpen(false);
+                  newMeeting();
+                }}
+                className={iosItemCls}
+              >
+                <span className="text-lab-orange">●</span>
+                新会议
+              </button>
+            )}
+          </div>
+        </BottomSheet>
       )}
 
       {/* Rendered outside the `open` dropdown block so the PiP window
