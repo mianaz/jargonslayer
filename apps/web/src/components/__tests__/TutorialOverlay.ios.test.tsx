@@ -45,7 +45,10 @@ describe("TutorialOverlay — iOS engine picker (S13 §6 Sol F5)", () => {
     resetStore();
   });
 
-  it("step 2's engine grid offers osspeech ONLY — no webspeech/whisper/tabaudio/appaudio card", async () => {
+  // iOS-cloud round (Sol F2): the picker matches IOS_ENGINE_OPTIONS —
+  // osspeech first + the BYOK cloud trio; the no-capture-path engines
+  // stay absent.
+  it("step 2's engine grid offers osspeech + the cloud trio — no webspeech/whisper/tabaudio/appaudio card", async () => {
     await act(async () => {
       root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
     });
@@ -57,10 +60,36 @@ describe("TutorialOverlay — iOS engine picker (S13 §6 Sol F5)", () => {
 
     const cardLabels = Array.from(container!.querySelectorAll("button")).map((b) => b.textContent);
     expect(cardLabels.some((t) => t?.includes("系统识别"))).toBe(true);
+    expect(cardLabels.some((t) => t?.includes("Soniox 云端"))).toBe(true);
+    expect(cardLabels.some((t) => t?.includes("Deepgram 云端"))).toBe(true);
+    expect(cardLabels.some((t) => t?.includes("ElevenLabs 云端"))).toBe(true);
     expect(cardLabels.some((t) => t?.includes("浏览器识别"))).toBe(false);
     expect(cardLabels.some((t) => t?.includes("本地 Whisper"))).toBe(false);
     expect(cardLabels.some((t) => t?.includes("标签页音频"))).toBe(false);
     expect(cardLabels.some((t) => t?.includes("系统/App 音频"))).toBe(false);
+  });
+
+  // iOS-cloud round (Sol F2): a cloud pick from onboarding must land on
+  // mode:"mic" exactly like osspeech — the trio are mic engines
+  // (modeForPersistedEngine back-derivation, same write path).
+  it("selecting a cloud card writes engine AND mode:mic", async () => {
+    await act(async () => {
+      root!.render(<TutorialOverlay open={true} onClose={() => {}} />);
+    });
+    const nextButton = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === "下一步")!;
+    await act(async () => {
+      nextButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const sonioxCard = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes("Soniox 云端"),
+    )!;
+    await act(async () => {
+      sonioxCard.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.engine).toBe("soniox");
+    expect(useApp.getState().settings.mode).toBe("mic");
   });
 
   it("selecting the osspeech card updates settings.engine", async () => {

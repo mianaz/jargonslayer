@@ -80,6 +80,7 @@ const ENGINE_OVERRIDE_HINT = "引擎覆盖（模式自动选择的引擎可在�
 function EngineDropdown() {
   const engine = useApp((s) => s.settings.engine);
   const status = useApp((s) => s.status);
+  const sttEngineMode = useApp((s) => s.sttEngineMode);
   const updateSettings = useApp((s) => s.updateSettings);
   const disabled = isEngineControlBusy(status);
   const audiocapCaps = useAudiocapCaps();
@@ -91,36 +92,25 @@ function EngineDropdown() {
   const selectedOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
   const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps, osspeechCaps) : undefined;
 
-  // iOS (mobile-UX sprint): ENGINE_OPTIONS is a single entry there
-  // (osspeech, engineOptions.ts's IS_IOS branch) — a one-option native
-  // select renders a dead picker chevron, pure web-noise. Static chip
-  // instead; demo/import keep the same placeholder duty the select's
-  // own "" option carries below, and the gate title still surfaces the
-  // locked reason (e.g. sim/isAvailable-false).
-  if (IS_IOS) {
-    return (
-      <span
-        aria-label="转录引擎"
-        // #58 fix round FIX 10 (Opus LOW): the <select> this static chip
-        // replaced on iOS carried its own `disabled` styling for free —
-        // restore the same busy feedback (a meeting connecting/live/
-        // paused locks engine switching, isEngineControlBusy above) so
-        // the chip doesn't look interactive when it silently isn't.
-        aria-disabled={disabled || undefined}
-        data-testid="statusline-engine-static"
-        title={selectedGate?.title}
-        className={`flex h-full max-w-[6.5rem] shrink-0 items-center border-x border-edge bg-panel2 px-1.5 font-mono text-fg sm:max-w-[8.5rem] sm:px-2 ${
-          disabled ? "opacity-50" : ""
-        }`}
-      >
-        <span className="truncate">
-          {engine === "demo" || engine === "import"
-            ? ENGINE_SELECT_PLACEHOLDER
-            : (selectedOpt?.label ?? ENGINE_SELECT_PLACEHOLDER)}
-        </span>
-      </span>
-    );
-  }
+  // iOS-cloud round: the mobile-UX sprint's static chip is GONE — it
+  // existed only because a ONE-option native select renders a dead
+  // picker chevron (osspeech was iOS's sole engine then). With the BYOK
+  // cloud engines joining IOS_ENGINE_OPTIONS there's a real choice to
+  // make, and WKWebView presents <select> as the native iOS picker
+  // menu — exactly the non-webby affordance the sprint wanted. What iOS
+  // keeps instead: the select's TEXT carries the active engine's
+  // retention color (green=本地 / amber=云端, RETENTION_COPY) — the
+  // privacy sentence to the left is hidden below sm, so on a phone this
+  // color is the bar's only always-visible audio-path signal. While the
+  // select shows the 选择引擎 placeholder (demo/import — no live capture
+  // engine), it stays neutral text-fg (Sol F6): coloring a placeholder
+  // by the HIDDEN sentinel engine's retention class would assign privacy
+  // meaning to a control that names no engine at all.
+  const iosTextClass = IS_IOS
+    ? engine === "demo" || engine === "import"
+      ? "text-fg"
+      : RETENTION_COPY[resolveEngineRetentionClass(engine, sttEngineMode)].textClass
+    : "text-fg";
 
   return (
     <select
@@ -133,7 +123,7 @@ function EngineDropdown() {
         const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
         if (v) updateSettings({ engine: v });
       }}
-      className="h-full max-w-[6.5rem] shrink-0 border-x border-edge bg-panel2 px-1.5 font-mono text-fg disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[8.5rem] sm:px-2"
+      className={`h-full max-w-[6.5rem] shrink-0 border-x border-edge bg-panel2 px-1.5 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[8.5rem] sm:px-2 ${iosTextClass}`}
     >
       {(engine === "demo" || engine === "import") && (
         <option value="" disabled>
@@ -250,7 +240,12 @@ function AiStatusChip() {
           // are taller than the space above the bar. sm+ (tablet/
           // desktop, where this was never reported broken): reverts to
           // the exact original chip-anchored box, untouched.
-          className="scroll-thin fixed inset-x-2 bottom-8 z-30 max-h-[60vh] overflow-y-auto border border-edge bg-panel2 glassable p-3 shadow-lg sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+4px)] sm:left-0 sm:w-72 sm:max-h-none sm:overflow-visible"
+          // bottom offset rides the safe-area inset (iOS-cloud round,
+          // Sol F3): the bar sits 34pt higher on a full-bleed iOS
+          // webview (page.tsx's spacer), so a plain bottom-8 would
+          // cover its controls; env() is 0 elsewhere (identical to the
+          // old bottom-8).
+          className="scroll-thin fixed inset-x-2 bottom-[calc(2rem+env(safe-area-inset-bottom))] z-30 max-h-[60vh] overflow-y-auto border border-edge bg-panel2 glassable p-3 shadow-lg sm:absolute sm:inset-x-auto sm:bottom-[calc(100%+4px)] sm:left-0 sm:w-72 sm:max-h-none sm:overflow-visible"
         >
           <AiStatusPanel />
         </div>

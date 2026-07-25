@@ -379,7 +379,15 @@ function EnginePostureChip() {
   return (
     <span
       title={copy.hint}
-      className={`hidden items-center gap-1 border px-2 py-0.5 text-[10px] whitespace-nowrap sm:inline-flex ${copy.borderClass} ${copy.textClass}`}
+      // iOS-cloud fix round (Opus F2): on iOS this chip is ALWAYS
+      // visible — below sm the privacy sentence and this chip both used
+      // to hide, leaving the select's text COLOR as the only 本地/云端
+      // carrier on a phone (WCAG 1.4.1: color can't be the sole
+      // signal, and the engine name 云端 suffix truncates at
+      // max-w-[6.5rem]). The chip renders the retention LABEL from the
+      // same resolver the select's color uses, so the two can't
+      // disagree. Web/desktop keep the exact sm: behavior.
+      className={`${IS_IOS ? "inline-flex" : "hidden sm:inline-flex"} items-center gap-1 border px-2 py-0.5 text-[10px] whitespace-nowrap ${copy.borderClass} ${copy.textClass}`}
     >
       {copy.label}
     </span>
@@ -863,7 +871,19 @@ export default function Header({
        (pills + chip), "N cards" (StatusLine) — and made the frame feel
        heavy. The strip and its ⌘K placeholder chip are gone; the brand
        row below is now the whole header. docs/DESIGN.md updated. */}
-    <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel px-4">
+    {/* iOS-cloud round: layout.tsx's viewportFit:"cover" makes the
+       webview lay out under the system status bar (native full-bleed),
+       so on iOS this bar carries the top inset ITSELF — bg extends to
+       the physical top (the native tab-bar idiom, same trick as the
+       StatusLine spacer at the bottom) and the 56px content row starts
+       below the clock. Without this the ☰/监听 controls sit in the
+       status-bar's touch zone and taps never reach them (sim-caught:
+       the system owns touches there). */}
+    <header
+      className={`sticky top-0 z-20 flex shrink-0 items-center gap-3 border-b border-edge bg-panel px-4 ${
+        IS_IOS ? "h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]" : "h-14"
+      }`}
+    >
         <div className="flex items-center gap-2 whitespace-nowrap">
           {/* Scheme-aware brand mark (v0.2.4): transparent-background
               renditions per scheme — the old opaque icon-192 left a

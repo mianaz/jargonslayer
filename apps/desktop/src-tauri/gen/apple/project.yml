@@ -42,10 +42,16 @@ targets:
         LSRequiresIPhoneOS: true
         UILaunchStoryboardName: LaunchScreen
         UIRequiredDeviceCapabilities: [arm64, metal]
+        # iOS-cloud fix round (Opus F1, HIGH): iPhone is PORTRAIT-ONLY
+        # for now — the full-bleed shell (viewport-fit=cover + native
+        # .never) compensates top/bottom insets only; nothing in
+        # apps/web handles env(safe-area-inset-left/right), so in
+        # landscape the ☰ button (the ONLY route to 设置/帮助 on iOS)
+        # lands in the sensor-housing band. Re-adding landscape is a
+        # designed-feature decision (horizontal inset support across
+        # every fixed frame), not a one-liner — do both together.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
-          - UIInterfaceOrientationLandscapeLeft
-          - UIInterfaceOrientationLandscapeRight
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown

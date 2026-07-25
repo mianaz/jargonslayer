@@ -230,7 +230,49 @@ pub fn run() {
             osspeech_ios::preinstall_os_speech,
             devspike_ios::spike_flags,
             devspike_ios::spike_report,
-        ]);
+        ])
+        // iOS-cloud round (fixed 顶部/底部 shell) — the ONE native-side
+        // layout fix this round needs, and the root cause of "the whole
+        // UI slides": wry 0.55 disables scroll BOUNCE on the WKWebView's
+        // scrollView but leaves contentInsetAdjustmentBehavior at its
+        // .automatic default, which (a) shifts page content below the
+        // status bar natively while CSS env(safe-area-inset-*) reads 0
+        // (WebKit compensates via contentInset instead of exposing the
+        // insets), and (b) leaves a ~96pt native drag range (top+bottom
+        // insets) that lets the user slide the entire page even with
+        // bounces off — sim-measured via the DBG-SAI probe (sat:0 sab:0
+        // ih:874, content visually offset 62). .never hands full-bleed
+        // layout to the page: env() then reports the real insets
+        // (layout.tsx sets viewport-fit=cover) and apps/web's own
+        // safe-area CSS (Header/StatusLine spacer/overlays) takes over.
+        // UIScrollViewContentInsetAdjustmentNever = 2 (NSInteger).
+        //
+        // on_page_load, NOT .setup(): Tauri 2 runs .setup() BEFORE the
+        // config-declared windows are created, so get_webview_window
+        // ("main") is None there and the tweak silently no-ops
+        // (sim-caught: probe still 0/0 after a .setup() attempt).
+        // on_page_load hands us the live webview itself; the setter is
+        // idempotent, so re-firing on every navigation is harmless.
+        .on_page_load(|webview, _payload| {
+            #[cfg(target_os = "ios")]
+            {
+                // Err is LOGGED, not discarded (fix round, Opus F7): a
+                // silent dispatch failure reproduces the exact bug this
+                // hook removes (native 62pt shift + whole-page drag)
+                // with zero diagnostic — and the .setup() attempt this
+                // replaced failed silently in exactly that way. The web
+                // layer's own --sai-top probe (bootstrap.ts) is the
+                // matching in-app health check.
+                if let Err(e) = webview.with_webview(|pw| unsafe {
+                    let wk = pw.inner() as *mut objc2::runtime::AnyObject;
+                    let scroll: *mut objc2::runtime::AnyObject =
+                        objc2::msg_send![wk, scrollView];
+                    let () = objc2::msg_send![scroll, setContentInsetAdjustmentBehavior: 2isize];
+                }) {
+                    eprintln!("[ios-shell] contentInsetAdjustmentBehavior dispatch failed (on_page_load): {e}");
+                }
+            }
+        });
 
     let app = builder
         .build(tauri::generate_context!())
@@ -266,8 +308,35 @@ pub fn run() {
 
     // S13 §D3 — mobile v1 has no exit-cleanup child processes to reap
     // (no sidecar, no app-audio-tap, no osspeech CLI helper — the plugin
-    // owns its own AVAudioEngine/SpeechAnalyzer lifecycle in-process), so
-    // this is a plain run with no RunEvent handling.
+    // owns its own AVAudioEngine/SpeechAnalyzer lifecycle in-process).
+    // The one RunEvent it does handle: Ready re-applies the scrollView
+    // contentInsetAdjustmentBehavior=.never tweak (see on_page_load's
+    // comment above for the why). Ready fires once the event loop and
+    // config windows are up — typically BEFORE the page's first paint —
+    // which shrinks the launch-time flash of the .automatic state the
+    // on_page_load-only version had (sim-observed: the first screenshot
+    // after launch still showed the shifted layout for a beat). Both
+    // hooks stay: the setter is idempotent, and two timing points cover
+    // each other across tauri-mobile lifecycle differences.
     #[cfg(mobile)]
-    app.run(|_app_handle, _event| {});
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "ios")]
+        if matches!(event, tauri::RunEvent::Ready) {
+            use tauri::Manager;
+            if let Some(w) = app_handle.get_webview_window("main") {
+                // Err logged, not discarded — see on_page_load's own
+                // comment (fix round, Opus F7).
+                if let Err(e) = w.with_webview(|pw| unsafe {
+                    let wk = pw.inner() as *mut objc2::runtime::AnyObject;
+                    let scroll: *mut objc2::runtime::AnyObject =
+                        objc2::msg_send![wk, scrollView];
+                    let () = objc2::msg_send![scroll, setContentInsetAdjustmentBehavior: 2isize];
+                }) {
+                    eprintln!("[ios-shell] contentInsetAdjustmentBehavior dispatch failed (Ready): {e}");
+                }
+            }
+        }
+        // no non-iOS arm: cfg(mobile) && !ios is already a compile_error
+        // above, so this closure only ever compiles for iOS.
+    });
 }

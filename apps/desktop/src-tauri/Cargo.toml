@@ -135,3 +135,11 @@ tauri-plugin-single-instance = "2"
 # branch (Lane A) is the only caller.
 [target.'cfg(target_os = "ios")'.dependencies]
 tauri-plugin-os-speech = { path = "tauri-plugin-os-speech" }
+# iOS-cloud round (fixed shell) — lib.rs's mobile .setup() reaches the
+# WKWebView's scrollView over objc2::msg_send! to set
+# contentInsetAdjustmentBehavior = .never (wry 0.55 only calls
+# setBounces(false) and leaves the behavior at .automatic — see that
+# setup block's own comment for the two symptoms). Already resolved
+# transitively (wry's own backend) at 0.6.4; made explicit for direct
+# use, same precedent as libc/objc2-foundation above.
+objc2 = "0.6"

@@ -29,10 +29,28 @@ export const metadata: Metadata = {
   },
 };
 
+// iOS-cloud round (固定顶部/底部 shell): the iOS build pins the visual
+// viewport shut — pinch/double-tap zoom pans the WHOLE page (header and
+// status bar drift off-screen), the single most webby gesture the shell
+// can exhibit. App-provided display scale (data-fs) is the zoom story
+// there instead, same as any native app. viewportFit "cover" is what
+// makes env(safe-area-inset-bottom) report the real home-indicator
+// inset (page.tsx's iOS spacer under StatusLine consumes it) — the
+// webview is already full-bleed to the screen's bottom edge; without
+// cover, env() just reads 0 and the bar sits under the indicator.
+// Web/desktop keep the exact pre-round viewport (zoom stays a browser
+// affordance there; NEXT_PUBLIC_IOS is read directly rather than via
+// lib/platform/ios because this is a server component and that module
+// is client-marked).
+const IS_IOS_BUILD = process.env.NEXT_PUBLIC_IOS === "1";
+
 export const viewport: Viewport = {
   themeColor: "#0A0A0A",
   width: "device-width",
   initialScale: 1,
+  ...(IS_IOS_BUILD
+    ? { maximumScale: 1, userScalable: false, viewportFit: "cover" as const }
+    : {}),
 };
 
 // v0.2.1 anti-FOUC: theme/data-fs are set synchronously (before first
@@ -43,7 +61,16 @@ export const viewport: Viewport = {
 // setProperty calls, not worth a dependency). Built at module scope
 // (not per-request) since BUILTIN_THEMES is a static compile-time
 // registry.
-const foucScript = buildFoucScript(BUILTIN_THEMES);
+// iOS-cloud fix round (Opus F6b): the ios-shell class (globals.css's
+// gesture/overscroll lock block) used to be stamped only by
+// bootstrapIos(), which runs from page.tsx's mount effect — a cold load
+// or WebKit process-recovery reload on /review (reachable from the iOS
+// menu) ran with the whole gesture lock off. Stamping here rides the
+// same pre-first-paint inline script as the theme, on EVERY route;
+// bootstrapIos()'s own add stays as an idempotent belt.
+const foucScript =
+  buildFoucScript(BUILTIN_THEMES) +
+  (IS_IOS_BUILD ? 'document.documentElement.classList.add("ios-shell");' : "");
 
 export default function RootLayout({
   children,

@@ -106,6 +106,19 @@ describe("SettingsDialog — iOS build", () => {
     return buttons().find((b) => b.textContent === label);
   }
 
+  // ENGINE_CARDS' own buttons trail off into a per-card hint <div>
+  // beneath the label (and sometimes a badge span before that) — unlike
+  // findRow/findExact's own chevron/label-only shapes, a plain
+  // `.includes` match is what SettingsDialog.test.tsx/.desktop.test.tsx/
+  // .sonioxPreviewLane.test.tsx's own identical helper of this exact name
+  // already uses for the same reason; mirrored verbatim here (iOS-cloud
+  // round: this file's own suite gets its first ENGINE_CARDS case).
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = buttons().find((b) => b.textContent?.includes(text));
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
   function hasLabel(text: string): boolean {
     return Array.from(container!.querySelectorAll("label")).some((l) => l.textContent === text);
   }
@@ -247,5 +260,31 @@ describe("SettingsDialog — iOS build", () => {
 
     expect(findRow("转录引擎")).toBeTruthy();
     expect(hasLabel("识别语言")).toBe(false);
+  });
+
+  // iOS-cloud round (post-v0.6.0, Miana's direct call: 手机版显然应该允许
+  // 云端): 转录引擎 ENGINE_CARDS widens from S13's osspeech-only matrix to
+  // osspeech + the 3 BYOK cloud cards (IOS_ENGINE_CARD_VALUES) — mirrors
+  // lib/stt/engineOptions.ts's own IOS_ENGINE_OPTIONS widening
+  // (engineOptions.ios.test.ts) one level up in the same feature.
+  it("转录引擎 detail: ENGINE_CARDS keeps osspeech + the 3 BYOK cloud cards, drops 本地 Whisper/标签页音频/浏览器识别; picking ElevenLabs reveals its own API Key field", async () => {
+    await render();
+    act(() => {
+      findRow("转录引擎").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(findButtonContaining("系统识别 · 开箱即用")).toBeTruthy();
+    expect(findButtonContaining("Soniox 云端识别")).toBeTruthy();
+    expect(findButtonContaining("Deepgram 云端识别")).toBeTruthy();
+    expect(findButtonContaining("ElevenLabs 云端识别")).toBeTruthy();
+    expect(buttons().some((b) => b.textContent?.includes("本地 Whisper"))).toBe(false);
+    expect(buttons().some((b) => b.textContent?.includes("标签页音频"))).toBe(false);
+    expect(buttons().some((b) => b.textContent?.includes("浏览器识别"))).toBe(false);
+
+    expect(hasLabel("ElevenLabs API Key")).toBe(false);
+    act(() => {
+      findButtonContaining("ElevenLabs 云端识别").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(hasLabel("ElevenLabs API Key")).toBe(true);
   });
 });

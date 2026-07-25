@@ -67,6 +67,7 @@ import type {
   TaskLlmConfig,
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
+import { IOS_ENGINE_KINDS } from "@/lib/stt/engineCapabilities";
 import { isValidProxyUrl, normalizeProxyUrl } from "@/lib/proxyUrl";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS, IS_TAURI } from "@/lib/platform/ios";
@@ -332,11 +333,18 @@ const ALL_ENGINE_CARDS: {
 // condition, same drop) rather than importing that module directly —
 // this card grid's richer per-card `hint` copy keeps the two arrays
 // from cleanly sharing one data shape (see that module's own header
-// comment), so the semantics are mirrored here instead of forked. S13
-// (§6 Sol F5, BLOCKER): iOS keeps the osspeech card ONLY — same
-// osspeech-only matrix engineOptions.ts's own IS_IOS branch pins.
+// comment), so the semantics are mirrored here instead of forked.
+// S13 (§6 Sol F5, BLOCKER) pinned iOS to the osspeech card only; the
+// iOS-cloud round (post-v0.6.0, 手机版显然应该允许云端) widens it to the
+// SAME osspeech+BYOK-cloud-trio matrix — read from IOS_ENGINE_KINDS
+// (engineCapabilities.ts), the single source all four iOS engine-matrix
+// surfaces share (Opus F3 fix round; the Set is typed so a renamed kind
+// fails tsc instead of silently shrinking the card list). The
+// per-engine key inputs below are `draft.engine === …`-conditional, so
+// they follow automatically.
+const IOS_ENGINE_CARD_VALUES = new Set<STTEngineKind>(IOS_ENGINE_KINDS);
 const ENGINE_CARDS = IS_IOS
-  ? ALL_ENGINE_CARDS.filter((c) => c.value === "osspeech")
+  ? ALL_ENGINE_CARDS.filter((c) => IOS_ENGINE_CARD_VALUES.has(c.value))
   : IS_DESKTOP
     ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
     : ALL_ENGINE_CARDS;

@@ -22,6 +22,7 @@
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Trash, UploadSimple, X } from "@phosphor-icons/react";
+import { IS_IOS } from "@/lib/platform/ios";
 import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import * as storage from "@/lib/history/storage";
@@ -165,7 +166,14 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
       {/* w-full + max-w, not a bare fixed width: 380px overflowed a
           375px phone viewport by 5px, bleeding every row past the left
           edge (Miana's v0.2.2 E2E finding #5). */}
-      <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] translate-x-0 flex-col border-l border-edge bg-panel glassable-panel transition-transform">
+      <div
+        className={`fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] translate-x-0 flex-col border-l border-edge bg-panel glassable-panel transition-transform ${
+          // iOS-cloud round: full-bleed webview (viewportFit cover) — the
+          // panel spans under the system status bar, so its own header
+          // row must start below it; bg fills the inset zone.
+          IS_IOS ? "pt-[env(safe-area-inset-top)]" : ""
+        }`}
+      >
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
           <span className="font-medium text-fg">会议历史</span>
           <div className="flex items-center gap-1">
@@ -198,7 +206,7 @@ export default function HistoryDrawer({ open, onClose, onOpenImport }: HistoryDr
           />
         </div>
 
-        <div className="scroll-thin flex-1 overflow-y-auto px-3 pb-4">
+        <div className="scroll-thin flex-1 overflow-y-auto px-3 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           {importRows.length > 0 && (
             <div className="mb-3 space-y-2">
               {importRows.map((task) => (

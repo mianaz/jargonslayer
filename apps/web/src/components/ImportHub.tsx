@@ -646,7 +646,10 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
           ))}
         </div>
 
-        <div className="scroll-thin flex-1 overflow-y-auto p-5">{tabPanels}</div>
+        {/* pb rides the safe-area inset (iOS-cloud round, Sol F4): the
+           last action button must clear the home indicator on the
+           full-bleed iOS webview; env() is 0 elsewhere. */}
+        <div className="scroll-thin flex-1 overflow-y-auto p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">{tabPanels}</div>
       </div>
     );
   }

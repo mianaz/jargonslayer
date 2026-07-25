@@ -58,11 +58,26 @@ describe("deriveEngineForMode", () => {
     });
   });
 
-  describe("mic — iOS: osspeech unconditionally (v1's only engine)", () => {
-    it("ignores settings.engine/keys entirely", () => {
+  describe("mic — iOS: osspeech default; a BYOK cloud pick with its OWN matching key is respected (iOS-cloud round)", () => {
+    it("fresh default / non-cloud engine -> osspeech", () => {
       expect(deriveEngineForMode("mic", IOS, settings({ engine: "demo" }))).toBe("osspeech");
       expect(
         deriveEngineForMode("mic", IOS, settings({ engine: "whisper", sonioxKey: "sk-x" })),
+      ).toBe("osspeech");
+    });
+
+    it.each([
+      ["soniox", { sonioxKey: "sk-x" }],
+      ["deepgram", { deepgramKey: "dg-x" }],
+      ["elevenlabs", { elevenLabsKey: "el-x" }],
+    ] as const)("engine already %s with its own key -> respected", (engine, keys) => {
+      expect(deriveEngineForMode("mic", IOS, settings({ engine, ...keys }))).toBe(engine);
+    });
+
+    it("cloud pick with NO key (or only a MISMATCHED key) -> osspeech, the zero-config default", () => {
+      expect(deriveEngineForMode("mic", IOS, settings({ engine: "soniox" }))).toBe("osspeech");
+      expect(
+        deriveEngineForMode("mic", IOS, settings({ engine: "elevenlabs", sonioxKey: "sk-x" })),
       ).toBe("osspeech");
     });
   });
@@ -114,6 +129,18 @@ describe("deriveEngineForMode", () => {
       expect(
         deriveEngineForMode("mic", WEB, settings({ engine: "deepgram", deepgramKey: "dg-x" })),
       ).toBe("deepgram");
+    });
+
+    it("engine already elevenlabs AND an elevenlabs key exists -> respected (iOS-cloud round drive-by fix: this trio member was omitted from the v0.6 chain, so a keyed pick got clobbered to webspeech)", () => {
+      expect(
+        deriveEngineForMode("mic", WEB, settings({ engine: "elevenlabs", elevenLabsKey: "el-x" })),
+      ).toBe("elevenlabs");
+    });
+
+    it("engine already elevenlabs with NO matching key -> reset to webspeech (same matching-key rule as soniox/deepgram)", () => {
+      expect(
+        deriveEngineForMode("mic", WEB, settings({ engine: "elevenlabs", deepgramKey: "dg-x" })),
+      ).toBe("webspeech");
     });
 
     it("engine already webspeech + a key exists -> stays webspeech (not a whisper/soniox/deepgram choice to respect)", () => {

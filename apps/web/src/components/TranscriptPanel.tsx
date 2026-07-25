@@ -1472,7 +1472,11 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
       {touchSelection && (
         <div
           data-testid="touch-lookup-bar"
-          className="fixed inset-x-0 bottom-7 z-40 flex justify-center border-t border-edge bg-panel2 px-3 py-2"
+          // bottom-7 matches StatusLine's h-7 exactly; on a full-bleed
+          // iOS webview the bar sits a safe-area spacer higher
+          // (iOS-cloud round, Sol F3), so the offset rides env() too —
+          // 0 elsewhere, byte-identical to the old bottom-7.
+          className="fixed inset-x-0 bottom-[calc(1.75rem+env(safe-area-inset-bottom))] z-40 flex justify-center border-t border-edge bg-panel2 px-3 py-2"
         >
           <button
             type="button"
