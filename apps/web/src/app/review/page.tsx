@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { IS_IOS } from "@/lib/platform/ios";
 import { useApp } from "@/lib/store";
 import ReviewDashboard, { useSessionCache } from "@/components/review/ReviewDashboard";
 import PracticeDeck from "@/components/review/PracticeDeck";
@@ -43,8 +44,25 @@ export default function ReviewPage() {
   const handleQueueEmptied = () => useApp.getState().celebrateBit();
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-3 border-b border-edge bg-panel/85 px-4 backdrop-blur">
+    // iOS-cloud round (固定顶部/底部 shell): this was the ONE in-app
+    // route still built on document scroll (min-h-screen + sticky
+    // header) — on iOS the whole page moved, header included, exactly
+    // the webby posture the round removes. iOS gets the main page's own
+    // proven frame instead (page.tsx: h-screen overflow-hidden flex-col
+    // + a single internal scroller — component-level, NOT html/body
+    // overflow, which FIX 11 in globals.css bans for hit-testing
+    // reasons). Web/desktop keep the document-scroll layout untouched.
+    <div className={IS_IOS ? "flex h-screen flex-col overflow-hidden" : "min-h-screen"}>
+      <header
+        className={`flex shrink-0 items-center gap-3 border-b border-edge px-4 ${
+          IS_IOS
+            ? // static bar in a fixed frame (nothing scrolls under it, no
+              // sticky/blur) that carries the full-bleed top inset itself
+              // — bg extends to the physical top, same as Header.tsx.
+              "h-[calc(3.5rem+env(safe-area-inset-top))] bg-panel pt-[env(safe-area-inset-top)]"
+            : "sticky top-0 z-20 h-14 bg-panel/85 backdrop-blur"
+        }`}
+      >
         {/* Client-side nav back to "/" (E2E feedback 2026-07-11): a
             plain <a href> full-page-loaded the app, wiping in-memory
             state (running import tasks, transcript, cards) on the way
@@ -61,7 +79,16 @@ export default function ReviewPage() {
         <span className="font-mono text-xs text-mut2">/review</span>
       </header>
 
-      <main className="mx-auto max-w-5xl space-y-8 px-4 py-6">
+      <main
+        className={`mx-auto max-w-5xl space-y-8 px-4 py-6 ${
+          IS_IOS
+            ? // the frame's single scroller; bottom padding keeps the
+              // last card clear of the home indicator (layout.tsx's
+              // viewportFit:"cover" is what makes env() non-zero).
+              "scroll-thin min-h-0 w-full flex-1 overflow-y-auto pb-[calc(1.5rem+env(safe-area-inset-bottom))]"
+            : ""
+        }`}
+      >
         <ReviewDashboard cache={cache} loading={loading} />
         <div className="border-t border-edge" aria-hidden="true" />
         <div className="space-y-4">

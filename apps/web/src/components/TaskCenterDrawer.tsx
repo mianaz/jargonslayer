@@ -23,6 +23,7 @@
 import { useEffect, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { ArrowClockwise, ArrowSquareOut, CheckCircle, WarningCircle, X } from "@phosphor-icons/react";
+import { IS_IOS } from "@/lib/platform/ios";
 import { useApp } from "@/lib/store";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
@@ -201,7 +202,13 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
   return (
     <>
       <div className="fixed inset-0 z-30 bg-black/50" onClick={onClose} aria-hidden />
-      <div className="fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] flex-col border-l border-edge bg-panel glassable-panel">
+      <div
+        className={`fixed inset-y-0 right-0 z-40 flex w-full max-w-[380px] flex-col border-l border-edge bg-panel glassable-panel ${
+          // iOS-cloud round: same full-bleed top-inset rule as
+          // HistoryDrawer — see that panel's comment.
+          IS_IOS ? "pt-[env(safe-area-inset-top)]" : ""
+        }`}
+      >
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
           <span className="font-medium text-fg">后台任务</span>
           <button

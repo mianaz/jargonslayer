@@ -813,20 +813,26 @@ interface AppState {
  *  (Q8): the macOS-26 floor is an engineOptions.ts option-gate + a
  *  start_os_speech runtime re-check, not a platform swap.
  *
- *  S13 (docs/design-explorations/s13-ios-blueprint.md, §6): iOS v1's
- *  ENGINE_OPTIONS is osspeech-only (engineOptions.ts) — a persisted
- *  engine from any OTHER platform (a full-tier backup restored on an
- *  iOS device, or a device that was on an earlier build before this
- *  engine existed) is coerced to osspeech, the one iOS default, rather
- *  than surviving as an orphaned picker value. Checked FIRST and returns
- *  early: isDesktop is always false on an iOS build (D4 — IS_DESKTOP
- *  means exactly "macOS desktop shell"), so without this early return
- *  a stored "appaudio"/"osspeech" would otherwise fall into the `
- *  !isDesktop` web-coercion branches below and land on tabaudio, an
- *  engine iOS never offers either. No reverse (iOS -> other platform)
- *  coercion is needed: osspeech already exists on desktop, and web's own
- *  osspeech->tabaudio coercion above already covers a stored osspeech
- *  landing on a web build.
+ *  S13 (docs/design-explorations/s13-ios-blueprint.md, §6) + iOS-cloud
+ *  round (post-v0.6.0, 手机版显然应该允许云端): iOS's ENGINE_OPTIONS is
+ *  osspeech + the three BYOK cloud mic engines (soniox/deepgram/
+ *  elevenlabs — engineOptions.ts's IOS_ENGINE_OPTIONS documents why
+ *  exactly those three) — a persisted engine outside that set (a
+ *  full-tier backup restored on an iOS device: whisper/tabaudio/
+ *  appaudio/webspeech/tabaudio-cloud, none of which has an iOS capture
+ *  path) is coerced to osspeech, the zero-config iOS default, rather
+ *  than surviving as an orphaned picker value. Cloud picks survive
+ *  key-blind, same D3 posture as the BYOK-preview rule in
+ *  applyTierDefaults below: a restored engine:"deepgram" with stripped
+ *  keys stays selectable and fails honestly at start, never silently
+ *  coerced. Checked FIRST and returns early: isDesktop is always false
+ *  on an iOS build (D4 — IS_DESKTOP means exactly "macOS desktop
+ *  shell"), so without this early return a stored "appaudio"/"osspeech"
+ *  would otherwise fall into the `!isDesktop` web-coercion branches
+ *  below and land on tabaudio, an engine iOS never offers. No reverse
+ *  (iOS -> other platform) coercion is needed: every engine iOS offers
+ *  already exists on desktop/web pickers (or is coerced there by the
+ *  branches below).
  *
  *  v0.5 Wave-1 Feature 4 (docs/design-explorations/v05-wave1-blueprint.
  *  md §1 Feature 4 + §5 A4): desktop ALSO coerces a persisted
@@ -835,11 +841,20 @@ interface AppState {
  *  into, cloud backend or not) — tabaudio-cloud is web-only for v0.5
  *  (desktop already has sidecar+appaudio). No web/iOS coercion needed:
  *  tabaudio-cloud is legal on web as-is, and iOS's own isIos branch
- *  above already sweeps every non-osspeech/demo value (including this
- *  one) to osspeech before this line is ever reached. */
+ *  above already sweeps every value outside its allow-set (including
+ *  this one — no getDisplayMedia tab picker on iOS) to osspeech before
+ *  this line is ever reached. */
 export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boolean, isIos = false): Settings {
   if (isIos) {
-    if (settings.engine === "osspeech" || settings.engine === "demo") return settings;
+    if (
+      settings.engine === "osspeech" ||
+      settings.engine === "demo" ||
+      settings.engine === "soniox" ||
+      settings.engine === "deepgram" ||
+      settings.engine === "elevenlabs"
+    ) {
+      return settings;
+    }
     return { ...settings, engine: "osspeech" };
   }
   if (isDesktop && settings.engine === "tabaudio") {

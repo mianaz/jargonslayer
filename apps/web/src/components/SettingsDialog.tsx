@@ -332,11 +332,16 @@ const ALL_ENGINE_CARDS: {
 // condition, same drop) rather than importing that module directly —
 // this card grid's richer per-card `hint` copy keeps the two arrays
 // from cleanly sharing one data shape (see that module's own header
-// comment), so the semantics are mirrored here instead of forked. S13
-// (§6 Sol F5, BLOCKER): iOS keeps the osspeech card ONLY — same
-// osspeech-only matrix engineOptions.ts's own IS_IOS branch pins.
+// comment), so the semantics are mirrored here instead of forked.
+// S13 (§6 Sol F5, BLOCKER) pinned iOS to the osspeech card only; the
+// iOS-cloud round (post-v0.6.0, 手机版显然应该允许云端) widens it to the
+// SAME osspeech+BYOK-cloud-trio matrix engineOptions.ts's
+// IOS_ENGINE_OPTIONS now pins — see that array's comment for why
+// exactly these four (the per-engine key inputs below are
+// `draft.engine === …`-conditional, so they follow automatically).
+const IOS_ENGINE_CARD_VALUES = new Set(["osspeech", "soniox", "deepgram", "elevenlabs"]);
 const ENGINE_CARDS = IS_IOS
-  ? ALL_ENGINE_CARDS.filter((c) => c.value === "osspeech")
+  ? ALL_ENGINE_CARDS.filter((c) => IOS_ENGINE_CARD_VALUES.has(c.value))
   : IS_DESKTOP
     ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
     : ALL_ENGINE_CARDS;

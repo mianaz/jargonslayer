@@ -145,15 +145,25 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   toEngineOption("elevenlabs"),
 ];
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D): iOS
-// v1 = mic-only, single native engine — osspeech ONLY (label byte-
-// identical to the desktop entry above, Miana-veto #2: the two surfaces
-// must never say this engine's name differently — now structurally
-// guaranteed, not just conventionally matched, since both project off
-// the SAME ENGINE_CAPABILITIES.osspeech.label). No webspeech/whisper/
-// tabaudio/appaudio/soniox/mlx on iOS v1 (Soniox deferred, blueprint D7)
-// — none has an iOS capture path in v1's scope.
-const IOS_ENGINE_OPTIONS: EngineOption[] = [toEngineOption("osspeech")];
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D) drew
+// iOS v1 as mic-only, single native engine (osspeech). iOS-cloud round
+// (post-v0.6.0, Miana's direct call: 手机版显然应该允许云端) widens it:
+// the three BYOK cloud MIC engines join — their transports are
+// getUserMedia capture + WebSocket/fetch streaming, no sidecar and no
+// desktop-only API, so nothing structural ever kept them off iOS beyond
+// v1 scope discipline. Still excluded, each for a real missing capture
+// path (not policy): webspeech (WKWebView has no SpeechRecognition API
+// — the same fact that drops it on desktop, this module's header),
+// whisper/tabaudio/appaudio (sidecar/desktop capture), tabaudio-cloud
+// (getDisplayMedia's tab picker doesn't exist on iOS — D7's own
+// rationale, doubly true here). osspeech stays FIRST: it remains the
+// zero-config default deriveEngineForMode's iOS mic branch derives.
+const IOS_ENGINE_OPTIONS: EngineOption[] = [
+  toEngineOption("osspeech"),
+  toEngineOption("soniox"),
+  toEngineOption("deepgram"),
+  toEngineOption("elevenlabs"),
+];
 
 /** PINNED CONTRACT (S10 blueprint wave 2): StatusLine's engine dropdown
  *  and Header's EnginePostureChip both consume this exact list — see
@@ -441,7 +451,20 @@ export function deriveEngineForMode(
   } else {
     // mode === "mic"
     if (isIos) {
-      candidate = "osspeech";
+      // iOS-cloud round (手机版显然应该允许云端): osspeech stays the
+      // zero-config default, but an already-picked BYOK cloud engine
+      // with its OWN matching key survives a mic-tile click — the web
+      // branch's "don't clobber a deliberate pick" nicety, key-gated
+      // (an iOS build has no preview tier, so no keyless carve-out).
+      const iosCloudKeyFor =
+        settings.engine === "soniox"
+          ? !!settings.sonioxKey
+          : settings.engine === "deepgram"
+            ? !!settings.deepgramKey
+            : settings.engine === "elevenlabs"
+              ? !!settings.elevenLabsKey
+              : false;
+      candidate = iosCloudKeyFor ? settings.engine : "osspeech";
     } else if (isDesktop) {
       candidate = osspeechFloorMet ? "osspeech" : "whisper";
     } else {
@@ -467,7 +490,15 @@ export function deriveEngineForMode(
           ? !!settings.sonioxKey || PREVIEW_TIER
           : settings.engine === "deepgram"
             ? !!settings.deepgramKey
-            : false;
+            : // iOS-cloud round, drive-by fix: elevenlabs joined this
+              // BYOK trio in v0.6 but was never added to this chain, so
+              // a keyed elevenlabs pick got clobbered to webspeech on
+              // every mic-tile click — same respect rule as deepgram
+              // (key-gated, no keyless carve-out; see the deepgram note
+              // above for why that's the deliberate shape here).
+              settings.engine === "elevenlabs"
+              ? !!settings.elevenLabsKey
+              : false;
       candidate =
         settings.engine === "whisper" || cloudKeyFor ? settings.engine : "webspeech";
     }

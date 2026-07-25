@@ -248,7 +248,12 @@ export default function TutorialOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="w-[560px] max-w-[92vw] rounded-none border border-edge2 bg-panel p-6">
+      {/* iOS-cloud round (shell audit): this was the one overlay in the
+         app with NO height cap or scroller — a step taller than the
+         viewport (short/landscape phones) just clipped with no way to
+         reach the buttons. Same scroll-thin internal-scroller contract
+         every other overlay already follows; inert when content fits. */}
+      <div className="scroll-thin max-h-[calc(100dvh-2rem)] w-[560px] max-w-[92vw] overflow-y-auto rounded-none border border-edge2 bg-panel p-6">
         <div className="flex items-center justify-center gap-2 font-mono text-xs tabular-nums text-mut">
           <span className="text-fg">
             [{step + 1}/{STEP_COUNT}]
@@ -302,7 +307,11 @@ export default function TutorialOverlay({
                   </div>
                 </div>
                 <div className="rounded-none border border-edge p-3">
-                  <div className="text-sm font-medium text-fg">全离线</div>
+                  {/* iOS-cloud round: 全离线 stays the desktop/web title
+                     (that copy really is fully offline); iOS says 本地优先
+                     — its copy now names an optional cloud path, and a
+                     全离线 headline over that would oversell. */}
+                  <div className="text-sm font-medium text-fg">{IS_IOS ? "本地优先" : "全离线"}</div>
                   <div className="mt-2 text-xs leading-[1.7] text-mut">
                     {/* #58 fix round FIX 9 (Sol MEDIUM): the desktop/web
                        copy names 本地 Whisper + Ollama — neither exists
@@ -311,9 +320,13 @@ export default function TutorialOverlay({
                        narrower: 系统识别 transcribes on-device, 词典检测
                        works with no network, but AI 解释 still needs a
                        key — an honest replacement, not a claim iOS can't
-                       back up. */}
+                       back up. iOS-cloud round: cloud engines are now
+                       selectable on iOS too, so the copy pins 默认 to
+                       the local claim and names the switch honestly —
+                       状态栏的引擎颜色 (StatusLine's iosTextClass) is
+                       the live surface of the same fact. */}
                     {IS_IOS
-                      ? "系统识别全程本机转录，词典检测离线可用，AI 解释需配置 API Key。"
+                      ? "默认系统识别，全程本机转录；切换云端识别引擎后音频会发往对应服务商。词典检测离线可用，AI 解释需配置 API Key。"
                       : "本地 Whisper + Ollama，音频和内容完全不出本机。"}
                   </div>
                 </div>

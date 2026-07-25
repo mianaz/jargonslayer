@@ -2769,23 +2769,33 @@ describe("applyPlatformEngineDefaults — S9/D7 desktop tabaudio<->appaudio coer
   });
 });
 
-// S13 (docs/design-explorations/s13-ios-blueprint.md, §6): iOS's
-// ENGINE_OPTIONS is osspeech-only (engineOptions.ts) — the 3rd (isIos)
-// argument is additive, defaulting false, so every 2-arg call above
-// keeps compiling AND keeps working (isIos simply never coerces for
-// them) — same additive shape engineOptionGate's own osspeechCaps
-// argument already established.
-describe("applyPlatformEngineDefaults — S13 iOS osspeech-only coercion (3rd, isIos argument)", () => {
+// S13 (docs/design-explorations/s13-ios-blueprint.md, §6) + iOS-cloud
+// round (post-v0.6.0, 手机版显然应该允许云端): iOS's ENGINE_OPTIONS is
+// osspeech + the three BYOK cloud mic engines (engineOptions.ts's
+// IOS_ENGINE_OPTIONS) — the 3rd (isIos) argument is additive,
+// defaulting false, so every 2-arg call above keeps compiling AND
+// keeps working (isIos simply never coerces for them) — same additive
+// shape engineOptionGate's own osspeechCaps argument already
+// established.
+describe("applyPlatformEngineDefaults — iOS engine coercion (3rd, isIos argument)", () => {
   function withEngine(engine: Settings["engine"]): Settings {
     return { ...DEFAULT_SETTINGS, engine };
   }
 
   it.each(
-    ["webspeech", "whisper", "tabaudio", "tabaudio-cloud", "appaudio", "soniox", "deepgram"] as const,
-  )("iOS coerces a stored %s to osspeech (iOS v1's ENGINE_OPTIONS is osspeech-only)", (engine) => {
+    ["webspeech", "whisper", "tabaudio", "tabaudio-cloud", "appaudio"] as const,
+  )("iOS coerces a stored %s to osspeech (no iOS capture path for it)", (engine) => {
     const s = applyPlatformEngineDefaults(withEngine(engine), false, true);
     expect(s.engine).toBe("osspeech");
   });
+
+  it.each(["soniox", "deepgram", "elevenlabs"] as const)(
+    "iOS leaves a stored BYOK cloud pick %s untouched, key-blind (iOS-cloud round; D3 survive-and-fail-honestly posture)",
+    (engine) => {
+      const s = applyPlatformEngineDefaults(withEngine(engine), false, true);
+      expect(s.engine).toBe(engine);
+    },
+  );
 
   it("iOS leaves a stored osspeech untouched", () => {
     const s = applyPlatformEngineDefaults(withEngine("osspeech"), false, true);

@@ -1855,6 +1855,7 @@ version = "0.6.0"
 dependencies = [
  "keyring",
  "libc",
+ "objc2",
  "objc2-foundation",
  "percent-encoding",
  "rubato",

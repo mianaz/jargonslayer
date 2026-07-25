@@ -458,6 +458,22 @@ export default function Home() {
 
       <StatusLine onOpenTaskCenter={() => setTaskCenterOpen(true)} />
 
+      {/* iOS-cloud round (固定顶部/底部 shell): the webview is full-bleed
+          to the screen's bottom edge, so without this the home indicator
+          sits ON the status line. A spacer painted in the bar's own
+          bg-panel2 reads as the bar extending into the safe area — the
+          native tab-bar idiom — rather than shrinking the bar itself.
+          env() is 0 until layout.tsx's viewportFit:"cover" (same round)
+          unlocks it, and 0 on every non-notch device, so this
+          collapses to nothing everywhere it isn't needed. */}
+      {IS_IOS && (
+        <div
+          aria-hidden
+          className="shrink-0 bg-panel2"
+          style={{ height: "env(safe-area-inset-bottom)" }}
+        />
+      )}
+
       {focusMode && (
         <button
           data-testid="btn-exit-focus"
