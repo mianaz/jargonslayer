@@ -149,7 +149,8 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
   }, [open]);
 
   async function runCorrection(): Promise<void> {
-    const { segments, settings, activeSessionId, meetingGen, customEntries, learnset } = useApp.getState();
+    const { segments, settings, activeSessionId, meetingGen, customEntries, learnset, sessions } =
+      useApp.getState();
     if (segments.length === 0) {
       onClose();
       return;
@@ -175,6 +176,13 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
       const model = resolveTaskCreds(settings, "detect").model;
       const windows = chunkCorrectSegments(segments.map((s) => ({ id: s.id, text: s.text })));
       const sessionId = activeSessionId ?? "";
+      // Lights up the prompt's existing (already-built, never-called)
+      // MEETING TITLE block (buildCorrectUserMessage) — the title of
+      // the session under review, looked up from the history metas
+      // already in the store (kept in lockstep with activeSessionId by
+      // every writer — saveCurrentSession/loadSession both set both in
+      // the same `set()` call).
+      const meetingTitle = sessions.find((m) => m.id === activeSessionId)?.title;
       const beforeById = new Map(segments.map((s) => [s.id, s.text]));
       const corrections = new Map<string, string>();
       let succeededOnce = false;
@@ -192,7 +200,7 @@ export default function CorrectionReview({ open, onClose }: CorrectionReviewProp
       for (const window of windows) {
         try {
           const res = await correctApi(
-            { segments: window.segments, context: window.context, lexicon, model },
+            { segments: window.segments, context: window.context, lexicon, model, meetingTitle },
             settings,
           );
           succeededOnce = true;

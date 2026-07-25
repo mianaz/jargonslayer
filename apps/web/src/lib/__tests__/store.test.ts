@@ -26,6 +26,7 @@ import {
 } from "../store";
 import {
   DEFAULT_SETTINGS,
+  MEETING_CONTEXT_MAX_CHARS,
   sessionToMeta,
   type CustomEntry,
   type DetectResponse,
@@ -35,6 +36,7 @@ import {
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
+import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonslayer/core/detect/packs";
 import * as learnsetModule from "../learn/store";
 import * as storageModule from "../history/storage";
 import * as liveDraftModule from "../history/liveDraft";
@@ -858,6 +860,42 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.correctionBusy).toBe(false);
   });
 
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — a stale context/
+  // attempt count from a PREVIOUS meeting must never survive into a
+  // fresh one (same rationale as speakerRoster/activeSpeaker above).
+  it("beginMeeting resets inferredContext/contextOverride/contextAttempts/contextRefreshed for a fresh meeting", () => {
+    useApp.setState({
+      inferredContext: "上一场会议的背景",
+      contextOverride: true,
+      contextAttempts: 2,
+      contextRefreshed: true,
+    });
+    useApp.getState().beginMeeting();
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(false);
+    expect(s.contextAttempts).toBe(0);
+    expect(s.contextRefreshed).toBe(false);
+  });
+
+  // F7 fix (Sol LOW #19, keychain-custody fix round): a stale
+  // "dictionary" left over from a PREVIOUS meeting's AI fallback must
+  // not survive into a fresh one — AiStatusPanel's useAiFallenBack
+  // (aiDetect on + detectMode==="dictionary") would otherwise falsely
+  // show the 重试 AI 检测 banner before the new meeting has attempted
+  // anything. Mirrors Header.tsx's own DetectModeBadge toggle
+  // convention (`setDetectMode(next ? "llm" : "dictionary")`).
+  it("beginMeeting resets a stale detectMode to reflect settings.aiDetect", () => {
+    useApp.setState({ detectMode: "dictionary", settings: { ...DEFAULT_SETTINGS, aiDetect: true } });
+    useApp.getState().beginMeeting();
+    expect(useApp.getState().detectMode).toBe("llm");
+
+    useApp.setState({ detectMode: "llm", settings: { ...DEFAULT_SETTINGS, aiDetect: false } });
+    useApp.getState().beginMeeting();
+    expect(useApp.getState().detectMode).toBe("dictionary");
+  });
+
   it("newMeeting resets the same three fields", () => {
     useApp.setState({
       speakerRoster: ["Alice"],
@@ -869,6 +907,25 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.speakerRoster).toEqual([]);
     expect(s.activeSpeaker).toBeNull();
     expect(s.correctionBusy).toBe(false);
+  });
+
+  // Auto meeting-context detection — newMeeting mirrors beginMeeting's
+  // own reset (see that test above): otherwise a stale context chip
+  // from the just-ended meeting would linger through 新会议 into the
+  // idle state that precedes the next Start.
+  it("newMeeting resets inferredContext/contextOverride/contextAttempts/contextRefreshed", () => {
+    useApp.setState({
+      inferredContext: "上一场会议的背景",
+      contextOverride: true,
+      contextAttempts: 2,
+      contextRefreshed: true,
+    });
+    useApp.getState().newMeeting();
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(false);
+    expect(s.contextAttempts).toBe(0);
+    expect(s.contextRefreshed).toBe(false);
   });
 
   it("loadSession resets activeSpeaker/correctionBusy and restores speakerRoster from the session", async () => {
@@ -934,6 +991,111 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     await useApp.getState().loadSession("sess-new-empty");
 
     expect(useApp.getState().speakerRoster).toEqual([]); // NOT derived from segments
+  });
+});
+
+// F1 fix (field-test batch C, BLOCK — both reviewers): loadSession's own
+// set() used to leave all four auto-context fields untouched, so a
+// PREVIOUS meeting's live inferredContext stayed visible over a loaded
+// history session AND could get baked into that session's stored record
+// by any post-load re-save (updateSegmentText/updateCard/updateTerm ->
+// saveCurrentSession, which writes the LIVE inferredContext — see that
+// action's own doc comment). Mirrors beginMeeting/newMeeting's identical
+// reset above.
+describe("loadSession resets inferredContext/contextOverride/contextAttempts/contextRefreshed (F1 fix)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    useApp.setState({
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
+      activeSessionId: null,
+      status: "idle",
+      segments: [],
+    });
+  });
+
+  it("clears a previous (finished) meeting's live inferredContext when the loaded session has none of its own", async () => {
+    const sessionB: MeetingSession = {
+      id: "sess-b",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1" })],
+      cards: [],
+      terms: [],
+      // no inferredContext key — session B never had one
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(sessionB);
+    // Simulates meeting A having just finished with a context inferred.
+    useApp.setState({
+      inferredContext: "会议A的背景",
+      contextOverride: true,
+      contextAttempts: 2,
+      contextRefreshed: true,
+    });
+
+    await useApp.getState().loadSession("sess-b");
+
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(false);
+    expect(s.contextAttempts).toBe(0);
+    expect(s.contextRefreshed).toBe(false);
+  });
+
+  it("shows the loaded session's OWN archived inferredContext, not the previous meeting's", async () => {
+    const sessionB: MeetingSession = {
+      id: "sess-b2",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1" })],
+      cards: [],
+      terms: [],
+      inferredContext: "会议B自己的背景",
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(sessionB);
+    useApp.setState({ inferredContext: "会议A的背景" });
+
+    await useApp.getState().loadSession("sess-b2");
+
+    expect(useApp.getState().inferredContext).toBe("会议B自己的背景");
+  });
+
+  it("corruption repro: a post-load re-save never bakes the PREVIOUS meeting's live context into the loaded session's saved record", async () => {
+    const sessionB: MeetingSession = {
+      id: "sess-b3",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1", text: "original" })],
+      cards: [],
+      terms: [],
+      // no inferredContext key — session B never had one
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(sessionB);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    // Meeting A's context is still live in the store when B loads.
+    useApp.setState({ inferredContext: "会议A的背景" });
+
+    await useApp.getState().loadSession("sess-b3");
+    useApp.getState().updateSegmentText("s1", "edited"); // triggers the post-load debounced re-save
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBeUndefined(); // NOT "会议A的背景"
   });
 });
 
@@ -1003,6 +1165,176 @@ describe("saveCurrentSession / currentSessionSnapshot persist speakerRoster (v0.
     await useApp.getState().loadSession(stored!.id);
 
     expect(useApp.getState().speakerRoster).toEqual(["Alice", "Bob"]);
+  });
+});
+
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — mirrors the speakerRoster
+// describe block immediately above: save/snapshot carry the final
+// inferredContext, contextAttempts/contextOverride/contextRefreshed
+// stay live-only (never part of MeetingSession's own shape).
+describe("saveCurrentSession / currentSessionSnapshot persist inferredContext (auto meeting-context detection)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("saveCurrentSession persists the live inferredContext", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      inferredContext: "生物信息学组会，面向研究生",
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBe("生物信息学组会，面向研究生");
+  });
+
+  it("saveCurrentSession persists undefined (not null) when no context was ever inferred", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      inferredContext: null,
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBeUndefined();
+  });
+
+  it("currentSessionSnapshot includes the live inferredContext", () => {
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      inferredContext: "跨境电商客户评审",
+    });
+    expect(currentSessionSnapshot()?.inferredContext).toBe("跨境电商客户评审");
+  });
+});
+
+describe("setInferredContext / bumpContextAttempts / markContextRefreshed", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
+      status: "idle",
+      segments: [],
+      activeSessionId: null,
+    });
+  });
+
+  it("sets inferredContext without touching contextOverride when opts is omitted", () => {
+    useApp.getState().setInferredContext("生物信息学组会");
+    const s = useApp.getState();
+    expect(s.inferredContext).toBe("生物信息学组会");
+    expect(s.contextOverride).toBe(false);
+  });
+
+  it("opts.override:true also sets contextOverride", () => {
+    useApp.getState().setInferredContext("用户手改的背景", { override: true });
+    const s = useApp.getState();
+    expect(s.inferredContext).toBe("用户手改的背景");
+    expect(s.contextOverride).toBe(true);
+  });
+
+  // F2 fix (field-test batch C): a manual chip edit past the hosted
+  // /api/detect route's own MEETING_CONTEXT_MAX_CHARS zod cap used to
+  // 400 every subsequent detect call — this defensive clamp is the
+  // backstop even if a caller (or a future one) skips the chip's own
+  // maxLength attribute.
+  it("clamps a value longer than MEETING_CONTEXT_MAX_CHARS at write time", () => {
+    useApp.getState().setInferredContext("x".repeat(200), { override: true });
+    const s = useApp.getState();
+    expect(s.inferredContext).toHaveLength(MEETING_CONTEXT_MAX_CHARS);
+    expect(s.inferredContext).toBe("x".repeat(MEETING_CONTEXT_MAX_CHARS));
+  });
+
+  it("value:null with override:true clears the context AND sets the hard-stop override (chip disappears, inference stays off)", () => {
+    useApp.setState({ inferredContext: "旧背景" });
+    useApp.getState().setInferredContext(null, { override: true });
+    const s = useApp.getState();
+    expect(s.inferredContext).toBeNull();
+    expect(s.contextOverride).toBe(true);
+  });
+
+  it("bumpContextAttempts increments contextAttempts by exactly 1 per call", () => {
+    useApp.getState().bumpContextAttempts();
+    expect(useApp.getState().contextAttempts).toBe(1);
+    useApp.getState().bumpContextAttempts();
+    expect(useApp.getState().contextAttempts).toBe(2);
+  });
+
+  it("markContextRefreshed sets contextRefreshed to true", () => {
+    useApp.getState().markContextRefreshed();
+    expect(useApp.getState().contextRefreshed).toBe(true);
+  });
+});
+
+// Post-stop top-up re-save — same idiom (and same fake-timer test
+// shape) as the "applySpeakerUpdate ... post-stop diarization linger
+// re-save" describe block above: a late-landing inference (or a manual
+// chip edit made after the meeting already stopped) must still reach
+// the ALREADY-saved session, not just the live view.
+describe("setInferredContext — post-stop top-up re-save", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    useApp.setState({
+      inferredContext: null,
+      contextOverride: false,
+      status: "idle",
+      segments: [],
+      activeSessionId: null,
+    });
+  });
+
+  it("re-saves the session when called after the meeting has already stopped", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      status: "stopped",
+      activeSessionId: "sess-1",
+    });
+
+    useApp.getState().setInferredContext("迟到的推断结果");
+
+    expect(saveSpy).not.toHaveBeenCalled(); // debounced, not immediate
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.inferredContext).toBe("迟到的推断结果");
+  });
+
+  it("does NOT schedule a re-save while a meeting is still live (status listening)", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      status: "listening",
+    });
+
+    useApp.getState().setInferredContext("生物信息学组会");
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).not.toHaveBeenCalled();
   });
 });
 
@@ -1777,6 +2109,63 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
   });
 });
 
+// MEDIUM-5 fix (v0.6 round-2 review) — the v0.6 new-built-in-packs (
+// modern-usage/finance-consumer/daily-idiom, packsSchemaVersion 1) used
+// to be permanently invisible to anyone who had ever unchecked even ONE
+// pack: SettingsDialog.tsx's own 保存 freezes enabledPacks into an
+// explicit array the moment that happens, and a pack added in a LATER
+// release is simply absent from it (isPackEnabled treats "absent" as
+// excluded). Every test in this block fails against pre-fix
+// migrateSettings, which never touched enabledPacks/packsSchemaVersion
+// at all.
+describe("migrateSettings — MEDIUM-5: unions newly-introduced built-in packs into an old explicit enabledPacks", () => {
+  const NEW_V06_PACK_IDS = PACKS_ADDED_AT_VERSION[1];
+
+  it("an explicit list missing the new ids contains them after migration, and stamps packsSchemaVersion", () => {
+    const s = migrateSettings({ enabledPacks: ["core", "meeting-flow"] } as Partial<Settings>);
+    for (const id of NEW_V06_PACK_IDS) {
+      expect(s.enabledPacks).toContain(id);
+    }
+    expect(s.enabledPacks).toEqual(expect.arrayContaining(["core", "meeting-flow", ...NEW_V06_PACK_IDS]));
+    expect(s.packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+  });
+
+  it("a user who explicitly excluded an OLD (pre-existing) pack still has it excluded after migration", () => {
+    // "academic" is an original (pre-v0.6) pack — never named here, so
+    // it stays excluded exactly like the user intended; only the NEW
+    // v0.6 ids get unioned in.
+    const s = migrateSettings({ enabledPacks: ["core", "meeting-flow"] } as Partial<Settings>);
+    expect(s.enabledPacks).not.toContain("academic");
+  });
+
+  it("a null enabledPacks (never customized) needs no migration — stays null, still stamps the version", () => {
+    const s = migrateSettings({ enabledPacks: null } as Partial<Settings>);
+    expect(s.enabledPacks).toBeNull();
+    expect(s.packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+  });
+
+  it("running migration twice is idempotent — the second pass adds nothing further", () => {
+    const once = migrateSettings({ enabledPacks: ["core"] } as Partial<Settings>);
+    const twice = migrateSettings(once);
+    expect(twice.enabledPacks).toEqual(once.enabledPacks);
+    expect(twice.packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+  });
+
+  it("a saved blob that already explicitly EXCLUDED a new v0.6 pack id at the CURRENT version keeps excluding it (only a version BEHIND current gets unioned)", () => {
+    const excluded = NEW_V06_PACK_IDS[0];
+    const s = migrateSettings({
+      enabledPacks: ["core"], // deliberately missing `excluded`
+      packsSchemaVersion: CURRENT_PACKS_SCHEMA_VERSION, // already up to date
+    } as Partial<Settings>);
+    expect(s.enabledPacks).not.toContain(excluded);
+  });
+
+  it("fresh install (null saved) gets packsSchemaVersion defaulted to CURRENT via the plain defaults-fold", () => {
+    expect(migrateSettings(null).packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+    expect(migrateSettings(undefined).packsSchemaVersion).toBe(CURRENT_PACKS_SCHEMA_VERSION);
+  });
+});
+
 describe("migrateSettings — #62 uiMode persisted toggle roundtrip", () => {
   it("fresh install (no saved uiMode) defaults to simple via the defaults-fold, no migration code", () => {
     expect(migrateSettings(null).uiMode).toBe("simple");
@@ -1991,6 +2380,324 @@ describe("updateSettings — persist opt-out (S14.1 演示 fix)", () => {
 
     expect(useApp.getState().settings.engine).toBe("demo");
     expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Quit-time settings durability (field fix — real desktop/Tauri report:
+// an API key saved shortly before quitting the app was lost).
+// updateSettings' own persist is fire-and-forget (see store.ts's
+// pendingSettingsSave doc) — flushSettings is the durable-commit escape
+// hatch a caller can actually await (SettingsDialog's 保存 handler does
+// exactly this before closing/toasting; hydrate()'s own quit-time
+// pagehide/visibilitychange listener calls it unawaited — see WebKit bug
+// 199854, mirrors useMeeting.ts's own live-draft flush). These pin the
+// promise-chaining contract directly; the DOM-side listener wiring
+// itself is covered separately in store.quitFlush.test.ts (jsdom).
+describe("flushSettings — durable-commit guarantee for the quit-time flush", () => {
+  beforeEach(() => {
+    // F1 fix (Sol + Opus review, BLOCK): flushSettings is now a guarded
+    // no-op pre-hydration (see store.ts's own doc) — every test below
+    // simulates a caller reachable only post-hydration in the real app
+    // (SettingsDialog's 保存, the quit-time listeners once hydrate()
+    // resolves), same posture store.quitFlush.test.ts's own tests take.
+    useApp.setState({ hydrated: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
+  });
+
+  it("resolves only after storage.saveSettings resolves, writing the CURRENT live settings", async () => {
+    let resolveWrite: (() => void) | undefined;
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockImplementation(
+      () => new Promise<void>((resolve) => { resolveWrite = resolve; }),
+    );
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+
+    let landed = false;
+    const flushed = useApp.getState().flushSettings().then(() => { landed = true; });
+
+    // The underlying write hasn't resolved yet — flushSettings must not
+    // have settled either, no matter how many microtask ticks pass.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(landed).toBe(false);
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "webspeech" }));
+
+    resolveWrite!();
+    await flushed;
+    expect(landed).toBe(true);
+  });
+
+  it("supersedes/awaits an ALREADY in-flight updateSettings write — resolves only once BOTH have landed", async () => {
+    let resolveFirst: (() => void) | undefined;
+    const saveSpy = vi
+      .spyOn(storageModule, "saveSettings")
+      .mockImplementationOnce(() => new Promise<void>((resolve) => { resolveFirst = resolve; }))
+      .mockResolvedValueOnce(undefined); // flushSettings' own fresh write
+
+    useApp.getState().updateSettings({ engine: "webspeech" }); // fires the first (still-pending) write
+
+    let landed = false;
+    const flushed = useApp.getState().flushSettings().then(() => { landed = true; });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(landed).toBe(false); // the EARLIER write is still in flight
+
+    resolveFirst!();
+    await flushed;
+    expect(landed).toBe(true);
+    expect(saveSpy).toHaveBeenCalledTimes(2); // updateSettings' write + flushSettings' own write
+  });
+
+  it("is safe to call with nothing changed since the last write (idempotent)", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    for (const call of saveSpy.mock.calls) {
+      expect(call[0]).toEqual(useApp.getState().settings);
+    }
+  });
+});
+
+// F1 fix (Sol + Opus review, BLOCK — fieldtest-a batch): hydrate()
+// installs the quit-time pagehide/visibilitychange listeners BEFORE the
+// async `await Promise.all([storage.loadSettings(), ...])` resolves and
+// `hydrated:true` is set — during that window get().settings is still
+// DEFAULT_SETTINGS, so a pre-hydration pagehide/visibilitychange used to
+// overwrite the user's real saved settings blob with defaults. Guarding
+// inside flushSettings itself (rather than only at the listener install
+// site) covers the listeners AND any other early caller — this pins the
+// direct call-level contract; store.quitFlush.test.ts pins the actual
+// pagehide dispatch racing hydrate() (needs a real DOM event, and is
+// "exactly how this was missed": every pre-existing test there awaits
+// hydrate() first).
+describe("flushSettings — F1 pre-hydration guard (BLOCK fix)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
+  });
+
+  it("is a guarded no-op — never calls storage.saveSettings — while hydrated is still false", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: false });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("resumes writing once hydrated flips true (the listeners stay installed the whole time, unchanged)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: false });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+    expect(saveSpy).not.toHaveBeenCalled();
+
+    useApp.setState({ hydrated: true });
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "webspeech" }));
+  });
+});
+
+// F2 fix (Sol MEDIUM review — fieldtest-a batch): storage.saveSettings
+// now propagates a write failure instead of always resolving (see that
+// function's own doc) — these pin the two halves of the caller-audit:
+// (a) updateSettings' fire-and-forget persist branch must swallow the
+// rejection (no unhandled rejection) AND must not leave
+// pendingSettingsSave itself rejected, since flushSettings/the next
+// updateSettings chain onto it; (b) flushSettings' OWN write failure
+// must reach ITS caller (SettingsDialog's handleSave — see that
+// component's own test for the toast/close half) while ALSO not
+// poisoning pendingSettingsSave for whichever save runs next.
+describe("updateSettings / flushSettings — F2 fix: a failed write doesn't poison later saves", () => {
+  beforeEach(() => {
+    useApp.setState({ hydrated: true });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: false });
+  });
+
+  it("updateSettings' fire-and-forget persist swallows a rejected write — no unhandled rejection", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockRejectedValueOnce(new Error("quota exceeded"));
+    const onUnhandledRejection = vi.fn();
+    process.on("unhandledRejection", onUnhandledRejection);
+    try {
+      useApp.getState().updateSettings({ engine: "webspeech" });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+    }
+
+    expect(onUnhandledRejection).not.toHaveBeenCalled();
+  });
+
+  it("a failed updateSettings write does not poison pendingSettingsSave — a later flushSettings still resolves", async () => {
+    const saveSpy = vi
+      .spyOn(storageModule, "saveSettings")
+      .mockRejectedValueOnce(new Error("quota exceeded")) // updateSettings' own fire-and-forget write
+      .mockResolvedValueOnce(undefined); // flushSettings' own later write
+
+    useApp.getState().updateSettings({ engine: "webspeech" });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(useApp.getState().flushSettings()).resolves.toBeUndefined();
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("flushSettings propagates a write failure to its own caller (rejects)", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(useApp.getState().flushSettings()).rejects.toThrow("disk full");
+  });
+
+  it("a flushSettings rejection does not poison pendingSettingsSave — a later flushSettings still resolves", async () => {
+    const saveSpy = vi
+      .spyOn(storageModule, "saveSettings")
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(useApp.getState().flushSettings()).rejects.toThrow("disk full");
+    await expect(useApp.getState().flushSettings()).resolves.toBeUndefined();
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+// Demo-overlay stash (field-test round, extends S14.1): the two describe
+// blocks above pin S14.1's OWN single write (startDemo's persist:false)
+// and the general updateSettings/flushSettings persist contract in
+// isolation — neither covers the leak S14.1 left open: an ORDINARY
+// persist:true save (or the quit-time flushSettings/pagehide flush)
+// firing while a demo is live merges + persists the WHOLE settings
+// object, re-baking engine:"demo" back into storage. These pin
+// beginDemoOverlay/endDemoOverlay + the settingsForPersist chokepoint
+// that closes it — see AppState.demoOverlayPrevEngine's own doc, store.ts,
+// for the full design. store.quitFlush.test.ts pins the pagehide/
+// visibilitychange half specifically (needs a real DOM event).
+describe("demo-overlay stash (field-test round, extends S14.1)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS, demoOverlayPrevEngine: null, hydrated: false });
+  });
+
+  it("beginDemoOverlay stashes the real engine and flips live engine to demo, without persisting", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().beginDemoOverlay();
+
+    expect(useApp.getState().settings.engine).toBe("demo");
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("webspeech");
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("beginDemoOverlay is idempotent — a second call while already overlaid doesn't re-stash the live \"demo\" value over the real one", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+
+    useApp.getState().beginDemoOverlay();
+
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("webspeech");
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("an ordinary persist:true save during the overlay writes the STASHED engine to storage — live state stays demo", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ aiDetect: false });
+
+    expect(saveSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ engine: "webspeech", aiDetect: false }),
+    );
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("flushSettings during the overlay writes the stashed engine", async () => {
+    // F1 fix: flushSettings is a guarded no-op pre-hydration now.
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "tabaudio" }, hydrated: true });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await useApp.getState().flushSettings();
+
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "tabaudio" }));
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("an explicit engine pick during the overlay clears the stash and persists the pick", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ engine: "whisper" });
+
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    expect(useApp.getState().settings.engine).toBe("whisper");
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "whisper" }));
+  });
+
+  it("endDemoOverlay restores the live engine and never touches storage", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" } });
+    useApp.getState().beginDemoOverlay();
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().endDemoOverlay();
+
+    expect(useApp.getState().settings.engine).toBe("webspeech");
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("endDemoOverlay is a safe no-op when no overlay is active", () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, demoOverlayPrevEngine: null });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().endDemoOverlay();
+
+    expect(useApp.getState().settings.engine).toBe("webspeech");
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("stashing \"demo\" itself (a fresh install's first-ever ≡ 演示) still restores correctly through endDemoOverlay", () => {
+    // DEFAULT_SETTINGS.engine is "demo" — a brand-new user's first demo
+    // stashes "demo" as the "real" prior value, which IS correct (they
+    // never picked anything else yet). Exercises the exact gap
+    // endDemoOverlay's own doc comment calls out: updateSettings' overlay
+    // supersession only clears the stash for a patch whose engine !==
+    // "demo", so restoring a stash that IS "demo" needs endDemoOverlay's
+    // own explicit clear, not that side effect.
+    useApp.setState({ settings: DEFAULT_SETTINGS, demoOverlayPrevEngine: null });
+    useApp.getState().beginDemoOverlay();
+    expect(useApp.getState().demoOverlayPrevEngine).toBe("demo");
+
+    useApp.getState().endDemoOverlay();
+
+    expect(useApp.getState().demoOverlayPrevEngine).toBeNull();
+    expect(useApp.getState().settings.engine).toBe("demo");
+  });
+
+  it("fresh-default case (no overlay): an ordinary save persists engine:\"demo\" unchanged, exactly as today", () => {
+    expect(DEFAULT_SETTINGS.engine).toBe("demo");
+    useApp.setState({ settings: DEFAULT_SETTINGS, demoOverlayPrevEngine: null });
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    useApp.getState().updateSettings({ aiDetect: false });
+
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ engine: "demo", aiDetect: false }));
   });
 });
 

@@ -8,15 +8,24 @@ import { useApp, currentSessionSnapshot } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
-import { langPairFromSettings, resolveTranslationProvider } from "../lib/translate/providers";
+import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
 import { getPreviewSessionSeconds } from "../lib/stt/soniox";
-import { resolveTabAudioCloudProvider } from "../lib/stt/engineCapabilities";
+import { ENGINE_CAPABILITIES, resolveTabAudioCloudProvider, type LiveEngineKind } from "../lib/stt/engineCapabilities";
 import * as liveDraft from "../lib/history/liveDraft";
-import type { STTEngine, STTEvents } from "@jargonslayer/core/types";
+import { IS_DESKTOP } from "../lib/platform/desktop";
+import { initDesktop } from "../lib/desktop/bootstrap";
+import { inferContextApi } from "../lib/llm/client";
+import { resolveTaskCreds } from "../lib/llm/taskConfig";
+import { setSenseContext } from "@jargonslayer/core/detect/dictionary";
+import type { SenseContextInput } from "@jargonslayer/core/detect/dictionary";
+import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
+import { deriveSenseContext } from "../lib/detect/senseContext";
+import { inferDomainsFromKeywords } from "../lib/detect/domainKeywords";
+import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 
 // Live bilingual transcript (#42): how many of the most recent
 // finalized segments to catch up when the toggle flips OFF->ON
@@ -51,6 +60,230 @@ export function logAndToastError(
 ): { message: string; ref?: string } {
   const entry = diagLog("error", tag, message, detail);
   return { message, ref: entry.ref };
+}
+
+/** Field-test fix B: does `engine` ride the managed local sidecar
+ *  process (engineCapabilities.ts's own static sidecarOnly flag, e.g.
+ *  whisper/appaudio) — used by preflightManagedSidecar below (start()'s
+ *  and resume()'s shared preflight). Object.hasOwn
+ *  (not `in`, which also matches anything inherited off
+ *  Object.prototype) keeps the lookup an honest miss for the non-live
+ *  STTEngineKind members (demo/import/browser-whisper), none of which
+ *  have a row in ENGINE_CAPABILITIES. */
+function ridesManagedSidecar(engine: STTEngineKind): boolean {
+  return (
+    Object.hasOwn(ENGINE_CAPABILITIES, engine) &&
+    ENGINE_CAPABILITIES[engine as LiveEngineKind].sidecarOnly === true
+  );
+}
+
+/** Field-test fix B: does `settings` need the managed-sidecar preflight
+ *  below AT ALL — desktop-only (IS_DESKTOP), managed-mode-only
+ *  (sidecarMode !== "external"), sidecar-riding-engine-only
+ *  (ridesManagedSidecar). A plain synchronous boolean, deliberately
+ *  checked by callers BEFORE ever calling (let alone awaiting)
+ *  preflightManagedSidecar itself — that function unconditionally
+ *  awaits initDesktop(), so gating it here means the overwhelmingly
+ *  common case (any non-desktop web build, external sidecar mode, or a
+ *  non-sidecar engine) costs zero async overhead: no promise, no
+ *  microtask tick, same synchronous timing as if this preflight didn't
+ *  exist at all. That's not just tidiness — useMeeting.lifecycle.test.
+ *  tsx's own startListeningSoft() helper relies on createEngine()
+ *  running fully SYNCHRONOUSLY as part of `p = api!.start();` itself
+ *  (see that helper's own comment); an unconditional `await
+ *  preflightManagedSidecar(...)` at the call site, even one that
+ *  resolves "immediately", would still push createEngine() one
+ *  microtask later and break that assumption for every non-desktop
+ *  test in this file. */
+function needsManagedSidecarPreflight(settings: Settings): boolean {
+  return IS_DESKTOP && settings.sidecarMode !== "external" && ridesManagedSidecar(settings.engine);
+}
+
+/** Field-test fix B (verified root cause): whisper/appaudio ride the
+ *  managed local sidecar — starting/resuming into one while the
+ *  sidecar isn't actually provisioned/healthy used to sail straight
+ *  into the engine's own doomed connect, landing on a raw "cd sidecar
+ *  && python whisper_server.py" CLI error no desktop-app user can act
+ *  on (whisperSocket.ts's connectFailureMessage). Only ever called once
+ *  needsManagedSidecarPreflight(settings) above has already returned
+ *  true (see its own doc comment for why that gate lives OUTSIDE this
+ *  function rather than as its own leading check) — an "external" user
+ *  runs their own server and must never be redirected into this app's
+ *  own install wizard. requestProvisionCheck() (bootstrap.ts) is the
+ *  NON-destructive re-entry into the same CHECKING flow reprovision()
+ *  uses — see its own doc comment for why this must not be
+ *  reprovision() itself (which would wipe an already-good install
+ *  record over what might just be a transient probe blip). Fire-and-
+ *  forget + swallowed rejection: the only way it rejects is the shared
+ *  sidecar-lifecycle latch already being held by some OTHER in-flight
+ *  operation, which will settle the UI on its own.
+ *
+ *  Shared by start() and resume() (F2 field-test fix, round 2 —
+ *  resume() used to bypass this entirely: settings cards unlock while
+ *  paused, so switching to an unprovisioned sidecar engine and then
+ *  resuming sailed into the exact same doomed connect start() already
+ *  guarded against) — ONE implementation so both stay in lock-step,
+ *  never two copies of this logic drifting apart. Returns true when
+ *  the caller must ABORT (the toast + fire-and-forget
+ *  requestProvisionCheck() above already fired); false when it's safe
+ *  to proceed with a normal attach — the handle is already HEALTHY. */
+async function preflightManagedSidecar(): Promise<boolean> {
+  const handle = await initDesktop();
+  if (handle.currentState().phase !== "HEALTHY") {
+    useApp.getState().showToast("本地 Whisper 尚未安装，正在打开安装向导…");
+    void handle.requestProvisionCheck().catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — once enough transcript
+// accumulates, a one-shot (plus one retry, plus one later refresh)
+// cheap LLM call infers the meeting's domain/context, which then
+// threads into every subsequent detect call (see scheduler.ts's
+// getMeetingContext / DetectRequest.meetingContext). The actual
+// dispatch lives in the effect inside useMeeting() below (imperative:
+// async call + store writes); the THRESHOLD/GATE decision is pulled
+// out here as a pure function so it's directly unit-testable without
+// mounting this hook — same "pure helper exported alongside the hook"
+// posture as logAndToastError/ridesManagedSidecar above.
+// ---------------------------------------------------------------
+
+/** Cumulative final-segment chars at which a fresh meeting fires its
+ *  first context-inference attempt — deliberately past the opening
+ *  logistics chatter. */
+export const CONTEXT_INITIAL_CHARS = 1200;
+/** One retry, only if the first attempt failed or came back empty. */
+export const CONTEXT_RETRY_CHARS = 1800;
+/** One later refresh of an already-inferred context, once topics have
+ *  had room to settle past the intros. */
+export const CONTEXT_REFRESH_CHARS = 7000;
+
+export type ContextTriggerAction = "initial" | "retry" | "refresh";
+
+export interface ContextTriggerState {
+  /** Meeting actually live (connecting/listening/paused) — false while
+   *  idle/stopped, e.g. browsing a loaded HISTORY session (loadSession
+   *  sets status:"stopped"), so auto-inference never fires there. */
+  live: boolean;
+  aiDetect: boolean;
+  cumulativeChars: number;
+  inferredContext: string | null;
+  contextOverride: boolean;
+  contextAttempts: number;
+  contextRefreshed: boolean;
+}
+
+/** Pure threshold/gate decision (attempt thresholds 1200/1800, one-shot
+ *  refresh at 7000, aiDetect gate, override-is-a-hard-stop). Returns
+ *  which action (if any) the caller should dispatch right now — never
+ *  itself touches the in-flight latch/store/meetingGen, all of which
+ *  are the calling effect's own job. `contextOverride` gates EVERY
+ *  action, not just refresh: once the user has set (or cleared) the
+ *  context by hand, auto-inference stops for the rest of the meeting —
+ *  including a user-cleared (null) override, which must NOT be
+ *  reinterpreted as "still needs an initial guess". */
+export function decideContextTrigger(state: ContextTriggerState): ContextTriggerAction | null {
+  if (!state.live || !state.aiDetect || state.contextOverride) return null;
+
+  if (state.inferredContext !== null) {
+    if (!state.contextRefreshed && state.cumulativeChars >= CONTEXT_REFRESH_CHARS) {
+      return "refresh";
+    }
+    return null;
+  }
+
+  if (state.contextAttempts === 0 && state.cumulativeChars >= CONTEXT_INITIAL_CHARS) {
+    return "initial";
+  }
+  if (state.contextAttempts === 1 && state.cumulativeChars >= CONTEXT_RETRY_CHARS) {
+    return "retry";
+  }
+  return null;
+}
+
+/** Sum of final-segment text lengths — the cumulative-chars gate
+ *  decideContextTrigger reads. Mirrors tasks/correct.ts's identical
+ *  totalSegmentChars helper (kept as its own copy rather than a shared
+ *  import — this hooks-layer file has no business reaching into
+ *  apps/web's llm/tasks layer for one line of arithmetic). */
+export function sumFinalTextLength(segments: { text: string }[]): number {
+  let total = 0;
+  for (const s of segments) total += s.text.length;
+  return total;
+}
+
+/** The excerpt actually sent to the model: final-segment text
+ *  concatenated in speaking order, capped at `cap` chars. The SAME cap
+ *  used for the threshold that fired this dispatch (1200/1800/7000) —
+ *  a bigger cap on the retry/refresh gives the model more room to work
+ *  with, precisely because more transcript has accumulated by the time
+ *  either fires. */
+export function buildContextExcerpt(segments: { text: string }[], cap: number): string {
+  return segments
+    .map((s) => s.text)
+    .join("\n")
+    .slice(0, cap);
+}
+
+/** Async-resolution guard (gen-mismatch drop / override-at-write-time
+ *  drop): a dispatched call's result is dropped when a NEW meeting has
+ *  since begun (gen mismatch) or the user has since set/cleared an
+ *  override while the call was in flight — the meetingGen check alone
+ *  can't catch the second case (same meeting, still current gen, but
+ *  the user's own hand-typed value must win over a late-landing
+ *  guess). */
+export function shouldDropContextResult(
+  dispatchGen: number,
+  currentGen: number,
+  contextOverrideNow: boolean,
+): boolean {
+  return dispatchGen !== currentGen || contextOverrideNow;
+}
+
+/** Pure — the sense-selection context (dictionary.ts's setSenseContext)
+ *  BOTH the reactive effect below and onFinal's own synchronous call
+ *  (S5 fix, v0.6 round-2 review) resolve into. Falls back to the
+ *  keyless keyword guess (domainKeywords.ts) only while
+ *  `inferredDomains` is still empty (no API key, or the LLM inference
+ *  hasn't landed yet) — dictionary detection must keep working with
+ *  zero key. Extracted so it's directly unit-testable with plain
+ *  inputs, same posture as sumFinalTextLength/buildContextExcerpt
+ *  above (this file has no component test harness of its own — see
+ *  app/wizardHelpTransition.ts's header comment for why that pattern
+ *  already applies here).
+ *
+ *  S5 fix: onFinal (below) calls this SYNCHRONOUSLY, right after
+ *  addFinal, BEFORE scheduler.pushSegment's own synchronous
+ *  scanDictionary call reads whatever context is currently registered.
+ *  Before this fix, only the REACTIVE effect (React-scheduled, so it
+ *  runs AFTER this same tick) ever called setSenseContext — the very
+ *  FIRST segment of a meeting (which typically carries both the domain
+ *  evidence and the ambiguous term itself) was scanned against
+ *  stale/empty context, with no later rescore unless the term recurred.
+ *  The reactive effect stays in place as well (unchanged) — it's what
+ *  picks up a LATER context change (the LLM inference resolving,
+ *  enabledPacks changing) that isn't tied to any one segment's own
+ *  onFinal call; calling this twice for the same segment is harmless,
+ *  same idempotent-set posture registeredEnabledPacks/registeredSenseContext
+ *  already have. */
+export function resolveSenseContext(input: {
+  segments: { text: string }[];
+  terms: { senses?: { domain: string }[] }[];
+  enabledPacks: string[] | null;
+  inferredDomains: DomainTag[];
+}): SenseContextInput {
+  const effectiveDomains =
+    input.inferredDomains.length > 0
+      ? input.inferredDomains
+      : inferDomainsFromKeywords(input.segments.map((s) => s.text).join(" "));
+  return deriveSenseContext({
+    inferredDomains: effectiveDomains,
+    enabledPacks: input.enabledPacks,
+    terms: input.terms,
+  });
 }
 
 export interface UseMeetingResult {
@@ -169,7 +402,26 @@ export function useMeeting(): UseMeetingResult {
     // case, so callers must not show a contradicting success toast on
     // top of it.
     const runStopFlow = async (): Promise<boolean> => {
+      // F1 field-test fix (stale-teardown ownership guard, Sol
+      // adversarial review): captured HERE, synchronously, before this
+      // flow's OWN first await — this is the engine THIS flow itself
+      // is tearing down, never re-read from live settings.engine after
+      // the awaits below, which by the time they resolve may belong to
+      // an entirely different, NEWER meeting (a real engine erroring
+      // here can race a brand-new startDemo() started while this flow
+      // is still awaiting saveCurrentSession — see the endDemoOverlay()
+      // call site further down for why that race matters).
+      const wasDemo = engine.kind === "demo";
       await engine.stop();
+      // v0.6: tear down the native Apple-translate child alongside the
+      // STT engine's own — see providers.ts's own doc comment for why
+      // this is safe/idempotent to call unconditionally (no-op outside
+      // desktop, or when "system" was never the resolved provider). S1
+      // fix (v0.6 round-2 review): now awaited — stopSystemTranslator()
+      // returns its promise so this flow doesn't move on (and, at the
+      // very next start(), warm a NEW child) before the old one is
+      // actually torn down.
+      await stopSystemTranslator();
       // Stop-drain belt (STT protocol v2): the drain final's own
       // onFinal already clears interim when one arrives, but a stop
       // with no trailing final must not leave a stale gray interim on
@@ -184,11 +436,28 @@ export function useMeeting(): UseMeetingResult {
       // and a lingering speaker_update (see wsTransport.ts's
       // POST_STOP_LINGER_MS) are both re-saved by the store's post-stop
       // debounced save (store.ts's applyDetection/applySpeakerUpdate).
+      let ok = true;
       if (segCount > 0) {
         const savedId = await useApp.getState().saveCurrentSession();
-        return savedId !== null;
+        ok = savedId !== null;
       }
-      return true;
+      // Demo-overlay stash (field-test round, extends S14.1): this is
+      // the natural-completion teardown path (detail === "demo_finished",
+      // see below) for a demo that plays through to its own scripted end
+      // rather than being manually stopped — doStop below covers the
+      // OTHER teardown path (an early manual End). endDemoOverlay is a
+      // safe no-op for the error/capture_ended branches sharing this
+      // same function (no overlay is ever active while a REAL engine is
+      // attached). Called AFTER saveCurrentSession above, never before —
+      // saveCurrentSession stamps the saved MeetingSession's own
+      // `engine` field from the LIVE settings.engine at call time, which
+      // must still read "demo" for a demo session's own history record.
+      // F1 field-test fix: gated on wasDemo (captured above, before any
+      // await) — a stale flow tearing down a REAL engine must never end
+      // an overlay some OTHER, newer flow armed in the meantime (see
+      // wasDemo's own doc comment for the exact race this closes).
+      if (wasDemo) useApp.getState().endDemoOverlay();
+      return ok;
     };
 
     const events: STTEvents = {
@@ -219,6 +488,23 @@ export function useMeeting(): UseMeetingResult {
       onFinal: (text, opts) => {
         const seg = useApp.getState().addFinal(text, opts);
         useApp.getState().setInterim(null);
+        // S5 fix (v0.6 round-2 review): apply the sense-selection
+        // context synchronously — reading state that already includes
+        // `seg` (addFinal's own set() above already ran) — BEFORE
+        // scheduler.pushSegment's own synchronous scanDictionary call
+        // reads whatever context is currently registered. See
+        // resolveSenseContext's own doc comment for the race this
+        // closes (the reactive effect further down still covers a
+        // LATER context change not tied to this one segment).
+        const senseState = useApp.getState();
+        setSenseContext(
+          resolveSenseContext({
+            segments: senseState.segments,
+            terms: senseState.terms,
+            enabledPacks: senseState.settings.enabledPacks,
+            inferredDomains: senseState.inferredDomains,
+          }),
+        );
         scheduler.pushSegment(seg);
         translateQueue.pushSegment(seg);
       },
@@ -390,10 +676,19 @@ export function useMeeting(): UseMeetingResult {
   const doStop = useCallback(async () => {
     const engine = engineRef.current;
     engineRef.current = null;
+    // F1 field-test fix — same ownership guard as attachEngine's own
+    // runStopFlow above (see its wasDemo doc comment for the full
+    // race): captured HERE, before this flow's own first await, from
+    // the engine THIS flow itself is tearing down.
+    const wasDemo = engine?.kind === "demo";
     const scheduler = schedulerRef.current;
     if (engine) {
       await engine.stop();
     }
+    // v0.6: same teardown as runStopFlow's matching call above — see
+    // providers.ts's own doc comment on why this is unconditional. S1
+    // fix (v0.6 round-2 review): awaited, same reason as runStopFlow's.
+    await stopSystemTranslator();
     // Stop-drain belt (STT protocol v2): the drain final's own onFinal
     // already clears interim when one arrives (WsTransport.stop() now
     // waits for the sidecar's drain ack before resolving — see
@@ -416,6 +711,17 @@ export function useMeeting(): UseMeetingResult {
         useApp.getState().showToast("会议已保存到历史记录");
       }
     }
+    // Demo-overlay stash (field-test round, extends S14.1): this is the
+    // manual-End teardown path — attachEngine's own runStopFlow covers a
+    // demo playing through to its own scripted end instead. A safe
+    // no-op for any non-demo meeting (endDemoOverlay only restores when
+    // an overlay is actually active), so an ordinary End never touches
+    // this. Called AFTER saveCurrentSession above — see runStopFlow's
+    // matching comment for why the order matters (the saved
+    // MeetingSession.engine must still read "demo").
+    // F1 field-test fix: gated on wasDemo (captured above, before any
+    // await) — see runStopFlow's matching guard for the exact race.
+    if (wasDemo) useApp.getState().endDemoOverlay();
   }, []);
 
   const withLifecycleGate = useCallback(async (fn: () => Promise<void>) => {
@@ -436,8 +742,20 @@ export function useMeeting(): UseMeetingResult {
   }, [doStop]);
 
   const start = useCallback(async () => withLifecycleGate(async () => {
-    const { status } = useApp.getState();
+    const { status, settings } = useApp.getState();
     if (status === "listening" || status === "connecting") return;
+
+    // Field-test fix B (verified root cause) — see preflightManagedSidecar's
+    // own doc comment (shared with resume() below, F2 field-test fix)
+    // for the full rationale. Checked, and returned from, BEFORE
+    // beginMeeting()/the scheduler/translateQueue below are ever
+    // touched, so a blocked Start leaves the app in exactly the state
+    // it was in before the click — unlike the mic-permission-denial
+    // path (acquireStream's own catch, surfaced through this
+    // callback's onStatus("error") handler below AFTER beginMeeting()
+    // has already run and torn down via runStopFlow), there's nothing
+    // here to tear down in the first place.
+    if (needsManagedSidecarPreflight(settings) && (await preflightManagedSidecar())) return;
 
     diarReadyToastedRef.current = false;
     previewMintNoticeRef.current = false;
@@ -481,6 +799,10 @@ export function useMeeting(): UseMeetingResult {
     const scheduler = new DetectionScheduler({
       getSettings: () => useApp.getState().settings,
       getMeetingGen: () => useApp.getState().meetingGen,
+      // Auto meeting-context detection (field request: "need AI to
+      // auto detect the context for better detection") — see the
+      // trigger effect further down for how this gets populated.
+      getMeetingContext: () => useApp.getState().inferredContext,
       onDetection: (res, src, meta) => useApp.getState().applyDetection(res, src, meta),
       onBusyChange: (b) => useApp.getState().setDetectBusy(b),
       onModeChange: (m) => useApp.getState().setDetectMode(m),
@@ -568,6 +890,32 @@ export function useMeeting(): UseMeetingResult {
     const { status, meetingGen, settings } = useApp.getState();
     if (status !== "paused") return;
     let engine = engineRef.current;
+    // F2 field-test fix (Sol review, round 2): settings cards unlock
+    // while paused, so this resume() call can end up attaching a
+    // DIFFERENT engine than whatever was live before — either via the
+    // kind-mismatch teardown+reattach below (F7), or because the prior
+    // pause was already a full TEARDOWN pause to begin with (e.g.
+    // webspeech, which has no soft pause at all — `engine` is already
+    // null here). Either way that's a fresh attachEngine() call below,
+    // exactly like start()'s own first attach, and needs the SAME
+    // preflight — see preflightManagedSidecar's own doc comment.
+    // needsFreshAttach is false ONLY when `engine` is both alive AND
+    // still the currently-selected kind — the one case guaranteed to
+    // take the soft in-place engine.resume() branch further down
+    // untouched, so it's the only case that keeps current (no-
+    // preflight) behavior. Computed and checked BEFORE any teardown
+    // below — a blocked resume leaves the meeting exactly as it was:
+    // still paused, old engine (if any) fully untouched, same non-
+    // destructive contract as start()'s own preflight (the user can fix
+    // the sidecar and hit resume again).
+    const needsFreshAttach = !(engine && engine.resume && engine.kind === settings.engine);
+    if (
+      needsFreshAttach &&
+      needsManagedSidecarPreflight(settings) &&
+      (await preflightManagedSidecar())
+    ) {
+      return;
+    }
     // Engine switch during a retained soft pause (codex v2 review F7):
     // pre-v2, EVERY pause was teardown, so switching engines in
     // Settings while paused was already honored (resume's
@@ -626,11 +974,20 @@ export function useMeeting(): UseMeetingResult {
   }, [withLifecycleGate, doStop]);
 
   const startDemo = useCallback(async () => {
-    // S14.1 field fix: live-only — never persisted (store.ts's
-    // updateSettings `persist:false`), so a demo run can't strand a
-    // returning preview user's real engine pick across a reload (see
-    // store.ts's applyTierDefaults doc for the field report).
-    useApp.getState().updateSettings({ engine: "demo" }, { persist: false });
+    // Demo-overlay stash (field-test round, extends S14.1): beginDemoOverlay
+    // stashes the user's real settings.engine (root AppState, never
+    // persisted itself) and flips the live value to "demo" via the same
+    // updateSettings `persist:false` path S14.1 originally added — but
+    // now ALSO guarantees every OTHER settings save (an ordinary
+    // Settings-dialog save, the quit-time flushSettings/pagehide flush)
+    // that fires while the demo is live persists the STASHED real engine
+    // instead of re-baking "demo" back into storage (store.ts's
+    // settingsForPersist chokepoint). doStop/runStopFlow call
+    // endDemoOverlay() on the way out so the live UI (not just storage)
+    // lands back on the user's real engine too — see store.ts's
+    // demoOverlayPrevEngine/applyTierDefaults docs for the full field
+    // report this closes.
+    useApp.getState().beginDemoOverlay();
     await start();
   }, [start]);
 
@@ -639,6 +996,10 @@ export function useMeeting(): UseMeetingResult {
       void engineRef.current?.stop();
       schedulerRef.current?.stop();
       translateQueueRef.current?.stop();
+      // React effect cleanups can't be async — same fire-and-forget
+      // posture as engineRef.current?.stop() above (unlike
+      // runStopFlow/doStop, which now await this).
+      void stopSystemTranslator();
     };
   }, []);
 
@@ -710,6 +1071,26 @@ export function useMeeting(): UseMeetingResult {
       .slice(-BILINGUAL_BACKFILL_COUNT);
     translateQueueRef.current?.backfill(toBackfill);
   }, [bilingualTranscript, status]);
+
+  // Field-test issue 8b (manual AI-detect retry): AiStatusPanel has no
+  // existing path to schedulerRef — it's a leaf component mounted with
+  // NO props at both its hosts (StatusLine's popover, SettingsDialog's
+  // AI 检测 section; verified against both call sites), and this hook's
+  // own return value (start/pause/resume/stop/startDemo) is only ever
+  // consumed by page.tsx, never threaded down to either host either. The
+  // store's aiRetryNonce is the cheapest seam instead — same monotonic-
+  // nonce shape as bitCelebrateNonce/PixelDragon just above (this ref
+  // seeds to whatever the nonce already is at mount, so an already-
+  // nonzero nonce never fires on first render, only later INCREASES do)
+  // — this is the one place that actually holds the live scheduler ref.
+  const aiRetryNonce = useApp((s) => s.aiRetryNonce);
+  const prevAiRetryNonceRef = useRef(aiRetryNonce);
+  useEffect(() => {
+    if (aiRetryNonce > prevAiRetryNonceRef.current) {
+      schedulerRef.current?.retryAi();
+    }
+    prevAiRetryNonceRef.current = aiRetryNonce;
+  }, [aiRetryNonce]);
 
   // Re-translate a segment whose text was hand-corrected (store's
   // updateSegmentText already dropped the stale translation entry —
@@ -805,6 +1186,140 @@ export function useMeeting(): UseMeetingResult {
     const id = setInterval(tick, liveDraft.DRAFT_WRITE_INTERVAL_MS);
     return () => clearInterval(id);
   }, [status, engine]);
+
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — see
+  // decideContextTrigger above for the pure threshold/gate logic this
+  // effect just dispatches against. In-flight latch is a REF (not
+  // store state) so an overlapping effect re-run while a call is still
+  // pending can't double-dispatch — same posture as draftWritingRef
+  // above. Keyed on `segments` (not settings.aiDetect/status too):
+  // every transition that matters for `live`/aiDetect gating is already
+  // accompanied by a `segments` reference change (beginMeeting/
+  // newMeeting reset it, loadSession replaces it), and a mid-meeting
+  // settings toggle is picked up on the very next final segment — same
+  // lazy-settings-read posture the scheduler itself already has.
+  // F3 fix (field-test batch C, Sol M2): ALSO keyed on `contextAttempts`
+  // — an in-flight initial attempt that settles empty/rejected
+  // (bumpContextAttempts, below) must re-evaluate the decision
+  // immediately on settlement, not wait for the NEXT final segment —
+  // otherwise a retry threshold already crossed during the in-flight
+  // window sits unfired until (if ever) more transcript arrives.
+  const contextAttempts = useApp((s) => s.contextAttempts);
+  const contextInFlightRef = useRef(false);
+  useEffect(() => {
+    if (contextInFlightRef.current) return;
+    const state = useApp.getState();
+    const { settings, meetingGen, status: liveStatus, inferredContext, contextOverride, contextRefreshed } =
+      state;
+    const action = decideContextTrigger({
+      live: liveStatus === "connecting" || liveStatus === "listening" || liveStatus === "paused",
+      aiDetect: settings.aiDetect,
+      cumulativeChars: sumFinalTextLength(segments),
+      inferredContext,
+      contextOverride,
+      contextAttempts,
+      contextRefreshed,
+    });
+    if (!action) return;
+
+    const cap =
+      action === "initial"
+        ? CONTEXT_INITIAL_CHARS
+        : action === "retry"
+          ? CONTEXT_RETRY_CHARS
+          : CONTEXT_REFRESH_CHARS;
+    const excerpt = buildContextExcerpt(segments, cap);
+    const dispatchGen = meetingGen;
+    contextInFlightRef.current = true;
+    // The refresh is a one-shot latch regardless of outcome — set at
+    // DISPATCH time (not on resolve), so a failed/slow refresh call is
+    // never retried again this meeting (decideContextTrigger's own
+    // "ONE refresh" contract means one ATTEMPT, not one success).
+    if (action === "refresh") {
+      useApp.getState().markContextRefreshed();
+    }
+
+    inferContextApi(
+      { excerpt, lang: settings.explainLanguage, model: resolveTaskCreds(settings, "detect").model },
+      settings,
+    )
+      .then((res) => {
+        contextInFlightRef.current = false;
+        const now = useApp.getState();
+        if (shouldDropContextResult(dispatchGen, now.meetingGen, now.contextOverride)) return;
+        // v0.6 multi-sense-terms sprint (T5): domains is an independent
+        // signal from the SAME inference call — set unconditionally on
+        // every successful resolve (context empty or not, refresh or
+        // not), same posture as context's own refresh handling just
+        // below. Feeds dictionary.ts's sense-scoring via the wiring
+        // effect further down this hook.
+        now.setInferredDomains(res.domains);
+        if (res.context) {
+          now.setInferredContext(res.context);
+        } else if (action !== "refresh") {
+          // Initial/retry counts an empty result as a failed attempt so
+          // the retry/give-up gate above can advance; the refresh's one
+          // shot is already consumed above regardless of outcome, and
+          // an empty refresh must never CLEAR an already-good context.
+          now.bumpContextAttempts();
+        }
+      })
+      .catch((err) => {
+        contextInFlightRef.current = false;
+        diagLog(
+          "warn",
+          "detect-context",
+          "会议背景推断失败",
+          err instanceof Error ? err.message : undefined,
+        );
+        // Same gen guard as the resolve branch above — a stale
+        // rejection for a meeting that has since ended (meetingGen
+        // moved on) must not consume an attempt from whatever NEW
+        // meeting is live now.
+        if (action !== "refresh" && dispatchGen === useApp.getState().meetingGen) {
+          useApp.getState().bumpContextAttempts();
+        }
+      });
+  }, [segments, contextAttempts]);
+
+  // Multi-sense dictionary terms (v0.6 multi-sense-terms sprint, T5):
+  // recompute the sense-selection context (dictionary.ts's
+  // setSenseContext) whenever its three inputs change — inferred
+  // domains, the user's pack selection, or the detected-term set
+  // (cooccurrence) — see resolveSenseContext's own doc comment for the
+  // actual weighting/fallback. ONE reactive effect covers every trigger
+  // the spec names, INCLUDING a fresh meeting's reset (beginMeeting/
+  // newMeeting zero out terms/inferredDomains, which this effect picks
+  // up like any other dependency change) — no separate reset call
+  // needed at those call sites. Cheap (O(terms.length) plus a
+  // ~70-keyword scan over the transcript so far) and runs OUTSIDE
+  // scanDictionary's own hot loop, so this never touches the ~ms
+  // per-segment scan budget T2/T3 protect.
+  //
+  // S5 fix (v0.6 round-2 review): this effect alone used to be the
+  // ONLY thing that ever called setSenseContext — React schedules an
+  // effect AFTER the render that changed its dependencies commits, so
+  // it never ran in time for the SAME segment's own synchronous
+  // scanDictionary call (onFinal above, via scheduler.pushSegment).
+  // onFinal now applies the context synchronously for its own segment;
+  // this effect is still what picks up a context change NOT tied to
+  // any one segment (the LLM inference resolving later, enabledPacks
+  // changing via Settings) — unchanged otherwise, still reuses the SAME
+  // resolveSenseContext derivation.
+  const senseTerms = useApp((s) => s.terms);
+  const enabledPacksForSense = useApp((s) => s.settings.enabledPacks);
+  const inferredDomains = useApp((s) => s.inferredDomains);
+  useEffect(() => {
+    setSenseContext(
+      resolveSenseContext({
+        segments,
+        terms: senseTerms,
+        enabledPacks: enabledPacksForSense,
+        inferredDomains,
+      }),
+    );
+  }, [senseTerms, enabledPacksForSense, inferredDomains, segments]);
 
   return { start, pause, resume, stop, startDemo };
 }

@@ -32,6 +32,7 @@ import {
   type DesktopLogLine,
 } from "@/lib/desktop/bootstrap";
 import type { PrewarmProgressEvent } from "@/lib/desktop/provisionRunner";
+import { trackPrewarm } from "@/lib/desktop/jobsBridge";
 import DesktopWizard, { DesktopOnboardingSteps } from "./DesktopWizard";
 
 // Blueprint §Chunk 6: "cap the buffer ~500 lines".
@@ -43,6 +44,7 @@ function describeError(error: unknown): string {
 
 export default function DesktopBootstrap() {
   const showToast = useApp((s) => s.showToast);
+  const setWizardVisible = useApp((s) => s.setWizardVisible);
   const [handle, setHandle] = useState<DesktopBootstrapHandle | null>(null);
   const [state, setState] = useState<DesktopBootstrapState | null>(null);
   const [logLines, setLogLines] = useState<DesktopLogLine[]>([]);
@@ -65,6 +67,24 @@ export default function DesktopBootstrap() {
   const [consentDismissed, setConsentDismissed] = useState(false);
   const [terminalDismissed, setTerminalDismissed] = useState(false);
   const [stepErrorDismissed, setStepErrorDismissed] = useState(false);
+  // Field-test issue 6 (cancellable first-run model downloads) — set by
+  // the wizard's own 「后台继续」 button (onBackgroundDownload below).
+  // UNLIKE the three dismiss flags above (each resets the moment its
+  // own triggering phase/status is left), this one deliberately stays
+  // true for the REST of the STEP-phase drive once set — through
+  // STARTING/POLLING_HEALTH and even a LATER STEP/ERROR in that SAME
+  // drive — because "后台继续" promises the user the wizard won't force
+  // back open on completion OR failure; both instead surface via the
+  // tray row (jobsBridge.ts's trackPrewarm) and existing toasts. Only
+  // resets once the drive actually LEAVES the STEP phase (HEALTHY, or
+  // bounced back to WIZARD_CONSENT_REQUIRED/TERMINAL_ERROR by some
+  // other path) — see the effect below — so a FUTURE, unrelated
+  // provisioning attempt never inherits a stale backgrounding choice.
+  // A "userBackgrounded" flag added alongside the existing never-
+  // dismissible-mid-flight invariant (`visible` below), not a weakening
+  // of it — every OTHER RUNNING step stays exactly as un-dismissible as
+  // before this fix.
+  const [downloadBackgrounded, setDownloadBackgrounded] = useState(false);
   // S10 field-fix (item #3 / Chunk C handoff, wave 2 mount): the two
   // OPTIONAL onboarding steps (DesktopWizard.tsx's own
   // DesktopOnboardingSteps — see that export's header comment for the
@@ -89,9 +109,29 @@ export default function DesktopBootstrap() {
   // (onBeginProvision below, the one real "a first-run drive is
   // starting" seam) — the trigger below now requires BOTH refs, not
   // just the phase transition shape.
+  // F3 (review round, K1 = Sol MEDIUM #14 + Opus IMPORTANT): the 后台
+  // continues promise (downloadBackgrounded's own doc comment above)
+  // extends to this onboarding pop too — a first-run download the user
+  // explicitly backgrounded must not ambush them with the full-screen
+  // onboarding overlay when it completes to HEALTHY while they're away.
+  // downloadBackgrounded itself can't gate the trigger below — it
+  // resets the moment the drive leaves the STEP phase (see that flag's
+  // own comment), so by the time the effect below observes STEP ->
+  // HEALTHY, it may already be back to false. Fixed per Opus's guidance:
+  // onBackgroundDownload sets onboardingShownRef directly (below),
+  // permanently suppressing the pop for the rest of this app session —
+  // exactly as if onboarding HAD already been shown, same one-shot
+  // contract this ref already carries.
   const prevPhaseRef = useRef<DesktopBootstrapState["phase"] | null>(null);
   const provisionBegunRef = useRef(false);
   const onboardingShownRef = useRef(false);
+  // Field-test issue 6: the wizard's own <ModelPicker> pick, captured at
+  // onBeginProvision time (the one place this component already learns
+  // it) purely so onBackgroundDownload below can pass it to jobsBridge.
+  // ts's trackPrewarm for its tray row's label (modelLabel(model)) — a
+  // ref, not state, since it never needs to trigger a re-render on its
+  // own.
+  const provisioningModelRef = useRef<string | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
@@ -144,6 +184,16 @@ export default function DesktopBootstrap() {
     if (!inStepError) setStepErrorDismissed(false);
   }, [inStepError]);
 
+  // Field-test issue 6: resets downloadBackgrounded once the drive
+  // actually LEAVES the STEP phase — see that flag's own doc comment
+  // above for why this is phase-level (not status-level like
+  // inStepError above): the whole point is to stay true across every
+  // STEP status/step transition WITHIN the same drive.
+  const inStepPhase = state?.phase === "STEP";
+  useEffect(() => {
+    if (!inStepPhase) setDownloadBackgrounded(false);
+  }, [inStepPhase]);
+
   // S10 field-fix onboarding mount: watches for a STEP -> HEALTHY
   // transition (this launch's own provisioning wizard just finished) —
   // see prevPhaseRef/onboardingShownRef/provisionBegunRef's own doc
@@ -189,6 +239,41 @@ export default function DesktopBootstrap() {
     showToast({ message: "本地语音识别服务反复异常退出，已停止自动重启", ref: entry.ref });
   }, [terminalReason, showToast]);
 
+  // Field-test fix (desktop first-run onboarding never seen — verified
+  // root cause): mirrors `visible`/`showOnboarding` below into
+  // store.ts's wizardVisible, so page.tsx can sequence the first-run
+  // tutorial's auto-open AFTER this component stops covering the screen
+  // instead of racing it (both this and TutorialOverlay.tsx render
+  // `fixed inset-0 z-50`; this component mounts LATER in page.tsx's own
+  // JSX, so equal z-index + later DOM always won that tie before this
+  // fix). ALSO folds in showOnboarding — DesktopOnboardingSteps renders
+  // the exact same WizardFrame chrome (see that component's own header
+  // comment), so it's every bit as much "covering the screen" as the
+  // wizard itself; omitting it here would just move the same race to the
+  // STEP -> HEALTHY handoff into those two optional steps. Computed here
+  // (duplicating `visible`'s own phase ternary below, not reusing that
+  // const directly) because every hook — including this effect — must
+  // run unconditionally, ahead of the `!state` early return just below
+  // (Rules of Hooks); `!!state` keeps it a safe `false` before
+  // initDesktop() has resolved rather than reading `state.phase` on a
+  // possibly-null `state`.
+  const wizardOverlayVisible =
+    !!state &&
+    (showOnboarding ||
+      (state.phase === "WIZARD_CONSENT_REQUIRED"
+        ? !consentDismissed
+        : state.phase === "TERMINAL_ERROR"
+          ? !terminalDismissed
+          : state.phase === "EXTERNAL_UNMANAGED"
+            ? false
+            : state.phase === "STEP" &&
+              !(state.status === "ERROR" && stepErrorDismissed) &&
+              !downloadBackgrounded));
+  useEffect(() => {
+    setWizardVisible(wizardOverlayVisible);
+    return () => setWizardVisible(false);
+  }, [wizardOverlayVisible, setWizardVisible]);
+
   if (!IS_DESKTOP || !handle || !state) return null;
 
   // Onboarding takes priority once triggered — by construction it only
@@ -208,7 +293,7 @@ export default function DesktopBootstrap() {
         ? !terminalDismissed
         : state.phase === "EXTERNAL_UNMANAGED"
           ? false
-          : state.phase === "STEP" && !(state.status === "ERROR" && stepErrorDismissed);
+          : state.phase === "STEP" && !(state.status === "ERROR" && stepErrorDismissed) && !downloadBackgrounded;
   // ^ an actively-advancing STEP (RUNNING/POLLING) stays visible once
   //   consent was given — install progress is never dismissible
   //   mid-flight — but the ERROR status is (v0.4.0 field fix): a
@@ -222,7 +307,10 @@ export default function DesktopBootstrap() {
   //   externally-managed sidecar) is spelled out explicitly rather than
   //   left to the STEP fallthrough: this app never provisions/starts
   //   anything in that mode, so there is no wizard action to ever offer
-  //   for it.
+  //   for it. downloadBackgrounded (field-test issue 6) is the ONE
+  //   dismissibility this invariant now carves out — see that flag's
+  //   own doc comment above for why it's added alongside the
+  //   never-dismissible-mid-flight rule rather than a weakening of it.
 
   if (!visible) return null;
 
@@ -237,6 +325,9 @@ export default function DesktopBootstrap() {
         // is actually starting" — see provisionBegunRef's own doc
         // comment above.
         provisionBegunRef.current = true;
+        // Field-test issue 6: stashed for onBackgroundDownload below —
+        // see provisioningModelRef's own doc comment above.
+        provisioningModelRef.current = model;
         handle.beginProvision(model);
       }}
       onDismissConsent={() => setConsentDismissed(true)}
@@ -249,6 +340,32 @@ export default function DesktopBootstrap() {
           await handle.reprovision();
         } catch (error) {
           showToast(`重新运行安装向导失败：${describeError(error)}`);
+        }
+      }}
+      onBackgroundDownload={() => {
+        setDownloadBackgrounded(true);
+        // F3 (review round): permanently suppresses the S10 onboarding
+        // pop for the rest of this session — see onboardingShownRef's
+        // own doc comment above for why downloadBackgrounded itself
+        // can't gate that trigger. A later, unrelated first-run drive
+        // (if one somehow still happens this session) also skips
+        // onboarding as a result — accepted: onboarding is already a
+        // one-shot-per-session affordance by design, and a user who
+        // backgrounded once has already signaled "leave me alone".
+        onboardingShownRef.current = true;
+        // DOWNLOAD_MODEL/RUNNING is only ever reached via a fresh
+        // beginProvision() call (the provisioned-dead auto-drive path
+        // skips straight to STARTING, marker already on disk) — the ref
+        // is always set by the time this button is even reachable; the
+        // "" fallback is defense-in-depth only (modelLabel("") degrades
+        // to an empty label, never a crash).
+        trackPrewarm(handle, provisioningModelRef.current ?? "");
+      }}
+      onCancelPrewarm={async () => {
+        try {
+          await handle.cancelPrewarm();
+        } catch (error) {
+          showToast(`取消下载失败：${describeError(error)}`);
         }
       }}
     />

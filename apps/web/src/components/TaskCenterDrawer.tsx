@@ -69,6 +69,22 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
 
   const [checkingSidecar, setCheckingSidecar] = useState(false);
   const [handle, setHandle] = useState<DesktopBootstrapHandle | null>(null);
+  // F6 (lead live-finding, review round): the sidecar's own cancel_prewarm
+  // / POST /jobs/{id}/cancel can take ~10s+ to actually be OBSERVED here
+  // (a pre-byte network/process-teardown phase before the drive even
+  // reacts — see bootstrap.ts's own downloadWasCancelled/jobsBridge.ts's
+  // trackPrewarm/trackSwitchModel, neither of which settle the task
+  // until THAT happens) — the row would otherwise keep reading "运行中"
+  // for that whole window right after the user clicked 取消, looking
+  // like the click did nothing. Purely a local optimistic label; the
+  // task itself still only actually settles once one of those async
+  // paths above observes it. ponytail: never pruned for a task id that
+  // settles without this exact row re-rendering again — harmless, since
+  // the running-only label branch below simply stops matching once
+  // status changes (a session-bounded handful of stale ids sitting in
+  // memory); add a useTasks-driven prune (mirrors jobsBridge.ts's F11
+  // modelByTaskId precedent) if this ever needs tightening.
+  const [cancelingTaskIds, setCancelingTaskIds] = useState<Set<string>>(new Set());
 
   const updateStatus = useUpdateCheck((s) => s.status);
   const updateCurrentVersion = useUpdateCheck((s) => s.currentVersion);
@@ -137,6 +153,29 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
     const model = modelForTask(task.id);
     if (!model) return;
     trackSwitchModel(handle, model);
+  };
+
+  // Field-test issue 6 (cancellable model downloads): a RUNNING
+  // "model-download" row is either a switch-model job (jobsBridge.ts's
+  // trackSwitchModel — registered in modelByTaskId, same test
+  // modelForTask/the retry button above already use) or a first-run
+  // prewarm row (trackPrewarm — deliberately NEVER registered there,
+  // see that function's own doc comment) — modelForTask's presence is
+  // what routes the click to the right sidecar/Rust cancel mechanism.
+  // Fire-and-forget from this handler's own POV: the actual task
+  // settling happens asynchronously either way (performSwitchModel's
+  // poll loop observing "cancelled", or trackPrewarm's state$ watcher
+  // observing the drive leave STEP) — this only surfaces a toast if the
+  // cancel REQUEST itself failed to even go out.
+  const handleCancelModelDownload = (task: TaskState) => {
+    if (!handle) return;
+    // F6: optimistic "取消中…" from click, not from the cancel call
+    // settling — see cancelingTaskIds' own doc comment above.
+    setCancelingTaskIds((prev) => new Set(prev).add(task.id));
+    const cancel = modelForTask(task.id) ? handle.cancelSwitchModel() : handle.cancelPrewarm();
+    cancel.catch((error: unknown) => {
+      showToast(`取消失败：${error instanceof Error ? error.message : String(error)}`);
+    });
   };
 
   const handleRetryDiarInstall = () => {
@@ -288,7 +327,7 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
                       <span className="text-mut2">·</span>
                       {task.status === "running" && (
                         <span className="text-mut">
-                          {task.stage || "处理中"}
+                          {cancelingTaskIds.has(task.id) ? "取消中…" : task.stage || "处理中"}
                           {isFiniteProgress(task.progress) && (
                             <span className="text-mut2 tabular-nums">{` ${Math.round(task.progress * 100)}%`}</span>
                           )}
@@ -315,6 +354,26 @@ export default function TaskCenterDrawer({ open, onClose }: TaskCenterDrawerProp
                           style={{ width: `${Math.round(clampProgress(task.progress) * 100)}%` }}
                         />
                       </div>
+                    )}
+
+                    {/* Field-test issue 6 (cancellable model downloads):
+                       covers BOTH switch-model rows (trackSwitchModel)
+                       and first-run prewarm rows (trackPrewarm) — see
+                       handleCancelModelDownload's own doc comment for
+                       how it routes between the two. */}
+                    {task.status === "running" && task.kind === "model-download" && handle && (
+                      <button
+                        type="button"
+                        disabled={cancelingTaskIds.has(task.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelModelDownload(task);
+                        }}
+                        className="mt-2 flex items-center gap-1 text-xs text-mut hover:text-fg disabled:opacity-50"
+                      >
+                        <X size={12} weight="regular" />
+                        取消
+                      </button>
                     )}
 
                     {task.status === "error" && task.kind === "model-download" && handle && modelForTask(task.id) && (

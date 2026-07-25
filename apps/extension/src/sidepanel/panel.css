@@ -81,7 +81,8 @@ body {
 .js-input-section,
 .js-translate-section,
 .js-results,
-.js-locked-section {
+.js-locked-section,
+.js-packs-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -364,7 +365,8 @@ body {
    .js-history-heading, grouped into the same rule here rather than
    forcing renderLocked.ts to change its class name. ---- */
 .js-locked-title,
-.js-history-heading {
+.js-history-heading,
+.js-packs-heading {
   margin: 0;
   font-size: 13px;
   font-weight: 600;
@@ -411,4 +413,33 @@ body {
   color: var(--mut2);
   font-size: 11px;
   white-space: nowrap;
+}
+
+/* ---- 词典库 (remote dictionary packs) — reuses .js-card/.js-card-head/
+   .js-card-headword/.js-card-badge/.js-card-gloss/.js-save-btn/.js-btn
+   as-is (see renderPacks.ts's own header); only the section/group chrome
+   below is new. ---- */
+
+.js-packs-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.js-packs-subheading {
+  margin: 4px 0 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--mut);
+}
+
+/* 官方 provenance badge — same accent color .js-privacy-line--on-device
+   already uses for a "trust this" signal. */
+.js-badge-official {
+  color: var(--lab-green);
+  border-color: var(--lab-green);
+}
+
+.js-packs-error {
+  color: var(--lab-orange);
 }

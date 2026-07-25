@@ -18,6 +18,7 @@ import {
   type ExpressionCard,
   type TermCard,
 } from "../types";
+import { AMBIGUOUS_MARGIN } from "./dictionary";
 
 export const EXPRESSION_TTL_MS = 8 * 60 * 1000;
 
@@ -181,6 +182,52 @@ function mergeTerms(
         existing.gloss_zh = det.gloss_zh;
         existing.type = det.type;
         existing.source = "llm";
+        // v0.6 T4 (multi-sense terms): the LLM saw the real sentence —
+        // its judgement supersedes the dictionary's context-scored
+        // heuristic, so that heuristic's own ambiguity bookkeeping no
+        // longer applies once upgraded. This is the existing keyed
+        // disambiguation branch; only these two lines are new.
+        existing.senses = undefined;
+        existing.ambiguous = undefined;
+      }
+      if (existing.source === "dictionary" && source === "dictionary" && det.senses !== undefined) {
+        // MEDIUM-4 fix (v0.6 round-2 review): captured BEFORE the S12
+        // refresh below overwrites existing.senses — the score the
+        // card's CURRENT senseId held under the OLD context, not the
+        // new one.
+        const oldScore = existing.senses?.find((s) => s.senseId === existing.senseId)?.score;
+        const newScore = det.senses.find((s) => s.senseId === det.senseId)?.score;
+
+        // S12 fix (v0.6 round-2 review): refresh the ranked snapshot +
+        // ambiguous flag on EVERY dictionary hit, even when the winning
+        // sense doesn't change — a context change can shift scores or
+        // flip `ambiguous` while the top pick stays the same, and the
+        // old snapshot must not go stale just because identity didn't
+        // move.
+        existing.senses = det.senses;
+        existing.ambiguous = det.ambiguous;
+
+        // MEDIUM-4 fix: only swap the WINNER (gloss/type/senseId — same
+        // card, same id/count/firstSeenAt, per v0.6 T4's original
+        // in-place-replace design) when the new top score beats the
+        // card's PREVIOUS sense by at least AMBIGUOUS_MARGIN. Without a
+        // margin, senseContext.ts's own cooccurrence denominator grows
+        // all meeting, so a borderline call could flip A->B->A as
+        // unrelated terms accumulate — a card whose meaning oscillates
+        // is worse than one that's simply wrong. No old score to
+        // compare against (a first-ever dictionary hit for this
+        // surface, or the entry didn't carry senses before) never
+        // blocks the swap — there is nothing to protect against
+        // oscillating FROM yet.
+        const winnerChanged = det.senseId !== undefined && det.senseId !== existing.senseId;
+        const marginClears =
+          oldScore === undefined || newScore === undefined || newScore - oldScore >= AMBIGUOUS_MARGIN;
+        if (winnerChanged && marginClears) {
+          existing.gloss_en = det.gloss_en;
+          existing.gloss_zh = det.gloss_zh;
+          existing.type = det.type;
+          existing.senseId = det.senseId;
+        }
       }
       continue;
     }

@@ -3,12 +3,15 @@ import {
   CORRECT_SYSTEM_PROMPT,
   DETECT_SYSTEM_PROMPT,
   DEFINE_SYSTEM_PROMPT,
+  INFER_CONTEXT_SYSTEM_PROMPT,
   SWEEP_SYSTEM_PROMPT,
   buildCorrectUserMessage,
   buildDefineSystemPrompt,
   buildDefineUserMessage,
   buildDetectSystemPrompt,
   buildDetectUserMessage,
+  buildInferContextSystemPrompt,
+  buildInferContextUserMessage,
   buildSweepSystemPrompt,
   buildSweepUserMessage,
 } from "../prompts";
@@ -142,6 +145,164 @@ describe("buildDetectUserMessage", () => {
   it("does not fall back when newText is empty (only context has a fallback)", () => {
     const msg = buildDetectUserMessage("some context", "");
     expect(msg).toBe("CONTEXT:\nsome context\n\nNEW:\n");
+  });
+});
+
+// ---------------------------------------------------------------
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — the MEETING CONTEXT
+// block buildDetectUserMessage splices in ABOVE the AUDIENCE block.
+// ---------------------------------------------------------------
+
+describe("buildDetectUserMessage — MEETING CONTEXT splice", () => {
+  it("no meetingContext -> no MEETING CONTEXT block, output unchanged from before this param existed", () => {
+    const msg = buildDetectUserMessage("ctx", "new text");
+    expect(msg).not.toContain("MEETING CONTEXT:");
+    expect(msg).toBe("CONTEXT:\nctx\n\nNEW:\nnew text");
+  });
+
+  it("meetingContext present -> prepends exactly one MEETING CONTEXT: block before CONTEXT:", () => {
+    const msg = buildDetectUserMessage("ctx", "new text", undefined, "生物信息学组会，面向研究生");
+    expect(msg).toBe(
+      "MEETING CONTEXT:\n生物信息学组会，面向研究生\n\nCONTEXT:\nctx\n\nNEW:\nnew text",
+    );
+  });
+
+  it("empty-string meetingContext is treated as absent (no block)", () => {
+    const msg = buildDetectUserMessage("ctx", "new text", undefined, "");
+    expect(msg).not.toContain("MEETING CONTEXT:");
+  });
+
+  it("meetingContext renders ABOVE the AUDIENCE block when both are present", () => {
+    const msg = buildDetectUserMessage("ctx", "new text", "行业：互联网", "生物信息学组会");
+    expect(msg).toBe(
+      "MEETING CONTEXT:\n生物信息学组会\n\nAUDIENCE:\n行业：互联网\n\nCONTEXT:\nctx\n\nNEW:\nnew text",
+    );
+    expect(msg.indexOf("MEETING CONTEXT:")).toBeLessThan(msg.indexOf("AUDIENCE:"));
+  });
+
+  it("the cached SYSTEM prompt stays byte-identical regardless of meetingContext (cache guarantee)", () => {
+    const systemNoContext = buildDetectSystemPrompt("zh");
+    buildDetectUserMessage("ctx", "new text", undefined, "生物信息学组会");
+    const systemWithContext = buildDetectSystemPrompt("zh");
+    expect(systemWithContext).toBe(systemNoContext);
+  });
+});
+
+// ---------------------------------------------------------------
+// Auto meeting-context detection — the inference task's own prompts.
+// ---------------------------------------------------------------
+
+describe("buildInferContextSystemPrompt", () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
+  it('"zh" returns exactly INFER_CONTEXT_SYSTEM_PROMPT, unmodified', () => {
+    expect(buildInferContextSystemPrompt("zh")).toBe(INFER_CONTEXT_SYSTEM_PROMPT);
+  });
+
+  it('"en" differs from the zh base prompt', () => {
+    expect(buildInferContextSystemPrompt("en")).not.toBe(INFER_CONTEXT_SYSTEM_PROMPT);
+  });
+
+  it('"en" is written in English (no 生物信息学-style zh example survives the splice)', () => {
+    expect(buildInferContextSystemPrompt("en")).not.toContain("生物信息学");
+    expect(buildInferContextSystemPrompt("en")).toContain("bioinformatics");
+  });
+
+  it("strict JSON contract: {\"context\": string}, no markdown fences, no prose", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const prompt = buildInferContextSystemPrompt(lang);
+      expect(prompt).toContain('{"context":');
+      expect(prompt).toContain("Return ONLY a single JSON object");
+    }
+  });
+
+  it("instructs: no jargon/term lists, no speaker names, base only on EXCERPT, empty result when unclear", () => {
+    for (const lang of ["zh", "en"] as const) {
+      const prompt = buildInferContextSystemPrompt(lang);
+      expect(prompt).toContain("NEVER list specific jargon/terms/acronyms");
+      expect(prompt).toContain("NEVER include any speaker's name");
+      expect(prompt).toContain("Base the context ONLY on EXCERPT");
+      expect(prompt).toContain('{"context": "", "domains": []}');
+    }
+  });
+
+  it("the <=60 character cap is stated for both languages", () => {
+    for (const lang of ["zh", "en"] as const) {
+      expect(buildInferContextSystemPrompt(lang)).toContain("<=60 characters");
+    }
+  });
+
+  it("all splice anchors are found for both languages — console.warn is never called", () => {
+    buildInferContextSystemPrompt("zh");
+    buildInferContextSystemPrompt("en");
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  // v0.6 multi-sense-terms sprint (T5): domains schema pin.
+  describe("domains (v0.6 T5)", () => {
+    const DOMAIN_TAGS = [
+      "biomed",
+      "clinical",
+      "pharma",
+      "genomics",
+      "stats",
+      "ml",
+      "software",
+      "infra",
+      "finance",
+      "sales",
+      "hr",
+      "legal",
+      "ops",
+      "edu",
+      "media",
+      "general",
+    ];
+
+    it("the wire schema names both fields, both required", () => {
+      for (const lang of ["zh", "en"] as const) {
+        const prompt = buildInferContextSystemPrompt(lang);
+        expect(prompt).toContain('"domains":');
+        expect(prompt).toContain("two fields, both required");
+      }
+    });
+
+    it("every DomainTag value is named in the prompt, for both languages", () => {
+      for (const lang of ["zh", "en"] as const) {
+        const prompt = buildInferContextSystemPrompt(lang);
+        for (const tag of DOMAIN_TAGS) {
+          expect(prompt).toContain(tag);
+        }
+      }
+    });
+
+    it("caps domains at 3 and instructs never to invent a tag outside the list", () => {
+      for (const lang of ["zh", "en"] as const) {
+        const prompt = buildInferContextSystemPrompt(lang);
+        expect(prompt).toContain("up to 3 tags");
+        expect(prompt).toContain("NEVER invent a tag outside this list");
+      }
+    });
+  });
+});
+
+describe("buildInferContextUserMessage", () => {
+  it("formats the excerpt into an EXCERPT: section", () => {
+    const msg = buildInferContextUserMessage("We're kicking off the single-cell project...");
+    expect(msg).toBe("EXCERPT:\nWe're kicking off the single-cell project...");
+  });
+
+  it("an empty excerpt still produces a well-formed (if empty) EXCERPT: section", () => {
+    expect(buildInferContextUserMessage("")).toBe("EXCERPT:\n");
   });
 });
 

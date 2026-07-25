@@ -19,6 +19,7 @@ import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
+import * as storageModule from "../../lib/history/storage";
 import { SETTINGS_UI_LEVELS } from "../../lib/settingsSections";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { RETENTION_COPY } from "../../lib/stt/engineOptions";
@@ -197,6 +198,77 @@ describe("SettingsDialog — F1: draft re-seeds on hydration completing while th
     expect(saved.apiKey).toBe("sk-real-user-key");
     expect(saved.engine).toBe("soniox");
     expect(saved.themeId).toBe("clarity");
+  });
+});
+
+// F2 fix (Sol MEDIUM review, fieldtest-a batch): flushSettings can now
+// reject (storage.saveSettings propagates IndexedDB failures instead of
+// always resolving — see both functions' own docs). handleSave must show
+// an explicit error toast and keep the dialog open rather than falling
+// through to "已保存" + onClose over a write that never landed — see
+// store.test.ts's own flushSettings/updateSettings F2 describe block for
+// the store-level half of this fix (chain-poisoning, unhandled
+// rejections).
+describe("SettingsDialog — F2: handleSave surfaces a flushSettings failure honestly", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    vi.restoreAllMocks();
+    resetStore();
+    useApp.setState({ toast: null });
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  it("a rejected flushSettings shows the failure toast and does NOT close the dialog", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockRejectedValue(new Error("quota exceeded"));
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={onClose} />);
+    });
+    await flush();
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(useApp.getState().toast).toBe("设置保存失败，请重试（存储不可用或空间不足）");
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("a successful flushSettings still shows the normal success toast and closes (regression guard)", async () => {
+    vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={onClose} />);
+    });
+    await flush();
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(useApp.getState().toast).toBe("设置已保存");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1031,6 +1103,252 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: retention badge agrees w
   });
 });
 
+// ---------------------------------------------------------------
+// Field-test fix: 本地 Whisper and 系统/App 音频 both transcribe with
+// Whisper, but only 本地 Whisper's own hint used to name an engine —
+// 系统/App 音频 named only its audio source. Both cards' hints must now
+// name BOTH halves. 系统/App 音频 itself only renders once IS_DESKTOP is
+// mocked true (SettingsDialog.desktop.test.tsx), so its own copy
+// assertion lives there instead of here.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS: hint copy names both audio source and recognition backend (field-test fix)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  // Exact label match, not substring: 浏览器识别's OWN hint recommends
+  // "标签页音频或本地 Whisper" as an alternative, so a plain `.includes("本地
+  // Whisper")` scan (this file's usual findButtonContaining idiom) would
+  // match that EARLIER card instead of the 本地 Whisper card itself.
+  function findCardLabeled(label: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.querySelector(".font-medium")?.textContent === label,
+    );
+    if (!btn) throw new Error(`card labeled "${label}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("本地 Whisper card names the mic as the source and Whisper as the backend", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const card = findCardLabeled("本地 Whisper");
+    expect(card.textContent).toContain("麦克风收音，本地 Whisper 模型识别，音频不出设备");
+  });
+});
+
+// ---------------------------------------------------------------
+// Field-test fix: the bottom bar (StatusLine) already disables engine
+// switching via isEngineControlBusy the moment a meeting is connecting/
+// listening — this dialog's own engine cards used to stay enabled the
+// whole time, so a mid-session pick here was silently ignored rather
+// than rejected (useMeeting.ts's attachEngine only snapshots
+// settings.engine at Start). "paused" is deliberately excluded (same
+// isEngineControlBusy contract Header.test.ts/StatusLine.test.tsx
+// already pin) — resuming from pause genuinely reconciles an engine
+// change, so cards must stay pickable there.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS lock while a meeting is connecting/listening (field-test fix)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  const LOCKED_HINT = "会议进行中，无法切换引擎；暂停或结束会议后可切换";
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ status: "idle" }); // resetStore() doesn't cover this field — avoid leaking into later tests
+  });
+
+  it("disables every engine card and shows the standing locked hint while connecting, and again once listening", async () => {
+    useApp.setState({ status: "connecting" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(true);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(true);
+    expect(container!.textContent).toContain(LOCKED_HINT);
+
+    await act(async () => {
+      useApp.setState({ status: "listening" });
+    });
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(true);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(true);
+    expect(container!.textContent).toContain(LOCKED_HINT);
+  });
+
+  it("leaves engine cards enabled with no locked hint while paused, and again once stopped", async () => {
+    useApp.setState({ status: "paused" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(false);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(false);
+    expect(container!.textContent).not.toContain(LOCKED_HINT);
+
+    await act(async () => {
+      useApp.setState({ status: "stopped" });
+    });
+
+    expect(findButtonContaining("浏览器识别").disabled).toBe(false);
+    expect(findButtonContaining("Soniox 云端识别").disabled).toBe(false);
+    expect(container!.textContent).not.toContain(LOCKED_HINT);
+  });
+});
+
+// ---------------------------------------------------------------
+// S3 fix (v0.6 round-2 review): 识别语言/解释语言 used to stay editable
+// while a meeting was listening/paused — 保存 while active would apply
+// a language change straight into a LIVE meeting, silently corrupting
+// translation (a target change makes queue.ts pass a new target to a
+// provider still holding the old pair, which rejects it; a source
+// change is worse — DesktopSystemTranslationProvider.translate() only
+// compares the TARGET against lastPair, so text keeps flowing through
+// the OLD source-language session after a hard resume reattaches STT
+// with the new one — see providers.ts's own doc). Locked here with
+// meetingActive (not the narrower engineLockedByMeeting the 转录引擎
+// cards above use) — unlike the STT engine, "paused" is UNSAFE for
+// these two fields too, since resume() never re-primes the translate
+// provider.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 识别语言/解释语言 lock while a meeting is active (S3 fix, v0.6 round-2 review)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findSelectByLabel(text: string): HTMLSelectElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === text);
+    const select = label?.parentElement?.querySelector("select");
+    if (!select) throw new Error(`${text} select not found`);
+    return select as HTMLSelectElement;
+  }
+
+  function clickAiDetectNav(): void {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ status: "idle" }); // resetStore() doesn't cover this field — avoid leaking into later tests
+  });
+
+  it("识别语言 is disabled while listening, and stays disabled while paused too", async () => {
+    useApp.setState({ status: "listening" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findSelectByLabel("识别语言").disabled).toBe(true);
+
+    await act(async () => {
+      useApp.setState({ status: "paused" });
+    });
+    expect(findSelectByLabel("识别语言").disabled).toBe(true);
+  });
+
+  it("识别语言 is enabled while idle", async () => {
+    useApp.setState({ status: "idle" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    expect(findSelectByLabel("识别语言").disabled).toBe(false);
+  });
+
+  it("解释语言 is disabled while listening, and stays disabled while paused too", async () => {
+    useApp.setState({ status: "listening" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(findSelectByLabel("解释语言").disabled).toBe(true);
+
+    await act(async () => {
+      useApp.setState({ status: "paused" });
+    });
+    expect(findSelectByLabel("解释语言").disabled).toBe(true);
+  });
+
+  it("解释语言 is enabled while stopped", async () => {
+    useApp.setState({ status: "stopped" });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(findSelectByLabel("解释语言").disabled).toBe(false);
+  });
+});
+
 describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox Key (v0.4 S4 chunk 6)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
@@ -1197,6 +1515,375 @@ describe("SettingsDialog — PROVIDER_PRESETS suggestedModels (field-test fix v0
     expect(findBaseUrlInput().value).toBe("https://api.openai.com/v1");
     expect(modelInputValue("primary-detect-options")).toBe("gpt-5.6-luna");
     expect(modelInputValue("primary-summary-options")).toBe("gpt-5.6-sol");
+  });
+});
+
+// ---------------------------------------------------------------
+// FIX 2 (field-debugging postmortem, v0.5.1 fieldtest B): baseUrl
+// hygiene at the save boundary — see SettingsDialog.tsx's
+// normalizeBaseUrl/isValidBaseUrl, applied in handleSave right before
+// toSave is built. Same 保存-boundary-sanitization shape as the F5
+// custom-font suite above, and the same AI 检测/Base URL field the
+// PROVIDER_PRESETS suite right above this already exercises.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — FIX 2: Base URL is normalized/validated at 保存", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    // aiDetectCredentials (the section carrying the Base URL field) is
+    // advanced-tier (settingsSections.ts) — needs uiMode: "advanced" to
+    // render at all, same setup the F2/flushSettings suite above uses.
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+    // useProviderModels' own debounced fetch fires once the credentials
+    // block mounts — stubbed so CI never turns it into a real network
+    // call, same posture the PROVIDER_PRESETS suite above documents.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ toast: null });
+    vi.unstubAllGlobals();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function findBaseUrlInput(): HTMLInputElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "Base URL");
+    const input = label?.parentElement?.querySelector("input");
+    if (!input) throw new Error("Base URL input not found");
+    return input as HTMLInputElement;
+  }
+
+  async function openAiDetectSection(): Promise<void> {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  // F3/F5 fix-round helpers: render + open the AI 检测 section, then type
+  // a candidate Base URL and click 保存 — every rejected/accepted-class
+  // test below just varies the URL string.
+  async function renderDialog(): Promise<void> {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+  }
+
+  async function saveWithBaseUrl(url: string): Promise<void> {
+    await act(async () => {
+      typeInto(findBaseUrlInput(), url);
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  it("full-width punctuation + surrounding whitespace (Chinese IME paste) is normalized to a clean ASCII URL on save", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    await act(async () => {
+      typeInto(findBaseUrlInput(), "  https：／／openrouter．ai／api／v1／  ");
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.baseUrl).toBe("https://openrouter.ai/api/v1");
+    expect(useApp.getState().toast).toBe("设置已保存");
+  });
+
+  it("garbage input blocks save (toast error, dialog stays open, live settings untouched)", async () => {
+    const onClose = vi.fn();
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={onClose} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    await act(async () => {
+      typeInto(findBaseUrlInput(), "not-a-url");
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+    expect(onClose).not.toHaveBeenCalled();
+    // Blocked before updateSettings ever ran — the live setting is
+    // untouched, not just "the toast happened to also fire".
+    expect(useApp.getState().settings.baseUrl).toBe(DEFAULT_SETTINGS.baseUrl);
+  });
+
+  it("an already-clean URL is saved byte-identical (no rewriting beyond the documented normalizations)", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    await act(async () => {
+      typeInto(findBaseUrlInput(), "https://api.openai.com/v1");
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.baseUrl).toBe("https://api.openai.com/v1");
+    expect(useApp.getState().toast).toBe("设置已保存");
+  });
+
+  it("a DISABLED taskLlm override's stale/garbage baseUrl never blocks save — resolveTaskCreds ignores it entirely once enabled:false, same as a live setting nothing will ever send", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        taskLlm: { translate: { enabled: false, baseUrl: "not-a-url" } },
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    // No taskLlm editing at all — 保存 immediately with whatever the
+    // (disabled, untouched) override the draft was seeded with.
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().toast).toBe("设置已保存");
+    expect(useApp.getState().settings.taskLlm?.translate).toEqual({ enabled: false, baseUrl: "not-a-url" });
+  });
+
+  // -------------------------------------------------------------
+  // F3 (Sol MEDIUM #15, fix round): isValidBaseUrl tightened beyond a
+  // bare `new URL()` success — non-http(s) schemes and a search/hash/
+  // userinfo component are now rejected outright (a query-bearing base
+  // would otherwise put buildOpenAiCompatRequestInit's `/chat/
+  // completions` path INSIDE the query string). Ports and multi-
+  // segment paths — genuinely valid provider bases — still work.
+  // -------------------------------------------------------------
+
+  it("F3: rejects a file: scheme base URL", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("file:///etc/passwd");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+    expect(useApp.getState().settings.baseUrl).toBe(DEFAULT_SETTINGS.baseUrl);
+  });
+
+  it("F3: rejects a mailto: scheme base URL", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("mailto:someone@example.com");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+  });
+
+  it("F3: rejects an ftp: scheme base URL", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("ftp://host.example.com/path");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+  });
+
+  it("F3: rejects a base URL carrying a query string", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("https://host.example.com/v1?extra=1");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+  });
+
+  it("F3: rejects a base URL carrying a fragment", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("https://host.example.com/v1#section");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+  });
+
+  it("F3: rejects a base URL carrying userinfo (username:password@)", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("https://user:pass@host.example.com/v1");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+  });
+
+  it("F3: still accepts a non-default port", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("http://localhost:11434/v1");
+
+    expect(useApp.getState().settings.baseUrl).toBe("http://localhost:11434/v1");
+    expect(useApp.getState().toast).toBe("设置已保存");
+  });
+
+  it("F3: still accepts a port + multi-segment path together", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("https://api.deepseek.com:8443/v1/custom");
+
+    expect(useApp.getState().settings.baseUrl).toBe("https://api.deepseek.com:8443/v1/custom");
+    expect(useApp.getState().toast).toBe("设置已保存");
+  });
+
+  // -------------------------------------------------------------
+  // F5 (Sol hunt-note g, fix round): normalizeBaseUrl used to strip
+  // ALL whitespace, including internal — `https://host/my endpoint/v1`
+  // silently became `.../myendpoint/v1` with no error. isValidBaseUrl
+  // now rejects internal whitespace pre-parse instead, so the user
+  // sees the existing error toast rather than a silent rewrite.
+  // -------------------------------------------------------------
+
+  it("F5: rejects internal whitespace instead of silently mangling it away", async () => {
+    await renderDialog();
+    await saveWithBaseUrl("https://host.example.com/my endpoint/v1");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+    // Never silently saved as the mangled "/myendpoint/v1" (the old
+    // bug) or any other rewrite — the live setting stays untouched.
+    expect(useApp.getState().settings.baseUrl).toBe(DEFAULT_SETTINGS.baseUrl);
+  });
+
+  // -------------------------------------------------------------
+  // F4 (Sol MEDIUM #16, fix round): validation only applies when the
+  // EFFECTIVE provider for that field actually uses Base URL
+  // (openai-compat) — anthropic hides the field entirely
+  // (CredentialFields.tsx), so a stale garbage value there must never
+  // block 保存. Same provider-awareness for an enabled taskLlm
+  // override, resolved the exact way resolveTaskCreds does:
+  // `override.provider ?? primary.provider`.
+  // -------------------------------------------------------------
+
+  it("F4: primary provider=anthropic with a stale garbage baseUrl (hidden field) never blocks save", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", provider: "anthropic", baseUrl: "not-a-url" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    // Base URL isn't even rendered for anthropic — save without
+    // touching it, same pattern as the DISABLED-override test above.
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().toast).toBe("设置已保存");
+    expect(useApp.getState().settings.baseUrl).toBe("not-a-url");
+  });
+
+  it("F4: primary provider=openai-compat with a garbage baseUrl still blocks save", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", provider: "openai-compat" },
+      hydrated: true,
+    });
+    await renderDialog();
+    await saveWithBaseUrl("not-a-url");
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+  });
+
+  it("F4: an ENABLED taskLlm override with an explicit anthropic provider and a garbage baseUrl never blocks save (value left as-is)", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        taskLlm: { translate: { enabled: true, provider: "anthropic", baseUrl: "not-a-url" } },
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().toast).toBe("设置已保存");
+    expect(useApp.getState().settings.taskLlm?.translate).toEqual({
+      enabled: true,
+      provider: "anthropic",
+      baseUrl: "not-a-url",
+    });
+  });
+
+  it("F4: an ENABLED taskLlm override with NO provider of its own inherits the primary's anthropic provider — a garbage baseUrl never blocks save either", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        provider: "anthropic",
+        taskLlm: { translate: { enabled: true, baseUrl: "not-a-url" } },
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().toast).toBe("设置已保存");
+    expect(useApp.getState().settings.taskLlm?.translate).toEqual({ enabled: true, baseUrl: "not-a-url" });
+  });
+
+  it("F4: an ENABLED taskLlm override that inherits the primary's (default) openai-compat provider still blocks save on a garbage baseUrl", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        taskLlm: { translate: { enabled: true, baseUrl: "not-a-url" } },
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await openAiDetectSection();
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().toast).toBe("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+    // Blocked before updateSettings ran — live setting is untouched.
+    expect(useApp.getState().settings.taskLlm?.translate).toEqual({ enabled: true, baseUrl: "not-a-url" });
   });
 });
 
@@ -1626,6 +2313,54 @@ describe("SettingsDialog — S14 credential-health chips", () => {
     expect(chips.some((c) => c.textContent === "已配置")).toBe(true);
     expect(chips.some((c) => c.textContent === "正常")).toBe(false);
     expect(chips.some((c) => c.textContent === "异常")).toBe(false);
+  });
+});
+
+// v0.5.1 desktop keychain custody design — web (IS_DESKTOP false, this
+// file's own ambient default) keeps the BYTE-IDENTICAL prior apiKeyHint
+// copy; the desktop-only Keychain hint is pinned separately in
+// SettingsDialog.desktop.test.tsx (needs IS_DESKTOP mocked true, a
+// module-scope import-time const — same file-split constraint that
+// file's own header comment documents).
+describe("SettingsDialog — primary API Key hint stays the pre-migration web copy (v0.5.1 desktop keychain migration)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("shows the original 仅存于本机浏览器 hint, never the desktop Keychain copy", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container!.textContent).toContain(
+      "仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）",
+    );
+    expect(container!.textContent).not.toContain("系统钥匙串");
   });
 });
 

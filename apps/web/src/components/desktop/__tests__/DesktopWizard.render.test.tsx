@@ -145,6 +145,8 @@ describe("DesktopWizard — state-driven rendering", () => {
           onRetry={noop}
           onRecheckHealth={asyncNoop}
           onReprovision={asyncNoop}
+          onBackgroundDownload={noop}
+          onCancelPrewarm={asyncNoop}
           {...overrides}
         />,
       );
@@ -460,6 +462,11 @@ describe("DesktopWizard — state-driven rendering", () => {
     // an actively-advancing install must not offer them.
     expect(container!.querySelector('[data-testid="btn-back-to-consent"]')).toBeNull();
     expect(container!.querySelector('[data-testid="btn-dismiss-step-error"]')).toBeNull();
+    // Field-test issue 6: 后台继续/取消下载 are DOWNLOAD_MODEL-only —
+    // every OTHER running step stays exactly as un-actionable as before
+    // this fix.
+    expect(container!.querySelector('[data-testid="btn-background-download"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-cancel-download"]')).toBeNull();
   });
 
   it("STEP/POLLING (POLLING_HEALTH): folds into the STARTING row, shown as running", async () => {
@@ -494,6 +501,57 @@ describe("DesktopWizard — state-driven rendering", () => {
       downloadProgress: { downloaded: 1, total: 2 },
     });
     expect(container!.querySelector('[data-testid="wizard-download-progress"]')).toBeNull();
+  });
+
+  // ---- Field-test issue 6 (cancellable model downloads): STEP RUNNING
+  // used to render ZERO action buttons anywhere in this file — scoped to
+  // DOWNLOAD_MODEL/RUNNING specifically, since both actions act on the
+  // prewarm_model download itself (see each prop's own doc comment,
+  // DesktopWizardProps). ----
+
+  it("STEP/RUNNING (DOWNLOAD_MODEL): shows 后台继续/取消下载 — 后台继续 calls onBackgroundDownload, 取消下载 awaits onCancelPrewarm (busy label while pending)", async () => {
+    const onBackgroundDownload = vi.fn();
+    let resolveCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      resolveCancel = resolve;
+    });
+    const onCancelPrewarm = vi.fn(() => cancelGate);
+    await renderWizard({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "RUNNING" }, [], {
+      onBackgroundDownload,
+      onCancelPrewarm,
+    });
+
+    const bgBtn = container!.querySelector('[data-testid="btn-background-download"]')! as HTMLButtonElement;
+    expect(bgBtn.textContent).toBe("后台继续");
+    await act(async () => {
+      bgBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onBackgroundDownload).toHaveBeenCalledTimes(1);
+
+    const cancelBtn = container!.querySelector('[data-testid="btn-cancel-download"]')! as HTMLButtonElement;
+    expect(cancelBtn.textContent).toBe("取消下载");
+    await act(async () => {
+      cancelBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onCancelPrewarm).toHaveBeenCalledTimes(1);
+    // busy while the awaited cancel is still in flight — mirrors
+    // 返回重新选择's own 处理中… contract (STEP/ERROR test below).
+    expect(cancelBtn.textContent).toBe(WIZARD_BUSY_LABEL);
+    expect(cancelBtn.disabled).toBe(true);
+
+    await act(async () => {
+      resolveCancel();
+      await cancelGate;
+    });
+    expect(cancelBtn.textContent).toBe("取消下载");
+    expect(cancelBtn.disabled).toBe(false);
+  });
+
+  it("STEP/ERROR (DOWNLOAD_MODEL): no 后台继续/取消下载 chrome — those are RUNNING-only, ERROR gets the existing 重试/返回重新选择/关闭 trio instead", async () => {
+    await renderWizard({ phase: "STEP", step: "DOWNLOAD_MODEL", status: "ERROR", error: "磁盘空间不足", retriable: true });
+    expect(container!.querySelector('[data-testid="btn-background-download"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-cancel-download"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-retry-step"]')).not.toBeNull();
   });
 
   it("STEP/ERROR: shows the error row, message, 重试 (onRetry), and the escape hatch (paths + 我已手动安装 -> onRecheckHealth)", async () => {

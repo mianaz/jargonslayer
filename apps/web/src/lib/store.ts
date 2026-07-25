@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import {
   DEFAULT_SETTINGS,
+  MEETING_CONTEXT_MAX_CHARS,
   newId,
   type DetectResponse,
   type DetectionSource,
@@ -20,6 +21,9 @@ import {
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
+import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
+import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonslayer/core/detect/packs";
+import { sanitizeDomains } from "./llm/tasks/inferContext";
 import type { DetectMode } from "./detect/scheduler";
 import type { OnDeviceMode } from "./stt/onDeviceSpeech";
 import * as storage from "./history/storage";
@@ -329,6 +333,27 @@ interface AppState {
   // settings
   settings: Settings;
   hydrated: boolean;
+  // Demo-overlay stash (field-test round, extends S14.1): while a demo
+  // (≡ 演示) is live, settings.engine reads "demo" for the WHOLE tab
+  // session so attachEngine/addFinal see it — but S14.1's persist:false
+  // alone only ever closed ONE write (startDemo's own). Any ORDINARY
+  // persist:true updateSettings while the demo is live (e.g. a Settings
+  // dialog save) merges + persists the WHOLE settings object, re-baking
+  // engine:"demo" right back in — same for the quit-time flushSettings/
+  // pagehide flush (both write get().settings verbatim otherwise). Root-
+  // level (NOT inside `settings`) is deliberate: the persisted blob is
+  // only ever the settings object (storage.saveSettings' own signature),
+  // so this field naturally never serializes no matter which write path
+  // fires — no separate "don't persist this one field" carve-out
+  // needed. Non-null while an overlay is active, holding the REAL engine
+  // to restore on the way out — see settingsForPersist (this store's
+  // single saveSettings chokepoint, folded near updateSettings below)
+  // and the beginDemoOverlay/endDemoOverlay actions further down. null =
+  // no overlay active — includes a fresh install that has simply never
+  // run the demo (DEFAULT_SETTINGS.engine is "demo" there by design, and
+  // persisting THAT is correct, unchanged first-run behavior, not a
+  // stranded overlay).
+  demoOverlayPrevEngine: Settings["engine"] | null;
 
   // live meeting
   status: MeetingStatus;
@@ -438,6 +463,19 @@ interface AppState {
   // ergonomic session toggle, not a Settings field).
   captionMode: boolean;
 
+  // Field-test fix (desktop first-run onboarding never seen — verified
+  // root cause): mirrors DesktopBootstrap.tsx's own "am I currently
+  // covering the whole screen" computation (its `visible`/showOnboarding
+  // branches — both render a `fixed inset-0 z-50` overlay, same as
+  // TutorialOverlay.tsx) into the store, so page.tsx can sequence the
+  // first-run tutorial's auto-open AFTER the wizard instead of racing it
+  // (DesktopBootstrap mounts LATER in page.tsx's own JSX, so equal
+  // z-index + later DOM always won the tie before this fix). Set from an
+  // effect in DesktopBootstrap.tsx, including its own unmount cleanup —
+  // stays false forever on a web build (DesktopBootstrap never mounts
+  // there). Non-persisted, same posture as focusMode/captionMode above.
+  wizardVisible: boolean;
+
   // Sidecar status (owner ask 2026-07-11: "I cannot see in the GUI if
   // the local side got set up at all"): last known GET /health result
   // for the local Whisper sidecar, written by SettingsDialog's 转录引擎
@@ -470,16 +508,57 @@ interface AppState {
 
   // ---- actions ----
   hydrate: () => Promise<void>;
-  // `opts.persist` (S14.1 field fix, default true): useMeeting.ts's
-  // startDemo passes `{ persist: false }` when setting engine:"demo" —
-  // a live demo session is entirely in-memory (settings.engine is read
-  // live by attachEngine/addFinal for the duration of that one tab
-  // session) and never needs to survive a reload, so writing it to
-  // storage only risks stranding a returning user on a start button
-  // that silently replays the demo (see applyTierDefaults' own doc for
-  // the exact field report this closes). Every other call site omits
-  // `opts` and persists exactly as before.
+  // `opts.persist` (S14.1 field fix, default true): store.ts's own
+  // beginDemoOverlay (called from useMeeting.ts's startDemo) passes
+  // `{ persist: false }` when setting engine:"demo" — a live demo
+  // session is entirely in-memory (settings.engine is read live by
+  // attachEngine/addFinal for the duration of that one tab session) and
+  // never needs to survive a reload, so writing it to storage only
+  // risks stranding a returning user on a start button that silently
+  // replays the demo (see applyTierDefaults' own doc for the exact
+  // field report this closes). Every other call site omits `opts` and
+  // persists exactly as before. NOTE: this alone only guarantees ONE
+  // write never bakes "demo" in — see demoOverlayPrevEngine's own doc
+  // above for why a live overlay needs more than that.
   updateSettings: (patch: Partial<Settings>, opts?: { persist?: boolean }) => void;
+  // Quit-time settings durability (field fix, real desktop/Tauri report:
+  // an API key saved shortly before quitting the app was lost).
+  // updateSettings' own persist above is fire-and-forget — this is the
+  // durable-commit escape hatch: writes the CURRENT settings via
+  // storage.saveSettings and resolves once that write (AND whatever was
+  // already in flight from a recent updateSettings call) has actually
+  // landed, so a caller gets a real guarantee instead of racing app
+  // teardown. Idempotent — safe to call any time, including with
+  // nothing changed since the last write. SettingsDialog's 保存 handler
+  // awaits this before closing/toasting; hydrate() below also wires a
+  // pagehide/visibilitychange(hidden) listener that calls this
+  // unawaited, mirroring useMeeting.ts's own live-draft flush (WebKit
+  // bug 199854 — WKWebView can drop an uncommitted IndexedDB write on
+  // teardown). See pendingSettingsSave's own doc above the store for
+  // the tracked-promise mechanics both of these lean on.
+  flushSettings: () => Promise<void>;
+  // Desktop keychain custody (v0.5.1 desktop keychain migration) —
+  // resolves once every Keychain write updateSettings has enqueued so
+  // far has settled (success OR failure — see syncSecretCustody's own
+  // doc above pendingSecretWrites). SettingsDialog's handleSave awaits
+  // this BEFORE flushSettings, so custody is up to date before
+  // settingsForPersist decides what to strip from the IDB blob. A no-op
+  // (pre-resolved) on web — nothing is ever enqueued there. Never
+  // rejects, same discipline as flushSettings' own pendingSettingsSave.
+  flushSecrets: () => Promise<unknown>;
+  // Demo-overlay stash (field-test round, extends S14.1) — begin/end the
+  // live "demo" overlay described on demoOverlayPrevEngine above.
+  // beginDemoOverlay is idempotent (a second call while already
+  // overlaid re-applies engine:"demo" but does NOT re-stash over the
+  // real value); endDemoOverlay is a safe no-op when no overlay is
+  // active. Both flip live settings.engine via the existing
+  // updateSettings persist:false path, so neither ever touches storage
+  // directly. See useMeeting.ts's startDemo (begin) and doStop/
+  // runStopFlow (end, called AFTER any saveCurrentSession so a demo
+  // session's own saved MeetingSession.engine still correctly reads
+  // "demo") for the call sites.
+  beginDemoOverlay: () => void;
+  endDemoOverlay: () => void;
 
   setStatus: (status: MeetingStatus, detail?: string | null) => void;
   setSttEngineMode: (mode: OnDeviceMode | null) => void;
@@ -633,9 +712,67 @@ interface AppState {
   // reset write is needed from the consumer side.
   bitCelebrateNonce: number;
   celebrateBit: () => void;
+  // AI-detect manual retry (field-test issue 8b): same transient,
+  // NEVER-persisted monotonic-nonce shape as bitCelebrateNonce right
+  // above — useMeeting.ts subscribes (the one place that actually holds
+  // the live DetectionScheduler ref) and calls its retryAi() on each
+  // increment. AiStatusPanel (a leaf component with no other path to
+  // the scheduler — neither of its hosts, StatusLine's popover or
+  // SettingsDialog, threads any meeting-layer callback down to it)
+  // bumps this from its 「重试 AI 检测」 button.
+  aiRetryNonce: number;
+  requestAiRetry: () => void;
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — live-only bookkeeping
+  // for the trigger effect in useMeeting.ts (see decideContextTrigger
+  // there for the full threshold/gate contract this state feeds).
+  // Reset alongside the rest of the live-meeting slice in
+  // beginMeeting/newMeeting; `inferredContext` (only) persists with the
+  // session — see MeetingSession.inferredContext, saveCurrentSession/
+  // currentSessionSnapshot below.
+  inferredContext: string | null;
+  // True once the user has set (via setInferredContext's own
+  // opts.override) OR cleared the context by hand from the header
+  // chip — a HARD stop for every further auto-attempt this meeting
+  // (initial/retry AND the later refresh), so a user-cleared (null)
+  // override is never reinterpreted as "still needs a first guess".
+  contextOverride: boolean;
+  // Count of failed/empty initial+retry attempts (0, 1, or 2) — gates
+  // the one-retry-then-give-up contract. Never touched by the refresh
+  // (a wholly separate one-shot latch, see contextRefreshed below).
+  contextAttempts: number;
+  // One-shot latch for the later (>=7000 chars) refresh of an already-
+  // inferred context — set at DISPATCH time (not on resolve), so a
+  // failed/slow refresh call is never retried again this meeting.
+  contextRefreshed: boolean;
+  // `opts.override: true` marks this as a user-authored value (the
+  // header chip's inline edit) — a hard stop for every further
+  // auto-attempt (see contextOverride above). Also the one write-time
+  // guard useMeeting.ts's async trigger effect re-checks before ever
+  // calling this with an INFERRED value, so a user edit that lands
+  // while a call is in flight always wins (gen guard alone can't catch
+  // a same-meeting clobber). `value: null` clears it (chip disappears,
+  // inference stays off when paired with override:true).
+  setInferredContext: (value: string | null, opts?: { override?: boolean }) => void;
+  bumpContextAttempts: () => void;
+  markContextRefreshed: () => void;
+  // v0.6 multi-sense-terms sprint (T5): the domain tags inferred
+  // alongside inferredContext above (InferContextResponse.domains) —
+  // same reset/persistence posture as that field (see its own doc):
+  // reset in beginMeeting/newMeeting, persisted with the session (see
+  // MeetingSession.inferredDomains, saveCurrentSession/
+  // currentSessionSnapshot below). Feeds detect/senseContext.ts's
+  // deriveSenseContext via useMeeting.ts's wiring effect. Narrowed to
+  // the real DomainTag union HERE (not left as the wire's loose
+  // string[]) — setInferredDomains below is the one write-time guard
+  // every caller routes through, same posture as setInferredContext's
+  // own MEETING_CONTEXT_MAX_CHARS clamp just above.
+  inferredDomains: DomainTag[];
+  setInferredDomains: (domains: string[]) => void;
   setFocusMode: (v: boolean) => void;
   setCaptionMode: (v: boolean) => void;
   setSidecarUp: (up: boolean | null) => void;
+  setWizardVisible: (v: boolean) => void;
 }
 
 /** S9/D7 platform engine coercion — desktop never shows tabaudio
@@ -750,11 +887,18 @@ export function applyPlatformEngineDefaults(settings: Settings, isDesktop: boole
  *      meant "they last quit mid-demo". In the field that theory broke:
  *      ≡ 演示 persisted engine:"demo" the moment it ran, and nothing
  *      ever coerced it back — a returning preview user's 开始监听
- *      silently replayed the demo forever after. Fixed at the root in
- *      useMeeting.ts's startDemo (S14.1): it no longer persists
- *      engine:"demo" at all — this coercion only ever fires on a STALE
- *      pre-fix value or a hand-edited settings blob, safe to always
- *      redirect. `_hadSavedEngine` is kept in the signature
+ *      silently replayed the demo forever after. Fixed at the root by
+ *      the demo-overlay stash design (demoOverlayPrevEngine +
+ *      settingsForPersist, this file — the original S14.1 fix was only
+ *      useMeeting.ts's startDemo passing persist:false on its OWN
+ *      write, which left every OTHER persist:true save, plus the
+ *      quit-time flushSettings/pagehide flush, free to re-bake
+ *      engine:"demo" back in; settingsForPersist is the single
+ *      chokepoint every one of those routes through now): storage never
+ *      sees engine:"demo" while an overlay is live, so this coercion
+ *      only ever fires on a STALE pre-overlay-design value or a
+ *      hand-edited settings blob, safe to always redirect.
+ *      `_hadSavedEngine` is kept in the signature
  *      (migrateSettings still feeds it; other call sites pass it) but
  *      is no longer read here.
  *
@@ -982,6 +1126,7 @@ export function modeForPersistedEngine(
     case "whisper":
     case "soniox":
     case "deepgram":
+    case "elevenlabs":
       return "mic";
     case "appaudio":
       return "system-audio";
@@ -1029,6 +1174,34 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
     settings.aiDetect = !legacy.dictionaryOnly;
   }
   delete (settings as { dictionaryOnly?: boolean }).dictionaryOnly;
+  // MEDIUM-5 fix (v0.6 round-2 review): union newly-introduced built-in
+  // pack ids into an OLD explicit enabledPacks array. SettingsDialog.tsx's
+  // own 保存 writes enabledPacks as an explicit array the moment a user
+  // has ever unchecked even ONE pack — that array is frozen at whatever
+  // packs existed at that moment, so a genuinely NEW built-in pack
+  // (added in a LATER release, e.g. v0.6's modern-usage/finance-consumer
+  // /daily-idiom) silently never fires for that user, forever
+  // (isPackEnabled treats "not in the array" as excluded). A null
+  // enabledPacks (nobody's ever customized packs — the common case)
+  // needs no migration: null already means "everything on", new packs
+  // included. Keyed off packsSchemaVersion so the user's own explicit
+  // EXCLUSIONS (packs they genuinely unchecked) survive untouched — only
+  // ids that didn't exist yet at their last-saved version get added —
+  // and running this twice is a no-op (packsSchemaVersion is already
+  // CURRENT_PACKS_SCHEMA_VERSION after the first pass, so the filter
+  // below finds nothing newer to union in).
+  const savedPacksVersion = legacy.packsSchemaVersion ?? 0;
+  if (settings.enabledPacks !== null) {
+    const explicitPacks = settings.enabledPacks;
+    const newlyIntroducedIds = Object.entries(PACKS_ADDED_AT_VERSION)
+      .filter(([version]) => Number(version) > savedPacksVersion)
+      .flatMap(([, ids]) => ids)
+      .filter((id) => !explicitPacks.includes(id));
+    if (newlyIntroducedIds.length > 0) {
+      settings.enabledPacks = [...explicitPacks, ...newlyIntroducedIds];
+    }
+  }
+  settings.packsSchemaVersion = CURRENT_PACKS_SCHEMA_VERSION;
   // S9/D7 platform coercion runs FIRST — see applyPlatformEngineDefaults'
   // own doc for why (an engine value must be legal for THIS platform
   // before preview-tier legality is even meaningful to ask about).
@@ -1195,9 +1368,237 @@ export function pauseIntervalsForSnapshot(
   return [...pauseIntervals, { start: pauseStartedAt, end: snapshotAt }];
 }
 
+// Quit-time settings durability (field fix, real desktop/Tauri report:
+// an API key saved shortly before quitting the app was lost) —
+// updateSettings persists via a fire-and-forget `storage.saveSettings`
+// call; this tracks that write's own promise so flushSettings (see
+// AppState's own doc on that action) can chain onto whatever's already
+// in flight instead of racing it, giving a caller (SettingsDialog's 保存
+// handler, and the quit-time pagehide/visibilitychange listener hydrate()
+// installs below) a real durable-commit guarantee. Starts pre-resolved
+// so the very first flushSettings call has nothing to wait on.
+let pendingSettingsSave: Promise<void> = Promise.resolve();
+
+// Desktop keychain custody (v0.5.1 desktop keychain migration, apps/
+// desktop/src-tauri/src/secret.rs's own header has the full design) —
+// `secretCustody` holds every Settings field name currently confirmed
+// written to the OS Keychain (or its debug-build file fallback — see
+// that Rust module), populated by hydrateSecrets() at boot — F5 fix
+// (Sol MEDIUM #13, keychain-custody fix round): REPLACED wholesale on
+// every hydrate (see that call site below), never merely added to, so
+// stale custody from an EARLIER hydrate can't outlive a restore/
+// re-hydrate that no longer confirms it and wrongly strip a fail-open
+// plaintext key forever after — and kept current by syncSecretCustody
+// below on every later change. Plain module-level state, not store
+// data: settingsForPersist reads it SYNCHRONOUSLY (see that function
+// below) to decide which fields to blank before a save ever reaches
+// storage.saveSettings, and a set of bare names has no reason to
+// round-trip through zustand's own set()/get(). `pendingSecretWrites`
+// mirrors pendingSettingsSave immediately above — the same "track the
+// in-flight promise so a later caller can await everything settling"
+// shape, one level down (Keychain writes rather than the IDB settings
+// write itself) — F4 fix (Sol MEDIUM #12, keychain-custody fix round):
+// syncSecretCustody below now DEFERS its own work inside the `.then()`
+// callback rather than starting it eagerly and merely chaining the
+// ALREADY-RUNNING promise on top — the old shape tracked concurrent
+// writes without ever truly serializing them, so two rapid patches
+// could land their Keychain writes out of enqueue order. Starts
+// pre-resolved so the very first flushSecrets() call has nothing to
+// wait on. Web builds never populate either — IS_DESKTOP gates every
+// write site.
+const secretCustody = new Set<string>();
+let pendingSecretWrites: Promise<unknown> = Promise.resolve();
+
+/** F2 fix (Sol HIGH #4, keychain-custody fix round) — settings.
+ *  secretDeletePending bookkeeping (packages/core/src/types.ts's own
+ *  field doc has the full design; secret.ts's hydrateSecrets is the
+ *  consult-first reader). Mutates the live store's settings DIRECTLY
+ *  (bypassing updateSettings' own patch/persist/theme-side-effect
+ *  machinery — this is internal retry bookkeeping, not a user-facing
+ *  settings change) and reports whether it actually changed anything,
+ *  so the caller (runSecretCustodySync below) knows whether a follow-up
+ *  persist is worth kicking. */
+function addSecretDeleteTombstone(name: string): boolean {
+  const { settings } = useApp.getState();
+  const pending = settings.secretDeletePending ?? [];
+  if (pending.includes(name)) return false;
+  useApp.setState({ settings: { ...settings, secretDeletePending: [...pending, name] } });
+  return true;
+}
+
+/** The clearing half of addSecretDeleteTombstone above — "a later
+ *  successful writeSecret set/delete for that name clears its
+ *  tombstone" (F2's own design). */
+function clearSecretDeleteTombstone(name: string): boolean {
+  const { settings } = useApp.getState();
+  const pending = settings.secretDeletePending ?? [];
+  if (!pending.includes(name)) return false;
+  useApp.setState({ settings: { ...settings, secretDeletePending: pending.filter((n) => n !== name) } });
+  return true;
+}
+
+/** Desktop-only Keychain sync for one updateSettings patch — for every
+ *  SECRET_NAMES field the patch touches with a value that actually
+ *  CHANGED (vs `prev`), writes it to the Keychain regardless of
+ *  updateSettings' own opts.persist (a key must reach custody the
+ *  moment it changes, independent of whether THIS particular call also
+ *  persists the rest of the settings blob). F4 fix (Sol MEDIUM #12,
+ *  keychain-custody fix round): the actual work is deferred to
+ *  runSecretCustodySync below, only invoked once whatever's already
+ *  chained onto pendingSecretWrites has settled — see that let's own
+ *  doc above for why this, not the old "chain an already-started
+ *  promise" shape, is what actually serializes writes across separate
+ *  calls in enqueue order.
+ *
+ *  Success updates custody (non-empty value -> add the name; cleared to
+ *  "" -> remove it) and clears any leftover delete-tombstone for that
+ *  name (F2). Failure removes the name from custody — so
+ *  settingsForPersist below never strips a key that ISN'T actually IN
+ *  the Keychain. A SET failure (a non-empty value that couldn't be
+ *  written) surfaces the existing non-blocking warning toast and leaves
+ *  the value wherever updateSettings' own IDB persist path already put
+ *  it (fail-open, retried idempotently on the next change or the next
+ *  hydrate()). A DELETE failure (F2, Sol HIGH #4) is worse — the OLD
+ *  credential is still sitting in the Keychain and would otherwise
+ *  silently resurrect on the next hydrate — so it ALSO tombstones the
+ *  name (addSecretDeleteTombstone above; secret.ts's hydrateSecrets
+ *  consults it first and retries instead of adopting) and shows its own
+ *  distinct warning. F1 fix (Sol HIGH #3, keychain-custody fix round):
+ *  whenever custody membership OR the tombstone actually changes for a
+ *  name, this ALSO kicks flushSettings() — the SAME chokepoint
+ *  SettingsDialog's own handleSave already awaits — so a non-dialog
+ *  writer (OnboardingByokStep/OnboardingDiarizeStep, the desktop OAuth
+ *  callback in oauth/openrouterDesktop.ts — every one of them a bare
+ *  updateSettings({apiKey / hfToken: ...}) with no flushSettings of its
+ *  own) still gets a durable, correctly-stripped-or-fail-open persist
+ *  without needing one, and a mid-write failure on an already-custodied
+ *  name doesn't strand its new plaintext value un-persisted with a
+ *  since-cleared custody entry (a missed pagehide would otherwise
+ *  silently revert to the old value on the next boot). Every write is
+ *  folded into the shared pendingSecretWrites chain so flushSecrets()
+ *  can await the lot; this function's own promise NEVER rejects (same
+ *  "never poison the shared chain" discipline pendingSettingsSave's own
+ *  doc documents above), so pendingSecretWrites is always safe to
+ *  unconditionally `.then()` onto. */
+function syncSecretCustody(patch: Partial<Settings>, prev: Settings, next: Settings): void {
+  pendingSecretWrites = pendingSecretWrites.then(() => runSecretCustodySync(patch, prev, next));
+}
+
+async function runSecretCustodySync(patch: Partial<Settings>, prev: Settings, next: Settings): Promise<void> {
+  try {
+    const { SECRET_NAMES, writeSecret } = await import("./desktop/secret");
+    for (const name of SECRET_NAMES) {
+      if (!(name in patch)) continue;
+      const value = next[name];
+      if (value === prev[name]) continue;
+      const wasCustodied = secretCustody.has(name);
+      const ok = await writeSecret(name, value);
+      let tombstoneChanged = false;
+      if (ok) {
+        if (value) secretCustody.add(name);
+        else secretCustody.delete(name);
+        tombstoneChanged = clearSecretDeleteTombstone(name);
+      } else {
+        secretCustody.delete(name);
+        diagLog(
+          "warn",
+          "secret-persist",
+          `keychain write failed for ${name}; value stays in local settings storage (fail-open, retried on next change)`,
+        );
+        if (value) {
+          useApp.getState().showToast("API Key 未能存入系统钥匙串，已临时保存在本地");
+        } else {
+          tombstoneChanged = addSecretDeleteTombstone(name);
+          useApp.getState().showToast("钥匙串中的旧 Key 删除失败，重启后可能重新出现，请重试清除");
+        }
+      }
+      if (tombstoneChanged || secretCustody.has(name) !== wasCustodied) {
+        await useApp.getState().flushSettings();
+      }
+    }
+  } catch (err) {
+    diagLog(
+      "warn",
+      "secret-persist",
+      "lib/desktop/secret.ts failed to load; keychain sync skipped for this settings change",
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
+
+/** Test-only reset — clears secretCustody/pendingSecretWrites. Mirrors
+ *  tauriApi.ts's own resetTauriApiCache / captionWindow.ts's
+ *  resetCaptionWindowStateForTests convention for module-level state
+ *  that must never leak between independent `it()` blocks (neither is
+ *  part of AppState, so `useApp.setState()` can't reach them). */
+export function resetSecretCustodyForTests(): void {
+  secretCustody.clear();
+  pendingSecretWrites = Promise.resolve();
+}
+
+// Installed-once guard for the quit-time listeners hydrate() adds below
+// — hydrate() can run more than once (dev/StrictMode double-invoke, a
+// manual re-hydrate) and must never stack a second pair of pagehide/
+// visibilitychange handlers.
+//
+// F4 fix (Sol review, LOW): keyed on globalThis via Symbol.for rather
+// than a plain module-level `let` — dev HMR re-evaluates this module on
+// every edit, which reset a module-local flag back to false while the
+// OLD listeners (closed over the OLD module instance) were still live on
+// window/document, silently accumulating a duplicate pagehide/
+// visibilitychange pair per edit. globalThis is the one thing that
+// survives a module re-evaluation within the same page, so a flag stored
+// there still reads back true across HMR — Symbol.for's registry key
+// (rather than a plain string prop) just avoids colliding with anything
+// else that might stash a same-named flag on globalThis.
+const QUIT_FLUSH_INSTALLED_KEY = Symbol.for("jargonslayer.quitFlushListenersInstalled");
+const globalFlags = globalThis as unknown as Record<symbol, boolean | undefined>;
+
+/** Demo-overlay stash — the single serialization chokepoint (see
+ *  AppState.demoOverlayPrevEngine's own doc). EVERY storage.saveSettings
+ *  call site in this store must route through this instead of writing
+ *  `state.settings` straight through: while an overlay is active, the
+ *  persisted engine is the STASHED real pick, never the live "demo"
+ *  value the UI is showing; with no overlay active (the ordinary case,
+ *  and a fresh install's first-ever save) this is exactly
+ *  `state.settings`, byte-identical to before the overlay design
+ *  existed. Takes a `Pick` rather than the full AppState so it stays
+ *  callable with a plain `{ settings, demoOverlayPrevEngine }` literal
+ *  (updateSettings needs the FRESHLY computed pair, not whatever `get()`
+ *  would still return mid-call) as well as `get()` itself (flushSettings).
+ *
+ *  Desktop keychain custody (v0.5.1): AFTER the demo-overlay engine
+ *  substitution above, also blanks every field currently IN
+ *  secretCustody — never a field merely NAMED in SECRET_NAMES, only one
+ *  syncSecretCustody has actually confirmed landed in the Keychain. That
+ *  custody-gated condition is exactly why iterating secretCustody itself
+ *  (rather than SECRET_NAMES + a membership check) is enough: custody
+ *  only ever holds a subset of SECRET_NAMES to begin with. A field whose
+ *  Keychain write failed stays OUT of custody and therefore un-stripped
+ *  here — the plaintext value keeps riding in the persisted blob on
+ *  purpose (fail-open) until a later write succeeds. Web never populates
+ *  secretCustody at all (IS_DESKTOP gates every write site), so this is
+ *  a no-op there regardless of the redundant IS_DESKTOP check below.
+ *  NOTE: taskLlm.*.apiKey (the per-task LLM overrides, #56) intentionally
+ *  stays OUT of keychain custody for this v1 — it's deliberately still
+ *  persisted in the IDB blob like every other pre-migration Settings
+ *  field; only the five top-level SECRET_NAMES fields ever move. */
+function settingsForPersist(
+  state: Pick<AppState, "settings" | "demoOverlayPrevEngine">,
+): Settings {
+  const settings = { ...state.settings, engine: state.demoOverlayPrevEngine ?? state.settings.engine };
+  if (!IS_DESKTOP || secretCustody.size === 0) return settings;
+  const stripped = { ...settings };
+  for (const name of secretCustody) {
+    (stripped as Record<string, unknown>)[name] = "";
+  }
+  return stripped;
+}
+
 export const useApp = create<AppState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   hydrated: false,
+  demoOverlayPrevEngine: null,
 
   status: "idle",
   statusDetail: null,
@@ -1234,11 +1635,44 @@ export const useApp = create<AppState>((set, get) => ({
   toast: null,
   focusMode: false,
   captionMode: false,
+  wizardVisible: false,
   sidecarUp: null,
 
   subscriptionKillCheckSettled: false,
 
   hydrate: async () => {
+    // Quit-time settings flush (field fix — see pendingSettingsSave's
+    // and AppState.flushSettings' own docs above): mirrors useMeeting.ts's
+    // live-draft pagehide/visibilitychange flush verbatim — same two
+    // events, same WebKit bug 199854 rationale (WKWebView can drop an
+    // uncommitted IndexedDB write on teardown, and neither event is
+    // actually GUARANTEED to fire either, just a best-effort head
+    // start). The handler never awaits (pagehide can't) — flushSettings
+    // itself starts the real storage.saveSettings transaction
+    // synchronously, before this handler returns. window-undefined
+    // guarded (no window at all under SSR/static export) and
+    // install-once guarded (quitFlushListenersInstalled) — hydrate() can
+    // run more than once (dev/StrictMode double-invoke, a manual
+    // re-hydrate) and must never stack a second pair of listeners.
+    // Installed FIRST, before the async work below, so it's live as
+    // early into boot as possible regardless of how long that takes. F1
+    // fix (Sol + Opus review, BLOCK): this means these listeners are live
+    // BEFORE the `await Promise.all([...])` below resolves and
+    // `hydrated:true` is set — a pagehide/visibilitychange firing in that
+    // window used to call flushSettings while get().settings was still
+    // DEFAULT_SETTINGS, overwriting the user's real saved blob with
+    // defaults. Fixed at flushSettings itself (see that action's own
+    // doc), not by delaying this install — installing early is still
+    // correct/desired, the bug was flushSettings acting on pre-hydration
+    // state, not the install timing itself.
+    if (typeof window !== "undefined" && !globalFlags[QUIT_FLUSH_INSTALLED_KEY]) {
+      globalFlags[QUIT_FLUSH_INSTALLED_KEY] = true;
+      const flush = () => void get().flushSettings();
+      window.addEventListener("pagehide", flush);
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") flush();
+      });
+    }
     const [saved, metas, entries] = await Promise.all([
       storage.loadSettings(),
       storage.listSessions(),
@@ -1246,7 +1680,50 @@ export const useApp = create<AppState>((set, get) => ({
       learnset.loadLearnset(),
     ]);
     const learned = await learnset.refreshStaleSuppressedLearnset();
-    const settings = migrateSettings(saved);
+    const migratedSettings = migrateSettings(saved);
+    // Desktop keychain custody (v0.5.1 desktop keychain migration) —
+    // dynamic-imports lib/desktop/secret.ts (see that module's own
+    // header + syncSecretCustody's own doc above for why this store
+    // never statically imports it) to read whatever's already in the
+    // Keychain, copy up any plaintext SECRET_NAMES field this freshly-
+    // loaded blob still carries, and populate secretCustody so
+    // settingsForPersist strips correctly from the very first save
+    // onward. `settings` below defaults to the pre-hydration value and
+    // is only ever reassigned on IS_DESKTOP; a hydrateSecrets() failure
+    // (the dynamic import itself throwing — hydrateSecrets/readSecrets'
+    // own internals never throw, see their docs) is logged and left
+    // fail-open: secret fields simply stay wherever `migratedSettings`
+    // already had them for this session, retried on the next hydrate().
+    let settings = migratedSettings;
+    let secretMigratedAndClean = false;
+    if (IS_DESKTOP) {
+      try {
+        const { hydrateSecrets } = await import("./desktop/secret");
+        const result = await hydrateSecrets(migratedSettings);
+        settings = result.settings;
+        // F5 fix (Sol MEDIUM #13, keychain-custody fix round): REPLACE,
+        // never merely add to — a stale name from an EARLIER hydrate
+        // (dev/StrictMode double-invoke, or a genuine re-hydrate after a
+        // restore whose own routing left this boot's Keychain without
+        // that entry) must not linger in custody once this fresh result
+        // no longer confirms it, or settingsForPersist would keep
+        // stripping a fail-open plaintext value that is no longer
+        // actually IN the Keychain, silently losing it on the next save.
+        // Only reached once hydrateSecrets has actually resolved (never
+        // on the catch path below), so a transient failure never wipes
+        // an EARLIER, still-good custody set out from under a live app.
+        secretCustody.clear();
+        for (const name of result.custodyNames) secretCustody.add(name);
+        secretMigratedAndClean = result.migratedAndClean;
+      } catch (err) {
+        diagLog(
+          "warn",
+          "secret-persist",
+          "keychain hydration failed; secret fields stay wherever the loaded settings blob already had them this session (fail-open)",
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+    }
     // Hydration atomicity (Codex/#48 s1 review item 2a): the UI is
     // interactive (zustand store already exists) before this async
     // hydrate() resolves — a markKnown/gradeReview/addCustomEntry that
@@ -1266,6 +1743,15 @@ export const useApp = create<AppState>((set, get) => ({
       learnset: mergedLearnset,
       hydrated: true,
     });
+    // Keychain migration cleanup (v0.5.1) — only true when EVERY secret
+    // field this boot's loaded blob carried was successfully copied to
+    // the Keychain (hydrateSecrets' own all-or-nothing contract, see its
+    // doc) — writes the now-stripped blob back so the plaintext doesn't
+    // survive a second boot. Must run AFTER hydrated:true is set above:
+    // flushSettings no-ops pre-hydration (F1 fix, see that action's own
+    // doc) — fire-and-forget, same posture as the subscription-direct
+    // kill-check further below.
+    if (secretMigratedAndClean) void get().flushSettings();
     // Item 2b: re-run suppression over whatever cards/terms are live
     // right now — a suppressed-term detection landing in the same
     // window would have been filtered against the starting (empty)
@@ -1348,10 +1834,59 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   updateSettings: (patch, opts) => {
-    const settings = { ...get().settings, ...patch };
-    set({ settings });
+    const prevSettings = get().settings;
+    const settings = { ...prevSettings, ...patch };
+    // Overlay supersession (demo-overlay stash design): an explicit
+    // engine pick other than "demo" while an overlay is active is the
+    // user's REAL choice winning over the stash — clear it so that pick
+    // persists normally on THIS save instead of silently being
+    // overwritten by the now-stale stashed value (settingsForPersist
+    // below). A patch that doesn't touch `engine` at all (the common
+    // case) leaves whatever overlay state was already there untouched;
+    // a patch that explicitly re-asserts engine:"demo" (beginDemoOverlay
+    // below) also leaves it untouched — that IS the stash being kept
+    // live, not superseded.
+    const demoOverlayPrevEngine =
+      "engine" in patch && patch.engine !== "demo"
+        ? null
+        : get().demoOverlayPrevEngine;
+    set({ settings, demoOverlayPrevEngine });
     if (opts?.persist !== false) {
-      void storage.saveSettings(settings);
+      // F2 fix (Sol MEDIUM review): this write is fire-and-forget —
+      // nothing here awaits or observes it — so a rejection (storage.
+      // saveSettings now propagates IndexedDB failures instead of always
+      // swallowing them, see that function's own doc) must not become an
+      // unhandled promise rejection. It also must never leave
+      // pendingSettingsSave itself holding a REJECTED promise:
+      // flushSettings/the next updateSettings both chain onto
+      // pendingSettingsSave via `.then(onFulfilled)`, which on an
+      // already-rejected input skips straight to re-rejecting with that
+      // SAME stale reason without ever attempting the new write — one
+      // failed fire-and-forget save would otherwise permanently poison
+      // every later flush, including a perfectly healthy one. Diag-
+      // logged (nothing here can show the user a toast — flushSettings'
+      // own callers, e.g. SettingsDialog's 保存, are what surface a real
+      // error) and resolved instead of left rejected.
+      pendingSettingsSave = storage
+        .saveSettings(settingsForPersist({ settings, demoOverlayPrevEngine }))
+        .catch((err) => {
+          diagLog(
+            "warn",
+            "settings-persist",
+            "fire-and-forget settings save failed (will retry on next save/flush)",
+            err instanceof Error ? err.message : String(err),
+          );
+        });
+    }
+    // Desktop keychain custody (v0.5.1 desktop keychain migration) —
+    // independent of the IDB persist branch above and of opts.persist:
+    // a changed SECRET_NAMES field must reach the Keychain the moment
+    // it changes, not only on a call that also persists everything
+    // else. See syncSecretCustody's own doc (module scope, above
+    // pendingSettingsSave) for the full write/custody/toast contract.
+    // No-op on web (IS_DESKTOP false) — nothing is ever enqueued there.
+    if (IS_DESKTOP) {
+      syncSecretCustody(patch, prevSettings, settings);
     }
     // Display settings (v0.2.1, extended v0.5.1): live-apply a theme/
     // font change immediately (rather than waiting for a reload) and
@@ -1399,6 +1934,93 @@ export const useApp = create<AppState>((set, get) => ({
     }
   },
 
+  // Quit-time settings durability — see AppState.flushSettings' own doc
+  // + pendingSettingsSave's module-level doc above for the WebKit-bug-
+  // 199854 field fix this closes. `write` is fired FIRST, synchronously
+  // (before this function does anything else) — a pagehide handler
+  // can't await, so the one thing that must happen before this even
+  // returns is the underlying storage.saveSettings transaction actually
+  // starting. Chaining onto whatever was already in flight
+  // (pendingSettingsSave) happens after, purely so the RETURNED promise
+  // settles only once BOTH writes have actually landed.
+  flushSettings: () => {
+    // F1 fix (Sol + Opus review, BLOCK): hydrate() installs the quit-time
+    // pagehide/visibilitychange listeners (above) BEFORE the async
+    // `await Promise.all([storage.loadSettings(), ...])` resolves and
+    // `hydrated:true` is set — during that window get().settings is
+    // still DEFAULT_SETTINGS. A pre-hydration pagehide/visibilitychange
+    // used to call this and overwrite the user's real saved settings
+    // blob (API keys/engine/theme) with defaults. Guarding HERE, not
+    // just at the listener call site, covers the listeners AND any other
+    // early caller; handleSave (SettingsDialog's 保存) only ever runs
+    // post-hydration (the dialog reads off the already-hydrated store),
+    // so this is a no-op for it.
+    if (!get().hydrated) return Promise.resolve();
+    const write = storage.saveSettings(settingsForPersist(get()));
+    // F2 fix (Sol MEDIUM review): storage.saveSettings can now reject
+    // (see that function's own doc — it used to swallow every IndexedDB
+    // failure and always resolve, which let this durable-commit escape
+    // hatch silently lie about success). Chaining `.then(() => write)`
+    // makes `settled` adopt `write`'s own eventual state, rejection
+    // included, so a caller (SettingsDialog's 保存 handler) gets an
+    // honest answer. `pendingSettingsSave` itself must stay a promise
+    // that NEVER rejects though — it's shared, chained-onto state: if it
+    // held a rejection, the NEXT flushSettings/updateSettings call's own
+    // `pendingSettingsSave.then(onFulfilled)` would skip straight to
+    // re-rejecting with THIS stale reason, without even attempting its
+    // own new write — one failed flush would otherwise permanently
+    // poison every later one. So the module-level variable is reassigned
+    // a locally-caught variant; the honest, possibly-rejecting `settled`
+    // is what's actually returned to this call's own caller.
+    const settled = pendingSettingsSave.then(() => write);
+    pendingSettingsSave = settled.catch((err) => {
+      diagLog(
+        "warn",
+        "settings-persist",
+        "flushSettings write failed (this call's own caller still sees the rejection; the shared chain continues)",
+        err instanceof Error ? err.message : String(err),
+      );
+    });
+    return settled;
+  },
+
+  // Desktop keychain custody (v0.5.1 desktop keychain migration) — see
+  // AppState.flushSecrets' own doc + syncSecretCustody's module-level
+  // doc above pendingSettingsSave. A bare passthrough — every actual
+  // write/custody/toast/chaining concern already lives in
+  // syncSecretCustody and pendingSecretWrites; this action exists only
+  // so a caller (SettingsDialog's handleSave) has something to await.
+  flushSecrets: () => pendingSecretWrites,
+
+  // Demo-overlay stash — see AppState's own doc on both actions and on
+  // demoOverlayPrevEngine above; useMeeting.ts's startDemo (begin) and
+  // doStop/runStopFlow (end) own doc comments have the exact call-site
+  // reasoning.
+  beginDemoOverlay: () => {
+    const { demoOverlayPrevEngine, settings } = get();
+    // Idempotent: a second begin while ALREADY overlaid (e.g. re-
+    // triggering ≡ 演示 mid-demo, which start()'s own status guard turns
+    // into a no-op immediately after this) must not re-stash the live
+    // "demo" value over the real one already stashed.
+    if (demoOverlayPrevEngine === null) {
+      set({ demoOverlayPrevEngine: settings.engine });
+    }
+    get().updateSettings({ engine: "demo" }, { persist: false });
+  },
+  endDemoOverlay: () => {
+    const { demoOverlayPrevEngine } = get();
+    if (demoOverlayPrevEngine === null) return; // safe no-op — no overlay active
+    // Clear the stash BEFORE the updateSettings call below, not after:
+    // updateSettings' own overlay-supersession only clears it for a
+    // patch whose engine !== "demo" — a fresh install's VERY FIRST
+    // overlay (settings.engine already "demo", DEFAULT_SETTINGS' own
+    // value, at the moment beginDemoOverlay stashed it) stashes "demo"
+    // itself, so restoring THAT value here would otherwise hit that
+    // exact gap and leave a no-longer-meaningful stash behind.
+    set({ demoOverlayPrevEngine: null });
+    get().updateSettings({ engine: demoOverlayPrevEngine }, { persist: false });
+  },
+
   setStatus: (status, detail = null) =>
     set({ status, statusDetail: detail ?? null }),
   setSttEngineMode: (sttEngineMode) => set({ sttEngineMode }),
@@ -1419,6 +2041,29 @@ export const useApp = create<AppState>((set, get) => ({
       speakerRoster: [],
       activeSpeaker: null,
       translations: {},
+      // Auto meeting-context detection: a stale context/attempt count
+      // from a PREVIOUS meeting must never survive into a fresh one —
+      // same rationale as the detectMode reset just below.
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
+      // v0.6 multi-sense-terms sprint: same "must not survive into a
+      // fresh meeting" rationale as inferredContext just above.
+      inferredDomains: [],
+      // F7 fix (Sol LOW #19, keychain-custody fix round): a stale
+      // "dictionary" left over from a PREVIOUS meeting's AI fallback
+      // otherwise survives into this fresh one — AiStatusPanel's own
+      // useAiFallenBack (aiDetect on + detectMode==="dictionary") would
+      // then falsely show the 重试 AI 检测 banner before this meeting has
+      // even attempted its first AI batch. Mirrors Header.tsx's own
+      // DetectModeBadge toggle convention (`setDetectMode(next ? "llm" :
+      // "dictionary")`) rather than the scheduler's third value ("off",
+      // pushSegment's own !autoDetect branch) — the scheduler re-reads
+      // live settings and corrects this on the very first segment
+      // regardless, same as that toggle's own echo-then-scheduler-wins
+      // posture.
+      detectMode: state.settings.aiDetect ? "llm" : "dictionary",
       cards: [],
       terms: [],
       summary: null,
@@ -1820,6 +2465,16 @@ export const useApp = create<AppState>((set, get) => ({
       // closes a still-open pause (F5: End-from-paused) — see
       // pauseIntervalsForSnapshot's own doc above.
       pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
+      // Auto meeting-context detection: only the final inferred value
+      // persists with the session — contextAttempts/contextOverride/
+      // contextRefreshed are live-only bookkeeping (see AppState's own
+      // doc), never part of MeetingSession's own shape.
+      inferredContext: s.inferredContext ?? undefined,
+      // v0.6 multi-sense-terms sprint: same "final value only" posture
+      // as inferredContext above; omit-when-empty like speakerAliases/
+      // translations (no meaningful "never inferred" vs. "inferred
+      // empty" distinction for this field — see AppState's own doc).
+      inferredDomains: s.inferredDomains.length > 0 ? s.inferredDomains : undefined,
     };
     // H1 fix (Sol adversarial review): storage.saveSession now reports
     // whether the write actually landed — a failed local save must
@@ -1931,6 +2586,24 @@ export const useApp = create<AppState>((set, get) => ({
       activeSessionId: session.id,
       focusCardId: null,
       lookup: null,
+      // F1 fix (field-test batch C): a loaded session must show ITS OWN
+      // archived context, not whatever the PREVIOUS live meeting had
+      // inferred — same "stale live-only bookkeeping must not survive a
+      // meeting swap" rationale as beginMeeting/newMeeting's own resets
+      // above. Without this, a post-load re-save (updateSegmentText/
+      // updateCard/updateTerm -> saveCurrentSession) would even bake the
+      // previous meeting's context INTO this session's stored record.
+      inferredContext: session.inferredContext ?? null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
+      // v0.6 multi-sense-terms sprint: same "this session's own
+      // archived value, not the previous live meeting's" rationale as
+      // inferredContext just above. Re-validated through the same
+      // sanitizeDomains a fresh inference result goes through — a
+      // hand-edited backup/export file must not smuggle an arbitrary
+      // string into a field this store treats as a closed enum.
+      inferredDomains: sanitizeDomains(session.inferredDomains ?? []),
     }));
   },
 
@@ -2180,6 +2853,16 @@ export const useApp = create<AppState>((set, get) => ({
       speakerRoster: [],
       activeSpeaker: null,
       translations: {},
+      // Auto meeting-context detection: mirrors beginMeeting's own
+      // reset above — otherwise a stale context chip from the just-
+      // ended meeting would linger through 新会议 into the idle state
+      // that precedes the next Start.
+      inferredContext: null,
+      contextOverride: false,
+      contextAttempts: 0,
+      contextRefreshed: false,
+      // v0.6 multi-sense-terms sprint: mirrors beginMeeting's own reset.
+      inferredDomains: [],
       cards: [],
       terms: [],
       summary: null,
@@ -2193,10 +2876,53 @@ export const useApp = create<AppState>((set, get) => ({
   showToast: (toast) => set({ toast }),
   bitCelebrateNonce: 0,
   celebrateBit: () => set((s) => ({ bitCelebrateNonce: s.bitCelebrateNonce + 1 })),
+  aiRetryNonce: 0,
+  requestAiRetry: () => set((s) => ({ aiRetryNonce: s.aiRetryNonce + 1 })),
+  inferredContext: null,
+  contextOverride: false,
+  contextAttempts: 0,
+  contextRefreshed: false,
+  inferredDomains: [],
+  setInferredContext: (value, opts) => {
+    set((s) => ({
+      // F2 fix (field-test batch C): defensive clamp — the header
+      // chip's input already carries a matching maxLength, but this is
+      // the one write-time guard EVERY caller (chip edit, inferred
+      // result, a future caller) routes through, so it's the backstop
+      // against ever storing (and later re-sending to the hosted
+      // /api/detect route, which 400s past MEETING_CONTEXT_MAX_CHARS)
+      // an over-length value. `null` passes through untouched.
+      inferredContext: value === null ? null : value.slice(0, MEETING_CONTEXT_MAX_CHARS),
+      contextOverride: opts?.override ? true : s.contextOverride,
+    }));
+    // Post-stop top-up re-save (same idiom as applyTranslations/
+    // updateSegmentText elsewhere in this file): a late-landing
+    // inference (or a manual chip edit made after the meeting already
+    // stopped) must still reach the ALREADY-saved session, not just
+    // the live view.
+    if (get().status === "stopped" && get().segments.length > 0) {
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        get().meetingGen,
+        () => get().meetingGen,
+      );
+    }
+  },
+  bumpContextAttempts: () => set((s) => ({ contextAttempts: s.contextAttempts + 1 })),
+  markContextRefreshed: () => set({ contextRefreshed: true }),
+  // v0.6 multi-sense-terms sprint (T5): called ONLY from useMeeting.ts's
+  // auto-inference success path, right alongside setInferredContext
+  // (never from the header chip's manual context edit — a hand-edited
+  // context string carries no domain guess of its own, so this is left
+  // untouched rather than guessed at). sanitizeDomains is the same
+  // backstop-clamp EVERY caller (an inference result, a restored
+  // session in loadSession) routes through — see its own doc.
+  setInferredDomains: (domains) => set({ inferredDomains: sanitizeDomains(domains) }),
   clearToast: () => set({ toast: null }),
   setFocusMode: (focusMode) => set({ focusMode }),
   setCaptionMode: (captionMode) => set({ captionMode }),
   setSidecarUp: (sidecarUp) => set({ sidecarUp }),
+  setWizardVisible: (wizardVisible) => set({ wizardVisible }),
 }));
 
 /** Meta helper kept here so UI code doesn't rebuild it. */
@@ -2226,5 +2952,11 @@ export function currentSessionSnapshot(): MeetingSession | null {
     // snapshot can be taken mid-pause too (e.g. SummaryPanel's export
     // row shows whenever segments exist, regardless of status).
     pauseIntervals: pauseIntervalsForSnapshot(s.pauseIntervals, s.pauseStartedAt, Date.now()),
+    // Auto meeting-context detection: same "final value only" posture
+    // as saveCurrentSession above.
+    inferredContext: s.inferredContext ?? undefined,
+    // v0.6 multi-sense-terms sprint: same posture as saveCurrentSession's
+    // own inferredDomains handling above.
+    inferredDomains: s.inferredDomains.length > 0 ? s.inferredDomains : undefined,
   };
 }

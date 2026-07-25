@@ -10,11 +10,15 @@ Run:
     importable — needed only for the progress-bar-math section below;
     everything else needs nothing beyond numpy + websockets + stdlib,
     same as every other file in this suite. huggingface_hub and
-    faster_whisper are NEVER imported here — every test that would
-    otherwise need them (the real snapshot_download call, or
+    faster_whisper are NEVER really imported here — every test that
+    would otherwise need them (the real snapshot_download call, or
     faster_whisper.utils._MODELS lookup) instead drives
     download_model_snapshot's pieces directly or stubs the whole
-    function; see each section below.)
+    function, EXCEPT the F3 cancel-checkpoint section near the end,
+    which fakes just enough of huggingface_hub via sys.modules — never
+    a real import — to drive the real download_model_snapshot
+    end-to-end, mirroring test_model_registry.py's own idiom; see each
+    section below.)
 
 Covers:
   - validate_download_model: MODEL_CHOICES gating (accept all 6,
@@ -68,6 +72,39 @@ Covers:
     in test_model_registry.py instead — they need a fake huggingface_
     hub/faster_whisper import surface this file deliberately never
     touches (see its own module docstring).
+  - Field-test issue 6 (cancellable model downloads): _make_progress_
+    bar_class's new cancel_event param — a real (not stubbed) tqdm bar
+    raises DownloadCancelled on update() once the event is set, never
+    before, never at all when cancel_event=None; JobManager.
+    _run_download_job catches DownloadCancelled and lands the job on
+    "cancelled" (never "error" — job.error stays None); JobManager.
+    request_cancel_download's three-way result ("not_found" for an
+    unknown/non-download-kind job, "terminal" for one already done/
+    error/cancelled, "ok" — and the job actually reaching "cancelled"
+    once its own fake download loop observes the flag, driven end-to-
+    end through start_download_job exactly like the single-flight
+    section above, not a bare unit call). do_POST /jobs/{id}/cancel's
+    HTTPStatus mapping (404/409/202) is a thin handler assertion only
+    (same posture as validate_download_model/download_conflict_
+    response above — no live handler constructed here either).
+  - F4 (review-round fix, Sol LOW #17): start_download_job's
+    thread.start() itself failing (threading.Thread.start monkeypatched
+    to raise, deterministically) after the job/cancel_event are already
+    recorded — the job must land on "error" immediately (not stay
+    "queued" forever) and the single-flight slot must be freed right
+    away for the next call.
+  - F3 (review-round fix, Sol MEDIUM #8, live-verified ~12s latency):
+    download_model_snapshot's three explicit cancel_event checkpoints
+    (before HfApi().model_info(), before snapshot_download(), and
+    after snapshot_download() returns) — the two gaps a pure tqdm-
+    update() checkpoint could never observe. Driven against the REAL
+    download_model_snapshot with just enough of huggingface_hub faked
+    via sys.modules (see this module docstring's own top-level note);
+    the last checkpoint is additionally driven end-to-end through
+    JobManager.start_download_job/request_cancel_download (the real
+    public cancel API, not a back-door into internals) to prove the
+    202-then-done race actually lands the job on "cancelled", not
+    "done".
 """
 
 from __future__ import annotations
@@ -84,6 +121,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import whisper_server  # noqa: E402 - module import, for monkeypatching below
 from whisper_server import (  # noqa: E402
     MODEL_CHOICES,
+    DownloadCancelled,
     JobManager,
     active_download_job_id,
     check_disk_space,
@@ -346,6 +384,12 @@ check(
     active_download_job_id({"a": {"id": "a", "kind": "download", "status": "error"}}) is None,
 )
 check(
+    "active_download_job_id: a cancelled download job is NOT active (terminal) "
+    "(field-test issue 6 — a cancel must free up the single-flight slot, or it "
+    "would permanently wedge every future download attempt)",
+    active_download_job_id({"a": {"id": "a", "kind": "download", "status": "cancelled"}}) is None,
+)
+check(
     "active_download_job_id: ignores non-download kinds (upload/url), however active",
     active_download_job_id(
         {
@@ -397,7 +441,9 @@ def _wait_for_job(job_manager: JobManager, job_id: str, timeout: float = 2.0) ->
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         job = job_manager.get(job_id)
-        if job is not None and job["status"] in ("done", "error"):
+        # "cancelled" (field-test issue 6) joins "done"/"error" as a
+        # third terminal status this helper waits for.
+        if job is not None and job["status"] in ("done", "error", "cancelled"):
             return job
         time.sleep(0.01)
     raise AssertionError(f"job {job_id} did not reach a terminal status within {timeout}s")
@@ -410,7 +456,7 @@ def _make_job_manager() -> JobManager:
     return JobManager(model=None, model_name="small", default_language="en", hf_token=None)
 
 
-def _fake_download_ok(model, on_progress=None, hf_token=None):  # noqa: ARG001 - model/hf_token unused by the fake
+def _fake_download_ok(model, on_progress=None, hf_token=None, cancel_event=None):  # noqa: ARG001 - model/hf_token/cancel_event unused by the fake
     if on_progress is not None:
         on_progress(50, 100)
         on_progress(100, 100)
@@ -454,7 +500,7 @@ finally:
     whisper_server.download_model_snapshot = _real_download_model_snapshot
 
 
-def _fake_download_fail(model, on_progress=None, hf_token=None):  # noqa: ARG001
+def _fake_download_fail(model, on_progress=None, hf_token=None, cancel_event=None):  # noqa: ARG001
     raise RuntimeError("磁盘空间不足：测试用固定失败")
 
 
@@ -493,6 +539,80 @@ finally:
 
 
 # =================================================================
+# F4 (review-round fix, Sol LOW #17): thread.start() itself failing —
+# the job + cancel_event are already recorded (self.jobs/self.
+# _cancel_events) by the time start() is attempted, so a start()
+# failure must not leave the job stuck "queued" forever (which would
+# wedge the single-flight slot permanently, since active_download_
+# job_id treats queued/running as still active). threading.Thread.
+# start is monkeypatched at the class level to raise deterministically
+# — no real OS thread-exhaustion needed, and this is restored in every
+# finally below so it never leaks into a later section.
+# =================================================================
+
+_real_thread_start = threading.Thread.start
+
+
+def _raising_thread_start(self):  # noqa: ANN001 - mirrors threading.Thread.start's own signature
+    raise RuntimeError("simulated: can't start new thread")
+
+
+threading.Thread.start = _raising_thread_start
+try:
+    jm = _make_job_manager()
+    job_id, active_job_id = jm.start_download_job("small")
+    check(
+        "start_download_job (thread.start() failure): still returns a job_id "
+        "(the job WAS recorded before start() was ever attempted), and no "
+        "active_job_id (this call itself was the one accepted)",
+        job_id is not None and active_job_id is None,
+    )
+    job = jm.get(job_id)
+    check(
+        "start_download_job (thread.start() failure): the job lands on 'error' "
+        "immediately — no background thread ever ran to do it, so it must not "
+        "stay 'queued' forever",
+        job is not None and job["status"] == "error",
+    )
+    check(
+        "start_download_job (thread.start() failure): job.error carries the "
+        "start() failure message",
+        job is not None and job["error"] == "simulated: can't start new thread",
+    )
+    check(
+        "start_download_job (thread.start() failure): the now-orphaned cancel "
+        "event is dropped too — no thread is left to ever observe it",
+        job_id not in jm._cancel_events,
+    )
+finally:
+    threading.Thread.start = _real_thread_start
+
+# The single-flight slot itself must not be wedged by a start() failure
+# — active_download_job_id excludes "error" as terminal, so a fresh
+# call right after must be accepted immediately, same as the ordinary
+# done/error/cancelled sections elsewhere in this file.
+whisper_server.download_model_snapshot = _fake_download_ok
+try:
+    jm = _make_job_manager()
+    threading.Thread.start = _raising_thread_start
+    try:
+        jm.start_download_job("small")
+    finally:
+        threading.Thread.start = _real_thread_start
+
+    unblocked_id, unblocked_active = jm.start_download_job("medium")
+    check(
+        "start_download_job (thread.start() failure): the single-flight slot is "
+        "freed immediately — a new call right after is accepted, not refused",
+        unblocked_id is not None and unblocked_active is None,
+    )
+    _wait_for_job(jm, unblocked_id)
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+    threading.Thread.start = _real_thread_start
+
+
+# =================================================================
 # start_download_job's single-flight guard (S4 review finding, HIGH):
 # a second call while a download job is still queued/running is
 # refused — same model OR a different one — and names the in-flight
@@ -505,7 +625,7 @@ finally:
 _release_download = threading.Event()
 
 
-def _fake_download_blocks_until_released(model, on_progress=None, hf_token=None):  # noqa: ARG001
+def _fake_download_blocks_until_released(model, on_progress=None, hf_token=None, cancel_event=None):  # noqa: ARG001
     if not _release_download.wait(timeout=5.0):
         raise AssertionError("test bug: _release_download was never set")
     return "fake/repo-id"
@@ -581,7 +701,7 @@ finally:
 _captured_hf_token: list[object] = []
 
 
-def _fake_download_captures_token(model, on_progress=None, hf_token=None):  # noqa: ARG001
+def _fake_download_captures_token(model, on_progress=None, hf_token=None, cancel_event=None):  # noqa: ARG001
     _captured_hf_token.append(hf_token)
     return "fake/repo-id"
 
@@ -637,6 +757,159 @@ finally:
 
 
 # =================================================================
+# Field-test issue 6 (cancellable model downloads): DownloadCancelled +
+# _make_progress_bar_class's new cancel_event param — a REAL tqdm bar
+# (no huggingface_hub/network involved, same as the progress-bar-math
+# section above), driven directly.
+# =================================================================
+
+try:
+    _cancel_event = threading.Event()
+    _cancel_cls = whisper_server._make_progress_bar_class(
+        1000, lambda d, t: None, cancel_event=_cancel_event
+    )
+    _cancel_bar = _cancel_cls(desc="Reconstructing (incomplete total...)", total=0, initial=0, unit="B", unit_scale=True)
+
+    raised_before_set = False
+    try:
+        _cancel_bar.update(100)
+    except DownloadCancelled:
+        raised_before_set = True
+    check(
+        "_make_progress_bar_class: update() does not raise DownloadCancelled before cancel_event is set",
+        not raised_before_set,
+    )
+
+    _cancel_event.set()
+    raised_after_set = False
+    try:
+        _cancel_bar.update(100)
+    except DownloadCancelled:
+        raised_after_set = True
+    check(
+        "_make_progress_bar_class: update() raises DownloadCancelled once cancel_event is set",
+        raised_after_set,
+    )
+    _cancel_bar.close()
+
+    # cancel_event=None (the default — every pre-field-test-6 caller,
+    # e.g. run_download_only's own --download-only path, which is
+    # cancelled at the OS-process level by Rust's cancel_prewarm
+    # instead, never via this mechanism) must never raise.
+    _no_cancel_cls = whisper_server._make_progress_bar_class(1000, lambda d, t: None)
+    _no_cancel_bar = _no_cancel_cls(desc="Reconstructing (incomplete total...)", total=0, initial=0, unit="B", unit_scale=True)
+    raised_with_no_event = False
+    try:
+        _no_cancel_bar.update(100)
+    except DownloadCancelled:
+        raised_with_no_event = True
+    check(
+        "_make_progress_bar_class: cancel_event=None (default) never raises DownloadCancelled",
+        not raised_with_no_event,
+    )
+    _no_cancel_bar.close()
+except ImportError as exc:  # pragma: no cover - only if tqdm truly isn't installed
+    print(f"SKIP: DownloadCancelled/_make_progress_bar_class cancel_event section (tqdm not importable: {exc})")
+
+
+# =================================================================
+# JobManager._run_download_job: DownloadCancelled -> status "cancelled"
+# (never "error"; job.error stays None) — same stub-download-at-the-
+# module-level posture as the success/failure sections above.
+# =================================================================
+
+
+def _fake_download_cancelled(model, on_progress=None, hf_token=None, cancel_event=None):  # noqa: ARG001
+    raise DownloadCancelled("download cancelled")
+
+
+whisper_server.download_model_snapshot = _fake_download_cancelled
+try:
+    jm = _make_job_manager()
+    job_id, active_job_id = jm.start_download_job("small")
+    check("start_download_job (cancelled): job_id is set", job_id is not None)
+    check("start_download_job (cancelled): active_job_id is None (nothing else in flight)", active_job_id is None)
+    job = _wait_for_job(jm, job_id)
+    check("start_download_job (cancelled): status lands on 'cancelled'", job["status"] == "cancelled")
+    check("start_download_job (cancelled): error stays None — a cancel is not an error", job["error"] is None)
+    check(
+        "start_download_job (cancelled): a NEW download call is accepted right away "
+        "(single-flight slot freed, mirrors the done/error sections above)",
+        jm.start_download_job("medium")[0] is not None,
+    )
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+
+# =================================================================
+# JobManager.request_cancel_download — the three-way result do_POST
+# /jobs/{id}/cancel maps to 404/409/202 (thin handler assertion only,
+# same posture as validate_download_model/download_conflict_response's
+# own 400/409 coverage above — no live handler constructed here).
+# =================================================================
+
+check(
+    "request_cancel_download: an unknown job id returns 'not_found'",
+    _make_job_manager().request_cancel_download("no-such-job-id") == "not_found",
+)
+
+_jm_wrong_kind = _make_job_manager()
+_jm_wrong_kind.jobs["fake-upload-id"] = {"id": "fake-upload-id", "kind": "upload", "status": "running"}
+check(
+    "request_cancel_download: a job that isn't kind=='download' (e.g. an upload/url "
+    "job) returns 'not_found' — no cancel mechanism exists for those",
+    _jm_wrong_kind.request_cancel_download("fake-upload-id") == "not_found",
+)
+
+whisper_server.download_model_snapshot = _fake_download_ok
+try:
+    _jm_done = _make_job_manager()
+    _done_id, _ = _jm_done.start_download_job("small")
+    _wait_for_job(_jm_done, _done_id)
+    check(
+        "request_cancel_download: a job that already reached 'done' returns 'terminal'",
+        _jm_done.request_cancel_download(_done_id) == "terminal",
+    )
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+
+# End-to-end (within this file's own no-network posture): a fake
+# download that actually LOOPS checking cancel_event — mirrors the real
+# download_model_snapshot's own contract (cancel_event checked at each
+# tqdm update()/loop boundary, see DownloadCancelled's own doc comment)
+# — proves request_cancel_download's "ok" result is actually OBSERVED
+# by the job's background thread, not just that the flag gets set.
+def _fake_download_checks_cancel(model, on_progress=None, hf_token=None, cancel_event=None):  # noqa: ARG001
+    for _ in range(500):  # up to ~5s at 10ms/iteration — _wait_for_job's own 2s default times out first on a bug
+        if cancel_event is not None and cancel_event.is_set():
+            raise DownloadCancelled("download cancelled")
+        time.sleep(0.01)
+    return "fake/repo-id"  # only reached if this test is broken (never actually cancelled)
+
+
+whisper_server.download_model_snapshot = _fake_download_checks_cancel
+try:
+    jm = _make_job_manager()
+    job_id, _ = jm.start_download_job("medium")
+    result = jm.request_cancel_download(job_id)
+    check("request_cancel_download: a queued/running download job returns 'ok'", result == "ok")
+    job = _wait_for_job(jm, job_id)
+    check(
+        "request_cancel_download: 'ok' is actually OBSERVED by the job's own background "
+        "thread — status reaches 'cancelled' end-to-end, not just the flag being set",
+        job["status"] == "cancelled",
+    )
+    check(
+        "request_cancel_download: calling it again on an already-cancelled job returns "
+        "'terminal', not 'ok' — idempotent, matches the 404/409 route-convention doc comment",
+        jm.request_cancel_download(job_id) == "terminal",
+    )
+finally:
+    whisper_server.download_model_snapshot = _real_download_model_snapshot
+
+
+# =================================================================
 # should_emit_download_progress — --download-only's NDJSON throttle
 # rule ("~1 line/500ms or on whole-percent change").
 # =================================================================
@@ -661,6 +934,238 @@ check(
     "should_emit_download_progress: the very first call (last_percent=-1 sentinel) always emits",
     should_emit_download_progress(now=0.0, last_emit=0.0, percent=0, last_percent=-1) is True,
 )
+
+
+# =================================================================
+# F3 (review-round fix, Sol MEDIUM #8, live-verified ~12s latency):
+# download_model_snapshot's three explicit cancel_event checkpoints
+# (see whisper_server.py's own _raise_if_cancelled/download_model_
+# snapshot doc comments) — the pre-fix code only ever observed
+# cancel_event inside _ProgressBar.update(), unobservable during
+# HfApi().model_info()'s own metadata round trip, or in the gap
+# between snapshot_download's LAST update() call and the moment it
+# actually returns (a 202-then-done race: POST /jobs/{id}/cancel
+# already answered 202, but the job still finished "done"). Exercising
+# the three checkpoints needs a REAL download_model_snapshot call —
+# they live strictly between its two huggingface_hub calls — so this
+# section fakes JUST enough of huggingface_hub (sys.modules, mirroring
+# test_model_registry.py's own idiom) to control exactly when
+# cancel_event flips relative to each checkpoint, with zero real
+# network/model I/O. See this module's own top-level docstring for why
+# this is a deliberate, scoped exception to the "never import
+# huggingface_hub" posture everywhere else in this file.
+# =================================================================
+
+_UNSET = object()
+
+
+def _set_fake_huggingface_hub(model_info_fn, snapshot_download_fn) -> dict[str, object]:
+    saved: dict[str, object] = {
+        name: sys.modules.get(name, _UNSET) for name in ("huggingface_hub", "huggingface_hub.constants")
+    }
+
+    class _FakeHfApi:
+        def model_info(self, repo_id, *, files_metadata=False, token=None):
+            return model_info_fn(repo_id, files_metadata=files_metadata, token=token)
+
+    fake_hub = types.ModuleType("huggingface_hub")
+    fake_hub.HfApi = _FakeHfApi  # type: ignore[attr-defined]
+    fake_constants = types.ModuleType("huggingface_hub.constants")
+    fake_constants.HF_HUB_CACHE = _TEST_DIR  # type: ignore[attr-defined] - a real, existing dir; plenty of free space for the tiny totals below
+    fake_hub.constants = fake_constants  # type: ignore[attr-defined]
+    fake_hub.snapshot_download = snapshot_download_fn  # type: ignore[attr-defined]
+    sys.modules["huggingface_hub"] = fake_hub
+    sys.modules["huggingface_hub.constants"] = fake_constants
+    return saved
+
+
+def _restore_huggingface_hub(saved: dict[str, object]) -> None:
+    for name, prev in saved.items():
+        if prev is _UNSET:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = prev  # type: ignore[assignment]
+
+
+def _fake_model_info_result(total_bytes: int):
+    # "config.json" matches "small"'s own MODEL_DOWNLOAD_ALLOW_PATTERNS,
+    # so download_model_snapshot's fnmatch-filtered `total` comes out to
+    # exactly total_bytes — no need to fake a whole realistic sibling list.
+    sibling = types.SimpleNamespace(rfilename="config.json", size=total_bytes)
+    return types.SimpleNamespace(siblings=[sibling])
+
+
+_SMALL_REPO_ID = "Systran/faster-whisper-small"  # WHISPER_REPO_IDS["small"]
+_f3_model_info_calls: list[str] = []
+_f3_snapshot_calls: list[str] = []
+
+
+def _f3_model_info(repo_id, *, files_metadata=False, token=None):  # noqa: ARG001
+    _f3_model_info_calls.append(repo_id)
+    return _fake_model_info_result(1024)
+
+
+def _f3_snapshot_download(repo_id, *, allow_patterns=None, token=None, tqdm_class=None, **kwargs):  # noqa: ARG001
+    _f3_snapshot_calls.append(repo_id)
+    return f"/fake/cache/{repo_id}"
+
+
+# ---- checkpoint (a): already cancelled before model_info is ever called ----
+
+_cancel_a = threading.Event()
+_cancel_a.set()
+_f3_model_info_calls.clear()
+_f3_snapshot_calls.clear()
+_saved_hub_a = _set_fake_huggingface_hub(_f3_model_info, _f3_snapshot_download)
+try:
+    raised_a: Exception | None = None
+    try:
+        whisper_server.download_model_snapshot("small", cancel_event=_cancel_a)
+    except DownloadCancelled as exc:  # noqa: BLE001 - capturing intentionally
+        raised_a = exc
+    check(
+        "download_model_snapshot checkpoint (a): an already-set cancel_event "
+        "raises DownloadCancelled before ever calling HfApi().model_info()",
+        isinstance(raised_a, DownloadCancelled),
+    )
+    check(
+        "download_model_snapshot checkpoint (a): model_info is never reached",
+        _f3_model_info_calls == [],
+    )
+    check(
+        "download_model_snapshot checkpoint (a): snapshot_download is never reached either",
+        _f3_snapshot_calls == [],
+    )
+finally:
+    _restore_huggingface_hub(_saved_hub_a)
+
+
+# ---- checkpoint (b) ("pre-download checkpoint"): cancel observed right
+# after metadata resolves, before the actual transfer starts ----
+
+_cancel_b = threading.Event()
+
+
+def _f3_model_info_then_cancel(repo_id, *, files_metadata=False, token=None):  # noqa: ARG001
+    _f3_model_info_calls.append(repo_id)
+    _cancel_b.set()  # simulates a cancel arriving during/right after the metadata call
+    return _fake_model_info_result(1024)
+
+
+_f3_model_info_calls.clear()
+_f3_snapshot_calls.clear()
+_saved_hub_b = _set_fake_huggingface_hub(_f3_model_info_then_cancel, _f3_snapshot_download)
+try:
+    raised_b: Exception | None = None
+    try:
+        whisper_server.download_model_snapshot("small", cancel_event=_cancel_b)
+    except DownloadCancelled as exc:  # noqa: BLE001
+        raised_b = exc
+    check(
+        "download_model_snapshot checkpoint (b): model_info DOES run first "
+        "(checkpoint (a) correctly did not fire before the event was set)",
+        _f3_model_info_calls == [_SMALL_REPO_ID],
+    )
+    check(
+        "download_model_snapshot checkpoint (b) ('pre-download checkpoint'): a "
+        "cancel observed right after metadata resolves raises DownloadCancelled "
+        "before snapshot_download is ever called — the actual transfer never starts",
+        isinstance(raised_b, DownloadCancelled) and _f3_snapshot_calls == [],
+    )
+finally:
+    _restore_huggingface_hub(_saved_hub_b)
+
+
+# ---- checkpoint (c) ("post-download checkpoint"): cancel observed only
+# after snapshot_download has already fully returned — the 202-then-done
+# race a pure tqdm-callback checkpoint could never catch ----
+
+_cancel_c = threading.Event()
+
+
+def _f3_snapshot_then_cancel(repo_id, *, allow_patterns=None, token=None, tqdm_class=None, **kwargs):  # noqa: ARG001
+    _f3_snapshot_calls.append(repo_id)
+    # The last real tqdm update() callback already happened normally (this
+    # fake never touches tqdm_class at all) — cancel_event only flips in the
+    # gap between that last callback and this call actually returning.
+    _cancel_c.set()
+    return f"/fake/cache/{repo_id}"
+
+
+_f3_model_info_calls.clear()
+_f3_snapshot_calls.clear()
+_saved_hub_c = _set_fake_huggingface_hub(_f3_model_info, _f3_snapshot_then_cancel)
+try:
+    raised_c: Exception | None = None
+    try:
+        whisper_server.download_model_snapshot("small", cancel_event=_cancel_c)
+    except DownloadCancelled as exc:  # noqa: BLE001
+        raised_c = exc
+    check(
+        "download_model_snapshot checkpoint (c): both model_info and "
+        "snapshot_download DID run — the transfer itself genuinely completed",
+        _f3_model_info_calls == [_SMALL_REPO_ID] and _f3_snapshot_calls == [_SMALL_REPO_ID],
+    )
+    check(
+        "download_model_snapshot checkpoint (c) ('post-download checkpoint'): a "
+        "cancel observed only after snapshot_download returns still raises "
+        "DownloadCancelled instead of returning repo_id",
+        isinstance(raised_c, DownloadCancelled),
+    )
+finally:
+    _restore_huggingface_hub(_saved_hub_c)
+
+
+# ---- checkpoint (c), end-to-end through JobManager: "event set after the
+# last progress callback -> job ends cancelled not done". Uses the REAL
+# public cancel API (request_cancel_download), not a back-door into
+# JobManager internals — a threading.Event handshake (mirrors this file's
+# own _fake_download_blocks_until_released idiom) makes the timing
+# deterministic against the real race between start_download_job's caller
+# and its background thread. ----
+
+_job_id_box: list[str] = []
+_job_id_ready = threading.Event()
+
+
+def _f3_snapshot_then_request_cancel(repo_id, *, allow_patterns=None, token=None, tqdm_class=None, **kwargs):  # noqa: ARG001
+    _f3_snapshot_calls.append(repo_id)
+    if not _job_id_ready.wait(timeout=5.0):
+        raise AssertionError("test bug: job_id was never published")
+    jm_e2e.request_cancel_download(_job_id_box[0])
+    return f"/fake/cache/{repo_id}"
+
+
+_f3_model_info_calls.clear()
+_f3_snapshot_calls.clear()
+_job_id_box.clear()
+_job_id_ready.clear()
+jm_e2e = _make_job_manager()
+_saved_hub_e2e = _set_fake_huggingface_hub(_f3_model_info, _f3_snapshot_then_request_cancel)
+try:
+    job_id_e2e, active_e2e = jm_e2e.start_download_job("small")
+    check(
+        "download_model_snapshot checkpoint (c) end-to-end: start_download_job "
+        "itself is accepted normally",
+        job_id_e2e is not None and active_e2e is None,
+    )
+    _job_id_box.append(job_id_e2e)
+    _job_id_ready.set()
+    job_e2e = _wait_for_job(jm_e2e, job_id_e2e)
+    check(
+        "download_model_snapshot checkpoint (c) end-to-end: a cancel landing "
+        "after snapshot_download has already fully run (event set after the last "
+        "progress callback) still lands the job on 'cancelled', never 'done' — "
+        "the 202-then-done race",
+        job_e2e["status"] == "cancelled",
+    )
+    check(
+        "download_model_snapshot checkpoint (c) end-to-end: error stays None — "
+        "a cancel is not an error",
+        job_e2e["error"] is None,
+    )
+finally:
+    _restore_huggingface_hub(_saved_hub_e2e)
 
 
 # =================================================================

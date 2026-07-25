@@ -22,13 +22,19 @@ import {
 import { packCounts, setEnabledPacks } from "@jargonslayer/core/detect/dictionary";
 import { getAllPacks } from "@jargonslayer/core/detect/packs";
 import {
+  addPackFromManifest,
   addPackSource,
   checkUpdates,
+  classifyPackOrigin,
+  compareSemver,
   listPackSources,
   loadRemotePacksIntoRegistry,
+  MAX_PACK_BYTES,
   removePackSource,
   type RemotePackSource,
 } from "@/lib/detect/remotePacks";
+import { toRawGithubUrl } from "@/lib/detect/githubUrl";
+import { fetchDictCatalog, type CatalogPackEntry } from "@/lib/detect/dictCatalog";
 import {
   buildFullBackup,
   chooseExportFolder,
@@ -61,6 +67,7 @@ import type {
   TaskLlmConfig,
 } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
+import { isValidProxyUrl, normalizeProxyUrl } from "@/lib/proxyUrl";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS, IS_TAURI } from "@/lib/platform/ios";
 import { openExternal } from "@/lib/platform/openExternal";
@@ -70,6 +77,7 @@ import { trackInstallDiar, trackSwitchModel } from "@/lib/desktop/jobsBridge";
 import { useTasks } from "@/lib/tasks/registry";
 import { connectOpenRouterDesktop } from "@/lib/oauth/openrouterDesktop";
 import { describeOAuthFailure } from "@/components/desktop/onboardingSettings";
+import { isEngineControlBusy } from "@/components/Header";
 import { agentHealth, type AgentHealth } from "@/lib/agent/localHost";
 import {
   isSectionVisible,
@@ -104,6 +112,7 @@ import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
 import TranslationEngineRow from "@/components/settings/TranslationEngineRow";
 import AnkiConnectSection from "@/components/settings/AnkiConnectSection";
+import UsagePanel from "@/components/settings/UsagePanel";
 import ThemeEditor from "@/components/settings/ThemeEditor";
 import { langPairFromSettings } from "@/lib/translate/providers";
 import ModelPicker from "@/components/desktop/ModelPicker";
@@ -179,7 +188,7 @@ const ALL_ENGINE_CARDS: {
   {
     value: "whisper",
     label: "本地 Whisper",
-    hint: "音频只在本机处理，不出设备",
+    hint: "麦克风收音，本地 Whisper 模型识别，音频不出设备",
     sidecarOnly: true,
   },
   // D7 desktop tabaudio replacement (docs/design-explorations/
@@ -199,7 +208,7 @@ const ALL_ENGINE_CARDS: {
     ? {
         value: "appaudio",
         label: "系统/App 音频",
-        hint: "会议中对方的声音，也含 Mac 播放的其他声音，不含你的麦克风",
+        hint: "捕获 Mac 系统/App 播放的声音（对方语音，不含你的麦克风），同样由本地 Whisper 识别",
         sidecarOnly: true,
       }
     : {
@@ -296,6 +305,21 @@ const ALL_ENGINE_CARDS: {
     value: "deepgram",
     label: "Deepgram 云端识别",
     hint: "BYOK 按量计费、音频经 Deepgram 云端、仅英文（中英混说请用 Soniox）",
+    byokOnly: true,
+  },
+  // v0.6 round 2 — third BYOK cloud engine (ElevenLabs Scribe realtime).
+  // The 云端·不留存/云端·可能留存 badge under this card is derived
+  // automatically from engineCapabilities.ts's own "elevenlabs" row
+  // (ITEM 2 fix precedent, this array's own header comment) — that row
+  // is honestly "cloud-stored" here (可能留存), NOT "cloud-transient"
+  // like Soniox/Deepgram: ElevenLabs' own zero-retention opt-out is
+  // enterprise-tier-gated (verified against their docs — see
+  // elevenLabsTransport.ts's header), so this card's own hint spells
+  // that out explicitly rather than letting the badge alone carry it.
+  {
+    value: "elevenlabs",
+    label: "ElevenLabs 云端识别",
+    hint: "BYOK 按量计费、音频经 ElevenLabs 云端（Scribe）识别、默认留存供 History 查看（企业版账户可关闭留存）；按单一语言识别，中英混说请用 Soniox",
     byokOnly: true,
   },
 ];
@@ -607,6 +631,105 @@ function sanitizeDraftFontValue(value: string): string {
   return sanitized ? `${CUSTOM_FONT_PREFIX}${sanitized}` : "default";
 }
 
+// FIX 2 (field-debugging postmortem, v0.5.1 fieldtest B): baseUrl
+// hygiene at the SAME kind of save boundary as sanitizeDraftFontValue
+// above — users paste base URLs from docs, sometimes through a Chinese
+// IME that silently swaps ASCII punctuation for full-width lookalikes
+// (：／．～) or leaves a stray trailing space/newline. Cleans exactly
+// that; never guesses at a path (no scheme insertion, no /v1
+// appending, no rewriting beyond these normalizations). The single
+// trailing-slash strip mirrors providerCore.ts's own
+// buildOpenAiCompatRequestInit (`baseUrl.replace(/\/$/, "")`) — kept
+// as a separate copy rather than an import since that module is
+// isomorphic/provider-side and has no reason to be pulled into this
+// dialog for one regex.
+//
+// F5 (Sol hunt-note g, fix round): this used to strip ALL whitespace,
+// including INTERNAL whitespace — `https://host/my endpoint/v1` was
+// silently mangled to `.../myendpoint/v1` with no error, no trace of
+// what happened. Only leading/trailing whitespace is a paste artifact
+// worth auto-cleaning; internal whitespace means the pasted value
+// itself is malformed and the user needs to see that (isValidBaseUrl
+// below now explicitly rejects it pre-parse instead).
+function normalizeBaseUrl(raw: string): string {
+  const trimmed = raw.trim();
+  const asciiPunctuation = trimmed
+    .replace(/：/g, ":")
+    .replace(/／/g, "/")
+    .replace(/．/g, ".")
+    .replace(/～/g, "~");
+  return asciiPunctuation.replace(/\/$/, "");
+}
+
+/** Empty stays allowed — the existing "缺少 Base URL" runtime handling
+ *  already covers a blank baseUrl downstream (providerCore.ts's
+ *  callJsonOpenAiCompat) — only a NON-empty value must actually parse
+ *  as a URL.
+ *
+ *  F3 (Sol MEDIUM #15, fix round): bare `new URL()` success was too
+ *  permissive for "is this usable as a provider base" — it happily
+ *  accepted `file:`/`mailto:`/`ftp:` schemes, and a query string/
+ *  fragment/userinfo all silently rode along into
+ *  buildOpenAiCompatRequestInit's string-concatenated `/chat/
+ *  completions` path (a query-bearing base puts the real path INSIDE
+ *  the query string). Now requires http:/https: and rejects any
+ *  search/hash/username/password component.
+ *
+ *  F5 (Sol hunt-note g, fix round): `new URL()` doesn't throw on
+ *  internal whitespace — it silently percent-encodes a space (or
+ *  drops a tab/newline outright) — so normalizeBaseUrl above no longer
+ *  strips it for the user; this explicitly rejects it pre-parse so a
+ *  malformed paste surfaces the existing error toast instead of
+ *  silently mangling the URL. */
+function isValidBaseUrl(value: string): boolean {
+  if (!value) return true;
+  if (/\s/.test(value)) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  if (url.search || url.hash || url.username || url.password) return false;
+  return true;
+}
+
+/** v0.6 T3: normalize + validate a pack-install URL — shared by every
+ *  entry point that hands a URL to addPackSource (词典源's manual
+ *  paste, and 词典库's own 安装/更新 button below). First silently
+ *  rewrites a pasted GitHub blob URL to its raw.githubusercontent.com
+ *  equivalent (toRawGithubUrl, lib/detect/githubUrl.ts — users paste
+ *  blob URLs constantly), THEN requires https (addPackSource itself
+ *  has no protocol opinion — this is the one gate, T3(c)). Returns the
+ *  resolved URL to install, or null — the caller shows its own zh
+ *  message via packInstallError. */
+function resolvePackInstallUrl(rawUrl: string): string | null {
+  const url = toRawGithubUrl(rawUrl.trim());
+  try {
+    if (new URL(url).protocol !== "https:") return null;
+  } catch {
+    return null;
+  }
+  return url;
+}
+
+/** Round-2 dict-pack auto-update — relative "last checked" label for
+ *  the 自动更新词典 row below (词典源 section); pure so it needs no
+ *  render-triggering state of its own. `now` defaults to Date.now(),
+ *  overridable only by a test. Bucketed 刚刚 / N 分钟前 / N 小时前 / N
+ *  天前; `checkedAt` undefined (auto-update never ran) renders as a
+ *  bare "尚未检查" — the one case with no "上次检查：" prefix. */
+function formatLastPackCheck(checkedAt: number | undefined, now: number = Date.now()): string {
+  if (checkedAt === undefined) return "尚未检查";
+  const minutes = Math.floor(Math.max(0, now - checkedAt) / 60_000);
+  if (minutes < 1) return "上次检查：刚刚";
+  if (minutes < 60) return `上次检查：${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `上次检查：${hours} 小时前`;
+  return `上次检查：${Math.floor(hours / 24)} 天前`;
+}
+
 // S12b fix round FB7-settings (§F) — pyannote (speaker diarization)
 // lives only in the shared BASE venv; parakeet rides a fully separate,
 // airtight-isolated MLX venv (§C R1) that never has pyannote installed,
@@ -817,6 +940,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const meetingStatus = useApp((s) => s.status);
   const meetingActive =
     meetingStatus === "connecting" || meetingStatus === "listening" || meetingStatus === "paused";
+  // Field-test fix: the bottom bar (StatusLine) already disables engine
+  // switching the moment a meeting is connecting/listening via
+  // isEngineControlBusy (Header.tsx) — a mid-session engine change is
+  // silently ignored, not applied (useMeeting.ts's attachEngine only
+  // snapshots settings.engine at Start), so this dialog's own engine
+  // cards need the same gate. Deliberately isEngineControlBusy, not
+  // meetingActive above: "paused" must stay unlocked, since resuming
+  // from pause genuinely reconciles an engine change (useMeeting.ts:586).
+  const engineLockedByMeeting = isEngineControlBusy(meetingStatus);
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
   // v0.5.1 appearance sprint (D4): non-null while the 显示 section shows
@@ -874,6 +1006,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     sessions: number;
     entries: number;
     learnset: number;
+    // M3 fix (adversarial review): so the confirm step can disclose
+    // that the file contains packs at all — restoring makes the
+    // browser fetch every url-backed row.
+    packSources: number;
     hasSettings: boolean;
     hasApiKey: boolean;
   } | null>(null);
@@ -965,6 +1101,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // scoped to 转录引擎 since the field itself only renders when
   // draft.engine === "deepgram".
   const [showDeepgramKey, setShowDeepgramKey] = useState(false);
+  // ElevenLabs API Key masked-input toggle (v0.6 round 2) — same idiom,
+  // scoped to 转录引擎 since the field itself only renders when
+  // draft.engine === "elevenlabs".
+  const [showElevenLabsKey, setShowElevenLabsKey] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -976,7 +1116,35 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [packSourceUrl, setPackSourceUrl] = useState("");
   const [addingPackSource, setAddingPackSource] = useState(false);
   const [checkingUpdates, setCheckingUpdates] = useState(false);
-  const [confirmRemoveUrl, setConfirmRemoveUrl] = useState<string | null>(null);
+  // Renamed from confirmRemoveUrl (v0.6 T5/GOTCHA): a file-imported
+  // source's own url is "" (see RemotePackSource.url's own doc), so
+  // every per-row identifier below is `s.url || s.pack.id`, never
+  // `s.url` alone — this now holds either shape.
+  const [confirmRemovePackId, setConfirmRemovePackId] = useState<string | null>(null);
+  // v0.6 T2: import a pack from a local file / pasted JSON — same
+  // collapsed-panel shape as the theme importer's own themeImportOpen/
+  // themeImportText (see handleImportThemeJson/handleImportThemeFile
+  // above, and the JSX at :4556-4599 this mirrors).
+  const [packImportOpen, setPackImportOpen] = useState(false);
+  const [packImportText, setPackImportText] = useState("");
+  // v0.6 T2/T3(b): shared inline error slot for every pack-install path
+  // below (URL/file/paste/catalog) — mirrors restoreError's own
+  // "persistent inline line, not just an ephemeral toast" idiom
+  // (:4187-4189) rather than losing a possibly-multi-sentence
+  // validation error (size caps, minAppVersion, quota, …) to a toast
+  // that's already gone by the time it's worth re-reading. Cleared at
+  // the start of every new attempt and on success.
+  const [packInstallError, setPackInstallError] = useState<string | null>(null);
+  // v0.6 T5: which installed sources currently have their 来源与许可
+  // disclosure open — keyed the same `s.url || s.pack.id` way as
+  // confirmRemovePackId above.
+  const [expandedPackNotices, setExpandedPackNotices] = useState<Set<string>>(new Set());
+  // v0.6 T6: 词典库 catalog browse — lazy-fetched (see the effect
+  // below), never on dialog mount. catalogStatus doubles as the
+  // fetch-once guard (only "idle" ever triggers a fetch).
+  const [catalogPacks, setCatalogPacks] = useState<CatalogPackEntry[] | null>(null);
+  const [catalogStatus, setCatalogStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [installingCatalogId, setInstallingCatalogId] = useState<string | null>(null);
   // 分任务模型（高级）(#56): collapsed by default — the per-domain
   // blocks below only mount (and only start fetching model lists) once
   // this is open, see TaskDomainBlock's own doc comment.
@@ -1131,6 +1299,23 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // live scanDictionary() registry as soon as the app loads, even if
   // the user never opens this dialog. Mirrors the dictionary.ts
   // registry-pattern comment (see setEnabledPacks there).
+  //
+  // SEPARATE bug fix (adversarial review, v0.6 dictpacks fix round):
+  // this used to run with `[]` deps, i.e. exactly once, using whatever
+  // `settings.enabledPacks` was in the closure at THAT render. But this
+  // dialog is mounted by page.tsx BEFORE store.hydrate() (async)
+  // resolves (#62/tag-blocker 1's own well-documented hazard), so the
+  // very first run always saw DEFAULT_SETTINGS.enabledPacks — and with
+  // an empty deps array never re-ran once hydrate() published the REAL
+  // persisted selection. The detector registry (setEnabledPacks here)
+  // and the ASR bias hint (buildMeetingLexicon, which reads the live
+  // store directly) would then permanently disagree about which packs
+  // are on for the whole session. `hydrated`/`settings.enabledPacks` in
+  // the deps array make this re-run once hydration actually publishes
+  // the persisted value (and again on any later change, e.g. 保存 or a
+  // backup restore) — loadRemotePacksIntoRegistry/listPackSources
+  // re-running alongside it is a harmless no-op/re-fetch, not a new
+  // side effect (see their own docs).
   useEffect(() => {
     setEnabledPacks(settings.enabledPacks);
     // Remote packs (#20): bootstrapped here, unconditionally on app
@@ -1154,7 +1339,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     });
     void listPackSources().then(setPackSources);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [hydrated, settings.enabledPacks]);
+
+  // v0.6 T6: 词典库 catalog browse — lazy-fetched only once the AI 检测
+  // category is actually visible (never on dialog mount, unlike the
+  // packSources bootstrap above), and only once per dialog lifetime —
+  // catalogStatus's own "idle" gate makes this fire exactly once even
+  // though switching tabs back and forth re-runs the effect.
+  useEffect(() => {
+    if (!open || activeCategory !== "aiDetect" || catalogStatus !== "idle") return;
+    setCatalogStatus("loading");
+    void fetchDictCatalog()
+      .then((catalog) => {
+        setCatalogPacks(catalog.packs);
+        setCatalogStatus("loaded");
+      })
+      .catch(() => {
+        setCatalogStatus("error");
+      });
+  }, [open, activeCategory, catalogStatus]);
 
   useEffect(() => {
     if (open) {
@@ -1175,6 +1378,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setThemeEditor(null);
       setThemeImportOpen(false);
       setThemeImportText("");
+      // L1 fix (adversarial review): exactly the same "don't leak a
+      // previous open's transient panel state into a fresh one" reason
+      // as the theme importer three lines above.
+      setPackInstallError(null);
+      setPackImportOpen(false);
+      setPackImportText("");
       // FINDING 5 (S14 fix round): a 测试连接 result from a PREVIOUS
       // dialog-open must never survive into a fresh one — the freshly
       // re-seeded draft above may no longer be what was last tested.
@@ -1533,8 +1742,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const packEntryCounts = packCounts();
 
   const handleAddPackSource = async () => {
-    const url = packSourceUrl.trim();
-    if (!url) return;
+    const rawUrl = packSourceUrl.trim();
+    if (!rawUrl) return;
+    setPackInstallError(null);
+    const url = resolvePackInstallUrl(rawUrl);
+    if (!url) {
+      setPackInstallError("请输入有效的 https 链接");
+      return;
+    }
     setAddingPackSource(true);
     try {
       const { pack } = await addPackSource(url);
@@ -1542,23 +1757,123 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       setPackSourceUrl("");
       showToast(`已添加词典包「${pack.name}」`);
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "添加词典包失败");
+      setPackInstallError(err instanceof Error ? err.message : "添加词典包失败");
     } finally {
       setAddingPackSource(false);
     }
   };
 
-  const handleRemovePackSource = async (url: string) => {
-    if (confirmRemoveUrl !== url) {
-      setConfirmRemoveUrl(url);
+  // v0.6 T2: shared parse+install tail for both the file picker and the
+  // paste-JSON textarea below — mirrors handleImportThemeJson's own
+  // JSON.parse-then-validate split, but addPackFromManifest (unlike
+  // parseTheme) never throws — it always resolves {ok, ...}, so there's
+  // no separate try/catch needed for the install half itself.
+  // N4(b) fix (adversarial review): the raw string's UTF-8 byte length
+  // is checked BEFORE JSON.parse — addPackFromManifest itself already
+  // enforces MAX_PACK_BYTES, but only after parsing an oversized paste.
+  const handleImportPackJson = async (raw: string) => {
+    if (new TextEncoder().encode(raw).length > MAX_PACK_BYTES) {
+      setPackInstallError("词典包过大：单个词典包不能超过 2 MB");
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      setPackInstallError("词典包不是有效的 JSON");
+      return;
+    }
+    setPackInstallError(null);
+    const result = await addPackFromManifest(parsed);
+    if (!result.ok) {
+      setPackInstallError(result.error);
+      return;
+    }
+    setPackSources(await listPackSources());
+    setPackImportOpen(false);
+    setPackImportText("");
+    showToast(`已导入词典「${result.pack.name}」`);
+  };
+
+  // N4(a) fix (adversarial review): File.size is checked BEFORE
+  // file.text() — buffering an oversized file into memory first, cap or
+  // not, is the exact thing this is meant to avoid.
+  const handleImportPackFile = async (file: File) => {
+    if (file.size > MAX_PACK_BYTES) {
+      setPackInstallError("词典包过大：单个词典包不能超过 2 MB");
+      return;
+    }
+    const text = await file.text();
+    await handleImportPackJson(text);
+  };
+
+  // v0.6 T6: 词典库 row action (安装/更新 both funnel through this — an
+  // addPackSource on an id that's already installed replaces it, same
+  // "last install wins" precedent as a manual URL re-add).
+  const handleInstallCatalogPack = async (row: CatalogPackEntry) => {
+    setPackInstallError(null);
+    const url = resolvePackInstallUrl(row.url);
+    if (!url) {
+      setPackInstallError("词典目录中的链接无效");
+      return;
+    }
+    setInstallingCatalogId(row.id);
+    try {
+      const { pack } = await addPackSource(url);
+      setPackSources(await listPackSources());
+      showToast(`已安装词典「${pack.name}」`);
+    } catch (err) {
+      setPackInstallError(err instanceof Error ? err.message : "安装词典包失败");
+    } finally {
+      setInstallingCatalogId(null);
+    }
+  };
+
+  // N7(d) fix (adversarial review): removePackSource itself now takes a
+  // DISCRIMINATED (url, packId) pair instead of one overloaded string —
+  // see that function's own doc (remotePacks.ts) for why a merged
+  // "s.url || s.pack.id" string can ambiguously match two different
+  // sources. This handler takes the whole source so both fields are
+  // always available; `identifier` (still `s.url || s.pack.id`) is kept
+  // ONLY for the confirm-then-click UI state / React key, which doesn't
+  // need to be collision-proof the way the actual delete call does.
+  const handleRemovePackSource = async (source: RemotePackSource) => {
+    const identifier = source.url || source.pack.id;
+    if (confirmRemovePackId !== identifier) {
+      setConfirmRemovePackId(identifier);
       setTimeout(() => {
-        setConfirmRemoveUrl((cur) => (cur === url ? null : cur));
+        setConfirmRemovePackId((cur) => (cur === identifier ? null : cur));
       }, 3000);
       return;
     }
-    await removePackSource(url);
+    const removed = await removePackSource(source.url, source.pack.id);
     setPackSources(await listPackSources());
-    setConfirmRemoveUrl(null);
+    setConfirmRemovePackId(null);
+    // N7(b) fix: report success/failure honestly instead of always
+    // toasting success regardless of whether the write actually landed.
+    if (!removed) {
+      showToast("移除词典包失败，请重试");
+      return;
+    }
+    const packId = source.pack.id;
+    // Drop the removed pack id from the LIVE draft checkbox state so it
+    // can't linger — a stale checked id would silently apply to some
+    // future pack that happens to reuse this id.
+    setCheckedPacks((prev) => {
+      if (!prev.has(packId)) return prev;
+      const next = new Set(prev);
+      next.delete(packId);
+      return next;
+    });
+    // ...and from the PERSISTED selection too, but only when it's
+    // already an explicit list — `enabledPacks: null` has nothing to
+    // clean up, and turning it explicit here would resurrect the exact
+    // commonWord-suppression bug the materializeEnabledPacks revert
+    // (H1/H2) just fixed.
+    const persisted = useApp.getState().settings.enabledPacks;
+    if (persisted !== null && persisted.includes(packId)) {
+      updateSettings({ enabledPacks: persisted.filter((pid) => pid !== packId) });
+    }
     showToast("已移除词典包");
   };
 
@@ -1566,11 +1881,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setCheckingUpdates(true);
     try {
       const updatedIds = await checkUpdates();
-      setPackSources(await listPackSources());
+      // L5 fix (adversarial review): read the REFRESHED list for the
+      // per-source report — the old code read the pre-refresh
+      // `packSources` closure, so a toast right after updating could
+      // still say "已是最新版本" for the pack it just updated.
+      const freshSources = await listPackSources();
+      setPackSources(freshSources);
       if (url) {
         // Per-source button: only report on whether this one source
         // changed, even though checkUpdates() refreshes every source.
-        const source = packSources.find((s) => s.url === url);
+        const source = freshSources.find((s) => s.url === url);
         const changed = source ? updatedIds.includes(source.pack.id) : false;
         showToast(changed ? "已更新到最新版本" : "已是最新版本");
       } else {
@@ -1583,7 +1903,67 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    // FIX 2 (field-debugging postmortem, v0.5.1 fieldtest B): baseUrl
+    // hygiene at the save boundary — normalize the primary field AND
+    // every configured per-task override (see normalizeBaseUrl's own
+    // doc comment), then block the save entirely on anything that
+    // still doesn't parse as a URL. Runs FIRST, before any other save
+    // side effect. No inline-field-error pattern exists anywhere in
+    // this dialog (checked every other field's validation — it's
+    // always a toast + early return, e.g. the flushSettings failure
+    // branch further down), so this follows that same convention
+    // rather than inventing a new UI pattern for one field.
+    //
+    // F4 (Sol MEDIUM #16, fix round): anthropic hides the Base URL
+    // field entirely (CredentialFields.tsx's own `provider ===
+    // "openai-compat"` gate), and resolveTaskCreds/providerCore.ts
+    // never read `baseUrl` for that provider either — normalizing or
+    // validating a stale value the user can't even see would block
+    // 保存 over an invisible field. Only openai-compat actually uses
+    // this field; a non-openai-compat provider's stale baseUrl is left
+    // completely as-is (neither normalized nor validated) below.
+    const providerUsesBaseUrl = draft.provider === "openai-compat";
+    const normalizedBaseUrl = providerUsesBaseUrl ? normalizeBaseUrl(draft.baseUrl) : draft.baseUrl;
+    if (providerUsesBaseUrl && !isValidBaseUrl(normalizedBaseUrl)) {
+      showToast("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+      return;
+    }
+    // W2 desktop proxy support — same save-boundary hygiene as baseUrl
+    // above; desktop-only field, but validated unconditionally here
+    // (cheap, and IS_DESKTOP already gates the field OUT of the draft
+    // on web/iOS since nothing ever renders it there to set a non-empty
+    // value in the first place).
+    const normalizedProxyUrl = normalizeProxyUrl(draft.proxyUrl);
+    if (!isValidProxyUrl(normalizedProxyUrl)) {
+      showToast("代理地址无效，请检查格式（例如 http://127.0.0.1:7890）");
+      return;
+    }
+    let normalizedTaskLlm = draft.taskLlm;
+    for (const { domain } of TASK_DOMAIN_META) {
+      const override = normalizedTaskLlm?.[domain];
+      // enabled:false is runtime-inert — resolveTaskCreds ignores a
+      // disabled override's baseUrl/provider/model entirely and falls
+      // back to the primary (taskConfig.ts; see its own SECURITY test
+      // in taskConfig.test.ts). Validating a value nothing will ever
+      // send would block 保存 over a stale field the user already
+      // toggled off, e.g. typed-then-abandoned while trying a preset.
+      if (!override?.enabled || !override.baseUrl) continue;
+      // F4: same provider-awareness as the primary field above — the
+      // override's EFFECTIVE provider is `t.provider ?? settings.
+      // provider` (resolveTaskCreds.ts's exact fallback — see that
+      // function), never `override.provider` alone, since an override
+      // that only sets baseUrl/model and leaves provider unset still
+      // inherits the primary's provider at runtime.
+      if ((override.provider ?? draft.provider) !== "openai-compat") continue;
+      const normalized = normalizeBaseUrl(override.baseUrl);
+      if (!isValidBaseUrl(normalized)) {
+        showToast("Base URL 无效，请检查格式（例如 https://openrouter.ai/api/v1）");
+        return;
+      }
+      normalizedTaskLlm = { ...normalizedTaskLlm, [domain]: { ...override, baseUrl: normalized } };
+    }
+
     const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
     // uiMode is deliberately excluded from `draft` — the header toggle
     // above writes it straight through updateSettings the moment it's
@@ -1603,10 +1983,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       enabledPacks,
       uiMode: useApp.getState().settings.uiMode,
       customThemes: useApp.getState().settings.customThemes,
+      // Round-2 dict-pack auto-update: same class of staleness bug
+      // uiMode/customThemes already had (see this object's own leading
+      // comment above) — packAutoUpdateCheckedAt is written by
+      // background code (app/dictPackAutoUpdateTrigger.ts) any time
+      // while this dialog happens to be open, never through `draft`;
+      // spreading draft's dialog-open-time snapshot here would silently
+      // roll back a fresher background-recorded timestamp on ANY 保存.
+      packAutoUpdateCheckedAt: useApp.getState().settings.packAutoUpdateCheckedAt,
       // F5 fix: sanitize custom: font values at this same persistence
       // boundary — see sanitizeDraftFontValue's own doc comment.
       uiFont: sanitizeDraftFontValue(draft.uiFont),
       monoFont: sanitizeDraftFontValue(draft.monoFont),
+      // FIX 2: the normalized (trimmed/ASCII-punctuation/no-trailing-
+      // slash) forms computed above — validated already, so these are
+      // always well-formed (or empty) by this point.
+      baseUrl: normalizedBaseUrl,
+      taskLlm: normalizedTaskLlm,
+      // W2: same "normalized + already validated above" guarantee.
+      proxyUrl: normalizedProxyUrl,
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
     // getSidecarMode is only ever read once, at app start (Finding 2c)
@@ -1623,6 +2018,40 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     // actual persistence boundary, closes both holes with the one
     // allowlist source of truth instead of re-deriving the check here.
     updateSettings(coercePreviewModels(toSave));
+    // Desktop keychain custody (v0.5.1 desktop keychain migration):
+    // updateSettings above already enqueued a Keychain write for any
+    // changed SECRET_NAMES field (store.ts's syncSecretCustody) — await
+    // those settling BEFORE flushSettings below, so custody is fully up
+    // to date before settingsForPersist decides what to strip from the
+    // IDB blob it's about to write. A write failure surfaces its own
+    // non-blocking warning toast from the store (never thrown here); the
+    // blocking catch further down stays reserved for genuine IDB
+    // failures. No-op on web.
+    if (IS_DESKTOP) {
+      await useApp.getState().flushSecrets();
+    }
+    // Field-test fix: updateSettings' own persist above is fire-and-
+    // forget (store.ts) — a key saved right before quit could still lose
+    // the race against app teardown. Await the write actually committing
+    // before this dialog closes/toasts "已保存".
+    //
+    // F2 fix (Sol MEDIUM review): flushSettings can now reject (storage.
+    // saveSettings propagates IndexedDB failures instead of always
+    // resolving — see both functions' own docs) — on failure, show an
+    // explicit error toast and KEEP the dialog open instead of falling
+    // through to the success toast + onClose, so the user isn't told
+    // "已保存" (and the dialog doesn't vanish) over a write that didn't
+    // actually land. Only the parts that CLAIM success — enabling the
+    // just-checked packs, the success toast, closing — are gated; the
+    // live in-memory settings update above already happened regardless
+    // (matches updateSettings' own fire-and-forget persist, unaffected
+    // by this).
+    try {
+      await useApp.getState().flushSettings();
+    } catch {
+      showToast("设置保存失败，请重试（存储不可用或空间不足）");
+      return;
+    }
     setEnabledPacks(enabledPacks);
     showToast(sidecarModeChanged ? "已保存，重启应用后生效" : "设置已保存");
     onClose();
@@ -2001,8 +2430,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     setRestoreError(null);
     const text = await file.text();
     try {
-      const { sessions, entries, learnset, hasSettings, hasApiKey } = previewBackup(text);
-      setRestorePreview({ text, sessions, entries, learnset, hasSettings, hasApiKey });
+      const { sessions, entries, learnset, packSources, hasSettings, hasApiKey } = previewBackup(text);
+      setRestorePreview({ text, sessions, entries, learnset, packSources, hasSettings, hasApiKey });
     } catch (err) {
       setRestorePreview(null);
       setRestoreError(err instanceof Error ? err.message : "备份文件解析失败");
@@ -2108,6 +2537,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     if (!draft.taskLlm?.[meta.domain]?.enabled) return false;
     return !!resolveTaskCreds(draft, meta.domain).apiKey !== !!draft.apiKey;
   });
+
+  // F4 fix (field-test batch C, Sol M3): the desktop transport wrapper
+  // reads the SAVED settings.proxyUrl, not this draft — an unsaved
+  // proxy edit would otherwise be silently ignored by exactly the two
+  // actions (测试连接 / OpenRouter connect below) whose entire point is
+  // to verify connectivity through it. Desktop-only, same IS_DESKTOP
+  // gate the proxy field itself renders under.
+  const proxyDraftDirty =
+    IS_DESKTOP && normalizeProxyUrl(draft.proxyUrl) !== normalizeProxyUrl(settings.proxyUrl);
+  const proxyDraftDirtyHint = "代理设置已修改，保存后再测试/连接";
 
   return (
     <div
@@ -2277,7 +2716,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <button
                     key={opt.value}
                     type="button"
-                    disabled={opt.disabled || previewLocked || floorLocked}
+                    disabled={opt.disabled || previewLocked || floorLocked || engineLockedByMeeting}
                     onClick={() => patch({ engine: opt.value })}
                     title={
                       previewLocked
@@ -2337,6 +2776,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 );
               })}
             </div>
+
+            {/* Field-test fix: standing (not hover-only) explanation for
+               why every card above just went disabled/dim —
+               engineLockedByMeeting's own doc comment has the why. */}
+            {engineLockedByMeeting && (
+              <div className="text-xs text-mut2">会议进行中，无法切换引擎；暂停或结束会议后可切换</div>
+            )}
 
             {/* S11 osspeech blueprint (§3 Worker D, §Q5): 预下载模型 —
                background-preinstalls the SpeechAnalyzer asset for
@@ -2576,6 +3022,64 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
+            {/* ElevenLabs API Key (v0.6 round 2): engine-conditional,
+               mirrors the Soniox/Deepgram API Key blocks above field-for-
+               field (same hand-rolled masked-input pattern, same S14
+               no-probe KeyStatusChip honesty). The key never rides the
+               websocket at all — it's used ONLY to mint a short-lived,
+               single-use token client-side (POST api.elevenlabs.io/v1/
+               single-use-token/realtime_scribe), and that derived token
+               is what actually authenticates the connection (see
+               elevenLabsTransport.ts's own header for the verified wire
+               shape). */}
+            {draft.engine === "elevenlabs" && (
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-xs text-mut">ElevenLabs API Key</label>
+                  {/* S14: no probe exists for ElevenLabs either (same
+                     no-telemetry posture as Soniox/Deepgram above). */}
+                  <KeyStatusChip status={deriveKeyStatus(draft.elevenLabsKey)} />
+                </div>
+                <div className="mt-1 flex items-center gap-2">
+                  <input
+                    type={showElevenLabsKey ? "text" : "password"}
+                    value={draft.elevenLabsKey}
+                    onChange={(e) => patch({ elevenLabsKey: e.target.value })}
+                    placeholder="粘贴你的 ElevenLabs API Key"
+                    className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowElevenLabsKey((v) => !v)}
+                    aria-label={showElevenLabsKey ? "隐藏" : "显示"}
+                    className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {showElevenLabsKey ? (
+                      <EyeSlash size={18} weight="regular" />
+                    ) : (
+                      <Eye size={18} weight="regular" />
+                    )}
+                  </button>
+                </div>
+                <div className="mt-1 text-xs text-mut2">
+                  按量计费；Key 仅在浏览器本地用于向 ElevenLabs 换取一次性 Token（api.elevenlabs.io），识别连接只携带该 Token，Key 本身不经我们的服务器
+                </div>
+                {!draft.elevenLabsKey && (
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    前往{" "}
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://elevenlabs.io/app/developers/api-keys")}
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      elevenlabs.io
+                    </button>{" "}
+                    创建 API Key
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 标签页音频·云端 provider picker (v0.5 Wave-1 Feature 4, §5
                A4; ITEM 3 fix, fix round Opus#1): unlike Soniox/Deepgram
                above, this card has no key input of its own — it rides
@@ -2673,10 +3177,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div>
               <label className="text-xs text-mut">识别语言</label>
+              {/* S3 fix (v0.6 round-2 review): locked while a meeting is
+                 active (listening OR paused — same meetingActive signal
+                 the model-switch controls above already gate on, reused
+                 here rather than engineLockedByMeeting's narrower
+                 "paused stays unlocked" carve-out, since THAT carve-out
+                 only holds for the STT engine — resume() reconciles an
+                 engine change but never re-primes the translate
+                 provider's own lastPair, see providers.ts's own
+                 translate() doc). Changing the source language mid-
+                 meeting used to silently corrupt translation: a hard
+                 resume reattaches STT with the NEW source language, but
+                 DesktopSystemTranslationProvider.translate() only
+                 compares the TARGET against lastPair, so text kept
+                 flowing through the OLD source-language session. */}
               <select
                 value={draft.language}
                 onChange={(e) => patch({ language: e.target.value })}
-                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                disabled={meetingActive}
+                title={meetingActive ? "会议进行中，结束会议后可修改识别语言" : undefined}
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -2684,6 +3204,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </option>
                 ))}
               </select>
+              {meetingActive && (
+                <div className="mt-1 text-xs text-mut2">会议进行中，结束会议后可修改识别语言</div>
+              )}
             </div>
 
             {/* 托管模式 (v0.4 S3 chunk 6, desktop build only, blueprint
@@ -3187,7 +3710,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
                   onApiKeyChange={(apiKey) => patch({ apiKey })}
                   apiKeyPlaceholder="sk-…"
-                  apiKeyHint="仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                  // Desktop keychain custody (v0.5.1 desktop keychain
+                  // migration): honest per the actual threat model — the
+                  // Keychain does not make the key unreadable to this
+                  // app itself (it's how the app reads it back), only to
+                  // OTHER apps/processes without permission, so this
+                  // deliberately does NOT say "加密无法读取". Web/iOS keep
+                  // the byte-identical prior copy — the key still lives
+                  // in browser storage there, nothing changed for them.
+                  apiKeyHint={
+                    IS_DESKTOP
+                      ? "Key 存入 macOS 系统钥匙串，不再明文保存在应用存储中；其他 App 未经许可无法读取"
+                      : "仅存于本机浏览器；调用时经应用接口内存转发，不落盘（env-first 见 README）"
+                  }
                   // BYOK preview sprint (2026-07-21): the chip used to be
                   // suppressed wholesale under PREVIEW_TIER (a key field
                   // that couldn't be set had nothing honest to report) —
@@ -3230,6 +3765,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   presets={PROVIDER_PRESETS}
                   onConnectOpenRouter={() => void handleConnectOpenRouter()}
                   connectingOpenRouter={connectingOpenRouter}
+                  connectDisabledHint={proxyDraftDirty ? proxyDraftDirtyHint : undefined}
                   models={[
                     {
                       key: "detect",
@@ -3297,14 +3833,48 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </div>
                 )}
 
+                {/* W2 desktop proxy support — desktop-only (meaningless
+                   on web/iOS, same IS_DESKTOP gate CredentialFields'
+                   own 钥匙串 apiKeyHint above uses): tauri-plugin-http
+                   already auto-detects the macOS system proxy with no
+                   configuration at all, so this is purely the escape
+                   hatch for what that can't see (env-var-only setups a
+                   Finder-launched app never inherits, or a PAC-only
+                   network the app can't execute). */}
+                {IS_DESKTOP && (
+                  <div>
+                    <label className="text-xs text-mut">网络代理（可选）</label>
+                    <input
+                      type="text"
+                      value={draft.proxyUrl}
+                      onChange={(e) => {
+                        patch({ proxyUrl: e.target.value });
+                        // F4 fix (field-test batch C, Sol M3): a stale
+                        // 测试连接 result must not keep reading as
+                        // authoritative once the proxy it was run
+                        // against no longer matches this draft.
+                        setTestConnectionOk(undefined);
+                      }}
+                      placeholder="http://127.0.0.1:7890"
+                      className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                    <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                      留空则自动跟随系统代理。支持 http:// 与 socks5:// （如 Clash 混合端口 7890）
+                    </div>
+                  </div>
+                )}
+
                 <button
                   type="button"
                   onClick={() => void handleTestConnection()}
-                  disabled={testingConnection}
+                  disabled={testingConnection || proxyDraftDirty}
                   className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {testingConnection ? "测试中…" : "测试连接"}
                 </button>
+                {proxyDraftDirty && (
+                  <div className="text-xs leading-[1.7] text-warn-soft">{proxyDraftDirtyHint}</div>
+                )}
 
                 {/* v0.4.5 ambient AI-status mirror (design doc
                    v045-ai-transparency-qc.md Part A) — the same
@@ -3429,12 +3999,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div data-ui-level="aiDetectExplainLanguage">
               <label className="text-xs text-mut">解释语言</label>
+              {/* S3 fix (v0.6 round-2 review): this IS the translation
+                 target — locked while a meeting is active for the same
+                 reason 识别语言 above is (see that field's own comment).
+                 Changing it mid-meeting makes queue.ts pass a NEW target
+                 to a provider still holding the OLD pair, which rejects
+                 every batch until the provider is re-primed (never
+                 happens mid-meeting), silently dropping pending
+                 translations. */}
               <select
                 value={draft.explainLanguage}
                 onChange={(e) =>
                   patch({ explainLanguage: e.target.value as ExplainLanguage })
                 }
-                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
+                disabled={meetingActive}
+                title={meetingActive ? "会议进行中，结束会议后可修改解释语言" : undefined}
+                className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {EXPLAIN_LANGUAGE_OPTIONS.map((l) => (
                   <option key={l.value} value={l.value}>
@@ -3444,6 +4024,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </select>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
                 卡片解释的语言；English 模式给不需要中文的用户，界面文字仍为中文
+                {meetingActive && "；会议进行中，结束会议后可修改"}
               </div>
             </div>
 
@@ -3608,37 +4189,171 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 <ToggleSwitch checked disabled />
               </label>
-              {allPacks.filter((p) => p.id !== "core").map((p) => (
-                <label
-                  key={p.id}
-                  className="flex items-center justify-between gap-3 py-1"
-                >
-                  <div>
-                    <div className="text-sm text-fg">
-                      {p.name}
-                      {p.remote && (
-                        <span className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut">
-                          社区
-                        </span>
-                      )}
+              {allPacks.filter((p) => p.id !== "core").map((p) => {
+                // v0.6 T1: replaces the old blanket "社区" badge —
+                // every remote pack now shows whether it's an official
+                // jargonslayer-dicts release or something the user
+                // pointed at/imported themselves. Recomputed on every
+                // render via classifyPackOrigin (never a stored flag —
+                // see that function's own doc comment on why). Matched
+                // against packSources by pack id since DictPack itself
+                // carries no url; a remote pack missing its own source
+                // (should never happen — every registry entry came
+                // from one) falls back to "" -> classifyPackOrigin's
+                // own "imported" default.
+                const origin = p.remote
+                  ? classifyPackOrigin(packSources.find((s) => s.pack.id === p.id)?.url ?? "")
+                  : null;
+                return (
+                  <label
+                    key={p.id}
+                    className="flex items-center justify-between gap-3 py-1"
+                  >
+                    <div>
+                      <div className="text-sm text-fg">
+                        {/* N5 fix (adversarial review): an imported
+                           pack's name is untrusted remote content —
+                           <bdi> isolates it from bidi reordering so it
+                           can't visually swallow/reorder the 官方/已导入
+                           badge, which stays in its OWN sibling element
+                           either way (validateManifest also strips
+                           bidi/zero-width control chars at the source —
+                           this is a second, independent layer). */}
+                        <bdi>{p.name}</bdi>
+                        {origin && (
+                          <span
+                            className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut"
+                            title={
+                              origin === "official"
+                                ? "来自 JargonSlayer 官方词典库"
+                                : "由你从外部链接或文件导入，内容未经官方审核"
+                            }
+                          >
+                            {origin === "official" ? "官方" : "已导入"}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-mut2">
+                        {/* H3(b) fix (adversarial review): a plain
+                           packEntryCounts[p.id] read turns an id of
+                           "__proto__" into an Object.prototype access
+                           ("Objects are not valid as a React child")
+                           instead of a real miss — validateManifest now
+                           rejects that id at install time (H3(a)), but
+                           this read-side hardening is defense in depth. */}
+                        {p.description}（{Object.hasOwn(packEntryCounts, p.id) ? packEntryCounts[p.id] : 0} 条）
+                      </div>
                     </div>
-                    <div className="text-xs text-mut2">
-                      {p.description}（{packEntryCounts[p.id] ?? 0} 条）
-                    </div>
-                  </div>
-                  <ToggleSwitch
-                    checked={checkedPacks.has(p.id)}
-                    onChange={(checked) => togglePack(p.id, checked)}
-                  />
-                </label>
-              ))}
+                    <ToggleSwitch
+                      checked={checkedPacks.has(p.id)}
+                      onChange={(checked) => togglePack(p.id, checked)}
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            )}
+
+            {/* 词典库 (#20 v0.6 T6): browse/install packs from the
+               community catalog jargonslayer-dicts publishes — installs
+               go through the exact same addPackSource() as a manual URL
+               paste below, just pre-filled from the index instead of
+               requiring the user to hunt down a raw link themselves.
+               Lazy-fetched (see the effect above) only once this
+               category is actually visible, never on dialog mount. */}
+            {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPackCatalog) && (
+            <div
+              className="space-y-2 border-t border-edge pt-3"
+              data-ui-level="aiDetectPackCatalog"
+            >
+              <div className="text-xs text-mut">词典库</div>
+              {catalogStatus === "loading" && (
+                <div className="text-xs text-mut2">加载词典目录中…</div>
+              )}
+              {catalogStatus === "error" && (
+                <div className="flex items-center justify-between gap-2 text-xs leading-[1.7] text-mut2">
+                  <span>暂时无法加载词典目录，可稍后重试或用下方链接手动添加</span>
+                  {/* L2 fix (adversarial review): catalogStatus never
+                     returned to "idle" on its own, so "可稍后重试" was
+                     unkeepable — resetting to "idle" re-arms the fetch
+                     effect's own "idle" gate above. */}
+                  <button
+                    type="button"
+                    onClick={() => setCatalogStatus("idle")}
+                    className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3"
+                  >
+                    重试
+                  </button>
+                </div>
+              )}
+              {catalogStatus === "loaded" && catalogPacks && catalogPacks.length === 0 && (
+                <div className="text-xs leading-[1.7] text-mut2">词典目录暂时是空的</div>
+              )}
+              {catalogStatus === "loaded" && catalogPacks && catalogPacks.length > 0 && (
+                <div className="space-y-1.5">
+                  {catalogPacks.map((row) => {
+                    const installedSource = packSources.find((s) => s.pack.id === row.id);
+                    // L3/N6 fix (adversarial review): id-only + String()
+                    // equality used to (a) render 更新 pointing at the
+                    // catalog's official url even when the installed
+                    // pack under this id came from a DIFFERENT source
+                    // (e.g. the user's own fork), and (b) present a
+                    // semver-OLDER catalog entry as an "update" (a stale
+                    // catalog serving a downgrade). `upToDate` is
+                    // version-only (>=, real semver ordering — never
+                    // offer anything once the installed version already
+                    // meets or exceeds the catalog's); 更新 additionally
+                    // requires the installed SOURCE to be this same
+                    // catalog url — otherwise it's an honest fresh 安装
+                    // of the official pack, not a same-lineage update.
+                    const versionCmp = installedSource
+                      ? compareSemver(String(installedSource.pack.version), String(row.version))
+                      : null;
+                    const sameSource = !!installedSource && installedSource.url === row.url;
+                    const upToDate = versionCmp !== null && versionCmp >= 0;
+                    const offersUpdate = !upToDate && sameSource;
+                    return (
+                      <div
+                        key={row.id}
+                        className="flex items-center justify-between gap-2 border border-edge bg-panel2 px-3 py-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm text-fg">{row.name}</div>
+                          {row.description && (
+                            <div className="truncate text-xs text-mut2">{row.description}</div>
+                          )}
+                          <div className="text-xs text-mut2">
+                            {row.entryCount ?? "?"} 条{row.license ? ` · ${row.license}` : ""}
+                            {row.tags && row.tags.length > 0 ? ` · ${row.tags.join(" ")}` : ""}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleInstallCatalogPack(row)}
+                          disabled={installingCatalogId === row.id || upToDate}
+                          className="btn-tactile shrink-0 border border-edge px-2 py-1 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {installingCatalogId === row.id
+                            ? "安装中…"
+                            : upToDate
+                              ? "已安装"
+                              : offersUpdate
+                                ? "更新"
+                                : "安装"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
             )}
 
             {/* 词典源 (#20): install community dictionary packs from a
-               URL. getAllPacks() above already folds loaded remote
-               packs into the checkbox list; this subsection manages
-               the underlying sources (add/remove/update-check). */}
+               URL, a local file, or pasted JSON. getAllPacks() above
+               already folds loaded remote packs into the checkbox
+               list; this subsection manages the underlying sources
+               (add/import/remove/update-check). */}
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectPackSources) && (
             <div
               className="space-y-2 border-t border-edge pt-3"
@@ -3667,41 +4382,182 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </button>
               </div>
 
+              {/* v0.6 T2: mirrors the 显示 section's own 导入主题文件
+                 block exactly (:4965-5008's own shape) — a collapsed
+                 file-picker + paste-JSON panel sharing one parse+install
+                 tail (handleImportPackJson above). */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs text-mut">从文件导入 / 粘贴 JSON</label>
+                  <button
+                    type="button"
+                    onClick={() => setPackImportOpen((v) => !v)}
+                    className="text-xs text-act hover:underline"
+                  >
+                    {packImportOpen ? "收起" : "展开"}
+                  </button>
+                </div>
+                {packImportOpen && (
+                  <div className="mt-1 space-y-2 border border-edge bg-panel2 p-3">
+                    <label className="btn-tactile inline-block cursor-pointer border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3">
+                      选择文件
+                      <input
+                        type="file"
+                        accept="application/json,.json"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = ""; // allow re-picking the same file
+                          if (file) void handleImportPackFile(file);
+                        }}
+                      />
+                    </label>
+                    <textarea
+                      value={packImportText}
+                      onChange={(e) => setPackImportText(e.target.value)}
+                      placeholder="或粘贴词典包 JSON…"
+                      rows={3}
+                      className="w-full resize-none border border-edge bg-panel px-2.5 py-1.5 font-mono text-xs leading-[1.7] text-fg placeholder:text-mut2 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleImportPackJson(packImportText)}
+                      disabled={!packImportText.trim()}
+                      className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      解析并导入
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* v0.6 T2/T3(b): persistent inline error for EVERY
+                 install path above (URL/file/paste) and the 词典库 row
+                 buttons above that — mirrors restoreError's own idiom
+                 (:4596-4598) rather than losing a validation error to a
+                 toast that's already gone. */}
+              {packInstallError && (
+                <div className="text-xs leading-[1.7] text-warn-soft">{packInstallError}</div>
+              )}
+
               {packSources.length > 0 && (
                 <div className="space-y-1.5">
-                  {packSources.map((s) => (
-                    <div
-                      key={s.url}
-                      className="flex items-center justify-between gap-2 border border-edge bg-panel2 px-3 py-2"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm text-fg">{s.pack.name}</div>
-                        <div className="font-mono text-xs tabular-nums text-mut2">
-                          v{s.pack.version} ·{" "}
-                          {s.pack.expressions.length + s.pack.terms.length} 条
+                  {packSources.map((s) => {
+                    // v0.6 T5/GOTCHA: s.url is "" (not undefined) for a
+                    // file-imported pack — every identifier/key below
+                    // is `s.url || s.pack.id`, never `s.url` alone.
+                    const id = s.url || s.pack.id;
+                    const hasNotice = !!(
+                      s.pack.source ||
+                      s.pack.license ||
+                      s.pack.sourceVersion ||
+                      s.pack.citation ||
+                      s.pack.notice
+                    );
+                    const noticeOpen = expandedPackNotices.has(id);
+                    return (
+                      <div key={id} className="border border-edge bg-panel2 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm text-fg">{s.pack.name}</div>
+                            <div className="font-mono text-xs tabular-nums text-mut2">
+                              v{s.pack.version} ·{" "}
+                              {s.pack.expressions.length + s.pack.terms.length} 条
+                            </div>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {/* v0.6 T5: NOTICE/attribution disclosure —
+                               only rendered when there's actually
+                               something to show (a v1 pack with no
+                               attribution metadata renders no trigger
+                               at all, never an empty expanded block). */}
+                            {hasNotice && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedPackNotices((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(id)) next.delete(id);
+                                    else next.add(id);
+                                    return next;
+                                  })
+                                }
+                                className="btn-tactile px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg"
+                              >
+                                {noticeOpen ? "收起来源" : "来源与许可"}
+                              </button>
+                            )}
+                            {/* checkUpdates() itself skips file-imported
+                               sources outright (nothing to refetch) —
+                               hide the button rather than show one that
+                               always no-ops. */}
+                            {s.url && (
+                              <button
+                                type="button"
+                                onClick={() => void handleCheckUpdates(s.url)}
+                                disabled={checkingUpdates}
+                                className="btn-tactile px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                检查更新
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => void handleRemovePackSource(s)}
+                              className={`btn-tactile px-2 py-1 text-xs hover:bg-panel3 ${
+                                confirmRemovePackId === id ? "text-warn-soft" : "text-mut hover:text-warn-soft"
+                              }`}
+                            >
+                              {confirmRemovePackId === id ? "确认移除?" : "移除"}
+                            </button>
+                          </div>
                         </div>
+                        {hasNotice && noticeOpen && (
+                          <div className="mt-2 space-y-1 border-t border-edge pt-2 text-xs leading-[1.7] text-mut2">
+                            {/* External pack-metadata URLs (source/
+                               license) are rendered as selectable TEXT,
+                               never a clickable link: the desktop
+                               opener plugin's own allowlist (apps/
+                               desktop/src-tauri/capabilities/
+                               default.json) only covers openrouter.ai/
+                               github.com/huggingface.co, and a pack's
+                               sourceUrl/licenseUrl can point at
+                               literally anything (raw.githubusercontent.
+                               com, choosealicense.com, an arbitrary
+                               journal/agency site, …) — see this
+                               worker's own task doc for the ruling. */}
+                            {s.pack.source && (
+                              <div>
+                                来源：{s.pack.source}
+                                {s.pack.sourceUrl && s.pack.sourceUrl.startsWith("https://") && (
+                                  <span className="ml-1 break-all">({s.pack.sourceUrl})</span>
+                                )}
+                              </div>
+                            )}
+                            {s.pack.license && (
+                              <div>
+                                许可：{s.pack.license}
+                                {s.pack.licenseUrl && s.pack.licenseUrl.startsWith("https://") && (
+                                  <span className="ml-1 break-all">({s.pack.licenseUrl})</span>
+                                )}
+                              </div>
+                            )}
+                            {s.pack.sourceVersion && <div>原始版本：{s.pack.sourceVersion}</div>}
+                            {s.pack.citation && <div>引用：{s.pack.citation}</div>}
+                            {/* notice is rendered VERBATIM as plain text
+                               (pre-clamped to 600 chars upstream,
+                               remotePacks.ts) — a plain React text child
+                               is never interpreted as HTML, so this is
+                               safe even though the string itself is
+                               untrusted remote content. */}
+                            {s.pack.notice && (
+                              <div className="whitespace-pre-wrap break-words">{s.pack.notice}</div>
+                            )}
+                          </div>
+                        )}
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => void handleCheckUpdates(s.url)}
-                          disabled={checkingUpdates}
-                          className="btn-tactile px-2 py-1 text-xs text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          检查更新
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void handleRemovePackSource(s.url)}
-                          className={`btn-tactile px-2 py-1 text-xs hover:bg-panel3 ${
-                            confirmRemoveUrl === s.url ? "text-warn-soft" : "text-mut hover:text-warn-soft"
-                          }`}
-                        >
-                          {confirmRemoveUrl === s.url ? "确认移除?" : "移除"}
-                        </button>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <button
                     type="button"
                     onClick={() => void handleCheckUpdates()}
@@ -3713,8 +4569,27 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
               )}
 
+              {/* Round-2: quiet daily auto-refresh — supplements 检查全部
+                 更新 above, never replaces it (that button still runs the
+                 SAME checkUpdates() on demand, see lib/detect/
+                 packAutoUpdate.ts). packAutoUpdateCheckedAt is written by
+                 background code outside this dialog's draft/保存 flow
+                 (app/dictPackAutoUpdateTrigger.ts), so this reads the
+                 LIVE `settings` value, never `draft`'s dialog-open-time
+                 snapshot — see handleSave's own
+                 toSave.packAutoUpdateCheckedAt for the matching "always
+                 take the live value" fix on the save side. */}
+              <label className="flex items-center justify-between gap-3 py-1">
+                <div className="text-sm text-fg">自动更新词典（联网时每天检查一次）</div>
+                <ToggleSwitch
+                  checked={draft.packAutoUpdate}
+                  onChange={(checked) => patch({ packAutoUpdate: checked })}
+                />
+              </label>
+              <div className="text-xs text-mut2">{formatLastPackCheck(settings.packAutoUpdateCheckedAt)}</div>
+
               <div className="text-xs leading-[1.7] text-mut2">
-                从 GitHub raw / jsDelivr 链接安装社区词典包，JSON 格式见文档
+                从 GitHub raw / jsDelivr 链接安装社区词典包（支持粘贴 GitHub 网页链接，自动转换为 raw 链接），JSON 格式见文档
               </div>
             </div>
             )}
@@ -3871,6 +4746,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               }
             />
 
+            {/* v0.6: local usage ledger for BYOK users — what your own
+               keys are being spent on. Local-only by construction (idb,
+               nothing leaves the device); the panel owns its own on/off
+               toggle, same self-contained shape as AnkiConnectSection. */}
+            <UsagePanel
+              value={draft.usageTracking}
+              onChange={(usageTracking) => patch({ usageTracking })}
+            />
+
             <label className="flex items-center justify-between gap-3 py-1">
               <div>
                 <div className="text-sm text-fg">Frontmatter</div>
@@ -3912,7 +4796,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   <div className="text-sm text-fg">不包含 API Key</div>
                   <div className="text-xs text-mut2">
                     取消勾选后，备份将包含你的 API Key（AI 检测 / 分任务模型 / HF Token / Soniox Key /
-                    Deepgram Key / Webhook / 连接码），请妥善保管
+                    Deepgram Key / ElevenLabs Key / Webhook / 连接码），请妥善保管
                   </div>
                 </div>
                 <ToggleSwitch
@@ -3955,6 +4839,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     <li>会议历史：{restorePreview.sessions} 场（按 ID 合并，同 ID 的已有会议将被覆盖）</li>
                     <li>个人词典：{restorePreview.entries} 条（按 ID 合并，规则同上）</li>
                     <li>学习记录：{restorePreview.learnset} 条（按记录合并，规则同上；备份不含此项时当前记录保持不变）</li>
+                    {/* M3 fix (adversarial review): disclose that the
+                       file contains dictionary packs at all — restoring
+                       makes the browser fetch every url-backed row. */}
+                    {restorePreview.packSources > 0 && (
+                      <li>词典包：{restorePreview.packSources} 个（url 来源将重新联网获取，请确认文件来源可信）</li>
+                    )}
                     <li>
                       设置：
                       {restorePreview.hasSettings

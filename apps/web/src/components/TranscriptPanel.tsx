@@ -887,6 +887,19 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
     });
   }, []);
 
+  // v0.5.1 fix round — 全选/取消全选: `segments` is the SAME (unfiltered)
+  // source the render loop below maps over, so filling selectedIds from
+  // it always matches every checkbox actually on screen. Gated on
+  // `selectMode &&` first so the `.every()` scan is skipped entirely
+  // outside selection mode (a live meeting can carry hundreds of
+  // segments — no reason to re-scan them on every unrelated re-render).
+  const allSegmentsSelected =
+    selectMode && segments.length > 0 && segments.every((seg) => selectedIds.has(seg.id));
+
+  const handleToggleSelectAll = useCallback(() => {
+    setSelectedIds(allSegmentsSelected ? new Set() : new Set(segments.map((seg) => seg.id)));
+  }, [allSegmentsSelected, segments]);
+
   // v0.5 Wave-1 Feature 1 (speaker assignment popover, §1 F1 items 1/3)
   // — replaces the old direct chip -> SpeakerRenamePopover trigger;
   // "重命名该说话人的所有发言" still reaches SpeakerRenamePopover, just via
@@ -1384,6 +1397,14 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
       {selectMode && (
         <div className="flex shrink-0 items-center gap-3 border-t border-edge bg-panel2 px-3 py-2">
           <span className="font-mono text-xs text-mut2">已选 {selectedIds.size}</span>
+          <button
+            type="button"
+            data-testid="btn-select-all"
+            onClick={handleToggleSelectAll}
+            className="btn-tactile min-h-10 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3"
+          >
+            {allSegmentsSelected ? "取消全选" : "全选"}
+          </button>
           <button
             type="button"
             data-testid="btn-bulk-assign"

@@ -57,6 +57,16 @@ export type STTEngineKind =
   // zh-en code-switching engine); lights up web + desktop from the one
   // browser-WS adapter (deepgramTransport.ts), no iOS v1 capture path.
   | "deepgram"
+  // v0.6 round 2: ElevenLabs Scribe realtime STT — third BYOK cloud
+  // engine, same triple gate as soniox/deepgram above (ENGINE_CARDS
+  // byokOnly + store.ts applyTierDefaults survives-preview posture + key
+  // field disabled). Single-language (whatever settings.language names,
+  // ISO 639-1) — no verified zh-en code-switching claim, so soniox stays
+  // the code-switching engine. No server-minted preview trial (BYOK
+  // only, unlike soniox's SONIOX_PREVIEW_LANE). Lights up web + desktop
+  // from the one browser-WS adapter (elevenLabsTransport.ts), no iOS v1
+  // capture path.
+  | "elevenlabs"
   // S9 (docs/design-explorations/s9-app-audio-tap-blueprint.md, D7):
   // desktop-only native app/system audio capture via a CoreAudio
   // process tap (apps/desktop/src-tauri's audiocap helper) — the
@@ -229,6 +239,26 @@ export interface DetectedTerm {
   type: TermType;
   gloss_en: string;
   gloss_zh: string;
+  // v0.6 T3 (multi-sense dictionary terms): present only when the
+  // matched dictionary entry declared `senses` (DictTermEntry.senses,
+  // detect/dictionary-data.ts) and dictionary.ts's scanDictionary ran
+  // sense selection on it — see that function's own doc for the scoring
+  // formula. Absent for every LLM-sourced term and every dictionary
+  // entry without `senses` (byte-identical to today, pinned by test).
+  senseId?: string;
+  // Ranked, chosen sense first (`senses[0]` is always the one flattened
+  // into term/type/gloss_en/gloss_zh above). `domain` is loosely
+  // `string` here, not the closed DomainTag union (detect/dictionary-
+  // data.ts) — this file is a dependency-free leaf (dictionary-data.ts
+  // itself imports FROM here), so every real producer (dictionary.ts)
+  // and consumer validates/narrows against the real DomainTag enum at
+  // its own boundary instead.
+  senses?: { senseId: string; gloss_en: string; gloss_zh: string; domain: string; score: number }[];
+  // True when the top two sense scores are within 0.15 of each other,
+  // or (only when a sense context is actually available) the chosen
+  // sense's own domain carries zero weight in it — i.e. this pick is a
+  // low-confidence guess worth flagging. Absent/false otherwise.
+  ambiguous?: boolean;
 }
 
 // ---------- UI cards = detection + bookkeeping ----------
@@ -267,6 +297,19 @@ export type ExplainLanguage = "zh" | "en";
 // Background profile (#48 step 3) self-reported English proficiency.
 export type EnglishLevel = "basic" | "intermediate" | "advanced";
 
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — the prompt asks the
+// model for <=60 chars, hard-capped a bit above that so a slightly-
+// over-budget but otherwise valid reply still saves instead of
+// failing outright (same posture as tasks/define.ts's own clamp
+// constants). Field-test fix (batch C, F2): exported here so EVERY
+// layer that touches this string shares the SAME bound instead of
+// each hardcoding its own 80 that could silently drift out of sync —
+// inferContext.ts's own sanitize clamp, the detect route's zod
+// schema, the header chip's input maxLength, and the store's
+// defensive clamp on manual edits all import this constant.
+export const MEETING_CONTEXT_MAX_CHARS = 80;
+
 export interface DetectRequest {
   context: string; // previously analyzed tail, disambiguation only
   new_text: string; // fresh finalized text to analyze
@@ -278,6 +321,16 @@ export interface DetectRequest {
   // profile.enabled. Spliced into the USER message ONLY (see
   // buildDetectUserMessage); the cached SYSTEM prompt never changes.
   profile?: string;
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — the domain/context
+  // string inferred once per meeting from the accumulating transcript
+  // (see MeetingSession.inferredContext, tasks/inferContext.ts). Same
+  // threading posture as `profile` above: spliced into the USER
+  // message ONLY (buildDetectUserMessage's MEETING CONTEXT block), the
+  // cached SYSTEM prompt never changes. Absent/undefined = no context
+  // inferred yet (today's behavior, unchanged). Hard-capped client-
+  // side at MEETING_CONTEXT_MAX_CHARS (see that constant's own doc).
+  meetingContext?: string;
 }
 
 export interface DetectResponse {
@@ -509,6 +562,16 @@ export interface Settings {
   whisperModel: string;
   provider: LlmProvider;
   baseUrl: string; // openai-compat only, e.g. https://api.deepseek.com/v1
+  // W2 desktop proxy support — desktop-only (meaningless/unread on a web
+  // build), manual escape hatch for whatever tauri-plugin-http's own
+  // macOS-system-proxy auto-detection can't see: env-var-only setups
+  // (a Finder-launched app inherits none of a shell's own http_proxy/
+  // https_proxy exports) or a PAC-only network (the app can't execute a
+  // PAC script). "" (default) = follow the system proxy exactly as
+  // before this field existed. http://, https://, socks5://, socks5h://
+  // schemes; userinfo (user:pass@) is allowed for proxy basic auth — see
+  // SettingsDialog.tsx's own isValidProxyUrl for the exact validation.
+  proxyUrl: string;
   apiKey: string; // "" = rely on server-side env ANTHROPIC_API_KEY
   detectModel: string;
   summaryModel: string;
@@ -562,6 +625,43 @@ export interface Settings {
   explainLanguage: "zh" | "en";
   // dictionary theme packs: null = all packs enabled
   enabledPacks: string[] | null;
+  // MEDIUM-5 fix (v0.6 round-2 review) — the packs-schema version this
+  // settings blob's own enabledPacks was last reconciled against (see
+  // detect/packs.ts's CURRENT_PACKS_SCHEMA_VERSION/PACKS_ADDED_AT_VERSION
+  // + store.ts's migrateSettings). A NEW built-in pack added in a LATER
+  // release would otherwise be permanently invisible to anyone who ever
+  // saved an explicit (non-null) enabledPacks array before it existed —
+  // migrateSettings unions newly-introduced pack ids into an old
+  // explicit array on load, keyed off this field, so the user's own
+  // explicit EXCLUSIONS survive while genuinely new packs default on
+  // like a fresh install. Always a concrete number post-migration
+  // (never absent) — DEFAULT_SETTINGS seeds CURRENT_PACKS_SCHEMA_VERSION
+  // directly: this file has zero imports of its own (dictionary-data.ts's
+  // header comment describes it as "a dependency-free leaf" for the
+  // identical reason DetectedTerm.senses[].domain stays loosely typed
+  // here), so that literal is mirrored by hand, not imported.
+  packsSchemaVersion: number;
+  // Round-2 dict-pack auto-update: quiet daily background refresh of
+  // every INSTALLED remote pack (lib/detect/remotePacks.ts's own
+  // checkUpdates(), reused wholesale — see lib/detect/packAutoUpdate.ts),
+  // supplementing (never replacing) SettingsDialog's manual 检查全部更新
+  // button. Default true — plainly better freshness at negligible cost
+  // (gated on being online, having at least one pack installed, and no
+  // live meeting; see shouldCheckForPackUpdates/runPackAutoUpdate for the
+  // exact gate).
+  packAutoUpdate: boolean;
+  // Epoch ms of the last COMPLETED auto-update attempt — success or
+  // failure alike (see runPackAutoUpdate's own doc for why a failed
+  // attempt still stamps this: otherwise one persistently-dead source
+  // would re-run the whole check on every single launch) — so the 24h
+  // interval survives an app restart. Absent/undefined = never
+  // auto-checked yet, treated as immediately due. Written by app/
+  // dictPackAutoUpdateTrigger.ts, OUTSIDE SettingsDialog's own draft/
+  // 保存 flow — that dialog always reads/writes it against the LIVE
+  // settings object, never draft's dialog-open-time snapshot (see
+  // SettingsDialog.tsx's 词典源 row + handleSave's own
+  // toSave.packAutoUpdateCheckedAt).
+  packAutoUpdateCheckedAt?: number;
   // Hugging Face token for the local Whisper sidecar's speaker
   // diarization (pyannote); "" = disabled. Never leaves the browser
   // except over localhost to the sidecar (see upload.ts).
@@ -583,6 +683,21 @@ export interface Settings {
   // stripKeyMaterial is a HAND-LISTED strip — deepgramKey is added there
   // too, mirroring sonioxKey's own precedent immediately above.
   deepgramKey: string;
+  // v0.6 round 2: ElevenLabs BYOK API key for the "elevenlabs" cloud
+  // engine (Scribe realtime STT); "" = engine unavailable. Unlike
+  // sonioxKey/deepgramKey, this value never rides the WebSocket itself —
+  // ElevenLabs' realtime endpoint authenticates via a `token` query
+  // param, so elevenLabsTransport.ts uses this key ONLY to mint a
+  // short-lived (15 min), single-use token client-side (POST
+  // https://api.elevenlabs.io/v1/single-use-token/realtime_scribe with
+  // an `xi-api-key` header carrying this value) — the raw key never
+  // transits our server, and never reaches ElevenLabs' own websocket at
+  // all, only the derived token does. diag/report.ts's SECRET_KEY_RE
+  // catches the name automatically (→ hasElevenLabsKey), but
+  // history/autoExport.ts's stripKeyMaterial is a HAND-LISTED strip —
+  // elevenLabsKey is added there too, mirroring sonioxKey/deepgramKey's
+  // own precedent above.
+  elevenLabsKey: string;
   // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
   // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
   // A4): which BYOK cloud backend the "tabaudio-cloud" engine (see
@@ -656,6 +771,19 @@ export interface Settings {
     weakDomains?: string;
     enabled: boolean;
   };
+
+  // Local usage ledger (v0.6, BYOK spend-visibility ask — apps/web/src/
+  // lib/usage/ledger.ts): records STT seconds streamed / LLM calls +
+  // tokens per day+provider, entirely on-device. NO TELEMETRY — nothing
+  // here ever leaves the browser/desktop app (see that file's own
+  // header); this is a local aggregate, not analytics. Default true
+  // (unlike profile.enabled above): the ledger is local-only and costs
+  // nothing to leave on, and an off-by-default toggle would make the
+  // settings UsagePanel useless out of the box for the fleet-wide
+  // "simple"-mode user it's meant to serve; the panel's own 清除使用记录
+  // button is the actual escape hatch. false makes every recordUsage()
+  // call a no-op (existing history is left alone, not cleared).
+  usageTracking: boolean;
 
   // ---- display settings (v0.2.1) — independent of theme; surviving a
   // theme switch is the whole point, so these live as their own
@@ -780,6 +908,22 @@ export interface Settings {
   // provider credential itself (see agent_server.py's Origin-gate
   // comment for the full threat model this closes).
   agentToken: string;
+  // v0.5.1 desktop keychain custody, F2 fix (Sol HIGH #4, review round
+  // cited in store.ts's syncSecretCustody doc): names (a subset of
+  // secret.ts's SECRET_NAMES) whose Keychain DELETE most recently
+  // FAILED — this blob's own field is already cleared, but the OS
+  // Keychain still holds the old value until a retry actually lands.
+  // secret.ts's hydrateSecrets consults this FIRST on every boot and
+  // retries the delete instead of ever adopting whatever's still
+  // sitting there for a listed name; store.ts's syncSecretCustody adds
+  // a name here on a live delete failure and clears it again the
+  // moment ANY later writeSecret set/delete for that name succeeds.
+  // Deliberately NOT a SECRET_NAMES entry and NOT touched by any strip
+  // logic (settingsForPersist/stripKeyMaterial) — this is bookkeeping
+  // about Keychain state, never key material itself, so it's safe to
+  // ride in the plaintext IDB blob (and a full-tier backup) like any
+  // other ordinary Settings field.
+  secretDeletePending?: string[];
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -812,6 +956,7 @@ export const DEFAULT_SETTINGS: Settings = {
   // this only changes what an UNTOUCHED default looks like.
   provider: "openai-compat",
   baseUrl: "https://openrouter.ai/api/v1",
+  proxyUrl: "",
   apiKey: "",
   // Field-test fix (v0.4.4, real user report): these were bare
   // Anthropic ids (claude-haiku-4-5/claude-sonnet-5) — 400s the moment
@@ -844,9 +989,15 @@ export const DEFAULT_SETTINGS: Settings = {
   ankiConnect: { enabled: false, deckName: "JargonSlayer", port: 8765 },
   explainLanguage: "zh",
   enabledPacks: null,
+  // Must match detect/packs.ts's own CURRENT_PACKS_SCHEMA_VERSION
+  // literal — see packsSchemaVersion's own field doc above for why this
+  // file can't import it directly.
+  packsSchemaVersion: 1,
+  packAutoUpdate: true,
   hfToken: "",
   sonioxKey: "",
   deepgramKey: "",
+  elevenLabsKey: "",
   tabAudioCloudProvider: "soniox",
   realtimeDiarize: false,
   partials: true,
@@ -854,6 +1005,7 @@ export const DEFAULT_SETTINGS: Settings = {
   bilingualTranscript: false,
   translateEngine: "llm",
   profile: { enabled: false },
+  usageTracking: true,
   themeId: "terminal",
   customThemes: [],
   fontSize: "md",
@@ -867,6 +1019,7 @@ export const DEFAULT_SETTINGS: Settings = {
   subscriptionProvider: "claude-sub",
   agentUrl: "http://127.0.0.1:8767",
   agentToken: "",
+  secretDeletePending: [],
 };
 
 /** Headers that carry LLM provider config from browser to routes.
@@ -928,6 +1081,25 @@ export interface MeetingSession {
   // session's own startedAt (any real pause gap then just shows as a
   // jump between segments — not recoverable after the fact).
   pauseIntervals?: { start: number; end: number }[];
+  // Auto meeting-context detection (field request: "need AI to auto
+  // detect the context for better detection") — the one-shot (plus one
+  // retry, plus one later refresh) inferred domain/context, persisted
+  // with the session it was inferred for (see store.ts's
+  // saveCurrentSession/currentSessionSnapshot). Absent = never
+  // inferred (aiDetect was off, inference failed/never fired, or this
+  // session predates the feature) — SessionMeta (history list) does
+  // NOT carry this; it's a detail view concern only.
+  inferredContext?: string;
+  // v0.6 T5 (multi-sense terms): the domain tags inferred alongside
+  // inferredContext above (InferContextResponse.domains) — same
+  // "final value only, omit when empty" persistence posture as that
+  // field's own sibling fields (speakerAliases/translations), not the
+  // "presence marks known-complete bookkeeping" posture pauseIntervals/
+  // speakerRoster use (there is no meaningful difference here between
+  // "never inferred" and "inferred as empty", so both collapse to
+  // absent). Loosely `string[]`, same leaf-file reasoning as
+  // InferContextResponse.domains above.
+  inferredDomains?: string[];
 }
 
 export interface SessionMeta {
@@ -1040,6 +1212,33 @@ export interface DefineResult {
   // term-only
   termType?: TermType;
   gloss_en?: string;
+}
+
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — a small one-shot task
+// mirroring DefineRequest/DefineResult's shape immediately above: the
+// client sends a transcript excerpt, the route/task infers a short
+// domain/context sentence. See tasks/inferContext.ts.
+export interface InferContextRequest {
+  excerpt: string;
+  lang: "zh" | "en";
+  model?: string;
+}
+
+export interface InferContextResponse {
+  context: string;
+  // v0.6 T5 (multi-sense terms): up to 3 domain tags inferred from the
+  // same excerpt, feeding dictionary.ts's setSenseContext so a multi-
+  // sense dictionary term (e.g. "EMT") can be ranked toward the sense
+  // matching the meeting's actual domain. Empty array = no confident
+  // domain (same "genuinely unclear" contract as an empty `context`
+  // string). Loosely typed as string[] here, not the closed DomainTag
+  // union (detect/dictionary-data.ts) — this file is a dependency-free
+  // leaf, and the model's raw output isn't trusted membership anyway;
+  // tasks/inferContext.ts validates against the real enum and drops
+  // anything unrecognized (see providerCore.ts's InferContextResponseSchema,
+  // which likewise only validates shape here, not membership).
+  domains: string[];
 }
 
 /** All surface forms a custom entry should match against, deduped. */

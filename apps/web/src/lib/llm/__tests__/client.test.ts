@@ -17,6 +17,7 @@ const {
   mockAgentDetect,
   mockAgentDefine,
   mockShowToast,
+  mockRecordUsage,
   AgentNoKeyError,
   AgentRateLimitError,
   AgentUnreachableError,
@@ -62,6 +63,15 @@ const {
     mockAgentDetect: vi.fn(),
     mockAgentDefine: vi.fn(),
     mockShowToast: vi.fn(),
+    // S4 fix (v0.6 round-2 review) — usage/ledger.ts's own recordUsage,
+    // mocked so the new detectViaNext/summarizeApiImpl/defineViaNext/
+    // translateApiImpl/correctViaNext/inferContextViaNext call-count
+    // instrumentation is directly assertable without a real IndexedDB
+    // (this file's vitest project defaults to the "node" environment —
+    // see recordApiCallUsage's own doc comment in client.ts for why
+    // that used to make the OLD providerCore.ts-side write silently
+    // dead here too).
+    mockRecordUsage: vi.fn(),
     AgentNoKeyError,
     AgentRateLimitError,
     AgentUnreachableError,
@@ -110,6 +120,10 @@ vi.mock("../../store", () => ({
   },
 }));
 
+vi.mock("../../usage/ledger", () => ({
+  recordUsage: (...args: unknown[]) => mockRecordUsage(...args),
+}));
+
 // client.ts's own /api/* fetch calls (the existing Next.js path) —
 // stubbed globally so detectViaNext/defineViaNext never make a real
 // network request when a test falls through to them.
@@ -123,6 +137,7 @@ import {
   testConnection,
   NoKeyError,
   RateLimitApiError,
+  UpstreamError,
   resetSubscriptionToastLatch,
 } from "../client";
 import { clearDiag, getDiagEntries } from "../../diag/log";
@@ -147,6 +162,7 @@ beforeEach(() => {
   mockAgentDetect.mockReset();
   mockAgentDefine.mockReset();
   mockShowToast.mockReset();
+  mockRecordUsage.mockReset();
   mockFetch.mockReset();
   vi.stubGlobal("fetch", mockFetch);
   clearDiag();
@@ -502,6 +518,56 @@ describe("detectApi — Next.js path status-code failures log to the diag ring b
 });
 
 // ---------------------------------------------------------------
+// Field-debugging postmortem (v0.5.1 fieldtest B): a real desktop
+// failure ("OpenRouter key works in curl, app always fails") took
+// days to pin down because a bare fetch() rejection (no HTTP response
+// at all — proxy/TLS/DNS-level) used to log only the fixed zh category
+// message, indistinguishable from any other transport failure. See
+// client.ts's transportFailureCause/throwForProviderError (the SAME
+// shared helper the client-transport path uses — see
+// clientTransport.test.ts's equivalent coverage for that path).
+// ---------------------------------------------------------------
+
+describe("detectApi — Next.js path transport-level (pre-HTTP) rejection logs a cause detail", () => {
+  it("a bare fetch() rejection appends the rejection's message to the diag detail as cause=..., toast copy unchanged", async () => {
+    mockFetch.mockRejectedValue(new Error("connection refused by proxy"));
+
+    const err = await detectApi({ context: "", new_text: "hi" }, makeSettings()).catch((e) => e);
+
+    expect(err).toBeInstanceOf(UpstreamError);
+    // User-facing toast copy is untouched — still the fixed zh phrase.
+    expect((err as Error).message).toBe("检测请求失败，请检查网络连接");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toBe("检测请求失败，请检查网络连接");
+    expect(entries[0].detail).toContain("cause=connection refused by proxy");
+  });
+
+  it("truncates a long rejection message to 160 chars in the cause detail", async () => {
+    mockFetch.mockRejectedValue(new Error("x".repeat(500)));
+
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toBeInstanceOf(
+      UpstreamError,
+    );
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    const causeMatch = entries[0].detail?.match(/cause=(.*)$/);
+    expect(causeMatch).not.toBeNull();
+    expect(causeMatch![1].length).toBeLessThanOrEqual(160);
+  });
+
+  it("a status-carrying failure (e.g. 502) is unaffected — no cause= token, existing detail shape unchanged", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
+
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toThrow();
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries[0].detail ?? "").not.toContain("cause=");
+  });
+});
+
+// ---------------------------------------------------------------
 // Item 5: a request with no client-side key runs KEYLESS through the
 // Next.js route, which falls back to ITS OWN server-managed credential
 // (anthropic.ts's resolveLlmConfig) — the client's idle settings.
@@ -620,6 +686,73 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
 // UpstreamError the shared throwForStatus throws, which client.ts's
 // telemetryKind then maps to nokey/ratelimit/upstream.
 // ---------------------------------------------------------------
+
+// ---------------------------------------------------------------
+// S4 fix (v0.6 round-2 review): usage-ledger call-count instrumentation
+// for the /api/*-routed (Next.js) paths — these used to be recorded
+// SERVER-side, inside providerCore.ts's own recordLlmCallUsage, which
+// on the hosted FULL tier (every call here routes through /api/*, no
+// exceptions — see useDirectTransport's own doc) ran in a Node process
+// with no IndexedDB, so the user's own browser UsagePanel stayed
+// permanently empty. Fails against pre-fix code — recordApiCallUsage
+// doesn't exist there, so mockRecordUsage is never called at all.
+// ---------------------------------------------------------------
+
+describe("usage-ledger call-count instrumentation (S4 fix, v0.6 round-2 review)", () => {
+  it("detectApi: keyless (shared/server-managed key) success records provider:'server'", async () => {
+    mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
+    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" }));
+    expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "server", kind: "llm", metric: "calls", value: 1 });
+  });
+
+  it("detectApi: a configured Anthropic key records provider:'anthropic', not 'server'", async () => {
+    mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
+    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "sk-real-key", provider: "anthropic" }));
+    expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "anthropic", kind: "llm", metric: "calls", value: 1 });
+  });
+
+  it("detectApi: a configured openai-compat key records the baseUrl's hostname — same per-vendor bucketing providerCore.ts's own ledger writes already use", async () => {
+    mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
+    await detectApi(
+      { context: "", new_text: "hi" },
+      makeSettings({ apiKey: "sk-x", provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }),
+    );
+    expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "openrouter.ai", kind: "llm", metric: "calls", value: 1 });
+  });
+
+  it("detectApi: a FAILED response never records usage", async () => {
+    mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "e" }, 502));
+    await expect(detectApi({ context: "", new_text: "hi" }, makeSettings())).rejects.toThrow();
+    expect(mockRecordUsage).not.toHaveBeenCalled();
+  });
+
+  it("defineApi: success records one calls:1 entry", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({ kind: "expression", headword: "h", variants: [], chinese_explanation: "z", example: "e" }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+    await defineApi({ phrase: "x", context: "" }, makeSettings({ apiKey: "" }));
+    expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "server", kind: "llm", metric: "calls", value: 1 });
+  });
+
+  it("translateApi: success records one calls:1 entry, via its own translateCreds (not detect's)", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ segments: [] }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    await translateApi({ segments: [], lang: "zh" }, makeSettings({ apiKey: "sk-x", provider: "anthropic" }));
+    expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "anthropic", kind: "llm", metric: "calls", value: 1 });
+  });
+
+  it("summarizeApi: success records one calls:1 entry", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
+    await summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKey: "" }));
+    expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "server", kind: "llm", metric: "calls", value: 1 });
+  });
+});
 
 describe("LLM telemetry wiring", () => {
   it("detectApi: records detect/ok on success", async () => {

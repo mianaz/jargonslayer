@@ -139,6 +139,10 @@ const ALL_ENGINE_OPTIONS: EngineOption[] = [
   // capture path — see engineCapabilities.ts's own doc comment); same
   // byokOnly preview-tier lock as soniox above.
   toEngineOption("deepgram"),
+  // v0.6 round 2 — third BYOK cloud engine, same web + desktop only
+  // scope as deepgram above (no iOS v1 capture path); same byokOnly
+  // posture (no server-minted preview lane for this one — BYOK only).
+  toEngineOption("elevenlabs"),
 ];
 
 // S13 (docs/design-explorations/s13-ios-blueprint.md, §6, Lane D): iOS

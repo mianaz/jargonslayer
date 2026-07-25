@@ -13,11 +13,14 @@ import type {
   ExpressionCategory,
   TermType,
 } from "../types";
-import { EXTRA_EXPRESSIONS, EXTRA_TERMS } from "./dictionary-data";
+import { EXTRA_EXPRESSIONS, EXTRA_TERMS, type DictSense, type DomainTag } from "./dictionary-data";
 import { COMPILED_PACK_TERMS } from "./dictionary-packs-compiled";
+import { MODERN_USAGE_EXPRESSIONS, MODERN_USAGE_TERMS } from "./dictionary-data-modern";
+import { FINANCE_CONSUMER_EXPRESSIONS, FINANCE_CONSUMER_TERMS } from "./dictionary-data-finance";
+import { DAILY_IDIOM_EXPRESSIONS } from "./dictionary-data-idiom";
 import { findEntryBySurface } from "../history/glossaryLookup";
-import { isPackEnabled } from "./packs";
-import { getLoadedRemotePacks } from "./remotePacksRegistry";
+import { isPackEnabled, isPackExplicitlyEnabled } from "./packs";
+import { getLoadedRemotePacks, getRemotePacksGeneration } from "./remotePacksRegistry";
 
 // ---------------------------------------------------------------
 // Dictionary entry shapes (internal — not part of the wire schema)
@@ -37,6 +40,9 @@ interface ExpressionEntry {
 
 interface TermEntry {
   term: string;
+  // See DictTermEntry.variants — matched in scanDictionary's term loop
+  // below alongside `term` itself.
+  variants?: string[];
   type: TermType;
   gloss_en: string;
   gloss_zh: string;
@@ -44,6 +50,10 @@ interface TermEntry {
   // See DictTermEntry.commonWord — everyday-English headwords from the
   // compiled domain packs, kept opt-in in scanDictionary's term loop.
   commonWord?: boolean;
+  // v0.6 multi-sense terms (T1) — see DictTermEntry.senses (dictionary-
+  // data.ts) for the full doc; mirrors that field exactly, same as
+  // every other field on this internal interface.
+  senses?: DictSense[];
 }
 
 // Base tables (below) are the product floor — always tagged "core",
@@ -952,9 +962,15 @@ function dedupeByKey<T>(base: T[], extra: T[], keyOf: (item: T) => string): T[] 
   return merged;
 }
 
+// Core content added in v0.6 (dictionary-data-{modern,finance,idiom}.ts):
+// field-agnostic vocabulary a person meets regardless of background —
+// recently-coined usages (modern-usage), consumer money/benefits
+// language (finance-consumer), and the conversational register around
+// meetings (daily-idiom). Merged at the same precedence as EXTRA_*:
+// base still wins a normalized-key collision, these only fill gaps.
 const EXPRESSIONS: ExpressionEntry[] = dedupeByKey(
-  BASE_EXPRESSIONS,
-  EXTRA_EXPRESSIONS,
+  dedupeByKey(BASE_EXPRESSIONS, EXTRA_EXPRESSIONS, (e) => e.expression),
+  [...MODERN_USAGE_EXPRESSIONS, ...FINANCE_CONSUMER_EXPRESSIONS, ...DAILY_IDIOM_EXPRESSIONS],
   (e) => e.expression,
 );
 
@@ -964,20 +980,33 @@ const EXPRESSIONS: ExpressionEntry[] = dedupeByKey(
 // base+EXTRA merge, so base/EXTRA still win on a normalized-key
 // collision — compiled pack terms only fill gaps.
 const TERM_DICTIONARY: TermEntry[] = dedupeByKey(
-  dedupeByKey(BASE_TERM_DICTIONARY, EXTRA_TERMS, (t) => t.term),
+  dedupeByKey(
+    dedupeByKey(BASE_TERM_DICTIONARY, EXTRA_TERMS, (t) => t.term),
+    [...MODERN_USAGE_TERMS, ...FINANCE_CONSUMER_TERMS],
+    (t) => t.term,
+  ),
   COMPILED_PACK_TERMS,
   (t) => t.term,
 );
 
 /** Entry counts per pack id, for the Settings dialog (shows how many
- *  items a pack contributes before the user decides to disable it). */
+ *  items a pack contributes before the user decides to disable it).
+ *  Counts INSTALLED remote packs too, from the same registry
+ *  scanDictionary reads — without that, every installed pack renders
+ *  "0 条" next to its toggle and the install looks like it silently
+ *  failed. (Null-prototype so a pack id of "__proto__" can never make
+ *  a lookup return Object.prototype; validateManifest also rejects
+ *  such ids, but this map is read by UI that predates that gate.) */
 export function packCounts(): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts: Record<string, number> = Object.create(null);
   for (const entry of EXPRESSIONS) {
     counts[entry.pack] = (counts[entry.pack] ?? 0) + 1;
   }
   for (const entry of TERM_DICTIONARY) {
     counts[entry.pack] = (counts[entry.pack] ?? 0) + 1;
+  }
+  for (const pack of getLoadedRemotePacks()) {
+    counts[pack.id] = (counts[pack.id] ?? 0) + pack.expressions.length + pack.terms.length;
   }
   return counts;
 }
@@ -997,6 +1026,35 @@ let registeredEnabledPacks: string[] | null = null;
 
 export function setEnabledPacks(packs: string[] | null): void {
   registeredEnabledPacks = packs;
+}
+
+// ---------------------------------------------------------------
+// Sense context (v0.6 T2, multi-sense dictionary terms) — mirrors
+// registeredEnabledPacks/setEnabledPacks immediately above: a
+// module-level cache, PRECOMPUTED outside the scan loop and read
+// synchronously inside it (selectSense, below scanDictionary's term
+// loop). apps/web calls setSenseContext() whenever the inferred
+// meeting domain(s), enabled packs, or the detected-term set change
+// (see apps/web's senseContext.ts derivation + useMeeting.ts's wiring
+// effect) — NEVER from inside scanDictionary itself, so a scan stays a
+// cheap read of whatever was last computed rather than doing any of
+// that derivation work per segment. `null` (the default, same posture
+// as registeredEnabledPacks) means no context at all yet — keyless, or
+// before the first inference has landed — and selectSense falls back
+// to plain `prior` ordering in that case (dictionary detection must
+// keep working with zero API key; this is the fallback that guarantees
+// it for multi-sense entries too).
+// ---------------------------------------------------------------
+
+export interface SenseContextInput {
+  domainWeights?: Partial<Record<DomainTag, number>>;
+  cooccurrence?: Partial<Record<DomainTag, number>>;
+}
+
+let registeredSenseContext: SenseContextInput | null = null;
+
+export function setSenseContext(input: SenseContextInput | null): void {
+  registeredSenseContext = input;
 }
 
 // ---------------------------------------------------------------
@@ -1043,15 +1101,40 @@ export function setGlossaryShadowLookup(
 /** Built-in + remote pack TERM entries (bare term string + pack id),
  *  filtered by isPackEnabled — the same universe scanDictionary's own
  *  term loop reads (minus personal-glossary shadowing, which doesn't
- *  apply here — this list feeds a BIAS hint, not the detector). The
- *  commonWord/enabledPacks===null guard is kept for the same reason
- *  scanDictionary applies it: a bias hint toward an everyday English
- *  word ("mean", "precision"...) is at best inert and at worst nudges
- *  the decoder the wrong way on ordinary speech. Expressions are NOT
- *  included — recognizer bias earns its keep on exact jargon/acronym
- *  recall; idiom phrasing is already well-modeled by the decoder's own
- *  LM (v0.4.7 Lane B, docs/design-explorations/stt-provider-wiring-
- *  2026-07.md §3/D3 — apps/web's lexicon.ts is the one consumer). */
+ *  apply here — this list feeds a BIAS hint, not the detector).
+ *
+ *  commonWord guard, PER-ENTRY semantics (v0.6 multi-sense-terms sprint,
+ *  T6 fix round — NOT the earlier "v0.6 dictpacks" T1-T6 labels used
+ *  elsewhere in this file for the unrelated remote-packs/variants sprint.
+ *  This doc used to be misread as "null -> commonWord entries fire",
+ *  which drove packs.ts's now-deleted materializeEnabledPacks into doing
+ *  the OPPOSITE of its intent — see that file's git history; the FIX
+ *  below closes a second, narrower misread the original fix left open —
+ *  see isPackExplicitlyEnabled's own doc, packs.ts):
+ *    enabledPacks === null (default, "everything on") -> commonWord
+ *      entries are SUPPRESSED (the line below skips them).
+ *    enabledPacks is an explicit list that NAMES this entry's own pack
+ *      -> commonWord entries are treated like any other term and CAN
+ *      fire.
+ *    enabledPacks is an explicit list that does NOT name this entry's
+ *      own pack -> still SUPPRESSED. In practice this third case is
+ *      unreachable for a normal pack (isPackEnabled already filtered
+ *      the entry out above) — it only matters for the "core" pack,
+ *      which isPackEnabled always treats as enabled regardless of the
+ *      list. Before this fix, a hypothetical commonWord entry tagged
+ *      "core" fired under ANY explicit selection, even one that never
+ *      named "core" at all; now it requires "core" itself to be named.
+ *  Rationale: a bias hint toward an everyday English word ("mean",
+ *  "precision"...) is at best inert and at worst nudges the decoder the
+ *  wrong way on ordinary speech under the default all-on state. See
+ *  scanDictionary's own term loop below for the matching (not just
+ *  bias-hint) guard, same semantics.
+ *
+ *  Expressions are NOT included — recognizer bias earns its keep on
+ *  exact jargon/acronym recall; idiom phrasing is already well-modeled
+ *  by the decoder's own LM (v0.4.7 Lane B, docs/design-explorations/
+ *  stt-provider-wiring-2026-07.md §3/D3 — apps/web's lexicon.ts is the
+ *  one consumer). */
 export function packTermsForBias(
   enabledPacks: string[] | null = registeredEnabledPacks,
 ): { term: string; pack: string }[] {
@@ -1060,7 +1143,7 @@ export function packTermsForBias(
   const result: { term: string; pack: string }[] = [];
   for (const entry of [...TERM_DICTIONARY, ...remoteTerms]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
-    if (entry.commonWord && enabledPacks === null) continue;
+    if (entry.commonWord && !isPackExplicitlyEnabled(entry.pack, enabledPacks)) continue;
     result.push({ term: entry.term, pack: entry.pack });
   }
   return result;
@@ -1075,16 +1158,34 @@ function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** S11 fix (v0.6 round-2 review): `\b` only makes sense adjacent to a
+ *  word character — it asserts "exactly one of the two neighboring
+ *  characters is a word character", so placed right next to a NON-word
+ *  edge character (e.g. the trailing "%" in "100%") it can never
+ *  actually match once that symbol is itself followed by whitespace,
+ *  punctuation, or the end of the string — the overwhelmingly common
+ *  case for how such a token appears in real text (both neighbors end
+ *  up non-word). An expression edge like that needs no `\b` at all: the
+ *  "don't match a substring of a longer word" concern `\b` exists for
+ *  (e.g. "cat" inside "category") only applies when the edge itself IS
+ *  a word character. */
+function boundaryFor(edgeChar: string): string {
+  return /\w/.test(edgeChar) ? "\\b" : "";
+}
+
 /** Build a case-insensitive, whitespace/inflection-tolerant regex for
  *  a multi-word expression. The last word may carry a common suffix
  *  (s, es, ed, d, ing) so "circling back" matches "circle back". */
 function buildExpressionRegex(phrase: string): RegExp {
   const words = phrase.trim().split(/\s+/);
+  const first = words[0];
   const last = words[words.length - 1];
   const head = words.slice(0, -1).map(escapeRe);
   const lastEscaped = escapeRe(last);
   const parts = [...head, `${lastEscaped}(?:s|es|ed|d|ing)?`];
-  const source = `\\b${parts.join("\\s+")}\\b`;
+  const leadingBoundary = boundaryFor(first[0]);
+  const trailingBoundary = boundaryFor(last[last.length - 1]);
+  const source = `${leadingBoundary}${parts.join("\\s+")}${trailingBoundary}`;
   return new RegExp(source, "i");
 }
 
@@ -1095,6 +1196,164 @@ function splitSentences(text: string): string[] {
   if (!trimmed) return [];
   const raw = trimmed.split(/(?<=[.?!])\s+/);
   return raw.map((s) => s.trim()).filter(Boolean);
+}
+
+// ---------------------------------------------------------------
+// Compiled-regex cache (M4, adversarial review v0.6 dictpacks fix
+// round): scanDictionary used to build a fresh RegExp for every
+// entry+variant on EVERY call (it runs synchronously per finalized
+// transcript segment) — fine for the small built-in tables, but the
+// new remote-pack size caps sanction up to ~100k entries across 20
+// installed packs. Keyed by the raw candidate STRING, not the owning
+// entry: buildExpressionRegex/the term-candidate regex below are both
+// pure functions of that string alone, so two different entries that
+// happen to share a surface safely share one compiled RegExp, and a
+// cache miss just self-heals (a pack installed mid-session is
+// matchable immediately — no invalidation needed for CORRECTNESS).
+// Neither regex uses the "g"/"y" flags, so reusing a cached instance
+// across many exec()/test() calls is safe (no shared lastIndex state).
+//
+// Cleared wholesale whenever remotePacksRegistry's generation counter
+// changes (a pack install/remove/update) — this bounds cache SIZE over
+// a long session with many install/remove cycles (a removed pack's
+// surfaces would otherwise sit cached forever); it is not required for
+// correctness, since a stale-but-present entry for a surface that no
+// longer belongs to any loaded pack is simply never looked up again.
+// ---------------------------------------------------------------
+
+const expressionRegexCache = new Map<string, RegExp>();
+const termRegexCache = new Map<string, RegExp>();
+let cachedRemotePacksGeneration = -1;
+
+function refreshRegexCachesIfStale(): void {
+  const generation = getRemotePacksGeneration();
+  if (generation === cachedRemotePacksGeneration) return;
+  expressionRegexCache.clear();
+  termRegexCache.clear();
+  cachedRemotePacksGeneration = generation;
+}
+
+function getCachedExpressionRegex(phrase: string): RegExp {
+  let re = expressionRegexCache.get(phrase);
+  if (!re) {
+    re = buildExpressionRegex(phrase);
+    expressionRegexCache.set(phrase, re);
+  }
+  return re;
+}
+
+function getCachedTermRegex(candidate: string): RegExp {
+  let re = termRegexCache.get(candidate);
+  if (!re) {
+    const isAllCaps = /^[A-Z0-9&]+$/.test(candidate);
+    re = new RegExp(`\\b${escapeRe(candidate)}\\b`, isAllCaps ? "" : "i");
+    termRegexCache.set(candidate, re);
+  }
+  return re;
+}
+
+// ---------------------------------------------------------------
+// Sense selection (v0.6 T3) — chooses which DictSense a multi-sense
+// term entry surfaces as, from whatever setSenseContext last cached
+// (see that function's own doc above). Called once per MATCHED entry
+// inside scanDictionary's term loop below — O(senses.length), capped
+// at 6 by T1's wire validation (validateTerms, apps/web's
+// remotePacks.ts), so this stays well inside the ~ms per-segment scan
+// budget the scheduler requires (scheduler.ts calls scanDictionary
+// synchronously on every finalized segment).
+// ---------------------------------------------------------------
+
+// Exported (MEDIUM-4 fix, v0.6 round-2 review): dedupe.ts's own
+// dictionary-to-dictionary term merge reuses this SAME margin to gate
+// an in-place sense swap on an existing card, rather than a second,
+// independently-tunable copy — see that file's own mergeTerms doc.
+export const AMBIGUOUS_MARGIN = 0.15;
+
+interface RankedSense {
+  senseId: string;
+  gloss_en: string;
+  gloss_zh: string;
+  domain: DomainTag;
+  score: number;
+}
+
+interface SenseSelection {
+  chosen: DictSense;
+  ranked: RankedSense[];
+  ambiguous: boolean;
+}
+
+/** score = 0.45*domainWeights[domain] + 0.25*cooccurrence[domain] +
+ *  0.15*(entry's own pack explicitly enabled ? 1 : 0) + 0.15*prior —
+ *  missing weights count as 0. The pack-bonus term is entry-level (all
+ *  of one entry's senses share the same `pack`), so it never changes
+ *  which sense WINS within that entry, but it is still part of each
+ *  sense's own displayed `score` — implemented exactly as specified.
+ *
+ *  With NO sense context at all (registeredSenseContext === null —
+ *  keyless, or before the first inference lands), falls back to plain
+ *  `prior` ordering instead of the weighted formula.
+ *
+ *  `ambiguous`: true when the top two scores are within
+ *  AMBIGUOUS_MARGIN of each other, OR — only on the scored path, since
+ *  there is no domainWeights to consult on the fallback path, AND only
+ *  when domainWeights actually carries at least one real entry — the
+ *  chosen sense's own domain carries zero weight in the current
+ *  context.
+ *
+ *  Fix (LOW, v0.6 round-2 review): that second trigger used to fire
+ *  whenever `ctx.domainWeights` was EMPTY (`{}`, not `undefined`) too
+ *  — which in practice is every meeting's own starting state (before
+ *  any domain is inferred) — because "this sense's own domain has zero
+ *  weight" is trivially true of every domain when NOTHING has non-zero
+ *  weight. That's not a real ambiguity signal ("we have context and it
+ *  disagrees with this pick"), it's "we have no context at all yet",
+ *  which made `ambiguous` effectively always true in-app (this app
+ *  ALWAYS calls setSenseContext with a real, if often still-empty,
+ *  object — see useMeeting.ts's own wiring — so the `ctx === null`
+ *  fallback path right above is unreachable there in practice; the
+ *  scored-but-empty path was the one that actually mattered). Gating
+ *  on a non-empty domainWeights map restores the intended meaning:
+ *  ambiguous only from a genuine domain mismatch, never from simply not
+ *  knowing the domain yet. */
+function selectSense(
+  entry: { pack: string; senses: DictSense[] },
+  enabledPacks: string[] | null,
+): SenseSelection {
+  const ctx = registeredSenseContext;
+  const packBonus = isPackExplicitlyEnabled(entry.pack, enabledPacks) ? 1 : 0;
+
+  const scored = entry.senses.map((sense) => ({
+    sense,
+    score: ctx
+      ? 0.45 * (ctx.domainWeights?.[sense.domain] ?? 0) +
+        0.25 * (ctx.cooccurrence?.[sense.domain] ?? 0) +
+        0.15 * packBonus +
+        0.15 * sense.prior
+      : sense.prior,
+  }));
+  scored.sort((a, b) => b.score - a.score);
+
+  const top1 = scored[0];
+  const top2 = scored[1];
+  const marginAmbiguous = top2 !== undefined && top1.score - top2.score < AMBIGUOUS_MARGIN;
+  const domainMismatchAmbiguous =
+    ctx !== null &&
+    Object.keys(ctx.domainWeights ?? {}).length > 0 &&
+    (ctx.domainWeights?.[top1.sense.domain] ?? 0) === 0;
+  const ambiguous = marginAmbiguous || domainMismatchAmbiguous;
+
+  return {
+    chosen: top1.sense,
+    ranked: scored.map(({ sense, score }) => ({
+      senseId: sense.senseId,
+      gloss_en: sense.gloss_en,
+      gloss_zh: sense.gloss_zh,
+      domain: sense.domain,
+      score,
+    })),
+    ambiguous,
+  };
 }
 
 // ---------------------------------------------------------------
@@ -1120,7 +1379,10 @@ function splitSentences(text: string): string[] {
  *  when omitted — see the registry comment above. Remote packs loaded
  *  via apps/web's remotePacks.ts (see the comment above) participate
  *  exactly like EXTRA_EXPRESSIONS/EXTRA_TERMS, filtered by their own
- *  pack id. */
+ *  pack id. A matched term entry that declares `senses` (v0.6 T3) is
+ *  ranked against whatever setSenseContext last cached (see selectSense
+ *  below); cardinality never changes — still one DetectedTerm per
+ *  matched entry either way. */
 export function scanDictionary(
   text: string,
   enabledPacks: string[] | null = registeredEnabledPacks,
@@ -1129,8 +1391,18 @@ export function scanDictionary(
   if (sentences.length === 0) return { expressions: [], terms: [] };
 
   const expressions: DetectedExpression[] = [];
-  const terms: DetectedTerm[] = [];
+  // S8 fix (v0.6 round-2 review): each hit carries its own match SPAN
+  // now (matchStart/matchEnd, the candidate's actual position in
+  // `text`) alongside the DetectedTerm — dropSubsumedTerms below needs
+  // it to tell a genuinely SEPARATE, non-overlapping occurrence of a
+  // shorter surface (e.g. a standalone "vesting" elsewhere in the same
+  // segment) apart from one that's truly subsumed inside a longer
+  // match (e.g. "vesting" inside "vesting cliff", same position) — see
+  // that function's own doc comment. Stripped back down to plain
+  // DetectedTerm[] at this function's own return statement.
+  const termHits: { term: DetectedTerm; matchStart: number; matchEnd: number }[] = [];
 
+  refreshRegexCachesIfStale();
   const remotePacks = getLoadedRemotePacks();
   const remoteExpressions: ExpressionEntry[] = remotePacks.flatMap((p) => p.expressions);
   const remoteTerms: TermEntry[] = remotePacks.flatMap((p) => p.terms);
@@ -1143,7 +1415,7 @@ export function scanDictionary(
     // pack-filtered (Finding 2 fix) — see shadowLookup's own doc above.
     if (shadowLookup(entry.expression)) continue;
     const candidates = [entry.expression, ...(entry.variants ?? [])];
-    const regexes = candidates.map(buildExpressionRegex);
+    const regexes = candidates.map(getCachedExpressionRegex);
     let matched = false;
     for (const sentence of sentences) {
       if (matched) break;
@@ -1169,29 +1441,142 @@ export function scanDictionary(
 
   for (const entry of [...TERM_DICTIONARY, ...remoteTerms]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
+    // commonWord guard, PER-ENTRY semantics (v0.6 multi-sense-terms
+    // sprint, T6 fix round — see packTermsForBias's own doc above for
+    // the full explanation/history, including the exact case this fix
+    // closes):
+    //   enabledPacks === null (default, "everything on") -> SUPPRESSED.
+    //   enabledPacks explicit AND names this entry's own pack -> FIRES.
+    //   enabledPacks explicit but does NOT name this entry's own pack ->
+    //     SUPPRESSED (previously fired for the "core" pack specifically,
+    //     since isPackEnabled above always lets "core" through).
     // A few compiled domain-pack terms are also everyday English words
-    // ("mean", "precision", "epoch"...). Under the default all-on state
-    // (enabledPacks === null) they'd fire on casual speech ("I mean...",
-    // "pay attention"), so they stay opt-in: matched only once the user
-    // has actively customized their pack selection (enabledPacks is an
-    // explicit list). Non-common terms are unaffected.
-    if (entry.commonWord && enabledPacks === null) continue;
+    // ("mean", "precision", "epoch"...) that would otherwise fire on
+    // casual speech ("I mean...", "pay attention") under the default
+    // all-on state. Non-common terms are unaffected.
+    if (entry.commonWord && !isPackExplicitlyEnabled(entry.pack, enabledPacks)) continue;
     // Same personal-glossary shadowing as the expressions loop above
     // (enabled-pack-filtered — Finding 2 fix).
     if (shadowLookup(entry.term)) continue;
-    // All-caps acronyms match case-sensitively (\bARR\b); mixed-case
-    // terms (e.g. "Series B", "headcount") match case-insensitively.
-    const isAllCaps = /^[A-Z0-9&]+$/.test(entry.term);
-    const re = new RegExp(`\\b${escapeRe(entry.term)}\\b`, isAllCaps ? "" : "i");
-    if (re.test(text)) {
-      terms.push({
-        term: entry.term,
-        type: entry.type,
-        gloss_en: entry.gloss_en,
-        gloss_zh: entry.gloss_zh,
+    // T2: also try the entry's `variants` alongside its own headword
+    // (mirrors the expressions loop's candidates array above) — but
+    // terms keep their OWN existing semantics per surface: no
+    // inflection tolerance, and each CANDIDATE's case-sensitivity is
+    // judged independently (all-caps acronyms match case-sensitively,
+    // e.g. \bARR\b; anything else, e.g. "Series B"/"CAC", matches
+    // case-insensitively — a mixed-case headword can still have an
+    // all-caps variant or vice versa). First candidate to hit wins; the
+    // emitted card always reports the entry's own headword
+    // (entry.term), never the variant that actually matched.
+    const candidates = [entry.term, ...(entry.variants ?? [])];
+    // S8 fix: finds the actual match (position, not just a boolean) for
+    // whichever candidate hits first — getCachedTermRegex carries no
+    // g/y flag (see its own doc comment), so .exec() is safe here
+    // without mutating any shared lastIndex state. Same "first candidate
+    // to hit wins" precedent the emitted headword already follows.
+    let match: RegExpExecArray | null = null;
+    for (const candidate of candidates) {
+      match = getCachedTermRegex(candidate).exec(text);
+      if (match) break;
+    }
+    if (!match) continue;
+    const matchStart = match.index;
+    const matchEnd = matchStart + match[0].length;
+
+    // v0.6 T3 (multi-sense terms): cardinality is UNCHANGED — still
+    // exactly one DetectedTerm per matched entry — but when the entry
+    // declares `senses`, the chosen sense's own gloss/type is flattened
+    // into the same term/gloss_en/gloss_zh/type fields every consumer
+    // already reads, plus the new optional senseId/senses/ambiguous
+    // fields below. An entry without `senses` (or an empty array) is
+    // untouched — byte-identical to today, pinned by test.
+    if (entry.senses && entry.senses.length > 0) {
+      const { chosen, ranked, ambiguous } = selectSense(
+        { pack: entry.pack, senses: entry.senses },
+        enabledPacks,
+      );
+      termHits.push({
+        term: {
+          term: entry.term,
+          type: chosen.type ?? entry.type,
+          gloss_en: chosen.gloss_en,
+          gloss_zh: chosen.gloss_zh,
+          senseId: chosen.senseId,
+          senses: ranked,
+          ambiguous,
+        },
+        matchStart,
+        matchEnd,
+      });
+    } else {
+      termHits.push({
+        term: {
+          term: entry.term,
+          type: entry.type,
+          gloss_en: entry.gloss_en,
+          gloss_zh: entry.gloss_zh,
+        },
+        matchStart,
+        matchEnd,
       });
     }
   }
 
-  return { expressions, terms };
+  return { expressions, terms: dropSubsumedTerms(termHits).map((h) => h.term) };
+}
+
+/** Span-shaped hit dropSubsumedTerms below consumes — matchStart/matchEnd
+ *  are the candidate's actual character positions in the scanned `text`
+ *  (see scanDictionary's own termHits construction). Generic over `T`
+ *  purely so dropSubsumedTermsForTests can exercise this with plain
+ *  fixtures instead of a real DetectedTerm. */
+interface SpannedHit<T> {
+  term: T;
+  matchStart: number;
+  matchEnd: number;
+}
+
+/** Longest-match-wins across overlapping term surfaces. "vesting cliff"
+ *  contains "vesting" as a word-bounded substring, so both entries match
+ *  the same phrase and the user gets two cards for one thing — the
+ *  shorter one always the less informative. Drops a hit whose match SPAN
+ *  is fully contained within another, STRICTLY LONGER hit's own match
+ *  span in the SAME scan.
+ *
+ *  S8 fix (v0.6 round-2 review): compares actual match POSITIONS now,
+ *  not the matched surface strings against each other — the old
+ *  string-containment check couldn't tell a genuinely subsumed
+ *  occurrence ("vesting" inside "vesting cliff", same position) apart
+ *  from a completely separate, non-overlapping occurrence of the
+ *  shorter surface elsewhere in the same segment (e.g. a standalone
+ *  "vesting" mentioned earlier, plus a later "vesting cliff") — the old
+ *  code dropped the legitimate standalone occurrence too, since it only
+ *  ever compared LABELS. Equal-length spans never subsume each other
+ *  (mirrors the old code's own `<=` tie rule) — two different entries
+ *  matching the exact same span both survive.
+ *
+ *  Also drops the old per-comparison `new RegExp` entirely (pure integer
+ *  span comparison instead) — the previous `hits.length > 64` guard
+ *  existed specifically to bound that regex-allocation cost and, as a
+ *  side effect, silently DISABLED filtering outright above 64 hits
+ *  (the opposite of what a safety guard should do). With comparisons
+ *  this cheap, O(n²) is trivial at the realistic scale here (hits
+ *  matched within ONE finalized segment — always a handful in
+ *  practice), so no upper bound is needed at all. */
+export function dropSubsumedTermsForTests<T>(hits: SpannedHit<T>[]): SpannedHit<T>[] {
+  return dropSubsumedTerms(hits);
+}
+
+function dropSubsumedTerms<T>(hits: SpannedHit<T>[]): SpannedHit<T>[] {
+  if (hits.length < 2) return hits;
+  return hits.filter((hit, i) => {
+    const hitLen = hit.matchEnd - hit.matchStart;
+    for (let j = 0; j < hits.length; j++) {
+      if (i === j) continue;
+      const other = hits[j];
+      if (other.matchEnd - other.matchStart <= hitLen) continue; // only a STRICTLY longer span can subsume
+      if (hit.matchStart >= other.matchStart && hit.matchEnd <= other.matchEnd) return false;
+    }
+    return true;
+  });
 }

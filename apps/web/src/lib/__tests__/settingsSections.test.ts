@@ -28,6 +28,7 @@ describe("SETTINGS_UI_LEVELS — level-tagging completeness", () => {
     "aiDetectTranslateEngine",
     "aiDetectProfile",
     "aiDetectPacks",
+    "aiDetectPackCatalog",
     "aiDetectPackSources",
     "taskLlm",
     "dataIntegration",
@@ -61,6 +62,9 @@ describe("SETTINGS_UI_LEVELS — level-tagging completeness", () => {
         "aiDetectBilingual",
         "aiDetectTranslateEngine",
         "aiDetectProfile",
+        "aiDetectPacks",
+        "aiDetectPackCatalog",
+        "aiDetectPackSources",
       ].sort(),
     );
   });

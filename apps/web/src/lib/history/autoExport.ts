@@ -19,6 +19,28 @@ import { isBitCostumeId } from "../bitCostumes";
 import { parseTheme, type ThemeDefinition } from "../theme/schema";
 import { CUSTOM_THEME_ID_PREFIX, mintCustomThemeId } from "../theme/resolve";
 import { CUSTOM_FONT_PREFIX, sanitizeFontFamily } from "../theme/fonts";
+import { isValidProxyUrl, normalizeProxyUrl } from "../proxyUrl";
+import { IS_DESKTOP } from "../platform/desktop";
+// Desktop keychain custody (v0.5.1 desktop keychain migration) — static
+// import (unlike store.ts, which dynamic-imports this same leaf; see
+// secret.ts's own header for why either style is safe here: it never
+// imports back from store.ts, so there's no cycle to avoid either way).
+import { readSecrets, writeSecret, type SecretName } from "../desktop/secret";
+// v0.6 T7 (dict pack backup inclusion) — remotePacks.ts (detect/) never
+// imports anything under history/, so this is a safe one-directional
+// edge (no cycle): addPackSource/addPackFromManifest reinstall a
+// url-backed/file-backed pack on restore, through the SAME validation +
+// caps a fresh install goes through.
+import {
+  addPackFromManifest,
+  addPackSource,
+  isAllowedPackUrl,
+  listPackSources,
+  MAX_PACK_COUNT,
+  type RemotePackSource,
+} from "../detect/remotePacks";
+import type { LoadedRemotePack } from "@jargonslayer/core/detect/remotePacksRegistry";
+import { diagLog } from "../diag/log";
 
 const EXPORT_DIR_KEY = "jargonslayer:export-dir";
 
@@ -260,6 +282,9 @@ function stripKeyMaterial(settings: Settings): Settings {
     // v0.4.7 (Lane D): Deepgram BYOK key — same hand-listed strip,
     // mirroring sonioxKey's own precedent immediately above.
     deepgramKey: "",
+    // v0.6 round 2: ElevenLabs BYOK key — same hand-listed strip,
+    // mirroring sonioxKey/deepgramKey's own precedent above.
+    elevenLabsKey: "",
     agentToken: "",
     // Webhook URLs routinely embed capability tokens in the path
     // (n8n/飞书 style) — credential-like, stripped with the rest
@@ -267,6 +292,25 @@ function stripKeyMaterial(settings: Settings): Settings {
     webhookUrl: "",
     taskLlm: strippedTaskLlm,
   };
+}
+
+/** Desktop keychain custody (v0.5.1) — fills in a Keychain value for any
+ *  SECRET_NAMES field `settings` itself left BLANK; a field `settings`
+ *  already has a non-empty value for is left completely untouched. Same
+ *  "IDB wins on conflict" rule secret.ts's own hydrateSecrets uses (see
+ *  that function's doc for the rationale: the loaded blob's own
+ *  non-empty value is the most recently saved one, e.g. mid fail-open
+ *  before a retry finishes migrating it — a possibly-stale Keychain read
+ *  must never silently overwrite it). buildFullBackup below is the one
+ *  caller. */
+function overlaySecrets(settings: Settings, keychainValues: Partial<Record<SecretName, string>>): Settings {
+  const merged = { ...settings };
+  for (const [name, value] of Object.entries(keychainValues)) {
+    if (!merged[name as SecretName]) {
+      (merged as Record<string, unknown>)[name] = value;
+    }
+  }
+  return merged;
 }
 
 /** Serialize sessions + glossary + learn-set + settings into one backup
@@ -288,7 +332,15 @@ function stripKeyMaterial(settings: Settings): Settings {
  *  "optional field, schemaVersion stays 1" precedent as learnset
  *  above. glossary.loadCustomEntries() above already loads+normalizes
  *  the pack registry as a side effect, so getCustomPacks() here is
- *  always fresh. */
+ *  always fresh.
+ *
+ *  `packSources` (v0.6 T7): installed dictionary theme packs (detect/
+ *  remotePacks.ts's own IDB slice) — same "optional field, schemaVersion
+ *  stays 1" precedent yet again. Only SOURCE records, not full content,
+ *  for a url-backed pack (url/id/name/version — enough to refetch it on
+ *  restore, see toBackupPackSource/restoreFullBackup below); a
+ *  file-imported pack (no url — T6) carries its FULL validated manifest
+ *  instead, since there is nothing else to ever refetch it from. */
 export async function buildFullBackup(
   opts: { includeKeys?: boolean } = {},
 ): Promise<string> {
@@ -300,8 +352,25 @@ export async function buildFullBackup(
   const glossaryEntries = await glossary.loadCustomEntries();
   const customPacks = glossary.getCustomPacks();
   const learnsetRecords = await learnset.loadLearnset();
+  const packSources = (await listPackSources()).map(toBackupPackSource);
   const rawSettings = await storage.loadSettings();
-  const settings = rawSettings && !includeKeys ? stripKeyMaterial(rawSettings) : rawSettings;
+  // Desktop keychain custody (v0.5.1): post-migration, storage.
+  // loadSettings() no longer carries the SECRET_NAMES fields already in
+  // custody (settingsForPersist's own strip, store.ts) — overlay
+  // whatever's actually in the Keychain onto the loaded blob BEFORE the
+  // includeKeys strip below, so a "包含 API Key" backup still carries
+  // real key material instead of silently exporting blanks. Only worth
+  // reading the Keychain at all when the export is actually going to
+  // KEEP keys — includeKeys:false strips them right back out below
+  // regardless, so skip the read entirely in that case. IDB wins on
+  // conflict — same rule hydrateSecrets uses (that function's own doc):
+  // a NON-EMPTY rawSettings field is the most-recently-saved value (e.g.
+  // mid fail-open, before a retry finishes migrating it) and must not be
+  // silently overwritten by a possibly-stale Keychain read; the overlay
+  // only ever FILLS IN a field rawSettings itself left blank.
+  const settingsWithSecrets =
+    rawSettings && IS_DESKTOP && includeKeys ? overlaySecrets(rawSettings, await readSecrets()) : rawSettings;
+  const settings = settingsWithSecrets && !includeKeys ? stripKeyMaterial(settingsWithSecrets) : settingsWithSecrets;
   return JSON.stringify(
     {
       schemaVersion: 1,
@@ -311,11 +380,32 @@ export async function buildFullBackup(
       glossary: glossaryEntries,
       customPacks,
       learnset: learnsetRecords,
+      packSources,
       settings,
     },
     null,
     2,
   );
+}
+
+/** One entry in a backup's `packSources` array (v0.6 T7) — NOT the
+ *  full RemotePackSource shape: a url-backed pack only needs enough to
+ *  find+refetch it (url + id/name/version, e.g. for a future
+ *  confirmation-step preview); a file-imported pack (`url` is "" — see
+ *  RemotePackSource.url's own doc in remotePacks.ts) has nothing to
+ *  refetch, so its full validated manifest rides along instead. */
+interface PackSourceBackupEntry {
+  url?: string;
+  packId: string;
+  packName: string;
+  packVersion: string | number;
+  manifest?: LoadedRemotePack;
+}
+
+function toBackupPackSource(s: RemotePackSource): PackSourceBackupEntry {
+  return s.url
+    ? { url: s.url, packId: s.pack.id, packName: s.pack.name, packVersion: s.pack.version }
+    : { packId: s.pack.id, packName: s.pack.name, packVersion: s.pack.version, manifest: s.pack };
 }
 
 interface BackupShape {
@@ -332,6 +422,9 @@ interface BackupShape {
   // exists via glossary.ts's own load-time auto-create, so a legacy
   // restore just ends up with "personal" only, per A7).
   customPacks?: unknown[];
+  // v0.6 T7: absent on any pre-T7 backup — restore below tolerates
+  // absence (0 packs restored, nothing else touched).
+  packSources?: unknown[];
   settings?: Settings;
 }
 
@@ -360,11 +453,20 @@ function parseBackup(json: string): BackupShape {
  *  whatever the exporter's "不包含 API Key" checkbox happened to be set
  *  to at export time (a file could have been hand-edited, or exported
  *  by an older build) — the confirm copy should describe what this
- *  FILE actually contains, not what a checkbox once claimed. */
+ *  FILE actually contains, not what a checkbox once claimed.
+ *
+ *  M3 fix (adversarial review): `packSources` is now part of the
+ *  preview too — restoring silently makes the browser fetch N
+ *  attacker-chosen URLs (every url-backed row is refetched), and this
+ *  used to never tell the user the file contains packs at all. This is
+ *  the RAW row count in the file (not yet capped at MAX_PACK_COUNT —
+ *  see restoreFullBackup below), so the confirm step can be honest
+ *  about how many install attempts the file actually asks for. */
 export function previewBackup(json: string): {
   sessions: number;
   entries: number;
   learnset: number;
+  packSources: number;
   hasSettings: boolean;
   hasApiKey: boolean;
 } {
@@ -375,10 +477,12 @@ export function previewBackup(json: string): {
     parsed.learnset && typeof parsed.learnset === "object"
       ? Object.keys(parsed.learnset).length
       : 0;
+  const packSourceCount = Array.isArray(parsed.packSources) ? parsed.packSources.length : 0;
   return {
     sessions: sessions.length,
     entries: entries.length,
     learnset: learnsetCount,
+    packSources: packSourceCount,
     hasSettings: !!parsed.settings,
     hasApiKey: !!parsed.settings?.apiKey,
   };
@@ -493,11 +597,126 @@ export function sanitizeRestoredCustomPack(raw: unknown): CustomPack | null {
   return { id: r.id, name: r.name, enabled: r.enabled, createdAt: r.createdAt };
 }
 
+/** Validate one untrusted packSources row from a backup file before
+ *  it's ever used to reinstall a pack (v0.6 T7) — same defense-in-depth
+ *  posture as sanitizeRestoredLearnRecord/sanitizeRestoredCustomPack
+ *  above. Malformed rows are DROPPED. This is only a SHAPE gate — a
+ *  file-backed entry's embedded manifest gets its REAL content
+ *  validation (length caps, https-only URL fields, minAppVersion gate,
+ *  etc.) exactly once, inside addPackFromManifest's own validateManifest
+ *  + size-cap pipeline on restore (restoreFullBackup below) — never
+ *  specially trusted just because it arrived inside a backup file.
+ *
+ *  N1 fix (adversarial review): a url row is now ALSO required to pass
+ *  isAllowedPackUrl (https-only, no embedded credentials) — the same
+ *  gate remotePacks.ts's own fetchManifestRaw enforces at the actual
+ *  network chokepoint (defense in depth: dropping it HERE means a
+ *  crafted backup's data:/http:/loopback url never even counts toward
+ *  packSourcesAccepted, rather than counting as "attempted" and then
+ *  failing downstream). */
+export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+
+  if (typeof r.packId !== "string" || r.packId.length === 0) return null;
+  if (DANGEROUS_OBJECT_KEYS.has(r.packId)) return null;
+  if (typeof r.packName !== "string" || r.packName.trim().length === 0) return null;
+  if (typeof r.packVersion !== "string" && typeof r.packVersion !== "number") return null;
+
+  const url = typeof r.url === "string" && r.url.trim().length > 0 ? r.url.trim() : undefined;
+  if (url && !isAllowedPackUrl(url)) return null;
+  // A url-backed entry is refetched on restore — nothing else to check
+  // here. A file-backed entry (no url) IS its only copy, so it needs at
+  // least an object-shaped `manifest` to be worth attempting at all;
+  // that manifest's real validity is re-checked wholesale below.
+  if (!url && (!r.manifest || typeof r.manifest !== "object")) return null;
+
+  return {
+    url,
+    packId: r.packId,
+    packName: r.packName,
+    packVersion: r.packVersion,
+    manifest: url ? undefined : (r.manifest as LoadedRemotePack),
+  };
+}
+
+/** Desktop keychain custody (v0.5.1) — for every non-empty restored
+ *  apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey, writes it to the
+ *  Keychain (overwriting whatever's already there — restoring a backup is an
+ *  explicit "make this device match the backup" action, same
+ *  IDB-wins-on-conflict posture hydrateSecrets uses for an ordinary
+ *  boot-time migration) and blanks that field on the returned object,
+ *  so the IDB write in restoreFullBackup below never re-introduces
+ *  plaintext. A write failure leaves that one field's plaintext value in
+ *  the returned object instead of blanking it (fail-open — the value
+ *  still lands somewhere rather than being silently dropped; the next
+ *  hydrate()'s own migration sweep picks it up like any other
+ *  pre-migration field). The caller's own re-hydrate (SettingsDialog's
+ *  handleConfirmRestore) reads the Keychain values back via
+ *  hydrateSecrets, same as any other boot.
+ *
+ *  F6 fix (Opus LOW, keychain-custody fix round): agentToken is force-
+ *  cleared in the BLOB by sanitizeRestoredSettings before this ever
+ *  runs (the machine-local pairing/kill-switch trio, Codex v0.2.3
+ *  MEDIUM) — so there's never a non-empty value here to route the
+ *  ordinary way above — but a STALE Keychain agentToken from this
+ *  machine's PREVIOUS pairing survives that blanking untouched and gets
+ *  silently re-adopted by the very next hydrateSecrets, undoing the
+ *  sanitizer's own reset. Deleted explicitly (writeSecret(name, ""))
+ *  instead of skipped.
+ *
+ *  F2 fix (Sol HIGH #4, migration/backup interplay): `priorPending` is
+ *  this MACHINE's own pre-restore secretDeletePending (see
+ *  restoreFullBackup below) — a restore REPLACES the whole settings
+ *  blob wholesale, and a donor backup has no reason to know (or agree
+ *  with) this machine's own unresolved Keychain deletes, so that
+ *  bookkeeping must be carried forward across the restore rather than
+ *  silently dropped (dropping it would un-track a still-undeleted stale
+ *  entry, which hydrateSecrets' own tombstone-first check — secret.ts —
+ *  would then silently re-adopt on the very next hydrate, the exact bug
+ *  this mechanism exists to close). Every name this function
+ *  successfully writes below (a fresh, deliberate value, OR the
+ *  agentToken delete) clears its own entry from that carried-forward
+ *  set — same "a later successful writeSecret set/delete clears its
+ *  tombstone" rule hydrateSecrets/syncSecretCustody (store.ts) both
+ *  already apply; a FAILED agentToken delete conversely ADDS to it, so
+ *  that stale entry gets the same retry-on-next-hydrate tracking any
+ *  other failed delete would. */
+async function routeRestoredSecretsToKeychain(settings: Settings, priorPending: string[]): Promise<Settings> {
+  const RESTORE_SECRET_NAMES: readonly SecretName[] = [
+    "apiKey",
+    "hfToken",
+    "sonioxKey",
+    "deepgramKey",
+    "elevenLabsKey",
+  ];
+  const next = { ...settings };
+  const pending = new Set(priorPending);
+  for (const name of RESTORE_SECRET_NAMES) {
+    const value = settings[name];
+    if (!value) continue;
+    const ok = await writeSecret(name, value);
+    if (ok) {
+      next[name] = "";
+      pending.delete(name);
+    }
+  }
+  const agentTokenOk = await writeSecret("agentToken", "");
+  if (agentTokenOk) {
+    pending.delete("agentToken");
+  } else {
+    pending.add("agentToken"); // fail-open — tombstoned so the NEXT hydrate retries it too
+  }
+  next.secretDeletePending = [...pending];
+  return next;
+}
+
 export async function restoreFullBackup(json: string): Promise<{
   sessions: number;
   entries: number;
   learnset: number;
   packs: number;
+  packSources: number;
   settingsRestored: boolean;
 }> {
   const parsed = parseBackup(json);
@@ -526,6 +745,55 @@ export async function restoreFullBackup(json: string): Promise<{
     packsAccepted += 1;
   }
 
+  // v0.6 T7: url-backed entries are refetched from their source (best-
+  // effort — an unreachable/changed url shouldn't fail the whole
+  // restore, same posture as every other per-item loop here); file-
+  // backed entries reinstall directly from their embedded manifest.
+  // Both paths run through the SAME validation + size caps a fresh
+  // install already applies (addPackSource/addPackFromManifest) — a
+  // hostile or oversized embedded manifest is rejected exactly like it
+  // would be on first import, never specially trusted just because it
+  // arrived inside a backup file. Absent on a pre-T7 backup -> 0 pack
+  // sources restored, nothing else touched.
+  //
+  // M3 fix (adversarial review): capped at MAX_PACK_COUNT BEFORE the
+  // loop below — this array used to be walked unbounded, each url-
+  // backed row a serial ~10s-timeout fetch; a backup with hundreds of
+  // rows aimed at an unreachable host could hang 恢复 for tens of
+  // minutes with no cancel. installValidatedPack's own cap would
+  // eventually reject any install past MAX_PACK_COUNT anyway, but only
+  // AFTER paying for every fetch up to that point.
+  const packSourceRows = (Array.isArray(parsed.packSources) ? parsed.packSources : []).slice(
+    0,
+    MAX_PACK_COUNT,
+  );
+  let packSourcesAccepted = 0;
+  for (const rawSource of packSourceRows) {
+    const entry = sanitizeRestoredPackSource(rawSource);
+    if (!entry) continue;
+    try {
+      if (entry.url) {
+        await addPackSource(entry.url);
+      } else if (entry.manifest) {
+        const result = await addPackFromManifest(entry.manifest);
+        if (!result.ok) {
+          diagLog("warn", "autoExport", `恢复词典包失败：${entry.packName}`, result.error);
+          continue;
+        }
+      } else {
+        continue;
+      }
+      packSourcesAccepted += 1;
+    } catch (err) {
+      diagLog(
+        "warn",
+        "autoExport",
+        `恢复词典包失败：${entry.packName}`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   // #48 s1 review item 4: validate every learn-set record before it's
   // ever upserted — malformed/hostile entries are dropped, only
   // accepted ones are counted (see sanitizeRestoredLearnRecord above).
@@ -545,7 +813,41 @@ export async function restoreFullBackup(json: string): Promise<{
     // Cast: the sanitizer returns a Partial (unknown keys dropped),
     // and the caller immediately re-hydrates, whose migrateSettings
     // fold fills every missing field from DEFAULT_SETTINGS.
-    await storage.saveSettings(sanitizeRestoredSettings(parsed.settings) as Settings);
+    const sanitized = sanitizeRestoredSettings(parsed.settings) as Settings;
+    // Desktop keychain custody (v0.5.1): route the restored key material
+    // straight to the Keychain (see routeRestoredSecretsToKeychain's own
+    // doc) instead of ever letting it land back in the IDB blob below.
+    // F2 fix (Sol HIGH #4, migration/backup interplay): read THIS
+    // machine's pre-restore secretDeletePending before it gets replaced
+    // by the line below — see routeRestoredSecretsToKeychain's own doc
+    // for why it must be carried forward across the restore.
+    const settingsToSave = IS_DESKTOP
+      ? await routeRestoredSecretsToKeychain(sanitized, (await storage.loadSettings())?.secretDeletePending ?? [])
+      : sanitized;
+    //
+    // F2 caller-audit fix (store.ts/storage.ts review batch):
+    // storage.saveSettings now rethrows on a write failure instead of
+    // always resolving (see its own doc). This function used to rely on
+    // the old never-rejects contract — every session/entry/pack/learnset
+    // record above is already durably upserted one-by-one by the time
+    // this line runs, so letting a settings-write failure reject the
+    // WHOLE function would discard those already-landed counts from the
+    // caller's summary toast (SettingsDialog's handleConfirmRestore
+    // catches and shows a bare "恢复失败", losing the partial-success
+    // detail). Local catch preserves the exact prior behavior — settings
+    // restore is still reported as attempted/true and the function still
+    // never rejects on this write — at the cost of `settingsRestored`
+    // staying honest-by-omission rather than reflecting the real outcome;
+    // narrower than this batch's flushSettings/handleSave fix, which DOES
+    // surface the failure (a live settings-dialog save is the hot path
+    // this batch targets — a backup-restore failure is logged, not silent
+    // in the sense that matters, since console.warn already fires inside
+    // saveSettings itself).
+    try {
+      await storage.saveSettings(settingsToSave);
+    } catch (err) {
+      console.warn("[autoExport] restoreFullBackup: settings write failed", err);
+    }
     settingsRestored = true;
   }
 
@@ -554,6 +856,7 @@ export async function restoreFullBackup(json: string): Promise<{
     entries: entries.length,
     learnset: learnsetAccepted,
     packs: packsAccepted,
+    packSources: packSourcesAccepted,
     settingsRestored,
   };
 }
@@ -626,7 +929,13 @@ function sanitizeRestoredFontValue(v: unknown, fallback: string): string {
 }
 
 export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settings> {
-  const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), "taskLlm"]);
+  // "taskLlm"/"packAutoUpdateCheckedAt": both optional Settings fields
+  // DEFAULT_SETTINGS deliberately omits (no meaningful non-undefined
+  // default — see each field's own doc in @jargonslayer/core/types), so
+  // Object.keys(DEFAULT_SETTINGS) alone would silently strip them from
+  // every restored backup. Everything else stays governed by the
+  // generic allow-list below.
+  const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), "taskLlm", "packAutoUpdateCheckedAt"]);
   const picked: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (allowed.has(k)) picked[k] = v;
@@ -669,5 +978,58 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
     picked.bitCostume === "auto" || picked.bitCostume === "none" || isBitCostumeId(picked.bitCostume)
       ? picked.bitCostume
       : DEFAULT_SETTINGS.bitCostume;
+  // F5 fix (field-test batch C, Sol M4): proxyUrl was allow-listed
+  // through untouched — a hand-edited backup's malformed proxy would
+  // poison every remote call while SettingsDialog's own validator
+  // (isValidProxyUrl) never gets a chance to run against it. Same
+  // normalize-then-validate pipeline the dialog's own save flow uses;
+  // non-string or invalid coerces to "" (silent coercion, matching
+  // every other bad-shape field's fallback above).
+  const normalizedProxyUrl =
+    typeof picked.proxyUrl === "string" ? normalizeProxyUrl(picked.proxyUrl) : "";
+  picked.proxyUrl = isValidProxyUrl(normalizedProxyUrl) ? normalizedProxyUrl : "";
+  // S9 fix (v0.6 round-2 review): same F11 boolean-coercion trap as
+  // overlayGlass above — a hand-edited backup's usageTracking:"false"
+  // (a STRING, truthy in JS despite reading like an explicit opt-out)
+  // used to sail straight through the generic allow-list pick, silently
+  // keeping usage recording ON; packAutoUpdate:"false" is the same trap
+  // for the auto-updater. Only an actual boolean is trusted.
+  picked.usageTracking =
+    typeof picked.usageTracking === "boolean" ? picked.usageTracking : DEFAULT_SETTINGS.usageTracking;
+  picked.packAutoUpdate =
+    typeof picked.packAutoUpdate === "boolean" ? picked.packAutoUpdate : DEFAULT_SETTINGS.packAutoUpdate;
+  // packAutoUpdateCheckedAt (no meaningful default — DEFAULT_SETTINGS
+  // omits it, see the allow-list's own comment above): a non-finite or
+  // negative value (a string, NaN, -1, …) would poison
+  // shouldCheckForPackUpdates' own `now - lastCheckedAt >= INTERVAL`
+  // arithmetic — e.g. a string coerces the WHOLE comparison to NaN,
+  // which is never `>= INTERVAL`, permanently suppressing the
+  // auto-update check. Only a genuine finite non-negative epoch-ms
+  // survives; anything else is dropped entirely (absent = "never
+  // auto-checked", the same honest state a fresh install starts in)
+  // rather than persisting a value that would wedge the check forever.
+  if (
+    typeof picked.packAutoUpdateCheckedAt !== "number" ||
+    !Number.isFinite(picked.packAutoUpdateCheckedAt) ||
+    picked.packAutoUpdateCheckedAt < 0
+  ) {
+    delete picked.packAutoUpdateCheckedAt;
+  }
+  // packsSchemaVersion (MEDIUM-5, v0.6 round-2 review): same class of
+  // trap — a corrupted value (e.g. a string) would poison
+  // migrateSettings' own `Number(version) > savedPacksVersion` compare
+  // with NaN, which silently disables the whole new-pack-union
+  // migration (NaN never compares > anything). Falls back to the
+  // CURRENT version — same posture as overlayGlass/bitCostume above —
+  // rather than dropping it outright, since (unlike
+  // packAutoUpdateCheckedAt) this field always has a meaningful
+  // default and "already up to date" is the safe assumption for a
+  // corrupted value.
+  picked.packsSchemaVersion =
+    typeof picked.packsSchemaVersion === "number" &&
+    Number.isFinite(picked.packsSchemaVersion) &&
+    picked.packsSchemaVersion >= 0
+      ? picked.packsSchemaVersion
+      : DEFAULT_SETTINGS.packsSchemaVersion;
   return picked as Partial<Settings>;
 }

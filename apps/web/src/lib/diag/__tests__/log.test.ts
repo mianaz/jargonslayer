@@ -64,6 +64,14 @@ describe("diag/log.ts — ring buffer", () => {
       expect(stored.endsWith("…[truncated]")).toBe(true);
     });
 
+    // v0.5.0 field crash: Rust Option::None arrives as JSON null through
+    // payloads typed `string | undefined` — every osspeech `starting`
+    // event passed detail=null and threw inside truncateField.
+    it("a null detail (Rust Option::None over the event bridge) is stored as undefined, not thrown on", () => {
+      expect(() => diagLog("info", "stt-osspeech", "osspeech://status 收到: starting", null as unknown as string)).not.toThrow();
+      expect(getDiagEntries()[0].detail).toBeUndefined();
+    });
+
     it("a message/detail at or under the cap is stored verbatim, untouched", () => {
       const exact = "z".repeat(DIAG_MAX_FIELD_CHARS);
       diagLog("info", "test-tag", exact, exact);

@@ -5,6 +5,7 @@
 // shared with tabAudio.ts.
 
 import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
+import { IS_DESKTOP } from "../platform/desktop";
 import { WsTransport } from "./wsTransport";
 
 export class WhisperSocketEngine implements STTEngine {
@@ -41,8 +42,22 @@ export class WhisperSocketEngine implements STTEngine {
       events,
       settings,
       lexicon,
+      // Field-test fix B (verified root cause): this is the BACKSTOP —
+      // useMeeting.ts's own session-start preflight (desktop, managed
+      // sidecar mode) already catches the ordinary "never installed"
+      // case before a connect is even attempted, opening the install
+      // wizard instead of reaching here. This still fires for whatever
+      // that preflight can't cover (a sidecar that was healthy moments
+      // ago and died right as this connected, external/unmanaged mode,
+      // etc.) — the web copy's "cd sidecar && python whisper_server.py"
+      // instruction is nonsense for a desktop-app user with no terminal
+      // workflow of their own, so IS_DESKTOP gets its own copy pointing
+      // at the in-app installer instead. Web keeps the original copy
+      // unchanged — those users legitimately run the sidecar by hand.
       connectFailureMessage: (url) =>
-        `无法连接本地 Whisper（${url}）。请先启动本地 Whisper 服务：cd sidecar && python whisper_server.py（详见 README）`,
+        IS_DESKTOP
+          ? "无法连接本地 Whisper。请在 设置 → 转录引擎 完成安装或检查本地服务状态"
+          : `无法连接本地 Whisper（${url}）。请先启动本地 Whisper 服务：cd sidecar && python whisper_server.py（详见 README）`,
     });
     this.transport = transport;
 

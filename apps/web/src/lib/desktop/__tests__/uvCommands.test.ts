@@ -58,7 +58,7 @@ describe("pythonInstall", () => {
 });
 
 describe("venvCreate", () => {
-  it("targets paths.venvDir with the pinned python minor", () => {
+  it("targets paths.venvDir with the pinned python minor, no --clear by default", () => {
     expect(venvCreate(paths)).toEqual({
       args: ["venv", paths.venvDir, "--python", "3.12"],
       env: uvEnv(paths),
@@ -68,6 +68,19 @@ describe("venvCreate", () => {
   it("uses whatever venvDir the given paths carry — never a hardcoded path", () => {
     const other: DesktopPaths = { ...paths, venvDir: "/elsewhere/venv" };
     expect(venvCreate(other).args).toEqual(["venv", "/elsewhere/venv", "--python", "3.12"]);
+  });
+
+  // v0.5.1 field-test fix — mirrors venvCreateMlx's own {clear} cases
+  // below exactly (same opts shape).
+  it("clear:false explicitly is identical to the default (no --clear)", () => {
+    expect(venvCreate(paths, { clear: false }).args).toEqual(["venv", paths.venvDir, "--python", "3.12"]);
+  });
+
+  it("clear:true appends a trailing --clear flag", () => {
+    expect(venvCreate(paths, { clear: true })).toEqual({
+      args: ["venv", paths.venvDir, "--python", "3.12", "--clear"],
+      env: uvEnv(paths),
+    });
   });
 });
 

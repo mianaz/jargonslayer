@@ -80,6 +80,25 @@ vi.mock("@/lib/desktop/mlxCaps", () => ({
   refreshMlxCaps: async () => ({ status: "ok" as const, caps: { mlxSupported: true, reason: null } }),
 }));
 
+// v0.5.1 desktop keychain custody design — the real lib/desktop/secret.ts
+// would reach tauriApi.ts's getInvoke(), which throws synchronously
+// outside an actual NEXT_PUBLIC_DESKTOP=1 build (same landmine class
+// audiocapCaps/osspeechCaps/mlxCaps are mocked above to avoid) the moment
+// ANY test in this file saves a changed SECRET_NAMES field (every 保存
+// routes through updateSettings' own syncSecretCustody once IS_DESKTOP is
+// true). Defaults to a no-op success so every PRE-EXISTING test in this
+// file — none of which assert anything about keychain custody — behaves
+// the same either way; the dedicated describe block far below overrides
+// mockWriteSecret per-test to pin the actual handleSave await-ordering
+// contract (flushSecrets before flushSettings).
+const mockWriteSecret = vi.fn(async (_name: string, _value: string) => true);
+vi.mock("@/lib/desktop/secret", () => ({
+  SECRET_NAMES: ["apiKey", "hfToken", "sonioxKey", "deepgramKey", "agentToken"],
+  writeSecret: (name: string, value: string) => mockWriteSecret(name, value),
+  readSecrets: async () => ({}),
+  hydrateSecrets: async (settings: unknown) => ({ settings, custodyNames: [], migratedAndClean: false }),
+}));
+
 // F7 only — F5's own describe block never reaches any of these three
 // (sidecarMode:"external" skips the managed-gated effects/handlers
 // that would call them).
@@ -399,6 +418,119 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
   });
 });
 
+// F4 fix (field-test batch C, Sol M3): the desktop transport wrapper
+// tests draft provider/key/baseUrl via testConnection(draft), but reads
+// the SAVED settings.proxyUrl for the proxy itself — so a just-typed
+// proxy edit used to be silently ignored by exactly the two actions
+// (测试连接 / 一键连接 OpenRouter 账号) whose entire point is to verify
+// connectivity through it. Reuses openRouterSeedSettings() (already on
+// the "openrouter" preset, see that helper's own doc comment) so the
+// connect button is on-screen to assert against too.
+describe("SettingsDialog (desktop) — F4: unsaved proxy draft disables 测试连接 / OpenRouter connect until saved", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: openRouterSeedSettings(), hydrated: true });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllGlobals();
+  });
+
+  async function flush(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  async function openAiDetectTab(): Promise<void> {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      findNavButton("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  function proxyInput(): HTMLInputElement {
+    const input = container!.querySelector(
+      'input[placeholder="http://127.0.0.1:7890"]',
+    ) as HTMLInputElement | null;
+    if (!input) throw new Error("proxy input not found");
+    return input;
+  }
+
+  it("both buttons stay enabled while the draft proxy matches the saved one (both empty)", async () => {
+    await openAiDetectTab();
+
+    expect(findButtonContaining("测试连接").disabled).toBe(false);
+    expect(findButtonContaining("一键连接 OpenRouter 账号").disabled).toBe(false);
+    expect(container!.textContent).not.toContain("代理设置已修改，保存后再测试/连接");
+  });
+
+  it("typing an unsaved proxy edit disables BOTH 测试连接 and the OpenRouter connect button, with the staging hint", async () => {
+    await openAiDetectTab();
+
+    await act(async () => {
+      typeInto(proxyInput(), "http://127.0.0.1:7890");
+    });
+
+    expect(proxyInput().value).toBe("http://127.0.0.1:7890");
+    expect(findButtonContaining("测试连接").disabled).toBe(true);
+    expect(findButtonContaining("一键连接 OpenRouter 账号").disabled).toBe(true);
+    expect(container!.textContent).toContain("代理设置已修改，保存后再测试/连接");
+  });
+
+  it("re-typing the draft proxy back to exactly the saved value re-enables both buttons", async () => {
+    useApp.setState({
+      settings: { ...openRouterSeedSettings(), proxyUrl: "http://127.0.0.1:7890" },
+      hydrated: true,
+    });
+    await openAiDetectTab();
+    expect(proxyInput().value).toBe("http://127.0.0.1:7890"); // draft seeded from saved — already equal
+
+    await act(async () => {
+      typeInto(proxyInput(), "http://127.0.0.1:9999");
+    });
+    expect(findButtonContaining("测试连接").disabled).toBe(true);
+
+    await act(async () => {
+      typeInto(proxyInput(), "http://127.0.0.1:7890");
+    });
+    expect(findButtonContaining("测试连接").disabled).toBe(false);
+    expect(findButtonContaining("一键连接 OpenRouter 账号").disabled).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------
 // F7 (MEDIUM, adversarial review): jobsBridge.trackInstallDiar's own
 // success handler mirrors sidecarUp into the STORE, but this dialog's
@@ -462,12 +594,15 @@ function makeFakeHandle(
     paths: FAKE_PATHS,
     recheckHealth: async () => {},
     reprovision: async () => {},
+    requestProvisionCheck: async () => {},
     installedModel: async () => null,
     switchModel: async () => {},
     switchModelProgress$: () => () => {},
     currentSwitchModelProgress: () => null,
     installDiarization: () => installPromise,
     readSidecarLog: async () => "",
+    cancelPrewarm: async () => {},
+    cancelSwitchModel: async () => {},
     ...overrides,
   };
   return { handle, resolveInstall };
@@ -734,6 +869,54 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
     });
     expect(container!.textContent).toContain("该引擎不支持说话人分离");
     expect(container!.textContent).not.toContain("需先配置 HF Token");
+  });
+});
+
+// ---------------------------------------------------------------
+// Field-test fix: 本地 Whisper and 系统/App 音频 both transcribe with
+// Whisper, but 系统/App 音频's own hint used to name only its audio
+// source, never the recognition backend. This card only renders once
+// IS_DESKTOP is mocked true (this file), so its copy assertion lives
+// here rather than in the ambient SettingsDialog.test.tsx.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog (desktop) — 转录引擎 系统/App 音频 card hint copy (field-test fix)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, sidecarMode: "external" }, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("names both the captured audio source and the Whisper backend", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+
+    const card = findButtonContaining("系统/App 音频");
+    expect(card.textContent).toContain(
+      "捕获 Mac 系统/App 播放的声音（对方语音，不含你的麦克风），同样由本地 Whisper 识别",
+    );
   });
 });
 
@@ -1100,5 +1283,143 @@ describe("SettingsDialog (desktop) — S12b fix round FB7-settings + FB8-refresh
     await openDiarizationSection();
     expect(findRealtimeDiarizeToggle().disabled).toBe(true);
     expect(container!.textContent).toContain("parakeet 本地转录暂不支持实时说话人分离");
+  });
+});
+
+// v0.5.1 desktop keychain custody design — handleSave's own sequencing
+// (await flushSecrets() BEFORE the flushSettings try block) + the
+// desktop-only copy line near the primary API Key field. Reuses F5's own
+// sidecarMode:"external" seed (skips the managed-only mount effects,
+// same rationale as that describe block's own header note) — this
+// concern doesn't touch sidecarMode at all.
+describe("SettingsDialog (desktop) — v0.5.1 desktop keychain custody: handleSave sequencing + copy line", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: openRouterSeedSettings(), hydrated: true });
+    mockProbeAudiocapCaps.mockClear();
+    mockWriteSecret.mockClear();
+    mockWriteSecret.mockImplementation(async () => true);
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllGlobals();
+  });
+
+  async function flush(): Promise<void> {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  it("保存 awaits the Keychain write to settle BEFORE flushSettings persists — the saved blob already reflects the just-landed custody, never a stale pre-write snapshot", async () => {
+    const storageModule = await import("../../lib/history/storage");
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      findNavButton("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const keyInput = container!.querySelector('input[placeholder="sk-…"]') as HTMLInputElement;
+    await act(async () => {
+      typeInto(keyInput, "sk-new-desktop-key");
+    });
+
+    await act(async () => {
+      findButtonContaining("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockWriteSecret).toHaveBeenCalledWith("apiKey", "sk-new-desktop-key");
+    // updateSettings' own fire-and-forget persist (call #1) always
+    // captures the PRE-custody snapshot — that's inherent, not what this
+    // test pins. flushSettings' OWN save (the LAST call) only happens
+    // once handleSave has awaited flushSecrets() — if that await were
+    // ever dropped/reordered, this call would race ahead of custody and
+    // still carry the plaintext key.
+    expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+    const lastCall = saveSpy.mock.calls[saveSpy.mock.calls.length - 1][0];
+    expect(lastCall.apiKey).toBe("");
+  });
+
+  it("a Keychain write failure still lets 保存 complete (non-blocking) — the plaintext key rides the persisted blob (fail-open) and the dialog still closes", async () => {
+    // The secret-write failure toast itself (its exact text) is pinned
+    // at the store level in store.secretCustody.desktop.test.ts, checked
+    // at the moment it's actually live — handleSave's OWN later "已保存"
+    // success toast overwrites store.toast's single-value slot by the
+    // time this test could observe it, so this level only proves the
+    // save flow ITSELF isn't blocked/aborted by the write failure.
+    mockWriteSecret.mockResolvedValueOnce(false);
+    const storageModule = await import("../../lib/history/storage");
+    const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    let closed = false;
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => { closed = true; }} />);
+    });
+    await flush();
+    await act(async () => {
+      findNavButton("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const keyInput = container!.querySelector('input[placeholder="sk-…"]') as HTMLInputElement;
+    await act(async () => {
+      typeInto(keyInput, "sk-new-desktop-key");
+    });
+    await act(async () => {
+      findButtonContaining("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(closed).toBe(true); // handleSave ran to completion, not aborted by the write failure
+    const lastCall = saveSpy.mock.calls[saveSpy.mock.calls.length - 1][0];
+    expect(lastCall.apiKey).toBe("sk-new-desktop-key"); // never entered custody — fail-open
+  });
+
+  it("shows the desktop Keychain custody hint near the primary API Key field (honest per threat model — not \"加密无法读取\")", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      findNavButton("AI 检测").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container!.textContent).toContain(
+      "Key 存入 macOS 系统钥匙串，不再明文保存在应用存储中；其他 App 未经许可无法读取",
+    );
+    expect(container!.textContent).not.toContain("加密无法读取");
   });
 });

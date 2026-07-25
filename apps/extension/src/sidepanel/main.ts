@@ -2,15 +2,17 @@
 // English text -> @jargonslayer/core dictionary detection renders
 // cards -> optional on-device translation of the pasted text.
 //
-// Only the built-in dictionary packs are used here — remote/community
-// pack loading (detect/remotePacksRegistry.ts's setLoadedRemotePacks)
-// is apps/web-only machinery (fetch + idb-keyval) that this app never
-// calls, so scanDictionary() below only ever sees the 428/11 built-in
-// packs. Explicitly deferred, not a bug: remote-pack loading in the
-// extension is out of S6's scope (see the plan's requirement 3).
-// Likewise, personal-glossary shadowing (history/glossaryLookup.ts) is
-// a no-op here for the same reason — this app never populates that
-// cache either, so every card comes straight from the built-in tables.
+// v0.6 remote packs: this app now HAS its own remote/community pack
+// loader (storage/remotePacks.ts, ported from apps/web's own
+// lib/detect/remotePacks.ts — see that file's header for exactly what
+// was duplicated and why) feeding detect/remotePacksRegistry.ts's
+// setLoadedRemotePacks the same way apps/web does. loadPacksIntoRegistry()
+// below runs once at panel load, before any scan can plausibly happen,
+// so scanDictionary() picks up whatever the user has installed via the
+// 词典库 section (renderPacks.ts) with NO changes needed here — it
+// already reads the shared registry on every call. Personal-glossary
+// shadowing (history/glossaryLookup.ts) remains apps/web-only and stays
+// a no-op here — this app never populates that cache.
 //
 // S7 adds live mic capture (captureController.ts) as an ADDITIVE
 // layer alongside all of the above: its own transcript/detected-cards
@@ -31,6 +33,14 @@ import type {
 
 import type { AccumulatorSnapshot } from "../detect/accumulator";
 import { openPermissionPage } from "../permission/micPermission";
+import { type CatalogPackEntry, fetchDictCatalog } from "../storage/dictCatalog";
+import {
+  addPackSource,
+  listPackSources,
+  loadPacksIntoRegistry,
+  removePackSource,
+  type RemotePackSource,
+} from "../storage/remotePacks";
 import {
   deleteSession,
   listSessions,
@@ -48,6 +58,7 @@ import { CaptureController, type CaptureStatus } from "./captureController";
 import { clearChildren, renderExpressionCard, renderTermCard } from "./render";
 import { renderHistorySection } from "./renderHistory";
 import { renderLockedSection } from "./renderLocked";
+import { type CatalogState, renderPacksSection } from "./renderPacks";
 import { renderTranscript } from "./renderTranscript";
 
 const input = document.querySelector<HTMLTextAreaElement>("#js-input")!;
@@ -74,6 +85,7 @@ const transcriptMount = document.querySelector<HTMLElement>("#js-transcript")!;
 const captureCardsEl = document.querySelector<HTMLElement>("#js-capture-cards")!;
 const captureEmptyHint = document.querySelector<HTMLParagraphElement>("#js-capture-empty-hint")!;
 const historyMount = document.querySelector<HTMLElement>("#js-history-mount")!;
+const packsMount = document.querySelector<HTMLElement>("#js-packs-mount")!;
 const lockedMount = document.querySelector<HTMLElement>("#js-locked-mount")!;
 
 let lastScannedText = "";
@@ -364,6 +376,85 @@ async function handleDeleteSession(id: string): Promise<void> {
   void refreshHistory();
 }
 
+// ---------------------------------------------------------------
+// 词典库 (remote dictionary packs) — storage/remotePacks.ts +
+// storage/dictCatalog.ts own the fetch/validate/persist/registry-load
+// work; everything here is state-holding + re-render glue, same
+// "controller/store stays DOM-free, main.ts owns the DOM" split as the
+// history/capture sections above. loadPacksIntoRegistry() below is
+// called once at panel load (near the bottom of this file) so
+// scanDictionary already sees whatever was installed in a PRIOR panel
+// session before the user ever opens this section.
+// ---------------------------------------------------------------
+
+let catalogState: CatalogState = { status: "loading" };
+let installedSources: RemotePackSource[] = [];
+let installingId: string | null = null;
+let installError: string | null = null;
+let removingKey: string | null = null;
+
+function renderPacks(): void {
+  packsMount.replaceChildren(
+    renderPacksSection(
+      {
+        catalog: catalogState,
+        installed: installedSources,
+        installingId,
+        installError,
+        removingKey,
+      },
+      {
+        onInstall: (entry) => void handleInstallPack(entry),
+        onRemove: (source) => void handleRemovePack(source),
+        onRetryCatalog: () => void refreshCatalog(),
+      },
+    ),
+  );
+}
+
+async function refreshInstalledPacks(): Promise<void> {
+  installedSources = await listPackSources();
+  renderPacks();
+}
+
+async function refreshCatalog(): Promise<void> {
+  catalogState = { status: "loading" };
+  renderPacks();
+  try {
+    const catalog = await fetchDictCatalog();
+    catalogState = { status: "loaded", packs: catalog.packs };
+  } catch (err) {
+    catalogState = {
+      status: "error",
+      message: err instanceof Error ? err.message : "获取词典目录失败",
+    };
+  }
+  renderPacks();
+}
+
+async function handleInstallPack(entry: CatalogPackEntry): Promise<void> {
+  installingId = entry.id;
+  installError = null;
+  renderPacks();
+  try {
+    await addPackSource(entry.url);
+    await refreshInstalledPacks();
+  } catch (err) {
+    installError = err instanceof Error ? err.message : "安装词典包失败";
+  } finally {
+    installingId = null;
+    renderPacks();
+  }
+}
+
+async function handleRemovePack(source: RemotePackSource): Promise<void> {
+  removingKey = source.url || source.pack.id;
+  renderPacks();
+  await removePackSource(source.url, source.pack.id);
+  removingKey = null;
+  await refreshInstalledPacks();
+}
+
 const captureController = new CaptureController({
   callbacks: {
     onStatusChange: handleCaptureStatus,
@@ -439,3 +530,11 @@ void updateTranslateAffordance();
 // never refreshed, unlike history below.
 lockedMount.appendChild(renderLockedSection());
 void refreshHistory();
+
+// loadPacksIntoRegistry() first (warms the shared core registry from
+// whatever was persisted in a prior session), THEN render the 词典库
+// section itself — installed-list read and catalog fetch both run
+// unconditionally of whether the user ever scrolls to this section, same
+// posture as apps/web's own SettingsDialog mount effect.
+void loadPacksIntoRegistry().then(() => refreshInstalledPacks());
+void refreshCatalog();

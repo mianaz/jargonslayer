@@ -75,17 +75,23 @@ Rules:
 Output the JSON object now.`;
 
 /** `profileHint` (#48 step 3, design Q5): pre-rendered background-
- *  profile hint, prepended as one AUDIENCE: line when present. USER
+ *  profile hint, prepended as one AUDIENCE: line when present.
+ *  `meetingContext` (auto meeting-context detection, field request:
+ *  "need AI to auto detect the context for better detection"): the
+ *  once-per-meeting inferred domain/context, prepended as one MEETING
+ *  CONTEXT: line ABOVE the AUDIENCE block when present. Both are USER
  *  message only — the SYSTEM prompt (buildDetectSystemPrompt above) is
  *  server-built and prompt-cached; it must stay byte-identical with or
- *  without a profile, so this splice happens ONLY here. */
+ *  without either, so both splices happen ONLY here. */
 export function buildDetectUserMessage(
   context: string,
   newText: string,
   profileHint?: string,
+  meetingContext?: string,
 ): string {
+  const meeting = meetingContext ? `MEETING CONTEXT:\n${meetingContext}\n\n` : "";
   const audience = profileHint ? `AUDIENCE:\n${profileHint}\n\n` : "";
-  return `${audience}CONTEXT:\n${context || "(meeting just started)"}\n\nNEW:\n${newText}`;
+  return `${meeting}${audience}CONTEXT:\n${context || "(meeting just started)"}\n\nNEW:\n${newText}`;
 }
 
 /** Detection prompt in the requested explanation language. "zh" is
@@ -106,6 +112,60 @@ export function buildDetectSystemPrompt(lang: ExplainLanguage): string {
     [
       "6. chinese_explanation must read like a colleague explaining quickly in a meeting: idiomatic, specific, no dictionary tone, no restating the English word-for-word. In all Chinese output, put a half-width space between Chinese characters and any English words or digits (e.g. \"把 ARR 拉起来\", not \"把ARR拉起来\").",
       "6. chinese_explanation must read like a colleague explaining quickly in plain simple English: specific, concrete, no dictionary tone, avoid rare words.",
+    ],
+  ]);
+}
+
+// ---------------- auto meeting-context detection ----------------
+// Field request: "need AI to auto detect the context for better
+// detection". Small, one-shot task (once per meeting, plus one retry,
+// plus one later refresh — see apps/web's useMeeting.ts trigger):
+// infers a short domain/context sentence from an early transcript
+// excerpt, which is then spliced into buildDetectUserMessage's own
+// MEETING CONTEXT block above to sharpen live detection.
+
+export const INFER_CONTEXT_SYSTEM_PROMPT = `You infer the likely domain/context of an English business or academic meeting from a short transcript excerpt, for a Chinese professional using a real-time jargon-explanation assistant. This context is later spliced into that assistant's own detection prompt to sharpen its guesses.
+
+You are given:
+- EXCERPT: a short window of the meeting's own finalized transcript, taken from early in the meeting.
+
+Return ONLY a single JSON object, nothing else. No markdown, no code fences, no commentary, no leading or trailing text. The first character of your reply must be "{" and the last must be "}".
+
+Schema (two fields, both required):
+{"context": "<ONE short sentence, <=60 characters, or empty string>", "domains": ["<=3 tags, most-relevant first, or [] — see rule 5 for the fixed list>"]}
+
+The context sentence must name, as concisely as possible: (1) the domain/field, e.g. 生物信息学 / 跨境电商 / 云计算基础设施; (2) the meeting type, e.g. 组会 / 客户评审 / 季度业务复盘; (3) a short audience/register hint when the excerpt makes one clear, e.g. 面向研究生 / 面向高管. Example: "生物信息学组会（单细胞转录组方向），面向研究生".
+
+Rules:
+1. Base the context ONLY on EXCERPT — never invent facts not evidenced in it.
+2. NEVER list specific jargon/terms/acronyms and NEVER include any speaker's name — this is a one-line domain summary, not a glossary or a transcript recap.
+3. If EXCERPT is too generic/ambiguous to confidently name a domain (e.g. pure opening logistics chatter), return exactly {"context": "", "domains": []} rather than guessing — a wrong guess is worse than none.
+4. Write the sentence in natural Chinese, <=60 characters. Put a half-width space between Chinese characters and any English words or digits (e.g. "单细胞 RNA 测序", not "单细胞RNA测序").
+5. domains: up to 3 tags, ranked most-relevant first, from this FIXED list only — biomed (biology/life sciences), clinical (patient care/clinical trials), pharma (drug development/regulatory), genomics (sequencing/omics), stats (statistics), ml (machine learning/AI), software (software engineering), infra (infrastructure/cloud/ops tooling), finance (finance/accounting), sales (sales/growth/marketing funnel), hr (human resources/people ops), legal (legal/compliance), ops (operations/supply chain/logistics), edu (academic/teaching/research), media (content/publishing/audience), general (no specific domain applies). Return [] when EXCERPT doesn't confidently fit any of them. NEVER invent a tag outside this list.
+Output the JSON object now.`;
+
+export function buildInferContextUserMessage(excerpt: string): string {
+  return `EXCERPT:\n${excerpt}`;
+}
+
+/** Context-inference prompt in the requested explanation language.
+ *  "zh" is the canonical base; "en" swaps the audience framing and the
+ *  domain/example vocabulary + output-language rule to English, same
+ *  splice-anchor discipline as buildDetectSystemPrompt above. */
+export function buildInferContextSystemPrompt(lang: ExplainLanguage): string {
+  if (lang === "zh") return INFER_CONTEXT_SYSTEM_PROMPT;
+  return applyLangVariant(INFER_CONTEXT_SYSTEM_PROMPT, [
+    [
+      "for a Chinese professional using a real-time jargon-explanation assistant",
+      "for a non-native English speaker using a real-time jargon-explanation assistant",
+    ],
+    [
+      'The context sentence must name, as concisely as possible: (1) the domain/field, e.g. 生物信息学 / 跨境电商 / 云计算基础设施; (2) the meeting type, e.g. 组会 / 客户评审 / 季度业务复盘; (3) a short audience/register hint when the excerpt makes one clear, e.g. 面向研究生 / 面向高管. Example: "生物信息学组会（单细胞转录组方向），面向研究生".',
+      'The context sentence must name, as concisely as possible: (1) the domain/field, e.g. bioinformatics / cross-border e-commerce / cloud infrastructure; (2) the meeting type, e.g. lab meeting / client review / quarterly business review; (3) a short audience/register hint when the excerpt makes one clear, e.g. for graduate students / for executives. Example: "Bioinformatics lab meeting (single-cell transcriptomics), for graduate students".',
+    ],
+    [
+      '4. Write the sentence in natural Chinese, <=60 characters. Put a half-width space between Chinese characters and any English words or digits (e.g. "单细胞 RNA 测序", not "单细胞RNA测序").',
+      "4. Write the sentence in plain, simple English, <=60 characters.",
     ],
   ]);
 }

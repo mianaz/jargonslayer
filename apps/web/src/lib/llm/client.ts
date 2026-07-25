@@ -9,6 +9,8 @@ import type {
   DefineResult,
   DetectRequest,
   DetectResponse,
+  InferContextRequest,
+  InferContextResponse,
   LlmProvider,
   LlmTaskDomain,
   Settings,
@@ -45,13 +47,18 @@ import { callProviderDirect, ProviderHttpError } from "./clientProvider";
 import {
   BadOutputError,
   OpenAiCompatError,
+  resolveLlmProviderId,
+  sanitizeProviderExcerpt,
+  scrubUrlCredentials,
   type CallJsonOptions,
   type ProviderCaller,
 } from "./providerCore";
+import { recordUsage } from "../usage/ledger";
 import { DEFAULT_DETECT_MODEL, runDetectTask } from "./tasks/detect";
 import { DEFAULT_DEFINE_MODEL, runDefineTask } from "./tasks/define";
 import { DEFAULT_TRANSLATE_MODEL, runTranslateTask } from "./tasks/translate";
 import { DEFAULT_CORRECT_MODEL, runCorrectTask } from "./tasks/correct";
+import { DEFAULT_INFER_CONTEXT_MODEL, runInferContextTask } from "./tasks/inferContext";
 import {
   DEFAULT_SUMMARIZE_MODEL,
   MAX_SEGMENTS,
@@ -223,6 +230,41 @@ function ctxProvider(creds: { provider: LlmProvider; apiKey: string }): string {
   return creds.apiKey ? creds.provider : "server";
 }
 
+// S4 fix (v0.6 round-2 review): usage-ledger instrumentation for the
+// /api/*-routed paths (detectViaNext/summarizeApiImpl/defineViaNext/
+// translateApiImpl/correctViaNext/inferContextViaNext below) — the
+// client-direct paths (detectViaClient etc.) already record themselves
+// correctly, from inside providerCore.ts, since THEY run entirely in
+// the browser (see that file's own recordLlmCallUsage). The /api/*
+// paths instead run providerCore.ts's request-shaping SERVER-side
+// (inside the Next.js route handler), where usage/ledger.ts's own
+// recordUsage now no-ops (no IndexedDB there — see that function's own
+// doc) rather than writing to a process-global nobody ever reads. This
+// records the one thing client.ts CAN see honestly from here — that a
+// call completed — at the browser boundary instead, once per successful
+// response. Deliberately calls-only, not token counts: the /api/*
+// response shapes (DetectResponse/SummaryResult/…) don't carry the
+// upstream usage block back to the browser, and widening every route's
+// wire contract just for this is a bigger change than this fix
+// warrants — the desktop/PREVIEW-BYOK direct paths still get real
+// token counts via providerCore.ts's own instrumentation, unchanged.
+//
+// Same keyless/keyed split as ctxProvider above, but resolved through
+// resolveLlmProviderId for the keyED case so openai-compat calls land
+// in the SAME per-vendor-hostname buckets providerCore.ts's own ledger
+// writes already use, rather than one generic "openai-compat" bucket —
+// a keyless request is served by the ROUTE's own server-managed
+// credential (see ctxProvider's own doc), which this client has no way
+// to resolve a real provider id for, so it's recorded under the same
+// "server" label ctxProvider already uses for diag purposes.
+function ledgerProviderId(creds: Pick<ResolvedTaskCreds, "provider" | "baseUrl" | "apiKey">): string {
+  return creds.apiKey ? resolveLlmProviderId(creds) : "server";
+}
+
+function recordApiCallUsage(creds: Pick<ResolvedTaskCreds, "provider" | "baseUrl" | "apiKey">): void {
+  void recordUsage({ provider: ledgerProviderId(creds), kind: "llm", metric: "calls", value: 1 });
+}
+
 // Diagnostics privacy (tag-blocker BLOCKER 2): body.error is NOT safe
 // to put in a diagLog message — for openai-compat providers it can be
 // up to a 500-char slice of the raw upstream response body (see
@@ -279,6 +321,47 @@ async function throwForStatus(res: Response, ctx: RequestErrorContext): Promise<
  *  issue detail (BadOutputError's `.message` — mirrors mapLlmError's
  *  OWN BadOutputError branch, which likewise discards the issue detail
  *  before it ever reaches an HTTP body). */
+// Field-debugging postmortem (v0.5.1 fieldtest B): a real desktop
+// failure ("OpenRouter key works in curl, app always fails") took days
+// to pin down because the branch below used to log nothing beyond the
+// fixed zh category message — no hint of WHY the bare fetch() rejected
+// (it turned out to be a proxy-environment divergence: the request
+// died at the network layer, before any HTTP response ever existed to
+// carry a status code). Appends the raw rejection's own message/name
+// (e.g. "Load failed", "error sending request for url…", a bare
+// "AbortError" name when .message is empty) as one extra `cause=`
+// token, so the diag ring can finally distinguish connection-refused
+// vs timeout vs TLS vs a native transport plugin's own error text.
+// Diag-ring-only — see throwForProviderError's network branch below:
+// the THROWN UpstreamError still carries the exact same fixed
+// `messages.network` string as before this existed, so user-facing
+// toast copy is untouched.
+function transportFailureCause(err: unknown): string | undefined {
+  if (typeof err !== "object" || err === null) return undefined;
+  const { message, name } = err as { message?: unknown; name?: unknown };
+  const raw = (typeof message === "string" && message) || (typeof name === "string" && name) || "";
+  if (!raw) return undefined;
+  // sanitizeProviderExcerpt's header-echo pattern is defense in depth
+  // here (no known secret passed — a transport-level rejection fires
+  // before any response body exists to redact an exact key from): no
+  // provider this codebase talks to ever puts a key anywhere but an
+  // Authorization/X-Api-Key HEADER (buildOpenAiCompatRequestInit,
+  // clientProvider.ts's callAnthropicDirect), so `raw` cannot
+  // legitimately contain one that way.
+  //
+  // F2 (Sol HIGH #6 part 2, correcting the claim this comment used to
+  // make): some runtimes' fetch-failure messages DO embed the failing
+  // request's URL verbatim, and an openai-compat baseUrl the user
+  // pasted in can itself carry userinfo or a credential-shaped query
+  // param (a self-hosted gateway that authenticates via the URL rather
+  // than a header). scrubUrlCredentials is called explicitly here, on
+  // top of sanitizeProviderExcerpt already calling it internally below
+  // — belt-and-suspenders so this specific diag-ring path (the one
+  // sanitizeProviderExcerpt call site with an empty secrets list) stays
+  // covered even if it were ever refactored to skip that helper.
+  return sanitizeProviderExcerpt(scrubUrlCredentials(raw), []).slice(0, 160);
+}
+
 function throwForProviderError(
   err: unknown,
   ctx: RequestErrorContext,
@@ -303,7 +386,9 @@ function throwForProviderError(
     diagLog("error", ctx.tag, messages.timeout, errorDetail(ctx));
     throw new UpstreamError(messages.timeout);
   }
-  diagLog("error", ctx.tag, messages.network, errorDetail(ctx));
+  const cause = transportFailureCause(err);
+  const detail = cause ? `${errorDetail(ctx)} cause=${cause}` : errorDetail(ctx);
+  diagLog("error", ctx.tag, messages.network, detail);
   throw new UpstreamError(messages.network);
 }
 
@@ -354,18 +439,28 @@ async function detectViaNext(
       signal: AbortSignal.timeout(PREVIEW_TIER ? 25000 : 20000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "检测请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("检测请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "检测请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("检测请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B): routed through
+    // the shared throwForProviderError (see its own comment) rather
+    // than a hand-rolled AbortError/network branch here, so a bare
+    // fetch() rejection against /api/detect gets the same transport-
+    // cause diag detail as the direct-provider path — a raw fetch can
+    // only ever throw a DOMException (abort) or a network-level Error
+    // here, never OpenAiCompatError/ProviderHttpError/BadOutputError
+    // (those are only ever constructed AFTER a response exists), so
+    // throwForProviderError's status-carrying branches are simply
+    // unreachable dead code for this call site — byte-identical
+    // behavior for both existing branches.
+    throwForProviderError(err, ctx, {
+      timeout: "检测请求超时，请稍后重试",
+      network: "检测请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as DetectResponse;
 }
 
@@ -413,6 +508,7 @@ async function detectViaClient(
         new_text: body.new_text,
         lang: settings.explainLanguage,
         profile: renderProfileHint(settings.profile),
+        meetingContext: body.meetingContext,
       },
       call,
     );
@@ -485,18 +581,20 @@ async function summarizeApiImpl(
       signal: AbortSignal.timeout(300000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "报告生成超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("报告生成超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "报告生成失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("报告生成失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "报告生成超时，请稍后重试",
+      network: "报告生成失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as SummaryResult;
 }
 
@@ -620,18 +718,20 @@ async function defineViaNext(
       signal: AbortSignal.timeout(20000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "解释请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("解释请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "解释请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("解释请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "解释请求超时，请稍后重试",
+      network: "解释请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as DefineResult;
 }
 
@@ -911,18 +1011,20 @@ async function translateApiImpl(
       signal: AbortSignal.timeout(30000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "翻译请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("翻译请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "翻译请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("翻译请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "翻译请求超时，请稍后重试",
+      network: "翻译请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(translateCreds);
   return (await res.json()) as TranslateResponse;
 }
 
@@ -1022,18 +1124,20 @@ async function correctViaNext(
       signal: AbortSignal.timeout(120000),
     });
   } catch (err) {
-    if (err instanceof DOMException && err.name === "AbortError") {
-      diagLog("error", ctx.tag, "校正请求超时，请稍后重试", errorDetail(ctx));
-      throw new UpstreamError("校正请求超时，请稍后重试");
-    }
-    diagLog("error", ctx.tag, "校正请求失败，请检查网络连接", errorDetail(ctx));
-    throw new UpstreamError("校正请求失败，请检查网络连接");
+    // Field-debugging postmortem (v0.5.1 fieldtest B) — see
+    // detectViaNext's identical comment on why routing through the
+    // shared throwForProviderError is behavior-preserving here.
+    throwForProviderError(err, ctx, {
+      timeout: "校正请求超时，请稍后重试",
+      network: "校正请求失败，请检查网络连接",
+    });
   }
 
   if (!res.ok) {
     await throwForStatus(res, ctx);
   }
 
+  recordApiCallUsage(creds);
   return (await res.json()) as CorrectResponse;
 }
 
@@ -1085,6 +1189,105 @@ export async function correctApi(
   // own resolveTaskCreds calls.
   const creds = resolveTaskCreds(settings, "detect");
   return useDirectTransport(creds) ? correctViaClient(body, settings) : correctViaNext(body, settings);
+}
+
+// ---------------------------------------------------------------
+// Auto meeting-context detection (field request: "need AI to auto
+// detect the context for better detection") — isomorphic like correct
+// above: inferContextViaNext (server route) and inferContextViaClient
+// (desktop/iOS, which strip app/api) both funnel through the SAME
+// tasks/inferContext.ts module. Rides the detect-domain config
+// (resolveTaskCreds(settings, "detect")), same routing choice as
+// correctApi/defineApi above — no dedicated LLM task domain, no
+// subscription-direct pre-branch, no telemetry wrap (same out-of-scope
+// call as correctApi's own header comment).
+// ---------------------------------------------------------------
+
+/** Existing Next.js-routed context-inference call. Mirrors
+ *  correctViaNext's shape — see inferContextApi below for the
+ *  useDirectTransport() branch. */
+async function inferContextViaNext(
+  body: InferContextRequest,
+  settings: Settings,
+): Promise<InferContextResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  const ctx: RequestErrorContext = { tag: "llm-context", provider: ctxProvider(creds), model: body.model ?? creds.model };
+  let res: Response;
+  try {
+    res = await fetch(withBase("/api/context"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...taskHeaders(settings, "detect"),
+      },
+      body: JSON.stringify({
+        ...body,
+        model: body.model ?? creds.model,
+      } satisfies InferContextRequest),
+      signal: AbortSignal.timeout(20000),
+    });
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "会议背景推断超时，请稍后重试",
+      network: "会议背景推断失败，请检查网络连接",
+    });
+  }
+
+  if (!res.ok) {
+    await throwForStatus(res, ctx);
+  }
+
+  recordApiCallUsage(creds);
+  return (await res.json()) as InferContextResponse;
+}
+
+/** Client-side callProvider context-inference call — used instead of
+ *  inferContextViaNext above when useDirectTransport() picks the
+ *  direct path (desktop/iOS, or preview BYOK). */
+async function inferContextViaClient(
+  body: InferContextRequest,
+  settings: Settings,
+): Promise<InferContextResponse> {
+  const creds = resolveTaskCreds(settings, "detect");
+  // creds.provider directly, never ctxProvider(creds) — see
+  // summarizeViaClient's comment on why the "server" label doesn't
+  // apply to this BYOK-only path.
+  const ctx: RequestErrorContext = { tag: "llm-context", provider: creds.provider, model: body.model ?? creds.model };
+  requireApiKey(creds.apiKey, ctx);
+  const call: ProviderCaller = function callDirect<T>(opts: CallJsonOptions<T>): Promise<T> {
+    return callProviderDirect({ ...opts, timeoutMs: 20000 });
+  };
+
+  try {
+    return await runInferContextTask(
+      {
+        apiKey: creds.apiKey,
+        model: body.model ?? DEFAULT_INFER_CONTEXT_MODEL,
+        provider: creds.provider,
+        baseUrl: creds.baseUrl,
+        excerpt: body.excerpt,
+        lang: body.lang,
+      },
+      call,
+    );
+  } catch (err) {
+    throwForProviderError(err, ctx, {
+      timeout: "会议背景推断超时，请稍后重试",
+      network: "会议背景推断失败，请检查网络连接",
+    });
+  }
+}
+
+export async function inferContextApi(
+  body: InferContextRequest,
+  settings: Settings,
+): Promise<InferContextResponse> {
+  // D1: rides the detect domain, same as inferContextViaNext/
+  // inferContextViaClient's own resolveTaskCreds calls.
+  const creds = resolveTaskCreds(settings, "detect");
+  return useDirectTransport(creds)
+    ? inferContextViaClient(body, settings)
+    : inferContextViaNext(body, settings);
 }
 
 /** Probe the configured provider/key/baseUrl with a trivial detect

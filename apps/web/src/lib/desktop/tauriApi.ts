@@ -160,6 +160,94 @@ export function getTauriFetch(): Promise<TauriFetchFn> {
   return tauriFetchPromise;
 }
 
+/** Matches `@tauri-apps/plugin-http`'s own `ClientOptions.proxy` shape
+ *  closely enough for getProxiedTauriFetch's one use below — same
+ *  "close enough, hand-rolled rather than imported" contract every
+ *  other interface in this file already uses (see header comment: this
+ *  file stays import()-only for `@tauri-apps/*`, even for types).
+ *  Verified against node_modules/@tauri-apps/plugin-http/dist-js/
+ *  index.d.ts's own Proxy/ProxyConfig interfaces before writing this. */
+interface TauriProxyOption {
+  proxy?: { all: string | { url: string; basicAuth?: { username: string; password: string }; noProxy?: string } };
+}
+
+/** A live read of the user's configured Settings.proxyUrl (W2 desktop
+ *  proxy support) — injected rather than imported directly so this
+ *  file never needs its own `await import("../store")` dance: every
+ *  real caller already resolves a hydration-gated closure of its own
+ *  (mirrors bootstrap.ts's readHfToken/isMeetingActive — see that
+ *  file's own doc comment on why THAT split exists) and passes it
+ *  straight into getProxiedTauriFetch below. */
+export type GetProxyUrlFn = () => string;
+
+/** Hostnames a manually-configured proxy must NEVER be applied to — a
+ *  real case this guards: Settings.baseUrl pointing at a local Ollama
+ *  server must stay a direct connection even with Settings.proxyUrl
+ *  set for everything else (a loopback target typically isn't even
+ *  reachable THROUGH an external proxy at all). `[::1]` is the literal
+ *  form `new URL(...).hostname` actually produces for the IPv6
+ *  loopback (verified below); the bare `::1` is kept too purely
+ *  defensively, in case some future input shape ever hands this a raw
+ *  (non-URL-parsed) hostname string instead.
+ *
+ *  F6 fix (field-test batch C, Sol M5): an exact-set membership test
+ *  (the old `PROXY_LOOPBACK_HOSTNAMES.has(...)`) missed every OTHER
+ *  127/8 address (e.g. `127.0.0.2` — a real shape: a local LLM server
+ *  bound to a loopback alias to avoid colliding with something else on
+ *  127.0.0.1) — the entire 127.0.0.0/8 block is loopback, not just the
+ *  one conventional address. */
+function isLoopbackHostname(hostname: string): boolean {
+  if (hostname === "localhost" || hostname === "::1" || hostname === "[::1]") return true;
+  return /^127\.\d+\.\d+\.\d+$/.test(hostname);
+}
+
+function extractHostname(input: URL | Request | string): string | null {
+  try {
+    if (typeof input === "string") return new URL(input).hostname;
+    if (input instanceof URL) return input.hostname;
+    return new URL(input.url).hostname;
+  } catch {
+    return null; // an unparseable URL is never treated as loopback — falls through to fetchFn, same as before this wrapper existed
+  }
+}
+
+/** W2 desktop proxy support — wraps a TauriFetchFn (plugin-http's own
+ *  `fetch`) so every call optionally routes through the user's
+ *  manually-configured Settings.proxyUrl. `getProxyUrl` is called
+ *  FRESH on every single fetch (never memoized), so a Settings change
+ *  mid-session takes effect starting with the very next call.
+ *
+ *  Passthrough (getProxyUrl() === "", the field's own default) is
+ *  BYTE-IDENTICAL to pre-W2 behavior: tauri-plugin-http's own macOS-
+ *  system-proxy auto-detection (Cargo.toml's default macos-system-
+ *  configuration reqwest feature) stays the only proxy path in effect,
+ *  completely unaffected by this wrapper existing at all. A configured
+ *  proxyUrl merges `ClientOptions.proxy.all` into the fetch init for
+ *  every non-loopback target (see isLoopbackHostname above) — `noProxy`
+ *  is set to the SAME loopback range as a second layer (reqwest's own
+ *  bypass list — tauri-plugin-http's commands.rs feeds this straight
+ *  into `reqwest::NoProxy::from_string`, which supports CIDR notation,
+ *  verified in reqwest 0.12.28's own proxy.rs doc comment/source),
+ *  belt-and-suspenders alongside this wrapper's own pre-check rather
+ *  than relying on either alone. F6 fix (field-test batch C, Sol M5):
+ *  `127.0.0.1` alone omitted both the rest of 127/8 (now the `/8` CIDR
+ *  block, matching isLoopbackHostname's own widened pre-check) and
+ *  IPv6 loopback entirely (now `::1`, since reqwest's NoProxy matches
+ *  the bracket-free form for this entry type). */
+export function getProxiedTauriFetch(fetchFn: TauriFetchFn, getProxyUrl: GetProxyUrlFn): TauriFetchFn {
+  return ((input: URL | Request | string, init?: RequestInit) => {
+    const proxyUrl = getProxyUrl();
+    if (!proxyUrl) return fetchFn(input, init);
+    const hostname = extractHostname(input);
+    if (hostname !== null && isLoopbackHostname(hostname)) return fetchFn(input, init);
+    const proxiedInit: RequestInit & TauriProxyOption = {
+      ...init,
+      proxy: { all: { url: proxyUrl, noProxy: "localhost,127.0.0.0/8,::1" } },
+    };
+    return fetchFn(input, proxiedInit);
+  }) as TauriFetchFn;
+}
+
 /** Lazily imports `@tauri-apps/api/core` and resolves a `ChannelFactory`
  *  — see PcmChannel/ChannelFactory's own doc comments above. */
 export function getChannelFactory(): Promise<ChannelFactory> {

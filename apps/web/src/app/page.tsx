@@ -27,6 +27,10 @@ import { installGlobalDiagHandlers } from "@/lib/diag/globalHandlers";
 import { checkAppUpdate } from "@/lib/desktop/updateCheck";
 import { initIos } from "@/lib/desktop/bootstrap";
 import { enterDesktopCaptionMode, exitDesktopCaptionMode } from "@/lib/captionWindow";
+import { checkUpdates as checkPackUpdates, listPackSources } from "@/lib/detect/remotePacks";
+import { warmSystemTranslateProbeForStartup } from "@/lib/translate/providers";
+import { nextHelpOpenForWizardTransition } from "./wizardHelpTransition";
+import { triggerDictPackAutoUpdate } from "./dictPackAutoUpdateTrigger";
 
 type RightTab = "cards" | "summary" | "glossary";
 
@@ -65,6 +69,12 @@ function savePanelH(h: number): void {
 export default function Home() {
   const { start, pause, resume, stop, startDemo } = useMeeting();
   const hydrate = useApp((s) => s.hydrate);
+  // Round-2 dict-pack auto-update: gates the effect below so its first
+  // run reads the REAL persisted settings.packAutoUpdate/
+  // packAutoUpdateCheckedAt, not the pre-hydration DEFAULT_SETTINGS
+  // placeholder (`settings` itself starts out as DEFAULT_SETTINGS until
+  // hydrate() actually resolves — see store.ts's own hydrate() doc).
+  const hydrated = useApp((s) => s.hydrated);
   const status = useApp((s) => s.status);
   const summary = useApp((s) => s.summary);
   const segments = useApp((s) => s.segments);
@@ -72,6 +82,10 @@ export default function Home() {
   const setFocusMode = useApp((s) => s.setFocusMode);
   const captionMode = useApp((s) => s.captionMode);
   const setCaptionMode = useApp((s) => s.setCaptionMode);
+  // Field-test fix (desktop first-run onboarding never seen): mirrored
+  // from DesktopBootstrap.tsx's own effect — see store.ts's wizardVisible
+  // doc for the full contract. Permanently false on a web build.
+  const wizardVisible = useApp((s) => s.wizardVisible);
 
   const [tab, setTab] = useState<RightTab>("cards");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -161,12 +175,26 @@ export default function Home() {
   };
 
   useEffect(() => {
-    void hydrate();
+    const hydration = hydrate();
+    void hydration;
     // Diagnostics (item 2): window error/unhandledrejection -> diag
     // ring buffer, registered once right alongside hydrate() — see
     // lib/diag/globalHandlers.ts's own doc comment.
     installGlobalDiagHandlers();
-    if (shouldShowTutorial()) setHelpOpen(true);
+    // Field-test fix (desktop first-run onboarding never seen — verified
+    // root cause): skip the auto-open while the desktop provisioning
+    // wizard is covering the screen (wizardVisible — see store.ts's own
+    // doc). This mount-time gate alone can't catch a TRUE first-run
+    // wizard on its own: wizardVisible is still its just-mounted default
+    // (false) at this exact tick on every platform, since
+    // DesktopBootstrap's initDesktop() call is inherently async and
+    // can't have reported a real value yet — the watcher effect below
+    // (which reopens the tutorial the moment wizardVisible actually
+    // transitions back to false) is what closes that gap. This gate's
+    // own job is simpler: web builds and any desktop launch that never
+    // needs the wizard at all, where wizardVisible just never leaves
+    // `false` — byte-equivalent to the old unconditional open for both.
+    if (shouldShowTutorial() && !wizardVisible) setHelpOpen(true);
     // S10 field-fix #8: on-launch update check, desktop only, quiet —
     // no toast/banner, Header's 后台任务 dot + TaskCenterDrawer's own
     // system-status row are the only surfacing (Q2 verdict). Fires
@@ -175,7 +203,15 @@ export default function Home() {
     // no-op on a web build, never throws — see that module's own doc
     // comment); the check here just skips the call outright on web
     // rather than relying on that internal guard alone.
-    if (IS_DESKTOP) void checkAppUpdate();
+    if (IS_DESKTOP) {
+      void checkAppUpdate();
+      // HIGH-1 fix (v0.6 round-2 review): warm the Apple-translate probe
+      // once hydration resolves, so the FIRST meeting after a cold app
+      // launch already sees a warm cache when translateEngine is
+      // "system" — see warmSystemTranslateProbeForStartup's own doc
+      // comment in lib/translate/providers.ts.
+      void hydration.then(() => warmSystemTranslateProbeForStartup(useApp.getState().settings));
+    }
     // S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/D6) —
     // iOS init: ONLY the LLM transport wiring (bootstrap.ts's own
     // initIos() doc comment) — no wizard/update-check chrome, so unlike
@@ -186,6 +222,55 @@ export default function Home() {
     // outright rather than relying on that internal guard alone.
     if (IS_IOS) void initIos();
   }, [hydrate]);
+
+  // Round-2 dict-pack auto-update: once hydration settles, and again on
+  // every browser "online" event (opportunistic — connectivity just
+  // came back), ask runPackAutoUpdate whether an auto-refresh is
+  // actually due — see lib/detect/packAutoUpdate.ts for the gate/
+  // never-throw contract, and dictPackAutoUpdateTrigger.ts for why this
+  // glue lives in its own file rather than inlined here (page.tsx has
+  // no component test harness — same reason wizardHelpTransition.ts is
+  // split out, see that file's own header comment). Fire-and-forget
+  // both times: never awaited, never blocks startup. Web/desktop/iOS
+  // all share this one effect (no platform gate) — dict packs are
+  // already a cross-platform, IndexedDB-backed feature with no engine/
+  // platform restriction of their own.
+  //
+  // isMeetingActive mirrors the SAME three-status rule bootstrap.ts's
+  // own resolveIsMeetingActive and SettingsDialog.tsx's own
+  // meetingActive already use ("paused" counts too — refreshing pack
+  // manifests while a meeting is merely paused, not stopped, would
+  // still rebuild scanDictionary's regex caches out from under a
+  // meeting the user intends to resume). No shared export exists for
+  // this predicate (see SettingsDialog.tsx's own doc on why it mirrors
+  // rather than imports one) — this is a third mirror of the same rule,
+  // not a different one.
+  useEffect(() => {
+    if (!hydrated) return;
+    const isMeetingActive = () => {
+      const s = useApp.getState().status;
+      return s === "connecting" || s === "listening" || s === "paused";
+    };
+    const runCheck = () => {
+      void triggerDictPackAutoUpdate({
+        getSettings: () => useApp.getState().settings,
+        isOnline: () => navigator.onLine,
+        isMeetingActive,
+        listPackSources,
+        // MEDIUM-2 fix (v0.6 round-2 review): threads the SAME
+        // isMeetingActive predicate into checkUpdates' own shouldContinue
+        // param — its multi-second refetch loop needs its own re-check
+        // right before writing, not just the entry-time one above (see
+        // remotePacks.ts's own checkUpdates doc comment).
+        checkUpdates: () => checkPackUpdates(() => !isMeetingActive()),
+        recordCheckedAt: (checkedAt) =>
+          useApp.getState().updateSettings({ packAutoUpdateCheckedAt: checkedAt }),
+      });
+    };
+    runCheck();
+    window.addEventListener("online", runCheck);
+    return () => window.removeEventListener("online", runCheck);
+  }, [hydrated]);
 
   // Jump to the report tab the moment a summary lands.
   const prevSummary = useRef(summary);
@@ -216,6 +301,43 @@ export default function Home() {
     }
     prevCaptionMode.current = captionMode;
   }, [captionMode]);
+
+  // Field-test fix (desktop first-run onboarding never seen): once the
+  // desktop wizard (or its optional post-install onboarding steps — both
+  // fold into wizardVisible, see DesktopBootstrap.tsx's own doc) stops
+  // covering the screen, open the first-run tutorial THEN — see the
+  // mount-time gate's own comment above for why this transition watcher
+  // is the half that actually catches a true first-run wizard. Also
+  // fires on an ordinary dismiss (稍后再说 etc.): any transition off
+  // "covering the screen" is a fair "the user can see the tutorial now"
+  // moment, not just a completed install. prevWizardVisible starts at
+  // wizardVisible's own initial (false) value, so there's no false->false
+  // no-op misfire the instant this effect first subscribes — same
+  // "compare against the previous value" shape as prevSummary/
+  // prevCaptionMode above.
+  //
+  // F3 fix (Sol MEDIUM / Opus LOW, fieldtest-a review): symmetric
+  // false->true arm added. The mount-time gate above can only see
+  // wizardVisible's just-mounted default (false), so on a real desktop
+  // first run it opens the tutorial BEFORE DesktopBootstrap's async
+  // initDesktop() has had a chance to report wizardVisible:true — for
+  // one render window BOTH full-screen overlays are mounted (the wizard
+  // paints on top by DOM order, but the tutorial stays mounted
+  // underneath with focus/tab-order still reachable into its now-
+  // invisible controls). Closing the tutorial the instant wizardVisible
+  // flips true shrinks that window to nothing; shouldShowTutorial()'s
+  // own re-check in the other arm still reopens it once the wizard is
+  // done. NOT handled: a user who manages to click 跳过 inside that
+  // sub-second pre-wizard window still permanently marks the tutorial
+  // done (markTutorialDone writes localStorage synchronously in
+  // TutorialOverlay's finish()) — accepted residual, not chased here.
+  const prevWizardVisible = useRef(wizardVisible);
+  useEffect(() => {
+    setHelpOpen((cur) =>
+      nextHelpOpenForWizardTransition(prevWizardVisible.current, wizardVisible, cur, shouldShowTutorial()),
+    );
+    prevWizardVisible.current = wizardVisible;
+  }, [wizardVisible]);
 
   const summaryReady = status === "stopped" && segments.length > 0;
 

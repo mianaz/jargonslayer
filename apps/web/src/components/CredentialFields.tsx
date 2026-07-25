@@ -144,6 +144,14 @@ export interface CredentialFieldsProps {
    *  no-op for every caller that doesn't pass onConnectOpenRouter in
    *  the first place (the #56 domain blocks never do). */
   connectingOpenRouter?: boolean;
+  /** F4 fix (field-test batch C, Sol M3): disables ONLY this button
+   *  (not the rest of the block, unlike `disabled` above) and renders
+   *  this hint under it instead of the usual OAuth blurb — e.g. an
+   *  unsaved desktop proxy edit that a connect attempt right now would
+   *  silently ignore. Undefined = no change from today. Same "caller-
+   *  owned ReactNode, presence gates the behavior" posture as
+   *  baseUrlHint/apiKeyHint above. */
+  connectDisabledHint?: React.ReactNode;
 }
 
 /** Shared provider + Base URL + API Key + model(s) block. Owns its own
@@ -167,6 +175,7 @@ export default function CredentialFields({
   disabled,
   onConnectOpenRouter,
   connectingOpenRouter,
+  connectDisabledHint,
 }: CredentialFieldsProps) {
   const [showKey, setShowKey] = useState(false);
   const activePreset = presetIdFor(presets, { provider, baseUrl });
@@ -208,15 +217,19 @@ export default function CredentialFields({
         <div className="space-y-1.5">
           <button
             type="button"
-            disabled={disabled || connectingOpenRouter}
+            disabled={disabled || connectingOpenRouter || !!connectDisabledHint}
             onClick={onConnectOpenRouter}
             className="btn-tactile w-full border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {connectingOpenRouter ? "连接中…" : "一键连接 OpenRouter 账号"}
           </button>
-          <div className="text-xs leading-[1.7] text-mut2">
-            跳转 OpenRouter 完成授权，自动生成并填入 API Key；也可在下方手动粘贴已有 Key
-          </div>
+          {connectDisabledHint ? (
+            <div className="text-xs leading-[1.7] text-warn-soft">{connectDisabledHint}</div>
+          ) : (
+            <div className="text-xs leading-[1.7] text-mut2">
+              跳转 OpenRouter 完成授权，自动生成并填入 API Key；也可在下方手动粘贴已有 Key
+            </div>
+          )}
         </div>
       )}
 

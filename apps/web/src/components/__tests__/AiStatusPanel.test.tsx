@@ -21,7 +21,7 @@ import AiStatusPanel, {
 } from "../AiStatusPanel";
 
 function resetStore() {
-  useApp.setState((s) => ({ settings: { ...DEFAULT_SETTINGS } }));
+  useApp.setState((s) => ({ settings: { ...DEFAULT_SETTINGS }, detectMode: "llm" }));
   resetLlmTelemetry();
 }
 
@@ -217,6 +217,65 @@ describe("AiStatusPanel", () => {
 
     expect(container!.querySelector('[data-testid="ai-status-zero-config-banner"]')).toBeNull();
     expect(row("translate").textContent).toContain("自带 Key");
+  });
+
+  // Field-test issue 8b (manual AI-detect retry): store.detectMode is
+  // the pre-existing seam DetectionScheduler's onModeChange already
+  // writes (useMeeting.ts) — dictionary mode while the user's OWN
+  // aiDetect toggle is still on can only mean the scheduler's fellBack
+  // latch tripped (scheduler.ts's pushSegment — the only other way to
+  // land on "dictionary" is aiDetect itself being off).
+  describe("manual retry button (field-test issue 8b)", () => {
+    it("renders on the 检测 row when fallen back, scoped to that row only, and bumps aiRetryNonce on click", async () => {
+      useApp.setState((s) => ({
+        detectMode: "dictionary",
+        settings: { ...s.settings, aiDetect: true },
+      }));
+      render();
+      await act(async () => {
+        root!.render(<AiStatusPanel />);
+      });
+
+      const btn = container!.querySelector('[data-testid="ai-status-retry-detect"]');
+      expect(btn).not.toBeNull();
+      expect(btn!.textContent).toBe("重试 AI 检测");
+      expect(row("detect").contains(btn)).toBe(true);
+      // Scoped to 检测 only — 解释 rides the same resolver config but has
+      // no scheduler of its own to retry.
+      expect(row("define").querySelector('[data-testid="ai-status-retry-detect"]')).toBeNull();
+
+      const nonceBefore = useApp.getState().aiRetryNonce;
+      await act(async () => {
+        btn!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(useApp.getState().aiRetryNonce).toBe(nonceBefore + 1);
+    });
+
+    it("does NOT render when dictionary mode is because the user turned aiDetect off themselves (not a fallback)", async () => {
+      useApp.setState((s) => ({
+        detectMode: "dictionary",
+        settings: { ...s.settings, aiDetect: false },
+      }));
+      render();
+      await act(async () => {
+        root!.render(<AiStatusPanel />);
+      });
+
+      expect(container!.querySelector('[data-testid="ai-status-retry-detect"]')).toBeNull();
+    });
+
+    it("does NOT render while healthy (detectMode llm)", async () => {
+      useApp.setState((s) => ({
+        detectMode: "llm",
+        settings: { ...s.settings, aiDetect: true },
+      }));
+      render();
+      await act(async () => {
+        root!.render(<AiStatusPanel />);
+      });
+
+      expect(container!.querySelector('[data-testid="ai-status-retry-detect"]')).toBeNull();
+    });
   });
 });
 

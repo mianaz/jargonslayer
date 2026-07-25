@@ -1,6 +1,6 @@
 [package]
 name = "jargonslayer"
-version = "0.5.0"
+version = "0.6.0"
 description = "JargonSlayer desktop shell"
 authors = ["Miana Zeng"]
 license = "AGPL-3.0-only"
@@ -21,7 +21,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-shell = "2"
-tauri-plugin-http = "2"
+# W2 desktop proxy support — `socks` is additive onto this plugin's own
+# defaults (rustls-tls/http2/charset/macos-system-configuration/cookies,
+# see its own Cargo.toml `[features] default = [...]`; no
+# default-features=false here, so nothing above is dropped), pulling in
+# reqwest/socks so a manually-configured `socks5://`/`socks5h://`
+# Settings.proxyUrl (SettingsDialog.tsx) actually works — without it,
+# reqwest silently ignores a socks ClientOptions.proxy at runtime.
+tauri-plugin-http = { version = "2", features = ["socks"] }
 # S10 field-fix (docs/design-explorations/s10-fieldfix-blueprint.md,
 # Chunk A) — desktop external-link opens (OAuth authorize URL, update
 # download page, pyannote/HF gated-model links) via the system browser.
@@ -64,6 +71,18 @@ percent-encoding = "2"
 # directly against its own docs.rs API (not assumed) before writing
 # audiocap_resample.rs against it.
 rubato = "0.16.2"
+# v0.6 (Apple on-device translate lane) — systranslate.rs's own request/
+# reply correlation (`oneshot::channel` — a monotonic request id maps to
+# a one-shot reply sender in a shared HashMap, per <request id> ->
+# <oneshot sender>) plus its `tokio::time::timeout` bound on both the
+# --translate child's own ready-wait and a single translate call's
+# reply-wait (a wedged/dead child must return a clear Err rather than
+# hang a live meeting forever). Already resolved transitively (tauri's
+# own async runtime is tokio — see Cargo.lock) at 1.52.3; made explicit
+# now that this crate's own code calls tokio::sync::oneshot/tokio::time
+# directly, same "already-transitive, made explicit for direct use"
+# precedent as url/percent-encoding/objc2-foundation/libc above.
+tokio = { version = "1", features = ["sync", "time"] }
 # S9.2 — stop_app_audio's SIGKILL fallback. tauri-plugin-shell's
 # CommandChild (2.3.5) exposes only kill(self) (SIGKILL, consumes the
 # handle) or write(&mut self) — no partial "close just stdin, keep the
@@ -88,6 +107,19 @@ libc = "0.2"
 # of the crate's ~176 DEFAULT features, so no extra feature flags needed
 # (verified against the crate's own docs.rs feature list).
 objc2-foundation = "0.3.2"
+# Desktop keychain custody (v0.5.1) — secret.rs's own macOS Keychain
+# backend for API-key material moved out of the IndexedDB settings
+# blob (see that module's own header comment). Pinned to the v3 line,
+# same "pin against a churning meta-crate" precedent as rubato above:
+# keyring 4.x is a fresh major-version reshuffle of the same crate, and
+# v3's Entry/Error API (Entry::new/set_password/get_password/
+# delete_credential, Error::NoEntry) is already the exact stable shape
+# this module is written against. `apple-native` is the feature that
+# pulls in the macOS/iOS Keychain Services backend (Security.framework)
+# rather than any other platform's store — no default features exist in
+# this crate, so leaving this off would build a keystore-less Entry
+# that errors on every call.
+keyring = { version = "3", features = ["apple-native"] }
 
 # Single-instance is desktop-only (no Android/iOS support) — same
 # target gate the plugin's own setup docs recommend for `cargo add`.
