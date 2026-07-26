@@ -90,6 +90,14 @@ targets:
         RUST_LOG: info
     settings:
       base:
+        # TestFlight round: distribution signing needs an explicit team
+        # (sim builds never did, which is why this was missing until the
+        # first --export-method app-store-connect run failed). NOTE the
+        # build does NOT re-run XcodeGen — the live copy of these two
+        # values sits in jargonslayer.xcodeproj/project.pbxproj (both
+        # debug+release blocks); keep the pair in sync.
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: RFJQL954S9
         ENABLE_BITCODE: false
         ARCHS: [arm64]
         VALID_ARCHS: arm64 
