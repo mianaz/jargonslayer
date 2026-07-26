@@ -57,13 +57,22 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        # S13.1: keep in sync with the app version (web/desktop/core
-        # package.json + Cargo.toml — 0.4.6 at branch time). tauri ios init
-        # regenerates this file to 1.0.0; that same regen also drops the
-        # privacy keys below, which scripts/check-ios-plist.mjs catches, so
-        # a stale regen can't ship silently. Release-train step: bump here.
+        # S13.1 + TestFlight round correction (2026-07-25): the version the
+        # BUILT app actually carries comes from tauri.conf.json's top-level
+        # "version" — `tauri ios build` REWRITES the generated Info.plist
+        # from it every build (no tauri.conf version = 1.0.0 default, which
+        # is exactly how the app shipped mis-stamped despite this file
+        # saying 0.6.0; empirically traced). This entry is now just the
+        # regen template's copy. Release-train bump = Cargo.toml [package]
+        # + tauri.conf.json "version" + here, and check-ios-plist.mjs
+        # fails the build if the generated plist drifts from Cargo.toml.
         CFBundleShortVersionString: 0.6.0
         CFBundleVersion: "0.6.0"
+        # TestFlight export compliance, declared once (ASC would otherwise
+        # ask per-build): the app uses ONLY standard HTTPS/system TLS —
+        # exempt encryption, so false is the honest value. With this key
+        # present, uploaded builds skip the 出口合规 questionnaire.
+        ITSAppUsesNonExemptEncryption: false
         # S13 review fix S4 (Sol HIGH, XcodeGen-reproduced): project.yml OWNS
         # jargonslayer_iOS/Info.plist — keys absent here are DELETED on any
         # XcodeGen regen. Missing NSMicrophoneUsageDescription = hard
