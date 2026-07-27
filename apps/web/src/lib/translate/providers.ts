@@ -20,7 +20,7 @@
 // calls `create()` itself.
 import { translateApi } from "../llm/client";
 import { diagLog } from "../diag/log";
-import { IS_TAURI } from "../platform/ios";
+import { IS_IOS, IS_TAURI } from "../platform/ios";
 import { IS_DESKTOP } from "../platform/desktop";
 import { getInvoke } from "../desktop/tauriApi";
 import type { Settings, TranslateRequest, TranslateResponse } from "@jargonslayer/core/types";
@@ -280,11 +280,17 @@ export class ChromeTranslatorProvider implements TranslationProvider {
 }
 
 // ---------------------------------------------------------------
-// Desktop Apple-translate provider (v0.6, macOS 26+, on-device, no LLM
-// key) — the Rust side (owned by a concurrent lane, not this module)
-// exposes a closed 4-command surface, ALL through tauriApi.ts's
-// getInvoke() (the only module that ever imports `@tauri-apps/*` — see
-// its own header comment):
+// Native system-translate provider — desktop (macOS 26+, v0.6) AND iOS
+// (S13) share this SAME on-device, no-LLM-key provider: the Rust side
+// (owned by concurrent lanes, not this module) exposes a closed
+// 4-command surface, byte-identical invoke names + wire shapes on both
+// platforms (desktop: systranslate.rs spawns a child process; iOS: the
+// os-speech plugin's in-process TranslationSession, bridged through
+// osspeech_ios.rs — see that file's own header comment on keeping
+// invoke names wire-identical across platforms, the same pattern its
+// os_speech commands already use), so ONE provider class below serves
+// both — ALL through tauriApi.ts's getInvoke() (the only module that
+// ever imports `@tauri-apps/*` — see its own header comment):
 //   invoke("system_translate_probe", {source,target})
 //     -> {osSupported: boolean; status: "installed"|"supported"|"unsupported"}
 //   invoke("system_translate_prepare", {source,target}) -> number   (spawns/warms
@@ -292,6 +298,13 @@ export class ChromeTranslatorProvider implements TranslationProvider {
 //   invoke("system_translate", {items:{id,text}[],source,target}) -> {id,text}[]  (order-preserving)
 //   invoke("system_translate_stop", {generation: number|null}) -> void
 // ---------------------------------------------------------------
+
+// Single gate for both platforms' identical native surface above —
+// desktop and iOS builds are mutually exclusive (IS_DESKTOP/IS_IOS never
+// both true), so this is never ambiguous about which side actually owns
+// the call at runtime; every call site below reads this instead of
+// IS_DESKTOP alone.
+const NATIVE_SYSTEM_TRANSLATE = IS_DESKTOP || IS_IOS;
 
 export interface SystemTranslateProbeResult {
   osSupported: boolean;
@@ -302,8 +315,8 @@ const SYSTEM_TRANSLATE_UNSUPPORTED: SystemTranslateProbeResult = { osSupported: 
 
 // Module-level, keyed by pairKey — separate from ChromeTranslatorProvider's
 // own sessionCache above (different question, different platform; the two
-// never coexist since IS_DESKTOP/plain-web are mutually exclusive builds).
-// Shared by TranslationEngineRow's own read-only hint (T2) and
+// never coexist since native (IS_DESKTOP/IS_IOS) and plain-web are mutually
+// exclusive builds). Shared by TranslationEngineRow's own read-only hint (T2) and
 // resolveTranslationProvider's synchronous read below (T1) — single
 // source of truth so a probe fired from either caller benefits the other.
 const systemProbeCache = new Map<string, SystemTranslateProbeResult>();
@@ -323,7 +336,7 @@ export function getSystemTranslateProbeSnapshot(pair: TranslationLangPair): Syst
 /** Runs system_translate_probe for `pair`, caching a successful result.
  *  Single-flighted per pair (a Settings-row mount racing a meeting
  *  Start's own background warm-up share one round trip). Never throws —
- *  outside a desktop build, or on any invoke()/getInvoke() failure
+ *  outside a desktop/iOS build, or on any invoke()/getInvoke() failure
  *  (including the SYNCHRONOUS throw tauriApi.ts's getInvoke() raises
  *  outside a Tauri build), resolves the fail-closed SYSTEM_TRANSLATE_
  *  UNSUPPORTED shape instead, deliberately NOT cached so a later call
@@ -386,6 +399,12 @@ export function resetSystemTranslateGenerationForTests(): void {
   lastDesktopTranslateGeneration = null;
 }
 
+// Despite the name (kept to avoid touching every existing test/call
+// site — see this module's section header comment above), this class
+// now serves BOTH native platforms: desktop (macOS 26+) AND iOS, gated
+// identically via NATIVE_SYSTEM_TRANSLATE below. Same 4 invoke commands
+// either way, so no per-platform branching lives inside this class
+// itself.
 export class DesktopSystemTranslationProvider implements TranslationProvider {
   readonly kind: Settings["translateEngine"] = "system";
 
@@ -444,12 +463,19 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
       });
     } catch (err) {
       // "not-installed" (the language pair's model isn't downloaded on
-      // this Mac) self-heals once the user downloads it via 系统设置 —
-      // queue.ts's existing "downloading" branch pauses+retries instead
-      // of giving up; everything else (child dead, IPC failure, any
-      // other native error) is treated as a flat unavailable.
+      // this device) self-heals once the user downloads it — desktop
+      // points at 系统设置 (no headless download trigger exists there
+      // either); iOS has no 系统设置 equivalent for this at all, so it
+      // points at the system 「翻译」App instead, the only place iOS
+      // itself exposes a download for. Either way queue.ts's existing
+      // "downloading" branch pauses+retries instead of giving up;
+      // everything else (child dead, IPC failure, any other native
+      // error) is treated as a flat unavailable.
       if (errorMessage(err).includes("not-installed")) {
-        throw new SystemTranslatorUnavailableError("downloading", "系统翻译语言包未安装，下载中");
+        throw new SystemTranslatorUnavailableError(
+          "downloading",
+          IS_IOS ? "系统翻译语言包未安装——请在系统「翻译」App 中下载该语言" : "系统翻译语言包未安装，下载中",
+        );
       }
       throw new SystemTranslatorUnavailableError("unavailable", "系统翻译不可用");
     }
@@ -474,7 +500,8 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
  *  to call even when no system-translate child was ever spawned this
  *  meeting (translateEngine !== "system", or prepare() never ran), so
  *  callers don't need to track whether "system" was actually the
- *  resolved provider. No-op outside a desktop build.
+ *  resolved provider. No-op outside a desktop/iOS build (NATIVE_SYSTEM_
+ *  TRANSLATE false).
  *
  *  S1 fix (v0.6 round-2 review): now RETURNS its promise (used to be
  *  `void`-only fire-and-forget) — useMeeting.ts's own teardown paths
@@ -501,7 +528,7 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
  *  teardown-pause engine.stop() call, which would permanently kill
  *  translation for the rest of a meeting the user only meant to pause. */
 export function stopSystemTranslator(): Promise<void> {
-  if (!IS_DESKTOP) return Promise.resolve();
+  if (!NATIVE_SYSTEM_TRANSLATE) return Promise.resolve();
   return (async () => {
     try {
       const invoke = await getInvoke();
@@ -516,24 +543,25 @@ export function stopSystemTranslator(): Promise<void> {
 // Resolution
 // ---------------------------------------------------------------
 
-/** settings.translateEngine==="system" branches three ways: IS_DESKTOP
- *  (macOS 26+, v0.6) -> DesktopSystemTranslationProvider, but ONLY when
- *  a cached system_translate_probe already says osSupported && status
- *  !== "unsupported" (a cold/negative cache falls back to LLM for THIS
- *  meeting, same as before, while a background probe warms the cache
- *  for the NEXT resolution — see probeSystemTranslateSupport); plain web
- *  with the Chrome Translator API present -> ChromeTranslatorProvider;
- *  everything else (iOS, an unsupported browser, a not-yet-known/
- *  unsupported desktop probe) -> LLM, silently (one diagLog line — never
- *  a toast, never a thrown error: the meeting just starts on the LLM
- *  engine instead). Takes a live getter (not a settings snapshot) so the
- *  constructed LlmTranslationProvider keeps reading FRESH settings on
- *  every batch, same as before this abstraction existed; the provider
- *  KIND itself is decided once, here, matching how engine kind is
- *  already frozen for a session (useMeeting.ts's attachEngine). */
+/** settings.translateEngine==="system" branches three ways: NATIVE_SYSTEM_
+ *  TRANSLATE (desktop macOS 26+ OR iOS) -> DesktopSystemTranslationProvider,
+ *  but ONLY when a cached system_translate_probe already says osSupported
+ *  && status !== "unsupported" (a cold/negative cache falls back to LLM
+ *  for THIS meeting, same as before, while a background probe warms the
+ *  cache for the NEXT resolution — see probeSystemTranslateSupport);
+ *  plain web with the Chrome Translator API present ->
+ *  ChromeTranslatorProvider; everything else (an unsupported browser, a
+ *  not-yet-known/unsupported native probe) -> LLM, silently (one diagLog
+ *  line — never a toast, never a thrown error: the meeting just starts
+ *  on the LLM engine instead). Takes a live getter (not a settings
+ *  snapshot) so the constructed LlmTranslationProvider keeps reading
+ *  FRESH settings on every batch, same as before this abstraction
+ *  existed; the provider KIND itself is decided once, here, matching how
+ *  engine kind is already frozen for a session (useMeeting.ts's
+ *  attachEngine). */
 /** Startup warm-up (v0.6 round-2 review, HIGH-1 fix): resolveTranslationProvider's
- *  IS_DESKTOP branch above only returns the desktop provider once
- *  getSystemTranslateProbeSnapshot(pair) is already populated, and
+ *  NATIVE_SYSTEM_TRANSLATE branch above only returns the native provider
+ *  once getSystemTranslateProbeSnapshot(pair) is already populated, and
  *  systemProbeCache is memory-only — the only thing that used to warm it
  *  was TranslationEngineRow's own Settings-row mount effect, which never
  *  mounts unless the user opens Settings first (SettingsDialog.tsx's own
@@ -548,7 +576,7 @@ export function stopSystemTranslator(): Promise<void> {
  *  nothing here: resolveTranslationProvider already falls back to LLM on
  *  a cold/negative cache. */
 export function warmSystemTranslateProbeForStartup(settings: Settings): void {
-  if (IS_DESKTOP && settings.translateEngine === "system") {
+  if (NATIVE_SYSTEM_TRANSLATE && settings.translateEngine === "system") {
     void probeSystemTranslateSupport(langPairFromSettings(settings));
   }
 }
@@ -556,7 +584,7 @@ export function warmSystemTranslateProbeForStartup(settings: Settings): void {
 export function resolveTranslationProvider(getSettings: () => Settings): TranslationProvider {
   const settings = getSettings();
   if (settings.translateEngine === "system") {
-    if (IS_DESKTOP) {
+    if (NATIVE_SYSTEM_TRANSLATE) {
       const pair = langPairFromSettings(settings);
       const probe = getSystemTranslateProbeSnapshot(pair);
       if (probe && probe.osSupported && probe.status !== "unsupported") {

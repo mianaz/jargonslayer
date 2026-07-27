@@ -9,7 +9,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 
-vi.mock("../../platform/ios", () => ({ IS_TAURI: true }));
+// IS_IOS: false — this file exercises the generic "any Tauri shell"
+// IS_TAURI gate alone (providers.ts's ChromeTranslatorProvider branch);
+// providers.iosSystem.test.ts covers the IS_IOS-specific NATIVE_SYSTEM_
+// TRANSLATE gate providers.ts also reads from this SAME module now.
+vi.mock("../../platform/ios", () => ({ IS_TAURI: true, IS_IOS: false }));
 vi.mock("../../llm/client", () => ({ translateApi: vi.fn() }));
 
 import { ChromeTranslatorProvider, LlmTranslationProvider, resolveTranslationProvider } from "../providers";

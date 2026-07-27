@@ -205,11 +205,17 @@ export default function Home() {
     // rather than relying on that internal guard alone.
     if (IS_DESKTOP) {
       void checkAppUpdate();
-      // HIGH-1 fix (v0.6 round-2 review): warm the Apple-translate probe
-      // once hydration resolves, so the FIRST meeting after a cold app
-      // launch already sees a warm cache when translateEngine is
-      // "system" — see warmSystemTranslateProbeForStartup's own doc
-      // comment in lib/translate/providers.ts.
+    }
+    // HIGH-1 fix (v0.6 round-2 review), widened for iOS's own native
+    // system-translate lane (same 4 invoke commands as desktop — see
+    // providers.ts's NATIVE_SYSTEM_TRANSLATE): warm the probe once
+    // hydration resolves, so the FIRST meeting after a cold app launch
+    // already sees a warm cache when translateEngine is "system" — see
+    // warmSystemTranslateProbeForStartup's own doc comment in
+    // lib/translate/providers.ts (itself a no-op on neither platform, but
+    // gated here too rather than relying on that internal guard alone,
+    // matching checkAppUpdate/initIos's own posture in this same effect).
+    if (IS_DESKTOP || IS_IOS) {
       void hydration.then(() => warmSystemTranslateProbeForStartup(useApp.getState().settings));
     }
     // S13 (docs/design-explorations/s13-ios-blueprint.md, §6 D4/D6) —

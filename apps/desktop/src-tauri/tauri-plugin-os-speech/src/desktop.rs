@@ -47,4 +47,25 @@ impl<R: Runtime> OsSpeech<R> {
   pub fn preinstall(&self, _args: PreinstallArgs) -> crate::Result<()> {
     self.unsupported()
   }
+
+  // ---- v0.6 iOS translate lane — same stub-conformance posture as the
+  // six methods above (this file's own header comment): matches every
+  // signature `mobile::OsSpeech` exposes so the two conformances can't
+  // silently drift apart.
+
+  pub fn sys_translate_probe(&self, _args: SysTranslateArgs) -> crate::Result<SysTranslateProbeResult> {
+    self.unsupported()
+  }
+
+  pub fn sys_translate_prepare(&self, _args: SysTranslateArgs) -> crate::Result<u64> {
+    self.unsupported()
+  }
+
+  pub fn sys_translate(&self, _args: SysTranslateBatchArgs) -> crate::Result<Vec<TranslateItem>> {
+    self.unsupported()
+  }
+
+  pub fn sys_translate_stop(&self, _args: SysTranslateStopArgs) -> crate::Result<()> {
+    self.unsupported()
+  }
 }

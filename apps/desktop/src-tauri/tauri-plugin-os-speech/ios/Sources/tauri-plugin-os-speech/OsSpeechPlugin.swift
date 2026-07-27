@@ -27,6 +27,71 @@ class PreinstallArgs: Decodable {
   let locale: String
 }
 
+// v0.6 (Apple on-device translation, iOS lane) — the four `sysTranslate*`
+// Decodable arg shapes/Encodable reply payloads below, same convention
+// as `StartArgs`/`PreinstallArgs` above (plain classes/structs living
+// directly in this glue file, not OsSpeechCore — unlike
+// `OsSpeechCapabilitiesPayload`, none of these need a custom `Encodable`
+// conformance for an explicit-null field, so the synthesized one is
+// enough). Real logic lives in `SysTranslateController`
+// (OsSpeechCore/SysTranslateController.swift); these four `@objc`
+// methods below do the same two things every other method in this file
+// does — an `#available` pre-check, then hand off and resolve/reject.
+
+/// `sysTranslateProbe`'s own Decodable.
+class SysTranslateProbeArgs: Decodable {
+  let source: String
+  let target: String
+}
+
+/// `sysTranslatePrepare`'s own Decodable.
+class SysTranslatePrepareArgs: Decodable {
+  let source: String
+  let target: String
+}
+
+/// One `{id, text}` entry of `sysTranslate`'s own `items` array.
+class SysTranslateItem: Decodable {
+  let id: String
+  let text: String
+}
+
+/// `sysTranslate`'s own Decodable.
+class SysTranslateArgs: Decodable {
+  let items: [SysTranslateItem]
+  let source: String
+  let target: String
+}
+
+/// `sysTranslateStop`'s own Decodable — `generation` is optional (JS may
+/// omit it to mean "clear every session", mirrors
+/// `SysTranslateController.stop(generation:)`'s own `nil` contract).
+class SysTranslateStopArgs: Decodable {
+  let generation: UInt64?
+}
+
+/// `sysTranslateProbe`'s own reply shape.
+struct SysTranslateProbePayload: Encodable {
+  let osSupported: Bool
+  let status: String
+}
+
+/// `sysTranslatePrepare`'s own reply shape.
+struct SysTranslatePreparePayload: Encodable {
+  let generation: UInt64
+}
+
+/// One `{id, text}` entry of `sysTranslate`'s own reply `items` array.
+struct SysTranslateResultItem: Encodable {
+  let id: String
+  let text: String
+}
+
+/// `sysTranslate`'s own reply shape.
+struct SysTranslatePayload: Encodable {
+  let items: [SysTranslateResultItem]
+}
+
 class OsSpeechPlugin: Plugin {
   // `Any?` (not `OsSpeechController?` directly): the controller's own
   // type is `@available(iOS 26.0, *)`-gated (it stores an
@@ -42,6 +107,14 @@ class OsSpeechPlugin: Plugin {
   // gate onto this class.
   private var controllerBox: Any?
 
+  // Same `Any?`-boxing rationale as `controllerBox` above, for the same
+  // structural reason — `SysTranslateController` (OsSpeechCore/
+  // SysTranslateController.swift) is itself `@available(iOS 26.0,
+  // macOS 26.0, *)`-gated, so a STORED property of that type would force
+  // this whole `OsSpeechPlugin` class under the same gate too. Boxed and
+  // downcast the same way, constructed in the same `init()` below.
+  private var translateControllerBox: Any?
+
   // F-S2 (S13 fix round, BLOCKER) — constructed EAGERLY, exactly once,
   // here in `init()` (plugin construction/registration time — Tauri's
   // iOS runtime constructs+registers one `OsSpeechPlugin` instance per
@@ -54,11 +127,15 @@ class OsSpeechPlugin: Plugin {
   // single-shot construction during `init()` removes the race
   // structurally — there is no "first access" moment for two callers to
   // contend over, since Swift guarantees `init()` completes before any
-  // other method can run against this instance.
+  // other method can run against this instance. `SysTranslateController`
+  // is constructed the same eager way, same reason (its own `nonisolated
+  // init()` exists specifically so this synchronous, non-isolated
+  // `init()` can call it at all — see that type's own doc comment).
   override init() {
     super.init()
     if #available(iOS 26.0, *) {
       controllerBox = OsSpeechController()
+      translateControllerBox = SysTranslateController()
     }
   }
 
@@ -72,6 +149,16 @@ class OsSpeechPlugin: Plugin {
   private var controller: OsSpeechController {
     guard let existing = controllerBox as? OsSpeechController else {
       preconditionFailure("OsSpeechController must have been constructed eagerly in init()")
+    }
+    return existing
+  }
+
+  /// Read-only, same "eager `init()` is the only writer" contract as
+  /// `controller` above.
+  @available(iOS 26.0, *)
+  private var translateController: SysTranslateController {
+    guard let existing = translateControllerBox as? SysTranslateController else {
+      preconditionFailure("SysTranslateController must have been constructed eagerly in init()")
     }
     return existing
   }
@@ -240,6 +327,70 @@ class OsSpeechPlugin: Plugin {
       } catch {
         invoke.reject("\(error)")
       }
+    }
+  }
+
+  // ---- v0.6 (Apple on-device translation, iOS lane) ----
+
+  /// Below-floor: resolves `{osSupported:false, status:"unsupported"}`
+  /// rather than rejecting — UNLIKE every other method below (and unlike
+  /// `startTranscribe`/`preinstall` above), matching this task's own
+  /// pinned contract: a probe is a query, not a command, so JS can treat
+  /// "not supported" uniformly whether the answer came from the version
+  /// pre-check or from the framework itself.
+  @objc public func sysTranslateProbe(_ invoke: Invoke) throws {
+    guard #available(iOS 26.0, *) else {
+      invoke.resolve(SysTranslateProbePayload(osSupported: false, status: "unsupported"))
+      return
+    }
+    let args = try invoke.parseArgs(SysTranslateProbeArgs.self)
+    Task {
+      let result = await translateController.probe(source: args.source, target: args.target)
+      invoke.resolve(SysTranslateProbePayload(osSupported: result.osSupported, status: result.status))
+    }
+  }
+
+  @objc public func sysTranslatePrepare(_ invoke: Invoke) throws {
+    guard #available(iOS 26.0, *) else {
+      invoke.reject(OsSpeechFloor.unsupportedReason)
+      return
+    }
+    let args = try invoke.parseArgs(SysTranslatePrepareArgs.self)
+    Task {
+      let generation = await translateController.prepare(source: args.source, target: args.target)
+      invoke.resolve(SysTranslatePreparePayload(generation: generation))
+    }
+  }
+
+  @objc public func sysTranslate(_ invoke: Invoke) throws {
+    guard #available(iOS 26.0, *) else {
+      invoke.reject(OsSpeechFloor.unsupportedReason)
+      return
+    }
+    let args = try invoke.parseArgs(SysTranslateArgs.self)
+    let items = args.items.map { (id: $0.id, text: $0.text) }
+    Task {
+      do {
+        let translated = try await translateController.translate(items: items, source: args.source, target: args.target)
+        invoke.resolve(SysTranslatePayload(items: translated.map { SysTranslateResultItem(id: $0.id, text: $0.text) }))
+      } catch {
+        // The "not-installed" substring (SysTranslateError.notInstalled's
+        // own `description`) must survive verbatim through this
+        // interpolation — providers.ts:451 string-matches on it.
+        invoke.reject("\(error)")
+      }
+    }
+  }
+
+  @objc public func sysTranslateStop(_ invoke: Invoke) throws {
+    guard #available(iOS 26.0, *) else {
+      invoke.resolve() // idempotent, matches stop/pause/resume's own below-floor contract above
+      return
+    }
+    let args = try invoke.parseArgs(SysTranslateStopArgs.self)
+    Task {
+      await translateController.stop(generation: args.generation)
+      invoke.resolve()
     }
   }
 }

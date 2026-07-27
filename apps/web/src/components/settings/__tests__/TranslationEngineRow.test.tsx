@@ -8,7 +8,9 @@
 // ChromeTranslatorProvider) is mocked at the providers.ts module
 // boundary — real-API/ordering behavior is providers.test.ts's job; this
 // file is about what the ROW renders/calls given a resolved state. See
-// TranslationEngineRow.tauri.test.tsx for the IS_TAURI-hidden branch.
+// TranslationEngineRow.ios.test.tsx for the iOS probe-driven branch
+// (the old .tauri.test.tsx it superseded asserted an IS_TAURI-hidden
+// row that no longer exists).
 
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";

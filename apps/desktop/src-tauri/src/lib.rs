@@ -39,6 +39,12 @@ mod osspeech;
 // command bridge (§D2).
 #[cfg(target_os = "ios")]
 mod osspeech_ios;
+// v0.6 iOS lane — same wire-identical-command-name posture as osspeech_ios
+// above, extended to the on-device translate commands; see this module's
+// own header comment for why (systranslate.rs is the macOS analog, the
+// plugin's Swift translate controller is the iOS one).
+#[cfg(target_os = "ios")]
+mod systranslate_ios;
 // S13.1 (docs/design-explorations/s13-ios-blueprint.md) — the iOS
 // simulator spike harness (spike_flags/spike_report), armed by the
 // `--spike-osspeech` launch arg — see devspike_ios.rs's own header
@@ -228,6 +234,10 @@ pub fn run() {
             osspeech_ios::resume_os_speech,
             osspeech_ios::os_speech_capabilities,
             osspeech_ios::preinstall_os_speech,
+            systranslate_ios::system_translate_probe,
+            systranslate_ios::system_translate_prepare,
+            systranslate_ios::system_translate,
+            systranslate_ios::system_translate_stop,
             devspike_ios::spike_flags,
             devspike_ios::spike_report,
         ])

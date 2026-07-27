@@ -68,4 +68,33 @@ impl<R: Runtime> OsSpeech<R> {
   pub fn preinstall(&self, args: PreinstallArgs) -> crate::Result<()> {
     self.0.run_mobile_plugin("preinstall", args).map_err(Into::into)
   }
+
+  // ---- v0.6 iOS translate lane (models.rs's own header comment on this
+  // section covers the wire shapes; systranslate_ios.rs's own header
+  // comment covers why the command names these back must stay wire-
+  // identical to macOS's own systranslate.rs) ----
+
+  pub fn sys_translate_probe(&self, args: SysTranslateArgs) -> crate::Result<SysTranslateProbeResult> {
+    self.0.run_mobile_plugin("sysTranslateProbe", args).map_err(Into::into)
+  }
+
+  /// Unwraps Swift's `{"generation": u64}` reply envelope (`GenerationResult`'s
+  /// own doc comment) down to the bare `u64` desktop's own `system_translate_
+  /// prepare` returns.
+  pub fn sys_translate_prepare(&self, args: SysTranslateArgs) -> crate::Result<u64> {
+    let result = self.0.run_mobile_plugin::<GenerationResult>("sysTranslatePrepare", args).map_err(crate::Error::from)?;
+    Ok(result.generation)
+  }
+
+  /// Unwraps Swift's `{"items": [...]}` reply envelope (`TranslateItemsResult`'s
+  /// own doc comment) down to the bare `Vec<TranslateItem>` desktop's own
+  /// `system_translate` returns.
+  pub fn sys_translate(&self, args: SysTranslateBatchArgs) -> crate::Result<Vec<TranslateItem>> {
+    let result = self.0.run_mobile_plugin::<TranslateItemsResult>("sysTranslate", args).map_err(crate::Error::from)?;
+    Ok(result.items)
+  }
+
+  pub fn sys_translate_stop(&self, args: SysTranslateStopArgs) -> crate::Result<()> {
+    self.0.run_mobile_plugin("sysTranslateStop", args).map_err(Into::into)
+  }
 }

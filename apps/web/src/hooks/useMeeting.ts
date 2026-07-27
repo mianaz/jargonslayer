@@ -416,7 +416,7 @@ export function useMeeting(): UseMeetingResult {
       // v0.6: tear down the native Apple-translate child alongside the
       // STT engine's own — see providers.ts's own doc comment for why
       // this is safe/idempotent to call unconditionally (no-op outside
-      // desktop, or when "system" was never the resolved provider). S1
+      // desktop/iOS, or when "system" was never the resolved provider). S1
       // fix (v0.6 round-2 review): now awaited — stopSystemTranslator()
       // returns its promise so this flow doesn't move on (and, at the
       // very next start(), warm a NEW child) before the old one is

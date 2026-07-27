@@ -1,27 +1,27 @@
 // @vitest-environment jsdom
 //
-// TranslationEngineRow — iOS build. v0.6 field-fix (item 5, iOS
-// TestFlight report): iOS used to be hidden entirely (see this file's
-// git history for the old "renders nothing" assertion) — but a
-// translateEngine:"system" value picked on another platform (settings
-// sync) still silently fell back to LLM here (providers.ts's
-// resolveTranslationProvider), with no UI to explain why. iOS now
-// renders the SAME WebTranslationEngineRow branch desktop's dispatcher
-// falls through to, with 系统 force-disabled + suffixed — mirrors
-// TranslationEngineRow.test.tsx's own mount/select shape. IS_IOS is a
-// module-scope import-time const, so this needs its own file/vi.mock —
-// mirrors AnkiConnectSection.ios.test.tsx's own split for the identical
-// constraint. IS_DESKTOP is deliberately left UNMOCKED (real, false in
-// this env) — IS_IOS/IS_DESKTOP are mutually exclusive in any real
-// build, matching that invariant here.
+// TranslationEngineRow — iOS build. Reverted from the old force-disabled
+// stopgap (see this file's own git history for that version) back to
+// probe-driven behavior: iOS now ships the SAME 4-invoke-command
+// system-translate surface as desktop (providers.ts's own
+// NATIVE_SYSTEM_TRANSLATE gate), so the dispatcher routes iOS to
+// DesktopTranslationEngineRow exactly like desktop — mirrors
+// TranslationEngineRow.desktop.test.tsx's own shape, mocking IS_IOS
+// instead of IS_DESKTOP. IS_IOS is a module-scope import-time const, so
+// this needs its own file/vi.mock — mirrors AnkiConnectSection.ios.
+// test.tsx's own split for the identical constraint. IS_DESKTOP is
+// deliberately left UNMOCKED (real, false in this env) — IS_IOS/
+// IS_DESKTOP are mutually exclusive in any real build, matching that
+// invariant here.
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 
 vi.mock("@/lib/platform/ios", () => ({ IS_IOS: true }));
+
+const probeMock = vi.fn();
 vi.mock("@/lib/translate/providers", () => ({
-  checkSystemTranslatorAvailability: vi.fn().mockResolvedValue("available"),
-  ChromeTranslatorProvider: vi.fn(),
+  probeSystemTranslateSupport: (...args: unknown[]) => probeMock(...args),
 }));
 
 import TranslationEngineRow, { type TranslationEngineRowProps } from "../TranslationEngineRow";
@@ -46,6 +46,7 @@ describe("TranslationEngineRow (iOS build)", () => {
       container.remove();
       container = null;
     }
+    probeMock.mockReset();
   });
 
   const langPair = { source: "en", target: "zh" };
@@ -63,17 +64,43 @@ describe("TranslationEngineRow (iOS build)", () => {
     return el.querySelector("select") as HTMLSelectElement;
   }
 
-  it("renders the row (no longer hidden) with 系统 force-disabled and suffixed （iOS 暂不支持）, even though the underlying probe resolves 'available'", async () => {
+  it("probe says 'installed' -> 系统 option enabled, hint 已就绪 (no more force-disabled/iOS-suffixed label)", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
     const el = mount({ value: "llm", onChange: () => {}, langPair });
     await flush();
 
     expect(el.querySelector('[data-testid="translation-engine-row"]')).not.toBeNull();
+    expect(probeMock).toHaveBeenCalledWith(langPair);
+    const systemOption = select(el).querySelector('option[value="system"]') as HTMLOptionElement;
+    expect(systemOption.disabled).toBe(false);
+    expect(systemOption.textContent).not.toContain("暂不支持");
+    expect(el.textContent).toContain("已就绪");
+  });
+
+  it("probe says 'unsupported' -> 系统 option disabled, fallback hint shown", async () => {
+    probeMock.mockResolvedValue({ osSupported: false, status: "unsupported" });
+    const el = mount({ value: "llm", onChange: () => {}, langPair });
+    await flush();
+
     const systemOption = select(el).querySelector('option[value="system"]') as HTMLOptionElement;
     expect(systemOption.disabled).toBe(true);
-    expect(systemOption.textContent).toContain("（iOS 暂不支持）");
+    expect(systemOption.textContent).toContain("当前设备或语言组合不支持");
+  });
+
+  it("probe says 'supported' (pair not downloaded) -> option STILL enabled, install hint points at the system 「翻译」App, not 系统设置", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "supported" });
+    const el = mount({ value: "llm", onChange: () => {}, langPair });
+    await flush();
+
+    const systemOption = select(el).querySelector('option[value="system"]') as HTMLOptionElement;
+    expect(systemOption.disabled).toBe(false);
+    expect(el.textContent).toContain("「翻译」App");
+    expect(el.textContent).not.toContain("系统设置");
+    expect(el.textContent).not.toContain("已就绪");
   });
 
   it("AI 模型 stays selectable — onChange still fires for it", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
     const onChange = vi.fn();
     const el = mount({ value: "system", onChange, langPair });
     await flush();
