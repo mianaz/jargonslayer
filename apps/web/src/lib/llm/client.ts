@@ -394,15 +394,22 @@ function throwForProviderError(
 
 /** Direct-provider paths have no server to fall back to, so an
  *  unconfigured key must fail IMMEDIATELY — without dispatching a
- *  request the provider is guaranteed to 401 anyway. Mirrors
- *  resolveLlmConfig returning null server-side (the exact same
- *  message + diag shape throwForStatus's own 401 default produces:
- *  `body?.error ?? "未配置 API Key"`), just resolved locally instead of
- *  over the wire. */
+ *  request the provider is guaranteed to 401 anyway.
+ *
+ *  Field bug fix (iOS TestFlight: a user's valid OpenRouter key still
+ *  read "401" in 复制诊断): this used to reuse diagMessageForStatus(401)
+ *  + errorDetail(ctx, 401) — byte-identical to a REAL server 401
+ *  (throwForProviderError above, client.ts:372/374) — so a key that
+ *  simply failed to persist/load (this LOCAL short-circuit) was
+ *  indistinguishable in the diag log from the provider actually
+ *  rejecting a live key. Own message + own diag detail now, and the
+ *  detail deliberately carries no `status=` field at all (never
+ *  claims 401 — nothing was sent for the provider to reject). */
 function requireApiKey(apiKey: string, ctx: RequestErrorContext): void {
   if (apiKey) return;
-  diagLog("error", ctx.tag, diagMessageForStatus(401), errorDetail(ctx, 401));
-  throw new NoKeyError("未配置 API Key");
+  const message = "未配置 API Key（本地拦截，未发出请求）";
+  diagLog("error", ctx.tag, message, `${errorDetail(ctx)} status=local`);
+  throw new NoKeyError(message);
 }
 
 /** Existing Next.js-routed detect call (BYOK / shared-key / Poe / …).

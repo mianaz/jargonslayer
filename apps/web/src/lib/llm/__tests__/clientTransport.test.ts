@@ -146,6 +146,26 @@ describe("flag on, no apiKey configured — NoKeyError without dispatching any r
     ).rejects.toBeInstanceOf(NoKeyError);
     expect(mockFetch).not.toHaveBeenCalled();
   });
+
+  // Field bug fix (iOS TestFlight: a user's valid OpenRouter key still
+  // read "401" in 复制诊断) — this LOCAL short-circuit (requireApiKey)
+  // used to log the exact same diag message + detail as a REAL server
+  // 401 (see "401 -> NoKeyError..." test below, message
+  // "API Key 无效或未配置" + detail carrying "status=401"), making the
+  // two indistinguishable in a copied diag report. Both must now read
+  // differently.
+  it("logs a distinct diag message/detail — never the real-401 phrase, never status=401", async () => {
+    const err = await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" })).catch((e) => e);
+
+    expect(err).toBeInstanceOf(NoKeyError);
+    expect((err as Error).message).toBe("未配置 API Key（本地拦截，未发出请求）");
+
+    const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toBe("未配置 API Key（本地拦截，未发出请求）");
+    expect(entries[0].message).not.toBe("API Key 无效或未配置");
+    expect(entries[0].detail).not.toContain("status=401");
+  });
 });
 
 // ---------------------------------------------------------------

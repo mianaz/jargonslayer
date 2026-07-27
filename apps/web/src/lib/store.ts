@@ -49,6 +49,7 @@ import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "./deployTier";
 import { IS_DESKTOP } from "./platform/desktop";
 import { IS_IOS } from "./platform/ios";
 import { diagLog } from "./diag/log";
+import { sanitizeSecretValue } from "./settings/sanitizeSecret";
 import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
 import { remapOpenRouterModelDefaults } from "./oauth/openrouterModelDefaults";
 
@@ -1190,6 +1191,22 @@ export function isModeLegalForPlatform(mode: Settings["mode"], platform: ModePla
 export function migrateSettings(saved: Partial<Settings> | null | undefined): Settings {
   const legacy = (saved ?? {}) as Partial<Settings> & { dictionaryOnly?: boolean };
   const settings: Settings = { ...DEFAULT_SETTINGS, ...legacy };
+  // Field bug fix (iOS TestFlight): self-heal secret fields already
+  // persisted with a dirty (zero-width/whitespace-padded) paste from
+  // before this fix shipped — same six SECRET_NAMES fields
+  // sanitizeSecretValue's own doc covers, sanitized here so a stale
+  // stored value self-heals on the very next hydrate() rather than
+  // only being cleaned for keys saved from now on (SettingsDialog's
+  // toSave). The Keychain-sourced half of this same self-heal (desktop
+  // only) lives at hydrate()'s hydrateSecrets merge point instead —
+  // this settings-blob path also covers the web/iOS platforms that
+  // have no Keychain at all.
+  settings.apiKey = sanitizeSecretValue(settings.apiKey);
+  settings.hfToken = sanitizeSecretValue(settings.hfToken);
+  settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
+  settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
+  settings.elevenLabsKey = sanitizeSecretValue(settings.elevenLabsKey);
+  settings.agentToken = sanitizeSecretValue(settings.agentToken);
   if (legacy.aiDetect === undefined && typeof legacy.dictionaryOnly === "boolean") {
     settings.aiDetect = !legacy.dictionaryOnly;
   }
@@ -1721,6 +1738,20 @@ export const useApp = create<AppState>((set, get) => ({
         const { hydrateSecrets } = await import("./desktop/secret");
         const result = await hydrateSecrets(migratedSettings);
         settings = result.settings;
+        // Field bug fix (iOS TestFlight): migrateSettings above already
+        // sanitized whatever `migratedSettings` carried, but
+        // hydrateSecrets can just as easily hand back a RAW Keychain
+        // value for a name with no plaintext counterpart (secret.ts's
+        // own "adopt it live" branch) — sanitize `settings` again here
+        // so a dirty value already sitting in an EARLIER-migrated
+        // Keychain entry self-heals too. Idempotent for every field
+        // that was already clean.
+        settings.apiKey = sanitizeSecretValue(settings.apiKey);
+        settings.hfToken = sanitizeSecretValue(settings.hfToken);
+        settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
+        settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
+        settings.elevenLabsKey = sanitizeSecretValue(settings.elevenLabsKey);
+        settings.agentToken = sanitizeSecretValue(settings.agentToken);
         // F5 fix (Sol MEDIUM #13, keychain-custody fix round): REPLACE,
         // never merely add to — a stale name from an EARLIER hydrate
         // (dev/StrictMode double-invoke, or a genuine re-hydrate after a

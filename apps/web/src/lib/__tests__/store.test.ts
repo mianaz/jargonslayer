@@ -2109,6 +2109,33 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
   });
 });
 
+// Field bug fix (iOS TestFlight): a secret field saved BEFORE this fix
+// shipped can still carry a dirty (zero-width/whitespace-padded) paste
+// — migrateSettings self-heals it on the very next hydrate(), same
+// SECRET_NAMES fields SettingsDialog's toSave now sanitizes at save
+// time (see sanitizeSecret.ts's own doc).
+describe("migrateSettings — self-heals dirty (zero-width/whitespace) SECRET_NAMES fields", () => {
+  it("strips a leading space + zero-width space from a previously-saved apiKey", () => {
+    const s = migrateSettings({ apiKey: " sk-​test-key" } as Partial<Settings>);
+    expect(s.apiKey).toBe("sk-test-key");
+  });
+
+  it("cleans every SECRET_NAMES field, not just apiKey", () => {
+    const s = migrateSettings({
+      hfToken: "hf-‌token ",
+      sonioxKey: " sonx-‍key",
+      deepgramKey: "﻿dg-key",
+      elevenLabsKey: " el-key ",
+      agentToken: "​agent-token​",
+    } as Partial<Settings>);
+    expect(s.hfToken).toBe("hf-token");
+    expect(s.sonioxKey).toBe("sonx-key");
+    expect(s.deepgramKey).toBe("dg-key");
+    expect(s.elevenLabsKey).toBe("el-key");
+    expect(s.agentToken).toBe("agent-token");
+  });
+});
+
 // MEDIUM-5 fix (v0.6 round-2 review) — the v0.6 new-built-in-packs (
 // modern-usage/finance-consumer/daily-idiom, packsSchemaVersion 1) used
 // to be permanently invisible to anyone who had ever unchecked even ONE

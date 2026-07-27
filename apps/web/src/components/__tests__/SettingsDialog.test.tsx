@@ -1888,6 +1888,74 @@ describe("SettingsDialog — FIX 2: Base URL is normalized/validated at 保存",
 });
 
 // ---------------------------------------------------------------
+// Field bug fix (iOS TestFlight: a user's valid OpenRouter key still
+// "401'd") — sanitizeSecretValue applied at the SAME 保存 boundary as
+// FIX 2's baseUrl normalization above, just for the API Key field.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — sanitizes a pasted API Key (zero-width chars + whitespace) at 保存", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced" }, hydrated: true });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    useApp.setState({ toast: null });
+    vi.unstubAllGlobals();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function findApiKeyInput(): HTMLInputElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) => l.textContent === "API Key");
+    const input = label?.parentElement?.parentElement?.querySelector("input");
+    if (!input) throw new Error("API Key input not found");
+    return input as HTMLInputElement;
+  }
+
+  it("a pasted key with a leading space + embedded zero-width space persists clean", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await act(async () => {
+      typeInto(findApiKeyInput(), " sk-​test-key ");
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.apiKey).toBe("sk-test-key");
+    expect(useApp.getState().toast).toBe("设置已保存");
+  });
+});
+
+// ---------------------------------------------------------------
 // 转录引擎 更换模型 (v0.4 S4 chunk 4, blueprint decision C's switch
 // flow). Same IS_DESKTOP limitation this file's own Soniox describe
 // block above already documents ("PREVIEW_TIER/IS_DESKTOP are

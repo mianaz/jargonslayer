@@ -153,6 +153,43 @@ describe("storage.ts", () => {
       const storage = await import("../storage");
       await expect(storage.saveSettings(sampleSettings)).resolves.toBeUndefined();
     });
+
+    // Field bug fix (iOS TestFlight postmortem): both catches used to be
+    // console.warn-only — invisible to 复制诊断. A WKWebView IDB failure
+    // must now leave a trace in the diag ring buffer too.
+    it("saveSettings failure also logs a diag 'error' entry (not just console.warn)", async () => {
+      const storage = await import("../storage");
+      const { set } = await import("idb-keyval");
+      const { clearDiag, getDiagEntries } = await import("../../diag/log");
+      clearDiag();
+      vi.mocked(set).mockRejectedValueOnce(new Error("quota exceeded"));
+
+      await expect(storage.saveSettings(sampleSettings)).rejects.toThrow("quota exceeded");
+
+      const entries = getDiagEntries().filter((e) => e.tag === "storage");
+      expect(entries).toHaveLength(1);
+      expect(entries[0].level).toBe("error");
+      expect(entries[0].detail).toContain("quota exceeded");
+    });
+
+    it("loadSettings failure also logs a diag 'error' entry and still falls back to null", async () => {
+      const storage = await import("../storage");
+      const { get } = await import("idb-keyval");
+      const { clearDiag, getDiagEntries } = await import("../../diag/log");
+      // Prime + complete the one-time legacy migration first (its own
+      // internal `get` calls would otherwise eat the mockRejectedValueOnce
+      // below before loadSettings' own SETTINGS_KEY read ever runs).
+      await storage.loadSettings();
+      clearDiag();
+      vi.mocked(get).mockRejectedValueOnce(new Error("read failed"));
+
+      await expect(storage.loadSettings()).resolves.toBeNull();
+
+      const entries = getDiagEntries().filter((e) => e.tag === "storage");
+      expect(entries).toHaveLength(1);
+      expect(entries[0].level).toBe("error");
+      expect(entries[0].detail).toContain("read failed");
+    });
   });
 
   describe("legacy migration", () => {

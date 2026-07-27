@@ -81,6 +81,27 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).toContain('"hasWebhookUrl": false');
     });
 
+    // Field bug fix (iOS TestFlight: hasApiKey:true next to an ambiguous
+    // 401 — a truncated/whitespace-mangled key still reads "configured"
+    // via hasApiKey alone) — length only, never the key content, and
+    // apiKey-only (not extended to hfToken/agentToken/etc.).
+    it("apiKeyChars reports the key's length, never its content", () => {
+      const report = buildDiagnosticReport(settingsWithSecrets());
+      expect(report).not.toContain(SENTINELS.apiKey);
+      expect(report).toContain(`"apiKeyChars": ${SENTINELS.apiKey.length}`);
+    });
+
+    it("apiKeyChars is 0 for an unconfigured (empty-string) apiKey", () => {
+      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      expect(report).toContain('"apiKeyChars": 0');
+    });
+
+    it("does not extend the Chars treatment to other secret-shaped fields", () => {
+      const report = buildDiagnosticReport(settingsWithSecrets());
+      expect(report).not.toContain("hfTokenChars");
+      expect(report).not.toContain("agentTokenChars");
+    });
+
     it("never leaks a secret VALUE even when a diag entry's own detail happens to mention the field name", () => {
       // A malformed/future call site could log something referencing a
       // field name — the report must still never contain the sentinel

@@ -10,6 +10,7 @@ import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
 import { resolveTaskCreds, type ResolvedTaskCreds } from "@/lib/llm/taskConfig";
 import { useLlmTelemetry } from "@/lib/llm/telemetry";
+import { sanitizeSecretValue } from "@/lib/settings/sanitizeSecret";
 import {
   credsMatch,
   deriveKeyStatus,
@@ -2237,6 +2238,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       taskLlm: normalizedTaskLlm,
       // W2: same "normalized + already validated above" guarantee.
       proxyUrl: normalizedProxyUrl,
+      // Field bug fix (iOS TestFlight, sanitizeSecret.ts's own doc):
+      // strip pasted zero-width chars + trim whitespace from every
+      // SECRET_NAMES field at this same save boundary — mirrors
+      // normalizeBaseUrl above, just for the six secret-shaped fields
+      // instead of baseUrl.
+      apiKey: sanitizeSecretValue(draft.apiKey),
+      hfToken: sanitizeSecretValue(draft.hfToken),
+      sonioxKey: sanitizeSecretValue(draft.sonioxKey),
+      deepgramKey: sanitizeSecretValue(draft.deepgramKey),
+      elevenLabsKey: sanitizeSecretValue(draft.elevenLabsKey),
+      agentToken: sanitizeSecretValue(draft.agentToken),
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
     // getSidecarMode is only ever read once, at app start (Finding 2c)

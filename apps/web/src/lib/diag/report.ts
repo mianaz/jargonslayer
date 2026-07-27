@@ -154,6 +154,14 @@ function redactSettingsObject(obj: Record<string, unknown>): Record<string, unkn
     }
     if (typeof value === "string" && isSecretShapedKey(key)) {
       out[`has${capitalizeFirst(key)}`] = hasSecret(value);
+      // Field bug fix (iOS TestFlight: hasApiKey:true next to an
+      // ambiguous 401 — see llm/client.ts's requireApiKey/sanitizeSecret.ts):
+      // length only, never content, so a truncated/whitespace-mangled
+      // key is visible in the next diag export without exposing the
+      // key itself. apiKey only, deliberately not extended to every
+      // SECRET_NAMES field — this is the one report.ts's `hasApiKey`
+      // line couldn't already tell apart from a genuinely missing key.
+      if (key === "apiKey") out.apiKeyChars = value.length;
       continue;
     }
     if (typeof value === "string" && isUrlShapedKey(key)) {

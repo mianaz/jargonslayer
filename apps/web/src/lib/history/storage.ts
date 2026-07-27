@@ -5,6 +5,9 @@
 
 import { del, get, set } from "idb-keyval";
 import { sessionToMeta, type MeetingSession, type SessionMeta, type Settings } from "@jargonslayer/core/types";
+// diag/log.ts is a leaf module (no imports of its own — see its own
+// header) — safe to import statically here, no cycle risk.
+import { diagLog } from "../diag/log";
 
 const SETTINGS_KEY = "jargonslayer:settings";
 const SESSIONS_INDEX_KEY = "jargonslayer:sessions:index";
@@ -79,6 +82,15 @@ export async function saveSettings(s: Settings): Promise<void> {
     await set(SETTINGS_KEY, s);
   } catch (err) {
     console.warn("[storage] saveSettings failed", err);
+    // Field bug fix (iOS TestFlight postmortem): this used to be
+    // console.warn-only — invisible to 复制诊断, so a WKWebView IDB
+    // write failure left no trace a user could actually report.
+    diagLog(
+      "error",
+      "storage",
+      "设置保存失败（IndexedDB 写入异常）",
+      err instanceof Error ? err.message : String(err),
+    );
     throw err;
   }
 }
@@ -91,6 +103,16 @@ export async function loadSettings(): Promise<Settings | null> {
     return s ?? null;
   } catch (err) {
     console.warn("[storage] loadSettings failed", err);
+    // Same fix as saveSettings above — a read failure here silently
+    // falls back to DEFAULT_SETTINGS (migrateSettings(null)) with
+    // nothing in the diag ring buffer to explain why a saved key
+    // vanished.
+    diagLog(
+      "error",
+      "storage",
+      "设置读取失败（IndexedDB 读取异常，已回退到默认设置）",
+      err instanceof Error ? err.message : String(err),
+    );
     return null;
   }
 }
