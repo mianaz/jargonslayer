@@ -932,6 +932,12 @@ async function detectApiImpl(
   systemPromptOverride?: string,
 ): Promise<DetectResponse> {
   if (shouldAttemptSubscriptionDirect(settings)) {
+    // Known limitation (fix-round accept, Sol MEDIUM): the
+    // subscription-direct agent path does not thread
+    // systemPromptOverride — a 划词 lookup through the local agent
+    // still gets the passive filter prompt. Experimental feature,
+    // build-flag-gated and off by default; thread the flag through the
+    // agent protocol if it ever graduates.
     const result = await attemptSubscriptionDirect(settings, () => agentDetect(body, settings));
     if (result === null) {
       // Dictionary-mode signal: every existing detectApi caller

@@ -211,6 +211,17 @@ public final class OsSpeechSession: @unchecked Sendable {
       try engine.start()
 
       registerLifecycleObservers()
+      // Fix-round (Sol MEDIUM): an engine-config change landing in the
+      // sub-millisecond window between `engine.start()` above and the
+      // observer registration would stop the engine with nobody
+      // listening — no frames, no terminal event, a silent hang until
+      // the user's own stop. The notification is unrecoverable once
+      // missed, but its documented EFFECT (the engine stops itself) is
+      // still observable: recheck after registration and convert a
+      // missed one into the same terminal `.deviceChanged`.
+      if !engine.isRunning {
+        requestStop(kind: .deviceChanged, message: "engine-config-change pre-observer window")
+      }
       await MainActor.run { UIApplication.shared.isIdleTimerDisabled = true }
 
       // "starting" was already emitted above (mirrors macOS's own

@@ -21,6 +21,7 @@ import { defineApi, NoKeyError } from "@/lib/llm/client";
 import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 import { useSelectionLookup } from "@/lib/tasks/selectionLookup";
 import { findEntryBySurface } from "@/lib/history/glossary";
+import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
 import { newId } from "@jargonslayer/core/types";
 import type { CustomEntry, CustomEntryKind } from "@jargonslayer/core/types";
 
@@ -49,6 +50,27 @@ function emptyDraft(headword: string): GlossaryDraft {
     variants: [],
     source: "manual",
   };
+}
+
+// Manual-draft seed (fix round, Sol MEDIUM): since 保存 no longer
+// requires a hand-typed 中文解释, a blank manual save of a phrase the
+// built-in dictionary DOES know would enroll a blank-backed SRS card
+// that shadows the useful built-in gloss on future detections
+// (personal entries win in dictionary.ts). Seed the draft from an
+// offline dictionary scan when it hits, so the blank-save path is left
+// only for genuinely-unknown phrases — where blank is the honest state
+// (editable later in GlossaryPanel).
+function manualDraft(text: string): GlossaryDraft {
+  const scan = scanDictionary(text);
+  const expr = scan.expressions[0];
+  if (expr) {
+    return { ...emptyDraft(expr.expression), chinese_explanation: expr.chinese_explanation };
+  }
+  const term = scan.terms[0];
+  if (term) {
+    return { ...emptyDraft(term.term), kind: "term", chinese_explanation: term.gloss_zh };
+  }
+  return emptyDraft(text);
 }
 
 const POPOVER_WIDTH = 320; // w-80
@@ -151,7 +173,7 @@ export default function LookupPopover() {
   const handleAddToGlossary = async () => {
     if (!lookup) return;
     if (!settings.aiDetect) {
-      setDraft(emptyDraft(lookup.text));
+      setDraft(manualDraft(lookup.text));
       return;
     }
     setGlossaryLoading(true);
@@ -175,7 +197,7 @@ export default function LookupPopover() {
       });
     } catch (err) {
       if (err instanceof NoKeyError) {
-        setDraft(emptyDraft(lookup.text));
+        setDraft(manualDraft(lookup.text));
       } else {
         showToast(err instanceof Error ? err.message : "解释失败，请重试");
       }

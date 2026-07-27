@@ -4348,7 +4348,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     key={opt.value}
                     type="button"
                     onClick={() => {
-                      if (opt.value === "off") patch({ autoDetect: false });
+                      // 关闭 clears BOTH flags (Sol HIGH, fix round):
+                      // leaving aiDetect=true made desktop text-selection
+                      // still fire an AI lookup while the UI promised
+                      // no detection at all. Modes are explicit — no
+                      // remembered aiDetect preference across 关闭.
+                      if (opt.value === "off") patch({ autoDetect: false, aiDetect: false });
                       else if (opt.value === "dictionary") patch({ autoDetect: true, aiDetect: false });
                       else patch({ autoDetect: true, aiDetect: true });
                     }}
@@ -4361,7 +4366,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 ))}
               </div>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                词典检测内置离线即时生效；词典+AI 检测额外并行调用 AI，就地升级词典结果；检测关闭则完全不做检测
+                词典检测内置离线即时生效；词典+AI 检测额外并行调用 AI，就地升级词典结果；检测关闭后不再自动检测、划词只查离线词典
               </div>
             </div>
 

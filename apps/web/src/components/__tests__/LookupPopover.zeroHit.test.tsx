@@ -172,3 +172,67 @@ describe("LookupPopover — zero-hit state (field bug fix)", () => {
     expect(entry.headword).toBe("keep the ball rolling");
   });
 });
+
+// Fix round (Sol MEDIUM): with the 保存-requires-explanation gate gone,
+// a blank manual save of a phrase the BUILT-IN dictionary knows would
+// enroll a blank-backed card that shadows the built-in gloss (personal
+// entries win). manualDraft now seeds the draft from an offline
+// scanDictionary hit, so blank saves are left only for genuinely
+// unknown phrases.
+describe("LookupPopover — manual draft seeds from the built-in dictionary", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({
+      customEntries: [],
+      settings: { ...DEFAULT_SETTINGS, aiDetect: false },
+      lookup: {
+        id: LOOKUP_ID,
+        // In the core pack ("get the ball rolling") — unlike the other
+        // suite's "keep the ball rolling", which deliberately misses.
+        text: "get the ball rolling",
+        contextText: "let's get the ball rolling on this",
+        x: 10,
+        y: 10,
+      },
+    });
+    useSelectionLookup.setState({
+      byId: { [LOOKUP_ID]: { status: "done", result: { expressions: [], terms: [] }, dictFallback: true } },
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    useApp.setState({ lookup: null });
+    useSelectionLookup.setState({ byId: {} });
+  });
+
+  it("aiDetect off + dictionary-known phrase: 中文解释 arrives prefilled from the built-in gloss", async () => {
+    await act(async () => {
+      root!.render(<LookupPopover />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const openDraftBtn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.textContent === "手动添加到词典",
+    );
+    if (!openDraftBtn) throw new Error("手动添加到词典 button not found");
+    await act(async () => {
+      openDraftBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const textarea = container!.querySelector("textarea") as HTMLTextAreaElement | null;
+    if (!textarea) throw new Error("中文解释 textarea not found");
+    expect(textarea.value.length).toBeGreaterThan(0);
+  });
+});

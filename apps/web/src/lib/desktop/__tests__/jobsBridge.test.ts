@@ -878,7 +878,7 @@ describe("trackOsSpeechAsset", () => {
       tracker.settle();
 
       const tasks = Object.values(useTasks.getState().tasks);
-      expect(tasks[0]).toMatchObject({ status: "error", error: "系统识别已停止，模型下载未完成" });
+      expect(tasks[0]).toMatchObject({ status: "error", error: "系统识别已停止，语音资源下载未完成" });
     });
 
     it("fails a row a DIFFERENT tracker started (preempt-handoff case) — looks up the registry, not just its own local id", () => {

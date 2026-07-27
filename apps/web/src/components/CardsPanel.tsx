@@ -769,9 +769,9 @@ function EmptyState() {
   if (detectMode === "off") {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-        <div className="text-sm font-medium text-fg">实时检测已关闭</div>
+        <div className="text-sm font-medium text-fg">检测已关闭</div>
         <div className="mt-2 max-w-xs text-xs leading-[1.7] text-mut">
-          在设置里打开「实时检测」，会议里出现的英文表达会自动变成卡片。
+          在设置的「检测模式」里选择词典或词典＋AI 检测，会议里出现的英文表达会自动变成卡片。
         </div>
       </div>
     );

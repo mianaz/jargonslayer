@@ -2787,3 +2787,69 @@ describe("SettingsDialog — Bit 装扮 picker (v0.5.1 Bit sprint, Lane B)", () 
     expect(useApp.getState().settings.bitCostume).toBe("douli");
   });
 });
+
+// Fix round (Sol HIGH, iOS field-fix r2): 检测关闭 must clear BOTH
+// autoDetect AND aiDetect — the first cut only cleared autoDetect, so
+// desktop text-selection still fired an AI lookup while the segmented
+// control promised no detection at all.
+describe("SettingsDialog — 检测模式 mapping writes both flags", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: DEFAULT_SETTINGS, hydrated: true });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  async function openAiDetectAndClickMode(modeLabel: string): Promise<void> {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText(modeLabel).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  it("检测关闭 persists autoDetect=false AND aiDetect=false (defaults start true/true)", async () => {
+    await openAiDetectAndClickMode("检测关闭");
+    const saved = useApp.getState().settings;
+    expect(saved.autoDetect).toBe(false);
+    expect(saved.aiDetect).toBe(false);
+  });
+
+  it("词典检测 persists autoDetect=true, aiDetect=false", async () => {
+    await openAiDetectAndClickMode("词典检测");
+    const saved = useApp.getState().settings;
+    expect(saved.autoDetect).toBe(true);
+    expect(saved.aiDetect).toBe(false);
+  });
+});
