@@ -7,9 +7,19 @@
 // self-contained subcomponent... referenced by a SINGLE import + render
 // line; the lead serializes those one-line insertions") — no store
 // imports, value+onChange only, mirroring AnkiConnectSection.tsx's own
-// shape. Hidden on iOS — no on-device translator there (A6 scope,
-// unchanged). Desktop (macOS 26+) got its OWN on-device path in v0.6
+// shape. Desktop (macOS 26+) got its OWN on-device path in v0.6
 // (DesktopTranslationEngineRow below) — un-gated there instead of hidden.
+//
+// v0.6 field-fix (item 5, iOS TestFlight report): iOS used to be hidden
+// entirely (A6 scope) — but a translateEngine:"system" value picked on
+// ANOTHER platform (settings sync) still silently fell back to LLM on
+// iOS (providers.ts's resolveTranslationProvider), with no UI to explain
+// why. iOS now renders the SAME WebTranslationEngineRow branch desktop's
+// dispatcher falls through to (IS_DESKTOP is always false on iOS), with
+// its own 系统 option force-disabled — see WebTranslationEngineRow's own
+// IS_IOS branch below. DesktopTranslationEngineRow gets the identical
+// treatment for consistency even though IS_DESKTOP can't be true on iOS
+// today.
 //
 // INSERTION POINT for the lead: SettingsDialog.tsx's AI 检测 section,
 // directly after the existing 双语转录 row (`data-ui-level=
@@ -54,13 +64,15 @@ export interface TranslationEngineRowProps {
   langPair: TranslationLangPair;
 }
 
-/** Platform dispatcher — IS_IOS/IS_DESKTOP are build-time constants
- *  (never change across this component's lifetime), so branching to a
+/** Platform dispatcher — IS_DESKTOP is a build-time constant (never
+ *  changes across this component's lifetime), so branching to a
  *  completely different sub-component per platform here is safe: each
  *  sub-component runs its own hooks in its own stable order, same as any
- *  other build-time-gated render split in this codebase. */
+ *  other build-time-gated render split in this codebase. iOS (IS_DESKTOP
+ *  always false there) falls through to WebTranslationEngineRow, which
+ *  force-disables its own 系统 option — see this file's own header
+ *  comment. */
 export default function TranslationEngineRow(props: TranslationEngineRowProps) {
-  if (IS_IOS) return null; // no on-device translator on iOS — unchanged v0.5 A6 scope
   if (IS_DESKTOP) return <DesktopTranslationEngineRow {...props} />;
   return <WebTranslationEngineRow {...props} />;
 }
@@ -116,9 +128,14 @@ function WebTranslationEngineRow({ value, onChange, langPair }: TranslationEngin
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [polling, langPair.source, langPair.target]);
 
-  const systemUnavailable = hint === "no-api" || hint === "unavailable";
-  const systemLabel =
-    hint === "no-api"
+  // v0.6 field-fix (item 5): iOS has no Chrome Translator at all — force
+  // -disabled with an honest iOS-specific reason rather than the generic
+  // (and, on a native app, confusing) "当前浏览器不支持" the no-api hint
+  // below would otherwise show.
+  const systemUnavailable = IS_IOS || hint === "no-api" || hint === "unavailable";
+  const systemLabel = IS_IOS
+    ? "系统翻译（Chrome 内置·本机处理）（iOS 暂不支持）"
+    : hint === "no-api"
       ? "系统翻译（Chrome 内置·本机处理）— 当前浏览器不支持"
       : hint === "unavailable"
         ? "系统翻译（Chrome 内置·本机处理）— 当前语言组合不支持"
@@ -212,9 +229,16 @@ function DesktopTranslationEngineRow({ value, onChange, langPair }: TranslationE
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [langPair.source, langPair.target]);
 
-  const systemUnavailable = hint === "unsupported";
-  const systemLabel =
-    hint === "unsupported" ? "Apple 翻译 · 本机离线 — 需要 macOS 26 或更高版本" : "Apple 翻译 · 本机离线";
+  // v0.6 field-fix (item 5): defensive/for-consistency only — IS_DESKTOP
+  // is always false on iOS today (see the dispatcher above), so this
+  // branch never actually mounts there, but mirrors WebTranslationEngineRow's
+  // own IS_IOS handling exactly in case that ever changes.
+  const systemUnavailable = IS_IOS || hint === "unsupported";
+  const systemLabel = IS_IOS
+    ? "Apple 翻译 · 本机离线（iOS 暂不支持）"
+    : hint === "unsupported"
+      ? "Apple 翻译 · 本机离线 — 需要 macOS 26 或更高版本"
+      : "Apple 翻译 · 本机离线";
 
   return (
     <div data-testid="translation-engine-row">

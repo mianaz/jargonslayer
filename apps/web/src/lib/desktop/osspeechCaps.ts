@@ -203,7 +203,7 @@ export async function preinstallOsSpeech(locale: string): Promise<void> {
       resolveDone();
     } else if (OSSPEECH_TERMINAL_STATUS_KINDS.has(kind)) {
       settled = true;
-      rejectDone(new Error(message || "系统识别模型预下载失败"));
+      rejectDone(new Error(message || "系统语音资源预下载失败"));
     }
   });
 

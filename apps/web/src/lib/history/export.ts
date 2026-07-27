@@ -20,9 +20,10 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   tabaudio: "标签页音频",
   appaudio: "系统/App 音频",
   // S11 (v0.4.3): terse noun form for the export label, matching every
-  // other entry here — engineOptions.ts's own picker label carries the
-  // fuller "· 开箱即用" tagline, which doesn't fit this file's plain
-  // identifier convention.
+  // other entry here. Since the iOS field-fix round the picker label
+  // (engineCapabilities.ts) dropped its "· 开箱即用" tagline too, so
+  // the two are now byte-identical — kept as separate constants only
+  // because this file stays engine-metadata-free by design.
   osspeech: "系统识别",
   soniox: "Soniox 云端识别",
   // v0.4.7 (docs/design-explorations/stt-provider-wiring-2026-07.md,

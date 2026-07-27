@@ -708,7 +708,7 @@ describe("trackOsSpeechAsset", () => {
     expect(useTasks.getState().tasks).toEqual({});
   });
 
-  it("asset-downloading lazily starts a running task row, labeled 系统识别模型 by default", () => {
+  it("asset-downloading lazily starts a running task row, labeled 系统语音资源 by default", () => {
     const tracker = trackOsSpeechAsset();
     tracker.handle("asset-downloading", 0.3);
 
@@ -716,7 +716,7 @@ describe("trackOsSpeechAsset", () => {
     expect(tasks).toHaveLength(1);
     expect(tasks[0]).toMatchObject({
       kind: "os-speech-asset",
-      label: "系统识别模型",
+      label: "系统语音资源",
       stage: "下载中",
       progress: 0.3,
       status: "running",
@@ -783,7 +783,7 @@ describe("trackOsSpeechAsset", () => {
     tracker.handle("asset-failed");
 
     const tasks = Object.values(useTasks.getState().tasks);
-    expect(tasks[0].error).toBe("系统识别模型下载失败");
+    expect(tasks[0].error).toBe("系统语音资源下载失败");
   });
 
   it("a FRESH tracker per call never reuses a PRIOR tracker's already-settled task id", () => {

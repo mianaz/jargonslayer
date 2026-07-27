@@ -21,7 +21,7 @@ describe("ENGINE_OPTIONS (iOS build)", () => {
   it("osspeech carries the SAME S11-pinned label/posture the desktop build uses (Miana-veto #2: never say this engine's name differently)", () => {
     expect(ENGINE_OPTIONS[0]).toEqual({
       value: "osspeech",
-      label: "系统识别 · 开箱即用",
+      label: "系统识别",
       posture: "local",
       retentionClass: "local",
     });

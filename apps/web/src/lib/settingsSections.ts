@@ -24,8 +24,10 @@ export const SETTINGS_UI_LEVELS = {
   // AI 检测 — mixed section, tagged row-by-row:
   aiDetectPreviewBanner: "simple", // preview-tier data-path disclosure
   aiDetectCredentials: "advanced", // CredentialFields (provider/baseUrl/apiKey/detectModel/summaryModel) + 测试连接
-  aiDetectAutoDetect: "simple", // 实时检测
-  aiDetectCore: "simple", // AI 检测 toggle (the "core" of the section)
+  // v0.6 field-fix (item 3): 实时检测/AI 检测 merged into ONE 检测模式
+  // segmented control (SettingsDialog.tsx) — aiDetectAutoDetect retired,
+  // aiDetectCore now tags that single merged row.
+  aiDetectCore: "simple", // 检测模式 segmented control (the "core" of the section)
   aiDetectConfidence: "advanced", // 置信度阈值
   aiDetectExplainLanguage: "simple", // 解释语言
   aiDetectBilingual: "simple", // 双语转录
