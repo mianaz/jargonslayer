@@ -349,7 +349,7 @@ export class OsSpeechEngine implements STTEngine {
         this.assetTracker?.handle("asset-checking");
         if (!this.assetCheckingNoticeShown) {
           this.assetCheckingNoticeShown = true;
-          events.onNotice?.("正在检查系统识别模型…");
+          events.onNotice?.("正在检查系统语音资源…");
         }
         break;
       case "asset-downloading":
@@ -357,7 +357,7 @@ export class OsSpeechEngine implements STTEngine {
         this.assetTracker?.handle("asset-downloading", payload.progress);
         if (!this.assetDownloadingNoticeShown) {
           this.assetDownloadingNoticeShown = true;
-          events.onNotice?.("首次使用需下载系统识别模型，请保持网络畅通…");
+          events.onNotice?.("正在下载系统语音资源（系统自带，仅首次）…");
         }
         break;
       case "asset-installed":
@@ -366,7 +366,7 @@ export class OsSpeechEngine implements STTEngine {
         break;
       case "asset-failed":
         this.assetTracker?.handle("asset-failed", undefined, payload.message);
-        events.onStatus("error", "系统识别模型下载失败，请检查网络后重试");
+        events.onStatus("error", "系统语音资源下载失败，请检查网络后重试");
         break;
       case "locale-resolved":
         if (payload.resolvedLocale) events.onNotice?.(`识别语言：${payload.resolvedLocale}`);

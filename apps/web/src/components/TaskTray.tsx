@@ -23,7 +23,10 @@ export const KIND_LABEL: Record<TaskState["kind"], string> = {
   "import-text": "文稿导入",
   "model-download": "下载模型",
   "diar-install": "安装说话人分离",
-  "os-speech-asset": "下载系统识别模型",
+  // v0.6 field-fix (item 4): "系统识别模型" scared users into thinking
+  // the app downloads its own model — this is Apple's own per-language
+  // speech asset, OS-managed.
+  "os-speech-asset": "下载系统语音资源",
   "mlx-install": "安装 MLX 运行环境",
   "selection-lookup": "解释所选",
 };

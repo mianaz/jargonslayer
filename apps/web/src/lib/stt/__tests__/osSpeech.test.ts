@@ -352,7 +352,7 @@ describe("OsSpeechEngine", () => {
 
       emit("osspeech://status", { kind: "asset-failed", message: "network unreachable", source: "session" });
 
-      expect(onStatus).toHaveBeenCalledWith("error", "系统识别模型下载失败，请检查网络后重试");
+      expect(onStatus).toHaveBeenCalledWith("error", "系统语音资源下载失败，请检查网络后重试");
       expect(assetTrackers[0].handle).toHaveBeenCalledWith("asset-failed", undefined, "network unreachable");
     });
 

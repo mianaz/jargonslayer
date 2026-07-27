@@ -4,7 +4,7 @@
 // Edits a local draft; only committed to the store on 保存.
 
 import { useEffect, useState } from "react";
-import { Eye, EyeSlash, X } from "@phosphor-icons/react";
+import { CaretDown, CaretRight, Eye, EyeSlash, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
@@ -20,7 +20,7 @@ import {
   type KeyStatus,
 } from "@/lib/settings/keyStatus";
 import { packCounts, setEnabledPacks } from "@jargonslayer/core/detect/dictionary";
-import { getAllPacks } from "@jargonslayer/core/detect/packs";
+import { getAllPacks, type DictPack } from "@jargonslayer/core/detect/packs";
 import {
   addPackFromManifest,
   addPackSource,
@@ -125,6 +125,10 @@ import CredentialFields, {
   type ProviderPresetId,
 } from "@/components/CredentialFields";
 import AiStatusPanel from "@/components/AiStatusPanel";
+// v0.6 field-fix (item 3): the merged 检测模式 segmented control reuses
+// StatusLine's own off/dictionary/llm label strings verbatim — single
+// source of truth, never a second hand-copied set.
+import { DETECT_MODE_LABEL } from "@/components/StatusLine";
 import {
   buildAuthUrl,
   codeChallengeS256,
@@ -269,7 +273,10 @@ const ALL_ENGINE_CARDS: {
     ? [
         {
           value: "osspeech" as const,
-          label: "系统识别 · 开箱即用",
+          // v0.6 field-fix (item 2): trimmed "· 开箱即用" — see
+          // engineCapabilities.ts's own osspeech entry, the canonical
+          // copy of this label every surface pins verbatim.
+          label: "系统识别",
           // S13 lead fix (Lane D report flag #1): the card is shared by
           // both Tauri shells — the OS-version tail must name the right
           // platform (IS_IOS is a build-time const, so this folds).
@@ -443,6 +450,48 @@ const UI_MODE_OPTIONS: { value: Settings["uiMode"]; label: string }[] = [
   { value: "advanced", label: "高级" },
 ];
 
+// v0.6 field-fix (item 3, iOS TestFlight report): a user looking for
+// "检测模式" in settings found two separate 实时检测/AI 检测 toggles
+// instead — merged into one three-way segmented control here, same
+// FONT_SIZE_OPTIONS-style button row. Labels borrowed verbatim from
+// StatusLine's own DETECT_MODE_LABEL (see the import above) rather than
+// a second hand-copied set of strings.
+const DETECT_MODE_OPTIONS: { value: "off" | "dictionary" | "llm"; label: string }[] = [
+  { value: "off", label: DETECT_MODE_LABEL.off },
+  { value: "dictionary", label: DETECT_MODE_LABEL.dictionary },
+  { value: "llm", label: DETECT_MODE_LABEL.llm },
+];
+
+// v0.6 field-fix (item 1, iOS TestFlight report): "too many small
+// dictionaries" — a UI-only regroup of the 16 flat toggleable built-in
+// packs into 3 collapsible buckets. Never a data/pack-id merge: every
+// group here still keys off the SAME individual pack ids packs.ts
+// defines (licensing + commonWord gating + domain tags stay per-id).
+// Remote/imported packs (p.remote) are NOT part of this map — they stay
+// outside the groups, rendered exactly as before. A future built-in
+// pack id landing without an entry here falls into 其他 instead of
+// silently vanishing.
+const BUILTIN_PACK_GROUP_ORDER = ["通用表达", "职场与会议", "专业领域", "其他"] as const;
+type BuiltinPackGroup = (typeof BUILTIN_PACK_GROUP_ORDER)[number];
+const BUILTIN_PACK_GROUP: Record<string, Exclude<BuiltinPackGroup, "其他">> = {
+  "daily-idiom": "通用表达",
+  "modern-usage": "通用表达",
+  chitchat: "通用表达",
+  softening: "通用表达",
+  "finance-consumer": "通用表达",
+  "meeting-flow": "职场与会议",
+  project: "职场与会议",
+  feedback: "职场与会议",
+  sales: "职场与会议",
+  "business-terms": "职场与会议",
+  academic: "职场与会议",
+  "tech-terms": "专业领域",
+  "ml-stats": "专业领域",
+  stats: "专业领域",
+  "bioinformatics-edam": "专业领域",
+  "pharma-biotech": "专业领域",
+};
+
 // Settings redesign (owner ask 2026-07-11: "side navbar for each
 // category"): one nav entry per existing <section> — id per category,
 // label copied verbatim from that section's own <SectionHeading>. Order
@@ -494,7 +543,6 @@ const IOS_ADVANCED_CATEGORY_IDS: SettingsCategoryId[] = ["taskLlm", "subscriptio
 const AI_DETECT_ROW_LEVELS = [
   SETTINGS_UI_LEVELS.aiDetectPreviewBanner,
   SETTINGS_UI_LEVELS.aiDetectCredentials,
-  SETTINGS_UI_LEVELS.aiDetectAutoDetect,
   SETTINGS_UI_LEVELS.aiDetectCore,
   SETTINGS_UI_LEVELS.aiDetectConfidence,
   SETTINGS_UI_LEVELS.aiDetectExplainLanguage,
@@ -1166,6 +1214,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [checkedPacks, setCheckedPacks] = useState<Set<string>>(
     new Set(settings.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
   );
+  // v0.6 field-fix (item 1): which built-in pack GROUPS (通用表达/职场与
+  // 会议/专业领域/其他) are expanded — plain local view state, collapsed
+  // by default, never persisted (mirrors LogPane's own expanded state in
+  // DesktopWizard.tsx). Never touches checkedPacks/enabledPacks — purely
+  // which rows are currently visible.
+  const [expandedPackGroups, setExpandedPackGroups] = useState<Set<BuiltinPackGroup>>(new Set());
   // 词典源 (remote dictionary packs, #20).
   const [packSources, setPackSources] = useState<RemotePackSource[]>([]);
   const [packSourceUrl, setPackSourceUrl] = useState("");
@@ -1841,6 +1895,86 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const nonCorePackIds = allPacks.filter((p) => p.id !== "core").map((p) => p.id);
   const allPacksChecked = nonCorePackIds.every((id) => checkedPacks.has(id));
   const packEntryCounts = packCounts();
+  // v0.6 field-fix (item 1): built-in (non-remote) packs, bucketed by
+  // BUILTIN_PACK_GROUP into the 3 collapsible groups + a catch-all 其他
+  // — computed once here, rendered far below in 词典主题包. Remote packs
+  // are read straight off `allPacks` at that same render site, unchanged.
+  const builtinPacks = allPacks.filter((p) => p.id !== "core" && !p.remote);
+  const remotePacksList = allPacks.filter((p) => p.remote);
+  const packGroups = BUILTIN_PACK_GROUP_ORDER.map((group) => ({
+    group,
+    packs: builtinPacks.filter((p) => (BUILTIN_PACK_GROUP[p.id] ?? "其他") === group),
+  })).filter((g) => g.packs.length > 0);
+  // v0.6 field-fix (item 3): 检测模式 segmented control's own derived
+  // value — off/dictionary/llm computed straight off the draft state
+  // this control edits (draft.autoDetect/aiDetect), matching the SAME
+  // vocabulary the store's separate RUNTIME detectMode field uses
+  // (store.ts: `state.settings.aiDetect ? "llm" : "dictionary"`, gated
+  // off entirely when !autoDetect — see scheduler.ts's own `if
+  // (!settings.autoDetect)` early-out).
+  const detectModeValue: "off" | "dictionary" | "llm" = !draft.autoDetect
+    ? "off"
+    : draft.aiDetect
+      ? "llm"
+      : "dictionary";
+
+  // v0.6 field-fix (item 1): single row renderer shared by every group's
+  // expanded body AND the remote-pack flat list below it — "expanding
+  // reveals the existing per-pack rows unchanged", byte-identical to the
+  // pre-regroup markup either way.
+  const renderPackRow = (p: DictPack) => {
+    // v0.6 T1: replaces the old blanket "社区" badge — every remote pack
+    // now shows whether it's an official jargonslayer-dicts release or
+    // something the user pointed at/imported themselves. Recomputed on
+    // every render via classifyPackOrigin (never a stored flag — see
+    // that function's own doc comment on why). Matched against
+    // packSources by pack id since DictPack itself carries no url; a
+    // remote pack missing its own source (should never happen — every
+    // registry entry came from one) falls back to "" ->
+    // classifyPackOrigin's own "imported" default.
+    const origin = p.remote
+      ? classifyPackOrigin(packSources.find((s) => s.pack.id === p.id)?.url ?? "")
+      : null;
+    return (
+      <label key={p.id} className="flex items-center justify-between gap-3 py-1">
+        <div>
+          <div className="text-sm text-fg">
+            {/* N5 fix (adversarial review): an imported pack's name is
+               untrusted remote content — <bdi> isolates it from bidi
+               reordering so it can't visually swallow/reorder the
+               官方/已导入 badge, which stays in its OWN sibling element
+               either way (validateManifest also strips bidi/zero-width
+               control chars at the source — this is a second,
+               independent layer). */}
+            <bdi>{p.name}</bdi>
+            {origin && (
+              <span
+                className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut"
+                title={
+                  origin === "official"
+                    ? "来自 JargonSlayer 官方词典库"
+                    : "由你从外部链接或文件导入，内容未经官方审核"
+                }
+              >
+                {origin === "official" ? "官方" : "已导入"}
+              </span>
+            )}
+          </div>
+          <div className="text-xs text-mut2">
+            {/* H3(b) fix (adversarial review): a plain
+               packEntryCounts[p.id] read turns an id of "__proto__"
+               into an Object.prototype access ("Objects are not valid
+               as a React child") instead of a real miss —
+               validateManifest now rejects that id at install time
+               (H3(a)), but this read-side hardening is defense in
+               depth. */}
+            {p.description}（{Object.hasOwn(packEntryCounts, p.id) ? packEntryCounts[p.id] : 0} 条）
+          </div>
+        </div>
+        <ToggleSwitch checked={checkedPacks.has(p.id)} onChange={(checked) => togglePack(p.id, checked)} />
+      </label>
+    );
+  };
 
   const handleAddPackSource = async () => {
     const rawUrl = packSourceUrl.trim();
@@ -3010,7 +3144,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   >
                     {/* S14.1 field fix (item 5): at 375-390px this row
                        had no wrap/shrink escape hatch — a long label
-                       (Soniox 云端识别, 系统识别 · 开箱即用) plus a
+                       (Soniox 云端识别, 系统识别) plus a
                        shrink-0 badge cluster (up to 2 — 本地版功能 + 实验
                        can no longer co-occur on one card since the BYOK
                        preview sprint, see previewLocked's own doc above —
@@ -3070,7 +3204,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                machine can't run makes no sense. */}
             {draft.engine === "osspeech" && (
               <div className="space-y-2 border border-edge bg-panel2 p-3">
-                <div className="text-sm text-fg">系统识别模型</div>
+                {/* v0.6 field-fix (item 4): "系统识别模型" read as "the
+                   app downloads its own model" — this is Apple's own
+                   per-language speech asset, OS-managed. */}
+                <div className="text-sm text-fg">系统语音资源</div>
                 <div className="text-xs leading-[1.7] text-mut2">
                   首次监听时会自动下载所需的系统模型；也可以提前在这里预下载，避免第一次会议时等待。
                 </div>
@@ -4196,26 +4333,42 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             )}
 
-            <label
-              className="flex items-center justify-between gap-3 py-1"
-              data-ui-level="aiDetectAutoDetect"
-            >
-              <span className="text-sm text-fg">实时检测</span>
-              <ToggleSwitch checked={draft.autoDetect} onChange={(checked) => patch({ autoDetect: checked })} />
-            </label>
-
-            <label
-              className="flex items-center justify-between gap-3 py-1"
-              data-ui-level="aiDetectCore"
-            >
-              <div>
-                <div className="text-sm text-fg">AI 检测</div>
-                <div className="text-xs text-mut2">
-                  内置词典始终即时检测；开启后 AI 并行分析并就地升级词典结果。关闭则完全离线，不调用任何 API
-                </div>
+            {/* v0.6 field-fix (item 3): merges the old 实时检测/AI 检测
+               toggle pair into one 检测模式 segmented control — same
+               button-row pattern as 全局字号 (FONT_SIZE_OPTIONS) below.
+               data-ui-level stays "aiDetectCore" (both old rows were
+               "simple" anyway); aiDetectAutoDetect is retired from
+               settingsSections.ts since there's no longer a second row
+               to tag. */}
+            <div data-ui-level="aiDetectCore">
+              <label className="text-xs text-mut">检测模式</label>
+              <div className="mt-1 flex items-center gap-0.5 border border-edge bg-panel2 p-0.5">
+                {DETECT_MODE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      // 关闭 clears BOTH flags (Sol HIGH, fix round):
+                      // leaving aiDetect=true made desktop text-selection
+                      // still fire an AI lookup while the UI promised
+                      // no detection at all. Modes are explicit — no
+                      // remembered aiDetect preference across 关闭.
+                      if (opt.value === "off") patch({ autoDetect: false, aiDetect: false });
+                      else if (opt.value === "dictionary") patch({ autoDetect: true, aiDetect: false });
+                      else patch({ autoDetect: true, aiDetect: true });
+                    }}
+                    className={`flex-1 px-2 py-1.5 text-sm transition-colors ${
+                      detectModeValue === opt.value ? "bg-panel3 text-fg" : "text-mut hover:text-fg"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
               </div>
-              <ToggleSwitch checked={draft.aiDetect} onChange={(checked) => patch({ aiDetect: checked })} />
-            </label>
+              <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                词典检测内置离线即时生效；词典+AI 检测额外并行调用 AI，就地升级词典结果；检测关闭后不再自动检测、划词只查离线词典
+              </div>
+            </div>
 
             {isSectionVisible(level, SETTINGS_UI_LEVELS.aiDetectConfidence) && (
               <div data-ui-level="aiDetectConfidence">
@@ -4501,68 +4654,63 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 <ToggleSwitch checked disabled />
               </label>
-              {allPacks.filter((p) => p.id !== "core").map((p) => {
-                // v0.6 T1: replaces the old blanket "社区" badge —
-                // every remote pack now shows whether it's an official
-                // jargonslayer-dicts release or something the user
-                // pointed at/imported themselves. Recomputed on every
-                // render via classifyPackOrigin (never a stored flag —
-                // see that function's own doc comment on why). Matched
-                // against packSources by pack id since DictPack itself
-                // carries no url; a remote pack missing its own source
-                // (should never happen — every registry entry came
-                // from one) falls back to "" -> classifyPackOrigin's
-                // own "imported" default.
-                const origin = p.remote
-                  ? classifyPackOrigin(packSources.find((s) => s.pack.id === p.id)?.url ?? "")
-                  : null;
+              {/* v0.6 field-fix (item 1): the 16 built-in packs, bucketed
+                 into 3 collapsible groups (+ 其他 catch-all) instead of
+                 one flat 16-row list — UI-only, packGroups/renderPackRow
+                 both computed above. Collapsed by default; expanding a
+                 group reveals its packs via the SAME renderPackRow every
+                 remote pack below also uses. */}
+              {packGroups.map(({ group, packs }) => {
+                const entryTotal = packs.reduce(
+                  (sum, p) => sum + (Object.hasOwn(packEntryCounts, p.id) ? packEntryCounts[p.id] : 0),
+                  0,
+                );
+                const onCount = packs.filter((p) => checkedPacks.has(p.id)).length;
+                const groupAllOn = onCount === packs.length;
+                const isExpanded = expandedPackGroups.has(group);
                 return (
-                  <label
-                    key={p.id}
-                    className="flex items-center justify-between gap-3 py-1"
-                  >
-                    <div>
-                      <div className="text-sm text-fg">
-                        {/* N5 fix (adversarial review): an imported
-                           pack's name is untrusted remote content —
-                           <bdi> isolates it from bidi reordering so it
-                           can't visually swallow/reorder the 官方/已导入
-                           badge, which stays in its OWN sibling element
-                           either way (validateManifest also strips
-                           bidi/zero-width control chars at the source —
-                           this is a second, independent layer). */}
-                        <bdi>{p.name}</bdi>
-                        {origin && (
-                          <span
-                            className="ml-1.5 border border-edge2 px-1.5 py-0 text-[10px] font-normal text-mut"
-                            title={
-                              origin === "official"
-                                ? "来自 JargonSlayer 官方词典库"
-                                : "由你从外部链接或文件导入，内容未经官方审核"
+                  <div key={group} className="border-t border-edge pt-2 first:border-t-0 first:pt-0">
+                    <div className="flex items-center justify-between gap-3 py-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedPackGroups((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(group)) next.delete(group);
+                            else next.add(group);
+                            return next;
+                          })
+                        }
+                        className="btn-tactile flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm text-fg"
+                      >
+                        {isExpanded ? <CaretDown size={12} /> : <CaretRight size={12} />}
+                        <span className="truncate">{group}</span>
+                        <span className="shrink-0 text-xs text-mut2">
+                          {packs.length} 包 · {entryTotal} 条 · {onCount}/{packs.length} 开启
+                        </span>
+                      </button>
+                      <ToggleSwitch
+                        checked={groupAllOn}
+                        ariaLabel={`${group}：全部启用`}
+                        onChange={(checked) =>
+                          setCheckedPacks((prev) => {
+                            const next = new Set(prev);
+                            for (const p of packs) {
+                              if (checked) next.add(p.id);
+                              else next.delete(p.id);
                             }
-                          >
-                            {origin === "official" ? "官方" : "已导入"}
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-mut2">
-                        {/* H3(b) fix (adversarial review): a plain
-                           packEntryCounts[p.id] read turns an id of
-                           "__proto__" into an Object.prototype access
-                           ("Objects are not valid as a React child")
-                           instead of a real miss — validateManifest now
-                           rejects that id at install time (H3(a)), but
-                           this read-side hardening is defense in depth. */}
-                        {p.description}（{Object.hasOwn(packEntryCounts, p.id) ? packEntryCounts[p.id] : 0} 条）
-                      </div>
+                            return next;
+                          })
+                        }
+                      />
                     </div>
-                    <ToggleSwitch
-                      checked={checkedPacks.has(p.id)}
-                      onChange={(checked) => togglePack(p.id, checked)}
-                    />
-                  </label>
+                    {isExpanded && <div className="space-y-2 pl-4">{packs.map(renderPackRow)}</div>}
+                  </div>
                 );
               })}
+              {/* Remote/imported packs — stay outside the groups above,
+                 unchanged flat list. */}
+              {remotePacksList.map(renderPackRow)}
             </div>
             )}
 

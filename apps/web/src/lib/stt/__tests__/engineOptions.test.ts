@@ -162,7 +162,7 @@ describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
   };
   const osspeech: EngineOption = {
     value: "osspeech",
-    label: "系统识别 · 开箱即用",
+    label: "系统识别",
     posture: "local",
     retentionClass: "local",
   };

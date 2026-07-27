@@ -28,6 +28,10 @@ import { useTasks } from "../registry";
 import { runSelectionLookup, useSelectionLookup } from "../selectionLookup";
 import { NoKeyError } from "../../llm/client";
 import { DEFAULT_SETTINGS, type DetectResponse, type Settings } from "@jargonslayer/core/types";
+import {
+  buildSelectionDetectSystemPrompt,
+  DETECT_SYSTEM_PROMPT,
+} from "@jargonslayer/core/llm/prompts";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return { ...DEFAULT_SETTINGS, ...overrides };
@@ -83,6 +87,23 @@ describe("runSelectionLookup — AI path", () => {
     expect(useApp.getState().cards.map((c) => c.expression)).toEqual(["circle back"]);
   });
 
+  // Field bug fix (iOS TestFlight "画词 dead end"): a user selection is
+  // an explicit "explain this", not automatic scanning — this pipeline
+  // must pass detectApi the SELECTION_DETECT_SYSTEM_PROMPT override
+  // (never DETECT_SYSTEM_PROMPT byte-identically, which is reserved for
+  // the automatic scheduler/scan path — see scheduler.ts, which never
+  // passes a third arg to detectApi at all).
+  it("passes the SELECTION_DETECT_SYSTEM_PROMPT override (resolved for the settings' explainLanguage), never the bare scanning prompt", async () => {
+    mockDetectApi.mockResolvedValue(NO_HIT);
+    const req = makeReq({ id: "lookup-prompt-override" });
+    await runSelectionLookup(req, makeSettings({ aiDetect: true, explainLanguage: "zh" }));
+
+    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    const [, , systemPromptOverride] = mockDetectApi.mock.calls[0] as [unknown, unknown, string];
+    expect(systemPromptOverride).toBe(buildSelectionDetectSystemPrompt("zh"));
+    expect(systemPromptOverride).not.toBe(DETECT_SYSTEM_PROMPT);
+  });
+
   it("registers a selection-lookup task and completes it on success", async () => {
     mockDetectApi.mockResolvedValue(NO_HIT);
     const req = makeReq({ id: "lookup-task-1" });
@@ -112,7 +133,7 @@ describe("runSelectionLookup — AI path", () => {
     useApp.setState({ lookup: null });
     await runSelectionLookup(req, makeSettings({ aiDetect: true }));
 
-    expect(useApp.getState().toast).toBe("所选内容未检出术语");
+    expect(useApp.getState().toast).toBe("所选内容未检出术语，可在弹窗中手动加入词典");
   });
 
   it("no toast while the popover is still open on this exact request — it renders the result itself", async () => {
@@ -256,7 +277,7 @@ describe("runSelectionLookup — H2: meetingGen guards applyDetection against a 
     resolveDetect(NO_HIT);
     await runPromise;
 
-    expect(useApp.getState().toast).toBe("所选内容未检出术语");
+    expect(useApp.getState().toast).toBe("所选内容未检出术语，可在弹窗中手动加入词典");
   });
 
   it("the switched-meeting toast still respects the popover-open guard — silent while this exact request's popover is open", async () => {

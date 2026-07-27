@@ -46,7 +46,11 @@ export interface EngineChoiceScreenProps {
 const CARDS: { value: EngineChoice; title: string; points: string[] }[] = [
   {
     value: "osspeech",
-    title: "系统识别 · 开箱即用",
+    // v0.6 field-fix (item 2): dropped the "· 开箱即用" tail — the
+    // points list right below already says as much (无需配置/无需下载),
+    // see engineCapabilities.ts's own osspeech entry for the other two
+    // surfaces pinning this exact string.
+    title: "系统识别",
     points: ["无需配置", "无需下载", "macOS 原生识别", "音频不离开本机"],
   },
   {

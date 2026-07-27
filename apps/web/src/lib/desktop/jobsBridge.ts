@@ -295,7 +295,9 @@ export interface OsSpeechAssetTracker {
   settle(): void;
 }
 
-const OS_SPEECH_ASSET_LABEL = "系统识别模型";
+// v0.6 field-fix (item 4): "系统识别模型" read as "the app downloads its
+// own model" — this is Apple's own per-language speech asset, OS-managed.
+const OS_SPEECH_ASSET_LABEL = "系统语音资源";
 
 // S11 fix-round J2 (b): the preempt handoff (a session start superseding
 // an in-flight preinstall, per the osspeech://status `source` contract —
@@ -315,7 +317,7 @@ function activeOsSpeechAssetTaskId(): string | null {
   return null;
 }
 
-const OS_SPEECH_ASSET_STOPPED_MESSAGE = "系统识别已停止，模型下载未完成";
+const OS_SPEECH_ASSET_STOPPED_MESSAGE = "系统识别已停止，语音资源下载未完成";
 
 /** Drives an "os-speech-asset" task row off osspeech://status asset
  *  lifecycle events — a PUSH-style driver (unlike trackSwitchModel/
@@ -371,7 +373,7 @@ export function trackOsSpeechAsset(label: string = OS_SPEECH_ASSET_LABEL): OsSpe
               startTask(id, "os-speech-asset", label);
             }
           }
-          failTask(id, message || "系统识别模型下载失败");
+          failTask(id, message || "系统语音资源下载失败");
           break;
         }
       }

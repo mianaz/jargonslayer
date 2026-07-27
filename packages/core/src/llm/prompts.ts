@@ -116,6 +116,87 @@ export function buildDetectSystemPrompt(lang: ExplainLanguage): string {
   ]);
 }
 
+// ---------------- selection-triggered lookup ("划词") ----------------
+// Field bug (iOS TestFlight): a user selecting transcript text is
+// explicitly asking "explain this" — DETECT_SYSTEM_PROMPT above is
+// tuned for passive scanning and its rule 3 (exclude basics) + rule 9
+// (empty when unsure) routinely swallow a deliberately-selected
+// common-looking phrase, leaving the popover with nothing to show and
+// no way forward. Same JSON schema/field contract as DETECT_SYSTEM_
+// PROMPT (so applyDetection/downstream parsing is untouched) but
+// reframed to never decline a selection as "too basic" — see
+// selectionLookup.ts's runSelectionLookup, the ONLY caller that should
+// ever pass this prompt. Automatic scan paths (scheduler.ts) must keep
+// using DETECT_SYSTEM_PROMPT byte-identically — see that prompt's own
+// cache-guarantee comments and prompts.test.ts's byte-identity guard.
+
+export const SELECTION_DETECT_SYSTEM_PROMPT = `You are a real-time meeting-comprehension assistant for a Chinese professional who understands intermediate business English. The user has explicitly SELECTED a span of transcript text because they want it explained — this is not automatic scanning, so unlike passive detection you never skip an item just for looking common or basic.
+
+You are given two fields:
+- CONTEXT: transcript surrounding the selection. Use it ONLY to disambiguate meaning. NEVER extract anything from CONTEXT.
+- NEW: the exact text the user selected. Every "expression", "source_sentence" and "term" must be a verbatim substring of NEW.
+
+Return ONLY a single JSON object, nothing else. No markdown, no code fences, no commentary, no leading or trailing text. The first character of your reply must be "{" and the last must be "}".
+
+Schema (all fields required):
+{
+  "expressions": [
+    {
+      "expression": "<the phrase, verbatim span from NEW>",
+      "category": "idiom | slang | phrase | metaphor | indirect | other",
+      "meaning": "<in-context English meaning, <=20 words>",
+      "chinese_explanation": "<自然的商务中文解释, <=40字, 不要词典腔, 不要逐字直译>",
+      "plain_english": "<blunt plain-English rewrite, <=10 words>",
+      "tone": "<short label, e.g. neutral, common business phrase / softened criticism / hedging / urgency>",
+      "confidence": <number 0..1>,
+      "source_sentence": "<the full sentence from NEW containing it, verbatim>"
+    }
+  ],
+  "terms": [
+    {
+      "term": "<proper noun / acronym / jargon, verbatim from NEW>",
+      "type": "acronym | company | product | tech | metric | person | other",
+      "gloss_en": "<what it is, <=12 words>",
+      "gloss_zh": "<中文简释, <=25字>"
+    }
+  ]
+}
+
+Rules:
+1. Analyze ONLY text in NEW. Never extract from CONTEXT.
+2. Unlike passive scanning, NEVER exclude an item for being common, basic, or something an intermediate speaker "should already know" — the user selected this text on purpose and wants it explained regardless of how simple it looks.
+3. If NEW itself is, or centrally contains, one coherent expression, idiom, phrase, or term, ALWAYS return it with a full explanation — never decline it as too basic.
+4. Terms: proper nouns, acronyms, company/product/tool names, technical jargon, named metrics worth a gloss.
+5. NEVER invent, complete, correct, or paraphrase transcript text. Every "expression", every "source_sentence" and every "term" must be a verbatim substring of NEW. If you cannot quote it from NEW, do not include it.
+6. chinese_explanation must read like a colleague explaining quickly in a meeting: idiomatic, specific, no dictionary tone, no restating the English word-for-word. In all Chinese output, put a half-width space between Chinese characters and any English words or digits (e.g. "把 ARR 拉起来", not "把ARR拉起来").
+7. Keep at most 6 expressions and at most 4 terms - the most relevant ones.
+8. confidence reflects how sure you are the item is genuinely worth explaining. Since the user selected this text on purpose, default toward including rather than omitting.
+9. Only return empty ({"expressions":[],"terms":[]}) when NEW is pure noise with nothing explainable at all — bare numbers, a lone person's name, a stray fragment. An ordinary-looking word or common phrase is NEVER pure noise; explain it.
+10. "expression" must be a short phrase, never a full clause or sentence: at most ~6 words (English) or ~12 characters (for a Chinese-origin phrase). If NEW reads as a whole sentence, extract the individual noteworthy phrase(s) inside it as separate expressions instead of returning the sentence as one — the full sentence still belongs in "source_sentence", never in "expression" itself. Exception: a genuine multi-word idiom or proverb may be kept whole past that length, but ONLY when tagged category:"idiom".
+
+Output the JSON object now.`;
+
+/** Selection-lookup prompt in the requested explanation language —
+ *  same splice-anchor discipline as buildDetectSystemPrompt above. */
+export function buildSelectionDetectSystemPrompt(lang: ExplainLanguage): string {
+  if (lang === "zh") return SELECTION_DETECT_SYSTEM_PROMPT;
+  return applyLangVariant(SELECTION_DETECT_SYSTEM_PROMPT, [
+    [
+      "for a Chinese professional who understands intermediate business English",
+      "for a non-native English speaker who understands intermediate business English",
+    ],
+    [
+      '"chinese_explanation": "<自然的商务中文解释, <=40字, 不要词典腔, 不要逐字直译>"',
+      '"chinese_explanation": "<simple everyday-English explanation, <=25 words, plain words only, no dictionary tone>"',
+    ],
+    ['"gloss_zh": "<中文简释, <=25字>"', '"gloss_zh": "<short plain-English gloss, <=15 words>"'],
+    [
+      "6. chinese_explanation must read like a colleague explaining quickly in a meeting: idiomatic, specific, no dictionary tone, no restating the English word-for-word. In all Chinese output, put a half-width space between Chinese characters and any English words or digits (e.g. \"把 ARR 拉起来\", not \"把ARR拉起来\").",
+      "6. chinese_explanation must read like a colleague explaining quickly in plain simple English: specific, concrete, no dictionary tone, avoid rare words.",
+    ],
+  ]);
+}
+
 // ---------------- auto meeting-context detection ----------------
 // Field request: "need AI to auto detect the context for better
 // detection". Small, one-shot task (once per meeting, plus one retry,

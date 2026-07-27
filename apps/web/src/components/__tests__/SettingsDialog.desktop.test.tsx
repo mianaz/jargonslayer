@@ -755,9 +755,9 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
 
   function findOsSpeechCard(): HTMLButtonElement {
     const card = Array.from(container!.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("系统识别 · 开箱即用"),
+      b.textContent?.includes("系统识别"),
     );
-    if (!card) throw new Error('"系统识别 · 开箱即用" card not found');
+    if (!card) throw new Error('"系统识别" card not found');
     return card as HTMLButtonElement;
   }
 

@@ -24,6 +24,7 @@ import type {
   Settings,
 } from "@jargonslayer/core/types";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { buildSelectionDetectSystemPrompt } from "@jargonslayer/core/llm/prompts";
 import { create } from "zustand";
 import { useApp, type LookupRequest } from "../store";
 import { detectApi, NoKeyError } from "../llm/client";
@@ -120,7 +121,12 @@ function notifyIfClosed(id: string, res: DetectResponse, appliedThisMeeting: boo
   if (isOpenLookup(id)) return;
   const hasHits = res.expressions.length > 0 || res.terms.length > 0;
   if (!hasHits) {
-    useApp.getState().showToast("所选内容未检出术语");
+    // Field bug fix (iOS TestFlight "画词 dead end"): a zero-hit toast
+    // used to be a dead end with no recovery — the popover is already
+    // closed by the time this fires, so point at LookupPopover's own
+    // zero-hit footer action (手动添加到词典 / AI 解释并加入词典) on
+    // the next selection instead of just reporting nothing was found.
+    useApp.getState().showToast("所选内容未检出术语，可在弹窗中手动加入词典");
     return;
   }
   useApp.getState().showToast(
@@ -195,6 +201,13 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
   // visibility into.
   startTask(req.id, "selection-lookup", "解释所选");
   try {
+    // Field bug fix (iOS TestFlight "画词 dead end"): a user selection
+    // is an explicit "explain this", not automatic scanning — pass the
+    // SELECTION_DETECT_SYSTEM_PROMPT override (prompts.ts) so a common-
+    // looking selected phrase never gets silently excluded the way
+    // DETECT_SYSTEM_PROMPT's rule 3/9 would for a passive scan. This is
+    // the ONLY call site that ever sets this override — see detectApi's
+    // own doc in client.ts.
     const res = await detectApi(
       {
         context: req.contextText,
@@ -202,6 +215,7 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
         model: resolveTaskCreds(settings, "detect").model,
       },
       settings,
+      buildSelectionDetectSystemPrompt(settings.explainLanguage),
     );
     // #48 s1 review item 12c (preserved from the original LookupPopover
     // effect this pipeline was extracted from): `res` here is shown to

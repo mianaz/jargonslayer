@@ -228,7 +228,14 @@ describe("SettingsDialog — iOS build", () => {
 
     // "会议流程与推进" (meeting-flow) is a built-in, checked-by-default
     // non-core pack (packages/core/src/detect/packs.ts) — no remote
-    // pack/catalog setup needed to exercise it.
+    // pack/catalog setup needed to exercise it. v0.6 field-fix (item 1):
+    // it now lives inside the collapsed 职场与会议 group — expand that
+    // group first so its own row exists in the DOM.
+    act(() => {
+      buttons()
+        .find((b) => b.textContent?.startsWith("职场与会议"))!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
     act(() => {
       findSwitchByLabel("会议流程与推进").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
@@ -273,7 +280,7 @@ describe("SettingsDialog — iOS build", () => {
       findRow("转录引擎").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(findButtonContaining("系统识别 · 开箱即用")).toBeTruthy();
+    expect(findButtonContaining("系统识别")).toBeTruthy();
     expect(findButtonContaining("Soniox 云端识别")).toBeTruthy();
     expect(findButtonContaining("Deepgram 云端识别")).toBeTruthy();
     expect(findButtonContaining("ElevenLabs 云端识别")).toBeTruthy();

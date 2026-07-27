@@ -315,6 +315,13 @@ export interface DetectRequest {
   new_text: string; // fresh finalized text to analyze
   model?: string;
   lang?: ExplainLanguage; // explanation language, default "zh"
+  // User-initiated 划词 lookup (iOS field fix): a bare boolean — the
+  // server rebuilds buildSelectionDetectSystemPrompt(lang) from it.
+  // Deliberately NOT a prompt string: /api/detect may run on a shared
+  // server key, and accepting client-supplied system-prompt text there
+  // would be an open abuse surface. Direct transport (BYOK on-device)
+  // passes the prompt string itself instead and ignores this field.
+  selection?: boolean;
   // Pre-rendered background-profile hint (#48 step 3, design Q5):
   // threaded exactly like `lang` above — client renders it from
   // Settings.profile (llm/profileHint.ts), sent only when

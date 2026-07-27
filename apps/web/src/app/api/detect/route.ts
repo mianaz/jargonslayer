@@ -12,6 +12,7 @@ import {
 } from "@/lib/llm/anthropic";
 import { allowDailyBudget, allowRequest, clientIp } from "@/lib/llm/rateLimit";
 import { DEFAULT_DETECT_MODEL, runDetectTask } from "@/lib/llm/tasks/detect";
+import { buildSelectionDetectSystemPrompt } from "@jargonslayer/core/llm/prompts";
 import { PROFILE_HINT_MAX_CHARS } from "@jargonslayer/core/llm/profileHint";
 import { newRequestId } from "@/lib/diag/requestId";
 import { MEETING_CONTEXT_MAX_CHARS, type ApiErrorBody, type DetectResponse } from "@jargonslayer/core/types";
@@ -34,6 +35,11 @@ const BodySchema = z.object({
   // field-test batch C — a manual chip edit past the old hardcoded 80
   // here used to 400 every subsequent hosted detect call).
   meetingContext: z.string().max(MEETING_CONTEXT_MAX_CHARS).optional(),
+  // User-initiated 划词 lookup (iOS field fix, DetectRequest.selection):
+  // boolean only — the SELECTION prompt is rebuilt server-side from
+  // `lang`, never accepted as client-supplied prompt text (this route
+  // can run on the shared server key; see the type's own comment).
+  selection: z.boolean().optional(),
 });
 
 // Diagnostics (item 5): every error response carries a short
@@ -64,7 +70,7 @@ export async function POST(req: Request) {
   if (!parsedBody.success) {
     return errorBody({ error: "请求参数不合法", code: "bad_request" }, 400);
   }
-  const { context, new_text, model, lang, profile, meetingContext } = parsedBody.data;
+  const { context, new_text, model, lang, profile, meetingContext, selection } = parsedBody.data;
 
   const cfg = resolveLlmConfig(req, "detect");
   if (!cfg) {
@@ -106,6 +112,7 @@ export async function POST(req: Request) {
         lang,
         profile,
         meetingContext,
+        systemPromptOverride: selection ? buildSelectionDetectSystemPrompt(lang ?? "zh") : undefined,
       },
       withFallback(cfg.fallbackModel),
     );

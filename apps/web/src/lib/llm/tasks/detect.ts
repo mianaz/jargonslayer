@@ -51,6 +51,16 @@ export interface DetectTaskInput {
    *  same posture as `profile` above (see prompts.ts's MEETING
    *  CONTEXT splice). */
   meetingContext?: string;
+  /** Selection-lookup override (field bug fix, iOS TestFlight "画词
+   *  dead end"): when present, REPLACES buildDetectSystemPrompt's own
+   *  choice entirely — the caller has already resolved language into
+   *  this string itself (see prompts.ts's SELECTION_DETECT_SYSTEM_
+   *  PROMPT / buildSelectionDetectSystemPrompt, and client.ts's
+   *  detectApi/detectViaClient, the only plumbing that ever sets this).
+   *  Automatic scan paths never set it, so they keep resolving
+   *  DETECT_SYSTEM_PROMPT byte-identically, exactly as before this
+   *  field existed. */
+  systemPromptOverride?: string;
 }
 
 /** Anti-hallucination post-filter: drop any expression whose
@@ -78,7 +88,7 @@ export async function runDetectTask(
   const raw = await call({
     apiKey: input.apiKey,
     model: input.model,
-    system: buildDetectSystemPrompt(input.lang ?? "zh"),
+    system: input.systemPromptOverride ?? buildDetectSystemPrompt(input.lang ?? "zh"),
     user: buildDetectUserMessage(input.context, input.new_text, input.profile, input.meetingContext),
     schema: DetectResponseSchema,
     maxTokens: 1000,

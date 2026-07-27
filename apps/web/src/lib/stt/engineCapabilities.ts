@@ -150,7 +150,13 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   },
   osspeech: {
     kind: "osspeech",
-    label: "系统识别 · 开箱即用",
+    // v0.6 field-fix (iOS TestFlight report, item 2): the "· 开箱即用"
+    // tail read as marketing filler once users had actually seen the
+    // card's own "无需配置/无需下载" hint text say the same thing —
+    // trimmed to the bare engine name. Every surface pinning this
+    // verbatim (SettingsDialog's ENGINE_CARDS, EngineChoiceScreen's
+    // wizard card) moved together, see their own comments.
+    label: "系统识别",
     retentionClass: "local",
     // SpeechAnalyzer's AnalysisContext.contextualStrings — S11's Q11
     // already ships this (doc §3, Sol F16); Lane B migrates the

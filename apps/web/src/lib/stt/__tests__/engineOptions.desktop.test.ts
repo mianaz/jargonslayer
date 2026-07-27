@@ -23,7 +23,7 @@ describe("ENGINE_OPTIONS (desktop build)", () => {
     const osspeech = ENGINE_OPTIONS.find((o) => o.value === "osspeech");
     expect(osspeech).toEqual({
       value: "osspeech",
-      label: "系统识别 · 开箱即用",
+      label: "系统识别",
       posture: "local",
       retentionClass: "local",
     });
