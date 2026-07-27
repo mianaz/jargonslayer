@@ -86,6 +86,7 @@ public final class OsSpeechSession: @unchecked Sendable {
 
   private var interruptionObserver: NSObjectProtocol?
   private var routeChangeObserver: NSObjectProtocol?
+  private var engineConfigObserver: NSObjectProtocol?
 
   public init(generation: UInt64, emit: @escaping (String, any Encodable) -> Void) {
     self.generation = generation
@@ -416,11 +417,23 @@ public final class OsSpeechSession: @unchecked Sendable {
   }
 
   /// `.began` -> stop + terminal `.ended`, no auto-resume (blueprint
-  /// D6: v1 posture). Route change -> terminal `.deviceChanged` (parity
-  /// with macOS's own starvation/device-changed handling — JS's
-  /// `OSSPEECH_TERMINAL_STATUS_KINDS` expects the session to be OVER
-  /// once this kind arrives, so this tears the session down exactly like
-  /// an explicit stop, just with a different terminal kind).
+  /// D6: v1 posture). Route change -> terminal `.deviceChanged` ONLY for
+  /// the two reasons that mean capture actually broke (see
+  /// `RouteChangePolicy`'s own doc comment) — unlike macOS, where
+  /// device-changed comes from genuine IO starvation, a raw iOS route
+  /// notification fires for plenty of cosmetic settle events too
+  /// (`.categoryChange`/`.routeConfigurationChange`/`.override`
+  /// routinely land ~3s after activation as the system settles the
+  /// route), so "parity with macOS" here means "only genuine
+  /// capture-breaking events are terminal", not "every notification is
+  /// terminal". The actual "did the engine's IO graph really change"
+  /// signal is `AVAudioEngineConfigurationChange` instead — AVAudioEngine
+  /// stops itself when its I/O config changes, so that notification IS
+  /// the honest terminal signal route-change reasons were standing in
+  /// for. Both paths land on the same terminal `.deviceChanged` kind:
+  /// JS's `OSSPEECH_TERMINAL_STATUS_KINDS` expects the session to be OVER
+  /// once this kind arrives, so either one tears the session down
+  /// exactly like an explicit stop, just with a different terminal kind.
   private func registerLifecycleObservers() {
     let center = NotificationCenter.default
     interruptionObserver = center.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] note in
@@ -429,8 +442,15 @@ public final class OsSpeechSession: @unchecked Sendable {
       else { return }
       self?.requestStop(kind: .ended)
     }
-    routeChangeObserver = center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
-      self?.requestStop(kind: .deviceChanged)
+    routeChangeObserver = center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] note in
+      let reasonRaw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+      guard case .stop(let reasonLabel) = RouteChangePolicy.routeChangeAction(reasonRaw: reasonRaw) else { return }
+      self?.requestStop(kind: .deviceChanged, message: "route-change reason=\(reasonLabel)")
+    }
+    // object: engine — scoped to THIS session's own engine instance, not
+    // every AVAudioEngine in the process.
+    engineConfigObserver = center.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+      self?.requestStop(kind: .deviceChanged, message: "engine-config-change")
     }
   }
 
@@ -438,8 +458,10 @@ public final class OsSpeechSession: @unchecked Sendable {
     let center = NotificationCenter.default
     if let interruptionObserver { center.removeObserver(interruptionObserver) }
     if let routeChangeObserver { center.removeObserver(routeChangeObserver) }
+    if let engineConfigObserver { center.removeObserver(engineConfigObserver) }
     interruptionObserver = nil
     routeChangeObserver = nil
+    engineConfigObserver = nil
   }
 
   // ---- small helpers ----
