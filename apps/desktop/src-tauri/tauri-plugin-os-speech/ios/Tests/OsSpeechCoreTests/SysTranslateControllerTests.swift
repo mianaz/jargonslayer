@@ -94,7 +94,19 @@ final class SysTranslateGenerationGuardTests: XCTestCase {
 }
 
 /// `SysTranslateError.description` — the two substrings JS/other lanes
-/// string-match on must survive verbatim.
+/// string-match on must survive verbatim. `testTimeoutDescriptionContains
+/// PinnedSubstring` below is also THE regression coverage for the
+/// fix-round's Sol MEDIUM 1 fix (`probe()` now throws this exact case on
+/// its own 8s race instead of resolving a fake `"unsupported"` — see
+/// that function's own doc comment in SysTranslateController.swift): a
+/// live end-to-end timeout test would mean either eating a real 8s
+/// `Task.sleep` or faking the system clock, neither worth it for a
+/// project convention already established one file over
+/// (OsSpeechSession.swift's own concurrency-glue types — `PauseGeneration
+/// Box`/`ResumeOnceBox` — carry no dedicated unit tests either, "exercised
+/// by the build + the on-device smoke test instead"); asserting the
+/// exact thrown message here is the host-testable half of that same
+/// contract.
 final class SysTranslateErrorTests: XCTestCase {
   func testNotInstalledDescriptionContainsPinnedSubstring() {
     XCTAssertTrue("\(SysTranslateError.notInstalled)".contains("not-installed"))

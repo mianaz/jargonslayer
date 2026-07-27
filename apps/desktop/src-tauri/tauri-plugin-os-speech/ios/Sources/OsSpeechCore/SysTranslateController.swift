@@ -30,6 +30,19 @@ public final class SysTranslateController {
   private var sessions: [String: TranslationSession] = [:]
   private var generation: UInt64 = 0
 
+  /// Fix-round (Sol MEDIUM 2b) — the LATEST `prepare(...)` call's own
+  /// best-effort warm-up `Task` (see `prepare`'s own doc comment below),
+  /// stored so `stop(generation:)` can cancel it: without this, a
+  /// `stop()` landing while the warm-up is still probing/awaiting
+  /// `prepareTranslation()` left that detached work running with no way
+  /// to interrupt it. Cancellation here is COOPERATIVE (same posture as
+  /// `TimeoutRaceBox` below) — an in-flight `prepareTranslation()` call
+  /// that ignores `Task.isCancelled` may still run to completion after
+  /// `stop()` returns; its result goes nowhere either way (the warm-up
+  /// throws its own result away via `try?`), so this is accepted, not
+  /// fixed further.
+  private var prepareWarmupTask: Task<Void, Never>?
+
   /// `nonisolated` — needs to be explicit at all for the same reason
   /// `OsSpeechController.init()`'s own doc comment gives (no implicit
   /// public no-arg init synthesized at this access level); ADDITIONALLY
@@ -68,14 +81,22 @@ public final class SysTranslateController {
   /// OsSpeechPlugin.swift's own `#available(iOS 26.0, *)` pre-check —
   /// never reached by a call that makes it into this function at all).
   ///
-  /// Timeout (8s, same deadline `translate` below uses): returns
-  /// `(true, "unsupported")` rather than surfacing an error — this is a
-  /// PROBE, and JS's own consumer of an "unsupported" status falls back
-  /// to the LLM translation route, which is the correct failure mode for
-  /// "the framework didn't answer in time" too; there is no user-visible
-  /// distinction worth making between "definitively unsupported" and
-  /// "didn't answer in time" for a probe result.
-  public func probe(source: String, target: String) async -> (osSupported: Bool, status: String) {
+  /// Fix-round (Sol MEDIUM 1) — timeout (8s, same deadline `translate`
+  /// below uses) THROWS rather than resolving `(true, "unsupported")`.
+  /// The original "just say unsupported" posture was wrong: JS's own
+  /// `systemProbeCache` (providers.ts) caches every successfully
+  /// RESOLVED probe result indefinitely and deliberately does NOT cache
+  /// a failed one — a resolved-but-timed-out probe would poison that
+  /// cache with a false "unsupported" for the rest of the app's
+  /// lifetime, over one transient framework hiccup. Throwing routes this
+  /// through `sysTranslateProbe`'s own `catch` -> `invoke.reject(...)`
+  /// (OsSpeechPlugin.swift), which lands in JS's catch path and is NOT
+  /// cached — a later probe call gets a real retry. The below-iOS-26
+  /// `#available` guard one layer up is NOT affected: that one still
+  /// resolves `{osSupported:false,status:"unsupported"}` since it's a
+  /// DEFINITIVE, cacheable answer (the OS version can't un-downgrade
+  /// mid-session).
+  public func probe(source: String, target: String) async throws -> (osSupported: Bool, status: String) {
     let status = await Self.withTimeout {
       await LanguageAvailability().status(
         from: Locale.Language(identifier: source),
@@ -83,7 +104,7 @@ public final class SysTranslateController {
       )
     }
     guard let status else {
-      return (osSupported: true, status: "unsupported")
+      throw SysTranslateError.timeout
     }
     return (osSupported: true, status: Self.statusWireValue(status))
   }
@@ -115,26 +136,34 @@ public final class SysTranslateController {
   /// before any framework I/O has even started.
   ///
   /// DEVICE-VERIFY ITEM: the best-effort warm-up below fires AFTER
-  /// returning, detached from the caller's own await chain.
-  /// `TranslationSession.prepareTranslation()` is documented to be able
-  /// to present the system's language-download consent sheet in-app when
-  /// the pair isn't installed yet — never actually exercised on a real
-  /// device by this port (main.swift's own spike never called it: a
-  /// headless CLI helper has no UI to present a system sheet FROM, so it
-  /// never needed this method at all). Every error is swallowed on
-  /// purpose: a failed/declined warm-up changes nothing about
-  /// `translate`'s own behavior below — a still-uninstalled pair simply
-  /// throws `.notInstalled` on the first real request either way, and
-  /// another lane's settings-row hint is the documented fallback UX for
-  /// that case.
+  /// returning, detached from the caller's own await chain (handle
+  /// stored in `prepareWarmupTask` so `stop()` can cancel it — see that
+  /// property's own doc comment). Apple's documented shape for this API
+  /// pair (per Sol's fix-round citation) is that a session obtained from
+  /// `TranslationSession(installedSource:target:)` — a direct,
+  /// non-`.translationTask`-vended init — is meant for an ALREADY
+  /// installed language pair; the actual download-consent flow is
+  /// documented against a session vended by SwiftUI's `.translationTask`
+  /// modifier instead, so calling `prepareTranslation()` here is LIKELY
+  /// a no-op on a real device rather than the "presents a sheet" outcome
+  /// an earlier draft of this comment assumed. Kept anyway — it's cheap
+  /// and harmless even if it does nothing — but the real install path
+  /// for an uninstalled pair is the system 翻译 (Translate) app; another
+  /// lane's settings-row hint covers directing the user there. A device
+  /// run decides whether this call does anything at all. Every error is
+  /// swallowed on purpose either way: a failed/no-op warm-up changes
+  /// nothing about `translate`'s own behavior below — a still-
+  /// uninstalled pair simply throws `.notInstalled` on the first real
+  /// request regardless.
   public func prepare(source: String, target: String) -> UInt64 {
     let session = sessionFor(source: source, target: target)
     generation += 1
     let mintedGeneration = generation
 
-    Task {
-      let probeResult = await self.probe(source: source, target: target)
-      guard probeResult.status == "supported" else { return }
+    prepareWarmupTask = Task {
+      guard let probeResult = try? await self.probe(source: source, target: target),
+        probeResult.status == "supported"
+      else { return }
       try? await session.prepareTranslation()
     }
 
@@ -196,6 +225,13 @@ public final class SysTranslateController {
   /// call already replaced).
   public func stop(generation requestedGeneration: UInt64?) {
     guard SysTranslateGenerationGuard.shouldClear(requestedGeneration: requestedGeneration, currentGeneration: generation) else { return }
+    // Fix-round (Sol MEDIUM 2b) — cancel any still-running `prepare(...)`
+    // warm-up BEFORE clearing (both the clear-all and generation-matched
+    // branches land here, same as `sessions.removeAll()` below); see
+    // `prepareWarmupTask`'s own doc comment for the residual "may still
+    // run to completion" acceptance this doesn't try to eliminate.
+    prepareWarmupTask?.cancel()
+    prepareWarmupTask = nil
     sessions.removeAll()
   }
 
@@ -213,16 +249,28 @@ public final class SysTranslateController {
   /// `withCheckedContinuation`, resumed by whichever of the two
   /// unstructured `Task`s below finishes first, is enough once the
   /// calling actor's run loop is already being pumped by UIKit.
+  ///
+  /// Fix-round (Sol MEDIUM 2a) — both Task handles are now registered
+  /// with the box, and whichever side resumes first CANCELS the other
+  /// (`TimeoutRaceBox.resume(_:isWork:)`'s own doc comment covers what
+  /// cancellation does/doesn't guarantee for each side): the timeout
+  /// side, if it loses, no longer keeps its `Task.sleep` alive for
+  /// nothing after `body()` already won; the work side, if it loses to a
+  /// real timeout, is asked to cancel too — best-effort only, since nothing
+  /// here can force `body()` (e.g. `session.translations(from:)`, which
+  /// isn't documented to check `Task.isCancelled`) to actually stop early.
   private static func withTimeout<T>(_ body: @escaping () async -> T) async -> T? {
     await withCheckedContinuation { (continuation: CheckedContinuation<T?, Never>) in
-      let box = TimeoutRaceBox(continuation)
-      Task {
-        box.resume(await body())
+      let box = TimeoutRaceBox<T>(continuation)
+      let workTask = Task {
+        box.resume(await body(), isWork: true)
       }
-      Task {
+      let timeoutTask = Task {
         try? await Task.sleep(nanoseconds: 8_000_000_000)
-        box.resume(nil)
+        guard !Task.isCancelled else { return }
+        box.resume(nil, isWork: false)
       }
+      box.attach(work: workTask, timeout: timeoutTask)
     }
   }
 }
@@ -246,16 +294,39 @@ private final class TimeoutRaceBox<T>: @unchecked Sendable {
   private let lock = NSLock()
   private var resumed = false
   private let continuation: CheckedContinuation<T?, Never>
+  private var workTask: Task<Void, Never>?
+  private var timeoutTask: Task<Void, Never>?
 
   init(_ continuation: CheckedContinuation<T?, Never>) {
     self.continuation = continuation
   }
 
-  func resume(_ value: T?) {
+  /// Registered right after both `Task`s are created (`withTimeout`
+  /// above) — can't be passed into `init` since each `Task`'s own
+  /// closure needs to capture THIS box first.
+  func attach(work: Task<Void, Never>, timeout: Task<Void, Never>) {
+    lock.lock()
+    workTask = work
+    timeoutTask = timeout
+    lock.unlock()
+  }
+
+  /// `isWork` — which side is resuming, so the LOSER's own `Task` gets
+  /// cancelled: if `body()` won, the still-sleeping timeout `Task` is
+  /// cancelled (its `Task.sleep` throws immediately instead of firing
+  /// 8s late into an already-resolved continuation); if the timeout won,
+  /// the still-running work `Task` is cancelled too, best-effort — see
+  /// `withTimeout`'s own doc comment for why that can't be guaranteed to
+  /// actually stop `body()` early. Cancelling unconditionally (not just
+  /// on the FIRST resume) is deliberate and harmless: cancelling an
+  /// already-finished `Task` is a no-op.
+  func resume(_ value: T?, isWork: Bool) {
     lock.lock()
     let alreadyResumed = resumed
     resumed = true
+    let loser = isWork ? timeoutTask : workTask
     lock.unlock()
+    loser?.cancel()
     guard !alreadyResumed else { return }
     continuation.resume(returning: value)
   }

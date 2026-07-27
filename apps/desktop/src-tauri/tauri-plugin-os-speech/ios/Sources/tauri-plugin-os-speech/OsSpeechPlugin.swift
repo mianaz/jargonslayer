@@ -337,7 +337,17 @@ class OsSpeechPlugin: Plugin {
   /// `startTranscribe`/`preinstall` above), matching this task's own
   /// pinned contract: a probe is a query, not a command, so JS can treat
   /// "not supported" uniformly whether the answer came from the version
-  /// pre-check or from the framework itself.
+  /// pre-check or from the framework itself. That DEFINITIVE, cacheable
+  /// answer is the ONE case that still resolves — everything past the
+  /// `#available` gate now rejects on failure (fix-round, Sol MEDIUM 1):
+  /// `SysTranslateController.probe` throws `.timeout` on its own 8s race
+  /// instead of resolving a fake `"unsupported"`, specifically so a
+  /// transient timeout lands in JS's `catch` path — JS's own
+  /// `systemProbeCache` (providers.ts) caches every successfully
+  /// RESOLVED probe indefinitely but deliberately never caches a
+  /// rejected one, so resolving here would have permanently disabled
+  /// system translation for the rest of the app's lifetime over one
+  /// slow framework call.
   @objc public func sysTranslateProbe(_ invoke: Invoke) throws {
     guard #available(iOS 26.0, *) else {
       invoke.resolve(SysTranslateProbePayload(osSupported: false, status: "unsupported"))
@@ -345,8 +355,12 @@ class OsSpeechPlugin: Plugin {
     }
     let args = try invoke.parseArgs(SysTranslateProbeArgs.self)
     Task {
-      let result = await translateController.probe(source: args.source, target: args.target)
-      invoke.resolve(SysTranslateProbePayload(osSupported: result.osSupported, status: result.status))
+      do {
+        let result = try await translateController.probe(source: args.source, target: args.target)
+        invoke.resolve(SysTranslateProbePayload(osSupported: result.osSupported, status: result.status))
+      } catch {
+        invoke.reject("\(error)")
+      }
     }
   }
 
