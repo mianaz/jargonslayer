@@ -172,6 +172,36 @@ describe("scanDictionary — S11 fix: an expression ending in a non-word charact
   });
 });
 
+// Variants enrichment pass (conservative alias sweep, field report):
+// "get the ball rolling" gained explicit keep-family variants since the
+// FIRST word is the light-verb here and buildExpressionRegex only ever
+// inflects the LAST word of a multi-word phrase (see the "last-word
+// inflection AS IMPLEMENTED" describe block above) — "keep"/"kept"/
+// "keeps" would never have matched otherwise.
+describe("scanDictionary — 'get the ball rolling' keep-family variants (variants enrichment pass)", () => {
+  it("matches the keep-family variants added alongside the original headword", () => {
+    const kept = scanDictionary("She kept the ball rolling while I was out.");
+    expect(kept.expressions.some((e) => e.expression === "get the ball rolling")).toBe(true);
+
+    const keep = scanDictionary("Let's keep the ball rolling on this.");
+    expect(keep.expressions.some((e) => e.expression === "get the ball rolling")).toBe(true);
+
+    const keeps = scanDictionary("He always keeps the ball rolling on these projects.");
+    expect(keeps.expressions.some((e) => e.expression === "get the ball rolling")).toBe(true);
+  });
+
+  it("still matches the original headword and its own inflected last word ('rolling')", () => {
+    const res = scanDictionary("Let's get the ball rolling on this.");
+    expect(res.expressions.some((e) => e.expression === "get the ball rolling")).toBe(true);
+  });
+
+  it("negative guard: a deliberately NOT-aliased near-miss phrase stays unmatched ('drop the ball' has no 'lose the ball' variant)", () => {
+    const res = scanDictionary("Let's not lose the ball on this one.");
+    expect(res.expressions.some((e) => e.expression === "drop the ball")).toBe(false);
+    expect(res.expressions).toHaveLength(0);
+  });
+});
+
 describe("scanDictionary — source_sentence extraction", () => {
   it("extracts only the sentence containing the match, not the whole text", () => {
     const res = scanDictionary(

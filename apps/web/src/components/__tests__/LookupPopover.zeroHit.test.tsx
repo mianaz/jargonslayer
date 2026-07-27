@@ -57,8 +57,15 @@ describe("LookupPopover — zero-hit state (field bug fix)", () => {
       customEntries: [],
       lookup: {
         id: LOOKUP_ID,
-        text: "keep the ball rolling",
-        contextText: "let's keep the ball rolling on this",
+        // Deliberately NOT a dictionary phrase — "we had lunch and went
+        // home" is the same zero-hit fixture dictionary.test.ts pins
+        // ("does not match a completely unrelated sentence"). Was "keep
+        // the ball rolling" until the variants enrichment pass gave
+        // "get the ball rolling" that exact phrase as a keep-family
+        // variant, which turned this into a real hit and broke this
+        // suite's zero-hit premise.
+        text: "we had lunch and went home",
+        contextText: "we had lunch and went home",
         x: 10,
         y: 10,
       },
@@ -169,7 +176,7 @@ describe("LookupPopover — zero-hit state (field bug fix)", () => {
     expect(addCustomEntry).toHaveBeenCalledTimes(1);
     const [entry] = addCustomEntry.mock.calls[0];
     expect(entry.chinese_explanation).toBe("");
-    expect(entry.headword).toBe("keep the ball rolling");
+    expect(entry.headword).toBe("we had lunch and went home");
   });
 });
 
@@ -191,7 +198,7 @@ describe("LookupPopover — manual draft seeds from the built-in dictionary", ()
       lookup: {
         id: LOOKUP_ID,
         // In the core pack ("get the ball rolling") — unlike the other
-        // suite's "keep the ball rolling", which deliberately misses.
+        // suite's "we had lunch and went home", which deliberately misses.
         text: "get the ball rolling",
         contextText: "let's get the ball rolling on this",
         x: 10,

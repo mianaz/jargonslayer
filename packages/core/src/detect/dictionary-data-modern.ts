@@ -370,6 +370,7 @@ export const MODERN_USAGE_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "order of magnitude",
+    variants: ["orders of magnitude"],
     category: "phrase",
     meaning: "roughly ten times more or less; a very large difference in scale",
     chinese_explanation: "差了一个数量级，规模完全不是一档",
@@ -422,6 +423,7 @@ export const MODERN_USAGE_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "quiet quitting",
+    variants: ["quiet quit"],
     category: "phrase",
     meaning: "doing only the minimum required work, no longer going above and beyond",
     chinese_explanation: "只做份内最低限度的活，不再多付出",
@@ -432,6 +434,7 @@ export const MODERN_USAGE_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "quiet firing",
+    variants: ["quiet fire", "quiet fired"],
     category: "phrase",
     meaning: "a company making conditions bad enough that an employee quits on their own",
     chinese_explanation: "故意把处境搞差，逼员工自己走人",

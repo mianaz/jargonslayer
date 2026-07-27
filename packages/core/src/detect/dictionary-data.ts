@@ -3453,6 +3453,7 @@ export const EXTRA_TERMS: DictTermEntry[] = [
   },
   {
     term: "1:1",
+    variants: ["one-on-one"],
     type: "other",
     gloss_en: "a private one-on-one meeting, usually manager and report",
     gloss_zh: "一对一沟通会",
@@ -3684,6 +3685,7 @@ export const EXTRA_TERMS: DictTermEntry[] = [
   },
   {
     term: "M&A",
+    variants: ["M and A"],
     type: "other",
     gloss_en: "Mergers and Acquisitions",
     gloss_zh: "并购",

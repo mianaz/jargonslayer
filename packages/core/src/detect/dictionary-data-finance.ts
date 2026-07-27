@@ -55,6 +55,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "out-of-pocket maximum",
+    variants: ["out-of-pocket max"],
     type: "other",
     gloss_en: "the most you'll pay in a year before insurance covers everything else",
     gloss_zh: "自付封顶额，超过后保险全包",
@@ -78,6 +79,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "pre-existing condition",
+    variants: ["pre-existing conditions"],
     type: "other",
     gloss_en: "a health condition you already had before a new insurance policy started",
     gloss_zh: "既往病史，投保前就有的健康问题",
@@ -172,6 +174,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "liquidation preference",
+    variants: ["liquidation preferences"],
     type: "other",
     gloss_en: "investors' contractual right to get paid back before common shareholders in a sale",
     gloss_zh: "清算优先权，出售时投资人优先拿钱",
@@ -237,6 +240,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "credit score",
+    variants: ["credit scores"],
     type: "metric",
     gloss_en: "a number summarizing how reliably you repay debt, used to price loans",
     gloss_zh: "信用分，衡量还款可靠度的分数",
@@ -252,6 +256,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "W-2",
+    variants: ["W2"],
     type: "other",
     gloss_en: "the US tax form an employer gives an employee reporting wages and withholding",
     gloss_zh: "W-2 表，雇主给员工的工资纳税凭证",
@@ -297,6 +302,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "tax bracket",
+    variants: ["tax brackets"],
     type: "other",
     gloss_en: "the income range that determines your marginal tax rate",
     gloss_zh: "税级，决定边际税率的收入区间",
@@ -311,6 +317,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "severance",
+    variants: ["severance package"],
     type: "other",
     gloss_en: "pay and benefits given to an employee when let go, beyond their final paycheck",
     gloss_zh: "遣散费，被辞退时额外给的补偿",
@@ -325,6 +332,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "non-compete",
+    variants: ["non-compete agreement"],
     type: "other",
     gloss_en: "a contract clause barring you from working for a competitor for some time after leaving",
     gloss_zh: "竞业限制协议",
@@ -346,6 +354,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "gross margin",
+    variants: ["gross margins"],
     type: "metric",
     gloss_en: "revenue minus the direct cost of the product, before overhead",
     gloss_zh: "毛利率，扣除直接成本后的比例",
@@ -353,6 +362,7 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
   },
   {
     term: "net margin",
+    variants: ["net margins"],
     type: "metric",
     gloss_en: "profit remaining after ALL expenses are subtracted from revenue",
     gloss_zh: "净利率，扣除全部成本后的比例",
@@ -456,6 +466,7 @@ export const FINANCE_CONSUMER_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "living paycheck to paycheck",
+    variants: ["paycheck to paycheck", "live paycheck to paycheck", "lives paycheck to paycheck", "lived paycheck to paycheck"],
     category: "idiom",
     meaning: "spending nearly all income before the next payday, with no savings buffer",
     chinese_explanation: "月光，工资一到手很快就花光",

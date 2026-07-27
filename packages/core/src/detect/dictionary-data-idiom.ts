@@ -112,6 +112,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "drop me a line",
+    variants: ["drop us a line"],
     category: "idiom",
     meaning: "send me a message whenever, no urgency implied",
     chinese_explanation: "有空给我发个消息",
@@ -163,6 +164,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "bear with me",
+    variants: ["bear with us"],
     category: "idiom",
     meaning: "please be patient with me for a moment",
     chinese_explanation: "稍等我一下，见谅",
@@ -297,6 +299,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "throwing this out there",
+    variants: ["throw this out there"],
     category: "idiom",
     meaning: "suggesting an idea tentatively, open to it being rejected",
     chinese_explanation: "先抛出这个想法，仅供参考",
@@ -307,6 +310,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "shooting from the hip",
+    variants: ["shoot from the hip"],
     category: "idiom",
     meaning: "responding quickly and instinctively, without much preparation",
     chinese_explanation: "凭直觉快速反应，没怎么准备",
@@ -379,6 +383,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "makes sense",
+    variants: ["made sense", "making sense"],
     category: "phrase",
     meaning: "acknowledging something is logical and understood",
     chinese_explanation: "有道理，能理解",
@@ -470,6 +475,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "couldn't agree more",
+    variants: ["could not agree more"],
     category: "idiom",
     meaning: "expressing total agreement",
     chinese_explanation: "完全同意，说得太对了",
@@ -480,6 +486,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "beg to differ",
+    variants: ["begs to differ"],
     category: "idiom",
     meaning: "a polite but firm way of disagreeing",
     chinese_explanation: "恕我不能同意，礼貌地反对",
@@ -575,6 +582,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "swing for the fences",
+    variants: ["swinging for the fences"],
     category: "idiom",
     meaning: "go for the biggest, most ambitious possible outcome",
     chinese_explanation: "放手一搏，冲着最大的目标去",
@@ -595,7 +603,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "jump the gun",
-    variants: ["jumping the gun"],
+    variants: ["jumping the gun", "jumped the gun"],
     category: "idiom",
     meaning: "act prematurely, before the right moment",
     chinese_explanation: "操之过急，时机还没到就行动了",
@@ -616,6 +624,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "the ball's in your court",
+    variants: ["the ball is in your court"],
     category: "metaphor",
     meaning: "it's now your turn to act or decide",
     chinese_explanation: "轮到你了，该你行动或决定了",
@@ -698,6 +707,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "take it with a grain of salt",
+    variants: ["take with a grain of salt"],
     category: "idiom",
     meaning: "don't fully trust this, treat it with some skepticism",
     chinese_explanation: "别全信，保持点怀疑态度",
@@ -730,6 +740,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "let's not go there",
+    variants: ["don't go there"],
     category: "idiom",
     meaning: "avoid opening up this particular topic",
     chinese_explanation: "这个话题别聊了，先不提",
@@ -761,6 +772,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "cutting it close",
+    variants: ["cut it close"],
     category: "idiom",
     meaning: "barely making a deadline with very little margin",
     chinese_explanation: "卡着点，时间非常紧",
@@ -792,6 +804,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "flying under the radar",
+    variants: ["fly under the radar", "flew under the radar"],
     category: "metaphor",
     meaning: "happening without attracting attention",
     chinese_explanation: "悄悄进行，没引起注意",
@@ -832,6 +845,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "burning the midnight oil",
+    variants: ["burn the midnight oil"],
     category: "idiom",
     meaning: "working very late into the night",
     chinese_explanation: "开夜车，熬夜工作",
@@ -862,6 +876,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "reading the tea leaves",
+    variants: ["read the tea leaves"],
     category: "idiom",
     meaning: "trying to interpret vague signals to predict what will happen",
     chinese_explanation: "从零散的信号里猜测接下来会怎样",
@@ -883,6 +898,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "kick the tires",
+    variants: ["kicking the tires"],
     category: "idiom",
     meaning: "try something out and evaluate it before committing",
     chinese_explanation: "先试用看看，再决定要不要",
@@ -903,6 +919,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "the writing's on the wall",
+    variants: ["the writing is on the wall"],
     category: "idiom",
     meaning: "the signs clearly point to an outcome, usually a negative one",
     chinese_explanation: "迹象已经很明显了，结果可预见",
@@ -913,6 +930,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "throw in the towel",
+    variants: ["throwing in the towel", "threw in the towel"],
     category: "idiom",
     meaning: "give up on something entirely",
     chinese_explanation: "彻底放弃，认输了",
@@ -933,6 +951,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "cut corners",
+    variants: ["cutting corners"],
     category: "idiom",
     meaning: "doing something in a cheaper or easier way that sacrifices quality",
     chinese_explanation: "为了省事省钱牺牲了质量",
@@ -943,6 +962,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "read the fine print",
+    variants: ["reading the fine print"],
     category: "idiom",
     meaning: "carefully check the small, easily-overlooked contract details",
     chinese_explanation: "仔细看合同里容易被忽略的细则",
@@ -953,7 +973,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "burn bridges",
-    variants: ["burning bridges"],
+    variants: ["burning bridges", "burned bridges", "burnt bridges"],
     category: "idiom",
     meaning: "damage a relationship so badly there's no going back",
     chinese_explanation: "把关系彻底搞僵，没有回旋余地",
@@ -974,7 +994,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "let's not beat around the bush",
-    variants: ["beat around the bush"],
+    variants: ["beat around the bush", "beating around the bush"],
     category: "idiom",
     meaning: "stop avoiding the direct point and address it plainly",
     chinese_explanation: "别拐弯抹角了，直说吧",
@@ -1005,6 +1025,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "it's not rocket science",
+    variants: ["not rocket science", "isn't rocket science"],
     category: "idiom",
     meaning: "this isn't actually that complicated",
     chinese_explanation: "没那么难，不是什么高深的事",
@@ -1025,6 +1046,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "hit the nail on the head",
+    variants: ["hits the nail on the head", "hitting the nail on the head"],
     category: "idiom",
     meaning: "described or diagnosed something exactly right",
     chinese_explanation: "说得太准了，一针见血",
@@ -1065,6 +1087,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "let the dust settle",
+    variants: ["letting the dust settle"],
     category: "idiom",
     meaning: "wait for a chaotic situation to calm down before acting",
     chinese_explanation: "先等局面稳定下来，别急着行动",
@@ -1106,6 +1129,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "hit a snag",
+    variants: ["hitting a snag"],
     category: "idiom",
     meaning: "run into an unexpected obstacle or problem",
     chinese_explanation: "碰到意外的小麻烦、卡住了",
@@ -1156,6 +1180,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "put all your eggs in one basket",
+    variants: ["putting all your eggs in one basket"],
     category: "idiom",
     meaning: "risk everything on a single option instead of spreading the risk",
     chinese_explanation: "所有筹码都押在一个选择上，风险集中",
@@ -1198,6 +1223,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "keep me in the loop",
+    variants: ["keep us in the loop"],
     category: "idiom",
     meaning: "please make sure I keep receiving updates on this",
     chinese_explanation: "有进展记得让我知道",
@@ -1351,6 +1377,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "keep an ear out",
+    variants: ["keeping an ear out"],
     category: "idiom",
     meaning: "stay alert for news or information that might come up",
     chinese_explanation: "留意着点，有消息注意一下",
@@ -1361,6 +1388,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "put your money where your mouth is",
+    variants: ["putting your money where your mouth is"],
     category: "idiom",
     meaning: "back up your claims with real action or commitment",
     chinese_explanation: "别光说，拿出实际行动证明",
@@ -1371,6 +1399,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "don't rock the boat",
+    variants: ["rocking the boat"],
     category: "idiom",
     meaning: "don't do anything that would disrupt a currently stable situation",
     chinese_explanation: "别搞事，别破坏现在的平衡",
@@ -1381,6 +1410,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "jump on the bandwagon",
+    variants: ["jumping on the bandwagon", "jumped on the bandwagon"],
     category: "idiom",
     meaning: "start supporting or doing something just because it's suddenly popular",
     chinese_explanation: "跟风，因为流行才加入",
@@ -1391,6 +1421,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "miss the boat",
+    variants: ["missed the boat"],
     category: "idiom",
     meaning: "miss an opportunity because you acted too slowly",
     chinese_explanation: "错过机会了，动作太慢了",
@@ -1461,6 +1492,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "throw caution to the wind",
+    variants: ["throwing caution to the wind", "threw caution to the wind"],
     category: "idiom",
     meaning: "act boldly, ignoring the risks",
     chinese_explanation: "不顾风险，豁出去了",
@@ -1471,6 +1503,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "raise the stakes",
+    variants: ["raising the stakes", "raised the stakes"],
     category: "idiom",
     meaning: "increase what's being risked or what's on the line",
     chinese_explanation: "把风险/赌注提高了",
@@ -1491,6 +1524,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "cast a wide net",
+    variants: ["casting a wide net"],
     category: "idiom",
     meaning: "search broadly, considering many options rather than narrowing early",
     chinese_explanation: "撒大网，尽量多找些选项",
@@ -1511,6 +1545,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "walking on eggshells",
+    variants: ["walk on eggshells"],
     category: "metaphor",
     meaning: "being extremely careful not to upset someone or something fragile",
     chinese_explanation: "小心翼翼，生怕惹出问题",
@@ -1531,6 +1566,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "in over your head",
+    variants: ["in over my head"],
     category: "idiom",
     meaning: "dealing with something more difficult than you can actually handle",
     chinese_explanation: "力不从心，超出自己能应付的范围",
@@ -1551,7 +1587,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "cover your bases",
-    variants: ["cover all your bases"],
+    variants: ["cover all your bases", "covering your bases"],
     category: "idiom",
     meaning: "prepare for every possible outcome or contingency",
     chinese_explanation: "把各种可能都考虑到、准备好",
@@ -1562,7 +1598,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "tie up loose ends",
-    variants: ["loose ends"],
+    variants: ["loose ends", "tying up loose ends"],
     category: "idiom",
     meaning: "finish off the small remaining unfinished details",
     chinese_explanation: "把剩下的零碎事情收尾",
@@ -1573,6 +1609,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "run with it",
+    variants: ["running with it"],
     category: "idiom",
     meaning: "take an idea and continue developing or executing it independently",
     chinese_explanation: "接手继续推进，放手去做",
@@ -1593,6 +1630,7 @@ export const DAILY_IDIOM_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "drop everything",
+    variants: ["dropping everything"],
     category: "idiom",
     meaning: "stop whatever you're currently doing to deal with something urgent",
     chinese_explanation: "手头的事先放下，去处理紧急的",

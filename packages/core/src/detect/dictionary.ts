@@ -69,9 +69,10 @@ const CORE_PACK = "core";
 const BASE_EXPRESSIONS: ExpressionEntry[] = [
   {
     expression: "get the ball rolling",
+    variants: ["keep the ball rolling", "kept the ball rolling", "keeps the ball rolling"],
     category: "idiom",
     meaning: "start something, kick off an activity or process",
-    chinese_explanation: "先启动起来，把事情推进下去",
+    chinese_explanation: "让事情动起来、继续推进下去",
     plain_english: "start it now",
     tone: "neutral, common business phrase",
     confidence: 0.9,
@@ -89,6 +90,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "move the needle",
+    variants: ["moving the needle", "moved the needle"],
     category: "idiom",
     meaning: "make a meaningful, measurable impact",
     chinese_explanation: "真正带来明显变化、有实际效果",
@@ -152,6 +154,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "boil the ocean",
+    variants: ["boiling the ocean", "boiled the ocean"],
     category: "idiom",
     meaning: "attempt something unnecessarily large or unfeasible",
     chinese_explanation: "把事情做得太大太全，贪多嚼不烂",
@@ -224,6 +227,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "touch base",
+    variants: ["touching base", "touched base"],
     category: "idiom",
     meaning: "make brief contact to check in",
     chinese_explanation: "简单碰个头，同步一下情况",
@@ -234,6 +238,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "ping me",
+    variants: ["pinged me", "pinging me"],
     category: "slang",
     meaning: "send me a quick message",
     chinese_explanation: "有事直接给我发个消息",
@@ -264,6 +269,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "drop the ball",
+    variants: ["dropped the ball", "dropping the ball"],
     category: "idiom",
     meaning: "fail to follow through on a responsibility",
     chinese_explanation: "掉链子了，该做的事没做好",
@@ -304,6 +310,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "double-click on",
+    variants: ["double-clicking on", "double-clicked on"],
     category: "metaphor",
     meaning: "examine a point in more detail",
     chinese_explanation: "针对这一点再深入展开说说",
@@ -374,6 +381,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "put a pin in it",
+    variants: ["putting a pin in it"],
     category: "idiom",
     meaning: "pause the topic to return to it later",
     chinese_explanation: "先记下来，这个话题稍后再聊",
@@ -384,6 +392,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "park this",
+    variants: ["parking this", "parked this"],
     category: "phrase",
     meaning: "set a topic aside for now",
     chinese_explanation: "先放一放，暂时不处理这个",
@@ -394,6 +403,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "moving the goalposts",
+    variants: ["move the goalposts", "moved the goalposts"],
     category: "idiom",
     meaning: "unfairly changing the criteria for success mid-process",
     chinese_explanation: "标准中途被改了，之前说好的不算数",
@@ -414,6 +424,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "run it up the flagpole",
+    variants: ["running it up the flagpole", "ran it up the flagpole"],
     category: "idiom",
     meaning: "float an idea to see how people react",
     chinese_explanation: "先把想法抛出去，看看大家反应",
@@ -424,6 +435,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "straw man",
+    variants: ["straw men"],
     category: "metaphor",
     meaning: "a simplified draft proposal meant to spark feedback",
     chinese_explanation: "先搭个粗糙的草案，抛出来听意见",
@@ -474,6 +486,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "pushing the envelope",
+    variants: ["push the envelope", "pushed the envelope"],
     category: "idiom",
     meaning: "going beyond normal limits, being innovative or risky",
     chinese_explanation: "突破常规界限，做点大胆创新的事",
@@ -494,6 +507,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "throw under the bus",
+    variants: ["throwing under the bus", "threw under the bus"],
     category: "idiom",
     meaning: "blame or betray someone to protect oneself",
     chinese_explanation: "把责任甩给别人，牺牲对方保自己",
@@ -534,6 +548,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "evangelize",
+    variants: ["evangelizing"],
     category: "metaphor",
     meaning: "actively promote and champion an idea or product",
     chinese_explanation: "大力推广、四处安利这个想法或产品",
@@ -554,6 +569,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "bake in",
+    variants: ["baking in", "baked in"],
     category: "metaphor",
     meaning: "build a feature or assumption in from the start",
     chinese_explanation: "从一开始就把这个考虑进去、内置进去",
@@ -624,6 +640,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "keep me honest",
+    variants: ["keeping me honest", "kept me honest"],
     category: "phrase",
     meaning: "correct me if I get something wrong",
     chinese_explanation: "我说得不对的话，请大家帮忙纠正",
@@ -654,6 +671,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "whiteboard this",
+    variants: ["whiteboarding this"],
     category: "phrase",
     meaning: "work through an idea visually/interactively together",
     chinese_explanation: "拉个白板，大家一起把思路画出来讨论",
@@ -664,6 +682,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "socialize this",
+    variants: ["socializing this", "socialized this"],
     category: "phrase",
     meaning: "share an idea informally to gather early reactions",
     chinese_explanation: "先私下和大家通个气，听听初步反应",
@@ -674,6 +693,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "take a step back",
+    variants: ["taking a step back", "took a step back"],
     category: "idiom",
     meaning: "pause to reconsider the bigger picture",
     chinese_explanation: "先停一停，跳出来看看整体情况",
@@ -684,6 +704,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "peel the onion",
+    variants: ["peeling the onion"],
     category: "metaphor",
     meaning: "investigate a problem layer by layer",
     chinese_explanation: "一层一层地深挖问题的根源",
@@ -714,6 +735,7 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
   },
   {
     expression: "wear many hats",
+    variants: ["wearing many hats", "wore many hats"],
     category: "idiom",
     meaning: "handle multiple different roles/responsibilities",
     chinese_explanation: "身兼多职，一人干好几摊活儿",
@@ -927,6 +949,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
   },
   {
     term: "P&L",
+    variants: ["P and L"],
     type: "acronym",
     gloss_en: "Profit and Loss statement",
     gloss_zh: "损益表",
@@ -934,6 +957,7 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
   },
   {
     term: "headcount",
+    variants: ["head count"],
     type: "metric",
     gloss_en: "the number of employees",
     gloss_zh: "员工人数",
