@@ -111,10 +111,16 @@ describe("LookupPopover — 加入我的词典 forwards the resolved detect-doma
     });
     await flush();
 
+    // This fixture's detect result is zero-hit (aiDetect on, dictFallback
+    // false), so the footer button is the zero-hit primary action
+    // ("AI 解释并加入词典" — see LookupPopover's zeroHit/zeroHitManualOnly),
+    // not the normal-state "＋ 加入我的词典" — both trigger the exact same
+    // handleAddToGlossary/defineApi call this test is about, so match
+    // either label rather than pinning one exact string.
     const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
-      b.textContent?.includes("加入我的词典"),
+      /加入.*词典/.test(b.textContent ?? ""),
     ) as HTMLButtonElement | undefined;
-    if (!btn) throw new Error("＋ 加入我的词典 button not found");
+    if (!btn) throw new Error("加入词典 button not found");
 
     await act(async () => {
       btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));

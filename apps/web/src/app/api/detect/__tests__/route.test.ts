@@ -202,3 +202,71 @@ describe("POST /api/detect — global daily budget (server-key only)", () => {
     expect(res.status).toBe(200);
   });
 });
+
+// 划词 selection flag (iOS field-fix round): the wire carries only a
+// boolean — the route rebuilds the SELECTION prompt server-side from
+// `lang` and never accepts client prompt text (shared-key abuse
+// surface; see DetectRequest.selection). These prove the flag both
+// survives schema validation AND actually swaps the system prompt in
+// the outgoing provider call, using the same mocked-fetch pattern as
+// the BYOK budget test above.
+describe("POST /api/detect — selection flag (划词 SELECTION prompt server-side)", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+    resetRateLimiter();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    resetRateLimiter();
+  });
+
+  // Distinctive to SELECTION_DETECT_SYSTEM_PROMPT, absent from
+  // DETECT_SYSTEM_PROMPT — cheaper and provider-shape-agnostic vs
+  // parsing the exact request body layout.
+  const SELECTION_MARKER = "explicitly SELECTED";
+
+  function mockProviderFetch() {
+    const fixture = { expressions: [], terms: [] };
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ content: [{ type: "text", text: JSON.stringify(fixture) }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("selection:true swaps the outgoing system prompt to the SELECTION variant", async () => {
+    vi.stubEnv("JARGONSLAYER_API_KEY", "server-secret");
+    const fetchMock = mockProviderFetch();
+    const res = await POST(
+      makeRequest({ context: "", new_text: "keep the ball rolling", selection: true }),
+    );
+    expect(res.status).toBe(200);
+    const outgoing = String(fetchMock.mock.calls[0]?.[1]?.body ?? "");
+    expect(outgoing).toContain(SELECTION_MARKER);
+  });
+
+  it("without the flag the outgoing prompt is the passive-detection one, byte-for-byte unaffected", async () => {
+    vi.stubEnv("JARGONSLAYER_API_KEY", "server-secret");
+    const fetchMock = mockProviderFetch();
+    const res = await POST(
+      makeRequest({ context: "", new_text: "keep the ball rolling" }),
+    );
+    expect(res.status).toBe(200);
+    const outgoing = String(fetchMock.mock.calls[0]?.[1]?.body ?? "");
+    expect(outgoing).not.toContain(SELECTION_MARKER);
+  });
+
+  it("rejects a non-boolean selection value with 400 bad_request", async () => {
+    const res = await POST(
+      makeRequest({ context: "", new_text: "hi", selection: "yes" }),
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.code).toBe("bad_request");
+  });
+});

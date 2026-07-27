@@ -411,6 +411,7 @@ function requireApiKey(apiKey: string, ctx: RequestErrorContext): void {
 async function detectViaNext(
   body: DetectRequest,
   settings: Settings,
+  systemPromptOverride?: string,
 ): Promise<DetectResponse> {
   const creds = resolveTaskCreds(settings, "detect");
   const ctx: RequestErrorContext = { tag: "llm-detect", provider: ctxProvider(creds), model: body.model ?? creds.model };
@@ -426,6 +427,10 @@ async function detectViaNext(
         ...body,
         lang: settings.explainLanguage,
         profile: renderProfileHint(settings.profile),
+        // Wire contract: flag only — route.ts rebuilds the selection
+        // prompt from `lang`; the override string itself never rides
+        // the wire (see detectApi's doc comment).
+        selection: systemPromptOverride === undefined ? undefined : true,
       } satisfies DetectRequest),
       // Reasoning models behind openai-compat endpoints (e.g. the
       // hosted demo's MiniMax M-series) routinely take 8-15s per
@@ -482,6 +487,7 @@ async function detectViaNext(
 async function detectViaClient(
   body: DetectRequest,
   settings: Settings,
+  systemPromptOverride?: string,
 ): Promise<DetectResponse> {
   const creds = resolveTaskCreds(settings, "detect");
   // creds.provider directly, never ctxProvider(creds) — see
@@ -509,6 +515,7 @@ async function detectViaClient(
         lang: settings.explainLanguage,
         profile: renderProfileHint(settings.profile),
         meetingContext: body.meetingContext,
+        systemPromptOverride,
       },
       call,
     );
@@ -896,16 +903,33 @@ async function attemptSubscriptionDirect<T>(
   }
 }
 
+/** `systemPromptOverride` (field bug fix, iOS TestFlight "画词 dead
+ *  end"): selectionLookup.ts's runSelectionLookup is the ONLY caller
+ *  that ever passes this — every other call site (DetectionScheduler,
+ *  stt/upload.ts's import pipeline) omits it and keeps resolving
+ *  DETECT_SYSTEM_PROMPT exactly as before this param existed. On the
+ *  direct-transport branch (detectViaClient -> tasks/detect.ts — the
+ *  only transport iOS/desktop ever uses) the string is passed through
+ *  verbatim. On the Next path (full-tier self-hosted), detectViaNext
+ *  sends only a `selection: true` flag and route.ts rebuilds the SAME
+ *  prompt server-side from `lang` — client-supplied prompt text is
+ *  never accepted there (shared-key abuse surface; see
+ *  DetectRequest.selection's own comment). Consequence: a future
+ *  caller passing a DIFFERENT custom override would be honored on
+ *  direct transport but coerced to the selection prompt on the Next
+ *  path — fine today, since selectionLookup is the only caller. */
 export async function detectApi(
   body: DetectRequest,
   settings: Settings,
+  systemPromptOverride?: string,
 ): Promise<DetectResponse> {
-  return withTelemetry("detect", () => detectApiImpl(body, settings));
+  return withTelemetry("detect", () => detectApiImpl(body, settings, systemPromptOverride));
 }
 
 async function detectApiImpl(
   body: DetectRequest,
   settings: Settings,
+  systemPromptOverride?: string,
 ): Promise<DetectResponse> {
   if (shouldAttemptSubscriptionDirect(settings)) {
     const result = await attemptSubscriptionDirect(settings, () => agentDetect(body, settings));
@@ -930,7 +954,9 @@ async function detectApiImpl(
   // preview request takes the same client path for a different reason
   // — see useDirectTransport's own doc.
   const creds = resolveTaskCreds(settings, "detect");
-  return useDirectTransport(creds) ? detectViaClient(body, settings) : detectViaNext(body, settings);
+  return useDirectTransport(creds)
+    ? detectViaClient(body, settings, systemPromptOverride)
+    : detectViaNext(body, settings, systemPromptOverride);
 }
 
 export async function defineApi(

@@ -84,6 +84,18 @@ export default function LookupPopover() {
   const result = progress?.status === "done" ? progress.result : null;
   const dictFallback = progress?.status === "done" && progress.dictFallback;
 
+  // Field bug fix (iOS TestFlight "画词 dead end"): 0 expressions AND 0
+  // terms used to be a silent dead end — no explanation, no way to add
+  // a flashcard. Drives both the zero-hit copy below and the footer
+  // button's relabel-to-primary-action (see the footer render below).
+  const zeroHit =
+    !loading && !error && result !== null && result.expressions.length === 0 && result.terms.length === 0;
+  // aiDetect off (dictionary-only setting) or dictFallback (AI call hit
+  // NoKeyError and silently fell back to the dictionary scan) both land
+  // the user in the same place: no AI available for this lookup, so the
+  // footer action must be "type it yourself", not "ask AI".
+  const zeroHitManualOnly = !settings.aiDetect || dictFallback;
+
   // The glossary-draft flow is unrelated to detect progress above (and
   // stays component-local, per design — see handleAddToGlossary below)
   // but must still reset per fresh lookup / on close, exactly like
@@ -252,9 +264,9 @@ export default function LookupPopover() {
                 <div className="mt-2 text-sm text-mut">{t.gloss_zh}</div>
               </div>
             ))}
-            {result.expressions.length === 0 && result.terms.length === 0 && (
+            {zeroHit && (
               <div className="text-xs text-mut">
-                未检测到需要特别解释的表达
+                {zeroHitManualOnly ? "未检测到已收录的表达" : "词典与 AI 均未命中所选内容"}
               </div>
             )}
           </div>
@@ -276,13 +288,23 @@ export default function LookupPopover() {
               type="button"
               onClick={() => void handleAddToGlossary()}
               disabled={glossaryLoading}
-              className="btn-tactile flex w-full items-center justify-center gap-2 border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+              className={
+                // Zero-hit: this is now the primary way forward (was a
+                // dead end before), so it gets the same prominent
+                // filled treatment as the 保存 button below rather than
+                // the normal subtle bordered style.
+                zeroHit
+                  ? "btn-terminal flex w-full items-center justify-center gap-2 rounded-none bg-act px-3 py-1.5 text-xs font-mono font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-60"
+                  : "btn-tactile flex w-full items-center justify-center gap-2 border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+              }
             >
               {glossaryLoading ? (
                 <>
                   <span className="h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
                   生成中…
                 </>
+              ) : zeroHit ? (
+                zeroHitManualOnly ? "手动添加到词典" : "AI 解释并加入词典"
               ) : (
                 "＋ 加入我的词典"
               )}
@@ -372,7 +394,12 @@ export default function LookupPopover() {
             <button
               type="button"
               onClick={() => void handleSaveDraft()}
-              disabled={!draft.chinese_explanation.trim()}
+              // Field bug fix (iOS TestFlight "画词 dead end"): used to
+              // require a non-empty 中文解释, which with no API key
+              // forced hand-typing a Chinese definition just to save a
+              // card at all. headword always resolves to something (see
+              // handleSaveDraft's `|| lookup.text` fallback), so there's
+              // nothing left that legitimately blocks saving.
               className="btn-terminal rounded-none bg-act px-3 py-1.5 text-xs font-mono font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-50"
             >
               保存
