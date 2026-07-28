@@ -1924,6 +1924,90 @@ describe("saveCurrentSession / deleteSession — R6 fix: deletion-vs-in-flight-s
   });
 });
 
+describe("deleteSession — R7 REVERSAL (round-7 review): deleting the active session ALSO bumps meetingGen (session-identity change, like loadSession/newMeeting) — closes a resurrection race the epoch alone missed", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetPostStopSaveStateForTests();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  // R7 finding: a save STARTING inside deleteSession's own await window
+  // (after its synchronous entry-time epoch bump has already landed)
+  // captures the ALREADY-bumped epoch as its own epochAtEntry — so
+  // saveCurrentSession's epoch checks (both before and after its write)
+  // see no change during ITS OWN run and never refuse. Before this
+  // fix, THAT was the whole story for a caller gated on meetingGen
+  // instead (translate/gapfill.ts's genCurrent(), checked BEFORE ever
+  // calling saveCurrentSession — round-6 left meetingGen untouched, so
+  // that outer check still passed and the call went through, wrote,
+  // and reattached, resurrecting the deleted session. This test mirrors
+  // that exact outer-gate shape at the store level (gap-fill itself
+  // lives in gapfill.ts, out of this file's scope) using meetingGen
+  // directly, which is what the fix actually changed.
+  it("Sol's exact ordering: a meetingGen-gated caller (mirrors gap-fill's own genCurrent() guard) that captured its gen BEFORE the delete refuses to even call saveCurrentSession once deleteSession's synchronous bump lands mid-delete — no resurrection, no reattach, refusal happens via gen (storage.saveSession never called)", async () => {
+    const fakeStore = new Map<string, MeetingSession>();
+    fakeStore.set("s1", { id: "s1" } as MeetingSession);
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockImplementation(async (session) => {
+      fakeStore.set(session.id, session);
+      return true;
+    });
+    let resolveDelete: () => void = () => {};
+    const deleteSpy = vi.spyOn(storageModule, "deleteSession").mockImplementation(
+      (id) =>
+        new Promise<void>((resolve) => {
+          resolveDelete = () => {
+            fakeStore.delete(id);
+            resolve();
+          };
+        }),
+    );
+    vi.spyOn(storageModule, "listSessions").mockImplementation(
+      async () => [...fakeStore.keys()].map((id) => ({ id }) as ReturnType<typeof sessionToMeta>),
+    );
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      activeSessionId: "s1",
+      sessions: [{ id: "s1" } as ReturnType<typeof sessionToMeta>],
+    });
+
+    // gap-fill's own genCurrent() closure would have captured this at
+    // its run's dispatch time, long before this delete ever started.
+    const capturedGen = useApp.getState().meetingGen;
+
+    const deletePromise = useApp.getState().deleteSession("s1");
+    // deleteSession's synchronous entry-time work (epoch bump, timer/
+    // counter clear, AND — the round-7 fix — the meetingGen bump +
+    // activeSessionId null) has already landed; its own
+    // storage.deleteSession is still pending (mocked above).
+    expect(useApp.getState().meetingGen).not.toBe(capturedGen);
+    expect(useApp.getState().activeSessionId).toBeNull();
+
+    // Mirrors translate/gapfill.ts's own immediate post-fill save
+    // (doRunGapFill, `if (genCurrent()) { ...; await saveCurrentSession() }`)
+    // — gated on meetingGen, not this store's epoch.
+    const genCurrent = () => useApp.getState().meetingGen === capturedGen;
+    if (genCurrent()) {
+      await useApp.getState().saveCurrentSession();
+    }
+
+    resolveDelete();
+    await deletePromise;
+
+    expect(saveSpy).not.toHaveBeenCalled(); // refused via gen, before ever writing
+    expect(deleteSpy).toHaveBeenCalledTimes(1); // only the user's own delete — no compensating second delete needed
+    expect(fakeStore.has("s1")).toBe(false); // no resurrection in storage
+    expect(useApp.getState().sessions).toEqual([]); // no resurrect in metas
+    expect(useApp.getState().activeSessionId).toBeNull(); // no reattach
+  });
+});
+
 describe("restoreLiveDraft — materializes a RecoveryBanner draft into history (v0.5 closeout)", () => {
   afterEach(() => {
     vi.restoreAllMocks();

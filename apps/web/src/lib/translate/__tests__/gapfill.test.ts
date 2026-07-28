@@ -633,4 +633,43 @@ describe("gapfill — runGapFill / isGapFillRunning", () => {
     expect(result.aborted).toBe(true);
     expect(saveSpy).not.toHaveBeenCalled();
   });
+
+  // v0.7.1 train-2 round-7 review (store.ts's deleteSession, own header
+  // comment): deleting the CURRENTLY loaded/active session is now a
+  // session-identity change, exactly like loadSession/newMeeting — it
+  // bumps meetingGen too (previously left untouched, which is what let
+  // an in-flight gap-fill's own immediate post-fill save race past a
+  // delete and resurrect it). Simulated here at the store level (this
+  // file's existing convention for a mid-batch meeting-boundary event —
+  // see "gen bump mid-run aborts" above) rather than driving the real
+  // deleteSession action, which would need IndexedDB/storage mocking
+  // this file doesn't otherwise carry.
+  it("R7 fix: mid-run deleteSession of the loaded/active session bumps meetingGen — the runner aborts, makes no further provider calls, and never fires its own post-fill save", async () => {
+    const segments = Array.from({ length: 18 }, () => makeSegment()); // 3 batches of 6
+    useApp.setState({ segments, meetingGen: 0, activeSessionId: "sess-1" });
+    const saveSpy = vi.spyOn(useApp.getState(), "saveCurrentSession");
+    saveSpy.mockClear();
+    const translate = vi
+      .fn()
+      .mockImplementationOnce(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: `${it.text} 译` })),
+      )
+      .mockImplementationOnce(async (items: { id: string; text: string }[]) => {
+        // Mirrors deleteSession's own synchronous entry-time work in
+        // store.ts for deleting the CURRENTLY loaded/active session
+        // while this second batch's translate() request is in flight —
+        // bumps meetingGen and nulls activeSessionId, both before any
+        // await of its own. This gen bump is the concrete round-7
+        // trigger: it's what makes genCurrent() below fail.
+        useApp.setState((state) => ({ meetingGen: state.meetingGen + 1, activeSessionId: null }));
+        return items.map((it) => ({ id: it.id, text: `${it.text} 译` }));
+      });
+    installProvider(translate);
+
+    const result = await runGapFill();
+
+    expect(result.aborted).toBe(true);
+    expect(translate).toHaveBeenCalledTimes(2); // the 2nd batch's own response still lands; no 3rd batch is ever attempted
+    expect(saveSpy).not.toHaveBeenCalled(); // genCurrent() false at the finalization gate — no immediate post-fill save, no resurrection
+  });
 });

@@ -78,6 +78,14 @@ const POST_STOP_SAVE_MAX_RETRIES = 3;
 // time deleteSession gets to it. Monotonically increasing only — never
 // reset between tests (see resetPostStopSaveStateForTests below), since
 // every check below compares a delta, not an absolute value.
+//
+// R7 (v0.7.1 train-2 round-7 review): deleteSession's active-session
+// branch NOW ALSO bumps meetingGen (see its own comment) — a save whose
+// re-arm/re-entry is gated on meetingGen instead of this epoch (e.g.
+// translate/gapfill.ts's genCurrent()) is caught by THAT bump instead
+// of this one. This epoch stays as defense in depth for any save path
+// that isn't meetingGen-gated (or captures its epoch across a window
+// this particular gen bump doesn't cover).
 let postStopSaveEpoch = 0;
 
 // Test hygiene: postStopSaveTimer/postStopSaveFailureCount are module-
@@ -2996,32 +3004,52 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   deleteSession: async (id) => {
-    // R5 fix, R6 upgrade (v0.7.1 train-2 round-6 review): this used to
-    // check activeSessionId and cancel the pending failed-save retry
-    // only AFTER awaiting storage.deleteSession()/listSessions() below —
-    // too late for an already-fired (or near-deadline) retry: the timer
-    // callback nulls its own handle the instant it fires, so
-    // clearTimeout() was a no-op by the time execution got here, and a
-    // retry's saveCurrentSession() already running concurrently with
-    // THIS delete's own awaits could still snapshot the still-loaded
-    // segments with activeSessionId now null, MINT A NEW ID (see its
-    // `session.id` construction), and its storage write could land
-    // AFTER this delete resolves — resurrecting this just-deleted
-    // session right back into History. Root-fixed by moving the
-    // timer/counter clear (and the new epoch bump, postStopSaveEpoch's
-    // own doc comment) to right here, synchronously, before either await
-    // below — and by saveCurrentSession itself re-checking the epoch
-    // both before and after its own write as a backstop for a retry that
-    // was already past this point by the time the bump lands. meetingGen
-    // is deliberately left untouched (other flows key off it) and a
-    // non-active deletion doesn't touch any of this — only the
-    // currently-active session's own retry needs cancelling. This is a
-    // SEPARATE, entry-time check from the `patch.activeSessionId = null`
-    // one below, which deliberately keeps re-reading activeSessionId
-    // AFTER the awaits (unchanged from before this fix) — if the user
-    // has since switched to a different session/meeting while this
-    // delete was in flight, that newer activeSessionId must not be
-    // nulled out just because IT happened to match `id` back at entry.
+    // R5 fix, R6 upgrade, R7 REVERSAL (v0.7.1 train-2 round-7 review):
+    // this used to check activeSessionId and cancel the pending
+    // failed-save retry only AFTER awaiting storage.deleteSession()/
+    // listSessions() below — too late for an already-fired (or
+    // near-deadline) retry: the timer callback nulls its own handle the
+    // instant it fires, so clearTimeout() was a no-op by the time
+    // execution got here, and a retry's saveCurrentSession() already
+    // running concurrently with THIS delete's own awaits could still
+    // snapshot the still-loaded segments with activeSessionId now null,
+    // MINT A NEW ID (see its `session.id` construction), and its
+    // storage write could land AFTER this delete resolves —
+    // resurrecting this just-deleted session right back into History.
+    // Root-fixed (R6) by moving the timer/counter clear (and the epoch
+    // bump, postStopSaveEpoch's own doc comment) to right here,
+    // synchronously, before either await below.
+    //
+    // R7 finding: R6's epoch guard alone still missed a save that STARTS
+    // inside this same await window and is gated by meetingGen instead
+    // of the epoch — concretely, an in-flight gap-fill run (translate/
+    // gapfill.ts's genCurrent()/doRunGapFill) that completes mid-delete
+    // and fires its own immediate post-fill saveCurrentSession. R6's
+    // instruction to leave meetingGen untouched here was WRONG: deleting
+    // the ACTIVE session is a session-identity change exactly like
+    // loadSession/newMeeting, which both bump meetingGen — so it gets
+    // the same treatment now. Bumping it here (synchronously, in the
+    // same set() as nulling activeSessionId, both still before either
+    // await) closes gap-fill's save (its genCurrent() check fails before
+    // it ever writes) AND SummaryPanel's export-after-gapfill gen check
+    // (cancels with "会话已切换" instead of exporting a stale session) AND
+    // every other saveCurrentSession's own genAtEntry reattach guard —
+    // one bump covers every meetingGen-gated consumer instead of
+    // special-casing gap-fill alone. No live-meeting flow can ever
+    // observe this bump: beginMeeting/newMeeting already null
+    // activeSessionId the moment a meeting goes live, so this branch
+    // (get().activeSessionId === id) is unreachable while
+    // connecting/listening/paused — only a loaded/stopped session's own
+    // delete ever takes it. The epoch machinery (postStopSaveEpoch)
+    // stays as defense in depth — it still catches a write that lands
+    // after THIS delete resolves even if some future consumer somehow
+    // isn't meetingGen-gated.
+    //
+    // The activeSessionId null used to be applied a second time, late,
+    // by re-reading it AFTER the awaits below — now redundant: it's
+    // already nulled synchronously above, and a deleted id is never
+    // re-minted (newId()), so that re-check could never fire true again.
+    // Removed rather than left as dead code.
     if (get().activeSessionId === id) {
       postStopSaveEpoch++;
       if (postStopSaveTimer) {
@@ -3029,14 +3057,11 @@ export const useApp = create<AppState>((set, get) => ({
         postStopSaveTimer = null;
       }
       postStopSaveFailureCount = 0;
+      set((state) => ({ meetingGen: state.meetingGen + 1, activeSessionId: null }));
     }
     await storage.deleteSession(id);
     const metas = await storage.listSessions();
-    const patch: Partial<AppState> = { sessions: metas };
-    if (get().activeSessionId === id) {
-      patch.activeSessionId = null;
-    }
-    set(patch);
+    set({ sessions: metas });
   },
 
   // Crash/refresh recovery (v0.5 closeout) — see this action's own
