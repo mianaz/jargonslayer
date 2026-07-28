@@ -2682,6 +2682,26 @@ export const useApp = create<AppState>((set, get) => ({
 
   saveCurrentSession: async () => {
     const s = get();
+    // R3-2 fix (v0.7.1 train-2 round-3 review): captured up front, before
+    // any await below. If the user presses Start (beginMeeting bumps
+    // meetingGen + clears activeSessionId) while THIS save's storage
+    // awaits are still pending, the in-memory reattach further down must
+    // be skipped — otherwise this now-stale save would restore the OLD
+    // activeSessionId over the new meeting's cleared one, and a LATER
+    // save of the new meeting would construct itself with that stale id
+    // (line ~2701) and overwrite the old session's own history record.
+    const genAtEntry = s.meetingGen;
+    // R3-3 fix (v0.7.1 train-2 round-3 review): clear any pending
+    // scheduleSessionSave debounce up front — this call is about to
+    // persist a superset of whatever that debounce was queued to
+    // persist, so letting it fire 1.5s later would re-run auto-export/
+    // webhook/Anki delivery against the same meeting a second time.
+    // Root-fixed here (not per call site) so every immediate-save path
+    // heals, not just gap-fill's.
+    if (postStopSaveTimer) {
+      clearTimeout(postStopSaveTimer);
+      postStopSaveTimer = null;
+    }
     if (s.segments.length === 0) return null;
     const startedAt = s.startedAt ?? s.segments[0].startedAt;
     const autoTitle = autoMeetingTitle(startedAt);
@@ -2753,7 +2773,15 @@ export const useApp = create<AppState>((set, get) => ({
       return null;
     }
     const metas = await storage.listSessions();
-    set({ sessions: metas, activeSessionId: session.id });
+    // R3-2 fix: skip the in-memory reattach entirely when a newer
+    // meeting has begun while the awaits above were pending — the
+    // storage write just above already landed and is correct/desired
+    // (the OLD session's data, persisted under the OLD id), only this
+    // setState (which would restore the OLD activeSessionId over the
+    // new meeting's cleared one) is poison.
+    if (get().meetingGen === genAtEntry) {
+      set({ sessions: metas, activeSessionId: session.id });
+    }
     // Crash/refresh recovery (v0.5 closeout): a meeting that ends
     // normally (this is the ONLY function that ever reaches "stopped"
     // persistence — every call site is gated on status==="stopped", see

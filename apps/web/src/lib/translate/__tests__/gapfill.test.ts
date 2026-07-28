@@ -265,6 +265,124 @@ describe("gapfill — runGapFill / isGapFillRunning", () => {
     expect(isGapFillRunning()).toBe(false);
   });
 
+  it("R3-1 fix: a same-gen re-entry still JOINS the in-flight run (unchanged from the F3 behavior)", async () => {
+    useApp.setState({ segments: [makeSegment()], meetingGen: 3 });
+    let settleFirstBatch: () => void = () => {};
+    const translate = vi.fn().mockImplementation(
+      (items: { id: string; text: string }[]) =>
+        new Promise<{ id: string; text: string }[]>((resolve) => {
+          settleFirstBatch = () => resolve(items.map((it) => ({ id: it.id, text: `${it.text} 译` })));
+        }),
+    );
+    installProvider(translate);
+
+    const first = runGapFill();
+    const second = runGapFill(); // same meetingGen (3) as the in-flight run
+
+    expect(second).toBe(first);
+    expect(translate).toHaveBeenCalledTimes(1);
+
+    settleFirstBatch();
+    await Promise.all([first, second]);
+  });
+
+  it("R3-1 fix: a call for a DIFFERENT meetingGen while one is in flight does NOT join it — it starts a fresh run that actually fills the new session's own gaps", async () => {
+    const segA = makeSegment({ id: "segA-1", text: "A hello" });
+    useApp.setState({ segments: [segA], meetingGen: 0 });
+
+    // Session A's translate() call never resolves in this test — it's
+    // left permanently in flight (simulating a run asleep inside the
+    // 30s rate-limit wait) to prove session B's own run is a genuinely
+    // SEPARATE promise, not one that's silently waiting on A's.
+    const translate = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<{ id: string; text: string }[]>(() => {}))
+      .mockImplementation(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: `${it.text} 译` })),
+      );
+    installProvider(translate);
+
+    const first = runGapFill();
+
+    // Session switch: a NEW meeting/session, disjoint segments, bumped gen.
+    const segB = makeSegment({ id: "segB-1", text: "B hello" });
+    useApp.setState({ segments: [segB], translations: {}, meetingGen: 1 });
+
+    const second = runGapFill();
+
+    expect(second).not.toBe(first);
+    const secondResult = await second;
+    expect(secondResult).toEqual({ filled: 1, failed: 0, aborted: false });
+    expect(useApp.getState().translations[segB.id]).toBe("B hello 译");
+    // Session A's own gap was never filled by B's run.
+    expect(useApp.getState().translations[segA.id]).toBeUndefined();
+  });
+
+  it("R3-1 fix: an old run's belated cleanup does not null a newer run's registration (identity-safe finally)", async () => {
+    const segA = makeSegment({ id: "segA-1", text: "A hello" });
+    useApp.setState({ segments: [segA], meetingGen: 0 });
+
+    let settleA: () => void = () => {};
+    let settleB: () => void = () => {};
+    const translate = vi
+      .fn()
+      .mockImplementationOnce(
+        (items: { id: string; text: string }[]) =>
+          new Promise<{ id: string; text: string }[]>((resolve) => {
+            settleA = () => resolve(items.map((it) => ({ id: it.id, text: `${it.text} 译` })));
+          }),
+      )
+      .mockImplementationOnce(
+        (items: { id: string; text: string }[]) =>
+          new Promise<{ id: string; text: string }[]>((resolve) => {
+            settleB = () => resolve(items.map((it) => ({ id: it.id, text: `${it.text} 译` })));
+          }),
+      );
+    installProvider(translate);
+
+    const first = runGapFill(); // session A, gen 0
+
+    const segB = makeSegment({ id: "segB-1", text: "B hello" });
+    useApp.setState({ segments: [segB], translations: {}, meetingGen: 1 });
+    const second = runGapFill(); // session B, gen 1 — a fresh run, not a join
+
+    expect(second).not.toBe(first);
+
+    // A finishes (and its cleanup fires) WHILE B is still in flight.
+    settleA();
+    await first;
+
+    // A's belated cleanup must not have nulled B's still-live
+    // registration — a third call for B's gen must still JOIN the
+    // (still in-flight) second run, not start a THIRD fresh one.
+    expect(isGapFillRunning()).toBe(true);
+    const third = runGapFill();
+    expect(third).toBe(second);
+
+    settleB();
+    await second;
+    expect(isGapFillRunning()).toBe(false);
+  });
+
+  it("R3-1 fix: after the 30s rate-limit sleep, a gen change aborts before the retry — zero further provider calls", async () => {
+    vi.useFakeTimers();
+    useApp.setState({ segments: [makeSegment()], meetingGen: 0 });
+    const translate = vi.fn().mockRejectedValue(new RateLimitApiError());
+    installProvider(translate);
+
+    const promise = runGapFill();
+    await vi.advanceTimersByTimeAsync(0); // let the first rejection land
+    expect(translate).toHaveBeenCalledTimes(1);
+
+    // Session switch lands WHILE the runner is asleep in the 30s wait.
+    useApp.setState({ meetingGen: 1 });
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    const result = await promise;
+    expect(result.aborted).toBe(true);
+    expect(translate).toHaveBeenCalledTimes(1); // no retry request issued post-sleep
+  });
+
   it("calls provider.prepare() synchronously, before the first await", async () => {
     useApp.setState({ segments: [makeSegment()] });
     const prepare = vi.fn();

@@ -42,6 +42,7 @@ import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonsla
 import * as learnsetModule from "../learn/store";
 import * as storageModule from "../history/storage";
 import * as liveDraftModule from "../history/liveDraft";
+import * as autoExportModule from "../history/autoExport";
 import type { LearnRecord } from "@jargonslayer/core/learn/types";
 import { clearDiag, getDiagEntries } from "../diag/log";
 import { segmentElapsedMs } from "../segmentElapsed";
@@ -1541,6 +1542,106 @@ describe("saveCurrentSession clears the live draft (crash/refresh recovery, v0.5
       expect(listSpy).not.toHaveBeenCalled();
       expect(useApp.getState().activeSessionId).toBeNull();
     });
+  });
+});
+
+describe("saveCurrentSession — R3-2 fix: a late save must not reattach the old session id after a mid-save Start", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("begin meeting mid-save (gen bumps between the snapshot and the storage await resolving) — activeSessionId stays cleared, no reattach", async () => {
+    let resolveSave: (v: boolean) => void = () => {};
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockImplementation(
+      () => new Promise((resolve) => { resolveSave = resolve; }),
+    );
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      meetingGen: 1,
+      activeSessionId: "old-session",
+      sessions: [],
+    });
+
+    const savePromise = useApp.getState().saveCurrentSession();
+
+    // Start lands while this save's storage awaits are still pending —
+    // beginMeeting bumps meetingGen and clears activeSessionId for the
+    // NEW meeting.
+    useApp.getState().beginMeeting();
+    expect(useApp.getState().activeSessionId).toBeNull();
+
+    resolveSave(true);
+    await savePromise;
+
+    // The old save's completion must not restore the OLD id over the
+    // new meeting's cleared one — the storage write itself already
+    // landed (asserted below) and is fine/desired; only the in-memory
+    // reattach is poison.
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(useApp.getState().activeSessionId).toBeNull();
+  });
+
+  it("unchanged-gen path is untouched: still reattaches activeSessionId (and refreshes sessions) exactly as before", async () => {
+    vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    const metas = [{ id: "s1" } as ReturnType<typeof sessionToMeta>];
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue(metas);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      meetingGen: 1,
+      activeSessionId: null,
+      sessions: [],
+    });
+
+    const id = await useApp.getState().saveCurrentSession();
+
+    expect(useApp.getState().activeSessionId).toBe(id);
+    expect(useApp.getState().sessions).toBe(metas);
+  });
+});
+
+describe("saveCurrentSession — R3-3 fix: an immediate save clears any pending scheduleSessionSave debounce (no duplicate auto-export/webhook)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("applyTranslations schedules a debounced save; an immediate saveCurrentSession right after cancels it — storage save and the webhook each fire exactly once", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+    const webhookSpy = vi.spyOn(autoExportModule, "postWebhook").mockResolvedValue(undefined);
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      translations: {},
+      activeSessionId: null,
+      sessions: [],
+      settings: { ...DEFAULT_SETTINGS, webhookUrl: "https://example.com/hook" },
+    });
+
+    // Mirrors gapfill.ts's own sequence: applyTranslations's post-apply
+    // top-up schedules the ordinary 1.5s debounce, then the runner's own
+    // immediate saveCurrentSession() call (R2-6 fix) fires right after —
+    // without this fix, the leftover debounce would still fire 1.5s
+    // later and re-run auto-export/webhook a second time.
+    useApp.getState().applyTranslations({ s1: "你好" }, 1);
+    await useApp.getState().saveCurrentSession();
+
+    await vi.advanceTimersByTimeAsync(2000);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(webhookSpy).toHaveBeenCalledTimes(1);
   });
 });
 

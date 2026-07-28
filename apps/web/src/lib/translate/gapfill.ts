@@ -35,7 +35,18 @@ type Result = { filled: number; failed: number; aborted: boolean };
 // run — callers (SummaryPanel's 补全后导出) must genuinely wait for the
 // real result instead of racing past a no-op stub while the real run is
 // still filling gaps underneath them.
+//
+// R3-1 fix (v0.7.1 train-2 round-3 review): that join must be keyed by
+// meetingGen — otherwise session B's 补全后导出 joins session A's
+// still-in-flight run (possibly asleep inside the 30s rate-limit wait)
+// and B's own gaps are never attempted. `currentRunGen` records which
+// gen `currentRun` was started for; a call for a DIFFERENT gen starts a
+// fresh run instead of joining. The orphaned old run is never awaited
+// or cancelled here — its own genCurrent() guards (see doRunGapFill)
+// make every one of its remaining store writes and provider requests a
+// no-op against the new gen, so it just quietly self-terminates.
 let currentRun: Promise<Result> | null = null;
+let currentRunGen: number | null = null;
 
 export function isGapFillRunning(): boolean {
   return currentRun !== null;
@@ -46,9 +57,11 @@ function terminalStatus(filled: number): { state: "done" | "off"; pending: 0 } {
 }
 
 export function runGapFill(): Promise<Result> {
-  if (currentRun) return currentRun;
+  const gen = useApp.getState().meetingGen;
+  if (currentRun && currentRunGen === gen) return currentRun;
   const run = doRunGapFill();
   currentRun = run;
+  currentRunGen = gen;
   // R2-5 fix (v0.7.1 train-2 round-2 review): `void run.finally(...)`
   // used to leave the cleanup chain's own rejection unobserved (a
   // rejected `run` propagates through .finally()'s returned promise too)
@@ -57,8 +70,17 @@ export function runGapFill(): Promise<Result> {
   // returned below. `.catch(() => {})` on the cleanup chain specifically
   // (not on `run` itself) observes that duplicate rejection without
   // touching what callers actually see.
+  //
+  // R3-1 fix: identity-safe — only clear the registration if `run` is
+  // STILL the one currently registered. Without this check, an orphaned
+  // OLD run's belated cleanup (it finishes after being superseded) would
+  // null out a NEWER run's own registration, making a third caller wrongly
+  // start yet another fresh run instead of joining the still-in-flight one.
   run.finally(() => {
-    currentRun = null;
+    if (currentRun === run) {
+      currentRun = null;
+      currentRunGen = null;
+    }
   }).catch(() => {});
   return run;
 }
