@@ -19,6 +19,7 @@ import HistoryDrawer from "@/components/HistoryDrawer";
 import TaskCenterDrawer from "@/components/TaskCenterDrawer";
 import ImportHub, { type HubTab } from "@/components/ImportHub";
 import ModeSelector from "@/components/ModeSelector";
+import BitCelebrationOverlay from "@/components/BitCelebrationOverlay";
 import SettingsDialog from "@/components/SettingsDialog";
 import TutorialOverlay, { shouldShowTutorial } from "@/components/TutorialOverlay";
 import LookupPopover from "@/components/LookupPopover";
@@ -413,6 +414,12 @@ export default function Home() {
       </main>
 
       <StatusLine onOpenTaskCenter={() => setTaskCenterOpen(true)} />
+
+      {/* Bit mascot behavior train (chamber B): always mounted (like
+          Toast below) so its own bitCelebrateNonce-tracking effect never
+          misses a transition — it renders nothing itself except during
+          the few seconds a celebration actually plays. */}
+      <BitCelebrationOverlay />
 
       {/* iOS-cloud round (固定顶部/底部 shell): the webview is full-bleed
           to the screen's bottom edge, so without this the home indicator

@@ -423,4 +423,16 @@ describe("BitCameo — static preview render", () => {
     await mount(<BitCameo pose="awake" costume={null} />);
     expect(container!.querySelectorAll('rect[fill="#e7484c"]').length).toBe(0);
   });
+
+  // v0.5.2 body redesign (V5C): pin the slim 1×3 eye column at x7 + its
+  // full-column white glint cell, replacing the old 3×3 block eye at x5.
+  it("renders the slim 1×3 eye column at x7 with its white glint top cell", async () => {
+    await mount(<BitCameo pose="awake" />);
+    expect(
+      container!.querySelector('rect[x="7"][y="10"][width="1"][height="3"]'),
+    ).not.toBeNull();
+    expect(
+      container!.querySelector('rect[x="7"][y="10"][width="1"][height="1"][fill="#ffffff"]'),
+    ).not.toBeNull();
+  });
 });

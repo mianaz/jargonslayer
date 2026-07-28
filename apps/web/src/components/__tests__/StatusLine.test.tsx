@@ -49,19 +49,6 @@ describe("StatusLine — detect-mode toggle", () => {
   function renderStatusLine() {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       true;
-    // jsdom has no matchMedia — StatusLine mounts PixelDragon (the
-    // mascot perch), whose prefers-reduced-motion hook calls it
-    // unconditionally.
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: () => {},
-      removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => false,
-    }));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -1159,5 +1146,48 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(chip().className).toContain("text-lab-yellow");
     expect(chip().title).toBe("DeepL 429");
   });
+});
+
+// Bit mascot behavior train (chamber B): the always-on status-line perch
+// (#mascot-perch / data-slot="mascot", a permanently-mounted PixelDragon)
+// is retired entirely — Bit now only appears as ModeSelector's greeting
+// and a post-meeting celebration overlay (page.tsx), never in this bar,
+// at any status.
+describe("StatusLine — no mascot perch (retired)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "demo" } }));
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  it.each(["idle", "connecting", "listening", "paused", "stopped"] as const)(
+    "renders no #mascot-perch / [data-slot=mascot] while status is %s",
+    async (status) => {
+      useApp.setState((s) => ({ status, settings: { ...s.settings, engine: "demo" } }));
+      renderStatusLine();
+      await act(async () => {
+        root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+      });
+      expect(container!.querySelector("#mascot-perch")).toBeNull();
+      expect(container!.querySelector('[data-slot="mascot"]')).toBeNull();
+    },
+  );
 });
 

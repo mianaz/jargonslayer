@@ -111,10 +111,16 @@
    dark-value fallbacks): the dark-bar mint #4ADE80 washes out on a
    light StatusLine — the 0.42-alpha wing membrane in particular turns
    into a pale blob and the winged silhouette stops reading. Deepened
-   greens keep the same phosphor identity at light-surface contrast. */
+   greens keep the same phosphor identity at light-surface contrast.
+   方向三 recolor round: --bit-cream (horns/claw/belly-accent, moved off
+   phosphor-green onto cream) has the identical hole — the dark-bar
+   cream #e8dcc8 is ~1.2:1 against a light panel (#f5f5f0), same
+   washed-out failure mode the green fins had, so it gets the same
+   scheme-deepened treatment (contrast-checked ~6:1 against #f5f5f0). */
 [data-scheme="light"] {
   --bit-phos: #15803d;
   --bit-phos-dim: #86b598;
+  --bit-cream: #6b5940;
 }
 
 /* v0.5.1 appearance sprint (D6 毛玻璃): opt-in translucent-blur

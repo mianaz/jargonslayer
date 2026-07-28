@@ -74,10 +74,24 @@ describe("ModeSelector — desktop build", () => {
     }
     resetStore();
     resetOsSpeechCapsCache();
+    vi.unstubAllGlobals();
   });
 
   function render() {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no matchMedia — ModeSelector now mounts PixelDragon (the
+    // greeting Bit, Bit mascot behavior train), whose prefers-reduced-
+    // motion hook calls it unconditionally.
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);

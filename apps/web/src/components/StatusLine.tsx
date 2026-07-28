@@ -3,8 +3,14 @@
 // v3 主题基座 vim 状态线 (docs/DESIGN.md v3.3): bottom bar mounted below
 // <main> in page.tsx. Left = inverted status block reading store
 // status; middle = detect mode + audio-privacy sentence; right =
-// {cards+terms} counter, then the mascot perch where Bit the pixel
-// dragon lives (overflow-visible so it stands taller than the bar).
+// {cards+terms} counter, then the task tray.
+//
+// Bit mascot behavior train (chamber B): the always-on perch that used
+// to live at the right end of this bar is GONE — Bit now only appears
+// as a ModeSelector greeting (pre-meeting) and a brief post-meeting
+// celebration overlay (page.tsx), never during connecting/listening/
+// paused, and never as a persistent fixture here. See ModeSelector.tsx
+// and BitCelebrationOverlay.tsx.
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
@@ -22,7 +28,6 @@ import {
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
 import { langPairFromSettings } from "@/lib/translate/providers";
 import { isEngineControlBusy } from "@/components/Header";
-import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
 import AiStatusPanel, { deriveHealthStatus, type AiHealthStatus } from "@/components/AiStatusPanel";
 import { useLlmTelemetry } from "@/lib/llm/telemetry";
@@ -602,8 +607,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
           延迟 ~{Math.round(lagMs / 1000)}s
         </span>
       )}
-      {/* count hidden <sm: it also lives in the cards tab header, and
-          Bit outranks it for the remaining phone-width pixels. */}
+      {/* count hidden <sm: it also lives in the cards tab header. */}
       <span className="ml-auto hidden whitespace-nowrap px-3 tabular-nums sm:inline">
         {count} cards
       </span>
@@ -615,16 +619,17 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
           discipline (icon+count, sm:hidden icon). S10: its own popover
           is gone — onOpen (threaded from page.tsx) now opens
           TaskCenterDrawer instead, the same drawer a desktop Header
-          launcher will open in wave 2. */}
-      <span className="flex h-full items-center">
+          launcher will open in wave 2.
+          Bit mascot behavior train: this span inherits the retired
+          mascot perch's own ml-auto/sm:ml-0 pair verbatim (TaskTray is
+          now the bar's last element) — below sm the count span above
+          is hidden, so without this push TaskTray would sit left-packed
+          right after the engine dropdown/latency chip instead of using
+          the freed phone-width pixels; at sm+ the count's own ml-auto
+          already does the pushing, so sm:ml-0 just cancels the
+          duplicate margin. */}
+      <span className="ml-auto flex h-full items-center sm:ml-0">
         <TaskTray onOpen={onOpenTaskCenter} />
-      </span>
-      <span
-        id="mascot-perch"
-        data-slot="mascot"
-        className="relative ml-auto flex h-10 shrink-0 items-end self-end overflow-visible pr-2 sm:ml-0"
-      >
-        <PixelDragon />
       </span>
     </div>
   );

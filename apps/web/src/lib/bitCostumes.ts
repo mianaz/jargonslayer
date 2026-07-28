@@ -54,18 +54,20 @@ const RIM = "#d9d9d9";
 export const BIT_COSTUMES: Record<BitCostumeId, CostumeLayers> = {
   // 清晰 — round reading glasses: open half-rim (no bottom bar — the
   // full ring read as a porthole in round 1), temple arm to the ear.
+  // GLASSES_V5B (v0.5.2 body redesign round): lens re-centered on the
+  // new x7 1×3 eye (was centered on the old x5 3×3 block eye).
   glasses: {
     awake: [
-      [4, 9, 5, 1, RIM],
-      [3, 10, 1, 2, RIM],
-      [8, 10, 1, 2, RIM],
-      [9, 9, 3, 1, RIM, 0.8],
+      [6, 9, 3, 1, RIM],
+      [5, 10, 1, 2, RIM],
+      [9, 10, 1, 2, RIM],
+      [10, 9, 2, 1, RIM, 0.8],
     ],
     sleep: [
-      [4, 22, 5, 1, RIM],
-      [3, 23, 1, 1, RIM],
-      [8, 23, 1, 1, RIM],
-      [9, 22, 3, 1, RIM, 0.8],
+      [6, 22, 3, 1, RIM],
+      [5, 23, 1, 1, RIM],
+      [9, 23, 1, 1, RIM],
+      [10, 22, 2, 1, RIM, 0.8],
     ],
     bellyup: [
       [35, 24, 2, 2, RIM],
@@ -180,15 +182,18 @@ export const BIT_COSTUMES: Record<BitCostumeId, CostumeLayers> = {
 
   // 像素 — hero headband across the brow, knot tails fluttering off
   // behind the head (his home theme; the sprite-red matches 8bit's act).
+  // HERO_V5 (v0.5.2 body redesign round): band's front edge x2→x4 to
+  // hug the new, one-cell-narrower head; the knot tails past x13 sit
+  // on the untouched crown/back-of-head columns, unchanged.
   hero: {
     awake: [
-      [2, 8, 11, 1, RED],
+      [4, 8, 9, 1, RED],
       [13, 8, 2, 1, RED],
       [14, 9, 1, 1, RED, 0.8],
       [15, 10, 1, 1, RED, 0.6],
     ],
     sleep: [
-      [2, 22, 11, 1, RED],
+      [4, 22, 9, 1, RED],
       [13, 22, 2, 1, RED],
       [14, 23, 1, 1, RED, 0.8],
     ],
