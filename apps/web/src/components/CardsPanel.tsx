@@ -583,10 +583,7 @@ function ExpressionCardRow({
 
       <div className="mt-2 text-xs italic text-mut">{card.tone}</div>
 
-      <div
-        className="mt-2 line-clamp-2 border-l-2 border-edge bg-panel2 py-1.5 pl-2 font-mono text-xs text-mut"
-        title={card.source_sentence}
-      >
+      <div className="mt-2 border-l-2 border-edge bg-panel2 py-1.5 pl-2 font-mono text-xs text-mut">
         {card.source_sentence}
       </div>
 
