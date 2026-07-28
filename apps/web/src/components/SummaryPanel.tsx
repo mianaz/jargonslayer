@@ -3,7 +3,7 @@
 // Post-meeting report: bilingual summary, action items, flashcards,
 // full bilingual transcript, and export actions.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Notebook, Star } from "@phosphor-icons/react";
 import { useApp, currentSessionSnapshot } from "@/lib/store";
 import { summarizeApi, NoKeyError } from "@/lib/llm/client";
@@ -22,6 +22,7 @@ import { cardToCustomEntry, termToCustomEntry } from "@jargonslayer/core/types";
 import { langPairFromSettings } from "@/lib/translate/providers";
 import { oversizedUntranslated, untranslatedSegments } from "@/lib/translate/gaps";
 import { runGapFill } from "@/lib/translate/gapfill";
+import { IS_IOS } from "@/lib/platform/ios";
 import CornellNote from "./CornellNote";
 
 type PendingExportKind = "md" | "docx" | "copy";
@@ -41,6 +42,16 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const [pendingExport, setPendingExport] = useState<PendingExportKind | null>(null);
   const [gateBusy, setGateBusy] = useState(false);
 
+  // iOS-only: the .docx export needs a user gesture to survive all the
+  // way to navigator.share() (see export.ts's downloadBlob), and
+  // buildDocxReport's own dynamic import("docx") eats into that budget
+  // on first use. Prefetching the chunk as soon as this row mounts
+  // shortens the gap so the click itself has less work left to do.
+  useEffect(() => {
+    if (!IS_IOS) return;
+    void import("docx");
+  }, []);
+
   const pair = langPairFromSettings(settings);
   // F6 fix: oversized segments (too long for gap-fill to ever pick up,
   // same GAP_MAX_TEXT_CHARS cap the live queue itself uses) used to be
@@ -58,19 +69,19 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
     const session = currentSessionSnapshot();
     if (!session) return;
     if (kind === "md") {
-      downloadFile(
+      void downloadFile(
         `${session.title}.md`,
         buildMarkdownReport(session),
         "text/markdown",
       );
     } else if (kind === "tsv") {
-      downloadFile(
+      void downloadFile(
         `${session.title}.tsv`,
         buildAnkiTSV(session.summary?.flashcards ?? []),
         "text/tab-separated-values",
       );
     } else {
-      downloadFile(
+      void downloadFile(
         `${session.title}.json`,
         buildSessionJson(session),
         "application/json",
@@ -95,7 +106,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
     setDocxBusy(true);
     try {
       const blob = await buildDocxReport(session);
-      downloadBlob(`${session.title}.docx`, blob);
+      await downloadBlob(`${session.title}.docx`, blob);
     } catch (err) {
       const message = err instanceof Error ? err.message : "导出 .docx 失败";
       showToast(message);

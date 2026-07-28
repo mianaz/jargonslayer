@@ -44,6 +44,7 @@ import {
   previewBackup,
   restoreFullBackup,
 } from "@/lib/history/autoExport";
+import { downloadFile } from "@/lib/history/export";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import { probeSidecar, type SidecarProbeResult } from "@/lib/stt/sidecarHealth";
 import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
@@ -2710,19 +2711,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   };
 
   // 全量备份 (#57): downloads sessions + 词典 + settings as one JSON via
-  // a throwaway <a download> blob link — no server round-trip, matches
-  // this app's local-first storage model. exportStripKeys (default
-  // checked) strips key material before it ever leaves buildFullBackup.
+  // export.ts's downloadFile (share-sheet on iOS, throwaway <a download>
+  // blob link elsewhere) — no server round-trip, matches this app's
+  // local-first storage model. exportStripKeys (default checked) strips
+  // key material before it ever leaves buildFullBackup.
   const handleExportBackup = async () => {
     const json = await buildFullBackup({ includeKeys: !exportStripKeys });
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
     const date = new Date().toISOString().slice(0, 10);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `jargonslayer-backup-${date}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void downloadFile(`jargonslayer-backup-${date}.json`, json, "application/json");
     showToast(exportStripKeys ? "已导出备份（不含 API Key）" : "已导出备份（含 API Key，请妥善保管）");
   };
 

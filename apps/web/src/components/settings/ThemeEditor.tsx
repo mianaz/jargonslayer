@@ -37,6 +37,7 @@ import {
   type ThemeTokens,
 } from "@/lib/theme/schema";
 import { BUILTIN_THEMES, TERMINAL_THEME } from "@/lib/theme/themes";
+import { downloadFile } from "@/lib/history/export";
 
 // Preview activations use a fixed, never-"terminal" id — activateTheme's
 // own dispatcher special-cases the literal string "terminal" to always
@@ -339,13 +340,7 @@ export default function ThemeEditor({
       );
     const theme: ThemeDefinition = { id, label: trimmedLabel, scheme, tokens: draftTokens };
     const json = JSON.stringify(theme, null, 2);
-    const blob = new Blob([json], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${sanitizeFilename(trimmedLabel)}.jargonslayer-theme.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    void downloadFile(`${sanitizeFilename(trimmedLabel)}.jargonslayer-theme.json`, json, "application/json");
     showToast("已导出主题文件");
   };
 

@@ -403,7 +403,7 @@ export default function GlossaryPanel() {
 
   const handleExportAnki = () => {
     const tsv = buildAnkiTSV(customEntries.map(customEntryToFlashcard));
-    downloadFile("jargonslayer-glossary.tsv", tsv, "text/tab-separated-values");
+    void downloadFile("jargonslayer-glossary.tsv", tsv, "text/tab-separated-values");
     showToast("已导出 Anki .tsv");
   };
 

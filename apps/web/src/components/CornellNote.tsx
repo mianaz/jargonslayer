@@ -17,7 +17,7 @@ import {
   type AnnotationKind,
   type CornellSegment,
 } from "@/lib/cornell";
-import { copyToClipboard, downloadFile } from "@/lib/history/export";
+import { copyToClipboard, downloadBlob, downloadFile } from "@/lib/history/export";
 import { withBase } from "@/lib/basePath";
 
 export interface CornellNoteProps {
@@ -143,12 +143,17 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
     if (!node) return;
     try {
       const dataUrl = await toPng(node, { pixelRatio: 2, backgroundColor: PAPER_BG });
-      const a = document.createElement("a");
-      a.href = dataUrl;
-      a.download = `${formatDateStamp(date)}-cornell.png`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      // dataUrl -> Blob so this routes through downloadBlob (the app's
+      // one save path — see its own doc comment for why: a plain
+      // <a href={dataUrl}> click is a silent no-op on iOS same as the
+      // download-attribute anchor is). Decoded by hand rather than
+      // fetch(dataUrl): the desktop shell's CSP connect-src has no
+      // data:, so fetch would be blocked there.
+      const b64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      await downloadBlob(`${formatDateStamp(date)}-cornell.png`, new Blob([bytes], { type: "image/png" }));
     } catch (err) {
       console.warn("[CornellNote] PNG export failed", err);
       showToast("导出图片失败");
@@ -156,7 +161,7 @@ export default function CornellNote({ open, onClose }: CornellNoteProps) {
   };
 
   const handleExportMarkdown = () => {
-    downloadFile(`${formatDateStamp(date)}-cornell.md`, cornellToMarkdown(model), "text/markdown");
+    void downloadFile(`${formatDateStamp(date)}-cornell.md`, cornellToMarkdown(model), "text/markdown");
   };
 
   const handleCopyMarkdown = async () => {

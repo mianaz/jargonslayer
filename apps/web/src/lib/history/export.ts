@@ -12,6 +12,7 @@ import type {
 } from "@jargonslayer/core/types";
 import { formatElapsedClock, resolveSessionElapsedBasis, segmentElapsedMs } from "../segmentElapsed";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
+import { IS_IOS } from "@/lib/platform/ios";
 
 const ENGINE_LABELS: Record<STTEngineKind, string> = {
   demo: "演示模式",
@@ -229,9 +230,51 @@ export function buildSessionJson(session: MeetingSession): string {
   return JSON.stringify(session, null, 2);
 }
 
-/** Trigger a browser download of `content` as `filename`. */
-export function downloadFile(filename: string, content: string, mime: string): void {
-  const blob = new Blob([content], { type: mime });
+/** Trigger a save of a pre-built `blob` as `filename` — the app's one
+ *  save path; downloadFile below delegates here for the string+mime
+ *  case. Every non-iOS build keeps the original throwaway-anchor
+ *  download. On iOS, `<a download>.click()` is a silent no-op — the
+ *  Tauri WKWebView shell has no download delegate to catch it — so
+ *  this hands the file to the OS share sheet (navigator.share)
+ *  instead, falling back to the anchor attempt only when share itself
+ *  is unavailable. Always resolves: a dismissed share sheet is treated
+ *  as a completed export (see AbortError below), and a rejected one
+ *  surfaces its own retry toast rather than throwing. */
+export async function downloadBlob(filename: string, blob: Blob): Promise<void> {
+  if (IS_IOS && typeof navigator.share === "function") {
+    const file = new File([blob], filename, { type: blob.type || "application/octet-stream" });
+    const shareData: ShareData = { files: [file] };
+    if (!navigator.canShare || navigator.canShare(shareData)) {
+      try {
+        await navigator.share(shareData);
+        return;
+      } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          // The user dismissed the share sheet — a cancel, not a
+          // failure, so this stays silent (no toast, no fallback).
+          return;
+        }
+        if (err instanceof DOMException && err.name === "NotAllowedError") {
+          // Transient activation can expire before share() actually
+          // runs (e.g. after an await'd docx build) — WKWebView then
+          // refuses the sheet outright. The retry button's own click
+          // is a fresh user gesture, so a retry from there can still
+          // succeed. Dynamic import: store.ts's own static graph
+          // already reaches this file (store -> autoExport -> export),
+          // so a top-level `import { useApp } from "@/lib/store"` here
+          // would close that cycle — see store.ts's
+          // triggerSelectionLookup for the same dynamic-import idiom.
+          const { useApp } = await import("@/lib/store");
+          useApp.getState().showToast({
+            message: "导出未完成，请重试",
+            action: { label: "重试", run: () => void downloadBlob(filename, blob) },
+          });
+          return;
+        }
+        console.warn("[export] navigator.share failed, falling back to anchor download", err);
+      }
+    }
+  }
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -242,19 +285,11 @@ export function downloadFile(filename: string, content: string, mime: string): v
   URL.revokeObjectURL(url);
 }
 
-/** Trigger a browser download of a pre-built `blob` as `filename` —
- *  same anchor-click mechanics as downloadFile above, for callers
- *  (e.g. buildDocxReport, history/docx.ts) that already produce a
- *  Blob directly instead of a string+mime pair. */
-export function downloadBlob(filename: string, blob: Blob): void {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+/** Trigger a save of `content` as `filename` — builds a Blob and
+ *  delegates to downloadBlob (see its own doc comment for the iOS
+ *  share-sheet path). */
+export async function downloadFile(filename: string, content: string, mime: string): Promise<void> {
+  await downloadBlob(filename, new Blob([content], { type: mime }));
 }
 
 function yamlListItem(s: string): string {
