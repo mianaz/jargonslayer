@@ -57,6 +57,16 @@ import { remapOpenRouterModelDefaults } from "./oauth/openrouterModelDefaults";
 // transcript edits) — one timer, latest state wins.
 let postStopSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
+// R5 fix (v0.7.1 train-2 round-5 review): saveCurrentSession's own
+// failure-retry re-arms this same timer (see its `!saved` branch below)
+// — with a permanently failing IndexedDB that retry loop never stopped
+// on its own, re-toasting every 1.5s forever. This counts consecutive
+// storage failures so that retry loop can cap itself; reset to 0 on any
+// successful save (or when deleteSession cancels a pending retry — see
+// its own comment).
+let postStopSaveFailureCount = 0;
+const POST_STOP_SAVE_MAX_RETRIES = 3;
+
 /** `scheduledGen`/`currentGen` guard against a meeting-boundary race:
  * if the user starts a new meeting (bumping meetingGen) before this
  * debounce fires, the save would otherwise persist the WRONG (new,
@@ -2769,24 +2779,38 @@ export const useApp = create<AppState>((set, get) => ({
     // below — gets another chance).
     const saved = await storage.saveSession(session);
     if (!saved) {
-      get().showToast("保存失败，会议草稿已保留");
+      // R5 fix: only the FIRST failure of a burst toasts — with
+      // postStopSaveFailureCount already > 0, a broken store has already
+      // told the user once; re-toasting every 1.5s on top of it is just
+      // noise.
+      if (postStopSaveFailureCount === 0) {
+        get().showToast("保存失败，会议草稿已保留");
+      }
       // R4-2 fix: this entry already cleared the debounce timer above
       // (R3-3), so a storage failure here must re-arm it — otherwise a
       // completed gap-fill's translations exist only in memory and are
       // lost on reload. Re-arming under genAtEntry (not the live gen)
       // matches the reattach guard just below: if a newer meeting has
       // since begun, scheduleSessionSave's own currentGen() check skips
-      // firing rather than re-saving the wrong meeting's live state. If
-      // the retry hits the same failure it re-arms once more — a hot
-      // loop capped at one attempt per 1.5s tick, same cadence as the
-      // pre-R3-3 debounce this replaces.
-      scheduleSessionSave(
-        () => get().saveCurrentSession(),
-        genAtEntry,
-        () => get().meetingGen,
-      );
+      // firing rather than re-saving the wrong meeting's live state.
+      // R5 fix: capped at POST_STOP_SAVE_MAX_RETRIES — a permanently
+      // failing store used to retry every 1.5s forever. Once the cap is
+      // hit this gives up silently; the data stays in memory (the user
+      // was already toasted) rather than looping forever against a
+      // store that's never coming back.
+      if (postStopSaveFailureCount < POST_STOP_SAVE_MAX_RETRIES) {
+        postStopSaveFailureCount++;
+        scheduleSessionSave(
+          () => get().saveCurrentSession(),
+          genAtEntry,
+          () => get().meetingGen,
+        );
+      }
       return null;
     }
+    // R5 fix: any successful save clears the failure streak, so a later
+    // transient failure toasts again instead of staying silently capped.
+    postStopSaveFailureCount = 0;
     const metas = await storage.listSessions();
     // R3-2 fix, R4-1 refinement: `sessions: metas` is always safe (and
     // required — otherwise a never-saved meeting that ends while the
@@ -2930,6 +2954,19 @@ export const useApp = create<AppState>((set, get) => ({
     const patch: Partial<AppState> = { sessions: metas };
     if (get().activeSessionId === id) {
       patch.activeSessionId = null;
+      // R5 fix: cancel any pending failed-save retry for the session
+      // just deleted — without this, a retry that still passes
+      // saveCurrentSession's gen guard would snapshot the still-loaded
+      // segments with activeSessionId now null, MINT A NEW ID (see its
+      // `session.id` construction), and resurrect this just-deleted
+      // session right back into History. meetingGen is deliberately left
+      // untouched (other flows key off it); cancelling the timer alone
+      // is sufficient and side-effect-free.
+      if (postStopSaveTimer) {
+        clearTimeout(postStopSaveTimer);
+        postStopSaveTimer = null;
+      }
+      postStopSaveFailureCount = 0;
     }
     set(patch);
   },

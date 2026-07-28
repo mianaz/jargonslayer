@@ -1691,6 +1691,89 @@ describe("saveCurrentSession — R4-2 fix: a storage failure re-arms the debounc
   });
 });
 
+describe("saveCurrentSession — R5 fix: bounded failure retries + single toast per failure burst", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("a permanently failing storage.saveSession retries exactly 3 times (4 attempts total) then goes silent, toasting only once", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(false);
+    const showToastSpy = vi.spyOn(useApp.getState(), "showToast");
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      activeSessionId: null,
+      sessions: [],
+    });
+
+    const id = await useApp.getState().saveCurrentSession();
+
+    expect(id).toBeNull();
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(showToastSpy).toHaveBeenCalledTimes(1);
+
+    // Well past 4x1.5s: the 3 capped retries (attempts 2-4) all fire, then
+    // the retry loop gives up rather than re-arming a 5th.
+    await vi.advanceTimersByTimeAsync(1500 * 6);
+
+    expect(saveSpy).toHaveBeenCalledTimes(4);
+    expect(showToastSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("deleteSession — R5 fix: deleting the active session cancels a pending failed-save retry (no resurrection)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("deleting the loaded session while its failed save is still pending retry leaves it deleted — no further save call, no metas entry", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(false);
+    vi.spyOn(storageModule, "deleteSession").mockResolvedValue(undefined);
+    const listSpy = vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      activeSessionId: "s1",
+      sessions: [{ id: "s1" } as ReturnType<typeof sessionToMeta>],
+    });
+
+    // Storage full: the save fails and arms a retry keyed to this
+    // meeting's gen (activeSessionId is untouched by a failed save).
+    await useApp.getState().saveCurrentSession();
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(useApp.getState().activeSessionId).toBe("s1");
+
+    // User deletes that same session to free up space.
+    await useApp.getState().deleteSession("s1");
+    expect(listSpy).toHaveBeenCalledTimes(1);
+    expect(useApp.getState().activeSessionId).toBeNull();
+    expect(useApp.getState().sessions).toEqual([]);
+
+    // The pending retry must never fire — it would otherwise snapshot the
+    // still-loaded segments under a freshly minted id and resurrect the
+    // just-deleted session right back into History.
+    await vi.advanceTimersByTimeAsync(1500 * 6);
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(useApp.getState().sessions).toEqual([]);
+    expect(useApp.getState().activeSessionId).toBeNull();
+  });
+});
+
 describe("restoreLiveDraft — materializes a RecoveryBanner draft into history (v0.5 closeout)", () => {
   afterEach(() => {
     vi.restoreAllMocks();
