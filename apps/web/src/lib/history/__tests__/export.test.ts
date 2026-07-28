@@ -234,6 +234,28 @@ describe("buildMarkdownReport — sections", () => {
       expect(report).toContain("> 仅有现场翻译。");
     });
 
+    // F9 fix (v0.7.1 train-2 adversarial review): an empty/whitespace
+    // live value (e.g. a gap-fill batch that gave up on this segment)
+    // used to beat a real summary translation via `??`, since "" is not
+    // nullish — silently dropping a translation that DOES exist.
+    it("F9 fix: an empty-string live value falls back to the summary pair instead of winning", () => {
+      const session = makeSession({
+        segments: [
+          { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+        ],
+        translations: { seg1: "" },
+        summary: {
+          summary: { topic: { en: "", zh: "" }, key_points: [], decisions: [], action_items: [] },
+          translations: [{ index: 0, zh: "纪要翻译。" }],
+          flashcards: [],
+          generatedAt: 1000,
+          model: "test-model",
+        },
+      });
+      const report = buildMarkdownReport(session);
+      expect(report).toContain("> 纪要翻译。");
+    });
+
     it("omits the quote line when neither session.translations nor the summary pair has this segment", () => {
       const session = makeSession({
         segments: [

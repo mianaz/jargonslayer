@@ -226,6 +226,28 @@ describe("buildDocxReport — sections mirror buildMarkdownReport", () => {
     expect(docXml).toContain("仅有现场翻译。");
   });
 
+  // F9 fix — mirrors export.test.ts's own regression: an empty-string
+  // live value must fall back to the summary pair rather than win.
+  it("F9 fix: an empty-string live value falls back to the summary pair instead of winning", async () => {
+    const session = makeSession({
+      segments: [
+        { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+      ],
+      translations: { seg1: "" },
+      summary: {
+        summary: { topic: { en: "", zh: "" }, key_points: [], decisions: [], action_items: [] },
+        translations: [{ index: 0, zh: "纪要翻译。" }],
+        flashcards: [],
+        generatedAt: 1000,
+        model: "test-model",
+      },
+    });
+    const blob = await buildDocxReport(session);
+    const zip = await unzip(blob);
+    const docXml = await zip.file("word/document.xml")!.async("string");
+    expect(docXml).toContain("纪要翻译。");
+  });
+
   it("renders the 行动项 table with owner/task/due when action items are present", async () => {
     const session = makeSession({
       summary: {

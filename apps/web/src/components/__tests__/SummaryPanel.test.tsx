@@ -377,4 +377,80 @@ describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
     await flush();
     expect(container!.querySelector('[data-testid="export-gap-fill"]')).not.toBeNull();
   });
+
+  // F4(b) fix (v0.7.1 train-2 adversarial review): a live meeting already
+  // has its own TranslateQueue filling gaps — gapfill.ts's own status
+  // guard (F4a) would abort a run started here anyway, so 补全后导出
+  // itself must not even be offered while one is in progress. The
+  // 未翻译 count text (and 直接导出/取消) stay exactly as before.
+  it("F4(b) fix: only 直接导出/取消 are offered while a live meeting is running — no 补全后导出", async () => {
+    useApp.setState({ status: "listening" });
+
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出报告 .md"));
+    await flush();
+
+    expect(container!.textContent).toContain("还有 1 段未翻译");
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="export-anyway"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="export-cancel"]')).not.toBeNull();
+  });
+
+  // F6 fix (v0.7.1 train-2 adversarial review): oversized segments (too
+  // long for gap-fill to ever pick up — GAP_MAX_TEXT_CHARS) used to be
+  // invisible to this gate entirely, so a meeting with ONLY oversized
+  // gaps exported silently missing translations with no warning at all.
+  describe("F6 — oversized-segment visibility", () => {
+    const oversizedSeg = {
+      id: "seg-big",
+      index: 2,
+      startedAt: 2000,
+      endedAt: 2500,
+      text: "x".repeat(1600), // > GAP_MAX_TEXT_CHARS (1500)
+      engine: "demo" as const,
+    };
+
+    it("an ONLY-oversized gap still shows the gate, with no 补全后导出 button (nothing gap-fill could ever do)", async () => {
+      useApp.setState({
+        segments: [oversizedSeg, segTranslated],
+        translations: { seg2: "已翻译。" },
+      });
+
+      await act(async () => {
+        root!.render(<SummaryPanel />);
+      });
+      await flush();
+
+      await clickButton(findButton("导出报告 .md"));
+      await flush();
+
+      expect(container!.querySelector('[data-testid="export-gap-fill"]')).toBeNull();
+      expect(container!.querySelector('[data-testid="export-anyway"]')).not.toBeNull();
+      expect(container!.textContent).toContain("还有 0 段未翻译");
+      expect(container!.textContent).toContain("另有 1 段过长，无法自动翻译");
+    });
+
+    it("a MIXED gap (eligible + oversized) renders both counts, with 补全后导出 still available for the eligible one", async () => {
+      useApp.setState({
+        segments: [segWithGap, oversizedSeg, segTranslated],
+        translations: { seg2: "已翻译。" },
+      });
+
+      await act(async () => {
+        root!.render(<SummaryPanel />);
+      });
+      await flush();
+
+      await clickButton(findButton("导出报告 .md"));
+      await flush();
+
+      expect(container!.querySelector('[data-testid="export-gap-fill"]')).not.toBeNull();
+      expect(container!.textContent).toContain("还有 1 段未翻译");
+      expect(container!.textContent).toContain("另有 1 段过长，无法自动翻译");
+    });
+  });
 });

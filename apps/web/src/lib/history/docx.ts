@@ -208,7 +208,11 @@ export async function buildDocxReport(session: MeetingSession): Promise<Blob> {
         }),
       );
       children.push(plain(seg.text));
-      const zh = liveTranslations[seg.id] ?? translationByIndex.get(seg.index);
+      // F9 fix — see export.ts's buildMarkdownReport for the full
+      // rationale (mirrored section-for-section here): an empty/
+      // whitespace live value must still fall back to the summary pair.
+      const liveZh = liveTranslations[seg.id];
+      const zh = liveZh && liveZh.trim().length > 0 ? liveZh : translationByIndex.get(seg.index);
       if (zh) children.push(quote(zh));
     }
   }

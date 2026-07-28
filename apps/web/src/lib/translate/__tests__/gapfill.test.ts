@@ -26,11 +26,16 @@ vi.mock("../../llm/client", () => ({
 }));
 
 const resolveTranslationProviderMock = vi.fn();
+// F8(b) fix regression coverage — stopSystemTranslator itself is a
+// real no-op outside a desktop/iOS build, so it's mocked here purely to
+// make "was it called" observable, not to change its behavior.
+const stopSystemTranslatorMock = vi.fn();
 vi.mock("../providers", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../providers")>();
   return {
     ...actual,
     resolveTranslationProvider: (...args: unknown[]) => resolveTranslationProviderMock(...args),
+    stopSystemTranslator: (...args: unknown[]) => stopSystemTranslatorMock(...args),
   };
 });
 
@@ -57,8 +62,8 @@ function makeSegment(overrides: Partial<TranscriptSegment> = {}): TranscriptSegm
   };
 }
 
-function installProvider(translate: ReturnType<typeof vi.fn>, prepare = vi.fn()) {
-  resolveTranslationProviderMock.mockReturnValue({ kind: "llm", prepare, translate });
+function installProvider(translate: ReturnType<typeof vi.fn>, prepare = vi.fn(), kind = "llm") {
+  resolveTranslationProviderMock.mockReturnValue({ kind, prepare, translate });
   return { prepare, translate };
 }
 
@@ -66,6 +71,7 @@ describe("gapfill — runGapFill / isGapFillRunning", () => {
   beforeEach(() => {
     segIndex = 0;
     resolveTranslationProviderMock.mockReset();
+    stopSystemTranslatorMock.mockReset();
     useApp.setState({
       segments: [],
       translations: {},
@@ -202,14 +208,36 @@ describe("gapfill — runGapFill / isGapFillRunning", () => {
     expect(useApp.getState().translateStatus.state).toBe("done"); // something landed overall
   });
 
-  it("re-entry while already running is a no-op", async () => {
+  it("F1 fix: an id whose translation resolves to '' is given up on (counted failed), never re-selected — no infinite loop", async () => {
+    const seg = makeSegment();
+    useApp.setState({ segments: [seg] });
+
+    // Bounded call counter — a regression that reintroduces the
+    // infinite loop would blow well past any sane call count instead of
+    // this test just hanging forever.
+    let calls = 0;
+    const translate = vi.fn().mockImplementation(async (items: { id: string; text: string }[]) => {
+      calls++;
+      if (calls > 5) throw new Error("runaway loop — same empty-result id kept being re-selected");
+      return items.map((it) => ({ id: it.id, text: "" }));
+    });
+    installProvider(translate);
+
+    const result = await runGapFill();
+
+    expect(result).toEqual({ filled: 0, failed: 1, aborted: false });
+    expect(translate).toHaveBeenCalledTimes(1); // gave up after the one empty result, no re-fetch
+    expect(useApp.getState().translations[seg.id]).toBeUndefined();
+  });
+
+  it("F3 fix: re-entry while already running JOINS the same in-flight run instead of no-opping", async () => {
     useApp.setState({ segments: [makeSegment()] });
     // A controllable pending promise (not `new Promise(() => {})`) — this
     // test resolves it (with a REAL translation, closing the gap) before
-    // finishing, so the module-level `running` flag is guaranteed to
-    // clear again before the NEXT test in this file runs (it's a shared
-    // module singleton, not per-test state) instead of looping forever
-    // on a still-open gap.
+    // finishing, so the module-level `currentRun` is guaranteed to clear
+    // again before the NEXT test in this file runs (it's a shared module
+    // singleton, not per-test state) instead of looping forever on a
+    // still-open gap.
     let settleFirstBatch: () => void = () => {};
     const translate = vi.fn().mockImplementation(
       (items: { id: string; text: string }[]) =>
@@ -222,12 +250,18 @@ describe("gapfill — runGapFill / isGapFillRunning", () => {
     const first = runGapFill();
     expect(isGapFillRunning()).toBe(true);
 
-    const second = await runGapFill();
-    expect(second).toEqual({ filled: 0, failed: 0, aborted: false });
-    expect(translate).toHaveBeenCalledTimes(1); // the second call never even resolved a provider
+    // A second call while the first is still pending must return the
+    // SAME promise — not a stub {aborted:false} — so a caller
+    // (SummaryPanel's 补全后导出) that fires it genuinely waits for the
+    // real result.
+    const second = runGapFill();
+    expect(second).toBe(first);
+    expect(translate).toHaveBeenCalledTimes(1); // the second call never triggered its own batch
 
     settleFirstBatch();
-    await first;
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult).toEqual({ filled: 1, failed: 0, aborted: false });
+    expect(secondResult).toBe(firstResult);
     expect(isGapFillRunning()).toBe(false);
   });
 
@@ -262,5 +296,90 @@ describe("gapfill — runGapFill / isGapFillRunning", () => {
 
     expect(result).toEqual({ filled: 0, failed: 0, aborted: false });
     expect(resolveTranslationProviderMock).not.toHaveBeenCalled();
+  });
+
+  it("F8 fix: a no-gap call never resolves a provider at all (nothing to prime/tear down)", async () => {
+    useApp.setState({ segments: [makeSegment({ text: "hello" })], translations: { "seg-1": "你好" } });
+    const translate = vi.fn();
+    installProvider(translate);
+
+    const result = await runGapFill();
+
+    expect(result).toEqual({ filled: 0, failed: 0, aborted: false });
+    expect(resolveTranslationProviderMock).not.toHaveBeenCalled();
+  });
+
+  it.each(["listening", "connecting", "paused"] as const)(
+    "F4 fix: status %s aborts immediately without resolving a provider — a live meeting's own TranslateQueue owns this",
+    async (status) => {
+      useApp.setState({ segments: [makeSegment()], status });
+      const translate = vi.fn();
+      installProvider(translate);
+
+      const result = await runGapFill();
+
+      expect(result).toEqual({ filled: 0, failed: 0, aborted: true });
+      expect(resolveTranslationProviderMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("F5 fix: drops a translation for a segment whose text changed mid-flight, without giving it up (still eligible next pass)", async () => {
+    const seg = makeSegment({ text: "original text" });
+    useApp.setState({ segments: [seg] });
+
+    let calls = 0;
+    const translate = vi.fn().mockImplementation(async (items: { id: string; text: string }[]) => {
+      calls++;
+      if (calls === 1) {
+        // Simulates a concurrent edit landing while this batch's
+        // translate() request is still in flight — mutates the store's
+        // segment text BEFORE the request resolves.
+        useApp.setState({
+          segments: useApp
+            .getState()
+            .segments.map((s) => (s.id === seg.id ? { ...s, text: "edited text" } : s)),
+        });
+      }
+      return items.map((it) => ({ id: it.id, text: `${it.text} 译` }));
+    });
+    installProvider(translate);
+
+    await runGapFill();
+
+    // The stale translation ("original text 译", computed from the text
+    // AS SENT) must never land — only the SECOND attempt, re-dispatched
+    // with the post-edit text, is applied. Two calls (not one) is itself
+    // proof the id was left as an ordinary gap rather than given up on.
+    expect(translate).toHaveBeenCalledTimes(2);
+    expect(useApp.getState().translations[seg.id]).toBe("edited text 译");
+  });
+
+  it("F8 fix: tears down a system-kind provider's native child via stopSystemTranslator after completion", async () => {
+    useApp.setState({ segments: [makeSegment()] });
+    const translate = vi
+      .fn()
+      .mockImplementation(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: `${it.text} 译` })),
+      );
+    installProvider(translate, vi.fn(), "system");
+
+    expect(stopSystemTranslatorMock).not.toHaveBeenCalled();
+    await runGapFill();
+
+    expect(stopSystemTranslatorMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not tear down a non-system (llm) provider", async () => {
+    useApp.setState({ segments: [makeSegment()] });
+    const translate = vi
+      .fn()
+      .mockImplementation(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: `${it.text} 译` })),
+      );
+    installProvider(translate); // default kind: "llm"
+
+    await runGapFill();
+
+    expect(stopSystemTranslatorMock).not.toHaveBeenCalled();
   });
 });

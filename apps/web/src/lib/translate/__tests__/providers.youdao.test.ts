@@ -255,6 +255,33 @@ describe("YoudaoTranslationProvider", () => {
       await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(Error);
     });
 
+    // F1(a) fix (v0.7.1 train-2 adversarial review): errorCode "0" with
+    // a missing/empty translation[0] used to silently resolve "" — a
+    // permanently-empty "translation" that gapfill.ts's outer loop had
+    // no way to distinguish from "still pending", spinning it into an
+    // infinite re-fetch (and re-bill) loop. Must now throw instead, so
+    // it fails this item like any other provider error.
+    it("errorCode '0' with an empty translation array -> generic Error, not a resolved ''", async () => {
+      setTransport(vi.fn().mockResolvedValue(jsonResponse({ errorCode: "0", translation: [] })));
+      const provider = new YoudaoTranslationProvider(() => settingsWithKeys());
+
+      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toThrow("有道翻译返回空结果");
+    });
+
+    it("errorCode '0' with translation[0] === '' -> generic Error, not a resolved ''", async () => {
+      setTransport(vi.fn().mockResolvedValue(jsonResponse({ errorCode: "0", translation: [""] })));
+      const provider = new YoudaoTranslationProvider(() => settingsWithKeys());
+
+      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toThrow("有道翻译返回空结果");
+    });
+
+    it("errorCode '0' with translation missing entirely -> generic Error, not a resolved ''", async () => {
+      setTransport(vi.fn().mockResolvedValue(jsonResponse({ errorCode: "0" })));
+      const provider = new YoudaoTranslationProvider(() => settingsWithKeys());
+
+      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toThrow("有道翻译返回空结果");
+    });
+
     it("one item's NoKeyError fails the WHOLE batch (Promise.all propagation)", async () => {
       const mockTransport = vi.fn().mockImplementation((_url: string, init: { body: URLSearchParams }) => {
         const q = init.body.get("q");

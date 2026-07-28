@@ -159,7 +159,13 @@ export function buildMarkdownReport(session: MeetingSession): string {
       const elapsed = formatElapsedClock(segmentElapsedMs(elapsedZero, seg.startedAt, pauseIntervals));
       lines.push(`**${speaker}** \`${elapsed}\`  `);
       lines.push(`${seg.text}  `);
-      const zh = liveTranslations[seg.id] ?? translationByIndex.get(seg.index);
+      // F9 fix (v0.7.1 train-2 adversarial review): an empty/whitespace
+      // live value (e.g. a gap-fill batch that gave up on this segment,
+      // landing "" rather than nothing at all) must still fall back to
+      // the summary pair — `??` alone treats "" as present and wins,
+      // silently dropping a translation the summary stage actually has.
+      const liveZh = liveTranslations[seg.id];
+      const zh = liveZh && liveZh.trim().length > 0 ? liveZh : translationByIndex.get(seg.index);
       if (zh) {
         lines.push(`> ${zh}`);
       }

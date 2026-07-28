@@ -234,7 +234,18 @@ async function translateOneWithYoudao(
   }
 
   const code = body.errorCode ?? "";
-  if (code === "0") return body.translation?.[0] ?? "";
+  if (code === "0") {
+    // F1 fix (v0.7.1 train-2 adversarial review): errorCode "0" ("成功")
+    // with a missing/empty translation[0] is 有道 lying about success —
+    // treated as an ordinary item failure (throws) so gapfill.ts's
+    // retry-then-giveUp semantics take over, instead of silently
+    // resolving "" (which reads as untranslated forever and — pre-fix —
+    // spun gapfill.ts into re-selecting/re-billing the same batch
+    // endlessly).
+    const text = body.translation?.[0];
+    if (text) return text;
+    throw new Error("有道翻译返回空结果");
+  }
   if (YOUDAO_NOKEY_CODES.has(code)) throw new NoKeyError();
   if (YOUDAO_RATE_LIMIT_CODES.has(code)) throw new RateLimitApiError();
   throw new Error(`有道翻译失败 (${code})`);

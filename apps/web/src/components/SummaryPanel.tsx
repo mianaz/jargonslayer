@@ -20,7 +20,7 @@ import { buildDocxReport } from "@/lib/history/docx";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { cardToCustomEntry, termToCustomEntry } from "@jargonslayer/core/types";
 import { langPairFromSettings } from "@/lib/translate/providers";
-import { untranslatedSegments } from "@/lib/translate/gaps";
+import { oversizedUntranslated, untranslatedSegments } from "@/lib/translate/gaps";
 import { runGapFill } from "@/lib/translate/gapfill";
 import CornellNote from "./CornellNote";
 
@@ -32,13 +32,27 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const settings = useApp((s) => s.settings);
   const segments = useApp((s) => s.segments);
   const translations = useApp((s) => s.translations);
+  // F4 fix: whether 补全后导出 may even be offered — a live meeting
+  // already has its own TranslateQueue running; gapfill.ts's own status
+  // guard would abort a run started here anyway, so the button itself
+  // must not be offered while one is in progress.
+  const status = useApp((s) => s.status);
   const [docxBusy, setDocxBusy] = useState(false);
   const [pendingExport, setPendingExport] = useState<PendingExportKind | null>(null);
   const [gateBusy, setGateBusy] = useState(false);
 
   const pair = langPairFromSettings(settings);
-  const untranslatedCount = untranslatedSegments(segments, translations).length;
-  const gate = settings.bilingualTranscript && pair.source !== pair.target && untranslatedCount > 0;
+  // F6 fix: oversized segments (too long for gap-fill to ever pick up,
+  // same GAP_MAX_TEXT_CHARS cap the live queue itself uses) used to be
+  // invisible to this gate entirely — untranslatedSegments() excludes
+  // them, so a meeting with ONLY oversized gaps showed no gate at all
+  // and exported silently missing translations. eligibleCount is what
+  // 补全后导出 can actually fill; oversizeCount is called out separately
+  // in the confirm copy below since no amount of gap-filling clears it.
+  const eligibleCount = untranslatedSegments(segments, translations).length;
+  const oversizeCount = oversizedUntranslated(segments, translations).length;
+  const gate =
+    settings.bilingualTranscript && pair.source !== pair.target && eligibleCount + oversizeCount > 0;
 
   const handleExport = (kind: "md" | "tsv" | "json") => {
     const session = currentSessionSnapshot();
@@ -211,17 +225,23 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
           }}
         >
           <div className="w-[320px] max-w-[92vw] rounded-none border border-edge2 bg-panel glassable-panel p-5">
-            <div className="mb-4 text-sm text-fg">还有 {untranslatedCount} 段未翻译</div>
+            <div className="mb-4 text-sm text-fg">
+              {`还有 ${eligibleCount} 段未翻译${
+                oversizeCount > 0 ? `（另有 ${oversizeCount} 段过长，无法自动翻译）` : ""
+              }`}
+            </div>
             <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                data-testid="export-gap-fill"
-                disabled={gateBusy}
-                onClick={() => void handleExportAfterGapFill()}
-                className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                补全后导出
-              </button>
+              {eligibleCount > 0 && status === "stopped" && (
+                <button
+                  type="button"
+                  data-testid="export-gap-fill"
+                  disabled={gateBusy}
+                  onClick={() => void handleExportAfterGapFill()}
+                  className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  补全后导出
+                </button>
+              )}
               <button
                 type="button"
                 data-testid="export-anyway"
