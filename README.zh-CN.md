@@ -32,16 +32,16 @@
 
 - **macOS 桌面端**（Apple Silicon，推荐）— 从 [Releases](https://github.com/mianaz/jargonslayer/releases/latest) 下载 DMG。首次启动的引导向导会把本地 Whisper 安装到应用自身目录（未经同意不会下载任何文件；删除目录即为干净卸载）。**系统/App 音频**（macOS 14.4+）可直接转录 Zoom、Teams、微信等原生应用中的会议音频，无需虚拟音频设备。
 - **Web 应用** — [在线体验托管版](https://apps.bioinfospace.com/jargonslayer)（内置演示 AI key，有频率限制），也可自行部署：`npm install && npm run build && npm start`，需要 Node 20+。详见[文档](https://mianaz.github.io/jargonslayer/docs/)。手机浏览器也可直接使用。
-- **iOS 测试版** — TestFlight 受邀测试，可[通过网站联系](https://mianaz.github.io/jargonslayer/)获取邀请；系统本机语音识别，需 iOS 26+。
+- **iOS 测试版** — TestFlight 受邀测试，可[通过网站联系](https://mianaz.github.io/jargonslayer/)获取邀请；系统本机语音识别 + 系统本机翻译（Apple Translation，无需 Key），需 iOS 26+。
 - **Chrome 扩展（JargonSlayer Lite）** — 侧边栏实时字幕 + 术语卡片。手动安装（正式安装方式，暂不上架 Web Store）：从 [Releases](https://github.com/mianaz/jargonslayer/releases) 下载 zip 并解压，打开 `chrome://extensions`，开启「开发者模式」，点「加载已解压的扩展程序」选中解压后的文件夹。[分步指南](https://mianaz.github.io/jargonslayer/docs/zh/#quickstart)。
 
 ## 功能
 
-- **实时术语卡片** — 黑话、习语、隐喻、缩写，说出口的瞬间就变成简短中文释义；LLM 驱动（自带 key）或离线词典（428 条），一键切换。
+- **实时术语卡片** — 黑话、习语、隐喻、缩写，说出口的瞬间就变成简短中文释义；默认走词典模式（1000+ 条，纯本地、无需 Key），可选 AI 模式（Beta，需自备 Key），一键切换。
 - **多转录引擎** — 本地 Whisper（全程在设备上运行）、系统/App 音频（桌面端）、标签页音频（Web 端）、浏览器语音识别；状态栏始终显示音频去向。
 - **说话人分离** — 谁说了什么，实时标注，导入录音后也能标注（pyannote，可选一键安装）。
 - **会议报告** — 双语会议纪要、全文翻译、导出到 Anki / Markdown / JSON、Webhook 推送。
-- **学习闭环** — 翻转卡片搭配间隔重复、词云、个人词汇本（已掌握的词自动不再提示）。
+- **学习中心** — 个人词典、翻转卡片、间隔重复、词云、已掌握词自动不再提示，整合在一处。
 - **导入** — 音视频文件和 URL，在浏览器端或 sidecar 本地转录。
 - **Bit** 🐉 — 趴在状态栏上的像素小龙。点它。快速连点三下试试。
 

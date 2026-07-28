@@ -32,16 +32,16 @@ It sits beside your English meetings and turns **business slang, idioms, metapho
 
 - **macOS desktop app** (Apple Silicon, recommended) — download the DMG from [Releases](https://github.com/mianaz/jargonslayer/releases/latest). The first-run wizard installs local Whisper into the app's own directory (nothing downloads without consent; deleting the directory is a clean uninstall). **System/app audio** (macOS 14.4+) transcribes meetings running in native apps — Zoom, Teams, WeChat — directly, with no virtual audio device.
 - **Web app** — [try the hosted preview](https://apps.bioinfospace.com/jargonslayer) (built-in demo AI key, rate-limited), or self-host: `npm install && npm run build && npm start` with Node 20+. Details in the [docs](https://mianaz.github.io/jargonslayer/docs/). Works in mobile browsers too.
-- **iOS (beta)** — available via TestFlight on request ([get in touch](https://mianaz.github.io/jargonslayer/)); on-device system speech recognition, iOS 26+.
+- **iOS (beta)** — available via TestFlight on request ([get in touch](https://mianaz.github.io/jargonslayer/)); on-device system speech recognition and on-device system translation (Apple Translation, no key required), iOS 26+.
 - **Chrome extension (JargonSlayer Lite)** — live captions and jargon cards in a side panel. Manual install (the supported path; no Web Store listing for now): download the zip from [Releases](https://github.com/mianaz/jargonslayer/releases), unzip, open `chrome://extensions`, enable Developer mode, click "Load unpacked", pick the unzipped folder. [Step-by-step guide](https://mianaz.github.io/jargonslayer/docs/#quickstart).
 
 ## Features
 
-- **Real-time jargon cards** — slang, idioms, metaphors, acronyms → short Chinese explanations as they are spoken; LLM-powered (bring your own key) or the instant offline dictionary (428 entries), one toggle apart.
+- **Real-time jargon cards** — slang, idioms, metaphors, acronyms → short Chinese explanations as they are spoken; dictionary mode is default (1,000+ entries, fully local, no key needed), with an optional AI mode (Beta, bring your own key) one toggle apart.
 - **Multiple transcription engines** — local Whisper (fully on-device), system/app audio (desktop), tab audio (web), browser recognition; the status bar always shows where your audio goes.
 - **Speaker diarization** — who-said-what labels, live and for imported recordings (pyannote, optional one-click install).
 - **Meeting reports** — bilingual minutes, full transcript translation, exports to Anki / Markdown / JSON, webhooks.
-- **Learning loop** — flip-card review with spaced repetition, a word cloud, and a personal glossary that suppresses what you already know.
+- **Learning center** — personal glossary, flip-card review with spaced repetition, a word cloud, and known-word suppression, all in one place.
 - **Imports** — audio/video files and URLs, transcribed locally in the browser or by the sidecar.
 - **Bit** 🐉 — the pixel dragon perched on the status line. Click it. Click it three times fast.
 
