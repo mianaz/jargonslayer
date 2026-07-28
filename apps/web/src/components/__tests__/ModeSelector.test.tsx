@@ -38,10 +38,25 @@ describe("ModeSelector — web build, ambient test env", () => {
       container = null;
     }
     resetStore();
+    vi.unstubAllGlobals();
   });
 
   function render(onOpenImport: (tab: "file" | "text" | "url") => void = () => {}) {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    // jsdom has no matchMedia — ModeSelector now mounts PixelDragon (the
+    // greeting Bit, Bit mascot behavior train), whose prefers-reduced-
+    // motion hook calls it unconditionally (same gap StatusLine.test.tsx
+    // originally documented for the now-retired status-line perch).
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -140,6 +155,18 @@ describe("ModeSelector — web build, ambient test env", () => {
     useApp.setState({ settings: DEFAULT_SETTINGS });
     render();
     expect(container!.querySelector('[data-testid="mode-selector-hint"]')).toBeNull();
+  });
+
+  // Bit mascot behavior train (chamber B): the greeting replaces the old
+  // decorative "$ <cursor>" placeholder — Bit renders here (a real
+  // PixelDragon instance, i.e. an SVG), not just an empty wrapper.
+  it("renders the Bit greeting (PixelDragon) above the title, replacing the old $ placeholder", () => {
+    resetStore();
+    render();
+    const bitSlot = container!.querySelector('[data-testid="mode-selector-bit"]');
+    expect(bitSlot).not.toBeNull();
+    expect(bitSlot!.querySelector("svg")).not.toBeNull();
+    expect(container!.textContent).not.toContain("$");
   });
 });
 

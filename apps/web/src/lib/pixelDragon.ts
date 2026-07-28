@@ -188,6 +188,7 @@ export interface Particle {
   y: number;
   dx: number; // drift (negative = up / left)
   dy: number;
+  size: number; // rendered pixel size, grid units (方向三: 火焰稍大)
 }
 
 export function makeParticles(
@@ -207,6 +208,7 @@ export function makeParticles(
       y: 5 - rand,
       dx: -(2 + rand * (big ? 5 : 3)), // up-LEFT
       dy: -(3 + rand * (big ? 5 : 3)),
+      size: (big ? 1.6 : 1.2) + rand * 0.3,
     });
   }
   return out;

@@ -33,6 +33,7 @@ import { PREVIEW_TIER } from "@/lib/deployTier";
 import { deriveEngineForMode } from "@/lib/stt/engineOptions";
 import { resolveEngineCapability } from "@/lib/stt/engineCapabilities";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
+import PixelDragon from "@/components/PixelDragon";
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
 import type { HubTab } from "./ImportHub";
 
@@ -194,11 +195,19 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
       data-testid="mode-selector"
       className="absolute inset-0 z-10 flex flex-col items-center justify-center overflow-y-auto bg-panel px-6 py-8"
     >
-      <div className="border border-edge bg-panel2 px-4 py-2 font-mono text-sm text-mut">
-        <span className="text-lab-green">$</span>
-        <span className="cursor-block ml-1 inline-block h-[1em] w-[0.55em] translate-y-[0.15em] bg-mut align-baseline">
-          &nbsp;
-        </span>
+      {/* Bit mascot behavior train (chamber B, 参考 Claude 手机版吉祥物):
+          the empty-state greeting — this replaces the old decorative
+          "$ <blinking cursor>" placeholder block (no onClick/testid,
+          purely a terminal-prompt flourish) with Bit itself. Bigger than
+          the retired status-line perch's size=40 default (~1.8×) so it
+          reads as the screen's focal moment rather than a corner
+          fixture; PixelDragon reads status off the store itself, and
+          this overlay only ever mounts while status is genuinely
+          "idle" (see this file's own mount-gate doc above), so Bit stays
+          in its normal awake/idle pose here — wing flutter + ember keep
+          running unmodified. */}
+      <div data-testid="mode-selector-bit" className="flex items-center justify-center">
+        <PixelDragon size={72} />
       </div>
       <div className="mt-3 max-w-sm text-center text-[15px] leading-[26px] text-mut">
         选择你的收听方式

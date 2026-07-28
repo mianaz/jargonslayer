@@ -2,13 +2,15 @@
 
 // ── Bit · 屠龙小助手 ──────────────────────────────────────────────
 // JargonSlayer's original terminal-ghost mascot (DESIGN v3.4). A
-// charcoal quadruped pixel-dragon that perches at the right end of the
-// vim status line, facing left, feet on the bar. Copyright red-lines
-// (honored, NOT the reference character): charcoal #3A3A3A body +
-// phosphor-green #4ADE80 fins/belly, square CURSOR-BLOCK pupils that
-// blink like a terminal cursor, low-slung four-legged posture, tail
-// tip = a half-block ▌, and multicolor ANSI pixel fire drawn straight
-// from the lab-* label palette.
+// warm-charcoal quadruped pixel-dragon that perches at the right end of
+// the vim status line, facing left, feet on the bar. Copyright red-lines
+// (honored, NOT the reference character): warm charcoal-brown #4a4038
+// body (方向三 recolor round, was flat #3A3A3A) + phosphor-green
+// #4ADE80 fins/eye/tail-tip/signal-meter + cream #e8dcc8 horn/claw/
+// belly accents, a slim 1×3 CURSOR-BLOCK eye that blinks like a
+// terminal cursor, low-slung four-legged posture, tail tip = a
+// half-block ▌, and multicolor ANSI pixel fire drawn straight from the
+// lab-* label palette.
 //
 // The visual state machine lives as PURE functions in
 // src/lib/pixelDragon.ts (createMachine / nextDragonState / … + the
@@ -39,11 +41,16 @@ import {
 
 // ── palette (mirrors globals terminal tokens; kept local so the widget
 //    is fully self-contained per the component contract) ────────────
-const BODY = "#3A3A3A";
-const BODY_DK = "#2E2E2E";
-const BODY_HL = "#454545";
-const FOOT_SHADOW = "#333333"; // sole shading under the two planted feet
-const TOE_SHADOW = "#2C2C2C"; // individual toe gaps
+// 方向三 recolor round (owner-approved on the costume-overview page):
+// body/skin moves off flat charcoal onto a warm charcoal-brown family.
+// Contrast-checked against both bar extremes (dark #121212 panel, light
+// #f5f5f0 panel) — the warm tones read at least as well as the old
+// #3A3A3A family on both (see the recolor round's own contrast notes).
+const BODY = "#4a4038";
+const BODY_DK = "#3a322c";
+const BODY_HL = "#574e44";
+const FOOT_SHADOW = "#3f372f"; // sole shading under the two planted feet
+const TOE_SHADOW = "#362f28"; // individual toe gaps
 // Phosphor green rides a CSS variable so light schemes can deepen it:
 // #4ADE80 belongs to a dark bar — on a light StatusLine the 0.42-alpha
 // wing membrane turns into a pale mint blob and the fins/eye wash out
@@ -51,21 +58,35 @@ const TOE_SHADOW = "#2C2C2C"; // individual toe gaps
 // the wing became invisible-ish and the silhouette read wingless).
 // The hex fallbacks keep the widget self-contained; the light values
 // live under [data-scheme="light"] in globals.css.
-const PHOS = "var(--bit-phos, #4ADE80)"; // phosphor fins / belly / eye / tail
+const PHOS = "var(--bit-phos, #4ADE80)"; // phosphor fins / signal meter / eye / tail
 const PHOS_DIM = "var(--bit-phos-dim, #2A5F3F)"; // closed-eyelid line
-const EYE_OFF = "#333333";
-const WB = "#2E2E2E"; // wing-bone / membrane-edge stroke (= BODY_DK family)
-const MEM = 0.42; // wing membrane fill opacity
-const MEM_HI = 0.6; // brighter membrane band under the leading edge
+// 方向三: horns / forearm claw / belly-accent move OFF phosphor-green
+// onto a cream family instead (role-based, not the whole green cast —
+// fins/eye/tail-tip/signal-meter/ember stay phosphor). Same light-
+// scheme-deepening shape as PHOS above: a light cream at partial alpha
+// over a LIGHT StatusLine panel washes out exactly like the old green
+// fins did (verified: #e8dcc8 @ full opacity is ~1.2:1 against
+// #f5f5f0 — invisible), so this rides its own CSS var with a deepened
+// light fallback in globals.css instead of a bare hex.
+const CREAM = "var(--bit-cream, #e8dcc8)";
+const EYE_OFF = "#3f372f";
+// 32% overlay on the eye's top cell — WHITE (not a lighter green) so
+// the lighter-top read survives theme-driven --bit-phos swaps
+// (v0.5.2 owner ask: "上半部份可以颜色略浅").
+const EYE_HI = "#ffffff";
+const WB = "#3a322c"; // wing-bone / membrane-edge stroke (= BODY_DK family)
+const MEM = 0.32; // wing membrane fill opacity (方向三: softened 0.42→0.32)
+const MEM_HI = 0.9; // leading-edge signal rail, promoted near-full phosphor
 
 // ───────────────────────────────────────────────────────────────────
-// PIXEL ART — 40×30 grid (winged redesign, round 5 — FINAL), facing
-// LEFT, feet baseline at y=26–27: thick near-head-width neck, big head,
-// visible small forearm + green claw, sturdy legs, green dorsal fin
-// pair, 3×3 green cursor-block eye, green horn pair, green half-block
-// tail tip, charcoal #3A3A3A body family, ground-contact feet, PLUS a
-// folding wing (membrane + bone) that renders BEHIND the body and
-// swaps geometry per pose (folded/raised/spread/sleep/bellyup).
+// PIXEL ART — 40×30 grid (v0.5.2 body redesign, V5C), facing LEFT, feet
+// baseline at y=26–27: small tucked-jaw head, round bell-shaped barrel,
+// visible forearm + cream claw, slimmed legs, green dorsal fin pair,
+// slim 1×3 green cursor-block eye w/ white glint, cream horn pair,
+// green half-block tail tip, warm charcoal-brown #4a4038 body family
+// (方向三 recolor), ground-contact feet, PLUS a folding wing (membrane +
+// bone) that renders BEHIND the body and swaps geometry per pose
+// (folded/raised/spread/sleep/bellyup).
 // Each part is its own list of rects so states can swap parts cleanly.
 // A rect is [x, y, w, h, fill, opacity?].
 // ───────────────────────────────────────────────────────────────────
@@ -78,53 +99,61 @@ const GRID_H = 30;
 // shared body (awake pose) minus the eye + mouth + tail (those swap
 // per-frame) and minus the fins (kept as their own array below so
 // listening can light them one-by-one, nose→tail).
+// v0.5.2 body redesign (owner round, 2026-07-22, render-approved v5):
+// small head (face front +1, one cell narrower per row; crown/horn
+// columns x7-11 y6-7 UNTOUCHED so all 7 costumes need zero changes),
+// round bell-shaped barrel (row widths 8·11·13·14·15·14·12·10), jaw
+// tucked + 2px mouth slit ("下颚跟头分开了"), throat rows run jaw→chest
+// with no background hole ("脖子断开"), forearm upper arm thickened to
+// 4-wide with taper to the claw ("上肢稍微粗一点"), both legs slimmed
+// to 3-wide / 2 toes, symmetric ("腿有点粗").
 const BODY_AWAKE: Px[] = [
-  // horns
-  [7, 6, 2, 1, PHOS],
-  [10, 6, 2, 1, PHOS],
+  // horns (columns untouched — every costume sits on these)
+  [7, 6, 2, 1, CREAM],
+  [10, 6, 2, 1, CREAM],
+  // small head — face front +1, each row one cell narrower
   [7, 7, 5, 1, BODY],
-  // head
-  [4, 8, 9, 1, BODY],
-  [3, 9, 10, 1, BODY],
-  [2, 10, 11, 1, BODY],
-  [2, 11, 11, 1, BODY],
-  [2, 12, 11, 1, BODY],
-  [3, 13, 10, 1, BODY],
-  [4, 14, 5, 1, BODY], // lower jaw
-  [1, 11, 1, 1, BODY_DK], // nostril / snout tip
-  [2, 13, 4, 1, BODY_DK], // mouth line
-  // thick neck (near head width)
+  [5, 8, 8, 1, BODY],
+  [4, 9, 9, 1, BODY],
+  [3, 10, 10, 1, BODY],
+  [3, 11, 10, 1, BODY],
+  [3, 12, 10, 1, BODY],
+  [4, 13, 9, 1, BODY],
+  [4, 14, 6, 1, BODY], // lower jaw, tucked under the skull
+  [2, 11, 1, 1, BODY], // snout nub, inside the silhouette
+  [3, 11, 1, 1, BODY_DK], // nostril dot
+  [3, 13, 2, 1, BODY_DK], // 2px mouth slit at the snout corner
+  // neck — throat rows continuous jaw→chest
   [11, 13, 6, 1, BODY],
-  [11, 14, 6, 1, BODY],
-  [12, 15, 6, 1, BODY],
-  // body barrel
+  [9, 14, 8, 1, BODY],
+  [8, 15, 10, 1, BODY],
+  // body barrel — round bell 8·11·13·14·15·14·12·10
   [14, 14, 8, 1, BODY],
-  [13, 15, 12, 1, BODY],
-  [12, 16, 14, 1, BODY],
-  [12, 17, 15, 1, BODY],
+  [13, 15, 11, 1, BODY],
+  [12, 16, 13, 1, BODY],
+  [12, 17, 14, 1, BODY],
   [12, 18, 15, 1, BODY],
-  [12, 19, 15, 1, BODY],
-  [13, 20, 14, 1, BODY],
-  [14, 21, 12, 1, BODY],
+  [12, 19, 14, 1, BODY],
+  [13, 20, 12, 1, BODY],
+  [14, 21, 10, 1, BODY],
   // belly ventral accent (hugs the chest, above the forearm)
-  [13, 17, 2, 1, PHOS, 0.55],
-  [13, 18, 2, 1, PHOS, 0.45],
-  // visible small forearm reaching forward, green claw
-  [11, 18, 3, 1, BODY],
+  [13, 17, 2, 1, CREAM, 0.55],
+  [13, 18, 2, 1, CREAM, 0.45],
+  // forearm — 4-wide upper arm tapering forward to the claw
+  [10, 18, 4, 1, BODY],
   [9, 19, 3, 1, BODY],
-  [8, 19, 1, 1, PHOS, 0.75], // claw
-  [8, 20, 1, 1, PHOS, 0.55],
-  // front foot (planted, near baseline)
+  [8, 19, 1, 1, CREAM, 0.75], // claw
+  [8, 20, 1, 1, CREAM, 0.55],
+  // front foot (planted, near baseline) — 3-wide, 2 toes
   [14, 22, 3, 3, BODY],
   [14, 25, 4, 1, FOOT_SHADOW],
   [14, 26, 1, 1, TOE_SHADOW],
   [16, 26, 1, 1, TOE_SHADOW],
-  // hind leg (chunky, sturdy)
-  [21, 21, 4, 4, BODY],
-  [21, 25, 5, 1, FOOT_SHADOW],
+  // hind leg — slimmed to match (3-wide, 2 toes)
+  [21, 21, 3, 4, BODY],
+  [21, 25, 4, 1, FOOT_SHADOW],
   [21, 26, 1, 1, TOE_SHADOW],
   [23, 26, 1, 1, TOE_SHADOW],
-  [25, 26, 1, 1, TOE_SHADOW],
 ];
 
 // front dorsal fin PAIR — stays visible above the shoulder, clear of the
@@ -136,52 +165,62 @@ const FINS: Px[] = [
   [17, 12, 1, 1, PHOS],
 ];
 
-// tail sway frames — the outer cells (x≥27) drift up/down 1 cell while
-// the base (25,18,3,1) and the green half-block tip stay attached.
+// tail sway frames — v0.5.2: segments 2 rows thick ("尾巴稍粗一些"),
+// run extended so the tip lands at x35 instead of x32 ("长一些"). The
+// outer cells still drift up/down 1 cell while the 2-row base
+// (25,17,3,2) and the green half-block tip stay attached.
 const TAIL_MID: Px[] = [
-  [25, 18, 3, 1, BODY],
-  [27, 17, 3, 1, BODY],
-  [29, 16, 3, 1, BODY],
-  [31, 15, 2, 1, BODY],
-  [32, 14, 1, 1, BODY],
-  [32, 13, 1, 1, PHOS], // half-block ▌ tip
+  [25, 17, 3, 2, BODY],
+  [28, 16, 3, 2, BODY],
+  [31, 15, 3, 1, BODY],
+  [33, 14, 2, 1, BODY],
+  [35, 13, 1, 1, BODY],
+  [35, 12, 1, 1, PHOS], // half-block ▌ tip
 ];
 const TAIL_UP: Px[] = [
-  [25, 18, 3, 1, BODY],
-  [27, 16, 3, 1, BODY],
-  [29, 15, 3, 1, BODY],
-  [31, 14, 2, 1, BODY],
-  [32, 13, 1, 1, BODY],
-  [32, 12, 1, 1, PHOS],
+  [25, 17, 3, 2, BODY],
+  [28, 15, 3, 2, BODY],
+  [31, 14, 3, 1, BODY],
+  [33, 13, 2, 1, BODY],
+  [35, 12, 1, 1, BODY],
+  [35, 11, 1, 1, PHOS],
 ];
 const TAIL_DOWN: Px[] = [
-  [25, 18, 3, 1, BODY],
-  [27, 18, 3, 1, BODY],
-  [29, 17, 3, 1, BODY],
-  [31, 16, 2, 1, BODY],
-  [32, 15, 1, 1, BODY],
-  [32, 14, 1, 1, PHOS],
+  [25, 17, 3, 2, BODY],
+  [28, 17, 3, 2, BODY],
+  [31, 16, 3, 1, BODY],
+  [33, 15, 2, 1, BODY],
+  [35, 14, 1, 1, BODY],
+  [35, 13, 1, 1, PHOS],
 ];
 const TAIL_FRAMES: Px[][] = [TAIL_MID, TAIL_UP, TAIL_MID, TAIL_DOWN];
 
-const EYE_OPEN: Px[] = [[5, 10, 3, 3, PHOS]];
-// pupil pulse: a 1×1 inner cell cycling darker/brighter over the block
-const EYE_PUPIL: Px[] = [
-  [5, 10, 3, 3, PHOS],
-  [6, 11, 1, 1, BODY_DK, 0.5],
+// v0.5.2 eye — slim 1×3 column at x7, owner-locked ("1x3可以"; a 1×2
+// vanishes at real StatusLine size — realsize strip proved it) with a
+// 32% white top highlight. x7 not x6: "眼睛太靠前" made the open-mouth
+// pose read scary; one cell back keeps it cute.
+const EYE_OPEN: Px[] = [
+  [7, 10, 1, 3, PHOS],
+  [7, 10, 1, 1, EYE_HI, 0.32],
 ];
-// blink: eyelid row replaces the eye block for a frame (charcoal)
+// pupil pulse: the middle cell dips darker over the slim eye
+const EYE_PUPIL: Px[] = [
+  [7, 10, 1, 3, PHOS],
+  [7, 10, 1, 1, EYE_HI, 0.32],
+  [7, 11, 1, 1, BODY_DK, 0.5],
+];
+// blink: lid column replaces the eye for a frame, dim slit at the bottom
 const EYE_BLINK: Px[] = [
-  [5, 10, 3, 3, EYE_OFF],
-  [5, 12, 3, 1, PHOS_DIM],
+  [7, 10, 1, 3, EYE_OFF],
+  [7, 12, 1, 1, PHOS_DIM],
 ];
 
 // ── WINGS — render BEHIND the body (folded/raised/spread swap by pose:
 //    idle/listening/burst). Membrane fan (phosphor-green, semi-
 //    transparent) + a charcoal wing-bone leading edge/fingers + a green
-//    wrist claw + trailing-edge scallop steps. ─────────────────────────
+//    wrist claw. ─────────────────────────────────────────────────────
 
-// FOLDED (idle) — continuous leading edge, solid membrane, clean scallops.
+// FOLDED (idle) — continuous leading edge, solid membrane.
 const WINGS_FOLDED: Px[] = [
   // membrane fan
   [17, 13, 2, 2, PHOS, MEM],
@@ -207,10 +246,6 @@ const WINGS_FOLDED: Px[] = [
   [24, 7, 2, 1, WB],
   // wrist claw (green hook)
   [26, 7, 1, 1, PHOS],
-  // trailing-edge scallop steps (charcoal)
-  [26, 9, 1, 2, WB],
-  [25, 11, 1, 2, WB],
-  [23, 13, 2, 1, WB],
 ];
 
 // RAISED (listening) — lifted + slightly opened.
@@ -235,9 +270,6 @@ const WINGS_RAISED: Px[] = [
   [22, 5, 2, 1, WB],
   [24, 5, 2, 1, WB],
   [26, 5, 1, 1, PHOS],
-  [26, 8, 1, 2, WB],
-  [25, 10, 1, 2, WB],
-  [23, 12, 2, 1, WB],
 ];
 
 // SIGNAL SEGMENTS (listening light-up), ordered nose→tail. Each is an
@@ -251,8 +283,14 @@ const SIGNAL_SEGMENTS: [number, number, number, number][] = [
   [18, 11, 2, 1], // 2  wing leading edge (low)
   [20, 8, 2, 1], // 3  wing leading edge (mid)
   [22, 6, 2, 1], // 4  wing leading edge (high)
-  [26, 5, 1, 1], // 5  wrist-tip claw
-  [26, 9, 1, 1], // 6  scallop claw 1
+  // F4 fix (bit-train fix round): segment here used to anchor on the old
+  // scallop-claw geometry at x26,y9 — scallops are gone from
+  // WINGS_RAISED, so that cell pulsed as a floating pixel with nothing
+  // under it. Remapped onto a real WINGS_RAISED leading-edge bone cell,
+  // `[24, 5, 2, 1, WB]`, and ORDERED before the wrist tip so the pulse
+  // still travels nose→tail monotonically (delays follow array index).
+  [24, 5, 1, 1], // 5  leading-edge bone, between high edge + wrist tip
+  [26, 5, 1, 1], // 6  wrist-tip claw
   [25, 11, 1, 1], // 7  scallop claw 2 (tail-most)
 ];
 
@@ -286,54 +324,53 @@ const WINGS_SPREAD: Px[] = [
   // wingtip green claws
   [30, 5, 1, 1, PHOS],
   [25, 2, 1, 1, PHOS],
-  // trailing-edge scallops
-  [32, 7, 1, 2, WB],
-  [30, 9, 2, 1, WB],
-  [27, 10, 2, 1, WB],
 ];
 
-// mouth-open head override: the upper head keeps its full neutral
-// silhouette (brow/skull unchanged) but the lower jaw drops 2 rows and
-// shifts forward, opening a visible gap at the snout so fire has a
-// clear exit path at ~(1–2, 7–8).
+// mouth-open head override — v0.5.2 V5C, the "微张小口" read: face stays
+// solid through y12, ONE-row gap at y13 (the fire's exit), jaw shifted
+// 1 forward with a soft shadow under it. Two owner catches shaped this:
+// V5's maw crossed the eye ("裂缝穿过眼睛") and V5B's 2-row maw read
+// scary ("嘴开太大了…吓人") — V5C opens exactly one row.
 const MOUTH_OPEN: Px[] = [
-  [7, 6, 2, 1, PHOS],
-  [10, 6, 2, 1, PHOS],
+  [7, 6, 2, 1, CREAM],
+  [10, 6, 2, 1, CREAM],
   [7, 7, 5, 1, BODY],
-  [4, 8, 9, 1, BODY],
-  [3, 9, 10, 1, BODY],
-  [2, 10, 11, 1, BODY], // upper head unchanged
-  [3, 11, 10, 1, BODY], // snout tip trimmed 1 cell — mouth gap starts
-  [1, 12, 1, 1, BODY], // dropped lower jaw, forward + open
-  [2, 13, 6, 1, BODY],
-  [2, 14, 6, 1, BODY_DK], // shadow under the dropped jaw
-  [5, 10, 3, 3, PHOS], // alert eye (unchanged position)
+  [5, 8, 8, 1, BODY],
+  [4, 9, 9, 1, BODY],
+  [3, 10, 10, 1, BODY],
+  [3, 11, 10, 1, BODY],
+  [3, 12, 10, 1, BODY], // face solid through y12 — y13 is the open gap
+  [2, 11, 1, 1, BODY], // snout nub
+  [3, 11, 1, 1, BODY_DK], // nostril
+  [3, 14, 6, 1, BODY], // dropped jaw, shifted 1 forward
+  [3, 15, 4, 1, BODY_DK, 0.6], // soft shadow under the open jaw
+  [7, 10, 1, 3, PHOS], // alert eye (same slim eye, same position)
+  [7, 10, 1, 1, EYE_HI, 0.32],
   [11, 13, 6, 1, BODY],
-  [11, 14, 6, 1, BODY],
-  [12, 15, 6, 1, BODY],
+  [9, 14, 8, 1, BODY],
+  [8, 15, 10, 1, BODY],
   [14, 14, 8, 1, BODY],
-  [13, 15, 12, 1, BODY],
-  [12, 16, 14, 1, BODY],
-  [12, 17, 15, 1, BODY],
+  [13, 15, 11, 1, BODY],
+  [12, 16, 13, 1, BODY],
+  [12, 17, 14, 1, BODY],
   [12, 18, 15, 1, BODY],
-  [12, 19, 15, 1, BODY],
-  [13, 20, 14, 1, BODY],
-  [14, 21, 12, 1, BODY],
-  [13, 17, 2, 1, PHOS, 0.55],
-  [13, 18, 2, 1, PHOS, 0.45],
-  [11, 18, 3, 1, BODY],
+  [12, 19, 14, 1, BODY],
+  [13, 20, 12, 1, BODY],
+  [14, 21, 10, 1, BODY],
+  [13, 17, 2, 1, CREAM, 0.55],
+  [13, 18, 2, 1, CREAM, 0.45],
+  [10, 18, 4, 1, BODY],
   [9, 19, 3, 1, BODY],
-  [8, 19, 1, 1, PHOS, 0.75],
-  [8, 20, 1, 1, PHOS, 0.55],
+  [8, 19, 1, 1, CREAM, 0.75],
+  [8, 20, 1, 1, CREAM, 0.55],
   [14, 22, 3, 3, BODY],
   [14, 25, 4, 1, FOOT_SHADOW],
   [14, 26, 1, 1, TOE_SHADOW],
   [16, 26, 1, 1, TOE_SHADOW],
-  [21, 21, 4, 4, BODY],
-  [21, 25, 5, 1, FOOT_SHADOW],
+  [21, 21, 3, 4, BODY],
+  [21, 25, 4, 1, FOOT_SHADOW],
   [21, 26, 1, 1, TOE_SHADOW],
   [23, 26, 1, 1, TOE_SHADOW],
-  [25, 26, 1, 1, TOE_SHADOW],
 ];
 
 // sleeping pose — whole dragon lowers onto the ground: a rounded head
@@ -345,33 +382,36 @@ const MOUTH_OPEN: Px[] = [
 // covers the back as a wrapped blanket, with its own dim fin-peek detail.
 const SLEEP_BODY: Px[] = [
   // horns lie flat against the head
-  [7, 20, 2, 1, PHOS],
-  [10, 20, 2, 1, PHOS],
-  // head resting on the ground — same rounded silhouette as awake,
-  // just shifted down onto the baseline (rows 21-27 instead of 8-14)
-  [4, 21, 9, 1, BODY],
-  [3, 22, 10, 1, BODY],
-  [2, 23, 11, 1, BODY],
-  [2, 24, 11, 1, BODY],
-  [2, 25, 11, 1, BODY],
-  [3, 26, 10, 1, BODY],
-  [4, 27, 5, 1, BODY], // lower jaw, closed
-  [1, 24, 1, 1, BODY_DK], // snout tip
-  [2, 26, 4, 1, BODY_DK], // closed mouth line
-  [5, 23, 3, 1, PHOS_DIM], // closed eye (thin dim line, not the alert block)
+  [7, 20, 2, 1, CREAM],
+  [10, 20, 2, 1, CREAM],
+  // v0.5.2 small head resting on the ground (awake head rebased onto
+  // the baseline, rows 21-27), same jaw-tuck + 2px closed mouth slit
+  [7, 21, 5, 1, BODY],
+  [5, 22, 8, 1, BODY],
+  [4, 23, 9, 1, BODY],
+  [3, 24, 10, 1, BODY],
+  [3, 25, 10, 1, BODY],
+  [4, 26, 9, 1, BODY],
+  [4, 27, 6, 1, BODY], // lower jaw, closed
+  [2, 24, 1, 1, BODY], // snout nub
+  [3, 24, 1, 1, BODY_DK], // nostril
+  [3, 26, 2, 1, BODY_DK], // closed mouth slit
+  [7, 23, 1, 1, PHOS_DIM], // closed eye — one dim px under the slim-eye spot
   // long low body log, same barrel width as awake but only 3 rows
   // tall (vs. 8) — the "lying flat" read
   [11, 25, 15, 1, BODY],
   [11, 26, 15, 1, BODY],
   [12, 27, 13, 1, BODY],
   // belly accent, barely visible along the ground contact line
-  [14, 26, 2, 1, PHOS, 0.35],
+  [14, 26, 2, 1, CREAM, 0.35],
   // forearm relaxed flat against the ground, claw visible
   [9, 26, 3, 1, BODY],
-  [8, 27, 1, 1, PHOS, 0.5],
-  // tail relaxed straight along the ground, tip still green
-  [26, 26, 6, 1, BODY],
-  [32, 26, 1, 1, PHOS],
+  [8, 27, 1, 1, CREAM, 0.5],
+  // tail relaxed along the ground — thickened + extended to match the
+  // fatter awake tail, tip still green
+  [26, 25, 4, 1, BODY],
+  [26, 26, 7, 1, BODY],
+  [33, 26, 1, 1, PHOS],
 ];
 
 // wing wrapped as a low blanket over the curled body — renders BEHIND
@@ -402,8 +442,8 @@ const BELLYUP_BODY: Px[] = [
   [1, 25, 3, 1, BODY],
   [1, 26, 5, 1, BODY],
   [2, 27, 6, 1, BODY],
-  [4, 23, 1, 1, PHOS, 0.6], // horn tip poking out, splayed
-  [6, 23, 1, 1, PHOS, 0.6],
+  [4, 23, 1, 1, CREAM, 0.6], // horn tip poking out, splayed
+  [6, 23, 1, 1, CREAM, 0.6],
   [4, 25, 3, 2, PHOS], // big happy eye
   // wide rolled body, back flat on the ground — one broad rounded mass
   [10, 23, 16, 1, BODY],
@@ -412,8 +452,8 @@ const BELLYUP_BODY: Px[] = [
   [9, 26, 19, 1, BODY],
   [10, 27, 17, 1, BODY],
   // belly accent band now facing UP, wide across the top of the roll
-  [11, 22, 14, 1, PHOS, 0.7],
-  [13, 21, 8, 1, PHOS, 0.45],
+  [11, 22, 14, 1, CREAM, 0.7],
+  [13, 21, 8, 1, CREAM, 0.45],
   // relaxed tail, flopped flat off the back
   [28, 25, 6, 1, BODY],
   [34, 25, 1, 1, PHOS],
@@ -486,7 +526,7 @@ function Rects({ px }: { px: Px[] }) {
 // auto-revert (the burst-lifecycle effect below dispatches burstDone
 // on its own timeout) and that same effect's own setBurstParticles
 // call, which fires on every machine.pose/burstQueue change and would
-// immediately clobber a denser celebration batch with its usual 5-8
+// immediately clobber a denser celebration batch with its usual 6-9
 // count (this is also why celebration owns its OWN particle state,
 // celebrationParticles below, rather than sharing the burst's — see F4,
 // v0.5.1 Bit sprint fix round). A celebration doesn't need to interact
@@ -499,7 +539,23 @@ function Rects({ px }: { px: Px[] }) {
 // TranscriptPanel.tsx's own exported INTERIM_THROTTLE_MS/etc.).
 export const CELEBRATE_MS = 2500;
 
-export default function PixelDragon({ size = 40 }: { size?: number }) {
+export default function PixelDragon({
+  size = 40,
+  celebrateOnMount = false,
+}: {
+  size?: number;
+  // F1 fix (bit-train fix round): BitCelebrationOverlay mounts a FRESH
+  // PixelDragon instance only while a celebration plays — this instance's
+  // own prevCelebrateNonce ref (below) would otherwise seed to whatever
+  // the store's nonce already is at mount, see no delta, and never enter
+  // `celebrating` at all (2.5s of a static folded dragon). Seeding the
+  // ref one below the current nonce makes the SAME mount-time effect
+  // that already drives every nonce-bump celebration fire once more, on
+  // mount, through the exact same code path — no parallel state machine.
+  // Always-mounted consumers (ModeSelector, review perch) never pass
+  // this, so they're unaffected.
+  celebrateOnMount?: boolean;
+}) {
   // store subscriptions (read-only — never mutate the store)
   const status = useApp((s) => s.status);
   const cardCount = useApp((s) => s.cards.length + s.terms.length);
@@ -568,7 +624,7 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
   useEffect(() => {
     if (machine.pose !== "burst") return;
     burstSeed.current += 1;
-    const count = 5 + (burstSeed.current % 4); // 5–8
+    const count = 6 + (burstSeed.current % 4); // 6–9 (方向三: 火焰稍大)
     setBurstParticles(makeParticles(burstSeed.current, count, false));
     if (reduced) {
       // static frame only — no timers, drop straight back
@@ -603,14 +659,16 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
   //    hops), and no second celebration is queued behind the first —
   //    see "batched nonce increments coalesce" below.
   const celebrateNonce = useApp((s) => s.bitCelebrateNonce);
-  const prevCelebrateNonce = useRef(celebrateNonce);
+  const prevCelebrateNonce = useRef(
+    celebrateOnMount ? celebrateNonce - 1 : celebrateNonce,
+  );
   const [celebrating, setCelebrating] = useState(false);
   const celebrateTimer = useRef<number | null>(null);
   useEffect(() => {
     if (celebrateNonce > prevCelebrateNonce.current) {
       if (celebrateTimer.current !== null) window.clearTimeout(celebrateTimer.current);
       burstSeed.current += 1;
-      const count = 8 + (burstSeed.current % 3); // 8–10, denser than a normal 5–8 burst
+      const count = 9 + (burstSeed.current % 3); // 9–11, denser than a normal 6–9 burst
       setCelebrationParticles(makeParticles(burstSeed.current, count, true));
       setCelebrating(true);
       // reduced-motion: settle back to the real machine pose almost
@@ -650,7 +708,7 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
     // celebrating overlay — its particles are a burst-source spark set
     // (F4 above), cleaned up by the same burst-lifecycle effect's own
     // BURST_MS timeout.
-    setBurstParticles(makeParticles(burstSeed.current, 8, true));
+    setBurstParticles(makeParticles(burstSeed.current, 10, true));
     dispatch({ type: "cardIncrease" }); // reuse the mouth-open burst
     if (reduced) return;
     // brief page-edge ANSI glow via a portal overlay, removed after 1s
@@ -902,12 +960,22 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
         {/* ── fire particles ──
             the particle generator (src/lib/pixelDragon.ts, not editable
             here) seeds positions around the OLD 24×16 snout (~x:1-2.5,
-            y:4-5). The mouth notch sits at ~(1.5, 11.5) in the current
-            40×30 grid (MOUTH_OPEN's snout/jaw rebased +4y from the
-            36×26 draft), so the whole group is offset at render time
-            instead of touching the lib. */}
+            y:4-5). MOUTH_OPEN's actual open gap (F3 fix, bit-train fix
+            round — read straight off the array: face rows run solid
+            through y12 at x3-13, the jaw doesn't resume until y14 at
+            x3-9, so y13 is the ONLY fully-open row, spanning x3-11) sits
+            a full 2 rows lower than the old translate(1,7) placed it
+            (base y 4-5 + 7 = 11-12, landing ON the solid snout/nostril
+            row instead of the y13 gap). y offset now 9: base y 4-5 + 9 =
+            13-14, squarely inside the y13 row (grid rows occupy
+            [y, y+1)). x offset unchanged (base x 1-2.5 + 1 = 2-3.5,
+            already inside the gap's x3-11 span, just outside the snout
+            nub at x2/y11). Both the normal burst and celebration/
+            triple-click paths share this one group (burstParticles +
+            celebrationParticles concatenated below), so one shared
+            origin fixes both. */}
         {showFire && (
-          <g transform="translate(0, 7)">
+          <g transform="translate(1, 9)">
             {/* F4: two independent sources (burst / celebration, see
                 above) rendered together — each only ever cleared by its
                 OWN timeout, so one can't cut the other short. */}
@@ -916,8 +984,8 @@ export default function PixelDragon({ size = 40 }: { size?: number }) {
                 key={p.id}
                 x={0}
                 y={0}
-                width={1}
-                height={1}
+                width={p.size}
+                height={p.size}
                 fill={p.color}
                 className={reduced ? "" : "bit-spark"}
                 style={

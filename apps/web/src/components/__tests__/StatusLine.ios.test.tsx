@@ -62,19 +62,6 @@ describe("StatusLine — iOS build (engine picker)", () => {
   function renderStatusLine() {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       true;
-    // jsdom has no matchMedia — StatusLine mounts PixelDragon (the
-    // mascot perch), whose prefers-reduced-motion hook calls it
-    // unconditionally. Mirrors StatusLine.test.tsx's own identical stub.
-    vi.stubGlobal("matchMedia", (query: string) => ({
-      matches: false,
-      media: query,
-      onchange: null,
-      addListener: () => {},
-      removeListener: () => {},
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      dispatchEvent: () => false,
-    }));
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
