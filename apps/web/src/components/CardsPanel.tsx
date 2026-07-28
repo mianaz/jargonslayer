@@ -25,6 +25,7 @@ import { handleButtonKeyDown } from "@/lib/a11y";
 import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import { BitCameo } from "@/components/PixelDragon";
 import { resolveBitCostume } from "@/lib/bitCostumes";
+import { toUnified, type UnifiedItem } from "@/lib/cards/unified";
 import type {
   DetectionSource,
   ExpressionCard,
@@ -56,38 +57,6 @@ const TERM_COLOR = { bar: "border-l-lab-cyan", text: "text-mut", border: "border
 
 const NEW_GLOW_MS = 4500;
 const REPULSE_MS = 2500;
-
-type Kind = "expression" | "term";
-
-interface UnifiedItem {
-  kind: Kind;
-  id: string;
-  firstSeenAt: number;
-  lastSeenAt: number;
-  sortAt: number;
-  expression?: ExpressionCard;
-  term?: TermCard;
-}
-
-function toUnified(cards: ExpressionCard[], terms: TermCard[]): UnifiedItem[] {
-  const fromCards: UnifiedItem[] = cards.map((c) => ({
-    kind: "expression",
-    id: c.id,
-    firstSeenAt: c.firstSeenAt,
-    lastSeenAt: c.lastSeenAt,
-    sortAt: c.lastSeenAt ?? c.firstSeenAt,
-    expression: c,
-  }));
-  const fromTerms: UnifiedItem[] = terms.map((t) => ({
-    kind: "term",
-    id: t.id,
-    firstSeenAt: t.firstSeenAt,
-    lastSeenAt: t.lastSeenAt,
-    sortAt: t.lastSeenAt ?? t.firstSeenAt,
-    term: t,
-  }));
-  return [...fromCards, ...fromTerms].sort((a, b) => b.sortAt - a.sortAt);
-}
 
 // ---------- progressive disclosure ----------
 // Precedence (highest first): manual per-card override > all-expanded /

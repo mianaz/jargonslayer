@@ -392,7 +392,7 @@ describe("Header — header-detect-toggle (E2E batch item 2)", () => {
 
     expect(container!.querySelector('[data-testid="header-detect-toggle"]')).toBeNull();
     const badge = Array.from(container!.querySelectorAll("span")).find((el) =>
-      el.textContent?.includes("检测关闭"),
+      el.textContent?.includes("关闭"),
     );
     expect(badge).toBeDefined();
     expect(badge!.className).not.toMatch(/\bborder\b/);

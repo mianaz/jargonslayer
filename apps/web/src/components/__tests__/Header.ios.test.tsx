@@ -185,3 +185,108 @@ describe("Header ≡ menu — iOS BottomSheet variant (S15)", () => {
     expect(header!.contains(dialog)).toBe(false);
   });
 });
+
+// TestFlight feedback (phone-width icon pass): brand logo/wordmark
+// removed entirely on iOS, and the transport buttons (开始/暂停/继续/
+// 结束) go icon-only (开始 keeps a visible short label) — same testids/
+// handlers as the desktop text buttons, see Header.render.test.tsx's
+// non-iOS coverage of those.
+describe("Header — iOS brand removal + icon-only transport buttons (mobile icon pass)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(async () => {
+    if (root) {
+      await act(async () => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", activeSessionId: null });
+  });
+
+  async function renderHeader(): Promise<void> {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    await act(async () => {
+      root!.render(
+        <Header
+          onStart={noop}
+          onPause={noop}
+          onResume={noop}
+          onStop={noop}
+          onDemo={noop}
+          onOpenHistory={noop}
+          onOpenSettings={noop}
+          onOpenHelp={noop}
+          onOpenImport={noop}
+          onOpenTaskCenter={noop}
+        />,
+      );
+    });
+  }
+
+  it("no logo <img> and no JargonSlayer wordmark anywhere in the header", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+    await renderHeader();
+
+    expect(container!.querySelector("header img")).toBeNull();
+    expect(container!.querySelector("header")!.textContent).not.toContain("JargonSlayer");
+  });
+
+  it("idle: 开始 button is icon+short-label (not the full 开始监听 text)", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+    await renderHeader();
+
+    const startBtn = container!.querySelector('[data-testid="btn-start"]')!;
+    expect(startBtn.querySelector("svg")).not.toBeNull();
+    expect(startBtn.textContent).toBe("开始");
+  });
+
+  it("listening: 暂停/结束 are icon-only with aria-label + title carrying the Chinese label", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, engine: "webspeech", realtimeDiarize: false },
+      status: "listening",
+    });
+    await renderHeader();
+
+    const pauseBtn = container!.querySelector('[data-testid="btn-pause"]')!;
+    expect(pauseBtn.querySelector("svg")).not.toBeNull();
+    expect(pauseBtn.textContent).toBe("");
+    expect(pauseBtn.getAttribute("aria-label")).toBe("暂停");
+    expect(pauseBtn.getAttribute("title")).toBe("暂停");
+
+    const stopBtn = container!.querySelector('[data-testid="btn-stop"]')!;
+    expect(stopBtn.querySelector("svg")).not.toBeNull();
+    expect(stopBtn.getAttribute("aria-label")).toBe("结束");
+    expect(stopBtn.getAttribute("title")).toBe("结束");
+  });
+
+  it("paused: 继续 is icon-only with aria-label + title", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "paused" });
+    await renderHeader();
+
+    const resumeBtn = container!.querySelector('[data-testid="btn-resume"]')!;
+    expect(resumeBtn.querySelector("svg")).not.toBeNull();
+    expect(resumeBtn.textContent).toBe("");
+    expect(resumeBtn.getAttribute("aria-label")).toBe("继续");
+    expect(resumeBtn.getAttribute("title")).toBe("继续");
+  });
+
+  // TestFlight batch fix: the mobile-icon import button is gone entirely
+  // on iOS — the start-screen ModeSelector already offers 导入文件或文稿
+  // there, so this was a second, redundant entry point on the platform
+  // with the least header width to spare.
+  it("does not render the mobile import button (btn-import-mobile) — ModeSelector's own import tile covers it", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="btn-import-mobile"]')).toBeNull();
+  });
+});

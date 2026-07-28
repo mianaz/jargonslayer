@@ -23,11 +23,13 @@ import {
   GraduationCap,
   List,
   ListChecks,
+  Pause,
   PictureInPicture,
   Play,
   Question,
   Shield,
   ShieldCheck,
+  Stop,
   UploadSimple,
 } from "@phosphor-icons/react";
 import { elapsedActiveMs, useApp } from "@/lib/store";
@@ -126,10 +128,10 @@ function DetectModeBadge() {
 
   const config =
     detectMode === "llm"
-      ? { label: "词典+AI 检测", cls: "text-lab-green", Icon: ShieldCheck }
+      ? { label: "AI 模式", cls: "text-lab-green", Icon: ShieldCheck }
       : detectMode === "dictionary"
-        ? { label: "词典检测", cls: "text-lab-orange", Icon: Shield }
-        : { label: "检测关闭", cls: "text-mut", Icon: null };
+        ? { label: "词典模式", cls: "text-lab-orange", Icon: Shield }
+        : { label: "关闭", cls: "text-mut", Icon: null };
 
   const content = (
     <>
@@ -179,7 +181,7 @@ function DetectModeBadge() {
         updateSettings({ aiDetect: next });
         setDetectMode(next ? "llm" : "dictionary");
       }}
-      title="点击切换 AI 检测（词典检测始终开启）"
+      title="点击切换 AI 模式（词典模式始终开启）"
       className={`hidden items-center gap-1.5 px-2.5 py-1 font-mono text-xs hover:text-fg md:inline-flex ${config.cls}`}
     >
       {content}
@@ -320,6 +322,11 @@ function ImportButton({ onOpenImport }: { onOpenImport: () => void }) {
   const status = useApp((s) => s.status);
   const busy = isEngineControlBusy(status);
 
+  // iOS drops BOTH import buttons (this md:flex one would resurface on
+  // iPad / landscape-iPhone widths) — the start-screen ModeSelector is
+  // the import entry there (Sol MEDIUM, review round 1).
+  if (IS_IOS) return null;
+
   return (
     <button
       type="button"
@@ -340,9 +347,17 @@ function ImportButton({ onOpenImport }: { onOpenImport: () => void }) {
 // used to sit beside (S10 wave 2) — kept as its own standalone control,
 // same row, same busy gating, same dialog. Icon-only (375px width
 // budget).
+//
+// TestFlight batch fix: never rendered on IS_IOS — the start-screen
+// ModeSelector already offers 导入文件或文稿 there, so this icon button was
+// a second, redundant import entry point on the one platform with the
+// least header width to spare. Desktop + mobile-web (a phone browser
+// tab, IS_IOS false) keep it exactly as before.
 function MobileImportButton({ onOpenImport }: { onOpenImport: () => void }) {
   const status = useApp((s) => s.status);
   const disabled = isEngineControlBusy(status);
+
+  if (IS_IOS) return null;
 
   return (
     <button
@@ -884,37 +899,39 @@ export default function Header({
         IS_IOS ? "h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]" : "h-14"
       }`}
     >
-        <div className="flex items-center gap-2 whitespace-nowrap">
-          {/* Scheme-aware brand mark (v0.2.4): transparent-background
-              renditions per scheme — the old opaque icon-192 left a
-              baked ink-dark square floating on light themes. Both are
-              rendered and CSS picks one via <html data-scheme> (the
-              .scheme-*-only rules in globals.css), so the right
-              variant shows from the first paint with zero JS. */}
-          <img
-            src={withBase("/icon-ui-dark.png")}
-            alt=""
-            className="scheme-dark-only h-9 w-auto"
-          />
-          <img
-            src={withBase("/icon-ui-light.png")}
-            alt=""
-            className="scheme-light-only h-9 w-auto"
-          />
-          {/* wordmark hidden <sm (#55): the phone-width row needs the
-              space for the import/start buttons (S10: the engine select
-              that used to share this budget moved to StatusLine's
-              bottom-bar dropdown); the icon (now Bit himself) carries
-              the brand there. */}
-          <div className="hidden flex-col leading-tight sm:flex">
-            <span className="font-mono font-bold tracking-wide text-fg">
-              JargonSlayer
-            </span>
-            <span className="hidden text-[11px] text-mut md:inline">
-              英文会议实时理解
-            </span>
+        {!IS_IOS && (
+          <div className="flex items-center gap-2 whitespace-nowrap">
+            {/* Scheme-aware brand mark (v0.2.4): transparent-background
+                renditions per scheme — the old opaque icon-192 left a
+                baked ink-dark square floating on light themes. Both are
+                rendered and CSS picks one via <html data-scheme> (the
+                .scheme-*-only rules in globals.css), so the right
+                variant shows from the first paint with zero JS. */}
+            <img
+              src={withBase("/icon-ui-dark.png")}
+              alt=""
+              className="scheme-dark-only h-9 w-auto"
+            />
+            <img
+              src={withBase("/icon-ui-light.png")}
+              alt=""
+              className="scheme-light-only h-9 w-auto"
+            />
+            {/* wordmark hidden <sm (#55): the phone-width row needs the
+                space for the import/start buttons (S10: the engine select
+                that used to share this budget moved to StatusLine's
+                bottom-bar dropdown); the icon (now Bit himself) carries
+                the brand there. */}
+            <div className="hidden flex-col leading-tight sm:flex">
+              <span className="font-mono font-bold tracking-wide text-fg">
+                JargonSlayer
+              </span>
+              <span className="hidden text-[11px] text-mut md:inline">
+                英文会议实时理解
+              </span>
+            </div>
           </div>
-        </div>
+        )}
 
         <ImportButton onOpenImport={onOpenImport} />
         <MobileImportButton onOpenImport={onOpenImport} />
@@ -930,9 +947,24 @@ export default function Header({
               type="button"
               data-testid="btn-start"
               onClick={onStart}
-              className="btn-terminal h-9 rounded-none bg-act px-4 font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap"
+              // iOS TestFlight feedback (phone-width icon pass): the
+              // primary CTA keeps a visible label (开始) even icon-ified
+              // — a first-time tester must not have to guess what the
+              // one lit-up button does. Every other transport button
+              // below goes icon-only since their neighbors (pause/
+              // resume/stop) make their purpose contextual.
+              className={`btn-terminal h-9 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
+                IS_IOS ? "flex items-center gap-1.5 px-3" : "px-4"
+              }`}
             >
-              开始监听
+              {IS_IOS ? (
+                <>
+                  <Play size={16} weight="fill" />
+                  开始
+                </>
+              ) : (
+                "开始监听"
+              )}
             </button>
           )}
 
@@ -940,9 +972,11 @@ export default function Header({
             <button
               type="button"
               disabled
-              className="h-9 cursor-not-allowed rounded-none bg-act/60 px-4 font-mono text-sm font-semibold text-ink whitespace-nowrap"
+              className={`h-9 cursor-not-allowed rounded-none bg-act/60 font-mono text-sm font-semibold text-ink whitespace-nowrap ${
+                IS_IOS ? "px-3" : "px-4"
+              }`}
             >
-              连接中…
+              {IS_IOS ? "连接中" : "连接中…"}
             </button>
           )}
 
@@ -951,9 +985,13 @@ export default function Header({
               type="button"
               data-testid="btn-pause"
               onClick={onPause}
-              className="h-9 rounded-none border border-edge px-4 font-mono text-sm text-fg hover:bg-panel3 whitespace-nowrap"
+              aria-label={IS_IOS ? "暂停" : undefined}
+              title={IS_IOS ? "暂停" : undefined}
+              className={`h-9 rounded-none border border-edge font-mono text-sm text-fg hover:bg-panel3 whitespace-nowrap ${
+                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
+              }`}
             >
-              暂停
+              {IS_IOS ? <Pause size={16} weight="regular" /> : "暂停"}
             </button>
           )}
 
@@ -962,9 +1000,13 @@ export default function Header({
               type="button"
               data-testid="btn-resume"
               onClick={onResume}
-              className="btn-terminal h-9 rounded-none bg-act px-4 font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap"
+              aria-label={IS_IOS ? "继续" : undefined}
+              title={IS_IOS ? "继续" : undefined}
+              className={`btn-terminal h-9 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
+                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
+              }`}
             >
-              继续
+              {IS_IOS ? <Play size={16} weight="regular" /> : "继续"}
             </button>
           )}
 
@@ -973,10 +1015,14 @@ export default function Header({
               type="button"
               data-testid="btn-stop"
               onClick={onStop}
-              className="btn-terminal flex h-9 items-center gap-2 rounded-none border border-lab-red px-4 font-mono text-sm font-semibold text-lab-red hover:bg-lab-red/10 whitespace-nowrap"
+              aria-label={IS_IOS ? "结束" : undefined}
+              title={IS_IOS ? "结束" : undefined}
+              className={`btn-terminal flex h-9 items-center gap-2 rounded-none border border-lab-red font-mono text-sm font-semibold text-lab-red hover:bg-lab-red/10 whitespace-nowrap ${
+                IS_IOS ? "w-9 justify-center px-0" : "px-4"
+              }`}
             >
               <span className="dot-live h-2 w-2 rounded-full bg-lab-red whitespace-nowrap" />
-              结束
+              {IS_IOS ? <Stop size={16} weight="regular" /> : "结束"}
             </button>
           )}
 

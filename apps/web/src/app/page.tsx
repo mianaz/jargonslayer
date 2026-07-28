@@ -12,7 +12,8 @@ import StatusLine from "@/components/StatusLine";
 import TranscriptPanel from "@/components/TranscriptPanel";
 import CardsPanel from "@/components/CardsPanel";
 import SummaryPanel from "@/components/SummaryPanel";
-import GlossaryPanel from "@/components/GlossaryPanel";
+import CardStrip from "@/components/CardStrip";
+import MobilePanels from "@/components/MobilePanels";
 import HistoryDrawer from "@/components/HistoryDrawer";
 import TaskCenterDrawer from "@/components/TaskCenterDrawer";
 import ImportHub, { type HubTab } from "@/components/ImportHub";
@@ -32,39 +33,7 @@ import { warmSystemTranslateProbeForStartup } from "@/lib/translate/providers";
 import { nextHelpOpenForWizardTransition } from "./wizardHelpTransition";
 import { triggerDictPackAutoUpdate } from "./dictPackAutoUpdateTrigger";
 
-type RightTab = "cards" | "summary" | "glossary";
-
-// Mobile bottom-panel height (Miana's v0.2.2 E2E request: the bottom
-// bar must be user-resizable on phones). Persisted per device — this
-// is an ergonomic viewport preference like display scale, so it lives
-// in plain localStorage (displayStorage mirror pattern), not Settings.
-const PANEL_H_KEY = "js-mobile-panel-h";
-const PANEL_MIN_PX = 120;
-const PANEL_MAX_VH = 0.8;
-
-function clampPanelH(h: number): number {
-  const max = Math.round(window.innerHeight * PANEL_MAX_VH);
-  return Math.min(max, Math.max(PANEL_MIN_PX, Math.round(h)));
-}
-
-function loadPanelH(): number | null {
-  try {
-    const raw = localStorage.getItem(PANEL_H_KEY);
-    if (!raw) return null;
-    const n = Number(raw);
-    return Number.isFinite(n) && n > 0 ? n : null;
-  } catch {
-    return null;
-  }
-}
-
-function savePanelH(h: number): void {
-  try {
-    localStorage.setItem(PANEL_H_KEY, String(h));
-  } catch {
-    // storage unavailable (private mode) — resize still works for the session
-  }
-}
+type RightTab = "cards" | "summary";
 
 export default function Home() {
   const { start, pause, resume, stop, startDemo } = useMeeting();
@@ -80,6 +49,7 @@ export default function Home() {
   const segments = useApp((s) => s.segments);
   const focusMode = useApp((s) => s.focusMode);
   const setFocusMode = useApp((s) => s.setFocusMode);
+  const setFocusCard = useApp((s) => s.setFocusCard);
   const captionMode = useApp((s) => s.captionMode);
   const setCaptionMode = useApp((s) => s.setCaptionMode);
   // Field-test fix (desktop first-run onboarding never seen): mirrored
@@ -111,18 +81,25 @@ export default function Home() {
   // stale tile-requested tab.
   const [importInitialTab, setImportInitialTab] = useState<HubTab | undefined>(undefined);
 
-  // Mobile bottom-panel resize state. null = never dragged on this
-  // device → the default content-driven max-h-[55vh] behavior. Only
-  // applied below lg (the panel is a right sidebar on desktop, where
-  // its width is fixed by design).
-  const [panelH, setPanelH] = useState<number | null>(null);
-  const [isMobileLayout, setIsMobileLayout] = useState(false);
-  const dragRef = useRef<{ startY: number; startH: number } | null>(null);
+  // isMobileLayout: starts at IS_IOS (build-time constant — NEXT_PUBLIC_IOS
+  // is baked at build time) so an iOS build paints the mobile layout from
+  // first render with no hydration flip. Web builds start false and the
+  // effect below flips it after the real matchMedia check.
+  const [isMobileLayout, setIsMobileLayout] = useState(IS_IOS);
+  // Mobile full-screen panels view (CardStrip's 全部卡片 / strip-card tap).
+  // null = closed; CardStrip owns focusCardId consumption while closed
+  // (focusEnabled prop below), this view owns it while open.
+  const [mobilePanelTab, setMobilePanelTab] = useState<RightTab | null>(null);
 
   useEffect(() => {
-    setPanelH(loadPanelH());
     const mq = window.matchMedia("(max-width: 1023.5px)");
-    const apply = () => setIsMobileLayout(mq.matches);
+    const apply = () => {
+      setIsMobileLayout(mq.matches);
+      // Crossing to desktop unmounts the mobile panels view; drop its
+      // state too so shrinking the window later doesn't silently
+      // reopen it (Sol LOW, review round 1).
+      if (!mq.matches) setMobilePanelTab(null);
+    };
     apply();
     // Both listeners on purpose: MQL "change" is the semantic signal,
     // but some environments (DevTools device emulation, some zoom
@@ -136,43 +113,6 @@ export default function Home() {
       window.removeEventListener("resize", apply);
     };
   }, []);
-
-  const beginPanelDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    const aside = e.currentTarget.parentElement;
-    if (!aside) return;
-    dragRef.current = { startY: e.clientY, startH: aside.getBoundingClientRect().height };
-    try {
-      e.currentTarget.setPointerCapture(e.pointerId);
-    } catch {
-      // capture unsupported for this pointer type — move/up on the
-      // handle itself still resize, just without off-element tracking
-    }
-  };
-  const movePanelDrag = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragRef.current) return;
-    // Panel is bottom-docked: dragging the handle UP grows it.
-    setPanelH(clampPanelH(dragRef.current.startH + (dragRef.current.startY - e.clientY)));
-  };
-  const endPanelDrag = () => {
-    if (!dragRef.current) return;
-    dragRef.current = null;
-    setPanelH((h) => {
-      if (h != null) savePanelH(h);
-      return h;
-    });
-  };
-  const nudgePanel = (e: React.KeyboardEvent<HTMLDivElement>) => {
-    const current =
-      panelH ?? Math.round(window.innerHeight * 0.4); // ≈ the default posture
-    let next: number | null = null;
-    if (e.key === "ArrowUp") next = clampPanelH(current + 24);
-    else if (e.key === "ArrowDown") next = clampPanelH(current - 24);
-    if (next != null) {
-      e.preventDefault();
-      setPanelH(next);
-      savePanelH(next);
-    }
-  };
 
   useEffect(() => {
     const hydration = hydrate();
@@ -401,36 +341,24 @@ export default function Home() {
           )}
         </section>
 
-        {!focusMode && (
-          <aside
-            className="flex max-h-[55vh] w-full shrink-0 flex-col min-h-0 lg:max-h-none lg:w-[400px] xl:w-[440px]"
-            style={
-              isMobileLayout && panelH != null
-                ? { height: panelH, maxHeight: `${PANEL_MAX_VH * 100}vh` }
-                : undefined
-            }
-          >
-            {/* Drag handle — phones only (bottom-sheet grab bar). */}
-            <div
-              role="separator"
-              aria-orientation="horizontal"
-              aria-label="拖动调整解释面板高度"
-              tabIndex={0}
-              onPointerDown={beginPanelDrag}
-              onPointerMove={movePanelDrag}
-              onPointerUp={endPanelDrag}
-              onPointerCancel={endPanelDrag}
-              onKeyDown={nudgePanel}
-              className="flex h-4 shrink-0 cursor-row-resize touch-none items-center justify-center border-b border-edge bg-panel2 focus:outline-none focus-visible:bg-panel3 lg:hidden"
-            >
-              <span className="h-1 w-10 bg-mut2/60" aria-hidden />
-            </div>
+        {!focusMode && isMobileLayout && (
+          <CardStrip
+            onOpenList={(focusId) => {
+              if (focusId) setFocusCard(focusId);
+              setMobilePanelTab("cards");
+            }}
+            onHide={() => setFocusMode(true)}
+            focusEnabled={mobilePanelTab === null}
+          />
+        )}
+
+        {!focusMode && !isMobileLayout && (
+          <aside className="flex w-full shrink-0 flex-col min-h-0 lg:max-h-none lg:w-[400px] xl:w-[440px]">
             <div className="flex items-center gap-1 border-b border-edge bg-panel2 px-3 pt-2">
               {(
                 [
                   ["cards", "实时解释"],
                   ["summary", "纪要与导出"],
-                  ["glossary", "我的词典"],
                 ] as [RightTab, string][]
               ).map(([key, label]) => (
                 <button
@@ -459,13 +387,7 @@ export default function Home() {
               </button>
             </div>
             <div className="min-h-0 flex-1 bg-panel">
-              {tab === "cards" ? (
-                <CardsPanel />
-              ) : tab === "summary" ? (
-                <SummaryPanel />
-              ) : (
-                <GlossaryPanel />
-              )}
+              {tab === "cards" ? <CardsPanel /> : <SummaryPanel />}
             </div>
           </aside>
         )}
@@ -501,6 +423,23 @@ export default function Home() {
         >
           <SidebarSimple size={18} weight="fill" />
         </button>
+      )}
+
+      {isMobileLayout && mobilePanelTab !== null && (
+        <MobilePanels
+          tab={mobilePanelTab}
+          onTabChange={(tab) => {
+            // Leaving the cards tab mid-ring abandons a pending focus
+            // request; clear it so CardStrip doesn't re-consume the
+            // same request after close (Sol MEDIUM, review round 1).
+            if (tab !== "cards") setFocusCard(null);
+            setMobilePanelTab(tab);
+          }}
+          onClose={() => {
+            setFocusCard(null);
+            setMobilePanelTab(null);
+          }}
+        />
       )}
 
       <HistoryDrawer

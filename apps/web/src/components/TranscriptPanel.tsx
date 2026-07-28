@@ -9,7 +9,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { PencilSimple, Play } from "@phosphor-icons/react";
+import {
+  ArrowDown,
+  MagicWand,
+  PencilSimple,
+  Play,
+  Selection,
+  X,
+} from "@phosphor-icons/react";
 import { useApp, type LookupRequest } from "../lib/store";
 import {
   buildHighlightMatcher,
@@ -1298,11 +1305,14 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
                 type="button"
                 data-testid="btn-select-mode"
                 onClick={toggleSelectMode}
-                className={`btn-tactile min-h-10 border px-3 font-mono text-xs ${
+                aria-label={selectMode ? "退出选择" : "选择"}
+                title={selectMode ? "退出选择" : "选择"}
+                className={`btn-tactile flex min-h-10 items-center gap-1.5 border px-3 font-mono text-xs ${
                   selectMode ? "border-act bg-act/10 text-act" : "border-edge2 text-fg hover:bg-panel3"
                 }`}
               >
-                {selectMode ? "退出选择" : "选择"}
+                {selectMode ? <X size={15} weight="regular" /> : <Selection size={15} weight="regular" />}
+                <span className="hidden lg:inline">{selectMode ? "退出选择" : "选择"}</span>
               </button>
             )}
             {aiConfigured && status === "stopped" && segments.length > 0 && (
@@ -1311,9 +1321,12 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
                 data-testid="btn-ai-correct"
                 disabled={correctionBusy}
                 onClick={() => setCorrectionOpen(true)}
-                className="btn-tactile min-h-10 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                aria-label={correctionBusy ? "校正中…" : "AI 校正"}
+                title={correctionBusy ? "校正中…" : "AI 校正"}
+                className="btn-tactile flex min-h-10 items-center gap-1.5 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {correctionBusy ? "校正中…" : "AI 校正"}
+                <MagicWand size={15} weight="regular" />
+                <span className="hidden lg:inline">{correctionBusy ? "校正中…" : "AI 校正"}</span>
               </button>
             )}
           </div>
@@ -1424,11 +1437,14 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
         <button
           type="button"
           onClick={scrollToBottom}
-          className={`absolute left-1/2 -translate-x-1/2 border border-edge bg-panel2 px-3 py-1 font-mono text-xs text-fg shadow-xl ${
+          aria-label="回到底部"
+          title="回到底部"
+          className={`absolute left-1/2 flex -translate-x-1/2 items-center gap-1.5 border border-edge bg-panel2 px-3 py-1 font-mono text-xs text-fg shadow-xl ${
             selectMode ? "bottom-16" : "bottom-3"
           }`}
         >
-          ↓ 回到底部
+          <ArrowDown size={13} weight="regular" />
+          <span className="hidden lg:inline">回到底部</span>
         </button>
       )}
 
