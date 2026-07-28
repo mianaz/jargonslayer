@@ -75,6 +75,12 @@ export default function Home() {
   // open even if the drawer behind it closes, instead of unmounting
   // with it.
   const [importHubOpen, setImportHubOpen] = useState(false);
+  // Mobile toolbar migration: 选择/AI 校正 open-state lifted here so
+  // Header's mobile 选择/AI 校正 buttons and TranscriptPanel's own desktop
+  // buttons can drive the SAME state — see Header.tsx's MobileToolbarButtons
+  // and TranscriptPanel.tsx's controlled/uncontrolled hybrid doc comments.
+  const [selectMode, setSelectMode] = useState(false);
+  const [correctionOpen, setCorrectionOpen] = useState(false);
   // v0.5 Wave-1 Feature 5 (mode-first UI): ModeSelector's 导入/链接
   // tiles want ImportHub to open on a SPECIFIC tab; every other opener
   // (Header's 导入 pill, HistoryDrawer's own button) leaves this
@@ -322,12 +328,23 @@ export default function Home() {
         onOpenHelp={() => setHelpOpen(true)}
         onOpenImport={() => setImportHubOpen(true)}
         onOpenTaskCenter={() => setTaskCenterOpen(true)}
+        isMobileLayout={isMobileLayout}
+        selectMode={selectMode}
+        onToggleSelectMode={() => setSelectMode((v) => !v)}
+        onOpenCorrection={() => setCorrectionOpen(true)}
       />
       <RecoveryBanner />
 
       <main className="flex min-h-0 flex-1 flex-col lg:flex-row">
         <section className="relative min-h-0 min-w-0 flex-1 border-b border-edge lg:border-b-0 lg:border-r">
-          <TranscriptPanel onDemo={() => void startDemo()} />
+          <TranscriptPanel
+            onDemo={() => void startDemo()}
+            isMobileLayout={isMobileLayout}
+            selectMode={selectMode}
+            onToggleSelectMode={() => setSelectMode((v) => !v)}
+            correctionOpen={correctionOpen}
+            onCorrectionOpenChange={setCorrectionOpen}
+          />
           {/* v0.5 Wave-1 Feature 5 (mode-first UI): overlays TranscriptPanel's
               OWN (untouched) idle/empty-state block on the exact same gate
               its isEmpty check uses — replaces the old "选择下方引擎" copy

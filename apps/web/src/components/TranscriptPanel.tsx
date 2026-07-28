@@ -811,9 +811,33 @@ export interface TranscriptPanelProps {
   // working unchanged — the button itself only renders when a handler
   // is actually supplied.
   onDemo?: () => void;
+  // Mobile toolbar migration: on a narrow layout the toolbar row's own
+  // 选择/AI 校正/补全翻译 buttons hand off to Header.tsx's MobileToolbarButtons
+  // instead (see this file's own toolbarVisible below) — the row itself
+  // still renders whenever showLatch is true (当前说话人 latch must never
+  // be lost). Optional, default false, so every bare `<TranscriptPanel />`
+  // render-test call site keeps its desktop-shaped output unchanged.
+  isMobileLayout?: boolean;
+  // Controlled/uncontrolled hybrid (both this pair and correctionOpen/
+  // onCorrectionOpenChange below): page.tsx lifts this state so Header's
+  // mobile 选择 button and this panel's own desktop 选择 button can drive
+  // the SAME boolean. Omitted entirely (every pre-existing bare render
+  // call) falls back to a fully local useState, byte-identical to the
+  // old always-internal behavior.
+  selectMode?: boolean;
+  onToggleSelectMode?: () => void;
+  correctionOpen?: boolean;
+  onCorrectionOpenChange?: (open: boolean) => void;
 }
 
-export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
+export default function TranscriptPanel({
+  onDemo,
+  isMobileLayout = false,
+  selectMode: selectModeProp,
+  onToggleSelectMode: onToggleSelectModeProp,
+  correctionOpen: correctionOpenProp,
+  onCorrectionOpenChange,
+}: TranscriptPanelProps) {
   const segments = useApp((s) => s.segments);
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
@@ -895,16 +919,28 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
   );
 
   // v0.5 Wave-1 Feature 1 (selection mode, §1 F1 item 2) — component-
-  // local, never persisted, never touches the store directly (bulk
-  // assign goes through the SAME SpeakerAssignPopover as a per-segment
-  // chip click — see handleBulkAssignClick below).
-  const [selectMode, setSelectMode] = useState(false);
+  // local by default, never persisted, never touches the store directly
+  // (bulk assign goes through the SAME SpeakerAssignPopover as a
+  // per-segment chip click — see handleBulkAssignClick below). Mobile
+  // toolbar migration: `selectMode` itself can now be CONTROLLED by
+  // page.tsx (via the optional selectModeProp/onToggleSelectModeProp
+  // pair above) so Header's mobile 选择 button drives the same boolean —
+  // selectModeState is only the uncontrolled fallback. selectedIds
+  // stays local either way; the effect just below clears it whenever
+  // the EFFECTIVE selectMode goes false, regardless of which side
+  // flipped it.
+  const [selectModeState, setSelectModeState] = useState(false);
+  const selectMode = selectModeProp ?? selectModeState;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const toggleSelectMode = useCallback(() => {
-    setSelectMode((v) => !v);
-    setSelectedIds(new Set());
-  }, []);
+    if (onToggleSelectModeProp) onToggleSelectModeProp();
+    else setSelectModeState((v) => !v);
+  }, [onToggleSelectModeProp]);
+
+  useEffect(() => {
+    if (!selectMode) setSelectedIds((prev) => (prev.size === 0 ? prev : new Set()));
+  }, [selectMode]);
 
   const handleToggleSelect = useCallback((segId: string) => {
     setSelectedIds((prev) => {
@@ -962,14 +998,29 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
 
   // Selection mode exits automatically once its bulk assign actually
   // lands (SpeakerAssignPopover's onAssigned) — never for the
-  // per-segment chip flow, which never passes this prop.
+  // per-segment chip flow, which never passes this prop. Only ever
+  // called while selectMode is true, so toggling (rather than forcing
+  // false) is safe in the controlled case too; selectedIds itself is
+  // cleared by the effect above once selectMode flips false.
   const handleBulkAssigned = useCallback(() => {
-    setSelectMode(false);
-    setSelectedIds(new Set());
-  }, []);
+    if (onToggleSelectModeProp) onToggleSelectModeProp();
+    else setSelectModeState(false);
+  }, [onToggleSelectModeProp]);
 
-  // v0.5 Wave-1 Feature 2 (AI 校正 header button).
-  const [correctionOpen, setCorrectionOpen] = useState(false);
+  // v0.5 Wave-1 Feature 2 (AI 校正 header button). Same controlled/
+  // uncontrolled hybrid as selectMode above — Header's mobile AI 校正
+  // button (via page.tsx's onOpenCorrection) needs to flip this true
+  // from outside this component; CorrectionReview's own onClose flips
+  // it false either way.
+  const [correctionOpenState, setCorrectionOpenState] = useState(false);
+  const correctionOpen = correctionOpenProp ?? correctionOpenState;
+  const setCorrectionOpen = useCallback(
+    (open: boolean) => {
+      if (onCorrectionOpenChange) onCorrectionOpenChange(open);
+      else setCorrectionOpenState(open);
+    },
+    [onCorrectionOpenChange],
+  );
 
   // Segment text correction: one segment editable at a time; starting
   // another discards the previous unsaved edit. Mirrored into refs so
@@ -1311,60 +1362,70 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
     };
   }, [isCoarsePointer]);
 
+  // Mobile toolbar migration: on a narrow layout the row itself only
+  // ever exists to carry the latch (当前说话人 latch must never be lost)
+  // — segments.length alone no longer earns the row a mobile mount,
+  // since its own buttons now live in Header.tsx's MobileToolbarButtons
+  // instead (rendered right below, wrapped in `!isMobileLayout`). Desktop
+  // keeps the exact original gate.
+  const toolbarVisible = isMobileLayout ? showLatch : showLatch || segments.length > 0;
+
   return (
     <div
       className="relative flex h-full flex-col"
       data-testid="transcript-panel"
       style={transcriptStyle}
     >
-      {(showLatch || segments.length > 0) && (
+      {toolbarVisible && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-edge bg-panel2 px-3 py-2">
           {showLatch && <ActiveSpeakerLatch />}
-          <div className="ml-auto flex items-center gap-2">
-            {segments.length > 0 && (
-              <button
-                type="button"
-                data-testid="btn-select-mode"
-                onClick={toggleSelectMode}
-                aria-label={selectMode ? "退出选择" : "选择"}
-                title={selectMode ? "退出选择" : "选择"}
-                className={`btn-tactile flex min-h-10 items-center gap-1.5 border px-3 font-mono text-xs ${
-                  selectMode ? "border-act bg-act/10 text-act" : "border-edge2 text-fg hover:bg-panel3"
-                }`}
-              >
-                {selectMode ? <X size={15} weight="regular" /> : <Selection size={15} weight="regular" />}
-                <span className="hidden lg:inline">{selectMode ? "退出选择" : "选择"}</span>
-              </button>
-            )}
-            {aiConfigured && status === "stopped" && segments.length > 0 && (
-              <button
-                type="button"
-                data-testid="btn-ai-correct"
-                disabled={correctionBusy}
-                onClick={() => setCorrectionOpen(true)}
-                aria-label={correctionBusy ? "校正中…" : "AI 校正"}
-                title={correctionBusy ? "校正中…" : "AI 校正"}
-                className="btn-tactile flex min-h-10 items-center gap-1.5 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <MagicWand size={15} weight="regular" />
-                <span className="hidden lg:inline">{correctionBusy ? "校正中…" : "AI 校正"}</span>
-              </button>
-            )}
-            {showGapFill && (
-              <button
-                type="button"
-                data-testid="btn-gap-fill"
-                disabled={gapFillBusy}
-                onClick={() => void runGapFill()}
-                aria-label={`补全翻译 (${untranslatedCount})`}
-                title={`补全翻译 (${untranslatedCount})`}
-                className="btn-tactile flex min-h-10 items-center gap-1.5 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Translate size={15} weight="regular" />
-                <span className="hidden lg:inline">{`补全翻译 (${untranslatedCount})`}</span>
-              </button>
-            )}
-          </div>
+          {!isMobileLayout && (
+            <div className="ml-auto flex items-center gap-2">
+              {segments.length > 0 && (
+                <button
+                  type="button"
+                  data-testid="btn-select-mode"
+                  onClick={toggleSelectMode}
+                  aria-label={selectMode ? "退出选择" : "选择"}
+                  title={selectMode ? "退出选择" : "选择"}
+                  className={`btn-tactile flex min-h-10 items-center gap-1.5 border px-3 font-mono text-xs ${
+                    selectMode ? "border-act bg-act/10 text-act" : "border-edge2 text-fg hover:bg-panel3"
+                  }`}
+                >
+                  {selectMode ? <X size={15} weight="regular" /> : <Selection size={15} weight="regular" />}
+                  <span className="hidden lg:inline">{selectMode ? "退出选择" : "选择"}</span>
+                </button>
+              )}
+              {aiConfigured && status === "stopped" && segments.length > 0 && (
+                <button
+                  type="button"
+                  data-testid="btn-ai-correct"
+                  disabled={correctionBusy}
+                  onClick={() => setCorrectionOpen(true)}
+                  aria-label={correctionBusy ? "校正中…" : "AI 校正"}
+                  title={correctionBusy ? "校正中…" : "AI 校正"}
+                  className="btn-tactile flex min-h-10 items-center gap-1.5 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <MagicWand size={15} weight="regular" />
+                  <span className="hidden lg:inline">{correctionBusy ? "校正中…" : "AI 校正"}</span>
+                </button>
+              )}
+              {showGapFill && (
+                <button
+                  type="button"
+                  data-testid="btn-gap-fill"
+                  disabled={gapFillBusy}
+                  onClick={() => void runGapFill()}
+                  aria-label={`补全翻译 (${untranslatedCount})`}
+                  title={`补全翻译 (${untranslatedCount})`}
+                  className="btn-tactile flex min-h-10 items-center gap-1.5 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Translate size={15} weight="regular" />
+                  <span className="hidden lg:inline">{`补全翻译 (${untranslatedCount})`}</span>
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1523,11 +1584,12 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
       {touchSelection && (
         <div
           data-testid="touch-lookup-bar"
-          // bottom-7 matches StatusLine's h-7 exactly; on a full-bleed
+          // Offset matches StatusLine's height exactly (h-9 below sm,
+          // h-7 from sm up — keep the two in lockstep); on a full-bleed
           // iOS webview the bar sits a safe-area spacer higher
           // (iOS-cloud round, Sol F3), so the offset rides env() too —
-          // 0 elsewhere, byte-identical to the old bottom-7.
-          className="fixed inset-x-0 bottom-[calc(1.75rem+env(safe-area-inset-bottom))] z-40 flex justify-center border-t border-edge bg-panel2 px-3 py-2"
+          // 0 elsewhere.
+          className="fixed inset-x-0 bottom-[calc(2.25rem+env(safe-area-inset-bottom))] sm:bottom-[calc(1.75rem+env(safe-area-inset-bottom))] z-40 flex justify-center border-t border-edge bg-panel2 px-3 py-2"
         >
           <button
             type="button"

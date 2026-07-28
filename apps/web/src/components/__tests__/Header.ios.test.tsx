@@ -27,6 +27,7 @@ vi.mock("@/lib/platform/ios", () => ({ IS_IOS: true }));
 import Header from "../Header";
 import { useApp } from "../../lib/store";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
+import type { HeaderProps } from "../Header";
 
 function noop() {}
 
@@ -204,10 +205,18 @@ describe("Header — iOS brand removal + icon-only transport buttons (mobile ico
       container.remove();
       container = null;
     }
-    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle", activeSessionId: null });
+    useApp.setState({
+      settings: DEFAULT_SETTINGS,
+      status: "idle",
+      activeSessionId: null,
+      segments: [],
+      translations: {},
+      translateStatus: { state: "off", pending: 0 },
+      correctionBusy: false,
+    });
   });
 
-  async function renderHeader(): Promise<void> {
+  async function renderHeader(extraProps: Partial<HeaderProps> = {}): Promise<void> {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       true;
     container = document.createElement("div");
@@ -227,6 +236,7 @@ describe("Header — iOS brand removal + icon-only transport buttons (mobile ico
           onOpenHelp={noop}
           onOpenImport={noop}
           onOpenTaskCenter={noop}
+          {...extraProps}
         />,
       );
     });
@@ -240,13 +250,66 @@ describe("Header — iOS brand removal + icon-only transport buttons (mobile ico
     expect(container!.querySelector("header")!.textContent).not.toContain("JargonSlayer");
   });
 
-  it("idle: 开始 button is icon+short-label (not the full 开始监听 text)", async () => {
+  it("idle: 开始 button is icon-only (aria-label/title carry 开始, no visible text)", async () => {
     useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
     await renderHeader();
 
     const startBtn = container!.querySelector('[data-testid="btn-start"]')!;
     expect(startBtn.querySelector("svg")).not.toBeNull();
-    expect(startBtn.textContent).toBe("开始");
+    expect(startBtn.textContent).toBe("");
+    expect(startBtn.getAttribute("aria-label")).toBe("开始");
+    expect(startBtn.getAttribute("title")).toBe("开始");
+  });
+
+  // Mobile toolbar migration: 选择/AI 校正/补全翻译 move off TranscriptPanel's
+  // own second bar into this header's ml-auto cluster — gated on the new
+  // isMobileLayout prop (not bare IS_IOS), same gate TranscriptPanel.tsx's
+  // own toolbarVisible now reads. Each button's OWN gate (aiConfigured/
+  // stopped+segments, showGapFill) is exercised once here; the exhaustive
+  // per-condition matrix already lives in TranscriptPanel.f1f2.test.tsx —
+  // this only pins that Header actually renders/wires them when told to.
+  it("mobile toolbar buttons (选择/AI 校正/补全翻译) render in the header when isMobileLayout is true, and 选择 fires onToggleSelectMode", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        apiKey: "byok-key",
+        bilingualTranscript: true,
+        language: "en-US",
+        explainLanguage: "zh",
+      },
+      status: "stopped",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+      translations: {},
+    });
+    const onToggleSelectMode = vi.fn();
+    await renderHeader({
+      isMobileLayout: true,
+      selectMode: false,
+      onToggleSelectMode,
+      onOpenCorrection: noop,
+    });
+
+    expect(container!.querySelector('[data-testid="btn-select-mode"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="btn-ai-correct"]')).not.toBeNull();
+    const gapFillBtn = container!.querySelector('[data-testid="btn-gap-fill"]');
+    expect(gapFillBtn).not.toBeNull();
+    expect(gapFillBtn!.textContent).toContain("1");
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="btn-select-mode"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(onToggleSelectMode).toHaveBeenCalledTimes(1);
+  });
+
+  it("mobile toolbar buttons are absent when isMobileLayout is false (default) — desktop-shaped header, unchanged", async () => {
+    useApp.setState({ settings: DEFAULT_SETTINGS, status: "idle" });
+    await renderHeader();
+
+    expect(container!.querySelector('[data-testid="btn-select-mode"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
   });
 
   it("listening: 暂停/结束 are icon-only with aria-label + title carrying the Chinese label", async () => {

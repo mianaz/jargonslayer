@@ -17,20 +17,26 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
+  CheckCircle,
+  CircleNotch,
   ClipboardText,
   ClockCounterClockwise,
   GearSix,
   GraduationCap,
   List,
   ListChecks,
+  MagicWand,
   Pause,
   PictureInPicture,
   Play,
   Question,
+  Selection,
   Shield,
   ShieldCheck,
   Stop,
+  Translate,
   UploadSimple,
+  X,
 } from "@phosphor-icons/react";
 import { elapsedActiveMs, useApp } from "@/lib/store";
 import {
@@ -47,6 +53,10 @@ import { selectRunningCount, useTasks } from "@/lib/tasks/registry";
 import { useUpdateCheck } from "@/lib/desktop/updateCheck";
 import { useCaptionPip } from "@/lib/captionWindow";
 import { copyDiagnosticReport } from "@/lib/diag/report";
+import { resolveTaskCreds } from "@/lib/llm/taskConfig";
+import { PREVIEW_TIER } from "@/lib/deployTier";
+import { untranslatedSegments } from "@/lib/translate/gaps";
+import { runGapFill } from "@/lib/translate/gapfill";
 import BottomSheet from "@/components/BottomSheet";
 
 export interface HeaderProps {
@@ -64,6 +74,20 @@ export interface HeaderProps {
    *  already opens on web/mobile — threaded from page.tsx exactly like
    *  onOpenHistory/onOpenSettings above. */
   onOpenTaskCenter: () => void;
+  /** Mobile toolbar migration: TranscriptPanel's own second toolbar row
+   *  (选择/AI 校正/补全翻译) hands its three buttons off to this header on
+   *  narrow layouts — see MobileToolbarButtons below and TranscriptPanel.
+   *  tsx's own toolbarVisible doc for the other half of this split. Gated
+   *  on isMobileLayout (page.tsx's own IS_IOS-or-matchMedia state) rather
+   *  than the bare IS_IOS constant so narrow-web mobile layout gets it
+   *  too, not just a native iOS build. selectMode/onToggleSelectMode are
+   *  the SAME lifted state TranscriptPanel now accepts as an optional
+   *  controlled prop (its own internal useState is the uncontrolled
+   *  fallback for every bare `<TranscriptPanel />` test render). */
+  isMobileLayout?: boolean;
+  selectMode?: boolean;
+  onToggleSelectMode?: () => void;
+  onOpenCorrection?: () => void;
 }
 
 // Shared "is a meeting live enough that switching engines (or opening
@@ -402,7 +426,7 @@ function EnginePostureChip() {
       // max-w-[6.5rem]). The chip renders the retention LABEL from the
       // same resolver the select's color uses, so the two can't
       // disagree. Web/desktop keep the exact sm: behavior.
-      className={`${IS_IOS ? "inline-flex" : "hidden sm:inline-flex"} items-center gap-1 border px-2 py-0.5 text-[10px] whitespace-nowrap ${copy.borderClass} ${copy.textClass}`}
+      className={`${IS_IOS ? "inline-flex" : "hidden sm:inline-flex"} items-center gap-1 border px-2 py-0.5 text-xs whitespace-nowrap ${copy.borderClass} ${copy.textClass}`}
     >
       {copy.label}
     </span>
@@ -447,6 +471,97 @@ function TaskCenterLauncher({ onOpenTaskCenter }: { onOpenTaskCenter: () => void
         />
       )}
     </button>
+  );
+}
+
+// Mobile toolbar migration: 选择/AI 校正/补全翻译 move off TranscriptPanel's
+// own second bar and into this header's ml-auto cluster on mobile — see
+// TranscriptPanel.tsx's own toolbarVisible doc comment for the desktop-
+// unchanged / mobile-latch-only half of this split. Every gating
+// condition below reads the SAME store selectors TranscriptPanel's own
+// desktop buttons use (aiConfigured/untranslatedCount/showGapFill/
+// gapFillBusy) so the two surfaces can never disagree — deliberately
+// re-derived here rather than extracted into a shared helper (four
+// lines each, not worth an abstraction for one caller on each side).
+// selectMode/onToggleSelectMode are the lifted page.tsx state;
+// onOpenCorrection just flips TranscriptPanel's own controlled
+// correctionOpen prop true (see that file's own hybrid controlled/
+// uncontrolled doc).
+function MobileToolbarButtons({
+  selectMode,
+  onToggleSelectMode,
+  onOpenCorrection,
+}: {
+  selectMode: boolean;
+  onToggleSelectMode: () => void;
+  onOpenCorrection: () => void;
+}) {
+  const status = useApp((s) => s.status);
+  const segments = useApp((s) => s.segments);
+  const correctionBusy = useApp((s) => s.correctionBusy);
+  const aiConfigured = useApp(
+    (s) => PREVIEW_TIER || !!resolveTaskCreds(s.settings, "detect").apiKey,
+  );
+  const untranslatedCount = useApp(
+    (s) => untranslatedSegments(s.segments, s.translations).length,
+  );
+  const bilingualTranscript = useApp((s) => s.settings.bilingualTranscript);
+  const translateLanguage = useApp((s) => s.settings.language);
+  const explainLanguage = useApp((s) => s.settings.explainLanguage);
+  const gapFillBusy = useApp((s) => s.translateStatus.state === "busy");
+  const showGapFill =
+    status === "stopped" &&
+    bilingualTranscript &&
+    translateLanguage.split("-")[0] !== explainLanguage &&
+    untranslatedCount > 0;
+
+  const iconBtnCls =
+    "flex h-9 w-9 items-center justify-center border text-mut hover:border-edge2 hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50";
+
+  return (
+    <>
+      {segments.length > 0 && (
+        <button
+          type="button"
+          data-testid="btn-select-mode"
+          onClick={onToggleSelectMode}
+          aria-label={selectMode ? "退出选择" : "选择"}
+          title={selectMode ? "退出选择" : "选择"}
+          className={`${iconBtnCls} ${selectMode ? "border-act bg-act/10 text-act" : "border-edge"}`}
+        >
+          {selectMode ? <X size={18} weight="regular" /> : <Selection size={18} weight="regular" />}
+        </button>
+      )}
+      {aiConfigured && status === "stopped" && segments.length > 0 && (
+        <button
+          type="button"
+          data-testid="btn-ai-correct"
+          disabled={correctionBusy}
+          onClick={onOpenCorrection}
+          aria-label={correctionBusy ? "校正中…" : "AI 校正"}
+          title={correctionBusy ? "校正中…" : "AI 校正"}
+          className={`${iconBtnCls} border-edge`}
+        >
+          <MagicWand size={18} weight="regular" />
+        </button>
+      )}
+      {showGapFill && (
+        <button
+          type="button"
+          data-testid="btn-gap-fill"
+          disabled={gapFillBusy}
+          onClick={() => void runGapFill()}
+          aria-label={`补全翻译 (${untranslatedCount})`}
+          title={`补全翻译 (${untranslatedCount})`}
+          className={`relative ${iconBtnCls} border-edge`}
+        >
+          <Translate size={18} weight="regular" />
+          <span className="absolute -right-1 -top-1 text-[10px] tabular-nums text-lab-orange">
+            {untranslatedCount}
+          </span>
+        </button>
+      )}
+    </>
   );
 }
 
@@ -867,6 +982,10 @@ export default function Header({
   onOpenHelp,
   onOpenImport,
   onOpenTaskCenter,
+  isMobileLayout = false,
+  selectMode = false,
+  onToggleSelectMode,
+  onOpenCorrection,
 }: HeaderProps) {
   const status = useApp((s) => s.status);
   const activeSessionId = useApp((s) => s.activeSessionId);
@@ -942,29 +1061,31 @@ export default function Header({
           <DetectModeBadge />
           <ElapsedTimer />
 
+          {isMobileLayout && (
+            <MobileToolbarButtons
+              selectMode={selectMode}
+              onToggleSelectMode={onToggleSelectMode ?? (() => {})}
+              onOpenCorrection={onOpenCorrection ?? (() => {})}
+            />
+          )}
+
           {(status === "idle" || status === "stopped") && (
             <button
               type="button"
               data-testid="btn-start"
               onClick={onStart}
-              // iOS TestFlight feedback (phone-width icon pass): the
-              // primary CTA keeps a visible label (开始) even icon-ified
-              // — a first-time tester must not have to guess what the
-              // one lit-up button does. Every other transport button
-              // below goes icon-only since their neighbors (pause/
-              // resume/stop) make their purpose contextual.
+              aria-label={IS_IOS ? "开始" : undefined}
+              title={IS_IOS ? "开始" : undefined}
+              // iOS TestFlight feedback (phone-width icon pass): every
+              // transport button goes icon-only on iOS — neighbors
+              // (pause/resume/stop) already make each one's purpose
+              // contextual, and the phone-width row has no room left for
+              // a label once 选择/AI 校正/补全翻译 also moved in here.
               className={`btn-terminal h-9 rounded-none bg-act font-mono text-sm font-semibold text-ink hover:bg-act/85 whitespace-nowrap ${
-                IS_IOS ? "flex items-center gap-1.5 px-3" : "px-4"
+                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
               }`}
             >
-              {IS_IOS ? (
-                <>
-                  <Play size={16} weight="fill" />
-                  开始
-                </>
-              ) : (
-                "开始监听"
-              )}
+              {IS_IOS ? <Play size={18} weight="fill" /> : "开始监听"}
             </button>
           )}
 
@@ -972,11 +1093,13 @@ export default function Header({
             <button
               type="button"
               disabled
+              aria-label={IS_IOS ? "连接中" : undefined}
+              title={IS_IOS ? "连接中" : undefined}
               className={`h-9 cursor-not-allowed rounded-none bg-act/60 font-mono text-sm font-semibold text-ink whitespace-nowrap ${
-                IS_IOS ? "px-3" : "px-4"
+                IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
               }`}
             >
-              {IS_IOS ? "连接中" : "连接中…"}
+              {IS_IOS ? <CircleNotch size={18} weight="regular" className="animate-spin" /> : "连接中…"}
             </button>
           )}
 
@@ -991,7 +1114,7 @@ export default function Header({
                 IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
               }`}
             >
-              {IS_IOS ? <Pause size={16} weight="regular" /> : "暂停"}
+              {IS_IOS ? <Pause size={18} weight="regular" /> : "暂停"}
             </button>
           )}
 
@@ -1006,7 +1129,7 @@ export default function Header({
                 IS_IOS ? "flex w-9 items-center justify-center px-0" : "px-4"
               }`}
             >
-              {IS_IOS ? <Play size={16} weight="regular" /> : "继续"}
+              {IS_IOS ? <Play size={18} weight="regular" /> : "继续"}
             </button>
           )}
 
@@ -1022,7 +1145,7 @@ export default function Header({
               }`}
             >
               <span className="dot-live h-2 w-2 rounded-full bg-lab-red whitespace-nowrap" />
-              {IS_IOS ? <Stop size={16} weight="regular" /> : "结束"}
+              {IS_IOS ? <Stop size={18} weight="regular" /> : "结束"}
             </button>
           )}
 
@@ -1032,11 +1155,17 @@ export default function Header({
             // bordered chip read as a second clickable affordance. It's
             // plain text — no border/chrome — so it can only be read as
             // "you're viewing a saved session", never mistaken for a button.
+            // iOS (mobile icon pass): swaps the text for a de-chromed
+            // CheckCircle icon — same no border/background posture, just
+            // an icon instead of a label to match the rest of this
+            // cluster's icon-only iOS treatment.
             <span
               data-testid="chip-saved"
-              className="px-2.5 py-1 font-mono text-xs text-lab-green whitespace-nowrap"
+              aria-label={IS_IOS ? "已保存" : undefined}
+              title={IS_IOS ? "已保存" : undefined}
+              className="flex items-center px-2.5 py-1 font-mono text-xs text-lab-green whitespace-nowrap"
             >
-              已保存
+              {IS_IOS ? <CheckCircle size={18} weight="regular" /> : "已保存"}
             </span>
           )}
 

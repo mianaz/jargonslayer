@@ -47,7 +47,7 @@ export const DETECT_MODE_LABEL: Record<string, string> = {
 // Same reasoning — the engine <select>'s own placeholder + sidecar-down
 // hint below, both pinned by exact-equality assertions in
 // StatusLine.test.tsx.
-export const ENGINE_SELECT_PLACEHOLDER = "选择引擎";
+export const ENGINE_SELECT_PLACEHOLDER = "引擎";
 export const SIDECAR_DOWN_HINT_WEB = "本地 Whisper 未连接——见 设置 → 转录引擎";
 
 // S10 field-fix #5: engines whose transcription actually flows through
@@ -189,7 +189,7 @@ function EngineDropdown() {
         const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
         if (v) updateSettings({ engine: v });
       }}
-      className={`h-full max-w-[6.5rem] shrink-0 border-x border-edge bg-panel2 px-1.5 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[8.5rem] sm:px-2 ${iosTextClass}`}
+      className={`h-full max-w-[6.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[8.5rem] sm:px-2 ${iosTextClass}`}
     >
       {(engine === "demo" || engine === "import") && (
         <option value="" disabled>
@@ -266,7 +266,8 @@ function AiStatusChip() {
 
   const resolved = resolveTaskCreds(settings, "detect");
   const model = shortModelName(resolved.model);
-  const glyph = AI_STATUS_CHIP_GLYPH[deriveHealthStatus(detectStat)];
+  const health = deriveHealthStatus(detectStat);
+  const glyph = AI_STATUS_CHIP_GLYPH[health];
 
   return (
     <div ref={rootRef} className="relative flex h-full items-center">
@@ -282,8 +283,14 @@ function AiStatusChip() {
         <span className="hidden sm:inline">
           {AI_STATUS_CHIP_DOMAIN_LABEL} · {model} {glyph}
         </span>
+        {/* Compact (phone-width) variant: the neutral "…" glyph read as
+            a truncation artifact rather than a status — dropped here
+            (ok "✓"/fail "✗" still show, both unambiguous at a glance).
+            The desktop-full span above keeps "…" unchanged. */}
         <span className="sm:hidden">
-          {AI_STATUS_CHIP_DOMAIN_LABEL} {glyph}
+          {health === "neutral"
+            ? AI_STATUS_CHIP_DOMAIN_LABEL
+            : `${AI_STATUS_CHIP_DOMAIN_LABEL} ${glyph}`}
         </span>
       </button>
       {open && (
@@ -378,19 +385,20 @@ function TranslateStatusChip() {
       <span
         data-testid="statusline-translate-chip"
         title={translateStatus.reason}
-        className="whitespace-nowrap px-2 text-lab-yellow sm:px-3"
+        className="flex h-full items-center whitespace-nowrap px-2 text-lab-yellow sm:px-3"
       >
-        <span className="hidden sm:inline">翻译暂停</span>
-        <span className="sm:hidden">译⏸</span>
+        翻译暂停
       </span>
     );
   }
 
   if (translateStatus.state === "busy") {
     return (
-      <span data-testid="statusline-translate-chip" className="whitespace-nowrap px-2 sm:px-3">
-        <span className="hidden sm:inline">翻译中… {translateStatus.pending}</span>
-        <span className="sm:hidden">译…</span>
+      <span
+        data-testid="statusline-translate-chip"
+        className="flex h-full items-center whitespace-nowrap px-2 sm:px-3"
+      >
+        翻译中… {translateStatus.pending}
       </span>
     );
   }
@@ -404,19 +412,20 @@ function TranslateStatusChip() {
     return (
       <span
         data-testid="statusline-translate-chip"
-        className="whitespace-nowrap px-2 text-mut2 sm:px-3"
+        className="flex h-full items-center whitespace-nowrap px-2 text-mut2 sm:px-3"
       >
-        <span className="hidden sm:inline">翻译</span>
-        <span className="sm:hidden">译</span>
+        翻译
       </span>
     );
   }
 
   // "done" only — at least one translation has actually landed.
   return (
-    <span data-testid="statusline-translate-chip" className="whitespace-nowrap px-2 sm:px-3">
-      <span className="hidden sm:inline">翻译 ✓</span>
-      <span className="sm:hidden">译✓</span>
+    <span
+      data-testid="statusline-translate-chip"
+      className="flex h-full items-center whitespace-nowrap px-2 sm:px-3"
+    >
+      翻译 ✓
     </span>
   );
 }
@@ -514,7 +523,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   return (
     <div
       data-testid="statusline"
-      className="flex h-7 shrink-0 items-center border-t border-edge bg-panel2 font-mono text-xs text-mut"
+      className="flex h-9 shrink-0 items-center border-t border-edge bg-panel2 font-mono text-xs text-mut sm:h-7"
     >
       <span
         className={`flex h-full items-center whitespace-nowrap px-2 font-bold tracking-wide sm:px-3 ${
@@ -573,7 +582,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
         title={sidecarDownHint}
         className={`hidden min-w-0 truncate px-2 sm:inline sm:px-3 ${privacyCopy.textClass}`}
       >
-        <span className="hidden sm:inline">{privacyCopy.hint}</span>
+        {privacyCopy.hint}
       </span>
       {/* Engine dropdown (S10 field-fix wave 2, EngineDropdown above):
           right here, between the privacy segment and the latency chip,
@@ -588,7 +597,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
       {isListening && LOCAL_WHISPER_ENGINES.has(engine) && lagMs !== null && latencySustained && (
         <span
           data-testid="statusline-latency-chip"
-          className="whitespace-nowrap px-2 text-lab-yellow sm:px-3"
+          className="flex h-full items-center whitespace-nowrap px-2 text-lab-yellow sm:px-3"
         >
           延迟 ~{Math.round(lagMs / 1000)}s
         </span>

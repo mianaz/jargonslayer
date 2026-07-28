@@ -22,7 +22,7 @@ vi.mock("@/lib/llm/client", () => ({
 
 import { useApp } from "@/lib/store";
 import { DEFAULT_SETTINGS, type Settings, type TranscriptSegment } from "@jargonslayer/core/types";
-import TranscriptPanel from "../TranscriptPanel";
+import TranscriptPanel, { type TranscriptPanelProps } from "../TranscriptPanel";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return { ...DEFAULT_SETTINGS, ...overrides };
@@ -82,9 +82,9 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     });
   });
 
-  async function renderPanel() {
+  async function renderPanel(props: Partial<TranscriptPanelProps> = {}) {
     await act(async () => {
-      root!.render(<TranscriptPanel />);
+      root!.render(<TranscriptPanel {...props} />);
     });
   }
 
@@ -366,5 +366,37 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     const btn = container!.querySelector('[data-testid="btn-gap-fill"]') as HTMLButtonElement;
     expect(btn).toBeTruthy();
     expect(btn.disabled).toBe(true);
+  });
+
+  // ---------------- mobile toolbar migration (isMobileLayout) ----------------
+  // 选择/AI 校正/补全翻译 move off this panel's own toolbar row and into
+  // Header.tsx's MobileToolbarButtons on a narrow layout (see this
+  // component's own toolbarVisible doc comment) — the row itself still
+  // mounts for the latch, never for these three buttons.
+
+  it("isMobileLayout hides the toolbar's own buttons (they move to Header) but keeps the row for the latch", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      status: "listening",
+      settings: makeSettings({ apiKey: "byok-key" }),
+    });
+    await renderPanel({ isMobileLayout: true });
+
+    expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeTruthy();
+    expect(container!.querySelector('[data-testid="btn-select-mode"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
+  });
+
+  it("isMobileLayout hides the toolbar row entirely once there's no latch to show, even with segments on screen", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      status: "stopped",
+      settings: makeSettings(),
+    });
+    await renderPanel({ isMobileLayout: true });
+
+    expect(container!.querySelector('[data-testid="active-speaker-latch"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="btn-select-mode"]')).toBeNull();
   });
 });
