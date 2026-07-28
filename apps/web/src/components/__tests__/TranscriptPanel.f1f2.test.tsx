@@ -77,6 +77,8 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
       status: "idle",
       settings: DEFAULT_SETTINGS,
       correctionBusy: false,
+      translations: {},
+      translateStatus: { state: "off", pending: 0 },
     });
   });
 
@@ -291,5 +293,78 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     useApp.setState({ segments: [], status: "stopped", settings: makeSettings({ apiKey: "byok-key" }) });
     await renderPanel();
     expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
+  });
+
+  // ---------------- 补全翻译 (gap-fill) button gating (v0.7.1 train-2 Chamber B) ----------------
+
+  it("补全翻译 button shown when stopped + bilingual on + language pair differs + gaps remain", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      translations: {},
+      status: "stopped",
+      settings: makeSettings({ bilingualTranscript: true, language: "en-US", explainLanguage: "zh" }),
+    });
+    await renderPanel();
+    const btn = container!.querySelector('[data-testid="btn-gap-fill"]');
+    expect(btn).toBeTruthy();
+    expect(btn!.textContent).toContain("补全翻译 (1)");
+  });
+
+  it("补全翻译 button hidden when every segment already has a translation", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      translations: { s1: "你好" },
+      status: "stopped",
+      settings: makeSettings({ bilingualTranscript: true, language: "en-US", explainLanguage: "zh" }),
+    });
+    await renderPanel();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
+  });
+
+  it("补全翻译 button hidden when bilingualTranscript is off, even with gaps", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      translations: {},
+      status: "stopped",
+      settings: makeSettings({ bilingualTranscript: false, language: "en-US", explainLanguage: "zh" }),
+    });
+    await renderPanel();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
+  });
+
+  it("补全翻译 button hidden when source === target (nothing to translate)", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      translations: {},
+      status: "stopped",
+      settings: makeSettings({ bilingualTranscript: true, language: "en-US", explainLanguage: "en" }),
+    });
+    await renderPanel();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
+  });
+
+  it("补全翻译 button hidden when status !== stopped even with gaps", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      translations: {},
+      status: "listening",
+      settings: makeSettings({ bilingualTranscript: true, language: "en-US", explainLanguage: "zh" }),
+    });
+    await renderPanel();
+    expect(container!.querySelector('[data-testid="btn-gap-fill"]')).toBeNull();
+  });
+
+  it("补全翻译 button disabled while translateStatus is busy", async () => {
+    useApp.setState({
+      segments: [seg({ id: "s1" })],
+      translations: {},
+      status: "stopped",
+      settings: makeSettings({ bilingualTranscript: true, language: "en-US", explainLanguage: "zh" }),
+      translateStatus: { state: "busy", pending: 1 },
+    });
+    await renderPanel();
+    const btn = container!.querySelector('[data-testid="btn-gap-fill"]') as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    expect(btn.disabled).toBe(true);
   });
 });

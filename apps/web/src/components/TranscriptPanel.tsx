@@ -15,6 +15,7 @@ import {
   PencilSimple,
   Play,
   Selection,
+  Translate,
   X,
 } from "@phosphor-icons/react";
 import { useApp, type LookupRequest } from "../lib/store";
@@ -35,6 +36,8 @@ import {
 import HoverGlossCard, { type GlossItem } from "./HoverGlossCard";
 import SpeakerAssignPopover, { type SpeakerAssignRequest } from "./SpeakerAssignPopover";
 import CorrectionReview from "./CorrectionReview";
+import { untranslatedSegments } from "../lib/translate/gaps";
+import { runGapFill } from "../lib/translate/gapfill";
 
 // Exported (not just module-private) so the render-split regression
 // tests (TranscriptPanel.render.test.tsx) can drive exact boundary
@@ -105,7 +108,8 @@ function formatTime(ms: number): string {
 
 /** Stable identity for buildHighlightMatcher's ACTUAL inputs (2026-07
  *  VAD-supervisor review finding #8). buildHighlightMatcher only ever
- *  looks at each card/term's `id` + surface text, and only the top
+ *  looks at each card/term's `id` + canonical/observed surface text,
+ *  and only the top
  *  MAX_HIGHLIGHT_PER_KIND-per-kind entries by lastSeenAt participate —
  *  memoizing `matcher` on the raw [cards, terms] ARRAYS instead gives
  *  it (and everything downstream that depends on it — cardsById,
@@ -124,7 +128,7 @@ function highlightVocabularyKey(
   const cardKey = [...cards]
     .sort((a, b) => b.lastSeenAt - a.lastSeenAt)
     .slice(0, MAX_HIGHLIGHT_PER_KIND)
-    .map((c) => `${c.id}:${c.expression}`)
+    .map((c) => `${c.id}:${c.expression}:${c.matched_surface ?? ""}`)
     .sort()
     .join("|");
   const termKey = [...terms]
@@ -865,6 +869,23 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
     (s) => PREVIEW_TIER || !!resolveTaskCreds(s.settings, "detect").apiKey,
   );
 
+  // v0.7.1 translation train-2, Chamber B (post-meeting gap-fill entry
+  // point): a stopped session's residual untranslated-segment count.
+  // Primitive number selector — no useShallow needed (repo rule only
+  // requires it for array/object-returning selectors).
+  const untranslatedCount = useApp(
+    (s) => untranslatedSegments(s.segments, s.translations).length,
+  );
+  const bilingualTranscript = useApp((s) => s.settings.bilingualTranscript);
+  const translateLanguage = useApp((s) => s.settings.language);
+  const explainLanguage = useApp((s) => s.settings.explainLanguage);
+  const gapFillBusy = useApp((s) => s.translateStatus.state === "busy");
+  const showGapFill =
+    status === "stopped" &&
+    bilingualTranscript &&
+    translateLanguage.split("-")[0] !== explainLanguage &&
+    untranslatedCount > 0;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const [stickToBottom, setStickToBottom] = useState(true);
 
@@ -1327,6 +1348,20 @@ export default function TranscriptPanel({ onDemo }: TranscriptPanelProps) {
               >
                 <MagicWand size={15} weight="regular" />
                 <span className="hidden lg:inline">{correctionBusy ? "校正中…" : "AI 校正"}</span>
+              </button>
+            )}
+            {showGapFill && (
+              <button
+                type="button"
+                data-testid="btn-gap-fill"
+                disabled={gapFillBusy}
+                onClick={() => void runGapFill()}
+                aria-label={`补全翻译 (${untranslatedCount})`}
+                title={`补全翻译 (${untranslatedCount})`}
+                className="btn-tactile flex min-h-10 items-center gap-1.5 border border-edge2 px-3 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Translate size={15} weight="regular" />
+                <span className="hidden lg:inline">{`补全翻译 (${untranslatedCount})`}</span>
               </button>
             )}
           </div>
