@@ -425,6 +425,9 @@ npm run dev
       <p>从 <code>≡</code> 菜单打开<code>悬浮字幕</code>，实时转录会弹成一个小小的置顶字幕视图——只显示最后一句定稿、正在识别的中间句，加最近一条解释释义。网页版用的是 Document 画中画窗口（Chrome/Edge 116+；浏览器没有这个接口时，菜单项自动隐藏）。桌面版没有第二个窗口，而是把主窗口自己缩成一条无边框字幕条，随便点哪儿都能拖动，关掉再还原成原来的大小。它适合压在视频通话上层看，主应用退到后面。iOS 没有这条路径，菜单里不显示。</p>
       <h3>崩溃恢复</h3>
       <p>会议进行中会实时写自动草稿。页面刷新、标签页被关、浏览器崩溃后重新打开，历史里会出现一条<code>恢复到历史记录</code>横幅，把中断前的内容一键找回，一次意外不至于赔掉整场会议。</p>
+      <h3>翻译</h3>
+      <p>实时双语字幕和全文翻译共用一套设置：设置里的<code>双语转录</code>开关正上方是<code>翻译引擎</code>选择器。可选项有 LLM（默认）、平台自带的本机翻译（网页版是 Chrome 的 Translator API，桌面版/iOS 是 Apple 翻译框架）、DeepL（自备 Key），以及 v0.7.1 新增的<strong>有道翻译</strong>（自备 Key）。有道需要在 <a href="https://ai.youdao.com" target="_blank" rel="noopener">ai.youdao.com</a> 创建应用（服务选「文本翻译」、接入方式选「API」）拿到应用ID和应用密钥，按字符量计费（英译中约 ¥48/百万字符，新用户有体验金），且只在原生 App（桌面版/iOS）可用——网页版因为 <code>openapi.youdao.com</code> 不支持浏览器跨域请求而禁用该选项。</p>
+      <p>会议结束后，只要双语字幕开着、还有没翻译成功的片段（比如某次 API 调用失败，或翻译时没配 Key），工具栏就会出现<code>补全翻译 (N)</code>按钮——点一下用当前配置的翻译引擎分批补齐，补完自动消失。</p>
     </section>
 
     <section id="transcription">
@@ -581,6 +584,7 @@ python whisper_server.py --model small</code></pre>
       <ol>
         <li>在应用中打开 <code>我的词典</code>。</li>
         <li>手动添加条目，或选中转录文本后点击 <code>加入我的词典</code>。</li>
+        <li>存词时记的是它在这场会议里实际出现的说法，不只是词典的标准写法——转录里说的是「back on the envelope」，词典收录的词条是 <i>back of the envelope</i>，存下来的仍然是会议里那句实际说法，后续复习和检测都认得这个变体。</li>
         <li>个人词典会参与后续会议检测，并优先于内置词典。</li>
         <li>可以拆成多个自定义命名词包，各自开关，按会议场景勾选启用。</li>
         <li>需要独立复习流程时，可导出为 Anki TSV。</li>
@@ -643,6 +647,7 @@ python whisper_server.py --model small</code></pre>
         <li>复制纪要到剪贴板。</li>
         <li>Cornell 笔记可导出 PNG 或 Markdown。</li>
       </ul>
+      <p>Markdown、docx 和复制纪要导出会带上已有的翻译。如果会议里还有没翻译成功的片段，会弹一个对话框——<code>补全后导出</code>（先跑一遍补全翻译再导出，仍失败的会 toast 提示）、<code>直接导出</code>（现在就导出，未翻译片段原地标出「未翻译」）、<code>取消</code>。JSON、Anki TSV、Cornell 笔记导出不受这道确认影响。</p>
       <h3>自动导出</h3>
       <p>设置中可以把每次会议自动保存为 Markdown + JSON 到指定文件夹。该能力依赖 File System Access API，因此更偏 Chromium 浏览器。它适合本地自动化、Obsidian vault 和 agent 工作流。</p>
       <h3>Webhook</h3>
@@ -1025,12 +1030,18 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>词典模式成为默认：</strong>新安装默认进入词典模式——内置词典即时检测、完全离线的底座；AI 模式转为可选的 Beta。</li>
       </ol>
       <p><strong>说明：</strong>Chrome 插件以 releases 页面的 zip 分发，手动加载安装；暂无网上应用店上架计划。</p>
+      <p>v0.7 已上线：</p>
+      <ol>
+        <li><strong>有道翻译引擎（BYOK，v0.7.1）：</strong>翻译引擎又添一项——除了 LLM、平台自带的本机翻译和 DeepL，还能选有道，自备应用ID/应用密钥，按量计费；只在原生 App（桌面版/iOS）可用，网页版因有道 API 不支持跨域而不提供。</li>
+        <li><strong>会后补全翻译（v0.7.1）：</strong>会议结束后，工具栏一键把没翻译成功的片段用当前配置的翻译引擎补齐。</li>
+        <li><strong>导出跟随翻译（v0.7.1）：</strong>Markdown、docx、复制纪要导出现在带上已有的翻译，不再只认 AI 报告顺带生成的那份；还有没翻译的片段会先问你要不要补全后再导出，剩下的原地标出「未翻译」。</li>
+        <li><strong>存词改进（v0.7.1）：</strong>加入我的词典时记下这个词在会议里实际出现的形式，不只是词典的标准写法。</li>
+        <li><strong>手机端 UI 打磨：</strong>手机宽度下头部收成单行、状态芯片改回完整词而不是缩写、控件尺寸统一。</li>
+        <li><strong>Bit 焕新：</strong>状态栏吉祥物重画了身体、换了更暖的配色，出场动画改成打招呼式。</li>
+        <li><strong>修复：</strong>展开的表达卡片里，原文例句不再被截断在两行。</li>
+      </ol>
       <p>暂缓项：浏览器端 Whisper 实时流、划词联网搜索。</p>
     </section>
-
-    <div class="footer">
-      来源：README.md、README.zh-CN.md、docs/PRODUCT.md、docs/ARCHITECTURE.md、docs/SCHEMA.md、docs/AGENT-WORKFLOWS.md、docs/PACKAGING.md、docs/PLAN-v0.4.md，以及 apps/web、apps/desktop、apps/extension、packages/core、sidecar/ 下的实现文件。
-    </div>
   </main>
 </div>
 </body>

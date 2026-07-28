@@ -451,6 +451,9 @@ npm run dev
       <p>Turn on <code>悬浮字幕</code> from the <code>≡</code> menu to pop the live transcript into a small, always-on-top caption view — just the last final line, the interim line being recognized, and the most recent explanation gloss. On the web app this opens a Document Picture-in-Picture window (Chrome/Edge 116+; the menu entry hides itself where the browser has no PiP API). On the desktop app there is no second window — it shrinks the main window itself into a chromeless strip you can drag from anywhere, then restores the previous size when you close it. It is meant to sit over a video call while the full app stays out of the way. iOS has no floating-caption path and hides the entry.</p>
       <h3>Crash Recovery</h3>
       <p>A live meeting is auto-drafted as you go. After a page refresh, a closed tab, or a browser crash, history shows a <code>恢复到历史记录</code> banner that restores everything up to the moment things stopped, so one accident does not cost the whole meeting.</p>
+      <h3>Translation</h3>
+      <p>Live bilingual subtitles and full-transcript translation share one setting: <code>双语转录</code> in Settings, right above a <code>翻译引擎</code> picker. Options are the LLM (default), the platform's on-device translator (Chrome's Translator API on the web app, Apple's Translation framework on desktop/iOS), DeepL (BYOK), and — new in v0.7.1 — <strong>有道翻译</strong> (Youdao, BYOK). Youdao needs an 应用ID and 应用密钥 from <a href="https://ai.youdao.com" target="_blank" rel="noopener">ai.youdao.com</a> (创建应用, service 文本翻译, access method API), is billed per character (roughly ¥48 per million EN→ZH characters, with a new-user trial credit), and is native-app only — the web app disables it in the picker because <code>openapi.youdao.com</code> does not allow cross-origin browser requests.</p>
+      <p>After a meeting stops, a <code>补全翻译 (N)</code> button appears in the toolbar whenever bilingual subtitles are on and N segments were never translated (a missed API call, a pause with no key, and so on). It re-runs just those segments through the configured translation engine in small batches and disappears once they're filled.</p>
     </section>
 
     <section id="transcription">
@@ -607,6 +610,7 @@ python whisper_server.py --model small</code></pre>
       <ol>
         <li>Open <code>我的词典</code> from the app.</li>
         <li>Add entries manually or select transcript text and choose <code>加入我的词典</code>.</li>
+        <li>Saving records the exact wording it appeared as in that meeting, not just the dictionary's canonical form — save it after hearing "back on the envelope" and the entry keeps that surface form even though the dictionary headword is <i>back of the envelope</i>, so review and future detection both recognize the variant you actually heard.</li>
         <li>Saved entries participate in future detection and shadow built-in dictionary matches.</li>
         <li>Split entries across multiple named custom packs, each toggled on or off per meeting.</li>
         <li>Export glossary entries to Anki TSV when you want a separate review workflow.</li>
@@ -669,6 +673,7 @@ python whisper_server.py --model small</code></pre>
         <li>Copy-to-clipboard summary.</li>
         <li>Cornell note export as PNG or Markdown.</li>
       </ul>
+      <p>Markdown, docx, and copy-to-clipboard exports carry your existing translations. If the meeting has any segments that never got translated, a dialog offers <code>补全后导出</code> (run gap-fill first, then export — a toast reports any that still failed), <code>直接导出</code> (export now, with untranslated segments marked 未翻译 inline), or <code>取消</code>. JSON, Anki TSV, and Cornell-note exports are unaffected by this gate.</p>
       <h3>Auto-export</h3>
       <p>Settings can save every session to a folder as Markdown plus JSON. This uses the File System Access API, so folder auto-save is Chromium-oriented. It is intended for local automation, Obsidian vaults, and agent workflows.</p>
       <h3>Webhook</h3>
@@ -1050,12 +1055,18 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Dictionary mode is now the default:</strong> new installs start in dictionary mode (the always-on, fully offline detection layer); AI mode moves to opt-in beta.</li>
       </ol>
       <p><strong>Note:</strong> the extension ships as a zip on releases and installs via load-unpacked; there is no Chrome Web Store listing planned for now.</p>
+      <p>v0.7 has since shipped:</p>
+      <ol>
+        <li><strong>有道翻译 Youdao translation engine (BYOK, v0.7.1):</strong> another translation-engine option alongside the LLM, on-device translators, and DeepL — bring your own 应用ID/应用密钥, billed per use; native-app only (desktop/iOS) since Youdao's API has no cross-origin support for the web app.</li>
+        <li><strong>会后补全翻译 Post-meeting gap-fill (v0.7.1):</strong> a one-click toolbar button after the meeting stops re-translates any segment that was missed, through whichever translation engine is configured.</li>
+        <li><strong>Exports follow translations (v0.7.1):</strong> Markdown, docx, and copy-to-clipboard exports now carry existing translations instead of only the ones an LLM summary happened to produce; if segments are still untranslated, you're offered a gap-fill-then-export option, with a 未翻译 marker for whatever remains.</li>
+        <li><strong>存词 glossary surface capture (v0.7.1):</strong> saving a card to your glossary now keeps the exact wording it appeared as in that meeting, not just the dictionary's canonical form.</li>
+        <li><strong>Mobile UI polish:</strong> a single-row header on phone widths, full-word status chips instead of abbreviations, and unified control sizing.</li>
+        <li><strong>Bit refresh:</strong> a redrawn body, a warmer color palette, and a greeting-style entrance animation for the status-line mascot.</li>
+        <li><strong>Fix:</strong> the source-sentence quote in an expanded expression card no longer clips at two lines.</li>
+      </ol>
       <p>Parked items include browser-Whisper realtime streaming and select-to-web-search.</p>
     </section>
-
-    <div class="footer">
-      Sources: README.md, README.zh-CN.md, docs/PRODUCT.md, docs/ARCHITECTURE.md, docs/SCHEMA.md, docs/AGENT-WORKFLOWS.md, docs/PACKAGING.md, docs/PLAN-v0.4.md, and implementation files under apps/web, apps/desktop, apps/extension, packages/core, and sidecar/.
-    </div>
   </main>
 </div>
 </body>
