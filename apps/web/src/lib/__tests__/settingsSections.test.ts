@@ -135,7 +135,11 @@ describe("shouldAutoPromoteToAdvanced — auto-promote predicate", () => {
     { name: "language", patch: { language: "en-GB" } },
     { name: "whisperUrl", patch: { whisperUrl: "ws://example:8765" } },
     { name: "autoDetect", patch: { autoDetect: false } },
-    { name: "aiDetect", patch: { aiDetect: false } },
+    // TestFlight batch fix: DEFAULT_SETTINGS.aiDetect flipped to false
+    // (packages/core/src/types.ts) — `true` is now the deviating value
+    // that needs testing here, not `false` (a no-op patch against the
+    // new default).
+    { name: "aiDetect", patch: { aiDetect: true } },
     { name: "explainLanguage", patch: { explainLanguage: "en" } },
     { name: "bilingualTranscript", patch: { bilingualTranscript: true } },
     { name: "profile.enabled", patch: { profile: { enabled: true, industry: "SaaS" } } },

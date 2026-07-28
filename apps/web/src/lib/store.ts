@@ -1632,6 +1632,27 @@ function settingsForPersist(
   return stripped;
 }
 
+/** HIGH fix (adversarial review, DEFAULT_SETTINGS.aiDetect true→false
+ *  round): `detectMode` is UI-facing (drives DETECT_MODE_LABEL/the
+ *  Header/CardsPanel/AiStatusPanel copy) and must reflect whatever
+ *  autoDetect/aiDetect settings are ACTUALLY persisted the instant they
+ *  become known — store creation (a fresh install's first paint, before
+ *  hydrate() ever resolves) and hydrate()'s own `set({ settings, ... })`
+ *  are the two moments a stale hardcoded/pre-hydration value would
+ *  otherwise leak into the UI. Priority mirrors detect/scheduler.ts's
+ *  own pushSegment gate exactly: !autoDetect wins outright (scheduler's
+ *  first !settings.autoDetect check reports "off" regardless of
+ *  aiDetect), then aiDetect decides "llm" vs "dictionary". Deliberately
+ *  NOT reused by beginMeeting's own detectMode reset just below — that
+ *  one intentionally never echoes "off" (see its own doc comment: it
+ *  mirrors the toggle convention because the scheduler self-corrects on
+ *  this meeting's very first segment regardless), a different, already-
+ *  reasoned-through posture this fix leaves untouched. */
+function deriveDetectMode(settings: Pick<Settings, "autoDetect" | "aiDetect">): DetectMode {
+  if (!settings.autoDetect) return "off";
+  return settings.aiDetect ? "llm" : "dictionary";
+}
+
 export const useApp = create<AppState>((set, get) => ({
   settings: DEFAULT_SETTINGS,
   hydrated: false,
@@ -1655,7 +1676,7 @@ export const useApp = create<AppState>((set, get) => ({
   cards: [],
   terms: [],
   detectBusy: false,
-  detectMode: "llm",
+  detectMode: deriveDetectMode(DEFAULT_SETTINGS),
   focusCardId: null,
   lookup: null,
 
@@ -1789,6 +1810,14 @@ export const useApp = create<AppState>((set, get) => ({
     const mergedLearnset = { ...learned, ...get().learnset };
     set({
       settings,
+      // HIGH fix (adversarial review): re-derive from the settings just
+      // loaded (see deriveDetectMode's own doc above) — without this, a
+      // returning user's real aiDetect:false (or a fresh install's new
+      // default) still showed the pre-hydration/module-init detectMode
+      // in the UI (AI 模式 label, AiStatusPanel's fallback banner, …)
+      // until the scheduler's first pushSegment corrected it, which
+      // never even runs before a meeting has started.
+      detectMode: deriveDetectMode(settings),
       sessions: metas,
       customEntries: entries,
       learnset: mergedLearnset,

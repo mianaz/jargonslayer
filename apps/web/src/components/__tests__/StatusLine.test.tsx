@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
 import { useLatencyStats } from "../../lib/stt/latencyStats";
+import { ENGINE_OPTIONS } from "../../lib/stt/engineOptions";
 import { recordLlmCall, resetLlmTelemetry } from "../../lib/llm/telemetry";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import StatusLine, {
@@ -109,7 +110,7 @@ describe("StatusLine — detect-mode toggle", () => {
     });
 
     expect(container!.querySelector('[data-testid="statusline-detect-toggle"]')).toBeNull();
-    expect(container!.textContent).toContain("检测关闭");
+    expect(container!.textContent).toContain("关闭");
   });
 });
 
@@ -641,8 +642,16 @@ describe("StatusLine — engine dropdown", () => {
     return el as HTMLSelectElement;
   }
 
-  it("lists every ENGINE_OPTIONS value (web build: webspeech/whisper/tabaudio/tabaudio-cloud/soniox/deepgram/elevenlabs, D7 keeps tabaudio; tabaudio-cloud v0.5 Wave-1 F4)", async () => {
-    useApp.setState((s) => ({ settings: { ...s.settings, engine: "whisper" } }));
+  it("lists every ENGINE_OPTIONS value once every BYOK cloud key is configured (web build: webspeech/whisper/tabaudio/tabaudio-cloud/soniox/deepgram/elevenlabs, D7 keeps tabaudio; tabaudio-cloud v0.5 Wave-1 F4)", async () => {
+    useApp.setState((s) => ({
+      settings: {
+        ...s.settings,
+        engine: "whisper",
+        sonioxKey: "sk-test",
+        deepgramKey: "dg-test",
+        elevenLabsKey: "el-test",
+      },
+    }));
     renderStatusLine();
     await act(async () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
@@ -662,8 +671,136 @@ describe("StatusLine — engine dropdown", () => {
     ]);
   });
 
+  // TestFlight batch fix: a BYOK cloud option with no key configured is
+  // hidden from the list entirely — a fresh install's DEFAULT_SETTINGS
+  // has all three keys empty, so none of the three should render here.
+  // Fix round (adversarial review, MEDIUM): tabaudio-cloud is NOT exempt
+  // either — outside the Soniox preview lane (ambiently off in this
+  // file) it resolves to the soniox provider by default (DEFAULT_SETTINGS.
+  // tabAudioCloudProvider) and needs sonioxKey exactly like the standalone
+  // soniox option, so it now hides here too.
+  it("hides soniox/deepgram/elevenlabs/tabaudio-cloud when their own key is empty (unconfigured, not the selected engine)", async () => {
+    useApp.setState((s) => ({
+      settings: { ...s.settings, engine: "whisper", sonioxKey: "", deepgramKey: "", elevenLabsKey: "" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const values = Array.from(select().querySelectorAll("option"))
+      .map((o) => o.getAttribute("value"))
+      .filter((v) => v !== "");
+    expect(values).toEqual(["webspeech", "whisper", "tabaudio"]);
+  });
+
+  // Same MEDIUM fix: tabaudio-cloud's "own key" is whichever provider
+  // Settings.tabAudioCloudProvider resolves to, not sonioxKey
+  // unconditionally — a Deepgram-resolved pick with its own key set is
+  // configured even with sonioxKey empty.
+  it("shows tabaudio-cloud when resolved to deepgram and deepgramKey is set (sonioxKey empty)", async () => {
+    useApp.setState((s) => ({
+      settings: {
+        ...s.settings,
+        engine: "whisper",
+        tabAudioCloudProvider: "deepgram",
+        sonioxKey: "",
+        deepgramKey: "dg-test",
+        elevenLabsKey: "",
+      },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const values = Array.from(select().querySelectorAll("option"))
+      .map((o) => o.getAttribute("value"))
+      .filter((v) => v !== "");
+    expect(values).toContain("tabaudio-cloud");
+  });
+
+  // Reverse of the above: a soniox key alone doesn't count once the
+  // provider is resolved to deepgram — the WRONG provider's key must not
+  // paper over the missing one.
+  it("hides tabaudio-cloud when resolved to deepgram but deepgramKey is empty (sonioxKey set is irrelevant)", async () => {
+    useApp.setState((s) => ({
+      settings: {
+        ...s.settings,
+        engine: "whisper",
+        tabAudioCloudProvider: "deepgram",
+        sonioxKey: "sk-test",
+        deepgramKey: "",
+        elevenLabsKey: "",
+      },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const values = Array.from(select().querySelectorAll("option"))
+      .map((o) => o.getAttribute("value"))
+      .filter((v) => v !== "");
+    expect(values).not.toContain("tabaudio-cloud");
+  });
+
+  // The currently-selected engine must never disappear even unconfigured
+  // — a <select> whose value has no matching <option> silently shows the
+  // wrong thing as selected instead.
+  it("keeps the currently-selected cloud engine visible even with no key configured", async () => {
+    useApp.setState((s) => ({
+      settings: { ...s.settings, engine: "soniox", sonioxKey: "", deepgramKey: "", elevenLabsKey: "" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const values = Array.from(select().querySelectorAll("option"))
+      .map((o) => o.getAttribute("value"))
+      .filter((v) => v !== "");
+    expect(values).toContain("soniox");
+    expect(values).not.toContain("deepgram");
+    expect(values).not.toContain("elevenlabs");
+    expect(select().value).toBe("soniox");
+  });
+
+  // TestFlight batch fix: this SELECT alone gets shorter labels for the
+  // four values Miana flagged — every other engine surface (Header's
+  // EnginePostureChip, SettingsDialog's own cards) keeps the full
+  // 系统识别/Soniox 云端识别/… wording, unasserted here (out of scope).
+  it("shows shortened labels (系统/Soniox/Deepgram/ElevenLabs) for those four option values only", async () => {
+    useApp.setState((s) => ({
+      settings: {
+        ...s.settings,
+        engine: "whisper",
+        sonioxKey: "sk-test",
+        deepgramKey: "dg-test",
+        elevenLabsKey: "el-test",
+      },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const labelOf = (value: string) =>
+      Array.from(select().querySelectorAll("option")).find((o) => o.getAttribute("value") === value)
+        ?.textContent;
+    expect(labelOf("soniox")).toBe("Soniox");
+    expect(labelOf("deepgram")).toBe("Deepgram");
+    expect(labelOf("elevenlabs")).toBe("ElevenLabs");
+    // Every OTHER option keeps its full ENGINE_OPTIONS.label untouched —
+    // this select's own override is scoped to the four values above.
+    expect(labelOf("webspeech")).toBe(ENGINE_OPTIONS.find((o) => o.value === "webspeech")!.label);
+  });
+
   it("changing the value writes settings.engine (same store write as the old mobile <select>)", async () => {
-    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: { ...s.settings, engine: "whisper", sonioxKey: "sk-test" },
+    }));
     renderStatusLine();
     await act(async () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);

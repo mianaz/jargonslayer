@@ -456,11 +456,15 @@ const UI_MODE_OPTIONS: { value: Settings["uiMode"]; label: string }[] = [
 // instead — merged into one three-way segmented control here, same
 // FONT_SIZE_OPTIONS-style button row. Labels borrowed verbatim from
 // StatusLine's own DETECT_MODE_LABEL (see the import above) rather than
-// a second hand-copied set of strings.
+// a second hand-copied set of strings — except `llm`, which appends its
+// own "（Beta）" qualifier LOCALLY here (TestFlight batch fix: 词典模式 is
+// the new default, AI 模式 stays an opt-in beta): StatusLine's bottom-bar
+// chip and Header's badge stay on the bare DETECT_MODE_LABEL.llm string,
+// no room there for the qualifier.
 const DETECT_MODE_OPTIONS: { value: "off" | "dictionary" | "llm"; label: string }[] = [
   { value: "off", label: DETECT_MODE_LABEL.off },
   { value: "dictionary", label: DETECT_MODE_LABEL.dictionary },
-  { value: "llm", label: DETECT_MODE_LABEL.llm },
+  { value: "llm", label: `${DETECT_MODE_LABEL.llm}（Beta）` },
 ];
 
 // v0.6 field-fix (item 1, iOS TestFlight report): "too many small
@@ -4378,7 +4382,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 ))}
               </div>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                词典检测内置离线即时生效；词典+AI 检测额外并行调用 AI，就地升级词典结果；检测关闭后不再自动检测、划词只查离线词典
+                词典模式内置离线即时生效；AI 模式为灰度/Beta 功能（检测质量仍在调优，需要 API
+                Key），额外并行调用 AI 就地升级词典结果；关闭后不再自动检测、划词只查离线词典
               </div>
             </div>
 

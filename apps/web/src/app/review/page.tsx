@@ -3,8 +3,10 @@
 // Study center: cross-session stats + two review modes over the
 // learn-set — 到期复习 (SRS due-driven, #48 step 2) and 翻卡浏览 (the
 // original light flip-through practice over the personal glossary,
-// unchanged). Can be opened directly (bookmark, new tab), so it
-// hydrates the store itself if needed.
+// unchanged) — plus 我的词典 (GlossaryPanel, moved off the meeting
+// screen per TestFlight feedback) behind its own top-level tab. Can be
+// opened directly (bookmark, new tab), so it hydrates the store itself
+// if needed.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -13,6 +15,7 @@ import { useApp } from "@/lib/store";
 import ReviewDashboard, { useSessionCache } from "@/components/review/ReviewDashboard";
 import PracticeDeck from "@/components/review/PracticeDeck";
 import DueReview from "@/components/review/DueReview";
+import GlossaryPanel from "@/components/GlossaryPanel";
 import Toast from "@/components/Toast";
 import PixelDragon from "@/components/PixelDragon";
 
@@ -23,9 +26,22 @@ const MODE_OPTIONS: { value: ReviewMode; label: string }[] = [
   { value: "browse", label: "翻卡浏览" },
 ];
 
+// TestFlight feedback (我的词典并入学习中心): top-level switcher between
+// the existing review flow and the personal glossary — GlossaryPanel no
+// longer has a tab of its own on the meeting screen (page.tsx's aside /
+// MobilePanels), this route is its only home now. Reuses MODE_OPTIONS'
+// own segmented-control classes below (this file's existing tab idiom).
+type CenterTab = "review" | "glossary";
+
+const CENTER_TAB_OPTIONS: { value: CenterTab; label: string }[] = [
+  { value: "review", label: "复习" },
+  { value: "glossary", label: "我的词典" },
+];
+
 export default function ReviewPage() {
   const hydrated = useApp((s) => s.hydrated);
   const hydrate = useApp((s) => s.hydrate);
+  const [centerTab, setCenterTab] = useState<CenterTab>("review");
   const [mode, setMode] = useState<ReviewMode>("due");
   // #48 s1 review item 8: one shared session cache for the whole page
   // — ReviewDashboard and DueReview both need it, but each doing its
@@ -89,27 +105,61 @@ export default function ReviewPage() {
             : ""
         }`}
       >
-        <ReviewDashboard cache={cache} loading={loading} />
-        <div className="border-t border-edge" aria-hidden="true" />
-        <div className="space-y-4">
-          <div className="flex items-center gap-1 rounded-none border border-edge bg-panel2 p-0.5">
-            {MODE_OPTIONS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setMode(opt.value)}
-                className={`px-2.5 py-1 text-xs transition-colors ${
-                  mode === opt.value
-                    ? "bg-panel3 text-fg"
-                    : "text-mut hover:text-fg"
-                }`}
-              >
-                {opt.label}
-              </button>
-            ))}
-          </div>
-          {mode === "due" ? <DueReview cache={cache} onQueueEmptied={handleQueueEmptied} /> : <PracticeDeck />}
+        <div className="flex items-center gap-1 rounded-none border border-edge bg-panel2 p-0.5">
+          {CENTER_TAB_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              data-testid={`center-tab-${opt.value}`}
+              onClick={() => setCenterTab(opt.value)}
+              className={`px-2.5 py-1 text-xs transition-colors ${
+                centerTab === opt.value
+                  ? "bg-panel3 text-fg"
+                  : "text-mut hover:text-fg"
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
         </div>
+
+        {centerTab === "review" ? (
+          <>
+            <ReviewDashboard cache={cache} loading={loading} />
+            <div className="border-t border-edge" aria-hidden="true" />
+            <div className="space-y-4">
+              <div className="flex items-center gap-1 rounded-none border border-edge bg-panel2 p-0.5">
+                {MODE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setMode(opt.value)}
+                    className={`px-2.5 py-1 text-xs transition-colors ${
+                      mode === opt.value
+                        ? "bg-panel3 text-fg"
+                        : "text-mut hover:text-fg"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {mode === "due" ? <DueReview cache={cache} onQueueEmptied={handleQueueEmptied} /> : <PracticeDeck />}
+            </div>
+          </>
+        ) : (
+          // Bounded height (own overflow-y-auto) rather than letting
+          // GlossaryPanel's internal list grow the whole page — its
+          // "flex h-full flex-col" root needs a sized ancestor to make
+          // its own scroll-thin list section actually scroll, matching
+          // how page.tsx's <aside> bounds it today. This nested scroll
+          // area is local to the glossary tab only — it doesn't touch
+          // the page-level scroller above (document scroll on web/
+          // desktop, main's own overflow-y-auto on iOS).
+          <div className="h-[70vh] min-h-0 overflow-hidden border border-edge bg-panel">
+            <GlossaryPanel />
+          </div>
+        )}
       </main>
 
       <Toast />

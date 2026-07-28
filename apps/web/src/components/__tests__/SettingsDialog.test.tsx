@@ -2907,17 +2907,29 @@ describe("SettingsDialog — 检测模式 mapping writes both flags", () => {
     });
   }
 
-  it("检测关闭 persists autoDetect=false AND aiDetect=false (defaults start true/true)", async () => {
-    await openAiDetectAndClickMode("检测关闭");
+  it("关闭 persists autoDetect=false AND aiDetect=false", async () => {
+    await openAiDetectAndClickMode("关闭");
     const saved = useApp.getState().settings;
     expect(saved.autoDetect).toBe(false);
     expect(saved.aiDetect).toBe(false);
   });
 
-  it("词典检测 persists autoDetect=true, aiDetect=false", async () => {
-    await openAiDetectAndClickMode("词典检测");
+  it("词典模式 persists autoDetect=true, aiDetect=false", async () => {
+    await openAiDetectAndClickMode("词典模式");
     const saved = useApp.getState().settings;
     expect(saved.autoDetect).toBe(true);
     expect(saved.aiDetect).toBe(false);
+  });
+
+  // TestFlight batch fix (detect-mode rename round): the third option's
+  // own rendered label carries a "（Beta）" qualifier that StatusLine's
+  // bottom-bar chip and Header's badge deliberately do NOT (see
+  // DETECT_MODE_OPTIONS's own comment, SettingsDialog.tsx) — clicking by
+  // this exact text also doubles as proof the button exists at all.
+  it("AI 模式（Beta）persists autoDetect=true, aiDetect=true", async () => {
+    await openAiDetectAndClickMode("AI 模式（Beta）");
+    const saved = useApp.getState().settings;
+    expect(saved.autoDetect).toBe(true);
+    expect(saved.aiDetect).toBe(true);
   });
 });

@@ -95,7 +95,11 @@ describe("useMeeting.ts diagnostics wiring — DetectionScheduler choke point", 
     vi.useFakeTimers();
     clearDiag();
     segIndex = 0;
-    settings = makeSettings();
+    // aiDetect:true — this describe block exercises the detectApi
+    // failure path; DEFAULT_SETTINGS itself now ships aiDetect:false
+    // (词典模式 fresh-install default), which would route straight to
+    // the (real, unmocked) dictionary scan and never call detectApi.
+    settings = makeSettings({ aiDetect: true });
     mockDetectApi.mockReset();
     toasts = [];
     // Mirrors useMeeting.ts's own onError wiring exactly:

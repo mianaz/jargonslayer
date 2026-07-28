@@ -86,8 +86,17 @@ describe("StatusLine — iOS build (engine picker)", () => {
     return el as HTMLSelectElement;
   }
 
-  it("the static chip is gone — the select is the only engine control, with exactly the 4 iOS engine values", async () => {
-    useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "osspeech" } }));
+  it("the static chip is gone — the select is the only engine control, with exactly the 4 iOS engine values once every BYOK key is configured", async () => {
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: {
+        ...s.settings,
+        engine: "osspeech",
+        sonioxKey: "sk-test",
+        deepgramKey: "dg-test",
+        elevenLabsKey: "el-test",
+      },
+    }));
     renderStatusLine();
     await act(async () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
@@ -100,6 +109,26 @@ describe("StatusLine — iOS build (engine picker)", () => {
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
     expect(values).toEqual(["osspeech", "soniox", "deepgram", "elevenlabs"]);
+  });
+
+  // TestFlight batch fix: 系统 (osspeech) always shows — it needs no
+  // BYOK key at all — but the three cloud engines drop out when
+  // unconfigured (a fresh iOS install's DEFAULT_SETTINGS keys are all
+  // empty).
+  it("hides the 3 BYOK cloud values when no key is configured, keeping only osspeech", async () => {
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: { ...s.settings, engine: "osspeech", sonioxKey: "", deepgramKey: "", elevenLabsKey: "" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const values = Array.from(engineSelect().querySelectorAll("option"))
+      .map((o) => o.getAttribute("value"))
+      .filter((v) => v !== "");
+    expect(values).toEqual(["osspeech"]);
   });
 
   it("select text carries the active engine's own retention color — green for local osspeech, amber for cloud-stored elevenlabs", async () => {

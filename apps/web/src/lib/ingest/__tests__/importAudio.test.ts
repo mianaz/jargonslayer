@@ -78,7 +78,11 @@ const mockTranscribeInBrowser = vi.mocked(transcribeInBrowser);
 const mockExtractAudioFromVideo = vi.mocked(extractAudioFromVideo);
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
-  return { ...DEFAULT_SETTINGS, ...overrides };
+  // This suite's fixture default is the AI-detect pipeline (DEFAULT_
+  // SETTINGS itself now ships aiDetect:false, 词典模式 fresh-install
+  // default) — tests that want the dictionary-only path override this
+  // explicitly below.
+  return { ...DEFAULT_SETTINGS, aiDetect: true, ...overrides };
 }
 
 // ---- fake AudioContext/OfflineAudioContext: vitest's environment is

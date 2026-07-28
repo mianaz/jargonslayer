@@ -43,6 +43,11 @@ function emptyRes(): DetectResponse {
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     ...DEFAULT_SETTINGS,
+    // This suite's fixture default is the AI-detect pipeline (DEFAULT_
+    // SETTINGS itself now ships aiDetect:false, 词典模式 fresh-install
+    // default) — tests that want the dictionary-only path override this
+    // explicitly below.
+    aiDetect: true,
     ...overrides,
   };
 }

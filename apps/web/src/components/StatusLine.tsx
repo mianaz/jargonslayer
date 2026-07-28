@@ -8,6 +8,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
+import { SONIOX_PREVIEW_LANE } from "@/lib/deployTier";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
@@ -30,10 +31,16 @@ import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 // imports this instead of re-pinning its own copy of the zh labels, so
 // a reword here can't silently desync from a test asserting the old
 // string.
+// TestFlight batch fix (detect-mode rename round): 词典模式/AI 模式
+// replace the old 词典检测/词典+AI 检测 wording fleet-wide — SettingsDialog's
+// own 检测模式 segmented control appends its own "（Beta）" qualifier onto
+// the `llm` label locally (see DETECT_MODE_OPTIONS there) rather than
+// baking it in here, since this bare string also has to fit this file's
+// own space-constrained bottom-bar chip/button.
 export const DETECT_MODE_LABEL: Record<string, string> = {
-  llm: "词典+AI 检测",
-  dictionary: "词典检测",
-  off: "检测关闭",
+  llm: "AI 模式",
+  dictionary: "词典模式",
+  off: "关闭",
 };
 
 // Same reasoning — the engine <select>'s own placeholder + sidecar-down
@@ -77,8 +84,58 @@ const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
 // to ModeSelector.
 const ENGINE_OVERRIDE_HINT = "引擎覆盖（模式自动选择的引擎可在此覆盖）";
 
+// TestFlight batch fix: the SELECT itself shows shorter labels for four
+// values — every OTHER surface reading ENGINE_OPTIONS.label
+// (EnginePostureChip, SettingsDialog's own ENGINE_CARDS, TutorialOverlay)
+// keeps the full 系统识别/Soniox 云端识别/… wording untouched (Miana's
+// explicit "仅底部选择框" scope) — so this is a display-only override
+// local to this component, never a change to the shared array.
+const ENGINE_SELECT_LABEL_OVERRIDE: Record<string, string> = {
+  osspeech: "系统",
+  soniox: "Soniox",
+  deepgram: "Deepgram",
+  elevenlabs: "ElevenLabs",
+};
+
+// TestFlight batch fix: a BYOK cloud option is only worth showing once
+// its own key is actually configured — an unconfigured pick still fails
+// honestly at engine-start (unchanged), but this select had no way to
+// tell a fresh installer "unconfigured" from "just untried" until they
+// clicked it. osspeech/whisper/tabaudio/etc. need no key at all, so they
+// pass through unconditionally.
+//
+// Fix round (adversarial review, MEDIUM): tabaudio-cloud was wrongly
+// falling into that unconditional "no key needed" bucket above — outside
+// the Soniox preview lane it needs a real key exactly like soniox/
+// deepgram/elevenlabs do, just resolved through Settings.
+// tabAudioCloudProvider first (mirrors resolveTabAudioCloudProvider,
+// lib/stt/engineCapabilities.ts, and tabAudioCloud.ts's own
+// `effectiveProvider === "soniox" && SONIOX_PREVIEW_LANE` mint gate —
+// the lane only ever covers the Soniox resolution, never Deepgram's).
+function isCloudEngineConfigured(
+  value: (typeof ENGINE_OPTIONS)[number]["value"],
+  sonioxKey: string,
+  deepgramKey: string,
+  elevenLabsKey: string,
+  tabAudioCloudProvider: "soniox" | "deepgram",
+): boolean {
+  if (value === "soniox") return !!sonioxKey;
+  if (value === "deepgram") return !!deepgramKey;
+  if (value === "elevenlabs") return !!elevenLabsKey;
+  if (value === "tabaudio-cloud") {
+    const provider = tabAudioCloudProvider === "deepgram" ? "deepgram" : "soniox";
+    if (provider === "soniox" && SONIOX_PREVIEW_LANE) return true;
+    return provider === "deepgram" ? !!deepgramKey : !!sonioxKey;
+  }
+  return true;
+}
+
 function EngineDropdown() {
   const engine = useApp((s) => s.settings.engine);
+  const sonioxKey = useApp((s) => s.settings.sonioxKey);
+  const deepgramKey = useApp((s) => s.settings.deepgramKey);
+  const elevenLabsKey = useApp((s) => s.settings.elevenLabsKey);
+  const tabAudioCloudProvider = useApp((s) => s.settings.tabAudioCloudProvider);
   const status = useApp((s) => s.status);
   const sttEngineMode = useApp((s) => s.sttEngineMode);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -91,6 +148,14 @@ function EngineDropdown() {
   const osspeechCaps = useOsSpeechCaps();
   const selectedOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
   const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps, osspeechCaps) : undefined;
+  // The CURRENTLY SELECTED value always stays an <option> even when its
+  // own key is unconfigured — a <select> whose value has no matching
+  // <option> silently renders the wrong thing as selected instead.
+  const visibleOptions = ENGINE_OPTIONS.filter(
+    (opt) =>
+      opt.value === engine ||
+      isCloudEngineConfigured(opt.value, sonioxKey, deepgramKey, elevenLabsKey, tabAudioCloudProvider),
+  );
 
   // iOS-cloud round: the mobile-UX sprint's static chip is GONE — it
   // existed only because a ONE-option native select renders a dead
@@ -130,11 +195,11 @@ function EngineDropdown() {
           {ENGINE_SELECT_PLACEHOLDER}
         </option>
       )}
-      {ENGINE_OPTIONS.map((opt) => {
+      {visibleOptions.map((opt) => {
         const gate = engineOptionGate(opt, audiocapCaps, osspeechCaps);
         return (
           <option key={opt.value} value={opt.value} disabled={gate.disabled} title={gate.title}>
-            {opt.label}
+            {ENGINE_SELECT_LABEL_OVERRIDE[opt.value] ?? opt.label}
           </option>
         );
       })}
@@ -381,7 +446,7 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
             updateSettings({ aiDetect: next });
             setDetectMode(next ? "llm" : "dictionary");
           }}
-          title="点击切换 AI 检测（词典检测始终开启）"
+          title="点击切换 AI 模式（词典模式始终开启）"
           className="flex h-full items-center whitespace-nowrap px-2 hover:bg-panel3 hover:text-fg sm:px-3"
         >
           {DETECT_MODE_LABEL[detectMode]}

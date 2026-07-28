@@ -986,7 +986,13 @@ export const DEFAULT_SETTINGS: Settings = {
   detectModel: "deepseek/deepseek-v4-flash",
   summaryModel: "deepseek/deepseek-v4-pro",
   autoDetect: true,
-  aiDetect: true,
+  // TestFlight batch fix (detect-mode rename round): 词典模式 is now the
+  // fresh-install default — AI 模式 stays a Beta the user opts into (see
+  // SettingsDialog.tsx's 检测模式 control). A RETURNING user's own saved
+  // choice survives untouched: migrateSettings's `{ ...DEFAULT_SETTINGS,
+  // ...legacy }` spread only falls back to this literal when the saved
+  // blob has no `aiDetect` key at all (a genuinely first-ever hydrate).
+  aiDetect: false,
   minConfidence: 0.55,
   detectIdiomMaxWords: 12,
   detectIdiomMaxChars: 90,

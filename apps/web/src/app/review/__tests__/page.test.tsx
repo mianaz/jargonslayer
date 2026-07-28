@@ -127,4 +127,31 @@ describe("/review page — Bit celebration wiring (v0.5.1 Bit sprint)", () => {
     });
     expect(container!.querySelector(".bit-hop")).not.toBeNull();
   });
+
+  // TestFlight feedback (我的词典并入学习中心): GlossaryPanel moved off
+  // the meeting screen onto this route's own top-level tab switcher.
+  // GlossaryPanel is deliberately NOT mocked here (glossary.ts degrades
+  // to in-memory/no-persist when indexedDB is undefined, same as this
+  // jsdom test env) — this proves the real component mounts, not just
+  // a stub.
+  it("switches between the review flow and GlossaryPanel via the center tab", async () => {
+    await act(async () => {
+      root!.render(<ReviewPage />);
+    });
+    expect(container!.querySelector('[data-testid="glossary-panel"]')).toBeNull();
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="center-tab-glossary"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="glossary-panel"]')).not.toBeNull();
+
+    await act(async () => {
+      container!
+        .querySelector('[data-testid="center-tab-review"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    expect(container!.querySelector('[data-testid="glossary-panel"]')).toBeNull();
+  });
 });

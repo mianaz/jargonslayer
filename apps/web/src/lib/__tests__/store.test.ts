@@ -2096,9 +2096,13 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
     expect(s.aiDetect).toBe(false);
   });
 
-  it("fresh install (null saved) gets the default aiDetect:true", () => {
-    expect(migrateSettings(null).aiDetect).toBe(true);
-    expect(migrateSettings(undefined).aiDetect).toBe(true);
+  // TestFlight batch fix (detect-mode rename round): 词典模式 is now the
+  // fresh-install default — DEFAULT_SETTINGS.aiDetect flipped to false
+  // (packages/core/src/types.ts). A returning user's own saved choice is
+  // untouched by this (see the "explicit saved aiDetect wins" case above).
+  it("fresh install (null saved) gets the default aiDetect:false", () => {
+    expect(migrateSettings(null).aiDetect).toBe(false);
+    expect(migrateSettings(undefined).aiDetect).toBe(false);
   });
 
   it("other saved fields still fold over defaults untouched", () => {
@@ -3508,6 +3512,70 @@ describe("hydrate — atomicity vs. actions racing the hydrate window (#48 s1 re
     await useApp.getState().hydrate();
 
     expect(useApp.getState().cards).toEqual([liveCard]);
+  });
+});
+
+// HIGH fix (adversarial review, DEFAULT_SETTINGS.aiDetect true→false
+// round): detectMode was hardcoded "llm" at store creation and never
+// re-derived on hydrate — a fresh install (autoDetect:true, aiDetect:
+// false) rendered the AI 模式 label while aiDetect was actually off, and
+// a returning user's real saved aiDetect:true only ever showed
+// "dictionary" until the scheduler's first pushSegment corrected it
+// (which never runs before a meeting starts).
+describe("hydrate — detectMode re-derived from settings (HIGH fix, adversarial review)", () => {
+  beforeEach(async () => {
+    await learnsetModule.clearLearnset();
+    useApp.setState({
+      cards: [],
+      terms: [],
+      learnset: {},
+      customEntries: [],
+      sessions: [],
+      settings: DEFAULT_SETTINGS,
+      hydrated: false,
+      // pre-hydration/module-init state a fresh boot would actually
+      // carry — the bug this fix closes.
+      detectMode: "llm",
+    });
+    vi.spyOn(learnsetModule, "refreshStaleSuppressedLearnset").mockResolvedValue({});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("fresh defaults (no saved settings): detectMode reflects 词典-only, not the stale pre-hydration 'llm'", async () => {
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue(null);
+
+    await useApp.getState().hydrate();
+
+    const s = useApp.getState();
+    expect(s.settings.autoDetect).toBe(true);
+    expect(s.settings.aiDetect).toBe(false);
+    expect(s.detectMode).toBe("dictionary");
+  });
+
+  it("hydrating a legacy saved blob with aiDetect:true derives 'llm'", async () => {
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      aiDetect: true,
+    });
+
+    await useApp.getState().hydrate();
+
+    expect(useApp.getState().detectMode).toBe("llm");
+  });
+
+  it("autoDetect:false wins outright, even with aiDetect:true (mirrors detect/scheduler.ts's own !autoDetect gate)", async () => {
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({
+      ...DEFAULT_SETTINGS,
+      autoDetect: false,
+      aiDetect: true,
+    });
+
+    await useApp.getState().hydrate();
+
+    expect(useApp.getState().detectMode).toBe("off");
   });
 });
 
