@@ -84,6 +84,44 @@ describe("mergeDetections — new card creation", () => {
     expect(term.source).toBe("dictionary");
   });
 
+  it("preserves and refreshes the observed surface without changing the canonical expression key", () => {
+    const first = makeDetectResponse({
+      expressions: [
+        makeExpression({
+          expression: "back-of-the-envelope",
+          matched_surface: "back on the envelope calculation",
+        }),
+      ],
+    });
+    const created = mergeDetections([], [], first, "dictionary", 0.5, 1000);
+    expect(created.cards[0].expression).toBe("back-of-the-envelope");
+    expect(created.cards[0].matched_surface).toBe(
+      "back on the envelope calculation",
+    );
+
+    const second = makeDetectResponse({
+      expressions: [
+        makeExpression({
+          expression: "back-of-the-envelope",
+          matched_surface: "back of the envelope estimate",
+        }),
+      ],
+    });
+    const updated = mergeDetections(
+      created.cards,
+      [],
+      second,
+      "dictionary",
+      0.5,
+      2000,
+    );
+    expect(updated.cards).toHaveLength(1);
+    expect(updated.cards[0].normKey).toBe("back-of-the-envelope");
+    expect(updated.cards[0].matched_surface).toBe(
+      "back of the envelope estimate",
+    );
+  });
+
   it("normKey for 'raised eyebrows' and 'raise eyebrow' forms — AS IMPLEMENTED they do NOT collide", () => {
     // Only the LAST word of a multi-word phrase gets its trailing
     // ing/ed/es/s/d suffix stripped (>4 chars, stripped len >=2).

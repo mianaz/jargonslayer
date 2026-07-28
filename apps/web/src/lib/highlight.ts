@@ -82,12 +82,19 @@ export function buildHighlightMatcher(
 
   const expressionParts: { entry: MatchEntry; length: number }[] = [];
   for (const card of recentCards) {
-    const expr = card.expression.trim();
-    if (!expr) continue;
-    expressionParts.push({
-      entry: { kind: "expression", id: card.id, surface: expr },
-      length: expr.length,
-    });
+    const surfaces = Array.from(
+      new Set(
+        [card.expression, card.matched_surface]
+          .map((s) => s?.trim())
+          .filter((s): s is string => Boolean(s)),
+      ),
+    );
+    for (const surface of surfaces) {
+      expressionParts.push({
+        entry: { kind: "expression", id: card.id, surface },
+        length: surface.length,
+      });
+    }
   }
 
   const termParts: { entry: MatchEntry; length: number }[] = [];

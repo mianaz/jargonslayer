@@ -146,17 +146,21 @@ describe("SettingsDialog — iOS build", () => {
 
   it("root list shows 常用/高级 groups with the expected category labels; diarization excluded entirely", async () => {
     await render();
-    // 常用
+    // 常用 — the phone landing page stays focused on the three things
+    // needed during ordinary use.
     expect(findRow("转录引擎")).toBeTruthy();
     expect(findRow("AI 检测")).toBeTruthy();
-    expect(findRow("数据与联动")).toBeTruthy();
     expect(findRow("显示")).toBeTruthy();
     // 高级
+    expect(findRow("数据与联动")).toBeTruthy();
     // Row label drops the （高级） suffix on iOS — redundant under the
     // 高级 group header it sits in (design-polish pass); the canonical
     // SETTINGS_CATEGORIES label keeps it for desktop/web.
     expect(findRow("分任务模型")).toBeTruthy();
     expect(buttons().some((b) => b.textContent?.includes("（高级）"))).toBe(false);
+    const rootText = container!.textContent ?? "";
+    expect(rootText.indexOf("显示")).toBeLessThan(rootText.indexOf("高级"));
+    expect(rootText.indexOf("数据与联动")).toBeGreaterThan(rootText.indexOf("高级"));
     // Part A #1: 说话人分离 (pyannote+sidecar) is impossible on iOS —
     // nowhere in the rendered nav/list.
     expect(container!.textContent).not.toContain("说话人分离");

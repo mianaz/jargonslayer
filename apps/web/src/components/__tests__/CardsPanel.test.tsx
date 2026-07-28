@@ -14,7 +14,7 @@ import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRoot, type Root } from "react-dom/client";
 import { useApp } from "../../lib/store";
-import type { ExpressionCard, TermCard } from "@jargonslayer/core/types";
+import type { CustomEntry, ExpressionCard, TermCard } from "@jargonslayer/core/types";
 
 // BitCameo (v0.5.1 Bit sprint) is a sibling lane's named export on
 // PixelDragon.tsx, possibly not landed yet on disk — stubbed here so
@@ -73,6 +73,8 @@ function makeTerm(overrides: Partial<TermCard> = {}): TermCard {
 // OWN action slots instead of an imported module.
 const REAL_UPDATE_CARD = useApp.getState().updateCard;
 const REAL_UPDATE_TERM = useApp.getState().updateTerm;
+const REAL_ADD_CUSTOM_ENTRY = useApp.getState().addCustomEntry;
+const REAL_SHOW_TOAST = useApp.getState().showToast;
 
 const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
   window.HTMLInputElement.prototype,
@@ -130,8 +132,11 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
       terms: [],
       status: "idle",
       focusCardId: null,
+      customEntries: [],
       updateCard: REAL_UPDATE_CARD,
       updateTerm: REAL_UPDATE_TERM,
+      addCustomEntry: REAL_ADD_CUSTOM_ENTRY,
+      showToast: REAL_SHOW_TOAST,
     });
   });
 
@@ -154,6 +159,81 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
       });
 
       expect(findButton("编辑")).not.toBeNull();
+    });
+
+    it("can add an AI result to 我的词典 while the meeting is still running", async () => {
+      const addCustomEntrySpy = vi.fn(async () => {});
+      const showToastSpy = vi.fn();
+      useApp.setState({
+        cards: [makeCard({ source: "llm" })],
+        terms: [],
+        customEntries: [],
+        status: "listening",
+        addCustomEntry: addCustomEntrySpy,
+        showToast: showToastSpy,
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+
+      expect(findButton("编辑")).toBeNull();
+      expect(findButton("加入我的词典")).not.toBeNull();
+
+      await act(async () => {
+        findButton("加入我的词典")!.dispatchEvent(
+          new MouseEvent("click", { bubbles: true }),
+        );
+        await Promise.resolve();
+      });
+
+      expect(addCustomEntrySpy).toHaveBeenCalledTimes(1);
+      expect(addCustomEntrySpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: "expression",
+          packId: "personal",
+          headword: "circle back",
+          chinese_explanation: "回头再聊这个话题",
+          source: "session",
+        }),
+      );
+      expect(showToastSpy).toHaveBeenCalledWith(
+        "已加入我的词典，下次会议将离线识别",
+      );
+    });
+
+    it("shows 已在词典 and prevents a duplicate save", async () => {
+      const existing: CustomEntry = {
+        id: "g1",
+        kind: "expression",
+        packId: "personal",
+        headword: "circle back",
+        variants: [],
+        chinese_explanation: "回头再聊",
+        example: "",
+        context: "",
+        note: "",
+        createdAt: 1000,
+        updatedAt: 1000,
+        source: "session",
+      };
+      const addCustomEntrySpy = vi.fn(async () => {});
+      useApp.setState({
+        cards: [makeCard({ source: "llm" })],
+        terms: [],
+        customEntries: [existing],
+        status: "listening",
+        addCustomEntry: addCustomEntrySpy,
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+
+      const savedButton = findButton("已在词典");
+      expect(savedButton).not.toBeNull();
+      expect(savedButton!.disabled).toBe(true);
+      expect(addCustomEntrySpy).not.toHaveBeenCalled();
     });
 
     it("保存 calls updateCard with ONLY the changed field", async () => {

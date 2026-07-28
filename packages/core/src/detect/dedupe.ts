@@ -120,6 +120,11 @@ function mergeExpressions(
       }
       existing.lastSeenAt = now;
       if (source === "dictionary") existing.lastDictSeenAt = now;
+      // Keep the most recently observed local surface so transcript
+      // highlighting follows dictionary/custom variants while the card
+      // title and normKey remain canonical. An LLM hit has no
+      // matched_surface and must not erase the local value.
+      if (det.matched_surface) existing.matched_surface = det.matched_surface;
       // LLM knows the live context better than the built-in dictionary —
       // upgrade content + source when a dictionary card gets a live hit.
       if (existing.source === "dictionary" && source === "llm") {

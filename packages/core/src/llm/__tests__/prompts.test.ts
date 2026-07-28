@@ -14,6 +14,7 @@ import {
   buildInferContextUserMessage,
   buildSweepSystemPrompt,
   buildSweepUserMessage,
+  buildTranslateSystemPrompt,
 } from "../prompts";
 import { renderProfileHint } from "../profileHint";
 import type { Settings } from "../../types";
@@ -330,6 +331,16 @@ describe("buildDefineUserMessage", () => {
   it("falls back to '(none)' when context is empty", () => {
     const msg = buildDefineUserMessage("circle back", "");
     expect(msg).toBe("PHRASE:\ncircle back\n\nCONTEXT:\n(none)");
+  });
+});
+
+describe("buildTranslateSystemPrompt — ASR-aware idiom translation", () => {
+  it("tells the live translator to recover an obvious idiom instead of translating an ASR substitution literally", () => {
+    const prompt = buildTranslateSystemPrompt("zh");
+    expect(prompt).toContain("raw ASR");
+    expect(prompt).toContain('"back on the envelope calculation"');
+    expect(prompt).toContain('"back-of-the-envelope calculation"');
+    expect(prompt).toContain('"粗略估算"');
   });
 });
 

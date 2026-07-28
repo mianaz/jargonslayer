@@ -415,6 +415,7 @@ Return ONLY a JSON array: [{"id": "<same id>", "text": "<translation>"}]
 Rules:
 - Return one item per input id, echoing "id" unchanged. Never add, drop, merge, or reorder ids.
 - Natural, concise spoken register — how the speaker would actually say it, not a literal word-for-word rendering.
+- The input is raw ASR. When a small recognition error turns a well-known idiom into a nonsensical literal phrase and the surrounding words make the intent clear, translate the intended idiomatic meaning. For example, "back on the envelope calculation" is likely "back-of-the-envelope calculation" and means "粗略估算", not calculating on the back of an envelope.
 - KEEP technical terms, acronyms, and product names in their original English.
 - No explanations, no annotations, no pinyin — the translation text only.
 - No markdown fences, no prose outside the JSON array.`;

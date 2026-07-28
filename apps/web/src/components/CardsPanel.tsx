@@ -26,11 +26,15 @@ import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import { BitCameo } from "@/components/PixelDragon";
 import { resolveBitCostume } from "@/lib/bitCostumes";
 import { toUnified, type UnifiedItem } from "@/lib/cards/unified";
-import type {
-  DetectionSource,
-  ExpressionCard,
-  ExpressionCategory,
-  TermCard,
+import {
+  cardToCustomEntry,
+  customEntrySurfaces,
+  termToCustomEntry,
+  type CustomEntry,
+  type DetectionSource,
+  type ExpressionCard,
+  type ExpressionCategory,
+  type TermCard,
 } from "@jargonslayer/core/types";
 
 // Left-bar + category-chip hue per expression category (docs/DESIGN.md
@@ -376,15 +380,53 @@ function EditActions({
   );
 }
 
+/** Persists a live card into 我的词典. Unlike inline editing, this stays
+ * available while listening: the whole point is to turn a useful,
+ * slower AI hit into an immediate cross-meeting offline match. */
+function AddToGlossaryAction({
+  saved,
+  onAdd,
+}: {
+  saved: boolean;
+  onAdd: () => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  const handleAdd = async () => {
+    if (saved || saving) return;
+    setSaving(true);
+    try {
+      await onAdd();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={() => void handleAdd()}
+      disabled={saved || saving}
+      className="btn-tactile mt-1 inline-flex h-10 items-center px-1 text-xs text-act hover:text-fg disabled:cursor-default disabled:text-mut2"
+    >
+      {saving ? "保存中…" : saved ? "已在词典" : "加入我的词典"}
+    </button>
+  );
+}
+
 function ExpressionCardRow({
   card,
   expanded,
+  savedToGlossary,
+  onAddToGlossary,
   onToggle,
   onKnownVote,
   onKnownSuppress,
 }: {
   card: ExpressionCard;
   expanded: boolean;
+  savedToGlossary: boolean;
+  onAddToGlossary: () => Promise<void>;
   onToggle: () => void;
   onKnownVote: () => void;
   onKnownSuppress: () => void;
@@ -557,6 +599,12 @@ function ExpressionCardRow({
           onCancel={handleCancel}
         />
       )}
+      {!editing && (
+        <AddToGlossaryAction
+          saved={savedToGlossary}
+          onAdd={onAddToGlossary}
+        />
+      )}
     </div>
   );
 }
@@ -564,12 +612,16 @@ function ExpressionCardRow({
 function TermCardRow({
   term,
   expanded,
+  savedToGlossary,
+  onAddToGlossary,
   onToggle,
   onKnownVote,
   onKnownSuppress,
 }: {
   term: TermCard;
   expanded: boolean;
+  savedToGlossary: boolean;
+  onAddToGlossary: () => Promise<void>;
   onToggle: () => void;
   onKnownVote: () => void;
   onKnownSuppress: () => void;
@@ -705,6 +757,12 @@ function TermCardRow({
           onCancel={handleCancel}
         />
       )}
+      {!editing && (
+        <AddToGlossaryAction
+          saved={savedToGlossary}
+          onAdd={onAddToGlossary}
+        />
+      )}
     </div>
   );
 }
@@ -769,6 +827,9 @@ const FILTERS: { key: FilterKind; label: string }[] = [
 export default function CardsPanel() {
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
+  const customEntries = useApp((s) => s.customEntries);
+  const addCustomEntry = useApp((s) => s.addCustomEntry);
+  const showToast = useApp((s) => s.showToast);
   const focusCardId = useApp((s) => s.focusCardId);
   const markKnown = useApp((s) => s.markKnown);
   const [query, setQuery] = useState("");
@@ -783,6 +844,52 @@ export default function CardsPanel() {
   );
 
   const unified = useMemo(() => toUnified(cards, terms), [cards, terms]);
+  const glossarySurfaceKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const entry of customEntries) {
+      // This action always writes to the always-enabled personal pack.
+      // An equal surface stranded in a disabled/imported pack must not
+      // make the button claim future offline recognition is already
+      // guaranteed.
+      if (entry.packId !== "personal") continue;
+      for (const surface of customEntrySurfaces(entry)) {
+        keys.add(surface.trim().toLowerCase());
+      }
+    }
+    return keys;
+  }, [customEntries]);
+
+  const isSavedToGlossary = (surface: string) =>
+    glossarySurfaceKeys.has(surface.trim().toLowerCase());
+
+  const addCardToGlossary = async (
+    item: ExpressionCard | TermCard,
+    kind: CustomEntry["kind"],
+  ) => {
+    const surface = kind === "expression"
+      ? (item as ExpressionCard).expression
+      : (item as TermCard).term;
+    // Re-read current state to close the rapid double-tap / sibling
+    // render window before the reactive saved flag catches up.
+    const alreadySaved = useApp.getState().customEntries.some(
+      (entry) =>
+        entry.packId === "personal" &&
+        customEntrySurfaces(entry).some(
+          (candidate) => candidate.trim().toLowerCase() === surface.trim().toLowerCase(),
+        ),
+    );
+    if (alreadySaved) {
+      showToast("这条已经在我的词典中");
+      return;
+    }
+
+    await addCustomEntry(
+      kind === "expression"
+        ? cardToCustomEntry(item as ExpressionCard)
+        : termToCustomEntry(item as TermCard),
+    );
+    showToast("已加入我的词典，下次会议将离线识别");
+  };
 
   // Auto-rule index is computed against the full unwrapped list (sortAt
   // order) so filtering/searching never changes which cards count as
@@ -921,6 +1028,8 @@ export default function CardsPanel() {
                   key={item.id}
                   card={card}
                   expanded={expanded}
+                  savedToGlossary={isSavedToGlossary(card.expression)}
+                  onAddToGlossary={() => addCardToGlossary(card, "expression")}
                   onToggle={() => handleToggleCard(item.id)}
                   onKnownVote={() => void markKnown("expression", card.expression, "vote")}
                   onKnownSuppress={() =>
@@ -936,6 +1045,8 @@ export default function CardsPanel() {
                   key={item.id}
                   term={term}
                   expanded={expanded}
+                  savedToGlossary={isSavedToGlossary(term.term)}
+                  onAddToGlossary={() => addCardToGlossary(term, "term")}
                   onToggle={() => handleToggleCard(item.id)}
                   onKnownVote={() => void markKnown("term", term.term, "vote")}
                   onKnownSuppress={() => void markKnown("term", term.term, "suppress")}

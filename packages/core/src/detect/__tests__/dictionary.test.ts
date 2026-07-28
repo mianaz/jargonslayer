@@ -213,6 +213,38 @@ describe("scanDictionary — source_sentence extraction", () => {
   });
 });
 
+describe("scanDictionary — back-of-the-envelope ASR variants", () => {
+  it("recognizes the reported 'back on the envelope calculation' transcript as the canonical idiom", () => {
+    const res = scanDictionary(
+      "Uh, I was doing the back on the envelope calculation.",
+    );
+    const hit = res.expressions.find(
+      (e) => e.expression === "back-of-the-envelope",
+    );
+    expect(hit).toBeDefined();
+    expect(hit?.matched_surface).toBe("back on the envelope calculation");
+    expect(hit?.chinese_explanation).toBe("粗略估算一下，不是精确计算");
+  });
+
+  it("also recognizes the ordinary unhyphenated spoken form when followed by calculation", () => {
+    const res = scanDictionary("This is only a back of the envelope calculation.");
+    expect(
+      res.expressions.some(
+        (e) => e.expression === "back-of-the-envelope",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not flag a literal reference to the physical back of an envelope", () => {
+    const res = scanDictionary("The return address is on the back of the envelope.");
+    expect(
+      res.expressions.some(
+        (e) => e.expression === "back-of-the-envelope",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("scanDictionary — at-most-once per entry per call", () => {
   it("only emits a single hit even when the same expression appears in multiple sentences", () => {
     const res = scanDictionary(

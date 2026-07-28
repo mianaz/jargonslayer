@@ -2103,7 +2103,16 @@ export const EXTRA_EXPRESSIONS: DictExpressionEntry[] = [
   },
   {
     expression: "back-of-the-envelope",
-    variants: ["a back-of-the-envelope calculation"],
+    variants: [
+      "a back-of-the-envelope calculation",
+      "back of the envelope calculation",
+      "back of the envelope estimate",
+      // Common speech-recognition substitution for "of" in this idiom.
+      // Keep "calculation/estimate" in the surface so literal references
+      // to something physically on the back of an envelope do not fire.
+      "back on the envelope calculation",
+      "back on the envelope estimate",
+    ],
     category: "metaphor",
     meaning: "a rough, quick estimate rather than a precise calculation",
     chinese_explanation: "粗略估算一下，不是精确计算",

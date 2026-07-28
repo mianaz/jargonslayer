@@ -92,6 +92,40 @@ describe("buildHighlightMatcher — expression inflection", () => {
   });
 });
 
+describe("buildHighlightMatcher — observed dictionary variants", () => {
+  it("highlights an ASR variant while routing it to the canonical expression card", () => {
+    const cards = [
+      makeCard({
+        id: "envelope",
+        expression: "back-of-the-envelope",
+        matched_surface: "back on the envelope calculation",
+      }),
+    ];
+    const matcher = buildHighlightMatcher(cards, []);
+    const hits = matchAll(
+      matcher,
+      "I was doing the back on the envelope calculation.",
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0].matched).toBe("back on the envelope calculation");
+    expect(hits[0].hit).toEqual({ kind: "expression", id: "envelope" });
+  });
+
+  it("keeps the canonical surface highlightable as well", () => {
+    const cards = [
+      makeCard({
+        id: "envelope",
+        expression: "back-of-the-envelope",
+        matched_surface: "back on the envelope calculation",
+      }),
+    ];
+    const matcher = buildHighlightMatcher(cards, []);
+    const hits = matchAll(matcher, "It was a back-of-the-envelope estimate.");
+    expect(hits[0].matched).toBe("back-of-the-envelope");
+    expect(hits[0].hit).toEqual({ kind: "expression", id: "envelope" });
+  });
+});
+
 describe("buildHighlightMatcher — term all-caps guard", () => {
   it('term "KPI": matched "KPI" and "KPIs" resolve, matched "kpi" does not', () => {
     const terms = [makeTerm({ id: "kpi", term: "KPI" })];

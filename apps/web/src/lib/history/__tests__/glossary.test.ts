@@ -68,6 +68,7 @@ describe("glossary.ts", () => {
       const res = glossary.scanCustomEntries("I was circling back on this issue.");
       expect(res.expressions).toHaveLength(1);
       expect(res.expressions[0].expression).toBe("circle back"); // still the headword
+      expect(res.expressions[0].matched_surface).toBe("circling back");
     });
 
     it("routes kind:'term' entries into res.terms instead of res.expressions", async () => {

@@ -345,21 +345,28 @@ export function scanCustomEntries(text: string): DetectResponse {
 
   for (const entry of cache) {
     let matchedSentence: string | null = null;
+    let matchedSurface: string | null = null;
     for (const surface of customEntrySurfaces(entry)) {
       const re = surfaceToRegex(surface);
       if (!re) continue;
-      const hit = sentences.find((s) => re.test(s)) ?? null;
-      if (hit) {
-        matchedSentence = hit;
+      for (const sentence of sentences) {
+        const hit = re.exec(sentence);
+        if (!hit) continue;
+        matchedSentence = sentence;
+        matchedSurface = hit[0];
         break;
       }
+      if (matchedSentence) break;
     }
     if (matchedSentence === null) continue;
 
     if (entry.kind === "term") {
       res.terms.push(customEntryToTerm(entry));
     } else {
-      res.expressions.push(customEntryToExpression(entry, matchedSentence));
+      res.expressions.push({
+        ...customEntryToExpression(entry, matchedSentence),
+        ...(matchedSurface ? { matched_surface: matchedSurface } : {}),
+      });
     }
   }
   return res;

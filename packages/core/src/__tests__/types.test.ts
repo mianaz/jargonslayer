@@ -133,6 +133,30 @@ describe("cardToCustomEntry — field mapping", () => {
     expect(entry.id).not.toBe(card.id); // gets a fresh id, not the card's id
     expect(entry.createdAt).toBe(entry.updatedAt); // stamped together at creation
   });
+
+  it("keeps a non-canonical observed transcript surface as an offline-match variant", () => {
+    const card: ExpressionCard = {
+      id: "c-asr",
+      expression: "back-of-the-envelope",
+      matched_surface: "back on the envelope calculation",
+      category: "metaphor",
+      meaning: "a rough estimate",
+      chinese_explanation: "粗略估算",
+      plain_english: "rough estimate",
+      tone: "neutral",
+      confidence: 0.9,
+      source_sentence: "Let's do a back on the envelope calculation.",
+      normKey: "back-of-the-envelope",
+      firstSeenAt: 1000,
+      lastSeenAt: 1000,
+      count: 1,
+      source: "dictionary",
+    };
+
+    expect(cardToCustomEntry(card).variants).toEqual([
+      "back on the envelope calculation",
+    ]);
+  });
 });
 
 describe("termToCustomEntry — field mapping", () => {

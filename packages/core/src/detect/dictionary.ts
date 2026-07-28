@@ -1455,6 +1455,7 @@ export function scanDictionary(
             tone: entry.tone,
             confidence: entry.confidence,
             source_sentence: sentence.trim(),
+            matched_surface: m[0],
           });
           matched = true;
           break;
