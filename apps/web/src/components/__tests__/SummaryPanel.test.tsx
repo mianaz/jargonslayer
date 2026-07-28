@@ -24,6 +24,30 @@ vi.mock("@/lib/llm/client", async (importOriginal) => {
   };
 });
 
+// gapfill.ts is worker-B-owned and may not exist on disk while this
+// lane works — this mock IS the pinned contract (v071 blueprint's
+// Shared contract section), not a stand-in for the real module.
+const runGapFillMock = vi.fn();
+vi.mock("@/lib/translate/gapfill", () => ({
+  runGapFill: (...args: unknown[]) => runGapFillMock(...args),
+}));
+
+// downloadFile/downloadBlob poke browser download machinery
+// (URL.createObjectURL) jsdom doesn't implement — swapped for stubs so
+// a real export click doesn't throw; buildMarkdownReport/buildAnkiTSV/
+// buildSessionJson stay real so the gate's export-path plumbing is
+// still exercised end to end.
+const downloadFileMock = vi.fn();
+const downloadBlobMock = vi.fn();
+vi.mock("@/lib/history/export", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/history/export")>();
+  return {
+    ...actual,
+    downloadFile: (...args: unknown[]) => downloadFileMock(...args),
+    downloadBlob: (...args: unknown[]) => downloadBlobMock(...args),
+  };
+});
+
 import SummaryPanel from "../SummaryPanel";
 
 function makeSummaryResult(overrides: Partial<SummaryResult> = {}): SummaryResult {
@@ -133,5 +157,224 @@ describe("SummaryPanel — Bit celebration on summary generation success (v0.5.1
 
     expect(useApp.getState().summary).toBeNull();
     expect(useApp.getState().bitCelebrateNonce).toBe(0);
+  });
+});
+
+// v0.7.1 Chamber C — export-path gate. md/docx/复制纪要 all carry the
+// live transcript, so they're gated behind an inline confirm when
+// bilingual translation is on and segments still have gaps; JSON/Anki
+// stay exempt. runGapFill is mocked per the pinned worker-B contract
+// (v071 blueprint's Shared contract section) — the mock itself IS the
+// contract, not a stand-in for gapfill.ts's real behavior.
+describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  async function flush() {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  }
+
+  function findButton(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.textContent?.trim() === text,
+    );
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn;
+  }
+
+  function clickButton(btn: HTMLButtonElement) {
+    return act(async () => {
+      btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  const segWithGap = {
+    id: "seg1",
+    index: 0,
+    startedAt: 1000,
+    endedAt: 1500,
+    text: "Untranslated.",
+    engine: "demo" as const,
+  };
+  const segTranslated = {
+    id: "seg2",
+    index: 1,
+    startedAt: 1600,
+    endedAt: 2000,
+    text: "Translated already.",
+    engine: "demo" as const,
+  };
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    runGapFillMock.mockReset();
+    downloadFileMock.mockReset();
+    downloadBlobMock.mockReset();
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-test", bilingualTranscript: true },
+      status: "stopped",
+      summary: null,
+      summarizing: false,
+      segments: [segWithGap, segTranslated],
+      cards: [],
+      terms: [],
+      translations: { seg2: "已翻译。" },
+      toast: null,
+      saveCurrentSession: vi.fn(async () => "session-1"),
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    if (root) {
+      await act(async () => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState({
+      summary: null,
+      summarizing: false,
+      segments: [],
+      translations: {},
+      toast: null,
+      saveCurrentSession: REAL_SAVE_CURRENT_SESSION,
+    });
+  });
+
+  it("shows the inline confirm with the untranslated count when bilingual is on and a gap exists", async () => {
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出报告 .md"));
+    await flush();
+
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="export-anyway"]')).not.toBeNull();
+    expect(container!.querySelector('[data-testid="export-cancel"]')).not.toBeNull();
+    expect(container!.textContent).toContain("还有 1 段未翻译");
+  });
+
+  it("直接导出 exports immediately without calling runGapFill", async () => {
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出报告 .md"));
+    await flush();
+    await clickButton(container!.querySelector('[data-testid="export-anyway"]') as HTMLButtonElement);
+    await flush();
+
+    expect(runGapFillMock).not.toHaveBeenCalled();
+    expect(downloadFileMock).toHaveBeenCalledTimes(1);
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).toBeNull();
+  });
+
+  it("补全后导出 awaits runGapFill before exporting, disabling the confirm's buttons meanwhile", async () => {
+    let resolveGapFill: (v: { filled: number; failed: number; aborted: boolean }) => void = () => {};
+    runGapFillMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveGapFill = resolve;
+      }),
+    );
+
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出报告 .md"));
+    await flush();
+    await clickButton(container!.querySelector('[data-testid="export-gap-fill"]') as HTMLButtonElement);
+
+    // Still awaiting runGapFill — no export yet, confirm buttons disabled.
+    expect(downloadFileMock).not.toHaveBeenCalled();
+    expect(
+      (container!.querySelector('[data-testid="export-gap-fill"]') as HTMLButtonElement).disabled,
+    ).toBe(true);
+    expect(
+      (container!.querySelector('[data-testid="export-anyway"]') as HTMLButtonElement).disabled,
+    ).toBe(true);
+
+    await act(async () => {
+      resolveGapFill({ filled: 1, failed: 0, aborted: false });
+    });
+    await flush();
+
+    expect(runGapFillMock).toHaveBeenCalledTimes(1);
+    expect(downloadFileMock).toHaveBeenCalledTimes(1);
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).toBeNull();
+  });
+
+  it("shows a toast and still exports when gap-fill reports failures", async () => {
+    runGapFillMock.mockResolvedValue({ filled: 0, failed: 1, aborted: false });
+
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出报告 .md"));
+    await flush();
+    await clickButton(container!.querySelector('[data-testid="export-gap-fill"]') as HTMLButtonElement);
+    await flush();
+
+    expect(downloadFileMock).toHaveBeenCalledTimes(1);
+    expect(useApp.getState().toast).toEqual(expect.stringContaining("1 段未能翻译"));
+  });
+
+  it("取消 closes the confirm without exporting or calling runGapFill", async () => {
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出报告 .md"));
+    await flush();
+    await clickButton(container!.querySelector('[data-testid="export-cancel"]') as HTMLButtonElement);
+    await flush();
+
+    expect(runGapFillMock).not.toHaveBeenCalled();
+    expect(downloadFileMock).not.toHaveBeenCalled();
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).toBeNull();
+  });
+
+  it("does not gate the JSON export path", async () => {
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出 JSON"));
+    await flush();
+
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).toBeNull();
+    expect(downloadFileMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("also gates the .docx and 复制纪要 export paths", async () => {
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出 .docx"));
+    await flush();
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).not.toBeNull();
+    await clickButton(container!.querySelector('[data-testid="export-cancel"]') as HTMLButtonElement);
+    await flush();
+
+    await clickButton(findButton("复制纪要"));
+    await flush();
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).not.toBeNull();
   });
 });

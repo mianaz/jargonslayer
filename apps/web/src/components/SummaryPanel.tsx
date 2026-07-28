@@ -19,12 +19,26 @@ import {
 import { buildDocxReport } from "@/lib/history/docx";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { cardToCustomEntry, termToCustomEntry } from "@jargonslayer/core/types";
+import { langPairFromSettings } from "@/lib/translate/providers";
+import { untranslatedSegments } from "@/lib/translate/gaps";
+import { runGapFill } from "@/lib/translate/gapfill";
 import CornellNote from "./CornellNote";
+
+type PendingExportKind = "md" | "docx" | "copy";
 
 function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const cards = useApp((s) => s.cards);
   const showToast = useApp((s) => s.showToast);
+  const settings = useApp((s) => s.settings);
+  const segments = useApp((s) => s.segments);
+  const translations = useApp((s) => s.translations);
   const [docxBusy, setDocxBusy] = useState(false);
+  const [pendingExport, setPendingExport] = useState<PendingExportKind | null>(null);
+  const [gateBusy, setGateBusy] = useState(false);
+
+  const pair = langPairFromSettings(settings);
+  const untranslatedCount = untranslatedSegments(segments, translations).length;
+  const gate = settings.bilingualTranscript && pair.source !== pair.target && untranslatedCount > 0;
 
   const handleExport = (kind: "md" | "tsv" | "json") => {
     const session = currentSessionSnapshot();
@@ -76,6 +90,46 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
     }
   };
 
+  const runExportKind = async (kind: PendingExportKind) => {
+    if (kind === "md") handleExport("md");
+    else if (kind === "docx") await handleExportDocx();
+    else await handleCopy();
+  };
+
+  // md/docx/复制纪要 all carry the transcript — gated when bilingual
+  // translation is on and segments are still missing a translation
+  // (JSON/Anki/Cornell are exempt: JSON is raw truth, Anki/Cornell
+  // don't carry the transcript at all — v071 blueprint §Chamber C).
+  const requestExport = (kind: PendingExportKind) => {
+    if (gate) {
+      setPendingExport(kind);
+    } else {
+      void runExportKind(kind);
+    }
+  };
+
+  const handleExportAnyway = async () => {
+    const kind = pendingExport;
+    setPendingExport(null);
+    if (kind) await runExportKind(kind);
+  };
+
+  const handleExportAfterGapFill = async () => {
+    const kind = pendingExport;
+    if (!kind) return;
+    setGateBusy(true);
+    try {
+      const result = await runGapFill();
+      if (result.failed > 0 || result.aborted) {
+        showToast(`${result.failed} 段未能翻译，已按现状导出`);
+      }
+      await runExportKind(kind);
+    } finally {
+      setGateBusy(false);
+      setPendingExport(null);
+    }
+  };
+
   const handleCollect = async () => {
     const { cards: liveCards, terms: liveTerms, addCustomEntry } = useApp.getState();
     let added = 0;
@@ -96,14 +150,14 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
     <div className="flex flex-wrap gap-2 border-t border-edge p-3">
       <button
         type="button"
-        onClick={() => handleExport("md")}
+        onClick={() => requestExport("md")}
         className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
       >
         导出报告 .md
       </button>
       <button
         type="button"
-        onClick={() => void handleExportDocx()}
+        onClick={() => requestExport("docx")}
         disabled={docxBusy}
         className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -134,7 +188,7 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
       </button>
       <button
         type="button"
-        onClick={() => void handleCopy()}
+        onClick={() => requestExport("copy")}
         className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
       >
         复制纪要
@@ -148,6 +202,47 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
           <Star size={14} weight="regular" className="text-lab-orange" />
           收藏本场卡片
         </button>
+      )}
+      {pendingExport && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget && !gateBusy) setPendingExport(null);
+          }}
+        >
+          <div className="w-[320px] max-w-[92vw] rounded-none border border-edge2 bg-panel glassable-panel p-5">
+            <div className="mb-4 text-sm text-fg">还有 {untranslatedCount} 段未翻译</div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="export-gap-fill"
+                disabled={gateBusy}
+                onClick={() => void handleExportAfterGapFill()}
+                className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                补全后导出
+              </button>
+              <button
+                type="button"
+                data-testid="export-anyway"
+                disabled={gateBusy}
+                onClick={() => void handleExportAnyway()}
+                className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                直接导出
+              </button>
+              <button
+                type="button"
+                data-testid="export-cancel"
+                disabled={gateBusy}
+                onClick={() => setPendingExport(null)}
+                className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

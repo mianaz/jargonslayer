@@ -163,6 +163,69 @@ describe("buildDocxReport — sections mirror buildMarkdownReport", () => {
     expect(docXml).toContain("启动会");
   });
 
+  // v0.7.1 Chamber C: mirrors export.test.ts's own live-map-precedence
+  // suite — same fix, docx builder.
+  it("prefers session.translations over the summary pair for the same segment", async () => {
+    const session = makeSession({
+      segments: [
+        { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+      ],
+      translations: { seg1: "现场翻译。" },
+      summary: {
+        summary: { topic: { en: "", zh: "" }, key_points: [], decisions: [], action_items: [] },
+        translations: [{ index: 0, zh: "纪要翻译。" }],
+        flashcards: [],
+        generatedAt: 1000,
+        model: "test-model",
+      },
+    });
+    const blob = await buildDocxReport(session);
+    const zip = await unzip(blob);
+    const docXml = await zip.file("word/document.xml")!.async("string");
+    expect(docXml).toContain("现场翻译。");
+    expect(docXml).not.toContain("纪要翻译。");
+  });
+
+  it("falls back to the summary pair when the live map has no entry for that segment id", async () => {
+    const session = makeSession({
+      segments: [
+        { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+        { id: "seg2", index: 1, startedAt: 1600, endedAt: 2000, text: "Let's start.", engine: "demo" },
+      ],
+      translations: { seg1: "现场翻译。" },
+      summary: {
+        summary: { topic: { en: "", zh: "" }, key_points: [], decisions: [], action_items: [] },
+        translations: [
+          { index: 0, zh: "纪要翻译 1。" },
+          { index: 1, zh: "纪要翻译 2。" },
+        ],
+        flashcards: [],
+        generatedAt: 1000,
+        model: "test-model",
+      },
+    });
+    const blob = await buildDocxReport(session);
+    const zip = await unzip(blob);
+    const docXml = await zip.file("word/document.xml")!.async("string");
+    expect(docXml).toContain("现场翻译。");
+    expect(docXml).toContain("纪要翻译 2。");
+  });
+
+  it("renders the translation from session.translations alone when the session has no summary at all", async () => {
+    const session = makeSession({
+      segments: [
+        { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+      ],
+      translations: { seg1: "仅有现场翻译。" },
+    });
+    expect(session.summary).toBeUndefined();
+    const blob = await buildDocxReport(session);
+    const zip = await unzip(blob);
+    const docXml = await zip.file("word/document.xml")!.async("string");
+    expect(docXml).toContain("双语转录");
+    expect(docXml).toContain("仅有现场翻译。");
+  });
+
   it("renders the 行动项 table with owner/task/due when action items are present", async () => {
     const session = makeSession({
       summary: {

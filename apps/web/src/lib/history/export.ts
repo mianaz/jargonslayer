@@ -141,6 +141,13 @@ export function buildMarkdownReport(session: MeetingSession): string {
     const translationByIndex = new Map<number, string>(
       (summary?.translations ?? []).map((t: TranslationPair) => [t.index, t.zh]),
     );
+    // Live bilingual translation (session.translations, id-keyed —
+    // MeetingSession.translations) wins over the summary's index-keyed
+    // pair for the same segment: it's the map the transcript actually
+    // rendered from live, so it reflects any per-segment retranslation/
+    // correction the summary snapshot never saw. Falls back to the
+    // summary pair when the live map has no entry for this segment id.
+    const liveTranslations = session.translations ?? {};
     // Transcript-timestamp fix: exports now match the screen — elapsed
     // since meeting start (paused spans excluded), not a wall-clock
     // time. The session-level header above keeps the absolute date
@@ -152,7 +159,7 @@ export function buildMarkdownReport(session: MeetingSession): string {
       const elapsed = formatElapsedClock(segmentElapsedMs(elapsedZero, seg.startedAt, pauseIntervals));
       lines.push(`**${speaker}** \`${elapsed}\`  `);
       lines.push(`${seg.text}  `);
-      const zh = translationByIndex.get(seg.index);
+      const zh = liveTranslations[seg.id] ?? translationByIndex.get(seg.index);
       if (zh) {
         lines.push(`> ${zh}`);
       }

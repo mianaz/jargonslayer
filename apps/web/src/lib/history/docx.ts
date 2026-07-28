@@ -194,6 +194,10 @@ export async function buildDocxReport(session: MeetingSession): Promise<Blob> {
     const translationByIndex = new Map<number, string>(
       (summary?.translations ?? []).map((t: TranslationPair) => [t.index, t.zh]),
     );
+    // Live bilingual translation wins over the summary pair — see
+    // export.ts's buildMarkdownReport for the full rationale (mirrored
+    // section-for-section here).
+    const liveTranslations = session.translations ?? {};
     const { startedAt: elapsedZero, pauseIntervals } = resolveSessionElapsedBasis(session);
     for (const seg of session.segments) {
       const speaker = seg.speaker || "Speaker";
@@ -204,7 +208,7 @@ export async function buildDocxReport(session: MeetingSession): Promise<Blob> {
         }),
       );
       children.push(plain(seg.text));
-      const zh = translationByIndex.get(seg.index);
+      const zh = liveTranslations[seg.id] ?? translationByIndex.get(seg.index);
       if (zh) children.push(quote(zh));
     }
   }

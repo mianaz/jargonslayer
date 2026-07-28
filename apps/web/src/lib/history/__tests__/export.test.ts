@@ -175,6 +175,77 @@ describe("buildMarkdownReport — sections", () => {
     expect(report).not.toContain("> ");
   });
 
+  // v0.7.1 Chamber C: live-translated meetings (session.translations,
+  // id-keyed) previously exported with no 双语 lines at all — only the
+  // LLM-summarize stage's index-keyed summary.translations were read.
+  describe("live translation map (session.translations) precedence", () => {
+    it("prefers session.translations over the summary pair for the same segment", () => {
+      const session = makeSession({
+        segments: [
+          { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+        ],
+        translations: { seg1: "现场翻译。" },
+        summary: {
+          summary: { topic: { en: "", zh: "" }, key_points: [], decisions: [], action_items: [] },
+          translations: [{ index: 0, zh: "纪要翻译。" }],
+          flashcards: [],
+          generatedAt: 1000,
+          model: "test-model",
+        },
+      });
+      const report = buildMarkdownReport(session);
+      expect(report).toContain("> 现场翻译。");
+      expect(report).not.toContain("纪要翻译。");
+    });
+
+    it("falls back to the summary pair when the live map has no entry for that segment id", () => {
+      const session = makeSession({
+        segments: [
+          { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+          { id: "seg2", index: 1, startedAt: 1600, endedAt: 2000, text: "Let's start.", engine: "demo" },
+        ],
+        translations: { seg1: "现场翻译。" },
+        summary: {
+          summary: { topic: { en: "", zh: "" }, key_points: [], decisions: [], action_items: [] },
+          translations: [
+            { index: 0, zh: "纪要翻译 1。" },
+            { index: 1, zh: "纪要翻译 2。" },
+          ],
+          flashcards: [],
+          generatedAt: 1000,
+          model: "test-model",
+        },
+      });
+      const report = buildMarkdownReport(session);
+      expect(report).toContain("> 现场翻译。");
+      expect(report).toContain("> 纪要翻译 2。");
+    });
+
+    it("emits the translation line from session.translations alone when the session has no summary at all", () => {
+      const session = makeSession({
+        segments: [
+          { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "Hello everyone.", engine: "demo" },
+        ],
+        translations: { seg1: "仅有现场翻译。" },
+      });
+      expect(session.summary).toBeUndefined();
+      const report = buildMarkdownReport(session);
+      expect(report).toContain("## 双语转录");
+      expect(report).toContain("> 仅有现场翻译。");
+    });
+
+    it("omits the quote line when neither session.translations nor the summary pair has this segment", () => {
+      const session = makeSession({
+        segments: [
+          { id: "seg1", index: 0, startedAt: 1000, endedAt: 1500, text: "No translation anywhere.", engine: "demo" },
+        ],
+        translations: {},
+      });
+      const report = buildMarkdownReport(session);
+      expect(report).not.toContain("> ");
+    });
+  });
+
   it("shows placeholder text for empty sections", () => {
     const report = buildMarkdownReport(makeSession());
     expect(report).toContain("（无转录内容）");
