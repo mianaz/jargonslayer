@@ -19,6 +19,7 @@ import {
   pauseIntervalsForSnapshot,
   renameRosterSpeakerList,
   renameSpeakerInSegments,
+  resetPostStopSaveStateForTests,
   scheduleSessionSave,
   shouldApplySpeakerUpdate,
   SPEAKER_ROSTER_CAP,
@@ -1653,6 +1654,10 @@ describe("saveCurrentSession — R3-3 fix: an immediate save clears any pending 
 describe("saveCurrentSession — R4-2 fix: a storage failure re-arms the debounced save (no silent translation loss)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // R6 test hygiene: postStopSaveTimer/postStopSaveFailureCount are
+    // module-scoped, not per-test — a leftover armed timer or failure
+    // count from an earlier test would otherwise corrupt this one.
+    resetPostStopSaveStateForTests();
   });
 
   afterEach(() => {
@@ -1694,6 +1699,7 @@ describe("saveCurrentSession — R4-2 fix: a storage failure re-arms the debounc
 describe("saveCurrentSession — R5 fix: bounded failure retries + single toast per failure burst", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    resetPostStopSaveStateForTests();
   });
 
   afterEach(() => {
@@ -1731,6 +1737,14 @@ describe("saveCurrentSession — R5 fix: bounded failure retries + single toast 
 describe("deleteSession — R5 fix: deleting the active session cancels a pending failed-save retry (no resurrection)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // R6 test hygiene fix: without this, postStopSaveFailureCount could
+    // leak in at 3 (left there by the R5 cap test's own last failed
+    // attempt above) — the save below would then skip re-arming
+    // ENTIRELY (count < POST_STOP_SAVE_MAX_RETRIES already false), so
+    // the "pending retry must never fire" assertion further down passed
+    // for the wrong reason: no timer was ever armed to fire in the first
+    // place.
+    resetPostStopSaveStateForTests();
   });
 
   afterEach(() => {
@@ -1771,6 +1785,142 @@ describe("deleteSession — R5 fix: deleting the active session cancels a pendin
     expect(saveSpy).toHaveBeenCalledTimes(1);
     expect(useApp.getState().sessions).toEqual([]);
     expect(useApp.getState().activeSessionId).toBeNull();
+  });
+});
+
+describe("saveCurrentSession / deleteSession — R6 fix: deletion-vs-in-flight-save epoch race (MEDIUM, v0.7.1 train-2 round-6 review)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    resetPostStopSaveStateForTests();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("a near-deadline retry's write races an active-session delete — the compensating delete wins (no resurrection), no re-arm", async () => {
+    // A tiny fake in-memory store — lets this test assert the actual
+    // FINAL storage state (not just spy call counts), matching what a
+    // real IndexedDB resurrection bug would look like: a record that's
+    // there when it shouldn't be.
+    const fakeStore = new Map<string, MeetingSession>();
+    let resolveSave: (v: boolean) => void = () => {};
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockImplementation(
+      (session) =>
+        new Promise<boolean>((resolve) => {
+          resolveSave = () => {
+            fakeStore.set(session.id, session);
+            resolve(true);
+          };
+        }),
+    );
+    const deleteSpy = vi.spyOn(storageModule, "deleteSession").mockImplementation(async (id) => {
+      fakeStore.delete(id);
+    });
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      activeSessionId: "s1",
+      sessions: [{ id: "s1" } as ReturnType<typeof sessionToMeta>],
+    });
+
+    // Simulates a failed-save retry whose timer has already fired — its
+    // saveCurrentSession() call is now in flight, its own epoch captured
+    // BEFORE the delete below ever runs, suspended on the storage write
+    // (mocked above as a controllable pending promise).
+    const savePromise = useApp.getState().saveCurrentSession();
+
+    // User deletes that same session while the retry's write is still
+    // pending — bumps the epoch (and clears the by-then-irrelevant
+    // timer/counter) synchronously, before its own await.
+    const deletePromise = useApp.getState().deleteSession("s1");
+
+    // The retry's write finally lands AFTER the delete's epoch bump.
+    resolveSave(true);
+    const id = await savePromise;
+    await deletePromise;
+
+    expect(id).toBeNull();
+    // Two deletes for "s1": the user's own call, plus saveCurrentSession's
+    // own compensation for the write that raced it.
+    expect(deleteSpy.mock.calls.filter(([delId]) => delId === "s1")).toHaveLength(2);
+    expect(fakeStore.has("s1")).toBe(false);
+    expect(useApp.getState().sessions).toEqual([]);
+    expect(useApp.getState().activeSessionId).toBeNull();
+
+    // No re-arm: the epoch-changed path returns before ever reaching the
+    // R4-2/R5 failure-retry re-arm.
+    await vi.advanceTimersByTimeAsync(1500 * 6);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("deleting the active session before a failed retry's deadline cancels it outright — storage.saveSession never called again", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(false);
+    vi.spyOn(storageModule, "deleteSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      activeSessionId: "s1",
+      sessions: [{ id: "s1" } as ReturnType<typeof sessionToMeta>],
+    });
+
+    // Storage full: the save fails and arms a retry.
+    await useApp.getState().saveCurrentSession();
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+
+    // Delete resolves in full (epoch bumped, timer cancelled while it's
+    // still genuinely pending) well before the retry's own 1.5s
+    // deadline — the retry timer never gets the chance to fire at all,
+    // so saveCurrentSession (and its storage.saveSession write) is never
+    // invoked a second time.
+    await useApp.getState().deleteSession("s1");
+
+    await vi.advanceTimersByTimeAsync(1500 * 6);
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("deleting a different (non-active) session doesn't touch the epoch/timer — an in-flight active-session save completes normally", async () => {
+    let resolveSave: (v: boolean) => void = () => {};
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockImplementation(
+      () => new Promise<boolean>((resolve) => { resolveSave = resolve; }),
+    );
+    vi.spyOn(storageModule, "deleteSession").mockResolvedValue(undefined);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([
+      { id: "s1" } as ReturnType<typeof sessionToMeta>,
+    ]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      activeSessionId: "s1",
+      sessions: [
+        { id: "s1" } as ReturnType<typeof sessionToMeta>,
+        { id: "other" } as ReturnType<typeof sessionToMeta>,
+      ],
+    });
+
+    const savePromise = useApp.getState().saveCurrentSession();
+
+    // Deleting an unrelated (non-active) session must not disturb "s1"'s
+    // own still-in-flight save.
+    await useApp.getState().deleteSession("other");
+
+    resolveSave(true);
+    const id = await savePromise;
+
+    expect(id).toBe("s1");
+    expect(useApp.getState().activeSessionId).toBe("s1");
+    expect(saveSpy).toHaveBeenCalledTimes(1);
   });
 });
 
