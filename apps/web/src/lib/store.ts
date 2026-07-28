@@ -1226,7 +1226,7 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   const settings: Settings = { ...DEFAULT_SETTINGS, ...legacy };
   // Field bug fix (iOS TestFlight): self-heal secret fields already
   // persisted with a dirty (zero-width/whitespace-padded) paste from
-  // before this fix shipped — same seven SECRET_NAMES fields
+  // before this fix shipped — the SECRET_NAMES fields
   // sanitizeSecretValue's own doc covers, sanitized here so a stale
   // stored value self-heals on the very next hydrate() rather than
   // only being cleaned for keys saved from now on (SettingsDialog's
@@ -1240,6 +1240,8 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
   settings.elevenLabsKey = sanitizeSecretValue(settings.elevenLabsKey);
   settings.deeplKey = sanitizeSecretValue(settings.deeplKey);
+  settings.youdaoAppKey = sanitizeSecretValue(settings.youdaoAppKey);
+  settings.youdaoAppSecret = sanitizeSecretValue(settings.youdaoAppSecret);
   settings.agentToken = sanitizeSecretValue(settings.agentToken);
   if (legacy.aiDetect === undefined && typeof legacy.dictionaryOnly === "boolean") {
     settings.aiDetect = !legacy.dictionaryOnly;
@@ -1876,6 +1878,8 @@ export const useApp = create<AppState>((set, get) => ({
         settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
         settings.elevenLabsKey = sanitizeSecretValue(settings.elevenLabsKey);
         settings.deeplKey = sanitizeSecretValue(settings.deeplKey);
+        settings.youdaoAppKey = sanitizeSecretValue(settings.youdaoAppKey);
+        settings.youdaoAppSecret = sanitizeSecretValue(settings.youdaoAppSecret);
         settings.agentToken = sanitizeSecretValue(settings.agentToken);
         // F5 fix (Sol MEDIUM #13, keychain-custody fix round): REPLACE,
         // never merely add to — a stale name from an EARLIER hydrate

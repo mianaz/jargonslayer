@@ -3,7 +3,7 @@
 // other apps) routinely carries leading/trailing whitespace and
 // invisible zero-width characters a user has no way to see or edit
 // out. normalizeBaseUrl (SettingsDialog.tsx) already does the
-// equivalent cleanup for baseUrl; this is the same idea for the seven
+// equivalent cleanup for baseUrl; this is the same idea for the
 // secret-shaped fields (secret.ts's SECRET_NAMES), applied at both the
 // SAVE boundary (SettingsDialog's toSave) and the LOAD boundary
 // (store.ts's migrateSettings + hydrateSecrets merge) so previously-

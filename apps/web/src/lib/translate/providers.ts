@@ -142,6 +142,134 @@ export class DeepLTranslationProvider implements TranslationProvider {
 }
 
 // ---------------------------------------------------------------
+// 有道 (Youdao) provider (v0.7.1 translation train-2, BYOK, native-
+// only) — mirrors DeepLTranslationProvider's shape above (live
+// getSettings, no-op prepare, getTransport()+AbortSignal.timeout), but
+// 有道's API is per-STRING rather than batch: one POST per item, fired
+// together via Promise.all (callers batch ≤6 items already). HTTP is
+// ALWAYS 200 here — errors ride the JSON body's errorCode instead (see
+// YOUDAO_NOKEY_CODES/YOUDAO_RATE_LIMIT_CODES below), unlike DeepL's
+// ordinary HTTP status codes. Not exposed on plain web (openapi.youdao.
+// com has no Access-Control-Allow-Origin on any probed Origin — see
+// docs/design-explorations/v071-translation-train2-blueprint.md's own
+// 有道 API contract section) — that carve-out is UI-side (
+// TranslationEngineRow.tsx's YOUDAO_WEB_DISABLED_REASON), not this
+// provider's job, same split DeepL's own CORS limit already uses.
+// ---------------------------------------------------------------
+
+const YOUDAO_NOKEY_CODES = new Set([
+  "108",
+  "111",
+  "112",
+  "201",
+  "202",
+  "110",
+  "205",
+  "203",
+  "401",
+]);
+const YOUDAO_RATE_LIMIT_CODES = new Set(["411", "412"]);
+
+/** `q.length<=20 ? q : q.slice(0,10) + q.length + q.slice(-10)` — raw
+ *  pre-encoding string, UTF-16 `String.length` (有道's own signing spec,
+ *  verified against live probes — see this module's header above). */
+export function youdaoTruncateForSign(q: string): string {
+  if (q.length <= 20) return q;
+  return q.slice(0, 10) + String(q.length) + q.slice(-10);
+}
+
+async function youdaoSign(
+  appKey: string,
+  q: string,
+  salt: string,
+  curtime: string,
+  appSecret: string,
+): Promise<string> {
+  const raw = appKey + youdaoTruncateForSign(q) + salt + curtime + appSecret;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(raw));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** BCP-47 primary subtag ("en"/"zh") -> 有道's own language code —
+ *  "zh-CHS" is 有道's simplified-Chinese code, everything else (this app
+ *  only ever passes "en" or "zh" — see langPairFromSettings) maps to
+ *  plain "en". */
+function youdaoLangCode(bcp: string): string {
+  return bcp === "zh" ? "zh-CHS" : "en";
+}
+
+async function translateOneWithYoudao(
+  text: string,
+  opts: { appKey: string; appSecret: string; from: string; to: string },
+): Promise<string> {
+  const salt = crypto.randomUUID();
+  const curtime = String(Math.floor(Date.now() / 1000));
+  const sign = await youdaoSign(opts.appKey, text, salt, curtime, opts.appSecret);
+
+  const res = await getTransport()("https://openapi.youdao.com/api", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      q: text,
+      from: opts.from,
+      to: opts.to,
+      appKey: opts.appKey,
+      salt,
+      sign,
+      signType: "v3",
+      curtime,
+    }),
+    signal: AbortSignal.timeout(10_000),
+  });
+
+  if (!res.ok) throw new Error(`有道翻译失败 (HTTP ${res.status})`);
+
+  let body: { errorCode?: string; translation?: string[] };
+  try {
+    body = await res.json();
+  } catch {
+    throw new Error("有道翻译失败（响应解析失败）");
+  }
+
+  const code = body.errorCode ?? "";
+  if (code === "0") return body.translation?.[0] ?? "";
+  if (YOUDAO_NOKEY_CODES.has(code)) throw new NoKeyError();
+  if (YOUDAO_RATE_LIMIT_CODES.has(code)) throw new RateLimitApiError();
+  throw new Error(`有道翻译失败 (${code})`);
+}
+
+export class YoudaoTranslationProvider implements TranslationProvider {
+  readonly kind: Settings["translateEngine"] = "youdao";
+
+  constructor(private getSettings: () => Settings) {}
+
+  // Stateless per call — nothing to prime.
+  prepare(_langPair: TranslationLangPair): void {}
+
+  async translate(
+    items: TranslateRequest["segments"],
+    lang: string,
+  ): Promise<TranslateResponse["translations"]> {
+    const settings = this.getSettings();
+    const appKey = settings.youdaoAppKey.trim();
+    const appSecret = settings.youdaoAppSecret.trim();
+    if (!appKey || !appSecret) throw new NoKeyError();
+
+    const from = youdaoLangCode(langPairFromSettings(settings).source);
+    const to = youdaoLangCode(lang);
+
+    // One request per item, in parallel — a single item's NoKeyError/
+    // RateLimitApiError fails the whole batch (Promise.all rejects on
+    // the first rejection), same failed-soft-at-the-batch-level contract
+    // as every other provider's own thrown errors.
+    const results = await Promise.all(items.map((it) => translateOneWithYoudao(it.text, { appKey, appSecret, from, to })));
+    return items.map((it, i) => ({ id: it.id, text: results[i] }));
+  }
+}
+
+// ---------------------------------------------------------------
 // Chrome Translator provider (web, on-device) — verified surface
 // (docs/design-explorations/v05-wave1-blueprint.md §1 Feature 6):
 // `Translator.availability({sourceLanguage,targetLanguage})` ->
@@ -659,6 +787,9 @@ export function resolveTranslationProvider(getSettings: () => Settings): Transla
   }
   if (settings.translateEngine === "deepl") {
     return new DeepLTranslationProvider(getSettings);
+  }
+  if (settings.translateEngine === "youdao") {
+    return new YoudaoTranslationProvider(getSettings);
   }
   return new LlmTranslationProvider(getSettings);
 }

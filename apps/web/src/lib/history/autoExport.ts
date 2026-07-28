@@ -289,6 +289,11 @@ function stripKeyMaterial(settings: Settings): Settings {
     // strip, mirroring sonioxKey/deepgramKey/elevenLabsKey's own
     // precedent above (types.ts's own deeplKey doc points back here).
     deeplKey: "",
+    // v0.7.1 translation train-2: 有道 BYOK credentials — same
+    // hand-listed strip, mirroring deeplKey's own precedent immediately
+    // above.
+    youdaoAppKey: "",
+    youdaoAppSecret: "",
     agentToken: "",
     // Webhook URLs routinely embed capability tokens in the path
     // (n8n/飞书 style) — credential-like, stripped with the rest
@@ -320,8 +325,9 @@ function overlaySecrets(settings: Settings, keychainValues: Partial<Record<Secre
 /** Serialize sessions + glossary + learn-set + settings into one backup
  *  JSON. `includeKeys: false` (the Settings dialog's default-checked
  *  "不包含 API Key" option) strips apiKey/taskLlm[*].apiKey/hfToken/
- *  sonioxKey/deepgramKey/elevenLabsKey/deeplKey/agentToken from the
- *  embedded settings — everything else round-trips as-is.
+ *  sonioxKey/deepgramKey/elevenLabsKey/deeplKey/youdaoAppKey/
+ *  youdaoAppSecret/agentToken from the embedded settings — everything
+ *  else round-trips as-is.
  *
  *  `learnset` (#48 step 4): the learn-set's `Record<string,
  *  LearnRecord>` (see learn/store.ts) as a fourth top-level field,
@@ -645,7 +651,8 @@ export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry 
 }
 
 /** Desktop keychain custody (v0.5.1) — for every non-empty restored
- *  apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/deeplKey, writes it to the
+ *  apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/deeplKey/
+ *  youdaoAppKey/youdaoAppSecret, writes it to the
  *  Keychain (overwriting whatever's already there — restoring a backup is an
  *  explicit "make this device match the backup" action, same
  *  IDB-wins-on-conflict posture hydrateSecrets uses for an ordinary
@@ -694,6 +701,8 @@ async function routeRestoredSecretsToKeychain(settings: Settings, priorPending: 
     "deepgramKey",
     "elevenLabsKey",
     "deeplKey",
+    "youdaoAppKey",
+    "youdaoAppSecret",
   ];
   const next = { ...settings };
   const pending = new Set(priorPending);

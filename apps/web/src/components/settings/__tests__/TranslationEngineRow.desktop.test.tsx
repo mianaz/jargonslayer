@@ -62,14 +62,14 @@ describe("TranslationEngineRow (desktop build)", () => {
     return el.querySelector("select") as HTMLSelectElement;
   }
 
-  it("renders all three options, in system/deepl/llm order, with the given value selected", async () => {
+  it("renders all four options, in system/deepl/youdao/llm order, with the given value selected", async () => {
     probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
     const el = mount({ value: "llm", onChange: () => {}, langPair });
     await flush();
 
     expect(el.querySelector('[data-testid="translation-engine-row"]')).not.toBeNull();
     const values = Array.from(select(el).querySelectorAll("option")).map((o) => (o as HTMLOptionElement).value);
-    expect(values).toEqual(["system", "deepl", "llm"]);
+    expect(values).toEqual(["system", "deepl", "youdao", "llm"]);
     expect(select(el).value).toBe("llm");
   });
 
@@ -81,6 +81,16 @@ describe("TranslationEngineRow (desktop build)", () => {
     const deeplOption = select(el).querySelector('option[value="deepl"]') as HTMLOptionElement;
     expect(deeplOption.disabled).toBe(false);
     expect(deeplOption.textContent).toBe("DeepL · 云端（需自备 Key）");
+  });
+
+  it("有道 also stays enabled on desktop (native, no CORS limit) regardless of key presence", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
+    const el = mount({ value: "llm", onChange: () => {}, langPair });
+    await flush();
+
+    const youdaoOption = select(el).querySelector('option[value="youdao"]') as HTMLOptionElement;
+    expect(youdaoOption.disabled).toBe(false);
+    expect(youdaoOption.textContent).toBe("有道翻译 · 云端（需自备 Key，国内可用）");
   });
 
   it("llm inline latency warning shows only while llm is the selected value", async () => {

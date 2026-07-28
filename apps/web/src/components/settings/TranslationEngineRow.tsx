@@ -96,6 +96,11 @@ export const LLM_ENGINE_LABEL = "AI 模型翻译 · Beta（较慢，不建议实
 export const LLM_TRANSLATE_WARNING =
   "AI 模型逐段翻译要等一次完整模型往返，实时字幕通常慢 3–10 秒；建议只在系统翻译不可用时临时使用。";
 export const DEEPL_WEB_DISABLED_REASON = "浏览器版暂不支持 DeepL（跨域限制），请用 App";
+// v0.7.1 translation train-2: 有道 has no CORS-clean endpoint either
+// (openapi.youdao.com carries no Access-Control-Allow-Origin on any
+// probed Origin — see the blueprint's own 有道 API contract section) —
+// same web-disabled posture as DeepL above.
+export const YOUDAO_WEB_DISABLED_REASON = "浏览器版暂不支持有道翻译（跨域限制），请用 App";
 
 /** Rendered under the <select> whenever `llm` is the CURRENTLY SELECTED
  *  value (on either platform variant) — real-time bilingual transcript
@@ -200,6 +205,12 @@ function WebTranslationEngineRow({ value, onChange, langPair }: TranslationEngin
         <option value="deepl" disabled>
           {`DeepL · 云端 — ${DEEPL_WEB_DISABLED_REASON}`}
         </option>
+        {/* Same cross-origin limit as DeepL immediately above — 有道's
+           own endpoint carries no CORS headers either (see this file's
+           own YOUDAO_WEB_DISABLED_REASON doc comment). */}
+        <option value="youdao" disabled>
+          {`有道翻译 · 云端 — ${YOUDAO_WEB_DISABLED_REASON}`}
+        </option>
         <option value="llm">{LLM_ENGINE_LABEL}</option>
       </select>
       <div className="mt-1 text-xs leading-[1.7] text-mut2">
@@ -292,6 +303,10 @@ function DesktopTranslationEngineRow({ value, onChange, langPair }: TranslationE
            platforms — prompting for the actual key is the settings
            field's own job (SettingsDialog.tsx), not this row's. */}
         <option value="deepl">DeepL · 云端（需自备 Key）</option>
+        {/* Un-gated for the same reason as deepl immediately above —
+           native builds have no CORS limit; 有道 is BYOK-only like DeepL,
+           never disabled here regardless of key presence. */}
+        <option value="youdao">有道翻译 · 云端（需自备 Key，国内可用）</option>
         <option value="llm">{LLM_ENGINE_LABEL}</option>
       </select>
       <div className="mt-1 text-xs leading-[1.7] text-mut2">

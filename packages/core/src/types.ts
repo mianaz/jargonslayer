@@ -216,6 +216,13 @@ export type ExpressionCategory =
 
 export interface DetectedExpression {
   expression: string;
+  // Exact transcript surface that triggered a local dictionary/custom
+  // match. The canonical `expression` remains the stable card title and
+  // dedup key; this optional field lets the transcript highlighter mark
+  // an observed variant (including an obvious ASR substitution) without
+  // promoting that variant to the canonical expression. LLM responses
+  // omit it.
+  matched_surface?: string;
   category: ExpressionCategory;
   meaning: string; // in-context English meaning
   chinese_explanation: string; // 自然的中文解释，商务语境
@@ -756,14 +763,15 @@ export interface Settings {
   // the translation-rework wave 1, on-device, free — Chrome's Translator
   // API on web, native Apple Translate on desktop/iOS; hidden/falls back
   // to "llm" wherever no on-device provider exists — see A6), "llm"
-  // (quality, today's translateApi path, unchanged), or "deepl" (BYOK,
-  // deeplKey below — wave 2 wires the actual transport; the kind exists
-  // here first so Settings/persistence never need a later migration of
-  // their own).
+  // (quality, today's translateApi path, unchanged), "deepl" (BYOK,
+  // deeplKey below), or "youdao" (BYOK, youdaoAppKey/youdaoAppSecret
+  // below — v0.7.1 translation train-2, native-only: 有道 has no CORS-
+  // clean endpoint, so the web variant disables this option, same
+  // posture DeepL's own web-CORS limit already established).
   // Independent of explainLanguage/bilingualTranscript above (this only
   // selects WHICH engine translates, not whether/into-what-language
   // translation happens at all).
-  translateEngine: "system" | "deepl" | "llm";
+  translateEngine: "system" | "deepl" | "youdao" | "llm";
   // Translation-rework wave 1: one-shot migration marker for a settings
   // blob saved BEFORE `translateEngine`'s default flipped from "llm" to
   // "system" above. store.ts's hydrate() consults this exactly once per
@@ -791,6 +799,16 @@ export interface Settings {
   // (migrateSettings + hydrate's post-hydrateSecrets pass), same list
   // sonioxKey/deepgramKey/elevenLabsKey/agentToken already ride.
   deeplKey: string;
+
+  // v0.7.1 translation train-2: 有道 (Youdao) BYOK credentials for the
+  // "youdao" translateEngine above — native-only (see translateEngine's
+  // own doc comment), so no web-CORS carve-out is needed here. Same
+  // hand-listed-strip/custody precedent as deeplKey immediately above:
+  // history/autoExport.ts's stripKeyMaterial + RESTORE_SECRET_NAMES,
+  // lib/desktop/secret.ts's SECRET_NAMES, and store.ts's
+  // sanitizeSecretValue call sites all gain BOTH field names.
+  youdaoAppKey: string;
+  youdaoAppSecret: string;
 
   // Background profile (#48 step 3, design Q5): a handful of short
   // free-text hints about the user, rendered into ONE short string
@@ -1049,6 +1067,8 @@ export const DEFAULT_SETTINGS: Settings = {
   translateEngine: "system",
   translateEngineMigrated: false,
   deeplKey: "",
+  youdaoAppKey: "",
+  youdaoAppSecret: "",
   profile: { enabled: false },
   usageTracking: true,
   themeId: "terminal",
@@ -1342,12 +1362,17 @@ export function customEntryToFlashcard(e: CustomEntry): Flashcard {
  *  ("收藏本场卡片"). Mastery state lives only on glossary entries. */
 export function cardToCustomEntry(c: ExpressionCard): CustomEntry {
   const now = Date.now();
+  const observedSurface = c.matched_surface?.trim();
   return {
     id: newId(),
     kind: "expression",
     packId: "personal",
     headword: c.expression,
-    variants: [],
+    variants:
+      observedSurface &&
+      observedSurface.toLowerCase() !== c.expression.trim().toLowerCase()
+        ? [observedSurface]
+        : [],
     chinese_explanation: c.chinese_explanation,
     example: "",
     context: c.source_sentence,

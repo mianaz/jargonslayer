@@ -34,6 +34,11 @@ export const SECRET_NAMES = [
   // keychain custody surface like every other BYOK key above (see
   // types.ts's deeplKey doc for the full list of surfaces this joins).
   "deeplKey",
+  // v0.7.1 translation train-2: 有道 BYOK credentials — same custody
+  // surface, two fields (types.ts's own youdaoAppKey/youdaoAppSecret doc
+  // points back here).
+  "youdaoAppKey",
+  "youdaoAppSecret",
 ] as const;
 export type SecretName = (typeof SECRET_NAMES)[number];
 

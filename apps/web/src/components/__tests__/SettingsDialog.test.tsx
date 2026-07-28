@@ -1008,6 +1008,93 @@ describe("SettingsDialog — AI 检测 翻译引擎: DeepL API Key (translation-
 });
 
 // ---------------------------------------------------------------
+// 有道 API Key (v0.7.1 translation train-2): mirrors the DeepL describe
+// block immediately above field-for-field, just with TWO inputs
+// (应用ID/应用密钥) instead of one.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — AI 检测 翻译引擎: 有道 API Key (v0.7.1 translation train-2)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function clickAiDetectNav(): void {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("the 有道 key fields are absent while translateEngine is system (default)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, translateEngine: "system" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(container!.querySelector('input[placeholder="应用ID"]')).toBeNull();
+    expect(container!.querySelector('input[placeholder="应用密钥"]')).toBeNull();
+  });
+
+  it("shows both 有道 key fields once translateEngine is youdao, with the signup help copy", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, translateEngine: "youdao" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(container!.querySelector('input[placeholder="应用ID"]')).not.toBeNull();
+    expect(container!.querySelector('input[placeholder="应用密钥"]')).not.toBeNull();
+    expect(container!.textContent).toContain("ai.youdao.com");
+    expect(container!.textContent).toContain("¥48/百万字符");
+  });
+
+  it("switching translateEngine away from youdao hides the key fields again", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, translateEngine: "youdao" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+    expect(container!.querySelector('input[placeholder="应用ID"]')).not.toBeNull();
+
+    const select = container!.querySelector(
+      '[data-testid="translation-engine-row"] select',
+    ) as HTMLSelectElement;
+    await act(async () => {
+      select.value = "system";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(container!.querySelector('input[placeholder="应用ID"]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------
 // AI 检测 翻译引擎: engineTouched edit-intent flag (Sol r6 BLOCKER —
 // SettingsDialog.tsx's handleSave, ~L2255-2270). translateEngine and
 // translateEngineMigrated are BOTH staged off engineTouched (set true

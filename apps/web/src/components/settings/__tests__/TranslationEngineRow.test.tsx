@@ -32,6 +32,7 @@ vi.mock("@/lib/translate/providers", () => ({
 import TranslationEngineRow, {
   DEEPL_WEB_DISABLED_REASON,
   LLM_TRANSLATE_WARNING,
+  YOUDAO_WEB_DISABLED_REASON,
   type TranslationEngineRowProps,
 } from "../TranslationEngineRow";
 
@@ -74,14 +75,14 @@ describe("TranslationEngineRow", () => {
     return el.querySelector("select") as HTMLSelectElement;
   }
 
-  it("renders all three options, in system/deepl/llm order, with the given value selected", async () => {
+  it("renders all four options, in system/deepl/youdao/llm order, with the given value selected", async () => {
     checkAvailabilityMock.mockResolvedValue("available");
     const el = mount({ value: "llm", onChange: () => {}, langPair });
     await flush();
 
     expect(el.querySelector('[data-testid="translation-engine-row"]')).not.toBeNull();
     const values = Array.from(select(el).querySelectorAll("option")).map((o) => (o as HTMLOptionElement).value);
-    expect(values).toEqual(["system", "deepl", "llm"]);
+    expect(values).toEqual(["system", "deepl", "youdao", "llm"]);
     expect(select(el).value).toBe("llm");
   });
 
@@ -93,6 +94,16 @@ describe("TranslationEngineRow", () => {
     const deeplOption = select(el).querySelector('option[value="deepl"]') as HTMLOptionElement;
     expect(deeplOption.disabled).toBe(true);
     expect(deeplOption.textContent).toContain(DEEPL_WEB_DISABLED_REASON);
+  });
+
+  it("有道 is ALSO disabled on a plain web build with its own cross-origin reason — no CORS-clean endpoint either", async () => {
+    checkAvailabilityMock.mockResolvedValue("available");
+    const el = mount({ value: "llm", onChange: () => {}, langPair });
+    await flush();
+
+    const youdaoOption = select(el).querySelector('option[value="youdao"]') as HTMLOptionElement;
+    expect(youdaoOption.disabled).toBe(true);
+    expect(youdaoOption.textContent).toContain(YOUDAO_WEB_DISABLED_REASON);
   });
 
   it("llm inline latency warning shows only while llm is the selected value", async () => {

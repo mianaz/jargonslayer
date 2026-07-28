@@ -43,7 +43,7 @@ use crate::paths::resolve_app_paths;
 /// Keychain "service" (macOS calls it the credential's _name_ attribute)
 /// every Entry in this module is created under — see keyring::Entry::
 /// new's own (service, user) pair; `name` (one of ALLOWED below) is the
-/// _user_ (macOS's _account_ attribute), so each of the 6 allowed fields
+/// _user_ (macOS's _account_ attribute), so each allowed field
 /// becomes its own distinct Keychain item, all grouped under this one
 /// service. Verified directly against keyring 3.6.3's own vendored
 /// source (~/.cargo/registry/src/.../keyring-3.6.3/src/macos.rs) before
@@ -60,7 +60,7 @@ const SERVICE: &str = "com.bioinfospace.jargonslayer";
 /// rs's own DiskFreeResult shape). Rejecting anything else keeps this
 /// from ever becoming an arbitrary keychain-write primitive for a
 /// compromised renderer.
-const ALLOWED: [&str; 7] = [
+const ALLOWED: [&str; 9] = [
     "apiKey",
     "hfToken",
     "sonioxKey",
@@ -68,6 +68,11 @@ const ALLOWED: [&str; 7] = [
     "elevenLabsKey",
     "agentToken",
     "deeplKey",
+    // v0.7.1 translation train-2: 有道 BYOK credentials — same custody
+    // surface, two fields (lib/desktop/secret.ts's SECRET_NAMES mirrors
+    // this byte-for-byte).
+    "youdaoAppKey",
+    "youdaoAppSecret",
 ];
 
 fn check_allowed(name: &str) -> Result<(), String> {

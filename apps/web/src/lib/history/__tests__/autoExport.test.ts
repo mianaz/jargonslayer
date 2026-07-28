@@ -81,6 +81,9 @@ const keyedSettings: Settings = {
   elevenLabsKey: "elevenlabs-secret",
   // Translation-rework wave 1: DeepL BYOK key — same hand-listed strip.
   deeplKey: "deepl-secret",
+  // v0.7.1 translation train-2: 有道 BYOK credentials — same hand-listed strip.
+  youdaoAppKey: "youdao-key-secret",
+  youdaoAppSecret: "youdao-secret-secret",
   agentToken: "agent-secret",
   taskLlm: {
     detect: { enabled: true, apiKey: "sk-detect-secret", provider: "anthropic" },
@@ -774,6 +777,8 @@ describe("autoExport.ts — backup/restore (#57)", () => {
         expect(parsed.settings.deepgramKey).toBe("deepgram-secret");
         expect(parsed.settings.elevenLabsKey).toBe("elevenlabs-secret");
         expect(parsed.settings.deeplKey).toBe("deepl-secret");
+        expect(parsed.settings.youdaoAppKey).toBe("youdao-key-secret");
+        expect(parsed.settings.youdaoAppSecret).toBe("youdao-secret-secret");
         expect(parsed.settings.agentToken).toBe("agent-secret");
         expect(parsed.settings.taskLlm?.detect?.apiKey).toBe("sk-detect-secret");
       }
@@ -793,6 +798,8 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       expect(parsed.settings.deepgramKey).toBe("");
       expect(parsed.settings.elevenLabsKey).toBe("");
       expect(parsed.settings.deeplKey).toBe("");
+      expect(parsed.settings.youdaoAppKey).toBe("");
+      expect(parsed.settings.youdaoAppSecret).toBe("");
       expect(parsed.settings.agentToken).toBe("");
       expect(parsed.settings.taskLlm?.detect?.apiKey).toBeUndefined();
       // Non-key fields on the stripped domain block must survive.

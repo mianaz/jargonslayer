@@ -527,9 +527,9 @@ export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = 
 // S13 iOS mobile-UX round (Part B #2) — iOS's two-level root list groups
 // visibleCategories into 常用/高级 instead of the desktop nav-rail's flat
 // list. diarization never appears in either group (already excluded from
-// categoryVisible on iOS below, Part A #1), and subscriptionDirect only
-// ever shows up here when visibleCategories itself already includes it
-// (build flag + isSectionVisible, unchanged) — no separate gate needed.
+// categoryVisible on iOS below, Part A #1); subscriptionDirect is also
+// excluded because it requires a computer-side localhost agent. Data
+// integration stays available, but below 高级 rather than in 常用.
 //
 // #58 fix round FIX 5 (Opus MEDIUM): 常用 has no list of its own below —
 // it's everything in visibleCategories NOT tagged advanced here. A twin
@@ -537,7 +537,11 @@ export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = 
 // to SETTINGS_CATEGORIES later without a matching entry in EITHER array
 // would have silently vanished from the iOS root list. Exclusion can't
 // have that failure mode: an untagged category defaults into 常用.
-const IOS_ADVANCED_CATEGORY_IDS: SettingsCategoryId[] = ["taskLlm", "subscriptionDirect"];
+const IOS_ADVANCED_CATEGORY_IDS: SettingsCategoryId[] = [
+  "taskLlm",
+  "dataIntegration",
+  "subscriptionDirect",
+];
 
 // "AI 检测" is settingsSections.ts's one MIXED section (tagged row-by-
 // row, not one whole-section key) — every row-level key that lives
@@ -1224,6 +1228,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // idiom, scoped to AI 检测's 翻译引擎 row since the field itself only
   // renders when draft.translateEngine === "deepl".
   const [showDeeplKey, setShowDeeplKey] = useState(false);
+  // 有道应用密钥 masked-input toggle (v0.7.1 translation train-2) — same
+  // idiom as showDeeplKey immediately above; 应用ID (youdaoAppKey) is a
+  // plain-text identifier, not masked (mirrors DeepL's own single-field
+  // precedent — only the actual secret gets a show/hide toggle).
+  const [showYoudaoAppSecret, setShowYoudaoAppSecret] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -1389,9 +1398,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // S13 (Part A #1): diarization is pyannote+sidecar-only — genuinely
   // impossible on iOS (no Python sidecar there at all, v1 mic-only
   // osspeech) — force-excluded regardless of uiVisibilityLevel above
-  // pinning everything ELSE to advanced, so this is the one category
-  // that must stay hidden even though its own section level would
-  // otherwise now read as visible.
+  // pinning everything ELSE to advanced. subscriptionDirect is likewise
+  // hidden below because its localhost desktop agent cannot exist on
+  // iPhone; all other advanced categories remain reachable.
   const categoryVisible: Record<SettingsCategoryId, boolean> = {
     engine: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.engine),
     diarization: !IS_IOS && isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.diarization),
@@ -1399,6 +1408,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     taskLlm: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.taskLlm),
     dataIntegration: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.dataIntegration),
     subscriptionDirect:
+      !IS_IOS &&
       process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" &&
       isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.subscriptionDirect),
     display: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.display),
@@ -2279,7 +2289,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // Field bug fix (iOS TestFlight, sanitizeSecret.ts's own doc):
       // strip pasted zero-width chars + trim whitespace from every
       // SECRET_NAMES field at this same save boundary — mirrors
-      // normalizeBaseUrl above, just for the seven secret-shaped fields
+      // normalizeBaseUrl above, just for each allowed secret-shaped field
       // instead of baseUrl.
       apiKey: sanitizeSecretValue(draft.apiKey),
       hfToken: sanitizeSecretValue(draft.hfToken),
@@ -2287,6 +2297,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       deepgramKey: sanitizeSecretValue(draft.deepgramKey),
       elevenLabsKey: sanitizeSecretValue(draft.elevenLabsKey),
       deeplKey: sanitizeSecretValue(draft.deeplKey),
+      youdaoAppKey: sanitizeSecretValue(draft.youdaoAppKey),
+      youdaoAppSecret: sanitizeSecretValue(draft.youdaoAppSecret),
       agentToken: sanitizeSecretValue(draft.agentToken),
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
@@ -4631,6 +4643,66 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </div>
                 </div>
               )}
+              {/* 有道 API Key (v0.7.1 translation train-2): engine-
+                 conditional, mirrors the DeepL block immediately above —
+                 same hand-rolled masked-input pattern, same S14 no-probe
+                 KeyStatusChip honesty (no telemetry/health probe exists
+                 for 有道 either). Two credentials instead of one — the
+                 chip reads BOTH (a lone appKey or appSecret still isn't
+                 usable). youdaoAppKey/youdaoAppSecret already ride
+                 toSave's sanitize list. */}
+              {draft.translateEngine === "youdao" && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs text-mut">有道 应用ID / 应用密钥</label>
+                    <KeyStatusChip
+                      status={deriveKeyStatus(draft.youdaoAppKey && draft.youdaoAppSecret ? draft.youdaoAppKey : "")}
+                    />
+                  </div>
+                  <div className="mt-1">
+                    <input
+                      type="text"
+                      value={draft.youdaoAppKey}
+                      onChange={(e) => patch({ youdaoAppKey: e.target.value })}
+                      placeholder="应用ID"
+                      className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                  </div>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <input
+                      type={showYoudaoAppSecret ? "text" : "password"}
+                      value={draft.youdaoAppSecret}
+                      onChange={(e) => patch({ youdaoAppSecret: e.target.value })}
+                      placeholder="应用密钥"
+                      className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowYoudaoAppSecret((v) => !v)}
+                      aria-label={showYoudaoAppSecret ? "隐藏" : "显示"}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {showYoudaoAppSecret ? (
+                        <EyeSlash size={18} weight="regular" />
+                      ) : (
+                        <Eye size={18} weight="regular" />
+                      )}
+                    </button>
+                  </div>
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    ① 在{" "}
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://ai.youdao.com")}
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      ai.youdao.com
+                    </button>{" "}
+                    注册并登录控制台 ② 创建应用：服务选「文本翻译」、接入方式选「API」 ③
+                    在应用总览复制「应用ID」和「应用密钥」填入。英译中约 ¥48/百万字符，新用户体验金即可试用。
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 背景画像 (#48 step 3, design Q5): opt-in — default off.
@@ -5575,6 +5647,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
              comment on that boundary). #62: advanced-only, AND-ed with
              the build flag above. */}
           {activeCategory === "subscriptionDirect" &&
+            !IS_IOS &&
             process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" &&
             isSectionVisible(level, SETTINGS_UI_LEVELS.subscriptionDirect) && (
             <section

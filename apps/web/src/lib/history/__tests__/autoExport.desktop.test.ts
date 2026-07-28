@@ -28,6 +28,8 @@ const SECRET_NAMES = [
   "elevenLabsKey",
   "agentToken",
   "deeplKey",
+  "youdaoAppKey",
+  "youdaoAppSecret",
 ] as const;
 type SecretName = (typeof SECRET_NAMES)[number];
 
@@ -71,6 +73,8 @@ function keyedSettings(overrides: Partial<Settings> = {}): Settings {
     deepgramKey: "deepgram-secret",
     elevenLabsKey: "elevenlabs-secret",
     deeplKey: "deepl-secret",
+    youdaoAppKey: "youdao-key-secret",
+    youdaoAppSecret: "youdao-secret-secret",
     agentToken: "agent-secret",
     ...overrides,
   };
@@ -143,7 +147,7 @@ describe("buildFullBackup — desktop keychain overlay (v0.5.1)", () => {
 });
 
 describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
-  it("routes every non-empty apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/deeplKey to the Keychain and blanks them on the object that gets saved to IDB; also deletes any stale Keychain agentToken (F6 fix, keychain-custody fix round)", async () => {
+  it("routes every non-empty apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/deeplKey/youdaoAppKey/youdaoAppSecret to the Keychain and blanks them on the object that gets saved to IDB; also deletes any stale Keychain agentToken (F6 fix, keychain-custody fix round)", async () => {
     const storage = await import("../storage");
     const saveSpy = vi.spyOn(storage, "saveSettings");
     const autoExport = await import("../autoExport");
@@ -164,6 +168,8 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
     expect(mockWriteSecret).toHaveBeenCalledWith("deepgramKey", "deepgram-secret");
     expect(mockWriteSecret).toHaveBeenCalledWith("elevenLabsKey", "elevenlabs-secret");
     expect(mockWriteSecret).toHaveBeenCalledWith("deeplKey", "deepl-secret");
+    expect(mockWriteSecret).toHaveBeenCalledWith("youdaoAppKey", "youdao-key-secret");
+    expect(mockWriteSecret).toHaveBeenCalledWith("youdaoAppSecret", "youdao-secret-secret");
     // F6 fix: agentToken is force-cleared in the BLOB by
     // sanitizeRestoredSettings (never a non-empty value to route the
     // ordinary way above), but a stale Keychain entry from an earlier
@@ -177,6 +183,8 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
     expect(saved.deepgramKey).toBe("");
     expect(saved.elevenLabsKey).toBe("");
     expect(saved.deeplKey).toBe("");
+    expect(saved.youdaoAppKey).toBe("");
+    expect(saved.youdaoAppSecret).toBe("");
     expect(saved.agentToken).toBe(""); // sanitizeRestoredSettings' own force-clear
     expect(saved.secretDeletePending).toEqual([]); // every routed name (including agentToken) resolved cleanly
 
@@ -184,6 +192,8 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
     expect(keychain.get("hfToken")).toBe("hf-secret");
     expect(keychain.get("elevenLabsKey")).toBe("elevenlabs-secret");
     expect(keychain.get("deeplKey")).toBe("deepl-secret");
+    expect(keychain.get("youdaoAppKey")).toBe("youdao-key-secret");
+    expect(keychain.get("youdaoAppSecret")).toBe("youdao-secret-secret");
     expect(keychain.has("agentToken")).toBe(false); // the stale entry is now actually gone
   });
 
@@ -226,6 +236,8 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
     expect(mockWriteSecret).not.toHaveBeenCalledWith("deepgramKey", expect.anything());
     expect(mockWriteSecret).not.toHaveBeenCalledWith("elevenLabsKey", expect.anything());
     expect(mockWriteSecret).not.toHaveBeenCalledWith("deeplKey", expect.anything());
+    expect(mockWriteSecret).not.toHaveBeenCalledWith("youdaoAppKey", expect.anything());
+    expect(mockWriteSecret).not.toHaveBeenCalledWith("youdaoAppSecret", expect.anything());
     // F6 fix: attempted regardless of what the rest of the backup contains.
     expect(mockWriteSecret).toHaveBeenCalledWith("agentToken", "");
   });

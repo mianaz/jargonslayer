@@ -119,15 +119,17 @@ describe("TranslationEngineRow (iOS build)", () => {
   // Wave-2B reorder — mirrors TranslationEngineRow.desktop.test.tsx's own
   // coverage (this file dispatches to the SAME DesktopTranslationEngineRow
   // function, just with IS_IOS mocked true instead of IS_DESKTOP).
-  it("renders all three options, in system/deepl/llm order; deepl stays enabled regardless of deeplKey presence", async () => {
+  it("renders all four options, in system/deepl/youdao/llm order; deepl and 有道 both stay enabled regardless of key presence", async () => {
     probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
     const el = mount({ value: "llm", onChange: () => {}, langPair });
     await flush();
 
     const values = Array.from(select(el).querySelectorAll("option")).map((o) => (o as HTMLOptionElement).value);
-    expect(values).toEqual(["system", "deepl", "llm"]);
+    expect(values).toEqual(["system", "deepl", "youdao", "llm"]);
     const deeplOption = select(el).querySelector('option[value="deepl"]') as HTMLOptionElement;
     expect(deeplOption.disabled).toBe(false);
+    const youdaoOption = select(el).querySelector('option[value="youdao"]') as HTMLOptionElement;
+    expect(youdaoOption.disabled).toBe(false);
   });
 
   it("llm inline latency warning shows only while llm is the selected value", async () => {
