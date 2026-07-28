@@ -610,7 +610,7 @@
     <span class="tl-dot g"></span>
   </div>
   <div class="tl-path">
-    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>web · desktop · extension
+    <span class="seg-strong">mianaz/jargonslayer</span><span class="sep">—</span>web · desktop · iOS · extension
   </div>
   <div class="tl-spacer"></div>
   <button class="lang-toggle" id="langToggle" type="button" aria-label="切换语言 / switch language">中 / EN</button>
@@ -777,10 +777,10 @@
       </div>
 
       <div class="feat c-yellow reveal">
-        <div class="feat-key">apple on-device translation (desktop, v0.6.0)</div>
+        <div class="feat-key">apple on-device translation (desktop + iOS, v0.6.0)</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>Apple 系统翻译（桌面版，macOS 26+）</b>：翻译引擎新增一项——跑在 macOS 系统翻译框架上，完全本机处理，不需要配置 API Key，文本不出这台 Mac。</span>
-          <span class="lang-en"><b>Apple on-device translation (desktop, macOS 26+)</b>: a new translation engine option running on macOS's own translation framework, fully local — no API key required, and text never leaves the Mac.</span>
+          <span class="lang-zh"><b>Apple 系统翻译（桌面版 macOS 26+ / iOS 26+）</b>：翻译引擎新增一项——跑在系统翻译框架上，完全本机处理，不需要配置 API Key，文本不出设备。</span>
+          <span class="lang-en"><b>Apple on-device translation (desktop macOS 26+ / iOS 26+)</b>: a new translation engine option running on the system's own translation framework, fully local — no API key required, and text never leaves the device.</span>
         </div>
       </div>
 
@@ -795,16 +795,16 @@
       <div class="feat c-orange reveal">
         <div class="feat-key">expression detection</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>实时表达检测</b>：LLM 结合前后语境判断，只解释"字面意思 ≠ 实际意思"的表达，专有名词/缩写单独成术语条。内置词典（650+ 条、14 个主题包，含医药生物科技、统计学、机器学习、生物信息学）是始终在线的即时底层——命中立刻出卡，AI 再就地升级解释；关掉 AI 就是纯离线模式，还能从 GitHub 安装社区词典包，也能自己建多个自定义命名词包分开管理。解释语言可切中文或英文。</span>
-          <span class="lang-en"><b>Real-time expression detection</b>: an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether <i>table this</i> means shelving a topic or furniture); proper nouns get separate term cards. A built-in dictionary (650+ entries, 14 topic packs incl. pharma/biotech, statistics, ML and bioinformatics) is the always-on instant layer — hits render immediately and the AI upgrades them in place; with AI off it works fully offline. Community packs install from GitHub, and you can also create your own named custom packs to keep topics separate.</span>
+          <span class="lang-zh"><b>实时表达检测</b>：LLM 结合前后语境判断，只解释"字面意思 ≠ 实际意思"的表达，专有名词/缩写单独成术语条。内置词典（650+ 条、14 个主题包，含医药生物科技、统计学、机器学习、生物信息学）是始终在线的即时底层——命中立刻出卡，AI 再就地升级解释；关掉 AI 就是纯离线模式（v0.6 起词典模式已是默认检测方式，AI 模式转为可选 Beta），还能从 GitHub 安装社区词典包，也能自己建多个自定义命名词包分开管理。解释语言可切中文或英文。</span>
+          <span class="lang-en"><b>Real-time expression detection</b>: an LLM uses surrounding context to explain only what "literal ≠ actual" (it can tell whether <i>table this</i> means shelving a topic or furniture); proper nouns get separate term cards. A built-in dictionary (650+ entries, 14 topic packs incl. pharma/biotech, statistics, ML and bioinformatics) is the always-on instant layer — hits render immediately and the AI upgrades them in place; with AI off it works fully offline (as of v0.6, dictionary mode is the default — AI mode is now opt-in beta). Community packs install from GitHub, and you can also create your own named custom packs to keep topics separate.</span>
         </div>
       </div>
 
       <div class="feat c-green reveal">
         <div class="feat-key">dictionary pack catalog, multi-sense ranking (v0.6.0)</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>词典包目录 · 多义词排序</b>：设置里可从官方目录一键安装 6 个专业词典包——医学、生物医药、AI/ML、法律、金融商务、工程计算机，共 4300+ 词条；也能从文件或 GitHub 链接导入第三方包，已装的包每天自动检查更新。内置词典另新增三个通用包共 271 条：新兴用法（harness、agent、RAG…）、钱与福利（保险/薪酬/股权）、日常口语与俗语。多义词按语境排序——像 EMT 这种在不同领域含义不同的词，会自动把当前会议最可能的解释排前面。词典包目录见 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>。</span>
-          <span class="lang-en"><b>Dictionary pack catalog · multi-sense ranking</b>: install 6 specialized packs from the official catalog in Settings — medicine, biopharma, AI/ML, law, finance, engineering — 4,300+ terms total; import third-party packs from a file or GitHub link too, and installed packs auto-check for updates daily. Three new built-in general packs add 271 more terms: emerging usage (harness, agent, RAG…), money &amp; benefits, and everyday idioms &amp; slang. Multi-sense terms now sort by context — a word like EMT that means different things in different fields gets the most likely definition for the current meeting ranked first. Catalog: <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>.</span>
+          <span class="lang-zh"><b>词典包目录 · 多义词排序</b>：设置里可从官方目录一键安装 6 个专业词典包——医学、生物医药、AI/ML、法律、金融商务、工程计算机，共 4300+ 词条；也能从文件或 GitHub 链接导入第三方包，已装的包每天自动检查更新。内置词典另新增三个通用包共 271 条：新兴用法（harness、agent、RAG…）、钱与福利（保险/薪酬/股权）、日常口语与俗语。多义词按语境排序——像 EMT 这种在不同领域含义不同的词，会自动把当前会议最可能的解释排前面。变体匹配（85 条）能识别屈折和近似形式，例如词典收录 <i>keep the ball rolling</i>，说话人说了 <i>get the ball rolling</i> 同样命中。词典包目录见 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>。</span>
+          <span class="lang-en"><b>Dictionary pack catalog · multi-sense ranking</b>: install 6 specialized packs from the official catalog in Settings — medicine, biopharma, AI/ML, law, finance, engineering — 4,300+ terms total; import third-party packs from a file or GitHub link too, and installed packs auto-check for updates daily. Three new built-in general packs add 271 more terms: emerging usage (harness, agent, RAG…), money &amp; benefits, and everyday idioms &amp; slang. Multi-sense terms now sort by context — a word like EMT that means different things in different fields gets the most likely definition for the current meeting ranked first. Variant matching (85 entries) catches inflected and alternate forms — <i>get the ball rolling</i> matches <i>keep the ball rolling</i>. Catalog: <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>.</span>
         </div>
       </div>
 
@@ -859,8 +859,8 @@
       <div class="feat c-red reveal">
         <div class="feat-key">learning center</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>学习闭环</b>：卡片上点「太简单 / 别再提示」，认识的词不再打扰（带撤销和 90 天回炉防误标）；<code>/review</code> 新增到期复习（不认识 / 模糊 / 认识三档评分，SM-2 间隔排期）+ 已知词管理，翻卡浏览、统计、词云照常可用；个人词典纳入后续会议检测。</span>
-          <span class="lang-en"><b>Learning loop</b>: mark a card 太简单/别再提示 and known terms stop surfacing (with undo + a 90-day refresher); <code>/review</code> adds due-driven spaced repetition (three-grade SM-2 scheduling) and a known-words list beside browsing, stats, and the word cloud; your glossary still feeds detection.</span>
+          <span class="lang-zh"><b>学习闭环</b>：卡片上点「太简单 / 别再提示」，认识的词不再打扰（带撤销和 90 天回炉防误标）；<code>/review</code> 新增到期复习（不认识 / 模糊 / 认识三档评分，SM-2 间隔排期）+ 已知词管理，翻卡浏览、统计、词云照常可用；个人词典已并入学习中心，纳入后续会议检测。</span>
+          <span class="lang-en"><b>Learning loop</b>: mark a card 太简单/别再提示 and known terms stop surfacing (with undo + a 90-day refresher); <code>/review</code> adds due-driven spaced repetition (three-grade SM-2 scheduling) and a known-words list beside browsing, stats, and the word cloud; your glossary — now part of the learning center — still feeds detection.</span>
         </div>
       </div>
 

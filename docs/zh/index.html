@@ -949,7 +949,7 @@ npm run build</code></pre>
           <tr><td>PWA 安装</td><td>可用</td><td>使用已有 manifest 和图标</td></tr>
           <tr><td>macOS 桌面版（Tauri）</td><td>可用</td><td>签名并公证的 DMG，见 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>；仅 Apple Silicon，无 Intel 版本</td></tr>
           <tr><td>Chrome 插件（Lite）</td><td>可用，手动加载</td><td>zip 在 releases 页面；暂不上架网上应用店，手动加载即正式安装方式</td></tr>
-          <tr><td>iOS / iPadOS（测试版）</td><td>TestFlight 邀请制</td><td>需要时联系作者获取邀请；iOS 26+，系统语音识别在设备本地转录。Android 与商店上架暂无计划，PWA 已覆盖主要移动场景</td></tr>
+          <tr><td>iOS / iPadOS（测试版）</td><td>TestFlight 邀请制</td><td>需要时联系作者获取邀请；iOS 26+，系统语音识别在设备本地转录，系统翻译引擎在设备本地翻译（Apple 翻译，无需 Key）。Android 与商店上架暂无计划，PWA 已覆盖主要移动场景</td></tr>
         </tbody>
       </table>
       <p>预览部署使用 <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>。默认构建是完整本地优先构建。</p>
@@ -1011,11 +1011,19 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>崩溃恢复：</strong>会议实时写自动草稿，页面刷新或浏览器崩溃后，历史里一键「恢复到历史记录」。</li>
         <li><strong>划词解释后台生成：</strong>选中文本的解释在后台完成、自动并入卡片列表，关掉弹窗也不会丢。</li>
         <li><strong>导出与联动：</strong>新增 docx 导出；AnkiConnect 一键把生词卡同步进本地 Anki（自动去重）；个人词典可拆成多个自定义命名词包。</li>
-        <li><strong>翻译引擎可选：</strong>双语字幕和全文翻译默认用 LLM，Chrome 138+ 可切到浏览器内置的本地翻译（免 Key）；桌面版现在还能选 Apple 系统翻译（macOS 26+），同样本机运行、免 Key。</li>
+        <li><strong>翻译引擎可选：</strong>双语字幕和全文翻译默认用 LLM，Chrome 138+ 可切到浏览器内置的本地翻译（免 Key）；桌面版和 iOS 版现在还能选 Apple 系统翻译（macOS 26+ / iOS 26+），同样本机运行、免 Key。</li>
         <li><strong>Deepgram 云端识别（BYOK，英文）：</strong>新增一个纯英文场景的云端识别引擎选项。</li>
         <li><strong>在线体验的限量试用：</strong>内置 Soniox 云端识别限量试用（免 Key，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得）；标签页音频回归在线体验，走同一试用额度。</li>
       </ol>
       <p>外观体系随后扩展——见<a href="#appearance">外观</a>：再加两套内置主题（共九套）、带实时对比度提示和 JSON 导入导出的自定义主题编辑器、界面字体与等宽字体的独立选择器，以及可选的毛玻璃浮层。</p>
+      <p>v0.6 已上线：</p>
+      <ol>
+        <li><strong>词典包扩展——17 包、上千词条：</strong>内置词典扩充到 17 个主题包，多义词按会议语境排序；新增变体匹配（85 条），能识别词条的屈折变化和近似形式——词典收录的是 <i>get the ball rolling</i>，说话人说成 <i>keep the ball rolling</i> 同样命中。</li>
+        <li><strong>Apple 系统翻译扩展到 iOS：</strong>原先仅桌面版可用的 Apple 翻译引擎，现在也跑在 iOS 26+ 上——完全本机处理，不需要 API Key，文本不出设备。</li>
+        <li><strong>iOS 版进入 TestFlight 内测：</strong>JargonSlayer 的 iOS 版现已通过 TestFlight 开放内测（受邀制，iOS 26+），系统语音识别和 Apple 翻译都在手机本地运行。</li>
+        <li><strong>手机主界面重构：</strong>转录占满手机主屏，解释卡片收进底部一条可左右滑动的卡片条——最新卡在最左，点转录里的高亮词直接跳到对应卡片。</li>
+        <li><strong>词典模式成为默认：</strong>新安装默认进入词典模式——内置词典即时检测、完全离线的底座；AI 模式转为可选的 Beta。</li>
+      </ol>
       <p><strong>说明：</strong>Chrome 插件以 releases 页面的 zip 分发，手动加载安装；暂无网上应用店上架计划。</p>
       <p>暂缓项：浏览器端 Whisper 实时流、划词联网搜索。</p>
     </section>

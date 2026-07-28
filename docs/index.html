@@ -974,7 +974,7 @@ npm run build</code></pre>
           <tr><td>PWA install</td><td>Available</td><td>Uses existing manifest and icons</td></tr>
           <tr><td>macOS desktop app (Tauri)</td><td>Available</td><td>Signed, notarized DMG on <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>; Apple Silicon only, no Intel build</td></tr>
           <tr><td>Chrome extension (Lite)</td><td>Available, load-unpacked</td><td>Zip on releases; load-unpacked is the supported path (no Web Store listing for now)</td></tr>
-          <tr><td>iOS / iPadOS (beta)</td><td>TestFlight, by invite</td><td>Get in touch for an invite; iOS 26+, on-device system speech recognition. No Android or store listing planned — the PWA covers most mobile use cases</td></tr>
+          <tr><td>iOS / iPadOS (beta)</td><td>TestFlight, by invite</td><td>Get in touch for an invite; iOS 26+, on-device system speech recognition, on-device system translation (Apple Translation, no key required). No Android or store listing planned — the PWA covers most mobile use cases</td></tr>
         </tbody>
       </table>
       <p>Preview deployments use <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>. The default build is the full local-first build.</p>
@@ -1036,11 +1036,19 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Crash recovery:</strong> the meeting is auto-drafted in real time; after a page refresh or a browser crash, history offers a one-click 「恢复到历史记录」 restore.</li>
         <li><strong>Background term lookup:</strong> a selection lookup's explanation keeps generating in the background and lands in the card list even if you close the popup.</li>
         <li><strong>Exports and integrations:</strong> a new docx export; AnkiConnect syncs new cards into your local Anki in one click with dedup; the personal glossary can split into multiple named custom packs.</li>
-        <li><strong>Translation engine choice:</strong> bilingual subtitles and full-transcript translation default to the LLM; Chrome 138+ can switch to the browser's built-in on-device translator instead (no key required). The desktop app now also offers Apple's on-device translation (macOS 26+), another local, key-free option.</li>
+        <li><strong>Translation engine choice:</strong> bilingual subtitles and full-transcript translation default to the LLM; Chrome 138+ can switch to the browser's built-in on-device translator instead (no key required). The desktop and iOS apps now also offer Apple's on-device translation (macOS 26+ / iOS 26+), another local, key-free option.</li>
         <li><strong>Deepgram cloud recognition (BYOK, English):</strong> a new cloud STT engine option for English-only meetings.</li>
         <li><strong>Hosted preview's limited trial:</strong> a built-in Soniox cloud-recognition trial (no key, up to 3 clips per person per day, ~10 minutes max per clip, shared first-come quota); tab audio is back in the hosted preview on the same trial quota.</li>
       </ol>
       <p>The appearance system has since expanded — see <a href="#appearance">Appearance</a>: two more built-in themes (nine total), a custom theme editor with live contrast hints and JSON import/export, separate UI and monospace font pickers, and an optional frosted-glass overlay.</p>
+      <p>v0.6 has since shipped:</p>
+      <ol>
+        <li><strong>Dictionary packs — 17 packs, 1,000+ entries:</strong> the built-in dictionary grew to 17 packs with multi-sense ranking that sorts definitions by meeting context. Variant matching (85 entries) catches inflected and alternate forms — say <i>keep the ball rolling</i> and the dictionary's <i>get the ball rolling</i> still hits.</li>
+        <li><strong>Apple on-device translation on iOS:</strong> the Apple Translation engine, previously desktop-only, now runs on iOS 26+ as well — fully on-device, no API key, text never leaves the device.</li>
+        <li><strong>iOS enters TestFlight beta:</strong> JargonSlayer is now available on iOS through TestFlight (by invite, iOS 26+). On-device system speech recognition and Apple Translation both run locally on the phone.</li>
+        <li><strong>Mobile main-screen redesign:</strong> the transcript now fills the phone screen, with explanation cards in a swipeable bottom strip — newest on the left, tap a highlighted term to jump to its card.</li>
+        <li><strong>Dictionary mode is now the default:</strong> new installs start in dictionary mode (the always-on, fully offline detection layer); AI mode moves to opt-in beta.</li>
+      </ol>
       <p><strong>Note:</strong> the extension ships as a zip on releases and installs via load-unpacked; there is no Chrome Web Store listing planned for now.</p>
       <p>Parked items include browser-Whisper realtime streaming and select-to-web-search.</p>
     </section>
