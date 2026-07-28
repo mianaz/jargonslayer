@@ -235,16 +235,20 @@ async function translateOneWithYoudao(
 
   const code = body.errorCode ?? "";
   if (code === "0") {
-    // F1 fix (v0.7.1 train-2 adversarial review): errorCode "0" ("成功")
-    // with a missing/empty translation[0] is 有道 lying about success —
-    // treated as an ordinary item failure (throws) so gapfill.ts's
-    // retry-then-giveUp semantics take over, instead of silently
-    // resolving "" (which reads as untranslated forever and — pre-fix —
-    // spun gapfill.ts into re-selecting/re-billing the same batch
-    // endlessly).
-    const text = body.translation?.[0];
-    if (text) return text;
-    throw new Error("有道翻译返回空结果");
+    // R2-4 fix (v0.7.1 train-2 round-2 review, REVERTING the round-1 F1
+    // "throw on empty" change below): errorCode "0" ("成功") with a
+    // missing/empty translation[0] resolves to "" here, PER-ITEM.
+    // Throwing used to reject the WHOLE Promise.all in translate()
+    // below on just one empty item, discarding up to 5 OTHER valid
+    // results in the same batch and re-billing all 6 on gapfill.ts's
+    // retry — a bigger amplification than the empty-result problem it
+    // was meant to fix. The actual root-fix for that infinite-loop risk
+    // lives in gapfill.ts instead (its own F1: any id that lands ""
+    // is quarantined into giveUpIds and never re-selected/re-billed) —
+    // the live queue already tolerates a "" translation the same way
+    // for every other engine, so this is no less safe than any other
+    // provider's own soft-empty result.
+    return body.translation?.[0] ?? "";
   }
   if (YOUDAO_NOKEY_CODES.has(code)) throw new NoKeyError();
   if (YOUDAO_RATE_LIMIT_CODES.has(code)) throw new RateLimitApiError();
@@ -272,9 +276,12 @@ export class YoudaoTranslationProvider implements TranslationProvider {
     const to = youdaoLangCode(lang);
 
     // One request per item, in parallel — a single item's NoKeyError/
-    // RateLimitApiError fails the whole batch (Promise.all rejects on
-    // the first rejection), same failed-soft-at-the-batch-level contract
-    // as every other provider's own thrown errors.
+    // RateLimitApiError still fails the whole batch (Promise.all rejects
+    // on the first rejection), same failed-soft-at-the-batch-level
+    // contract as every other provider's own thrown errors. An empty
+    // ("成功" with no text) result does NOT reject, though (R2-4 fix
+    // above) — it resolves "" in its own positional slot, same as any
+    // other item.
     const results = await Promise.all(items.map((it) => translateOneWithYoudao(it.text, { appKey, appSecret, from, to })));
     return items.map((it, i) => ({ id: it.id, text: results[i] }));
   }

@@ -255,31 +255,68 @@ describe("YoudaoTranslationProvider", () => {
       await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(Error);
     });
 
-    // F1(a) fix (v0.7.1 train-2 adversarial review): errorCode "0" with
-    // a missing/empty translation[0] used to silently resolve "" — a
-    // permanently-empty "translation" that gapfill.ts's outer loop had
-    // no way to distinguish from "still pending", spinning it into an
-    // infinite re-fetch (and re-bill) loop. Must now throw instead, so
-    // it fails this item like any other provider error.
-    it("errorCode '0' with an empty translation array -> generic Error, not a resolved ''", async () => {
+    // R2-4 fix (v0.7.1 train-2 round-2 review, REVERTING the round-1
+    // F1(a) "throw on empty" change these three tests used to pin):
+    // errorCode "0" with a missing/empty translation[0] resolves ''
+    // PER-ITEM instead — throwing here rejected the WHOLE Promise.all in
+    // translate() on just one empty item, discarding up to 5 other valid
+    // results in the same batch and re-billing all 6 on gapfill.ts's
+    // retry. The actual infinite-loop root-fix now lives in gapfill.ts
+    // itself (its own F1: an id landing '' is quarantined, never
+    // re-selected) — see gapfill.test.ts's own F1 test.
+    it("errorCode '0' with an empty translation array -> resolves '' for that item", async () => {
       setTransport(vi.fn().mockResolvedValue(jsonResponse({ errorCode: "0", translation: [] })));
       const provider = new YoudaoTranslationProvider(() => settingsWithKeys());
 
-      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toThrow("有道翻译返回空结果");
+      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).resolves.toEqual([
+        { id: "1", text: "" },
+      ]);
     });
 
-    it("errorCode '0' with translation[0] === '' -> generic Error, not a resolved ''", async () => {
+    it("errorCode '0' with translation[0] === '' -> resolves '' for that item", async () => {
       setTransport(vi.fn().mockResolvedValue(jsonResponse({ errorCode: "0", translation: [""] })));
       const provider = new YoudaoTranslationProvider(() => settingsWithKeys());
 
-      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toThrow("有道翻译返回空结果");
+      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).resolves.toEqual([
+        { id: "1", text: "" },
+      ]);
     });
 
-    it("errorCode '0' with translation missing entirely -> generic Error, not a resolved ''", async () => {
+    it("errorCode '0' with translation missing entirely -> resolves '' for that item", async () => {
       setTransport(vi.fn().mockResolvedValue(jsonResponse({ errorCode: "0" })));
       const provider = new YoudaoTranslationProvider(() => settingsWithKeys());
 
-      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toThrow("有道翻译返回空结果");
+      await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).resolves.toEqual([
+        { id: "1", text: "" },
+      ]);
+    });
+
+    // R2-4 regression coverage: one empty item must NOT drag down the
+    // rest of the same batch (the exact amplification bug this fix
+    // closes) — mirrors the "one item's NoKeyError fails the WHOLE
+    // batch" test below, but for the non-throwing empty case.
+    it("one item's empty result does NOT fail the rest of the batch", async () => {
+      const mockTransport = vi.fn().mockImplementation((_url: string, init: { body: URLSearchParams }) => {
+        const q = init.body.get("q");
+        return Promise.resolve(
+          q === "empty" ? jsonResponse({ errorCode: "0", translation: [] }) : jsonResponse({ errorCode: "0", translation: [`zh:${q}`] }),
+        );
+      });
+      setTransport(mockTransport);
+      const provider = new YoudaoTranslationProvider(() => settingsWithKeys());
+
+      const result = await provider.translate(
+        [
+          { id: "a", text: "good" },
+          { id: "b", text: "empty" },
+        ],
+        "zh",
+      );
+
+      expect(result).toEqual([
+        { id: "a", text: "zh:good" },
+        { id: "b", text: "" },
+      ]);
     });
 
     it("one item's NoKeyError fails the WHOLE batch (Promise.all propagation)", async () => {

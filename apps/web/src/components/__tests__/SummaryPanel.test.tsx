@@ -222,6 +222,7 @@ describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
       terms: [],
       translations: { seg2: "已翻译。" },
       toast: null,
+      meetingGen: 0,
       saveCurrentSession: vi.fn(async () => "session-1"),
     });
     container = document.createElement("div");
@@ -244,6 +245,7 @@ describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
       segments: [],
       translations: {},
       toast: null,
+      meetingGen: 0,
       saveCurrentSession: REAL_SAVE_CURRENT_SESSION,
     });
   });
@@ -330,6 +332,33 @@ describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
 
     expect(downloadFileMock).toHaveBeenCalledTimes(1);
     expect(useApp.getState().toast).toEqual(expect.stringContaining("1 段未能翻译"));
+  });
+
+  // R2-1 fix (v0.7.1 train-2 round-2 review): loadSession/newMeeting
+  // landing WHILE runGapFill() is still in flight bumps meetingGen —
+  // exporting after that would carry a DIFFERENT session's transcript
+  // under this confirm's kind. runGapFillMock bumps meetingGen itself
+  // (simulating that race) right before resolving.
+  it("R2-1 fix: cancels the export and toasts when meetingGen changes mid gap-fill (cross-session)", async () => {
+    runGapFillMock.mockImplementation(async () => {
+      useApp.setState({ meetingGen: useApp.getState().meetingGen + 1 });
+      return { filled: 1, failed: 0, aborted: false };
+    });
+
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickButton(findButton("导出报告 .md"));
+    await flush();
+    await clickButton(container!.querySelector('[data-testid="export-gap-fill"]') as HTMLButtonElement);
+    await flush();
+
+    expect(runGapFillMock).toHaveBeenCalledTimes(1);
+    expect(downloadFileMock).not.toHaveBeenCalled();
+    expect(useApp.getState().toast).toEqual(expect.stringContaining("会话已切换"));
+    expect(container!.querySelector('[data-testid="export-gap-fill"]')).toBeNull(); // confirm closed
   });
 
   it("取消 closes the confirm without exporting or calling runGapFill", async () => {

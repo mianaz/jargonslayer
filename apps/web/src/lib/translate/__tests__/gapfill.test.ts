@@ -382,4 +382,137 @@ describe("gapfill — runGapFill / isGapFillRunning", () => {
 
     expect(stopSystemTranslatorMock).not.toHaveBeenCalled();
   });
+
+  it("R2-2 fix: does NOT tear down a system-kind provider when meetingGen changed mid-run (ownership moved to the newer flow)", async () => {
+    const segments = Array.from({ length: 12 }, () => makeSegment());
+    useApp.setState({ segments, meetingGen: 0 });
+    const translate = vi
+      .fn()
+      .mockImplementationOnce(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: `${it.text} 译` })),
+      )
+      .mockImplementationOnce(async (items: { id: string; text: string }[]) => {
+        // Simulates loadSession/newMeeting landing WHILE this batch's
+        // request is in flight — the newer flow now owns translator
+        // teardown for its own prepare() call.
+        useApp.setState({ meetingGen: 1 });
+        return items.map((it) => ({ id: it.id, text: `${it.text} 译` }));
+      });
+    installProvider(translate, vi.fn(), "system");
+
+    const result = await runGapFill();
+
+    expect(result.aborted).toBe(true);
+    expect(stopSystemTranslatorMock).not.toHaveBeenCalled();
+  });
+
+  it("R2-3 fix: an id edited mid-flight during an exhausted give-up retry escapes quarantine and is retried with its new text on the next pass", async () => {
+    const segA = makeSegment({ text: "A original" });
+    const segB = makeSegment({ text: "B original" });
+    useApp.setState({ segments: [segA, segB] });
+
+    let attempt = 0;
+    const translate = vi.fn().mockImplementation(async (items: { id: string; text: string }[]) => {
+      attempt++;
+      if (attempt <= 2) {
+        if (attempt === 2) {
+          // Concurrent edit lands DURING the exhausted (2nd) attempt,
+          // before it rejects — by the time the give-up path re-reads
+          // segments, segA's text has already diverged from what was
+          // sent.
+          useApp.setState({
+            segments: useApp
+              .getState()
+              .segments.map((s) => (s.id === segA.id ? { ...s, text: "A edited" } : s)),
+          });
+        }
+        throw new Error("boom");
+      }
+      // 3rd call: the NEXT loop pass, re-reading fresh gaps — only segA
+      // should still be open (segB was quarantined on give-up).
+      return items.map((it) => ({ id: it.id, text: `${it.text} 译` }));
+    });
+    installProvider(translate);
+
+    const result = await runGapFill();
+
+    expect(translate).toHaveBeenCalledTimes(3); // initial + 1 retry (both fail) + a fresh pass for the edited id alone
+    expect(translate.mock.calls[2][0]).toEqual([{ id: segA.id, text: "A edited" }]);
+    expect(result.failed).toBe(1); // only segB given up on
+    expect(result.filled).toBe(1); // segA translated with its NEW text
+    expect(useApp.getState().translations[segA.id]).toBe("A edited 译");
+    expect(useApp.getState().translations[segB.id]).toBeUndefined();
+  });
+
+  it("R2-6 fix: triggers an immediate saveCurrentSession when the run fills at least one gap and its own gen is still current", async () => {
+    useApp.setState({ segments: [makeSegment()] });
+    // vi.spyOn on an ALREADY-spied store method (leftover from an
+    // earlier test's own spyOn call, since zustand's merged state
+    // objects carry the spy function reference forward across
+    // setState() calls) returns that SAME mock with its prior call
+    // history intact rather than a fresh one — mockClear() gives this
+    // test its own clean count regardless.
+    const saveSpy = vi.spyOn(useApp.getState(), "saveCurrentSession");
+    saveSpy.mockClear();
+    const translate = vi
+      .fn()
+      .mockImplementation(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: `${it.text} 译` })),
+      );
+    installProvider(translate);
+
+    await runGapFill();
+
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("R2-6 fix: does NOT save when nothing was filled (all given up)", async () => {
+    useApp.setState({ segments: [makeSegment()] });
+    // vi.spyOn on an ALREADY-spied store method (leftover from an
+    // earlier test's own spyOn call, since zustand's merged state
+    // objects carry the spy function reference forward across
+    // setState() calls) returns that SAME mock with its prior call
+    // history intact rather than a fresh one — mockClear() gives this
+    // test its own clean count regardless.
+    const saveSpy = vi.spyOn(useApp.getState(), "saveCurrentSession");
+    saveSpy.mockClear();
+    const translate = vi
+      .fn()
+      .mockImplementation(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: "" })),
+      );
+    installProvider(translate);
+
+    await runGapFill();
+
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
+
+  it("R2-6 fix: does NOT save when meetingGen changed mid-run (ownership/persistence moved to the newer flow)", async () => {
+    const segments = Array.from({ length: 12 }, () => makeSegment());
+    useApp.setState({ segments, meetingGen: 0 });
+    // vi.spyOn on an ALREADY-spied store method (leftover from an
+    // earlier test's own spyOn call, since zustand's merged state
+    // objects carry the spy function reference forward across
+    // setState() calls) returns that SAME mock with its prior call
+    // history intact rather than a fresh one — mockClear() gives this
+    // test its own clean count regardless.
+    const saveSpy = vi.spyOn(useApp.getState(), "saveCurrentSession");
+    saveSpy.mockClear();
+    const translate = vi
+      .fn()
+      .mockImplementationOnce(async (items: { id: string; text: string }[]) =>
+        items.map((it) => ({ id: it.id, text: `${it.text} 译` })),
+      )
+      .mockImplementationOnce(async (items: { id: string; text: string }[]) => {
+        useApp.setState({ meetingGen: 1 });
+        return items.map((it) => ({ id: it.id, text: `${it.text} 译` }));
+      });
+    installProvider(translate);
+
+    const result = await runGapFill();
+
+    expect(result.aborted).toBe(true);
+    expect(saveSpy).not.toHaveBeenCalled();
+  });
 });

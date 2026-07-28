@@ -132,8 +132,21 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
     const kind = pendingExport;
     if (!kind) return;
     setGateBusy(true);
+    // R2-1 fix (v0.7.1 train-2 round-2 review): capture meetingGen BEFORE
+    // awaiting runGapFill() — loadSession/newMeeting landing while this
+    // await is in flight swaps segments/translations for a DIFFERENT
+    // meeting entirely, so exporting after that would carry the WRONG
+    // session's transcript under this confirm's kind. A rate-limit-
+    // budget (or any other) abort with an UNCHANGED gen still exports as
+    // before (the existing partial-fail toast below) — this only guards
+    // the cross-session case.
+    const gen = useApp.getState().meetingGen;
     try {
       const result = await runGapFill();
+      if (useApp.getState().meetingGen !== gen) {
+        showToast("会话已切换，导出已取消");
+        return;
+      }
       if (result.failed > 0 || result.aborted) {
         showToast(`${result.failed} 段未能翻译，已按现状导出`);
       }

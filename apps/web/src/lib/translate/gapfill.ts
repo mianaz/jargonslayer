@@ -49,9 +49,17 @@ export function runGapFill(): Promise<Result> {
   if (currentRun) return currentRun;
   const run = doRunGapFill();
   currentRun = run;
-  void run.finally(() => {
+  // R2-5 fix (v0.7.1 train-2 round-2 review): `void run.finally(...)`
+  // used to leave the cleanup chain's own rejection unobserved (a
+  // rejected `run` propagates through .finally()'s returned promise too)
+  // — Node/browser both surface that as an unhandled-rejection warning
+  // even though every real caller already awaits the ORIGINAL `run`
+  // returned below. `.catch(() => {})` on the cleanup chain specifically
+  // (not on `run` itself) observes that duplicate rejection without
+  // touching what callers actually see.
+  run.finally(() => {
     currentRun = null;
-  });
+  }).catch(() => {});
   return run;
 }
 
@@ -196,14 +204,39 @@ async function doRunGapFill(): Promise<Result> {
             retriedGeneric = true;
             continue;
           }
-          for (const s of batch) giveUpIds.add(s.id);
-          failed += batch.length;
+          // R2-3 fix (v0.7.1 train-2 round-2 review): re-read current
+          // text before quarantining — same F5 rule as the success path
+          // above. An id edited mid-flight (its current text no longer
+          // matches what THIS batch actually sent) must stay an
+          // ordinary gap so the next loop iteration retries the NEW
+          // text, instead of being permanently given up on for a
+          // failure that was really about stale wording. An id whose
+          // text is UNCHANGED still gets quarantined here — skipping
+          // those too would recreate the F1 infinite loop (a
+          // genuinely-failing id re-selected/re-billed forever).
+          const currentTextById = new Map(useApp.getState().segments.map((s) => [s.id, s.text]));
+          for (const s of batch) {
+            if (currentTextById.get(s.id) !== sentText.get(s.id)) continue; // edited — leave as a gap, retry next pass
+            giveUpIds.add(s.id);
+            failed += 1;
+          }
           break;
         }
       }
     }
 
-    if (genCurrent()) useApp.getState().setTranslateStatus(terminalStatus(filled));
+    if (genCurrent()) {
+      useApp.getState().setTranslateStatus(terminalStatus(filled));
+      // R2-6 fix (v0.7.1 train-2 round-2 review): the post-apply save
+      // everywhere else in this app is scheduleSessionSave's 1.5s
+      // debounce (store.ts) — which is SKIPPED entirely on a meetingGen
+      // change. If the user starts a new meeting within that window,
+      // this run's gap-filled translations would never be persisted to
+      // history at all. An immediate save here (bypassing the debounce)
+      // closes that window; gated on filled > 0 so a run that filled
+      // nothing (all failed/given up) doesn't force an extra write.
+      if (filled > 0) await useApp.getState().saveCurrentSession();
+    }
     return { filled, failed, aborted: false };
   } finally {
     // F8 fix: a native system-translation child spawned by prepare()
@@ -212,6 +245,15 @@ async function doRunGapFill(): Promise<Result> {
     // stop is scoped to the exact generation prepare() warmed. Only
     // reached when a provider was actually created (the no-gap early
     // return above skips this whole try block entirely).
-    if (provider.kind === "system") void stopSystemTranslator();
+    //
+    // R2-2 fix (v0.7.1 train-2 round-2 review): only fire the stop when
+    // THIS run's own gen is still current. If meetingGen has moved on
+    // (loadSession/newMeeting landed mid-run), translator ownership has
+    // already moved to that newer flow's own prepare()/stop() pair —
+    // this run's spawned session is superseded by the newer prepare()
+    // and gets torn down by THAT flow's own stop path instead; a
+    // bounded single-session leak at worst (if that newer stop somehow
+    // never fires), never a kill of the wrong (newer) child — deliberate.
+    if (provider.kind === "system" && genCurrent()) void stopSystemTranslator();
   }
 }
