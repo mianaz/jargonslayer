@@ -293,6 +293,15 @@ function GenerateCta() {
 
   const handleGenerate = async () => {
     setSummarizing(true);
+    // Fix round-8 (v0.7.1 train-2, MEDIUM): captured BEFORE firing the
+    // summarize request — same rationale as ExportRow's own
+    // handleExportAfterGapFill gen capture above. deleteSession bumps
+    // meetingGen + nulls activeSessionId synchronously the moment the
+    // loaded session is deleted from History; without this guard, a
+    // summarize response landing after that would unconditionally
+    // setSummary()+saveCurrentSession() with activeSessionId now null,
+    // minting a FRESH session id and resurrecting the deleted meeting.
+    const gen = useApp.getState().meetingGen;
     try {
       const res = await summarizeApi(
         {
@@ -307,6 +316,10 @@ function GenerateCta() {
         },
         settings,
       );
+      if (useApp.getState().meetingGen !== gen) {
+        showToast("会话已切换，报告未保存");
+        return;
+      }
       setSummary(res);
       // Bit celebration contract: store nonce (celebrateBit) → PixelDragon.
       useApp.getState().celebrateBit();
@@ -318,6 +331,9 @@ function GenerateCta() {
       const savedId = await saveCurrentSession();
       if (savedId !== null) showToast("报告已生成并保存");
     } catch (err) {
+      // Stale failure is noise once the session has already moved on —
+      // same gen check as the success path above, error-path mirror.
+      if (useApp.getState().meetingGen !== gen) return;
       if (err instanceof NoKeyError) {
         showToast("需要 API Key（右上角设置）才能生成报告");
       } else {

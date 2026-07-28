@@ -158,6 +158,38 @@ describe("SummaryPanel — Bit celebration on summary generation success (v0.5.1
     expect(useApp.getState().summary).toBeNull();
     expect(useApp.getState().bitCelebrateNonce).toBe(0);
   });
+
+  // Fix round-8 (v0.7.1 train-2 review, MEDIUM): deleteSession (round-7)
+  // bumps meetingGen + nulls activeSessionId SYNCHRONOUSLY the moment the
+  // loaded session is deleted from History. Simulated here by having the
+  // mocked summarizeApi itself perform that same bump before resolving —
+  // same "mock does the racing write" shape as the export-gate test file's
+  // own R2-1 fix test for runGapFillMock. Before this fix, the resolved
+  // handler unconditionally applied setSummary()+saveCurrentSession(),
+  // which would mint a FRESH session id and resurrect the deleted meeting.
+  it("round-8 fix: mid-generation session delete skips save/setSummary and toasts 会话已切换", async () => {
+    const saveCurrentSessionMock = vi.fn(async () => "session-1");
+    useApp.setState({ saveCurrentSession: saveCurrentSessionMock, toast: null });
+    summarizeApiMock.mockImplementation(async () => {
+      useApp.setState((s) => ({ meetingGen: s.meetingGen + 1, activeSessionId: null }));
+      return makeSummaryResult();
+    });
+
+    await act(async () => {
+      root!.render(<SummaryPanel />);
+    });
+    await flush();
+
+    await clickGenerate();
+    await flush();
+
+    expect(useApp.getState().summary).toBeNull();
+    expect(useApp.getState().bitCelebrateNonce).toBe(0);
+    expect(saveCurrentSessionMock).not.toHaveBeenCalled();
+    expect(useApp.getState().toast).toEqual(expect.stringContaining("会话已切换"));
+
+    useApp.setState({ meetingGen: 0, activeSessionId: null, toast: null });
+  });
 });
 
 // v0.7.1 Chamber C — export-path gate. md/docx/复制纪要 all carry the
