@@ -2770,17 +2770,37 @@ export const useApp = create<AppState>((set, get) => ({
     const saved = await storage.saveSession(session);
     if (!saved) {
       get().showToast("保存失败，会议草稿已保留");
+      // R4-2 fix: this entry already cleared the debounce timer above
+      // (R3-3), so a storage failure here must re-arm it — otherwise a
+      // completed gap-fill's translations exist only in memory and are
+      // lost on reload. Re-arming under genAtEntry (not the live gen)
+      // matches the reattach guard just below: if a newer meeting has
+      // since begun, scheduleSessionSave's own currentGen() check skips
+      // firing rather than re-saving the wrong meeting's live state. If
+      // the retry hits the same failure it re-arms once more — a hot
+      // loop capped at one attempt per 1.5s tick, same cadence as the
+      // pre-R3-3 debounce this replaces.
+      scheduleSessionSave(
+        () => get().saveCurrentSession(),
+        genAtEntry,
+        () => get().meetingGen,
+      );
       return null;
     }
     const metas = await storage.listSessions();
-    // R3-2 fix: skip the in-memory reattach entirely when a newer
-    // meeting has begun while the awaits above were pending — the
-    // storage write just above already landed and is correct/desired
-    // (the OLD session's data, persisted under the OLD id), only this
-    // setState (which would restore the OLD activeSessionId over the
-    // new meeting's cleared one) is poison.
+    // R3-2 fix, R4-1 refinement: `sessions: metas` is always safe (and
+    // required — otherwise a never-saved meeting that ends while the
+    // user has already navigated into a history session leaves the
+    // just-ended meeting missing from the History drawer until reload)
+    // — only `activeSessionId` is the poison. Skip JUST the reattach
+    // when a newer meeting has begun while the awaits above were
+    // pending — the storage write just above already landed and is
+    // correct/desired (the OLD session's data, persisted under the OLD
+    // id), only restoring the OLD activeSessionId over the new
+    // meeting's cleared one would be wrong.
+    set({ sessions: metas });
     if (get().meetingGen === genAtEntry) {
-      set({ sessions: metas, activeSessionId: session.id });
+      set({ activeSessionId: session.id });
     }
     // Crash/refresh recovery (v0.5 closeout): a meeting that ends
     // normally (this is the ONLY function that ever reaches "stopped"

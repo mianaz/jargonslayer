@@ -1555,7 +1555,8 @@ describe("saveCurrentSession — R3-2 fix: a late save must not reattach the old
     const saveSpy = vi.spyOn(storageModule, "saveSession").mockImplementation(
       () => new Promise((resolve) => { resolveSave = resolve; }),
     );
-    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    const endedMeta = { id: "old-session" } as ReturnType<typeof sessionToMeta>;
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([endedMeta]);
     vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
     useApp.setState({
       segments: [makeSegment({ id: "s1" })],
@@ -1582,6 +1583,10 @@ describe("saveCurrentSession — R3-2 fix: a late save must not reattach the old
     // reattach is poison.
     expect(saveSpy).toHaveBeenCalledTimes(1);
     expect(useApp.getState().activeSessionId).toBeNull();
+    // R4-1 fix: the sessions list refresh is NOT part of the poisoned
+    // reattach — the ended meeting must show up in the History drawer
+    // even though this save's gen is stale by the time it resolves.
+    expect(useApp.getState().sessions).toEqual([endedMeta]);
   });
 
   it("unchanged-gen path is untouched: still reattaches activeSessionId (and refreshes sessions) exactly as before", async () => {
@@ -1642,6 +1647,47 @@ describe("saveCurrentSession — R3-3 fix: an immediate save clears any pending 
 
     expect(saveSpy).toHaveBeenCalledTimes(1);
     expect(webhookSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("saveCurrentSession — R4-2 fix: a storage failure re-arms the debounced save (no silent translation loss)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("storage.saveSession fails once then succeeds — the re-armed debounce retries 1.5s later and persists", async () => {
+    const saveSpy = vi
+      .spyOn(storageModule, "saveSession")
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    vi.spyOn(liveDraftModule, "clearDraft").mockResolvedValue(undefined);
+
+    useApp.setState({
+      status: "stopped",
+      meetingGen: 1,
+      segments: [makeSegment({ id: "s1" })],
+      activeSessionId: null,
+      sessions: [],
+    });
+
+    const id = await useApp.getState().saveCurrentSession();
+
+    // R3-3's own timer-clear (this same entry) already ran; the failure
+    // path must re-arm it rather than dropping the retry on the floor.
+    expect(id).toBeNull();
+    expect(saveSpy).toHaveBeenCalledTimes(1);
+    expect(useApp.getState().activeSessionId).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(1500);
+
+    expect(saveSpy).toHaveBeenCalledTimes(2);
+    expect(useApp.getState().activeSessionId).not.toBeNull();
   });
 });
 
