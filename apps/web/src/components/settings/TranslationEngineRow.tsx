@@ -82,6 +82,29 @@ export default function TranslationEngineRow(props: TranslationEngineRowProps) {
 
 type Hint = "checking" | "no-api" | TranslatorAvailabilityState;
 
+// Wave-2B reorder (system/deepl/llm) — shared copy so neither variant's
+// <option> text nor the test files pinning it can drift out of sync
+// with each other (same "exported so a reword can't silently desync a
+// test" precedent as StatusLine.tsx's own DETECT_MODE_LABEL). The base
+// label is now platform-unified ("本机离线" is equally accurate for
+// Chrome's Translator API and Apple's native Translation framework —
+// both translate fully on-device, no server round trip) — only the
+// disabled-reason suffix still differs per platform/hint (appended by
+// each variant's own systemLabel below).
+const SYSTEM_TRANSLATE_BASE_LABEL = "系统翻译 · 本机离线";
+export const LLM_ENGINE_LABEL = "AI 模型翻译 · Beta（较慢，不建议实时使用）";
+export const LLM_TRANSLATE_WARNING =
+  "AI 模型逐段翻译要等一次完整模型往返，实时字幕通常慢 3–10 秒；建议只在系统翻译不可用时临时使用。";
+export const DEEPL_WEB_DISABLED_REASON = "浏览器版暂不支持 DeepL（跨域限制），请用 App";
+
+/** Rendered under the <select> whenever `llm` is the CURRENTLY SELECTED
+ *  value (on either platform variant) — real-time bilingual transcript
+ *  now defaults to the instant on-device engines, so picking the
+ *  full-model-roundtrip path needs an honest latency warning up front. */
+function LlmTranslateWarning() {
+  return <div className="mt-1.5 text-xs leading-[1.7] text-lab-yellow">{LLM_TRANSLATE_WARNING}</div>;
+}
+
 const POLL_INTERVAL_MS = 2000;
 // ponytail: a bounded poll (30 x 2s = 60s) refreshes the hint once a
 // download finishes, rather than wiring up Translator.create()'s
@@ -138,10 +161,10 @@ function WebTranslationEngineRow({ value, onChange, langPair }: TranslationEngin
   const systemUnavailable = hint === "no-api" || hint === "unavailable";
   const systemLabel =
     hint === "no-api"
-      ? "系统翻译（Chrome 内置·本机处理）— 当前浏览器不支持"
+      ? `${SYSTEM_TRANSLATE_BASE_LABEL} — 当前浏览器不支持`
       : hint === "unavailable"
-        ? "系统翻译（Chrome 内置·本机处理）— 当前语言组合不支持"
-        : "系统翻译（Chrome 内置·本机处理）";
+        ? `${SYSTEM_TRANSLATE_BASE_LABEL} — 当前语言组合不支持`
+        : `${SYSTEM_TRANSLATE_BASE_LABEL}（推荐）`;
 
   function handleDownloadClick() {
     // A6: MUST fire synchronously inside THIS click's own user gesture —
@@ -167,10 +190,17 @@ function WebTranslationEngineRow({ value, onChange, langPair }: TranslationEngin
         onChange={(e) => onChange(e.target.value as Settings["translateEngine"])}
         className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
       >
-        <option value="llm">AI 模型（默认）</option>
         <option value="system" disabled={systemUnavailable}>
           {systemLabel}
         </option>
+        {/* Cross-origin fetch from a plain browser tab can't reach DeepL's
+           API directly — always disabled here (this variant only ever
+           renders when NEITHER IS_DESKTOP nor IS_IOS, see the dispatcher
+           above), unlike the native variant below where it's un-gated. */}
+        <option value="deepl" disabled>
+          {`DeepL · 云端 — ${DEEPL_WEB_DISABLED_REASON}`}
+        </option>
+        <option value="llm">{LLM_ENGINE_LABEL}</option>
       </select>
       <div className="mt-1 text-xs leading-[1.7] text-mut2">
         系统翻译在本机处理，无需发送到任何服务器；AI 模型质量更高，但会将转录内容发送给你配置的服务
@@ -189,6 +219,7 @@ function WebTranslationEngineRow({ value, onChange, langPair }: TranslationEngin
           )}
         </div>
       )}
+      {value === "llm" && <LlmTranslateWarning />}
     </div>
   );
 }
@@ -242,9 +273,9 @@ function DesktopTranslationEngineRow({ value, onChange, langPair }: TranslationE
   const systemLabel =
     hint === "unsupported"
       ? IS_IOS
-        ? "系统翻译 · 本机离线 — 当前设备或语言组合不支持"
-        : "Apple 翻译 · 本机离线 — 需要 macOS 26 或更高版本"
-      : "Apple 翻译 · 本机离线";
+        ? `${SYSTEM_TRANSLATE_BASE_LABEL} — 当前设备或语言组合不支持`
+        : `${SYSTEM_TRANSLATE_BASE_LABEL} — 需要 macOS 26 或更高版本`
+      : `${SYSTEM_TRANSLATE_BASE_LABEL}（推荐）`;
 
   return (
     <div data-testid="translation-engine-row">
@@ -254,10 +285,14 @@ function DesktopTranslationEngineRow({ value, onChange, langPair }: TranslationE
         onChange={(e) => onChange(e.target.value as Settings["translateEngine"])}
         className="mt-1 w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
       >
-        <option value="llm">AI 模型（默认）</option>
         <option value="system" disabled={systemUnavailable}>
           {systemLabel}
         </option>
+        {/* Un-gated regardless of deeplKey presence on BOTH native
+           platforms — prompting for the actual key is the settings
+           field's own job (SettingsDialog.tsx), not this row's. */}
+        <option value="deepl">DeepL · 云端（需自备 Key）</option>
+        <option value="llm">{LLM_ENGINE_LABEL}</option>
       </select>
       <div className="mt-1 text-xs leading-[1.7] text-mut2">
         Apple 翻译完全在本机处理，无需 API Key，转录内容不会离开{IS_IOS ? "这台设备" : "这台 Mac"}；AI 模型质量更高，但会将转录内容发送给你配置的服务
@@ -270,6 +305,7 @@ function DesktopTranslationEngineRow({ value, onChange, langPair }: TranslationE
             : "该语言组合尚未下载，请前往 系统设置 → 通用 → 语言与地区 → 翻译语言 下载后使用"}
         </div>
       )}
+      {value === "llm" && <LlmTranslateWarning />}
     </div>
   );
 }

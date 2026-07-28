@@ -921,6 +921,235 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: Deepgram (v0.4.7 Lane D)
 });
 
 // ---------------------------------------------------------------
+// DeepL API Key (translation-rework wave 2): mirrors Soniox/Deepgram/
+// ElevenLabs' own conditional-key posture above field-for-field, just
+// keyed off draft.translateEngine (AI 检测's 翻译引擎 row) instead of
+// draft.engine (转录引擎's own cards) — so it lives on the AI 检测 nav
+// page, not 转录引擎.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — AI 检测 翻译引擎: DeepL API Key (translation-rework wave 2)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function clickAiDetectNav(): void {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("the DeepL API Key field is absent while translateEngine is system (default)", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, translateEngine: "system" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(container!.querySelector('input[placeholder="粘贴你的 DeepL API Key"]')).toBeNull();
+  });
+
+  it("shows the DeepL API Key field once translateEngine is deepl, with the :fx free-tier hint", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, translateEngine: "deepl" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    expect(container!.querySelector('input[placeholder="粘贴你的 DeepL API Key"]')).not.toBeNull();
+    expect(container!.textContent).toContain(":fx");
+    expect(container!.textContent).toContain("deepl.com/pro-api");
+  });
+
+  it("switching translateEngine away from deepl hides the key field again", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, translateEngine: "deepl" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+    expect(container!.querySelector('input[placeholder="粘贴你的 DeepL API Key"]')).not.toBeNull();
+
+    const select = container!.querySelector(
+      '[data-testid="translation-engine-row"] select',
+    ) as HTMLSelectElement;
+    await act(async () => {
+      select.value = "system";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    expect(container!.querySelector('input[placeholder="粘贴你的 DeepL API Key"]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------
+// AI 检测 翻译引擎: engineTouched edit-intent flag (Sol r6 BLOCKER —
+// SettingsDialog.tsx's handleSave, ~L2255-2270). translateEngine and
+// translateEngineMigrated are BOTH staged off engineTouched (set true
+// by TranslationEngineRow's onChange, reset false on dialog open), not
+// off a stale-draft-vs-live diff — an ABA pick-and-return (llm→system→
+// llm) made while an async migration probe is still in flight must
+// still latch the marker true itself (not the draft's stale copy), and
+// an UNTOUCHED save must not let the stale open-time draft roll back a
+// migration that lands live while the dialog sits open.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — AI 检测 翻译引擎: engineTouched drives translateEngine/translateEngineMigrated on save (Sol r6 BLOCKER)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function clickAiDetectNav(): void {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const aiDetectBtn = navButtons.find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function findEngineSelect(): HTMLSelectElement {
+    const select = container!.querySelector('[data-testid="translation-engine-row"] select');
+    if (!select) throw new Error("translation-engine-row select not found");
+    return select as HTMLSelectElement;
+  }
+
+  // Mirrors the settings-redesign describe block's own helper above —
+  // every converted checkbox row wraps both its description text and
+  // its control in a single <label>.
+  function findSwitchByLabel(labelText: string): HTMLButtonElement {
+    const label = Array.from(container!.querySelectorAll("label")).find((l) =>
+      l.textContent?.includes(labelText),
+    );
+    if (!label) throw new Error(`label containing "${labelText}" not found`);
+    const btn = label.querySelector('button[role="switch"]');
+    if (!btn) throw new Error(`no switch inside label "${labelText}"`);
+    return btn as HTMLButtonElement;
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("an ABA engine pick (llm -> system -> llm) then 保存 preserves llm AND latches translateEngineMigrated true", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, translateEngine: "llm", translateEngineMigrated: false },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      clickAiDetectNav();
+    });
+
+    const select = findEngineSelect();
+    await act(async () => {
+      select.value = "system";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      select.value = "llm";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const saved = useApp.getState().settings;
+    expect(saved.translateEngine).toBe("llm");
+    expect(saved.translateEngineMigrated).toBe(true);
+  });
+
+  it("an untouched save can't roll back a translateEngine migration that lands live while the dialog is open", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, translateEngine: "llm", translateEngineMigrated: false },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    // Simulate the async llm->system migration landing live while the
+    // dialog sits open. `hydrated` doesn't flip here, so the [open,
+    // hydrated]-keyed draft-seed effect (SettingsDialog.tsx) never
+    // re-runs — draft.translateEngine stays the stale "llm" this dialog
+    // opened with, exactly the staleness handleSave's engineTouched
+    // branch exists to survive.
+    await act(async () => {
+      useApp.setState({
+        settings: {
+          ...useApp.getState().settings,
+          translateEngine: "system",
+          translateEngineMigrated: true,
+        },
+      });
+    });
+
+    // Edit an unrelated draft field — engineTouched (TranslationEngineRow's
+    // own onChange) is never set.
+    await act(async () => {
+      clickAiDetectNav();
+    });
+    await act(async () => {
+      findSwitchByLabel("双语转录").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const saved = useApp.getState().settings;
+    expect(saved.translateEngine).toBe("system");
+    expect(saved.translateEngineMigrated).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------
 // 标签页音频·云端 engine card (v0.5 Wave-1 Feature 4, docs/design-
 // explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4). Web-only
 // (ambient test env is the web build) — has no key input of its own,

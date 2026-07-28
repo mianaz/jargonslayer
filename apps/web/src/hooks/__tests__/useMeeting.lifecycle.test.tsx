@@ -817,4 +817,40 @@ describe("useMeeting — lifecycle races", () => {
 
     saveSpy.mockRestore();
   });
+
+  // ---------------------------------------------------------------
+  // Fix round (MEDIUM): a terminal engine event (error/demo-completion,
+  // runStopFlow's own un-gated teardown) must clear a stale stop-confirm
+  // sheet — the sheet was asking about a meeting that no longer exists
+  // once this teardown runs.
+  // ---------------------------------------------------------------
+
+  it("a terminal engine error clears a stale stop-confirm sheet — no second teardown from stale sheet buttons", async () => {
+    const engine = await startListening();
+    useApp.setState((s) => ({
+      settings: { ...s.settings, bilingualTranscript: true },
+      translateStatus: { state: "busy", pending: 3 },
+    }));
+
+    await act(async () => {
+      await api!.stop();
+    });
+    expect(api!.stopConfirm).not.toBeNull();
+    expect(useApp.getState().status).toBe("listening"); // parked behind the sheet
+
+    // A real engine error now tears the meeting down through
+    // runStopFlow (un-gated) — the confirm sheet's own meeting is gone.
+    await act(async () => {
+      engine.events!.onStatus("error", "sidecar crashed");
+      await flush();
+      await flush();
+    });
+
+    expect(api!.stopConfirm).toBeNull();
+    expect(useApp.getState().status).toBe("idle"); // 0 segments in this test
+    expect(engine.stopCalls).toBe(1);
+    // page.tsx only renders the confirm sheet's buttons while
+    // stopConfirm !== null — with the ref cleared, that mount (and any
+    // "stale sheet button" click it could otherwise fire) is gone too.
+  });
 });

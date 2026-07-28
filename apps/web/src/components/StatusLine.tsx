@@ -20,6 +20,7 @@ import {
   useAudiocapCaps,
 } from "@/lib/stt/engineOptions";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
+import { langPairFromSettings } from "@/lib/translate/providers";
 import { isEngineControlBusy } from "@/components/Header";
 import PixelDragon from "@/components/PixelDragon";
 import TaskTray from "@/components/TaskTray";
@@ -319,12 +320,114 @@ function AiStatusChip() {
   );
 }
 
+// Translation-rework wave 2: 翻译 status chip, immediately right of
+// AiStatusChip. Drives off settings.bilingualTranscript (whether the
+// live queue is even asked to translate) AND store.translateStatus
+// (the queue's own live state — no writer yet as of this lane; wave 2
+// wires TranslateQueue to actually call setTranslateStatus, this chip
+// just renders whatever it reports). A bare `useApp((s) => s.
+// translateStatus)` read is safe per that field's own store.ts doc
+// comment (no derived object here, so no useShallow needed).
+//
+// "off" (bilingualTranscript itself disabled) is the one INTERACTIVE
+// state — mirrors the detect-mode toggle immediately to its left
+// exactly: a single plain-text button, no compact/full split (its own
+// label is already short enough at every width), dim/inactive styling,
+// flips the setting on click. The three states that only apply once
+// bilingualTranscript is already on (busy/done/stalled) are passive
+// status text instead — same hidden-sm:inline / sm:hidden compact-glyph
+// split AiStatusChip's own two spans use.
+function TranslateStatusChip() {
+  // Full settings (not a single-field selector) — the tap-to-enable
+  // guard below needs langPairFromSettings' own source+target read,
+  // same "whole settings object" posture AiStatusChip already uses.
+  const settings = useApp((s) => s.settings);
+  const bilingualTranscript = settings.bilingualTranscript;
+  const translateStatus = useApp((s) => s.translateStatus);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const showToast = useApp((s) => s.showToast);
+
+  if (!bilingualTranscript) {
+    return (
+      <button
+        type="button"
+        data-testid="statusline-translate-chip"
+        onClick={() => {
+          // Fix round (MEDIUM): an en->en pair has nothing to
+          // translate — flipping the toggle on would just enable a
+          // queue that never lands anything (store.updateSettings
+          // itself forces it back off for this exact pair, see its own
+          // doc comment). Tell the user why instead of silently no-op.
+          const pair = langPairFromSettings(settings);
+          if (pair.source === pair.target) {
+            showToast("解释语言为英文时无需翻译");
+            return;
+          }
+          updateSettings({ bilingualTranscript: true });
+        }}
+        title="点击开启双语转录"
+        className="flex h-full items-center whitespace-nowrap px-2 text-mut2 hover:bg-panel3 hover:text-fg sm:px-3"
+      >
+        未译
+      </button>
+    );
+  }
+
+  if (translateStatus.state === "stalled") {
+    return (
+      <span
+        data-testid="statusline-translate-chip"
+        title={translateStatus.reason}
+        className="whitespace-nowrap px-2 text-lab-yellow sm:px-3"
+      >
+        <span className="hidden sm:inline">翻译暂停</span>
+        <span className="sm:hidden">译⏸</span>
+      </span>
+    );
+  }
+
+  if (translateStatus.state === "busy") {
+    return (
+      <span data-testid="statusline-translate-chip" className="whitespace-nowrap px-2 sm:px-3">
+        <span className="hidden sm:inline">翻译中… {translateStatus.pending}</span>
+        <span className="sm:hidden">译…</span>
+      </span>
+    );
+  }
+
+  if (translateStatus.state === "off") {
+    // Fix round (MEDIUM): bilingualTranscript is on but the queue
+    // hasn't landed anything yet (e.g. before the first batch) — this
+    // is "enabled, nothing translated yet", not a false claim of
+    // success. Neutral/dim, no checkmark, no click handler (unlike the
+    // off-toggle button above, this state is already on).
+    return (
+      <span
+        data-testid="statusline-translate-chip"
+        className="whitespace-nowrap px-2 text-mut2 sm:px-3"
+      >
+        <span className="hidden sm:inline">翻译</span>
+        <span className="sm:hidden">译</span>
+      </span>
+    );
+  }
+
+  // "done" only — at least one translation has actually landed.
+  return (
+    <span data-testid="statusline-translate-chip" className="whitespace-nowrap px-2 sm:px-3">
+      <span className="hidden sm:inline">翻译 ✓</span>
+      <span className="sm:hidden">译✓</span>
+    </span>
+  );
+}
+
 export interface StatusLineProps {
   onOpenTaskCenter: () => void;
 }
 
 export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
   const status = useApp((s) => s.status);
+  const segments = useApp((s) => s.segments);
   const cards = useApp((s) => s.cards);
   const terms = useApp((s) => s.terms);
   const detectMode = useApp((s) => s.detectMode);
@@ -454,6 +557,11 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
       )}
       <span className="text-mut2">|</span>
       <AiStatusChip />
+      {/* Translation-rework wave 2: same "visible whenever there's a
+          transcript to plausibly translate" gate as the rest of this
+          bar's transcript-scoped chips — a live/connecting meeting, OR
+          segments already on screen from one that just ended. */}
+      {(status !== "idle" || segments.length > 0) && <TranslateStatusChip />}
       {/* S14 mobile-preview field-fix: at 375px this segment's own
           neighbors (mode chip, detect toggle, AI status chip, engine
           dropdown) already eat past the viewport width on their own,

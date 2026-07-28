@@ -29,7 +29,11 @@ vi.mock("@/lib/translate/providers", () => ({
   }),
 }));
 
-import TranslationEngineRow, { type TranslationEngineRowProps } from "../TranslationEngineRow";
+import TranslationEngineRow, {
+  DEEPL_WEB_DISABLED_REASON,
+  LLM_TRANSLATE_WARNING,
+  type TranslationEngineRowProps,
+} from "../TranslationEngineRow";
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -70,15 +74,38 @@ describe("TranslationEngineRow", () => {
     return el.querySelector("select") as HTMLSelectElement;
   }
 
-  it("renders both options with the given value selected", async () => {
+  it("renders all three options, in system/deepl/llm order, with the given value selected", async () => {
     checkAvailabilityMock.mockResolvedValue("available");
     const el = mount({ value: "llm", onChange: () => {}, langPair });
     await flush();
 
     expect(el.querySelector('[data-testid="translation-engine-row"]')).not.toBeNull();
     const values = Array.from(select(el).querySelectorAll("option")).map((o) => (o as HTMLOptionElement).value);
-    expect(values).toEqual(["llm", "system"]);
+    expect(values).toEqual(["system", "deepl", "llm"]);
     expect(select(el).value).toBe("llm");
+  });
+
+  it("deepl is disabled on a plain web build with the cross-origin reason (跨域限制) — key presence irrelevant", async () => {
+    checkAvailabilityMock.mockResolvedValue("available");
+    const el = mount({ value: "llm", onChange: () => {}, langPair });
+    await flush();
+
+    const deeplOption = select(el).querySelector('option[value="deepl"]') as HTMLOptionElement;
+    expect(deeplOption.disabled).toBe(true);
+    expect(deeplOption.textContent).toContain(DEEPL_WEB_DISABLED_REASON);
+  });
+
+  it("llm inline latency warning shows only while llm is the selected value", async () => {
+    checkAvailabilityMock.mockResolvedValue("available");
+    const el = mount({ value: "system", onChange: () => {}, langPair });
+    await flush();
+    expect(el.textContent).not.toContain(LLM_TRANSLATE_WARNING);
+
+    act(() => {
+      root!.render(<TranslationEngineRow value="llm" onChange={() => {}} langPair={langPair} />);
+    });
+    await flush();
+    expect(el.textContent).toContain(LLM_TRANSLATE_WARNING);
   });
 
   it("changing the select calls onChange with the new value — props-driven, value itself never mutated locally", async () => {

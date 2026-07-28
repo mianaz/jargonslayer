@@ -128,6 +128,15 @@ export type ToastState =
   | { message: string; action?: ToastAction; ref?: string }
   | null;
 
+// Translation-rework wave 1 — see AppState.translateStatus's own doc
+// (module below) for what each state means and the useShallow
+// invariant that applies to any selector deriving off this field.
+export interface TranslateStatus {
+  state: "off" | "busy" | "done" | "stalled";
+  pending: number;
+  reason?: string;
+}
+
 // ---------------------------------------------------------------
 // Realtime speaker diarization (beta) — pure helpers, exported so
 // they're unit-testable independent of zustand (see store.test.ts;
@@ -424,6 +433,26 @@ interface AppState {
   // Live bilingual transcript (#42): segment id -> translated text,
   // written by applyTranslations (see TranslateQueue.onTranslations).
   translations: Record<string, string>;
+  // Translation-rework wave 1 (foundation only — no consumers yet; wave
+  // 2 wires TranslateQueue to write this and StatusLine to read it):
+  // live status of the translate queue for the CURRENT meeting.
+  // "off" = translation not running (bilingualTranscript off, or no
+  // meeting live); "busy" = at least one batch in flight; "done" = the
+  // queue is idle with nothing pending; "stalled" = the queue gave up
+  // retrying (see queue.ts's own retry/backoff policy, wave 2). `pending`
+  // is the count of segments still awaiting a translation; `reason` is
+  // an optional short human string for the "stalled" state (e.g. which
+  // provider failed).
+  //
+  // INVARIANT (zustand v5, same rule as lib/tasks/registry.ts's own
+  // useTasks doc): a bare `useApp((s) => s.translateStatus)` read is
+  // safe, but any wave-2 selector that DERIVES a new object/array from
+  // this field (e.g. spreading it with an extra computed key) MUST be
+  // wrapped in useShallow at the hook call site — v5's plain
+  // useSyncExternalStore has no selector-output caching, so a selector
+  // returning a fresh reference every call re-renders in an infinite
+  // loop (React #185).
+  translateStatus: TranslateStatus;
 
   // detection results
   cards: ExpressionCard[];
@@ -635,6 +664,10 @@ interface AppState {
   setDetectMode: (mode: DetectMode) => void;
   setFocusCard: (id: string | null) => void;
   setLookup: (req: LookupRequest | null) => void;
+  // Translation-rework wave 1 (foundation only) — see AppState.
+  // translateStatus's own doc. Plain set, no side effects; wave 2's
+  // TranslateQueue is the only intended writer.
+  setTranslateStatus: (s: TranslateStatus) => void;
 
   setSummary: (s: SummaryResult | null) => void;
   setSummarizing: (v: boolean) => void;
@@ -1193,7 +1226,7 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   const settings: Settings = { ...DEFAULT_SETTINGS, ...legacy };
   // Field bug fix (iOS TestFlight): self-heal secret fields already
   // persisted with a dirty (zero-width/whitespace-padded) paste from
-  // before this fix shipped — same six SECRET_NAMES fields
+  // before this fix shipped — same seven SECRET_NAMES fields
   // sanitizeSecretValue's own doc covers, sanitized here so a stale
   // stored value self-heals on the very next hydrate() rather than
   // only being cleaned for keys saved from now on (SettingsDialog's
@@ -1206,6 +1239,7 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
   settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
   settings.elevenLabsKey = sanitizeSecretValue(settings.elevenLabsKey);
+  settings.deeplKey = sanitizeSecretValue(settings.deeplKey);
   settings.agentToken = sanitizeSecretValue(settings.agentToken);
   if (legacy.aiDetect === undefined && typeof legacy.dictionaryOnly === "boolean") {
     settings.aiDetect = !legacy.dictionaryOnly;
@@ -1276,6 +1310,62 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
     ...openRouterSettings,
     mode: modeForPersistedEngine(legacy.engine, openRouterSettings.engine, platform),
   };
+}
+
+// Translation-rework wave 1 — one-time toast for a probe-confirmed
+// flip (runTranslateEngineMigration below). Exported so tests assert
+// on it without hardcoding the copy a second time.
+export const TRANSLATE_ENGINE_MIGRATION_TOAST =
+  "翻译已切换到本机系统翻译（更快，内容不离开设备），可在设置中改回";
+
+/** One-shot translateEngine migration (translation-rework wave 1) —
+ *  see Settings.translateEngineMigrated's own doc (packages/core/src/
+ *  types.ts) for the full contract this implements. Pure/testable:
+ *  takes `settings`, returns the patch hydrate() below applies via
+ *  updateSettings (never calls updateSettings/showToast itself, same
+ *  "thin store action wraps an extracted pure function" pattern as
+ *  migrateSettings above).
+ *
+ *  No-op (`{ patch: {} }`) unless translateEngine is still "llm" and
+ *  translateEngineMigrated is falsy — a fresh install already defaults
+ *  to "system" (DEFAULT_SETTINGS) and never needs this; a blob that
+ *  already ran this once is never re-probed. Otherwise probes the
+ *  platform's on-device system-translate availability for the CURRENT
+ *  language pair and flips to "system" ONLY when it reports "installed"
+ *  (never merely "supported"/downloadable — silently kicking off a
+ *  background model download is not this migration's job); every other
+ *  outcome (a non-"installed" status, or the probe throwing) sets the
+ *  marker with no flip, so the check never re-runs.
+ *
+ *  Dynamic-imports lib/translate/providers.ts rather than a static
+ *  import — that module reaches llm/client.ts, which imports `useApp`
+ *  FROM this file (this file's own triggerSelectionLookup/
+ *  hydrateSecrets dynamic imports exist for the identical cycle).
+ *  probeSystemTranslateSupport itself never throws (see its own doc) —
+ *  outside a desktop/iOS build (no native invoke bridge, e.g. a plain
+ *  web build) it resolves the fail-closed "unsupported" shape instead,
+ *  which lands in the same marker-only branch below — so a web build
+ *  takes this path without ever erroring. The try/catch is an extra
+ *  belt for the dynamic import itself failing. */
+export async function runTranslateEngineMigration(
+  settings: Settings,
+): Promise<{ patch: Partial<Settings>; toast?: string }> {
+  if (settings.translateEngineMigrated || settings.translateEngine !== "llm") {
+    return { patch: {} };
+  }
+  try {
+    const { probeSystemTranslateSupport, langPairFromSettings } = await import("./translate/providers");
+    const probe = await probeSystemTranslateSupport(langPairFromSettings(settings));
+    if (probe.status === "installed") {
+      return {
+        patch: { translateEngine: "system", translateEngineMigrated: true },
+        toast: TRANSLATE_ENGINE_MIGRATION_TOAST,
+      };
+    }
+  } catch {
+    // dynamic import itself failed — fall through to the marker-only patch
+  }
+  return { patch: { translateEngineMigrated: true } };
 }
 
 // ---------------------------------------------------------------
@@ -1403,6 +1493,18 @@ export function pauseIntervalsForSnapshot(
 ): PauseInterval[] {
   if (pauseStartedAt === null) return pauseIntervals;
   return [...pauseIntervals, { start: pauseStartedAt, end: snapshotAt }];
+}
+
+/** The auto-generated meeting-title shape saveCurrentSession has always
+ *  stamped a fresh session with ("会议 YYYY-MM-DD HH:MM"). Extracted so
+ *  the auto-title override in saveCurrentSession below can check "does
+ *  this session's already-persisted title still match the auto shape"
+ *  against the exact same format string, instead of hand-duplicating
+ *  it (and drifting out of sync with it later). */
+export function autoMeetingTitle(startedAt: number): string {
+  const d = new Date(startedAt);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `会议 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // Quit-time settings durability (field fix, real desktop/Tauri report:
@@ -1672,6 +1774,7 @@ export const useApp = create<AppState>((set, get) => ({
   speakerRoster: [],
   activeSpeaker: null,
   translations: {},
+  translateStatus: { state: "off", pending: 0 },
 
   cards: [],
   terms: [],
@@ -1772,6 +1875,7 @@ export const useApp = create<AppState>((set, get) => ({
         settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
         settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
         settings.elevenLabsKey = sanitizeSecretValue(settings.elevenLabsKey);
+        settings.deeplKey = sanitizeSecretValue(settings.deeplKey);
         settings.agentToken = sanitizeSecretValue(settings.agentToken);
         // F5 fix (Sol MEDIUM #13, keychain-custody fix round): REPLACE,
         // never merely add to — a stale name from an EARLIER hydrate
@@ -1911,11 +2015,75 @@ export const useApp = create<AppState>((set, get) => ({
     } else {
       set({ subscriptionKillCheckSettled: true });
     }
+
+    // Translation-rework wave 1: probe-gated one-shot translateEngine
+    // migration (see runTranslateEngineMigration's own doc above) —
+    // fire-and-forget, same posture as the subscription-direct kill
+    // check just above: never delays hydrate() itself resolving.
+    // updateSettings merges `patch` onto whatever get().settings is at
+    // apply time, so this is safe even if something else wrote settings
+    // in the meantime.
+    void runTranslateEngineMigration(settings).then(({ patch, toast }) => {
+      if (Object.keys(patch).length === 0) return;
+      // Adversarial-review Finding 2: hardens this fire-and-forget apply
+      // against two races the async probe above opens up. Re-read LIVE
+      // state (not the `settings` this promise closed over) right
+      // before applying: (a) only apply when translateEngine is STILL
+      // "llm" AND translateEngineMigrated is STILL false — a user
+      // selection that lands mid-probe wins (Finding 1 above already
+      // stamps the marker on that selection, so this one check alone
+      // catches it); (b) never apply while a meeting is active (status
+      // anything other than "idle"/"stopped") — the 内容不离开设备 toast
+      // must never fire mid-meeting while it's still translating via
+      // the LLM this probe measured. Neither branch sets the marker on
+      // a defer, so hydrate() simply re-probes on the NEXT launch, once
+      // idle.
+      const current = get().settings;
+      if (current.translateEngine !== "llm" || current.translateEngineMigrated) return;
+      const status = get().status;
+      if (status !== "idle" && status !== "stopped") return;
+      get().updateSettings(patch);
+      if (toast) get().showToast(toast);
+    });
   },
 
   updateSettings: (patch, opts) => {
     const prevSettings = get().settings;
     const settings = { ...prevSettings, ...patch };
+    // Adversarial-review Finding 1 (v0.7 translation train, r2 re-fix):
+    // a user's OWN explicit engine pick must never be silently
+    // auto-migrated later by runTranslateEngineMigration (hydrate()'s
+    // one-shot probe). Stamp on VALUE CHANGE, not patch shape —
+    // SettingsDialog's handleSave passes the FULL settings object, so
+    // "patch carries translateEngine without the marker" never fires on
+    // the main path (the full object always carries the current, still-
+    // false marker; Sol r2 REOPEN). A migration patch sets both fields
+    // itself, so this stays a no-op there.
+    if (settings.translateEngine !== prevSettings.translateEngine && !patch.translateEngineMigrated) {
+      settings.translateEngineMigrated = true;
+    }
+    // Sol r3 (new MEDIUM): the marker is MONOTONIC. SettingsDialog
+    // snapshots settings at open — a full save from a stale draft
+    // (opened before the async migration stamped true) must not regress
+    // the marker and re-arm the one-shot probe.
+    if (prevSettings.translateEngineMigrated && !settings.translateEngineMigrated) {
+      settings.translateEngineMigrated = true;
+    }
+    // Adversarial-review Finding 3: an en->en translation pair (spoken
+    // `language` and `explainLanguage` resolve to the same language —
+    // see Settings.bilingualTranscript's own doc, "translating English
+    // into English is a no-op") makes a live bilingual transcript
+    // meaningless — force it back off in the same patch rather than
+    // leaving a stale on-toggle the queue would otherwise keep no-oping
+    // against. Mirrors translate/providers.ts's langPairFromSettings'
+    // own trivial source/target split rather than importing it: a
+    // static import of translate/providers.ts here would close the
+    // store.ts <-> llm/client.ts cycle already documented on
+    // triggerSelectionLookup above (providers.ts itself reaches
+    // llm/client.ts, which imports useApp FROM this file).
+    if (settings.bilingualTranscript && settings.language.split("-")[0] === settings.explainLanguage) {
+      settings.bilingualTranscript = false;
+    }
     // Overlay supersession (demo-overlay stash design): an explicit
     // engine pick other than "demo" while an overlay is active is the
     // user's REAL choice winning over the stash — clear it so that pick
@@ -2384,6 +2552,9 @@ export const useApp = create<AppState>((set, get) => ({
     set({ lookup });
     if (lookup) void triggerSelectionLookup(lookup, get().settings);
   },
+  // Translation-rework wave 1 (foundation only) — plain set, no
+  // consumers yet (see AppState.translateStatus's own doc).
+  setTranslateStatus: (translateStatus) => set({ translateStatus }),
 
   setSummary: (summary) => set({ summary }),
   setSummarizing: (summarizing) => set({ summarizing }),
@@ -2509,13 +2680,22 @@ export const useApp = create<AppState>((set, get) => ({
     const s = get();
     if (s.segments.length === 0) return null;
     const startedAt = s.startedAt ?? s.segments[0].startedAt;
-    const d = new Date(startedAt);
-    const pad = (n: number) => String(n).padStart(2, "0");
+    const autoTitle = autoMeetingTitle(startedAt);
+    // Auto meeting titles: once a summary's topic exists, prefer it over
+    // the timestamp-only auto title — but ONLY while the session's own
+    // already-persisted title (this is a re-save of an existing
+    // activeSessionId; a session not yet saved has no prior title to
+    // check) still matches the auto shape exactly. A title that's
+    // diverged from that shape was set by something other than this
+    // same auto-fill (a future rename feature, most likely) and must
+    // never be overwritten.
+    const priorTitle = s.sessions.find((m) => m.id === s.activeSessionId)?.title;
+    const topic = s.summary?.summary.topic.zh?.trim();
+    const title =
+      topic && (priorTitle === undefined || priorTitle === autoTitle) ? topic : priorTitle ?? autoTitle;
     const session: MeetingSession = {
       id: s.activeSessionId ?? newId(),
-      title: `会议 ${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(
-        d.getDate(),
-      )} ${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      title,
       startedAt,
       endedAt: s.segments[s.segments.length - 1].endedAt,
       engine: s.settings.engine,
@@ -2659,6 +2839,11 @@ export const useApp = create<AppState>((set, get) => ({
       // no correction batch in flight.
       activeSpeaker: null,
       correctionBusy: false,
+      // Adversarial-review Finding 4: a stale "busy"/"stalled" chip from
+      // the PREVIOUS live meeting's translate queue must not survive
+      // into a loaded (stopped) session — this session has no live
+      // queue of its own.
+      translateStatus: { state: "off", pending: 0 },
       translations: session.translations ?? {},
       cards: session.cards,
       terms: session.terms,
@@ -2932,6 +3117,10 @@ export const useApp = create<AppState>((set, get) => ({
       speakerAliases: {},
       speakerRoster: [],
       activeSpeaker: null,
+      // Adversarial-review Finding 4: mirrors loadSession's own reset —
+      // a stale "busy"/"stalled" chip from the just-ended meeting's
+      // translate queue must not linger through 新会议 into idle.
+      translateStatus: { state: "off", pending: 0 },
       translations: {},
       // Auto meeting-context detection: mirrors beginMeeting's own
       // reset above — otherwise a stale context chip from the just-

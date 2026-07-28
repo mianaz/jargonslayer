@@ -31,6 +31,32 @@ export interface TranslateQueueOptions {
   provider: TranslationProvider;
   onTranslations: (map: Record<string, string>, gen: number) => void;
   onError: (msg: string) => void;
+  // v0.7 wave 2A — optional, additive: a caller-observable state stream,
+  // separate from onError's one-shot-per-meeting toast. `pending` is
+  // queued items PLUS whatever's currently dispatched/in-flight (Finding
+  // 5 fix, adversarial review: a ≤batch-size backlog must not report 0
+  // while a request is outbound — see emitState/runBatch below). "busy":
+  // that count > 0. "stalled": paused (a NoKeyError/
+  // SystemTranslatorUnavailableError/rate-limit/generic-error cooldown
+  // — see pauseFor/handleError below), `reason` set to whatever zh
+  // string already exists for that pause (undefined where none does,
+  // e.g. a rate-limit or generic-error cooldown, which have no user-
+  // facing copy today). "done": the queue has drained back to fully
+  // idle (nothing pending, nothing in flight, not paused) AFTER at
+  // least one translation has actually landed via onTranslations. "off"
+  // (Finding 6 fix, adversarial review — supersedes the old "off is
+  // NEVER emitted" note): the queue has drained back to fully idle but
+  // has NEVER yet landed a translation this meeting — documented as
+  // "idle, nothing shown" (the StatusLine chip renders enabled+off
+  // neutrally). The caller still separately derives its OWN "off" from
+  // Settings.bilingualTranscript being off (this queue keeps running
+  // even while the toggle is off, just no-opping every enqueue — see
+  // pushSegment/backfill/tryFlush's own toggle checks); this class just
+  // no longer refuses to ever emit the same string itself. Consecutive
+  // identical emissions (same state + pending + reason) are deduped —
+  // pushing a 2nd/3rd segment while already "busy" doesn't re-fire the
+  // same event.
+  onState?: (s: { state: "off" | "busy" | "done" | "stalled"; pending: number; reason?: string }) => void;
 }
 
 // ---------------------------------------------------------------
@@ -115,6 +141,14 @@ export class TranslateQueue {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   private inflight = false;
+  // Finding 5 fix (adversarial review): count of items in the CURRENT
+  // in-flight batch (0 while nothing is dispatched) — folded into
+  // emitState's reported `pending` below so a ≤BATCH_MAX backlog that's
+  // already been dispatched (removed from `pending` itself, awaiting a
+  // response) still reports its true size instead of a misleading 0
+  // that would let a caller's "translation done" gate (e.g. the End
+  // flow) fire while a request is still outbound.
+  private inflightCount = 0;
   // rate-limit/error cooldown gate: while now < pausedUntil, tryFlush
   // no-ops (checked defensively below), but the ACTUAL resume is
   // driven by resumeTimer firing exactly at the pause boundary —
@@ -136,6 +170,21 @@ export class TranslateQueue {
   // never actually retried (the common case) — only ever read/written
   // for an id that has failed at least once, so this stays small.
   private retryCount = new Map<string, number>();
+  // onState support (v0.7 wave 2A) — see TranslateQueueOptions.onState's
+  // own doc comment for the full state-machine contract.
+  private hasLandedTranslation = false; // flips true the first time onTranslations fires with >=1 entry
+  private lastEmittedState: {
+    state: "off" | "busy" | "done" | "stalled";
+    pending: number;
+    reason?: string;
+  } | null = null;
+  // The zh reason string the MOST RECENT pauseFor() call was given (see
+  // that method's own doc) — stored rather than threaded through every
+  // emitState() call site so a seam that fires WHILE already paused
+  // (e.g. runBatch's finally, right after handleError's own pauseFor
+  // already emitted) reads back the SAME reason instead of clobbering
+  // it with undefined.
+  private currentPauseReason: string | undefined = undefined;
 
   constructor(private opts: TranslateQueueOptions) {}
 
@@ -148,6 +197,7 @@ export class TranslateQueue {
 
     this.pending.push({ id: seg.id, text: seg.text });
     this.armDebounce();
+    this.emitState();
   }
 
   /** Enqueue segments at the FRONT of the pending queue (used when
@@ -165,21 +215,102 @@ export class TranslateQueue {
 
     this.pending = [...items, ...this.pending];
     this.armDebounce();
+    this.emitState();
   }
 
   /** Cancel timers and drop pending work. */
   stop(): void {
+    if (this.stopped) return;
     this.stopped = true;
     this.clearDebounce();
     this.clearResumeTimer();
     this.pending = [];
     // Late in-flight responses may still call onTranslations after
     // this — fine/desired, same rationale as DetectionScheduler.stop().
+    // Sol r2 MEDIUM: publish the terminal state, or a 直接结束/timed-out
+    // drain leaves the StatusLine chip stuck on 翻译中/翻译暂停 forever.
+    // Direct callback (not emitState) — internals like inflightCount may
+    // still be nonzero for the abandoned batch, and dedupe must not eat
+    // this terminal emission.
+    this.opts.onState?.({ state: "off", pending: 0 });
+  }
+
+  /** Resolves true once the queue is genuinely idle (nothing pending, no
+   *  batch in flight) within `timeoutMs`; false if that timeout elapses
+   *  first. Resolves false IMMEDIATELY (no wait at all) when the queue
+   *  is currently paused/stalled, or the moment it BECOMES paused while
+   *  already waiting — a pause self-heals on its own resumeTimer, not
+   *  because some caller happened to be draining it, so a caller must
+   *  never block on a queue that cannot make progress on its own right
+   *  now. Observation only — polls the same state emitState() already
+   *  derives from; never touches pending/inflight/pausedUntil itself. */
+  drain(timeoutMs: number): Promise<boolean> {
+    if (this.isPaused()) return Promise.resolve(false);
+    if (this.pending.length === 0 && !this.inflight) return Promise.resolve(true);
+
+    const DRAIN_POLL_MS = 50;
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const id = setInterval(() => {
+        if (this.isPaused()) {
+          clearInterval(id);
+          resolve(false);
+          return;
+        }
+        if (this.pending.length === 0 && !this.inflight) {
+          clearInterval(id);
+          resolve(true);
+          return;
+        }
+        if (Date.now() - start >= timeoutMs) {
+          clearInterval(id);
+          resolve(false);
+        }
+      }, DRAIN_POLL_MS);
+    });
   }
 
   // ---------------------------------------------------------------
   // internals
   // ---------------------------------------------------------------
+
+  private isPaused(): boolean {
+    return Date.now() < this.pausedUntil;
+  }
+
+  /** Derives the current state from live queue fields and emits through
+   *  onState IFF it (state + pending count + reason) differs from the
+   *  last emission — see TranslateQueueOptions.onState's own doc comment
+   *  for the full contract. A no-op with no onState configured. */
+  private emitState(): void {
+    if (!this.opts.onState) return;
+    // Sol r3 (reopen of the stop-emission fix): stop()'s direct off
+    // emission is the TERMINAL state — an already in-flight batch's
+    // .finally()/error path must not emit past it (End doesn't bump
+    // meetingGen, so the useMeeting gen guard would accept it).
+    if (this.stopped) return;
+    // Finding 5 fix: queued + in-flight, so a dispatched-but-unresolved
+    // batch still counts (see inflightCount's own doc above).
+    const pending = this.pending.length + this.inflightCount;
+    let state: "off" | "busy" | "done" | "stalled" = this.isPaused()
+      ? "stalled"
+      : this.inflight || pending > 0
+        ? "busy"
+        : "done";
+    // Finding 6 fix: a "done"-shaped drain (fully idle, not paused) that
+    // has never landed a single translation reports "off" instead of
+    // going silent forever — see onState's own doc for the "idle,
+    // nothing shown" contract this documents. `done` itself stays
+    // gated on >=1 landed translation, unchanged.
+    if (state === "done" && !this.hasLandedTranslation) state = "off";
+    const next = { state, pending, reason: state === "stalled" ? this.currentPauseReason : undefined };
+    const last = this.lastEmittedState;
+    if (last && last.state === next.state && last.pending === next.pending && last.reason === next.reason) {
+      return;
+    }
+    this.lastEmittedState = next;
+    this.opts.onState(next);
+  }
 
   private armDebounce(): void {
     if (this.debounceTimer !== null) return;
@@ -206,14 +337,24 @@ export class TranslateQueue {
   /** Set the cooldown gate and arm a timer to retry exactly when it
    *  lifts — the pending queue may otherwise sit un-drained forever if
    *  no new segment arrives to re-trigger armDebounce() in the
-   *  meantime (see the pausedUntil field doc above). */
-  private pauseFor(ms: number): void {
+   *  meantime (see the pausedUntil field doc above). `reason` (v0.7
+   *  wave 2A) is whatever zh string already exists for this pause at
+   *  its call site (undefined where none does, e.g. a rate-limit or
+   *  generic-error cooldown) — stashed for emitState()'s "stalled"
+   *  reason field, independent of whether onError's own one-shot toast
+   *  fires for this same pause. */
+  private pauseFor(ms: number, reason?: string): void {
+    // Sol r3: a late in-flight rejection landing after stop() must not
+    // re-arm the resume timer on a dead queue.
+    if (this.stopped) return;
     this.pausedUntil = Date.now() + ms;
+    this.currentPauseReason = reason;
     this.clearResumeTimer();
     this.resumeTimer = setTimeout(() => {
       this.resumeTimer = null;
       this.tryFlush();
     }, ms);
+    this.emitState();
   }
 
   private tryFlush(): void {
@@ -226,6 +367,7 @@ export class TranslateQueue {
     // request the user just opted out of.
     if (!this.opts.getSettings().bilingualTranscript) {
       this.pending = [];
+      this.emitState();
       return;
     }
 
@@ -234,12 +376,15 @@ export class TranslateQueue {
 
     const batch: Batch = { items, gen: this.opts.getMeetingGen() };
     this.runBatch(batch);
+    this.emitState();
   }
 
   private runBatch(batch: Batch): void {
     this.inflight = true;
+    this.inflightCount = batch.items.length;
     void this.attemptTranslate(batch).finally(() => {
       this.inflight = false;
+      this.inflightCount = 0;
       if (this.pending.length > 0) {
         // Re-arm the ordinary debounce for the next batch. If this
         // batch just triggered a cooldown, handleError already armed
@@ -247,6 +392,7 @@ export class TranslateQueue {
         // check makes an early debounce tick here a harmless no-op.
         this.armDebounce();
       }
+      this.emitState();
     });
   }
 
@@ -266,6 +412,11 @@ export class TranslateQueue {
       if (translations.length > 0) {
         const map: Record<string, string> = {};
         for (const t of translations) map[t.id] = t.text;
+        // v0.7 wave 2A: at least one translation has now genuinely
+        // landed — emitState()'s "done" case gates on this so a queue
+        // that has never yet succeeded stays silent instead of firing a
+        // premature "done".
+        this.hasLandedTranslation = true;
         this.opts.onTranslations(map, batch.gen);
       }
       // A partial/empty response is failed-soft by design (see route
@@ -277,6 +428,24 @@ export class TranslateQueue {
   }
 
   private handleError(err: unknown, batch: Batch): void {
+    // Sol r3: an in-flight rejection landing after stop() is abandoned
+    // wholesale — no re-queue, no pause timer, no emission (stop()
+    // already published the terminal off state).
+    if (this.stopped) return;
+    // Finding 5 fix follow-up: zero the in-flight bookkeeping for THIS
+    // batch immediately, before any branch below runs — every branch
+    // either drops these items outright or re-queues them into
+    // `pending` itself, and several call pauseFor (which emits state
+    // synchronously, right here, well before runBatch's own trailing
+    // .finally() would otherwise clear inflightCount). Without this, a
+    // re-queued/dropped item would be double-counted — once via
+    // `pending`, once via a still-stale inflightCount — in whatever
+    // emitState() a branch below triggers. That trailing .finally()
+    // still unconditionally re-zeroes both afterward too — a no-op by
+    // then, kept as the safety net for the stale-gen early return just
+    // below (which never reaches any branch that would reset these).
+    this.inflight = false;
+    this.inflightCount = 0;
     // Same meeting-boundary guard as the success path — an error for a
     // batch dispatched by a PREVIOUS meeting must not latch/toast onto
     // the current (unrelated) meeting.
@@ -292,13 +461,17 @@ export class TranslateQueue {
     // NoKeyError just below.
     if (err instanceof SystemTranslatorUnavailableError) {
       this.pending = [];
-      this.pauseFor(SYSTEM_UNAVAILABLE_PAUSE_MS);
+      // Computed unconditionally (not just inside the toast-once gate
+      // below) — emitState()'s "stalled" reason (v0.7 wave 2A) should
+      // reflect why the queue is paused on EVERY pause, independent of
+      // whether the one-shot onError toast fires for this one.
+      const msg =
+        err.reason === "downloading"
+          ? "系统翻译模型下载中，双语转录已暂停，下载完成后自动恢复"
+          : "系统翻译不可用，双语转录已暂停。可在设置中切换回 AI 模型翻译";
+      this.pauseFor(SYSTEM_UNAVAILABLE_PAUSE_MS, msg);
       if (!this.systemUnavailableToastShown) {
         this.systemUnavailableToastShown = true;
-        const msg =
-          err.reason === "downloading"
-            ? "系统翻译模型下载中，双语转录已暂停，下载完成后自动恢复"
-            : "系统翻译不可用，双语转录已暂停。可在设置中切换回 AI 模型翻译";
         this.opts.onError(msg);
       }
       return;
@@ -313,12 +486,11 @@ export class TranslateQueue {
       // needed. The toast still only fires once per meeting so filling
       // in a key mid-meeting isn't followed by a flood of repeats.
       this.pending = [];
-      this.pauseFor(NO_KEY_PAUSE_MS);
+      const msg = "未配置 API Key，双语转录已暂停。前往设置填入 Key 即可自动恢复";
+      this.pauseFor(NO_KEY_PAUSE_MS, msg);
       if (!this.noKeyToastShown) {
         this.noKeyToastShown = true;
-        this.opts.onError(
-          "未配置 API Key，双语转录已暂停。前往设置填入 Key 即可自动恢复",
-        );
+        this.opts.onError(msg);
       }
       return;
     }
@@ -353,6 +525,13 @@ export class TranslateQueue {
       return;
     }
 
+    // Accept (adversarial review, LOW, parked): a DeepL 5xx lands here
+    // as a plain thrown Error (see providers.ts's DeepLTranslationProvider
+    // — only 403/429/456 get their own classification above), so it
+    // rides this SAME generic per-segment retry budget/cooldown as any
+    // other transient failure rather than a dedicated exponential
+    // backoff. Deliberately deferred, not fixed here.
+    //
     // Any other error: re-queue each item up to MAX_RETRIES_PER_SEGMENT
     // times (see that constant's own doc — S14.1 item 8a) instead of
     // the old one-shot Set; an item that exhausts every attempt is

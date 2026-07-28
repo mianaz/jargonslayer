@@ -752,15 +752,45 @@ export interface Settings {
   // v0.5 Wave-1 Feature 6 (configurable translation engines, docs/
   // design-explorations/v05-wave1-blueprint.md §1 Feature 6 + §5 A6):
   // which TranslationProvider the live bilingual-transcript queue
-  // (lib/translate/queue.ts) resolves through — "llm" (default,
-  // quality, today's translateApi path, unchanged) or "system"
-  // (on-device, free — Chrome's Translator API on web; a future Apple
-  // Translation spike elsewhere; hidden/falls back to "llm" wherever no
-  // on-device provider exists, e.g. Tauri desktop/iOS — see A6).
+  // (lib/translate/queue.ts) resolves through — "system" (default as of
+  // the translation-rework wave 1, on-device, free — Chrome's Translator
+  // API on web, native Apple Translate on desktop/iOS; hidden/falls back
+  // to "llm" wherever no on-device provider exists — see A6), "llm"
+  // (quality, today's translateApi path, unchanged), or "deepl" (BYOK,
+  // deeplKey below — wave 2 wires the actual transport; the kind exists
+  // here first so Settings/persistence never need a later migration of
+  // their own).
   // Independent of explainLanguage/bilingualTranscript above (this only
   // selects WHICH engine translates, not whether/into-what-language
   // translation happens at all).
-  translateEngine: "llm" | "system";
+  translateEngine: "system" | "deepl" | "llm";
+  // Translation-rework wave 1: one-shot migration marker for a settings
+  // blob saved BEFORE `translateEngine`'s default flipped from "llm" to
+  // "system" above. store.ts's hydrate() consults this exactly once per
+  // boot: `!translateEngineMigrated && translateEngine === "llm"` probes
+  // the platform's on-device system-translate availability (see
+  // lib/translate/providers.ts's probeSystemTranslateSupport) for the
+  // current language pair and flips to "system" ONLY when it reports
+  // "installed" (never merely "supported"/downloadable — a silent
+  // background model download is not this migration's job); either way
+  // this is set true so the check never re-runs. Absent/false = not yet
+  // migrated (every persisted blob from before this field existed, plus
+  // every fresh install whose translateEngine starts at "system"
+  // already and so never even enters the guard above).
+  translateEngineMigrated?: boolean;
+
+  // Translation-rework wave 1: DeepL BYOK API key for the "deepl"
+  // translateEngine above; "" = engine unavailable (wave 2 wires the
+  // actual DeepL transport — this field only carries the credential).
+  // Same hand-listed-strip precedent as sonioxKey/deepgramKey/
+  // elevenLabsKey above: diag/report.ts's SECRET_KEY_RE catches the name
+  // automatically (→ hasDeeplKey), but history/autoExport.ts's
+  // stripKeyMaterial is a HAND-LISTED strip — deeplKey is added there
+  // too. Also joins lib/desktop/secret.ts's SECRET_NAMES (desktop
+  // keychain custody) and store.ts's sanitizeSecretValue call sites
+  // (migrateSettings + hydrate's post-hydrateSecrets pass), same list
+  // sonioxKey/deepgramKey/elevenLabsKey/agentToken already ride.
+  deeplKey: string;
 
   // Background profile (#48 step 3, design Q5): a handful of short
   // free-text hints about the user, rendered into ONE short string
@@ -1016,7 +1046,9 @@ export const DEFAULT_SETTINGS: Settings = {
   partials: true,
   preferOnDeviceSpeech: true,
   bilingualTranscript: false,
-  translateEngine: "llm",
+  translateEngine: "system",
+  translateEngineMigrated: false,
+  deeplKey: "",
   profile: { enabled: false },
   usageTracking: true,
   themeId: "terminal",

@@ -285,6 +285,10 @@ function stripKeyMaterial(settings: Settings): Settings {
     // v0.6 round 2: ElevenLabs BYOK key — same hand-listed strip,
     // mirroring sonioxKey/deepgramKey's own precedent above.
     elevenLabsKey: "",
+    // Translation-rework wave 1: DeepL BYOK key — same hand-listed
+    // strip, mirroring sonioxKey/deepgramKey/elevenLabsKey's own
+    // precedent above (types.ts's own deeplKey doc points back here).
+    deeplKey: "",
     agentToken: "",
     // Webhook URLs routinely embed capability tokens in the path
     // (n8n/飞书 style) — credential-like, stripped with the rest
@@ -316,8 +320,8 @@ function overlaySecrets(settings: Settings, keychainValues: Partial<Record<Secre
 /** Serialize sessions + glossary + learn-set + settings into one backup
  *  JSON. `includeKeys: false` (the Settings dialog's default-checked
  *  "不包含 API Key" option) strips apiKey/taskLlm[*].apiKey/hfToken/
- *  sonioxKey/agentToken from the embedded settings — everything else
- *  round-trips as-is.
+ *  sonioxKey/deepgramKey/elevenLabsKey/deeplKey/agentToken from the
+ *  embedded settings — everything else round-trips as-is.
  *
  *  `learnset` (#48 step 4): the learn-set's `Record<string,
  *  LearnRecord>` (see learn/store.ts) as a fourth top-level field,
@@ -641,7 +645,7 @@ export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry 
 }
 
 /** Desktop keychain custody (v0.5.1) — for every non-empty restored
- *  apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey, writes it to the
+ *  apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/deeplKey, writes it to the
  *  Keychain (overwriting whatever's already there — restoring a backup is an
  *  explicit "make this device match the backup" action, same
  *  IDB-wins-on-conflict posture hydrateSecrets uses for an ordinary
@@ -689,6 +693,7 @@ async function routeRestoredSecretsToKeychain(settings: Settings, priorPending: 
     "sonioxKey",
     "deepgramKey",
     "elevenLabsKey",
+    "deeplKey",
   ];
   const next = { ...settings };
   const pending = new Set(priorPending);

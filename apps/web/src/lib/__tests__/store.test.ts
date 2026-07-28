@@ -8,6 +8,7 @@ import {
   applyTierDefaults,
   assignSpeakerFollowingInSegments,
   assignSpeakerToSegments,
+  autoMeetingTitle,
   currentSessionSnapshot,
   deriveRosterFromSegments,
   elapsedActiveMs,
@@ -33,6 +34,7 @@ import {
   type MeetingSession,
   type Settings,
   type STTEngineKind,
+  type SummaryResult,
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { DEFAULT_EASE, KNOWN_VOTE_INCREMENT } from "../learn/store";
@@ -909,6 +911,15 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.correctionBusy).toBe(false);
   });
 
+  // Adversarial-review Finding 4 (v0.7 translation train): mirrors
+  // loadSession's own reset — a stale chip from the just-ended
+  // meeting's translate queue must not linger through 新会议 into idle.
+  it("newMeeting resets translateStatus to {off, pending:0}", () => {
+    useApp.setState({ translateStatus: { state: "busy", pending: 3 } });
+    useApp.getState().newMeeting();
+    expect(useApp.getState().translateStatus).toEqual({ state: "off", pending: 0 });
+  });
+
   // Auto meeting-context detection — newMeeting mirrors beginMeeting's
   // own reset (see that test above): otherwise a stale context chip
   // from the just-ended meeting would linger through 新会议 into the
@@ -949,6 +960,30 @@ describe("beginMeeting / loadSession / newMeeting reset the roster + latch + cor
     expect(s.speakerRoster).toEqual(["Alice", "Bob"]);
     expect(s.activeSpeaker).toBeNull();
     expect(s.correctionBusy).toBe(false);
+  });
+
+  // Adversarial-review Finding 4 (v0.7 translation train): a stale
+  // "busy"/"stalled" chip from the PREVIOUS live meeting's translate
+  // queue must not survive into a loaded (stopped) session — same
+  // "stale live-only bookkeeping must not survive a meeting swap"
+  // rationale as activeSpeaker/correctionBusy above.
+  it("loadSession resets translateStatus to {off, pending:0}", async () => {
+    const session: MeetingSession = {
+      id: "sess-ts",
+      title: "t",
+      startedAt: 1000,
+      endedAt: 2000,
+      engine: "whisper",
+      segments: [makeSegment({ id: "s1" })],
+      cards: [],
+      terms: [],
+    };
+    vi.spyOn(storageModule, "getSession").mockResolvedValue(session);
+    useApp.setState({ translateStatus: { state: "stalled", pending: 2, reason: "x" } });
+
+    await useApp.getState().loadSession("sess-ts");
+
+    expect(useApp.getState().translateStatus).toEqual({ state: "off", pending: 0 });
   });
 
   it("loadSession derives the roster from unique segment.speaker values for a LEGACY session (no speakerRoster key at all)", async () => {
@@ -1217,6 +1252,118 @@ describe("saveCurrentSession / currentSessionSnapshot persist inferredContext (a
       inferredContext: "跨境电商客户评审",
     });
     expect(currentSessionSnapshot()?.inferredContext).toBe("跨境电商客户评审");
+  });
+});
+
+function makeSummaryWithTopic(topicZh: string): SummaryResult {
+  return {
+    summary: { topic: { en: "", zh: topicZh }, key_points: [], decisions: [], action_items: [] },
+    translations: [],
+    flashcards: [],
+    generatedAt: 1000,
+    model: "m",
+  };
+}
+
+// Auto meeting titles: saveCurrentSession has always stamped a fresh
+// session with the auto-generated "会议 …" shape (autoMeetingTitle).
+// Once a summary's topic exists, that timestamp-only title upgrades to
+// the topic — but ONLY while the session's own already-persisted title
+// still matches the auto shape exactly; a title that's diverged (a
+// future rename feature, most likely) is never overwritten.
+describe("saveCurrentSession — auto meeting titles from the summary topic", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("no summary yet → the auto-generated title is used, unchanged", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      summary: null,
+      sessions: [],
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.title).toBe(autoMeetingTitle(1000));
+  });
+
+  it("a summary with a non-empty topic replaces a title still matching the auto shape", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      summary: makeSummaryWithTopic("周会：预算复盘"),
+      sessions: [
+        {
+          id: "existing-1",
+          title: autoMeetingTitle(1000),
+          startedAt: 1000,
+          endedAt: 2000,
+          segmentCount: 1,
+          cardCount: 0,
+          termCount: 0,
+          hasSummary: false,
+        },
+      ],
+      activeSessionId: "existing-1",
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.title).toBe("周会：预算复盘");
+  });
+
+  it("never overwrites a title that already diverged from the auto shape (a future rename)", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      summary: makeSummaryWithTopic("周会：预算复盘"),
+      sessions: [
+        {
+          id: "existing-1",
+          title: "客户访谈 · 老王",
+          startedAt: 1000,
+          endedAt: 2000,
+          segmentCount: 1,
+          cardCount: 0,
+          termCount: 0,
+          hasSummary: false,
+        },
+      ],
+      activeSessionId: "existing-1",
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.title).toBe("客户访谈 · 老王");
+  });
+
+  it("an empty/whitespace-only topic never overrides the auto title", async () => {
+    const saveSpy = vi.spyOn(storageModule, "saveSession").mockResolvedValue(true);
+    vi.spyOn(storageModule, "listSessions").mockResolvedValue([]);
+    useApp.setState({
+      segments: [makeSegment({ id: "s1" })],
+      startedAt: 1000,
+      summary: makeSummaryWithTopic("   "),
+      sessions: [],
+      activeSessionId: null,
+    });
+
+    await useApp.getState().saveCurrentSession();
+
+    const saved = saveSpy.mock.calls[0][0] as MeetingSession;
+    expect(saved.title).toBe(autoMeetingTitle(1000));
   });
 });
 
@@ -2411,6 +2558,54 @@ describe("updateSettings — persist opt-out (S14.1 演示 fix)", () => {
 
     expect(useApp.getState().settings.engine).toBe("demo");
     expect(saveSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Adversarial-review Finding 1/3 (v0.7 translation train, uncommitted):
+// updateSettings is the one chokepoint every settings write routes
+// through — these pin the migration-marker stamp (Finding 1) and the
+// en->en bilingual guard (Finding 3) directly at that chokepoint.
+describe("updateSettings — translateEngineMigrated stamp + en->en bilingual guard (adversarial-review Finding 1/3)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    useApp.setState({ settings: DEFAULT_SETTINGS });
+  });
+
+  it("Finding 1 (r2): a patch that CHANGES translateEngine stamps translateEngineMigrated:true — a user's own explicit pick must never be auto-migrated later", () => {
+    vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    useApp.getState().updateSettings({ translateEngine: "llm" });
+    expect(useApp.getState().settings.translateEngineMigrated).toBe(true);
+  });
+
+  it("Finding 1 (r2 REOPEN fix): the SettingsDialog full-object save shape — changed engine + carried-along stale marker:false — still stamps (value change wins over patch shape)", () => {
+    vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    useApp.getState().updateSettings({ translateEngine: "llm", translateEngineMigrated: false });
+    expect(useApp.getState().settings.translateEngineMigrated).toBe(true);
+  });
+
+  it("Finding 1 (r2): an UNCHANGED translateEngine (full-object save with no engine edit) does not stamp — hydration migration can still run later", () => {
+    vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    useApp.getState().updateSettings({
+      translateEngine: DEFAULT_SETTINGS.translateEngine,
+      translateEngineMigrated: false,
+    });
+    expect(useApp.getState().settings.translateEngineMigrated).toBe(false);
+  });
+
+  it('Finding 3: setting explainLanguage to "en" (pair en->en, DEFAULT_SETTINGS.language is "en-US") forces bilingualTranscript off', () => {
+    vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, bilingualTranscript: true } });
+    useApp.getState().updateSettings({ explainLanguage: "en" });
+    expect(useApp.getState().settings.bilingualTranscript).toBe(false);
+  });
+
+  it("Finding 3: a genuine zh->en pair leaves bilingualTranscript untouched", () => {
+    vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, language: "zh-CN", explainLanguage: "en", bilingualTranscript: true },
+    });
+    useApp.getState().updateSettings({ aiDetect: false });
+    expect(useApp.getState().settings.bilingualTranscript).toBe(true);
   });
 });
 

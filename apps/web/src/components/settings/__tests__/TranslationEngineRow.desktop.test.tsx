@@ -19,7 +19,10 @@ vi.mock("@/lib/translate/providers", () => ({
   probeSystemTranslateSupport: (...args: unknown[]) => probeMock(...args),
 }));
 
-import TranslationEngineRow, { type TranslationEngineRowProps } from "../TranslationEngineRow";
+import TranslationEngineRow, {
+  LLM_TRANSLATE_WARNING,
+  type TranslationEngineRowProps,
+} from "../TranslationEngineRow";
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -59,15 +62,38 @@ describe("TranslationEngineRow (desktop build)", () => {
     return el.querySelector("select") as HTMLSelectElement;
   }
 
-  it("renders both options with the given value selected", async () => {
+  it("renders all three options, in system/deepl/llm order, with the given value selected", async () => {
     probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
     const el = mount({ value: "llm", onChange: () => {}, langPair });
     await flush();
 
     expect(el.querySelector('[data-testid="translation-engine-row"]')).not.toBeNull();
     const values = Array.from(select(el).querySelectorAll("option")).map((o) => (o as HTMLOptionElement).value);
-    expect(values).toEqual(["llm", "system"]);
+    expect(values).toEqual(["system", "deepl", "llm"]);
     expect(select(el).value).toBe("llm");
+  });
+
+  it("deepl stays enabled on desktop regardless of deeplKey presence — key prompting is the settings field's own job", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
+    const el = mount({ value: "llm", onChange: () => {}, langPair });
+    await flush();
+
+    const deeplOption = select(el).querySelector('option[value="deepl"]') as HTMLOptionElement;
+    expect(deeplOption.disabled).toBe(false);
+    expect(deeplOption.textContent).toBe("DeepL · 云端（需自备 Key）");
+  });
+
+  it("llm inline latency warning shows only while llm is the selected value", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
+    const el = mount({ value: "system", onChange: () => {}, langPair });
+    await flush();
+    expect(el.textContent).not.toContain(LLM_TRANSLATE_WARNING);
+
+    act(() => {
+      root!.render(<TranslationEngineRow value="llm" onChange={() => {}} langPair={langPair} />);
+    });
+    await flush();
+    expect(el.textContent).toContain(LLM_TRANSLATE_WARNING);
   });
 
   it("changing the select calls onChange with the new value", async () => {
@@ -91,7 +117,7 @@ describe("TranslationEngineRow (desktop build)", () => {
 
     const systemOption = select(el).querySelector('option[value="system"]') as HTMLOptionElement;
     expect(systemOption.disabled).toBe(false);
-    expect(systemOption.textContent).toBe("Apple 翻译 · 本机离线");
+    expect(systemOption.textContent).toBe("系统翻译 · 本机离线（推荐）");
     expect(el.textContent).toContain("已就绪");
   });
 

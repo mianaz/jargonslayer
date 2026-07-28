@@ -316,7 +316,16 @@ describe("resolveTranslationProvider on IS_DESKTOP (macOS 26+)", () => {
     expect(provider).toBeInstanceOf(DesktopSystemTranslationProvider);
   });
 
-  it("osSupported:false (macOS < 26) -> falls back to LlmTranslationProvider, never crashes", async () => {
+  // BEHAVIOR CHANGE (v0.7 wave 2A, privacy taste-veto closed deliberately):
+  // this used to assert a fall-back to LlmTranslationProvider on
+  // osSupported:false — a user who opted into on-device-only translation
+  // could have that silently swapped for a cloud LLM call. resolution no
+  // longer reads the probe cache AT ALL: NATIVE_SYSTEM_TRANSLATE always
+  // resolves to DesktopSystemTranslationProvider now, regardless of probe
+  // state — an unsupported OS surfaces through SystemTranslatorUnavailableError
+  // once translate() actually runs instead (see providers.ts's own
+  // resolveTranslationProvider doc comment).
+  it("osSupported:false (macOS < 26) -> STILL resolves to the desktop provider (no silent LLM fallback)", async () => {
     const { invoke } = makeFakeInvoke({
       system_translate_probe: () => ({ osSupported: false, status: "unsupported" }),
     });
@@ -326,28 +335,20 @@ describe("resolveTranslationProvider on IS_DESKTOP (macOS 26+)", () => {
     const provider = resolveTranslationProvider(() =>
       makeSettings({ translateEngine: "system", language: "en-US", explainLanguage: "zh" }),
     );
-    expect(provider).toBeInstanceOf(LlmTranslationProvider);
+    expect(provider).toBeInstanceOf(DesktopSystemTranslationProvider);
   });
 
-  it("cold cache (no probe run yet) -> falls back to LlmTranslationProvider for THIS call, and fires a background probe that warms the cache for the NEXT one", async () => {
-    const { invoke } = makeFakeInvoke({
-      system_translate_probe: () => ({ osSupported: true, status: "installed" }),
-    });
-    currentInvoke = invoke;
-
+  // BEHAVIOR CHANGE (same taste-veto fix): this used to assert a fall-back
+  // to LlmTranslationProvider on a COLD cache (probe never run yet), with a
+  // background probe warming the cache for a later call. resolution no
+  // longer needs the probe warm at all — it resolves the desktop provider
+  // synchronously on the very first call, cold cache or not.
+  it("cold cache (no probe run yet) -> STILL resolves to the desktop provider immediately, no probe read/fired by resolution itself", () => {
     expect(getSystemTranslateProbeSnapshot({ source: "en", target: "zh" })).toBeNull();
     const getSettings = () => makeSettings({ translateEngine: "system", language: "en-US", explainLanguage: "zh" });
-    const first = resolveTranslationProvider(getSettings);
-    expect(first).toBeInstanceOf(LlmTranslationProvider);
 
-    await flush();
-    expect(getSystemTranslateProbeSnapshot({ source: "en", target: "zh" })).toEqual({
-      osSupported: true,
-      status: "installed",
-    });
-
-    const second = resolveTranslationProvider(getSettings);
-    expect(second).toBeInstanceOf(DesktopSystemTranslationProvider);
+    const provider = resolveTranslationProvider(getSettings);
+    expect(provider).toBeInstanceOf(DesktopSystemTranslationProvider);
   });
 });
 

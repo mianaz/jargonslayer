@@ -11,7 +11,15 @@ import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import { hydrateSecrets, readSecrets, SECRET_NAMES, writeSecret } from "../secret";
 
 describe("secret.ts — IS_DESKTOP guard (ambient, IS_DESKTOP false in this test env)", () => {
-  it("SECRET_NAMES pins the exact 6 field names secret.rs's own ALLOWED list mirrors", () => {
+  // Translation-rework wave 1: deeplKey joins this list on the TS side
+  // (types.ts's own doc). NOTE — secret.rs's own ALLOWED array (Rust,
+  // apps/desktop/src-tauri) is out of this wave's scope and has NOT
+  // been updated to match yet; until it is, a real desktop build's
+  // writeSecret("deeplKey", …) fails closed (returns false, per that
+  // function's own never-throws contract) and the value simply stays
+  // in the plaintext IDB blob (fail-open) instead of migrating to the
+  // Keychain — a known follow-up, not a crash.
+  it("SECRET_NAMES pins the exact 7 field names secret.rs's own ALLOWED list mirrors", () => {
     expect(SECRET_NAMES).toEqual([
       "apiKey",
       "hfToken",
@@ -19,6 +27,7 @@ describe("secret.ts — IS_DESKTOP guard (ambient, IS_DESKTOP false in this test
       "deepgramKey",
       "elevenLabsKey",
       "agentToken",
+      "deeplKey",
     ]);
   });
 

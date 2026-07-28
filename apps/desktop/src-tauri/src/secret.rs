@@ -60,13 +60,14 @@ const SERVICE: &str = "com.bioinfospace.jargonslayer";
 /// rs's own DiskFreeResult shape). Rejecting anything else keeps this
 /// from ever becoming an arbitrary keychain-write primitive for a
 /// compromised renderer.
-const ALLOWED: [&str; 6] = [
+const ALLOWED: [&str; 7] = [
     "apiKey",
     "hfToken",
     "sonioxKey",
     "deepgramKey",
     "elevenLabsKey",
     "agentToken",
+    "deeplKey",
 ];
 
 fn check_allowed(name: &str) -> Result<(), String> {

@@ -24,7 +24,10 @@ vi.mock("@/lib/translate/providers", () => ({
   probeSystemTranslateSupport: (...args: unknown[]) => probeMock(...args),
 }));
 
-import TranslationEngineRow, { type TranslationEngineRowProps } from "../TranslationEngineRow";
+import TranslationEngineRow, {
+  LLM_TRANSLATE_WARNING,
+  type TranslationEngineRowProps,
+} from "../TranslationEngineRow";
 
 async function flush(): Promise<void> {
   await act(async () => {
@@ -111,5 +114,32 @@ describe("TranslationEngineRow (iOS build)", () => {
     });
 
     expect(onChange).toHaveBeenCalledWith("llm");
+  });
+
+  // Wave-2B reorder — mirrors TranslationEngineRow.desktop.test.tsx's own
+  // coverage (this file dispatches to the SAME DesktopTranslationEngineRow
+  // function, just with IS_IOS mocked true instead of IS_DESKTOP).
+  it("renders all three options, in system/deepl/llm order; deepl stays enabled regardless of deeplKey presence", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
+    const el = mount({ value: "llm", onChange: () => {}, langPair });
+    await flush();
+
+    const values = Array.from(select(el).querySelectorAll("option")).map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual(["system", "deepl", "llm"]);
+    const deeplOption = select(el).querySelector('option[value="deepl"]') as HTMLOptionElement;
+    expect(deeplOption.disabled).toBe(false);
+  });
+
+  it("llm inline latency warning shows only while llm is the selected value", async () => {
+    probeMock.mockResolvedValue({ osSupported: true, status: "installed" });
+    const el = mount({ value: "system", onChange: () => {}, langPair });
+    await flush();
+    expect(el.textContent).not.toContain(LLM_TRANSLATE_WARNING);
+
+    act(() => {
+      root!.render(<TranslationEngineRow value="llm" onChange={() => {}} langPair={langPair} />);
+    });
+    await flush();
+    expect(el.textContent).toContain(LLM_TRANSLATE_WARNING);
   });
 });

@@ -30,6 +30,10 @@ export const SECRET_NAMES = [
   "deepgramKey",
   "elevenLabsKey",
   "agentToken",
+  // Translation-rework wave 1: DeepL BYOK key — joins the desktop
+  // keychain custody surface like every other BYOK key above (see
+  // types.ts's deeplKey doc for the full list of surfaces this joins).
+  "deeplKey",
 ] as const;
 export type SecretName = (typeof SECRET_NAMES)[number];
 

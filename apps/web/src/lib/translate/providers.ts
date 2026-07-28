@@ -18,9 +18,9 @@
 // returns. `translate()` (called later, off the debounced queue timer,
 // no gesture) only ever reads from the already-primed cache; it never
 // calls `create()` itself.
-import { translateApi } from "../llm/client";
-import { diagLog } from "../diag/log";
-import { IS_IOS, IS_TAURI } from "../platform/ios";
+import { translateApi, NoKeyError, RateLimitApiError } from "../llm/client";
+import { getTransport } from "../llm/llmTransport";
+import { IS_IOS } from "../platform/ios";
 import { IS_DESKTOP } from "../platform/desktop";
 import { getInvoke } from "../desktop/tauriApi";
 import type { Settings, TranslateRequest, TranslateResponse } from "@jargonslayer/core/types";
@@ -75,6 +75,69 @@ export class LlmTranslationProvider implements TranslationProvider {
     // them stay exactly as before.
     const res = await translateApi({ segments: items, lang }, settings);
     return res.translations;
+  }
+}
+
+// ---------------------------------------------------------------
+// DeepL provider (v0.7 wave 2A, BYOK) — a plain HTTP call, unlike the
+// system providers below: no per-language-pair priming/model download
+// exists for DeepL, so prepare() is a no-op and translate() reads
+// CURRENT settings.deeplKey/language fresh every call, same "always
+// fresh" contract as LlmTranslationProvider above. Routed through
+// llmTransport.ts's getTransport() (native fetch on desktop/iOS, CORS-
+// free) rather than the global fetch directly — on plain web (no Tauri
+// transport) a DeepL call CORS-fails, surfacing as an ordinary batch
+// failure through queue.ts's generic-error retry path; disabling the
+// option in that case is UI-side, not this provider's job.
+// ---------------------------------------------------------------
+
+export class DeepLTranslationProvider implements TranslationProvider {
+  readonly kind: Settings["translateEngine"] = "deepl";
+
+  constructor(private getSettings: () => Settings) {}
+
+  // Stateless per call — nothing to prime.
+  prepare(_langPair: TranslationLangPair): void {}
+
+  async translate(
+    items: TranslateRequest["segments"],
+    lang: string,
+  ): Promise<TranslateResponse["translations"]> {
+    const settings = this.getSettings();
+    const key = settings.deeplKey.trim();
+    if (!key) throw new NoKeyError();
+
+    const base = key.endsWith(":fx") ? "https://api-free.deepl.com" : "https://api.deepl.com";
+    const res = await getTransport()(`${base}/v2/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `DeepL-Auth-Key ${key}` },
+      body: JSON.stringify({
+        text: items.map((i) => i.text),
+        source_lang: langPairFromSettings(settings).source.toUpperCase(),
+        target_lang: lang === "zh" ? "ZH" : "EN-US",
+        model_type: "latency_optimized",
+        split_sentences: "0", // keeps DeepL's positional response 1:1 with `items` — see the length check below
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (res.status === 403) throw new NoKeyError();
+    if (res.status === 429 || res.status === 456) throw new RateLimitApiError(); // 456 = DeepL quota exceeded
+    if (!res.ok) throw new Error(`DeepL translate failed (${res.status})`);
+
+    const body = (await res.json()) as { translations?: { text: string }[] };
+    const translations = body.translations ?? [];
+    // DeepL's response is POSITIONAL (no ids) — a length mismatch must
+    // fail the WHOLE batch rather than zip a shifted array (a silent
+    // off-by-one would mistranslate every row); segments simply stay
+    // English-only, same failed-soft contract as every other provider's
+    // own thrown errors.
+    if (translations.length !== items.length) {
+      throw new Error(
+        `DeepL response length mismatch: got ${translations.length}, expected ${items.length}`,
+      );
+    }
+    return items.map((it, i) => ({ id: it.id, text: translations[i].text }));
   }
 }
 
@@ -316,9 +379,10 @@ const SYSTEM_TRANSLATE_UNSUPPORTED: SystemTranslateProbeResult = { osSupported: 
 // Module-level, keyed by pairKey — separate from ChromeTranslatorProvider's
 // own sessionCache above (different question, different platform; the two
 // never coexist since native (IS_DESKTOP/IS_IOS) and plain-web are mutually
-// exclusive builds). Shared by TranslationEngineRow's own read-only hint (T2) and
-// resolveTranslationProvider's synchronous read below (T1) — single
-// source of truth so a probe fired from either caller benefits the other.
+// exclusive builds). Shared by TranslationEngineRow's own read-only hint,
+// store.ts's runTranslateEngineMigration, and warmSystemTranslateProbeForStartup
+// below — single source of truth so a probe fired from any caller benefits
+// the others.
 const systemProbeCache = new Map<string, SystemTranslateProbeResult>();
 const systemProbeInFlight = new Map<string, Promise<SystemTranslateProbeResult>>();
 
@@ -326,9 +390,10 @@ const systemProbeInFlight = new Map<string, Promise<SystemTranslateProbeResult>>
  *  `pair` — null before probeSystemTranslateSupport() has ever resolved
  *  for real (a failed probe is deliberately not cached, same policy as
  *  osspeechCaps.ts's own probeOsSpeechCapabilitiesWith — see that
- *  function's own doc). resolveTranslationProvider (itself synchronous,
- *  per this module's own A6 header comment) reads this — it never
- *  awaits a probe inline. */
+ *  function's own doc). Read by TranslationEngineRow's own hint and
+ *  store.ts's runTranslateEngineMigration — resolveTranslationProvider
+ *  no longer reads this (see its own doc comment: the privacy taste-veto
+ *  fix means it never conditions the returned provider on probe state). */
 export function getSystemTranslateProbeSnapshot(pair: TranslationLangPair): SystemTranslateProbeResult | null {
   return systemProbeCache.get(pairKey(pair)) ?? null;
 }
@@ -543,63 +608,57 @@ export function stopSystemTranslator(): Promise<void> {
 // Resolution
 // ---------------------------------------------------------------
 
-/** settings.translateEngine==="system" branches three ways: NATIVE_SYSTEM_
- *  TRANSLATE (desktop macOS 26+ OR iOS) -> DesktopSystemTranslationProvider,
- *  but ONLY when a cached system_translate_probe already says osSupported
- *  && status !== "unsupported" (a cold/negative cache falls back to LLM
- *  for THIS meeting, same as before, while a background probe warms the
- *  cache for the NEXT resolution — see probeSystemTranslateSupport);
- *  plain web with the Chrome Translator API present ->
- *  ChromeTranslatorProvider; everything else (an unsupported browser, a
- *  not-yet-known/unsupported native probe) -> LLM, silently (one diagLog
- *  line — never a toast, never a thrown error: the meeting just starts
- *  on the LLM engine instead). Takes a live getter (not a settings
- *  snapshot) so the constructed LlmTranslationProvider keeps reading
- *  FRESH settings on every batch, same as before this abstraction
- *  existed; the provider KIND itself is decided once, here, matching how
- *  engine kind is already frozen for a session (useMeeting.ts's
- *  attachEngine). */
-/** Startup warm-up (v0.6 round-2 review, HIGH-1 fix): resolveTranslationProvider's
- *  NATIVE_SYSTEM_TRANSLATE branch above only returns the native provider
- *  once getSystemTranslateProbeSnapshot(pair) is already populated, and
- *  systemProbeCache is memory-only — the only thing that used to warm it
- *  was TranslationEngineRow's own Settings-row mount effect, which never
- *  mounts unless the user opens Settings first (SettingsDialog.tsx's own
- *  `if (!open) return null` gate). A user who launches the app with
- *  translateEngine:"system" already selected and hits Start straight
- *  away got LlmTranslationProvider for the WHOLE meeting instead —
- *  exactly the no-API-key-needed case this engine exists for. Called
- *  once from page.tsx's own mount effect, right after hydrate()
- *  resolves, so the cache is already warm before the user's first Start
- *  click. Fire-and-forget, same posture as every other startup probe in
- *  that effect (checkAppUpdate/initIos) — a failed/slow probe changes
- *  nothing here: resolveTranslationProvider already falls back to LLM on
- *  a cold/negative cache. */
+/** Startup warm-up (v0.6 round-2 review, HIGH-1 fix): warms
+ *  systemProbeCache (memory-only) at app launch so TranslationEngineRow's
+ *  own Settings-row hint (and store.ts's runTranslateEngineMigration) has
+ *  a cached answer ready the first time either reads it, rather than
+ *  only ever being warmed by TranslationEngineRow's own mount effect —
+ *  which never fires unless the user opens Settings first (SettingsDialog.tsx's
+ *  own `if (!open) return null` gate). resolveTranslationProvider itself no
+ *  longer reads this cache at all (see that function's own doc comment —
+ *  the privacy taste-veto fix means it never conditions the returned
+ *  provider on probe state), so this is purely a UI-hint/migration warm-up
+ *  now, not a resolution-correctness one. Called once from page.tsx's own
+ *  mount effect, right after hydrate() resolves. Fire-and-forget, same
+ *  posture as every other startup probe in that effect (checkAppUpdate/
+ *  initIos) — a failed/slow probe changes nothing here. */
 export function warmSystemTranslateProbeForStartup(settings: Settings): void {
   if (NATIVE_SYSTEM_TRANSLATE && settings.translateEngine === "system") {
     void probeSystemTranslateSupport(langPairFromSettings(settings));
   }
 }
 
+/** settings.translateEngine==="system" ALWAYS resolves to the system-kind
+ *  provider for this platform now — NATIVE_SYSTEM_TRANSLATE (desktop macOS
+ *  26+ OR iOS) -> DesktopSystemTranslationProvider, otherwise ->
+ *  ChromeTranslatorProvider (plain web). This used to gate the native
+ *  branch on a cached system_translate_probe (osSupported/status), falling
+ *  back to LlmTranslationProvider on a cold or negative cache — a flagged
+ *  privacy taste-veto, closed deliberately (v0.7 wave 2A): a user who
+ *  opted into on-device-only translation must never have that silently
+ *  swapped for a cloud LLM call. A genuinely unsupported/still-priming
+ *  system translator now surfaces through SystemTranslatorUnavailableError
+ *  once translate() actually runs instead (both provider classes above
+ *  already throw it when there's no ready session/native child — see their
+ *  own translate() methods), and queue.ts's existing pause+self-heal branch
+ *  for that error (SYSTEM_UNAVAILABLE_PAUSE_MS, unchanged) handles it the
+ *  same way a cold cache used to be papered over. The system_translate_probe
+ *  cache itself is unaffected by this — TranslationEngineRow's own hint and
+ *  store.ts's runTranslateEngineMigration still read/warm it, just no longer
+ *  this function. Takes a live getter (not a settings snapshot) so the
+ *  constructed LlmTranslationProvider/DeepLTranslationProvider keep reading
+ *  FRESH settings on every batch, same as before this abstraction existed;
+ *  the provider KIND itself is decided once, here, matching how engine kind
+ *  is already frozen for a session (useMeeting.ts's attachEngine). */
 export function resolveTranslationProvider(getSettings: () => Settings): TranslationProvider {
   const settings = getSettings();
   if (settings.translateEngine === "system") {
-    if (NATIVE_SYSTEM_TRANSLATE) {
-      const pair = langPairFromSettings(settings);
-      const probe = getSystemTranslateProbeSnapshot(pair);
-      if (probe && probe.osSupported && probe.status !== "unsupported") {
-        return new DesktopSystemTranslationProvider();
-      }
-      // Cold cache only — a cached DEFINITIVE answer (even a negative
-      // one) needs no re-probe; probeSystemTranslateSupport would just
-      // short-circuit on it anyway, but skipping the call entirely here
-      // keeps a session that's already confirmed unsupported from
-      // spawning a throwaway promise on every single resolution.
-      if (!probe) void probeSystemTranslateSupport(pair);
-    } else if (!IS_TAURI && isSystemTranslatorSupported()) {
-      return new ChromeTranslatorProvider();
-    }
-    diagLog("info", "translate-provider", "系统翻译不可用，已回退到 AI 模型翻译");
+    return NATIVE_SYSTEM_TRANSLATE
+      ? new DesktopSystemTranslationProvider()
+      : new ChromeTranslatorProvider();
+  }
+  if (settings.translateEngine === "deepl") {
+    return new DeepLTranslationProvider(getSettings);
   }
   return new LlmTranslationProvider(getSettings);
 }

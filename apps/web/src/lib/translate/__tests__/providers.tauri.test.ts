@@ -1,10 +1,28 @@
 // @vitest-environment jsdom
 //
-// resolveTranslationProvider on a Tauri shell (desktop OR iOS) — A6:
-// "system hidden/fallback on Tauri desktop + iOS". vi.mock is hoisted/
-// file-scoped, so this needs its own file (mirrors lib/stt/__tests__/
-// engineOptions.desktop.test.ts's own "vi.mock(...IS_DESKTOP: true)"
-// per-file pattern) rather than a describe block inside providers.test.ts.
+// resolveTranslationProvider with IS_TAURI true but NATIVE_SYSTEM_TRANSLATE
+// (IS_DESKTOP||IS_IOS) false — a combination this file's own vi.mock below
+// decouples ARTIFICIALLY (platform/ios.ts's real IS_TAURI is always exactly
+// IS_DESKTOP||IS_IOS, so in a real build this state is unreachable; both
+// real Tauri shells are already fully covered by providers.desktopSystem.
+// test.ts/providers.iosSystem.test.ts's own NATIVE_SYSTEM_TRANSLATE:true
+// cases). vi.mock is hoisted/file-scoped, so this needs its own file
+// (mirrors lib/stt/__tests__/engineOptions.desktop.test.ts's own
+// "vi.mock(...IS_DESKTOP: true)" per-file pattern) rather than a describe
+// block inside providers.test.ts.
+//
+// BEHAVIOR CHANGE (v0.7 wave 2A, privacy taste-veto closed deliberately):
+// resolveTranslationProvider used to gate ChromeTranslatorProvider on
+// `!IS_TAURI` specifically (on top of NATIVE_SYSTEM_TRANSLATE), so this
+// synthetic combination fell through to a silent LlmTranslationProvider
+// fallback. That extra guard is gone now — "system" always resolves to
+// NATIVE_SYSTEM_TRANSLATE ? DesktopSystemTranslationProvider :
+// ChromeTranslatorProvider, full stop, so this file's own test below now
+// documents that ChromeTranslatorProvider is what a hypothetical
+// IS_TAURI-but-non-native build would get (harmless in practice: no real
+// build reaches this state, and ChromeTranslatorProvider's own translate()
+// throws SystemTranslatorUnavailableError when window.Translator is
+// genuinely absent, same self-healing path as everywhere else).
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
@@ -41,11 +59,10 @@ afterEach(() => {
 });
 
 describe("resolveTranslationProvider on IS_TAURI (desktop/iOS)", () => {
-  it("translateEngine:'system' still resolves to LlmTranslationProvider — Chrome Translator is never used on a Tauri shell, even when the API happens to be present", () => {
+  it("translateEngine:'system' resolves to ChromeTranslatorProvider when NATIVE_SYSTEM_TRANSLATE is false — resolution no longer special-cases IS_TAURI on its own (see this file's own header comment)", () => {
     installFakeTranslator();
     const provider = resolveTranslationProvider(() => makeSettings({ translateEngine: "system" }));
-    expect(provider).toBeInstanceOf(LlmTranslationProvider);
-    expect(provider).not.toBeInstanceOf(ChromeTranslatorProvider);
+    expect(provider).toBeInstanceOf(ChromeTranslatorProvider);
   });
 
   it("translateEngine:'llm' resolves to LlmTranslationProvider as usual", () => {

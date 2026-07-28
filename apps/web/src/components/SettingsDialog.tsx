@@ -1051,6 +1051,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const engineLockedByMeeting = isEngineControlBusy(meetingStatus);
 
   const [draft, setDraft] = useState<Settings>(() => coercePreviewModels(settings));
+  // Sol r5 (v0.7 train): session-scoped edit-intent flag for
+  // translateEngine. A draft==savedSnapshot equality check loses the
+  // ABA case (user picks system, then deliberately returns to llm →
+  // equals snapshot again → their pick would be dropped in favor of
+  // the live value). Set by the engine row's onChange only; reset on
+  // every dialog open and on full-backup restore.
+  const [engineTouched, setEngineTouched] = useState(false);
   // S13 iOS mobile-UX round (Part B #4): frozen baseline for the iOS
   // sticky-save-bar dirty check below — re-seeded alongside `draft` in
   // the SAME open effect (never independently), so a background
@@ -1213,6 +1220,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // scoped to 转录引擎 since the field itself only renders when
   // draft.engine === "elevenlabs".
   const [showElevenLabsKey, setShowElevenLabsKey] = useState(false);
+  // DeepL API Key masked-input toggle (translation-rework wave 2) — same
+  // idiom, scoped to AI 检测's 翻译引擎 row since the field itself only
+  // renders when draft.translateEngine === "deepl".
+  const [showDeeplKey, setShowDeeplKey] = useState(false);
   // Draft checked-set for non-core theme packs; reconciled back into
   // draft.enabledPacks (string[] | null) on save. "core" is always on
   // and isn't part of this set — it renders as a disabled row instead.
@@ -1519,6 +1530,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       const seededDraft = coercePreviewModels(settings);
       setDraft(seededDraft);
       setSavedSnapshot(seededDraft);
+      setEngineTouched(false);
       // v0.5.1: SettingsDialog is mounted unconditionally by page.tsx
       // (this whole component instance survives an open/close cycle —
       // `if (!open) return null` above is only a render-output guard,
@@ -2231,6 +2243,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // spreading draft's dialog-open-time snapshot here would silently
       // roll back a fresher background-recorded timestamp on ANY 保存.
       packAutoUpdateCheckedAt: useApp.getState().settings.packAutoUpdateCheckedAt,
+      // Sol r4+r5 (v0.7 translation train): translateEngine is ALSO
+      // written by background code while this dialog sits open
+      // (hydrate()'s one-shot llm→system migration) — same staleness
+      // class as packAutoUpdateCheckedAt above, EXCEPT this field is
+      // editable in the dialog too. Resolution rides the engineTouched
+      // edit-intent flag (NOT draft-vs-snapshot equality, which loses
+      // the ABA pick-and-return case): untouched this session → live
+      // value wins, so a stale draft can't roll a migrated user back
+      // to llm with the marker already true (permanent, silent); any
+      // touched draft wins as the user's explicit pick. Marker rides
+      // the same rule; updateSettings' monotonic latch belts it.
+      translateEngine: engineTouched
+        ? draft.translateEngine
+        : useApp.getState().settings.translateEngine,
+      // Sol r6 (BLOCKER): a touched save stages the marker TRUE itself,
+      // not the draft's stale copy — an ABA pick (llm→system→llm) saved
+      // while the migration probe is still in flight produces no engine
+      // value change for updateSettings to stamp, and the resolving
+      // probe would otherwise overwrite the explicit choice.
+      translateEngineMigrated: engineTouched
+        ? true
+        : useApp.getState().settings.translateEngineMigrated,
       // F5 fix: sanitize custom: font values at this same persistence
       // boundary — see sanitizeDraftFontValue's own doc comment.
       uiFont: sanitizeDraftFontValue(draft.uiFont),
@@ -2245,13 +2279,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // Field bug fix (iOS TestFlight, sanitizeSecret.ts's own doc):
       // strip pasted zero-width chars + trim whitespace from every
       // SECRET_NAMES field at this same save boundary — mirrors
-      // normalizeBaseUrl above, just for the six secret-shaped fields
+      // normalizeBaseUrl above, just for the seven secret-shaped fields
       // instead of baseUrl.
       apiKey: sanitizeSecretValue(draft.apiKey),
       hfToken: sanitizeSecretValue(draft.hfToken),
       sonioxKey: sanitizeSecretValue(draft.sonioxKey),
       deepgramKey: sanitizeSecretValue(draft.deepgramKey),
       elevenLabsKey: sanitizeSecretValue(draft.elevenLabsKey),
+      deeplKey: sanitizeSecretValue(draft.deeplKey),
       agentToken: sanitizeSecretValue(draft.agentToken),
     };
     // Finding 2d: sidecarMode is a LAUNCH-TIME decision — bootstrap.ts's
@@ -2729,6 +2764,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       const resynced = coercePreviewModels(useApp.getState().settings);
       setDraft(resynced);
       setSavedSnapshot(resynced);
+      // Full restore replaced the draft wholesale — any pre-restore
+      // engine edit intent is void (Sol r5 engineTouched contract).
+      setEngineTouched(false);
       setCheckedPacks(
         new Set(resynced.enabledPacks ?? getAllPacks().filter((p) => p.id !== "core").map((p) => p.id)),
       );
@@ -2863,7 +2901,10 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // different key order than the one this dialog last saved, which a
   // plain stringify compare reads as a phantom edit despite being the
   // same value.
-  const draftDirty = IS_IOS && (packsDirty || stableStringify(draft) !== stableStringify(savedSnapshot));
+  // engineTouched joins the dirty check (Sol r5): an ABA engine edit
+  // leaves draft equal to the snapshot but must still offer 保存.
+  const draftDirty =
+    IS_IOS && (packsDirty || engineTouched || stableStringify(draft) !== stableStringify(savedSnapshot));
 
   return (
     <div
@@ -4537,9 +4578,59 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
             <div data-ui-level="aiDetectTranslateEngine">
               <TranslationEngineRow
                 value={draft.translateEngine}
-                onChange={(v) => patch({ translateEngine: v })}
+                onChange={(v) => {
+                  setEngineTouched(true);
+                  patch({ translateEngine: v });
+                }}
                 langPair={langPairFromSettings(draft)}
               />
+              {/* DeepL API Key (translation-rework wave 2): engine-
+                 conditional, mirrors the Soniox/Deepgram/ElevenLabs API
+                 Key blocks above field-for-field (same hand-rolled
+                 masked-input pattern, same S14 no-probe KeyStatusChip
+                 honesty — no telemetry/health probe exists for DeepL
+                 either). deeplKey already rides toSave's sanitize list
+                 (wave 1). */}
+              {draft.translateEngine === "deepl" && (
+                <div className="mt-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-xs text-mut">DeepL API Key</label>
+                    <KeyStatusChip status={deriveKeyStatus(draft.deeplKey)} />
+                  </div>
+                  <div className="mt-1 flex items-center gap-2">
+                    <input
+                      type={showDeeplKey ? "text" : "password"}
+                      value={draft.deeplKey}
+                      onChange={(e) => patch({ deeplKey: e.target.value })}
+                      placeholder="粘贴你的 DeepL API Key"
+                      className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowDeeplKey((v) => !v)}
+                      aria-label={showDeeplKey ? "隐藏" : "显示"}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {showDeeplKey ? (
+                        <EyeSlash size={18} weight="regular" />
+                      ) : (
+                        <Eye size={18} weight="regular" />
+                      )}
+                    </button>
+                  </div>
+                  <div className="mt-1 text-xs leading-[1.7] text-mut2">
+                    免费版 Key 以 :fx 结尾，每月 50 万字符；在{" "}
+                    <button
+                      type="button"
+                      onClick={() => void openExternal("https://www.deepl.com/pro-api")}
+                      className="text-lab-cyan underline decoration-lab-cyan/40"
+                    >
+                      deepl.com/pro-api
+                    </button>{" "}
+                    注册
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* 背景画像 (#48 step 3, design Q5): opt-in — default off.

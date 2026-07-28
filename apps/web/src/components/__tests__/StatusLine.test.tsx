@@ -963,3 +963,201 @@ describe("StatusLine — AI 状态 chip", () => {
   });
 });
 
+// ---------------------------------------------------------------
+// Translation-rework wave 2: 翻译 status chip — driven by settings.
+// bilingualTranscript (whether the live queue is even asked to
+// translate) AND store.translateStatus (the queue's own live state; no
+// writer yet as of this lane, same "set the derived field directly"
+// posture as the 延迟 chip's own sustained-flag tests above).
+// ---------------------------------------------------------------
+
+describe("StatusLine — 翻译 status chip", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  afterEach(() => {
+    if (root) {
+      act(() => root!.unmount());
+      root = null;
+    }
+    if (container) {
+      container.remove();
+      container = null;
+    }
+    useApp.setState((s) => ({
+      status: "idle",
+      segments: [],
+      translateStatus: { state: "off", pending: 0 },
+      settings: { ...s.settings, bilingualTranscript: false },
+    }));
+    vi.unstubAllGlobals();
+  });
+
+  function renderStatusLine() {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      true;
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  }
+
+  function chip(): HTMLElement {
+    const el = container!.querySelector('[data-testid="statusline-translate-chip"]');
+    if (!el) throw new Error("translate chip not found");
+    return el as HTMLElement;
+  }
+
+  it("hidden while status is idle and no segments are on screen", async () => {
+    useApp.setState({ status: "idle", segments: [] });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(container!.querySelector('[data-testid="statusline-translate-chip"]')).toBeNull();
+  });
+
+  it("shows once segments exist even while idle (a meeting that just ended)", async () => {
+    useApp.setState({
+      status: "idle",
+      segments: [{ id: "s1", index: 0, startedAt: 0, endedAt: 0, text: "hi", engine: "demo" }],
+    });
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(container!.querySelector('[data-testid="statusline-translate-chip"]')).not.toBeNull();
+  });
+
+  it("bilingualTranscript off renders a clickable 未译 button that flips the setting on", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: false },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().tagName).toBe("BUTTON");
+    expect(chip().textContent).toBe("未译");
+
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.bilingualTranscript).toBe(true);
+  });
+
+  it("bilingualTranscript on but translateStatus 'off' — neutral dim chip, no checkmark, not clickable", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: true },
+      translateStatus: { state: "off", pending: 0 },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().tagName).not.toBe("BUTTON");
+    expect(chip().textContent).toContain("翻译");
+    expect(chip().textContent).not.toContain("✓");
+    expect(chip().className).toContain("text-mut2");
+  });
+
+  it("tap-to-enable guard: en->en pair shows a toast and does not enable bilingualTranscript", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: false, language: "en-US", explainLanguage: "en" },
+      toast: null,
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.bilingualTranscript).toBe(false);
+    expect(useApp.getState().toast).toBe("解释语言为英文时无需翻译");
+  });
+
+  it("tap-to-enable guard: differing pair still enables (unaffected by the guard)", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: false, language: "en-US", explainLanguage: "zh" },
+      toast: null,
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    await act(async () => {
+      chip().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.bilingualTranscript).toBe(true);
+    expect(useApp.getState().toast).toBeNull();
+  });
+
+  it("busy shows 翻译中… with the pending count", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: true },
+      translateStatus: { state: "busy", pending: 3 },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain("翻译中…");
+    expect(chip().textContent).toContain("3");
+  });
+
+  it("done shows 翻译 ✓", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: true },
+      translateStatus: { state: "done", pending: 0 },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain("翻译 ✓");
+  });
+
+  it("stalled shows 翻译暂停 in amber, title carries the reason", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: true },
+      translateStatus: { state: "stalled", pending: 2, reason: "DeepL 429" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain("翻译暂停");
+    expect(chip().className).toContain("text-lab-yellow");
+    expect(chip().title).toBe("DeepL 429");
+  });
+});
+

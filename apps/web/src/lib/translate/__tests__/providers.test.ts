@@ -12,11 +12,28 @@ import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 
 vi.mock("../../llm/client", () => ({
   translateApi: vi.fn(),
+  // DeepLTranslationProvider throws these directly (providers.ts imports
+  // them statically from this module) — same fake-class shape queue.test.ts/
+  // queueProvider.test.ts already use for their own mock of this module.
+  NoKeyError: class NoKeyError extends Error {
+    constructor(message = "未配置 API Key") {
+      super(message);
+      this.name = "NoKeyError";
+    }
+  },
+  RateLimitApiError: class RateLimitApiError extends Error {
+    constructor(message = "请求过于频繁，请稍后重试") {
+      super(message);
+      this.name = "RateLimitApiError";
+    }
+  },
 }));
 
-import { translateApi } from "../../llm/client";
+import { translateApi, NoKeyError, RateLimitApiError } from "../../llm/client";
+import { resetTransport, setTransport } from "../../llm/llmTransport";
 import {
   ChromeTranslatorProvider,
+  DeepLTranslationProvider,
   LlmTranslationProvider,
   SystemTranslatorUnavailableError,
   checkSystemTranslatorAvailability,
@@ -131,6 +148,144 @@ describe("LlmTranslationProvider", () => {
     const provider = new LlmTranslationProvider(() => makeSettings());
 
     await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBe(err);
+  });
+});
+
+describe("DeepLTranslationProvider", () => {
+  afterEach(() => {
+    resetTransport();
+  });
+
+  function jsonResponse(body: unknown, status = 200): Response {
+    return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  }
+
+  it("kind is 'deepl'", () => {
+    expect(new DeepLTranslationProvider(() => makeSettings()).kind).toBe("deepl");
+  });
+
+  it("prepare() is a harmless no-op (nothing to prime)", () => {
+    const provider = new DeepLTranslationProvider(() => makeSettings());
+    expect(() => provider.prepare({ source: "en", target: "zh" })).not.toThrow();
+  });
+
+  it("happy path: explainLanguage 'zh' -> target_lang 'ZH', source_lang from settings.language, ids/order preserved", async () => {
+    const mockTransport = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ translations: [{ text: "你好" }, { text: "世界" }] }));
+    setTransport(mockTransport);
+    const settings = makeSettings({ deeplKey: "test-key", language: "en-US", explainLanguage: "zh" });
+    const provider = new DeepLTranslationProvider(() => settings);
+
+    const result = await provider.translate(
+      [
+        { id: "a", text: "hello" },
+        { id: "b", text: "world" },
+      ],
+      "zh",
+    );
+
+    expect(result).toEqual([
+      { id: "a", text: "你好" },
+      { id: "b", text: "世界" },
+    ]);
+    expect(mockTransport).toHaveBeenCalledTimes(1);
+    const [url, init] = mockTransport.mock.calls[0];
+    expect(url).toBe("https://api.deepl.com/v2/translate");
+    expect(init.headers["Authorization"]).toBe("DeepL-Auth-Key test-key");
+    const body = JSON.parse(init.body as string);
+    expect(body).toEqual({
+      text: ["hello", "world"],
+      source_lang: "EN",
+      target_lang: "ZH",
+      model_type: "latency_optimized",
+      split_sentences: "0",
+    });
+  });
+
+  it("happy path: explainLanguage 'en' -> target_lang 'EN-US'", async () => {
+    const mockTransport = vi.fn().mockResolvedValue(jsonResponse({ translations: [{ text: "hi" }] }));
+    setTransport(mockTransport);
+    const settings = makeSettings({ deeplKey: "test-key", language: "zh", explainLanguage: "en" });
+    const provider = new DeepLTranslationProvider(() => settings);
+
+    await provider.translate([{ id: "a", text: "你好" }], "en");
+
+    const body = JSON.parse(mockTransport.mock.calls[0][1].body as string);
+    expect(body.target_lang).toBe("EN-US");
+    expect(body.source_lang).toBe("ZH");
+  });
+
+  it("a key ending in ':fx' (DeepL Free) posts to api-free.deepl.com — a Pro key posts to api.deepl.com", async () => {
+    // mockImplementation (not mockResolvedValue) — a Response body can
+    // only be read once, and this test calls the transport twice.
+    const mockTransport = vi.fn().mockImplementation(async () => jsonResponse({ translations: [{ text: "hi" }] }));
+    setTransport(mockTransport);
+
+    const freeProvider = new DeepLTranslationProvider(() =>
+      makeSettings({ deeplKey: "abc123:fx", language: "en-US", explainLanguage: "zh" }),
+    );
+    await freeProvider.translate([{ id: "a", text: "hi" }], "zh");
+    expect(mockTransport.mock.calls[0][0]).toBe("https://api-free.deepl.com/v2/translate");
+
+    mockTransport.mockClear();
+    const proProvider = new DeepLTranslationProvider(() =>
+      makeSettings({ deeplKey: "abc123", language: "en-US", explainLanguage: "zh" }),
+    );
+    await proProvider.translate([{ id: "a", text: "hi" }], "zh");
+    expect(mockTransport.mock.calls[0][0]).toBe("https://api.deepl.com/v2/translate");
+  });
+
+  it("no key configured -> NoKeyError, without ever calling the transport", async () => {
+    const mockTransport = vi.fn();
+    setTransport(mockTransport);
+    const provider = new DeepLTranslationProvider(() => makeSettings({ deeplKey: "" }));
+
+    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(NoKeyError);
+    expect(mockTransport).not.toHaveBeenCalled();
+  });
+
+  it("HTTP 403 -> NoKeyError (invalid/revoked key)", async () => {
+    setTransport(vi.fn().mockResolvedValue(new Response("", { status: 403 })));
+    const provider = new DeepLTranslationProvider(() => makeSettings({ deeplKey: "bad-key" }));
+
+    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(NoKeyError);
+  });
+
+  it("HTTP 429 -> RateLimitApiError", async () => {
+    setTransport(vi.fn().mockResolvedValue(new Response("", { status: 429 })));
+    const provider = new DeepLTranslationProvider(() => makeSettings({ deeplKey: "k" }));
+
+    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(
+      RateLimitApiError,
+    );
+  });
+
+  it("HTTP 456 (DeepL quota exceeded) -> RateLimitApiError", async () => {
+    setTransport(vi.fn().mockResolvedValue(new Response("", { status: 456 })));
+    const provider = new DeepLTranslationProvider(() => makeSettings({ deeplKey: "k" }));
+
+    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(
+      RateLimitApiError,
+    );
+  });
+
+  it("a length-mismatched (positional) response fails the WHOLE batch instead of zipping a shifted array", async () => {
+    // DeepL's response is positional/id-less — 2 items requested, only 1
+    // translation returned: zipping this naively would mistranslate
+    // EVERY row after the missing one instead of just dropping it.
+    setTransport(vi.fn().mockResolvedValue(jsonResponse({ translations: [{ text: "only one" }] })));
+    const provider = new DeepLTranslationProvider(() => makeSettings({ deeplKey: "k" }));
+
+    await expect(
+      provider.translate(
+        [
+          { id: "a", text: "one" },
+          { id: "b", text: "two" },
+        ],
+        "zh",
+      ),
+    ).rejects.toThrow(/length mismatch/);
   });
 });
 
@@ -313,17 +468,34 @@ describe("resolveTranslationProvider — resolution matrix (web platform; IS_TAU
     expect(provider).toBeInstanceOf(ChromeTranslatorProvider);
   });
 
-  it("translateEngine:'system' + API ABSENT -> silent fallback to LlmTranslationProvider", () => {
+  // BEHAVIOR CHANGE (v0.7 wave 2A, privacy taste-veto closed deliberately):
+  // this used to assert a SILENT fallback to LlmTranslationProvider here —
+  // a user who opted into on-device-only translation could have that
+  // silently swapped for a cloud LLM call whenever the browser lacked the
+  // Translator API. Replaces that test (and the one right after it, which
+  // exercised the fallback LlmTranslationProvider's own translate() call —
+  // no longer applicable, since "system" never resolves to an
+  // LlmTranslationProvider anymore): "system" now ALWAYS resolves to
+  // ChromeTranslatorProvider on plain web, API present or not — an absent
+  // API surfaces through SystemTranslatorUnavailableError once translate()
+  // actually runs instead (see providers.ts's own resolveTranslationProvider
+  // doc comment).
+  it("translateEngine:'system' + API ABSENT -> STILL resolves to ChromeTranslatorProvider (no silent LLM fallback)", () => {
     // No installFakeTranslator() — jsdom has none by default.
     const provider = resolveTranslationProvider(() => makeSettings({ translateEngine: "system" }));
-    expect(provider).toBeInstanceOf(LlmTranslationProvider);
+    expect(provider).toBeInstanceOf(ChromeTranslatorProvider);
   });
 
-  it("the resolved LlmTranslationProvider (fallback case) still works — reads live settings via the SAME getter", async () => {
-    mockTranslateApi.mockResolvedValueOnce({ translations: [{ id: "1", text: "你好" }] });
-    const getSettings = () => makeSettings({ translateEngine: "system", explainLanguage: "zh" });
-    const provider = resolveTranslationProvider(getSettings);
-    const result = await provider.translate([{ id: "1", text: "hi" }], "zh");
-    expect(result).toEqual([{ id: "1", text: "你好" }]);
+  it("...and that resolved ChromeTranslatorProvider's translate() throws SystemTranslatorUnavailableError('unavailable') rather than silently working via the LLM", async () => {
+    const provider = resolveTranslationProvider(() => makeSettings({ translateEngine: "system" }));
+    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toBeInstanceOf(
+      SystemTranslatorUnavailableError,
+    );
+    expect(mockTranslateApi).not.toHaveBeenCalled();
+  });
+
+  it("translateEngine:'deepl' -> DeepLTranslationProvider", () => {
+    const provider = resolveTranslationProvider(() => makeSettings({ translateEngine: "deepl" }));
+    expect(provider).toBeInstanceOf(DeepLTranslationProvider);
   });
 });

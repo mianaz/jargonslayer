@@ -548,3 +548,153 @@ describe("TranslateQueue", () => {
     expect(mockTranslateApi).not.toHaveBeenCalled();
   });
 });
+
+// v0.7 wave 2A — onState (additive, optional) + drain(). Own describe/
+// beforeEach/afterEach (own queue instance, WITH onState wired) rather
+// than reusing the outer describe's shared `queue` (constructed without
+// onState in ITS OWN beforeEach) — mirrors queueProvider.test.ts's own
+// per-file "own makeQueue helper" pattern for the same reason.
+describe("TranslateQueue — onState / drain", () => {
+  let settings: Settings;
+  let meetingGen: number;
+  let onTranslations: ReturnType<typeof vi.fn<(map: Record<string, string>, gen: number) => void>>;
+  let onError: ReturnType<typeof vi.fn<(msg: string) => void>>;
+  let onState: ReturnType<
+    typeof vi.fn<(s: { state: "off" | "busy" | "done" | "stalled"; pending: number; reason?: string }) => void>
+  >;
+  let queue: TranslateQueue;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    segIndex = 0;
+    settings = makeSettings();
+    meetingGen = 0;
+    onTranslations = vi.fn<(map: Record<string, string>, gen: number) => void>();
+    onError = vi.fn<(msg: string) => void>();
+    onState = vi.fn();
+    mockTranslateApi.mockReset();
+    const provider = new LlmTranslationProvider(() => settings);
+    queue = new TranslateQueue({
+      getSettings: () => settings,
+      getMeetingGen: () => meetingGen,
+      provider,
+      onTranslations,
+      onError,
+      onState,
+    });
+  });
+
+  afterEach(() => {
+    queue.stop();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("busy -> done: push, dispatch, and a successful landing drains the queue to 'done'", async () => {
+    mockTranslateApi.mockResolvedValueOnce({ translations: [{ id: "seg-1", text: "你好" }] });
+
+    queue.pushSegment(makeSegment("hello"));
+    await vi.advanceTimersByTimeAsync(800);
+
+    // Finding 5 fix (adversarial review): dispatching a batch moves
+    // items from `pending` into "in flight" but doesn't change the
+    // REPORTED total (see emitState's own doc) — so tryFlush's own
+    // dispatch-time emission is now identical to pushSegment's {busy,1}
+    // and gets deduped, rather than firing its own (previously
+    // misleading) {busy, pending:0} in between.
+    expect(onState.mock.calls.map((c) => c[0])).toEqual([
+      { state: "busy", pending: 1, reason: undefined }, // pushSegment: enqueued, still idle otherwise
+      { state: "done", pending: 0, reason: undefined }, // batch lands, queue drains to idle
+    ]);
+  });
+
+  it("Finding 5: a <=batch-size backlog reports its full count while dispatched but still unresolved — in-flight items count towards `pending`, not just queued ones", async () => {
+    mockTranslateApi.mockImplementationOnce(() => new Promise(() => {})); // never resolves — stays in flight
+
+    queue.pushSegment(makeSegment("one"));
+    queue.pushSegment(makeSegment("two"));
+    await vi.advanceTimersByTimeAsync(800); // dispatches both (N=2 <= BATCH_MAX=3); still unresolved
+
+    expect(onState).toHaveBeenLastCalledWith({ state: "busy", pending: 2, reason: undefined });
+  });
+
+  it("never emits 'done' before at least one translation has actually landed — a batch that resolves with zero translations reports 'off' (idle, nothing shown) instead of going silent", async () => {
+    mockTranslateApi.mockResolvedValue({ translations: [] });
+
+    queue.pushSegment(makeSegment("hello"));
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "done" }));
+    // Finding 6 fix (adversarial review): the drain that used to be
+    // silent now reports "off" so a caller's chip never gets stuck on
+    // its last "busy" reading forever.
+    expect(onState).toHaveBeenLastCalledWith({ state: "off", pending: 0, reason: undefined });
+  });
+
+  it("stalled on pause: a NoKeyError pause emits 'stalled' with the SAME zh reason string as the onError toast", async () => {
+    mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
+
+    queue.pushSegment(makeSegment("hello"));
+    await vi.advanceTimersByTimeAsync(800);
+
+    expect(onState).toHaveBeenCalledWith({
+      state: "stalled",
+      pending: 0,
+      reason: "未配置 API Key，双语转录已暂停。前往设置填入 Key 即可自动恢复",
+    });
+    expect(onError).toHaveBeenCalledWith(onState.mock.calls.at(-1)?.[0].reason);
+  });
+
+  it("stalled: a rate-limit/generic-error pause has no existing zh toast copy, so reason stays undefined", async () => {
+    mockTranslateApi.mockRejectedValueOnce(new RateLimitApiError());
+
+    queue.pushSegment(makeSegment("hello"));
+    await vi.advanceTimersByTimeAsync(800);
+
+    // Below MAX_CONSECUTIVE_RATE_LIMITS, the batch is re-queued at the
+    // front (see handleError's RateLimitApiError branch) — pending is 1,
+    // not 0, once the pause takes effect.
+    expect(onState).toHaveBeenCalledWith({ state: "stalled", pending: 1, reason: undefined });
+  });
+
+  it("dedupes consecutive identical emissions — a batch-cap leftover re-emitting the SAME {state,pending} does not re-fire onState", async () => {
+    // BATCH_MAX (3) caps the first dispatch: 1 item is left over in
+    // `pending`, and 3 move to in-flight — with the Finding 5 fix,
+    // pending.length + inflightCount (1 + 3 = 4) is UNCHANGED from
+    // push4's own {busy,4}, so tryFlush's own dispatch-time emission is
+    // deduped. Once that in-flight batch resolves (0 translations, so
+    // never "lands"), inflightCount drops back to 0 while the 1
+    // leftover is still queued — a genuinely new {busy, pending:1} — so
+    // THAT is the one that actually fires.
+    mockTranslateApi.mockResolvedValue({ translations: [] }); // never "lands" — irrelevant to this test
+    for (let i = 0; i < 4; i++) queue.pushSegment(makeSegment(`seg ${i}`));
+    await vi.advanceTimersByTimeAsync(800);
+
+    // 4 pushes (pending 1,2,3,4) + 1 post-resolve emission (busy,1) = 5.
+    // The dispatch-time emission itself is deduped (see above).
+    expect(onState).toHaveBeenCalledTimes(5);
+    expect(onState).toHaveBeenLastCalledWith({ state: "busy", pending: 1, reason: undefined });
+  });
+
+  it("drain() resolves true immediately when the queue is already idle", async () => {
+    await expect(queue.drain(1000)).resolves.toBe(true);
+  });
+
+  it("drain() resolves false once the timeout elapses before the queue empties", async () => {
+    mockTranslateApi.mockImplementationOnce(() => new Promise(() => {})); // never resolves
+    queue.pushSegment(makeSegment("stuck forever"));
+    await vi.advanceTimersByTimeAsync(800); // dispatches — now inflight with no end in sight
+
+    const result = queue.drain(5000);
+    await vi.advanceTimersByTimeAsync(5000);
+    await expect(result).resolves.toBe(false);
+  });
+
+  it("drain() resolves false immediately (no waiting at all) when the queue is currently paused/stalled", async () => {
+    mockTranslateApi.mockRejectedValueOnce(new NoKeyError());
+    queue.pushSegment(makeSegment("hello"));
+    await vi.advanceTimersByTimeAsync(800); // fails -> pauses 60s
+
+    await expect(queue.drain(10_000)).resolves.toBe(false);
+  });
+});

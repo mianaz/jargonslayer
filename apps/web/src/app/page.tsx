@@ -14,6 +14,7 @@ import CardsPanel from "@/components/CardsPanel";
 import SummaryPanel from "@/components/SummaryPanel";
 import CardStrip from "@/components/CardStrip";
 import MobilePanels from "@/components/MobilePanels";
+import BottomSheet from "@/components/BottomSheet";
 import HistoryDrawer from "@/components/HistoryDrawer";
 import TaskCenterDrawer from "@/components/TaskCenterDrawer";
 import ImportHub, { type HubTab } from "@/components/ImportHub";
@@ -36,7 +37,8 @@ import { triggerDictPackAutoUpdate } from "./dictPackAutoUpdateTrigger";
 type RightTab = "cards" | "summary";
 
 export default function Home() {
-  const { start, pause, resume, stop, startDemo } = useMeeting();
+  const { start, pause, resume, stop, startDemo, stopConfirm, confirmStop, cancelStop } =
+    useMeeting();
   const hydrate = useApp((s) => s.hydrate);
   // Round-2 dict-pack auto-update: gates the effect below so its first
   // run reads the REAL persisted settings.packAutoUpdate/
@@ -441,6 +443,54 @@ export default function Home() {
           }}
         />
       )}
+
+      {/* v0.7 stop gate: End pressed while translations are pending.
+          BottomSheet's mount contract (no portal) is satisfied here —
+          page root, outside any sticky/transformed ancestor. Fix round
+          (LOW): mounted AFTER MobilePanels (not before) — both are
+          z-50, and a later sibling wins at equal z, so an open
+          MobilePanels used to cover this sheet entirely. */}
+      <BottomSheet open={stopConfirm !== null} onClose={cancelStop}>
+        {stopConfirm && (
+          <div className="flex flex-col gap-3 p-4">
+            <p className="text-sm text-fg">
+              {stopConfirm.stalled
+                ? `翻译已暂停${stopConfirm.reason ? `（${stopConfirm.reason}）` : ""}，仍有 ${stopConfirm.pending} 段未翻译，结束吗？`
+                : `翻译还没有完成（剩 ${stopConfirm.pending} 段），继续结束吗？`}
+            </p>
+            <div className="flex gap-2">
+              {!stopConfirm.stalled && (
+                <button
+                  type="button"
+                  data-testid="stop-confirm-wait"
+                  onClick={() => confirmStop("wait")}
+                  className="btn-tactile flex-1 border border-edge bg-panel3 px-3 py-2 text-sm text-fg"
+                >
+                  等待完成
+                </button>
+              )}
+              <button
+                type="button"
+                data-testid="stop-confirm-now"
+                onClick={() => confirmStop("now")}
+                className="btn-tactile flex-1 border border-edge bg-panel2 px-3 py-2 text-sm text-mut hover:text-fg"
+              >
+                直接结束
+              </button>
+              {stopConfirm.stalled && (
+                <button
+                  type="button"
+                  data-testid="stop-confirm-cancel"
+                  onClick={cancelStop}
+                  className="btn-tactile flex-1 border border-edge bg-panel2 px-3 py-2 text-sm text-mut hover:text-fg"
+                >
+                  取消
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+      </BottomSheet>
 
       <HistoryDrawer
         open={historyOpen}

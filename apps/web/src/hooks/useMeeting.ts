@@ -3,7 +3,7 @@
 // Wiring hook: connects the STT engine layer to the app store and
 // the detection scheduler. Owns the lifecycle of both per meeting.
 
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp, currentSessionSnapshot } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
@@ -31,6 +31,9 @@ import type { STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslaye
 // finalized segments to catch up when the toggle flips OFF->ON
 // mid-meeting (see the backfill effect below).
 const BILINGUAL_BACKFILL_COUNT = 5;
+// v0.7 stop-drain bound: how long an End waits for in-flight
+// translations before tearing the translator down anyway.
+const STOP_DRAIN_MS = 8000;
 
 // Storage durability (v0.5 closeout item 4): navigator.storage.persist()
 // asks the browser not to evict IndexedDB under pressure. Requested once
@@ -292,12 +295,28 @@ export interface UseMeetingResult {
   resume: () => Promise<void>;
   stop: () => Promise<void>;
   startDemo: () => Promise<void>;
+  /** v0.7 stop gate: non-null while the End-with-pending-translations
+   *  confirm sheet should show (page.tsx renders it). */
+  stopConfirm: { pending: number; stalled: boolean; reason?: string } | null;
+  confirmStop: (mode: "wait" | "now") => void;
+  cancelStop: () => void;
 }
 
 export function useMeeting(): UseMeetingResult {
   const engineRef = useRef<STTEngine | null>(null);
   const schedulerRef = useRef<DetectionScheduler | null>(null);
   const translateQueueRef = useRef<TranslateQueue | null>(null);
+  // v0.7 translation-posture stop gate: an End while translations are
+  // still pending gets a confirm sheet (page.tsx renders it off
+  // `stopConfirm`) instead of silently losing the tail. Both refs are
+  // one-shot, consumed by the next stop()/doStop pass.
+  const [stopConfirm, setStopConfirm] = useState<{
+    pending: number;
+    stalled: boolean;
+    reason?: string;
+  } | null>(null);
+  const stopBypassRef = useRef(false);
+  const skipDrainRef = useRef(false);
 
   // Lifecycle serialization (codex review 2026-07-10, rounds 1-3):
   // start/pause/resume/stop each await an engine teardown or attach,
@@ -332,7 +351,13 @@ export function useMeeting(): UseMeetingResult {
   // branches, cleared in a finally once runStopFlow settles — pause()/
   // resume() both plain-return while it's set, without touching the
   // gate itself.
-  const terminalTeardownRef = useRef(false);
+  // Sol r3 (M7 re-reopen): MEETING-OWNED — holds the owning flow's
+  // sessionGen, not a bare boolean. An old terminal flow can still be
+  // awaiting its save while a NEW meeting is already live (status flips
+  // to stopped before the save await); that new meeting's End/pause/
+  // resume must not be swallowed by the old flow's flag, so the guards
+  // below compare against the CURRENT meetingGen.
+  const terminalTeardownRef = useRef<number | null>(null);
 
   // Diar "ready" one-shot toast (STT protocol v2): reset per meeting
   // (see start() below) so a hard-resume's fresh engine (which re-arms
@@ -412,6 +437,23 @@ export function useMeeting(): UseMeetingResult {
       // is still awaiting saveCurrentSession — see the endDemoOverlay()
       // call site further down for why that race matters).
       const wasDemo = engine.kind === "demo";
+      // Fix round (MEDIUM): this is a TERMINAL teardown (engine error /
+      // demo natural end / capture_ended) — an End-with-pending-
+      // translations confirm sheet left over from an earlier click must
+      // not survive it (the meeting this sheet was asking about is
+      // already gone), and neither one-shot ref may leak into whatever
+      // meeting starts next. Cleared synchronously, before this flow's
+      // own first await, same posture as wasDemo's capture just above.
+      setStopConfirm(null);
+      stopBypassRef.current = false;
+      skipDrainRef.current = false;
+      // Sol r2 engineRef adjudication (FIX NOW): compare-and-clear so a
+      // racing doStop or the unmount cleanup can never call stop()
+      // twice on the same engine instance. The terminal-teardown window
+      // itself is guarded by terminalTeardownRef, set/cleared around
+      // this flow's call sites below — stop() plain-returns while it's
+      // set (the M7 reopen fix).
+      if (engineRef.current === engine) engineRef.current = null;
       await engine.stop();
       // v0.6: tear down the native Apple-translate child alongside the
       // STT engine's own — see providers.ts's own doc comment for why
@@ -600,17 +642,19 @@ export function useMeeting(): UseMeetingResult {
           attachFailed = true;
           // F6: set BEFORE runStopFlow's first await — see
           // terminalTeardownRef's own doc above.
-          terminalTeardownRef.current = true;
+          terminalTeardownRef.current = sessionGen;
           useApp.getState().showToast(logAndToastError("stt", detail ?? "转录引擎错误"));
           void runStopFlow().finally(() => {
-            terminalTeardownRef.current = false;
+            // Sol r4: compare-and-clear — an OLD flow's finalizer must
+            // not erase a NEWER meeting's active teardown marker.
+            if (terminalTeardownRef.current === sessionGen) terminalTeardownRef.current = null;
           });
         } else if (
           status === "idle" &&
           (detail === "demo_finished" || detail === "capture_ended")
         ) {
           // F6: same synchronous-before-await set as the error branch.
-          terminalTeardownRef.current = true;
+          terminalTeardownRef.current = sessionGen;
           // capture_ended toast copy is engine-kind-conditional
           // (adversarial review finding F10): an earlier S9.4 fix here
           // changed this to "音频捕获已结束" UNCONDITIONALLY, which
@@ -639,7 +683,9 @@ export function useMeeting(): UseMeetingResult {
               if (savedOk) useApp.getState().showToast(endToast);
             })
             .finally(() => {
-              terminalTeardownRef.current = false;
+              // Sol r4: compare-and-clear — an OLD flow's finalizer must
+            // not erase a NEWER meeting's active teardown marker.
+            if (terminalTeardownRef.current === sessionGen) terminalTeardownRef.current = null;
             });
         }
       },
@@ -674,6 +720,15 @@ export function useMeeting(): UseMeetingResult {
   // End body, ungated — reachable from listening AND paused; also the
   // drain target for pendingEndRef.
   const doStop = useCallback(async () => {
+    // Fix round (MEDIUM): every terminal stop path (this one included)
+    // must leave no stale confirm sheet mounted and no surviving
+    // one-shot ref — see runStopFlow's own matching clear (attachEngine
+    // above) for the full rationale. skipDrainRef is deliberately NOT
+    // cleared here: this function is what consumes it (the drain-gate
+    // check just below), and clearing it this early would make that
+    // check always see it as false.
+    setStopConfirm(null);
+    stopBypassRef.current = false;
     const engine = engineRef.current;
     engineRef.current = null;
     // F1 field-test fix — same ownership guard as attachEngine's own
@@ -685,6 +740,25 @@ export function useMeeting(): UseMeetingResult {
     if (engine) {
       await engine.stop();
     }
+    // v0.7 translation-posture: bounded drain so the tail segments'
+    // translations land before the translator/session teardown below.
+    // Skipped when the user chose 直接结束 in the stop-confirm sheet;
+    // drain() itself returns false fast on a stalled queue, so a broken
+    // queue can never hold the End hostage.
+    if (!skipDrainRef.current) {
+      await translateQueueRef.current?.drain(STOP_DRAIN_MS);
+    }
+    skipDrainRef.current = false;
+    // Fix round (HIGH): stop the queue right after the drain window —
+    // both the drained and skip-drain paths land here. Debounced/paused
+    // translate work (a pending debounce timer, a stalled cooldown
+    // retry) must never fire a cloud request after the meeting has
+    // actually stopped, including a drain that hit STOP_DRAIN_MS without
+    // landing anything. Idempotent with start()'s own
+    // translateQueueRef.current?.stop() call on the NEXT start() (see
+    // TranslateQueue.stop()'s own doc comment — stopped is a one-way
+    // flag, calling it twice is harmless).
+    translateQueueRef.current?.stop();
     // v0.6: same teardown as runStopFlow's matching call above — see
     // providers.ts's own doc comment on why this is unconditional. S1
     // fix (v0.6 round-2 review): awaited, same reason as runStopFlow's.
@@ -813,6 +887,9 @@ export function useMeeting(): UseMeetingResult {
     // Replace any previous translate queue before wiring a fresh one —
     // same lifecycle as the scheduler above.
     translateQueueRef.current?.stop();
+    // v0.7: fresh meeting, fresh translate-state chip (the queue's own
+    // onState only starts emitting once segments flow).
+    useApp.getState().setTranslateStatus({ state: "off", pending: 0 });
     // v0.5 Wave-1 Feature 6 / A6 (docs/design-explorations/
     // v05-wave1-blueprint.md §1 Feature 6 + §5 A6): provider KIND is
     // decided once here (mirrors attachEngine's own settings.engine
@@ -833,6 +910,14 @@ export function useMeeting(): UseMeetingResult {
       provider,
       onTranslations: (map, gen) => useApp.getState().applyTranslations(map, gen),
       onError: (msg) => useApp.getState().showToast(logAndToastError("translate-queue", msg)),
+      // Sol r2 HIGH: a stopped PRIOR queue's late batch .finally() (or
+      // its own stop() terminal emission) must never overwrite the
+      // current meeting's status — same meeting-boundary gen guard
+      // onTranslations gets via applyTranslations(map, gen).
+      onState: (s) => {
+        if (useApp.getState().meetingGen !== sessionGen) return;
+        useApp.getState().setTranslateStatus(s);
+      },
     });
     translateQueueRef.current = translateQueue;
 
@@ -852,7 +937,7 @@ export function useMeeting(): UseMeetingResult {
     // terminalTeardownRef's own doc above. Plain-return without
     // touching the gate itself (the gate stays free for this whole
     // window by design).
-    if (terminalTeardownRef.current) return;
+    if (terminalTeardownRef.current !== null && terminalTeardownRef.current === useApp.getState().meetingGen) return;
     const { status } = useApp.getState();
     if (status !== "listening") return;
     const engine = engineRef.current;
@@ -886,7 +971,7 @@ export function useMeeting(): UseMeetingResult {
   const resume = useCallback(async () => withLifecycleGate(async () => {
     // F6: same plain-return as pause() above — see terminalTeardownRef's
     // own doc.
-    if (terminalTeardownRef.current) return;
+    if (terminalTeardownRef.current !== null && terminalTeardownRef.current === useApp.getState().meetingGen) return;
     const { status, meetingGen, settings } = useApp.getState();
     if (status !== "paused") return;
     let engine = engineRef.current;
@@ -964,14 +1049,51 @@ export function useMeeting(): UseMeetingResult {
   }), [attachEngine, withLifecycleGate]);
 
   const stop = useCallback(async () => {
+    // Sol r2 M7 reopen: a terminal teardown already IS the end of this
+    // meeting — a concurrent End must neither queue a second teardown
+    // nor mount a fresh confirm sheet over the dying session.
+    if (terminalTeardownRef.current !== null && terminalTeardownRef.current === useApp.getState().meetingGen) return;
     if (lifecycleBusyRef.current) {
       // Never drop an End (codex round-2 HIGH): the gate-holder's
       // finally drains this intent into a real stop.
       pendingEndRef.current = true;
       return;
     }
+    // v0.7 stop gate: pending translations get a confirm sheet before
+    // the End proceeds. Only the direct user End takes this branch —
+    // the pendingEndRef path above and runStopFlow's error/demo paths
+    // never do (they must not block on user input).
+    if (!stopBypassRef.current) {
+      const { translateStatus, settings } = useApp.getState();
+      if (
+        settings.bilingualTranscript &&
+        translateStatus.pending > 0 &&
+        (translateStatus.state === "busy" || translateStatus.state === "stalled")
+      ) {
+        setStopConfirm({
+          pending: translateStatus.pending,
+          stalled: translateStatus.state === "stalled",
+          reason: translateStatus.reason,
+        });
+        return;
+      }
+    }
+    stopBypassRef.current = false;
     await withLifecycleGate(doStop);
   }, [withLifecycleGate, doStop]);
+
+  // 等待完成 ("wait") keeps doStop's bounded drain; 直接结束 ("now")
+  // skips it. Both re-enter stop() with the confirm gate bypassed.
+  const confirmStop = useCallback(
+    (mode: "wait" | "now") => {
+      setStopConfirm(null);
+      stopBypassRef.current = true;
+      skipDrainRef.current = mode === "now";
+      void stop();
+    },
+    [stop],
+  );
+  const cancelStop = useCallback(() => setStopConfirm(null), []);
 
   const startDemo = useCallback(async () => {
     // Demo-overlay stash (field-test round, extends S14.1): beginDemoOverlay
@@ -1321,5 +1443,5 @@ export function useMeeting(): UseMeetingResult {
     );
   }, [senseTerms, enabledPacksForSense, inferredDomains, segments]);
 
-  return { start, pause, resume, stop, startDemo };
+  return { start, pause, resume, stop, startDemo, stopConfirm, confirmStop, cancelStop };
 }

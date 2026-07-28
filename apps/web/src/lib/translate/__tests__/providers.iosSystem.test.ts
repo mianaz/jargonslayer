@@ -30,7 +30,6 @@ vi.mock("../../desktop/tauriApi", () => ({
 
 import {
   DesktopSystemTranslationProvider,
-  LlmTranslationProvider,
   getSystemTranslateProbeSnapshot,
   probeSystemTranslateSupport,
   resetSystemTranslateGenerationForTests,
@@ -61,10 +60,6 @@ function makeFakeInvoke(handlers: Record<string, (args?: Record<string, unknown>
   return { invoke, calls };
 }
 
-async function flush(ticks = 5): Promise<void> {
-  for (let i = 0; i < ticks; i++) await Promise.resolve();
-}
-
 const pair = { source: "en", target: "zh" };
 
 afterEach(() => {
@@ -86,25 +81,23 @@ describe("resolveTranslationProvider on iOS (IS_IOS true, IS_DESKTOP false)", ()
     expect(provider).toBeInstanceOf(DesktopSystemTranslationProvider);
   });
 
-  it("cold cache (no probe run yet) -> falls back to LlmTranslationProvider, and fires a background probe that warms the cache for the NEXT call", async () => {
-    const { invoke } = makeFakeInvoke({
-      system_translate_probe: () => ({ osSupported: true, status: "installed" }),
-    });
-    currentInvoke = invoke;
-
+  // BEHAVIOR CHANGE (v0.7 wave 2A, privacy taste-veto closed deliberately):
+  // this used to assert a fall-back to LlmTranslationProvider on a COLD
+  // probe cache, with a background probe warming it for a later call —
+  // a user who opted into on-device-only translation could have that
+  // silently swapped for a cloud LLM call. resolution no longer reads the
+  // probe cache AT ALL, so it resolves the native provider synchronously
+  // on the very first call regardless of probe state (see providers.ts's
+  // own resolveTranslationProvider doc comment).
+  it("cold cache (no probe run yet) -> STILL resolves to the native provider immediately, no probe read/fired by resolution itself", () => {
     expect(getSystemTranslateProbeSnapshot(pair)).toBeNull();
     const getSettings = () => makeSettings({ translateEngine: "system", language: "en-US", explainLanguage: "zh" });
-    const first = resolveTranslationProvider(getSettings);
-    expect(first).toBeInstanceOf(LlmTranslationProvider);
 
-    await flush();
-    expect(getSystemTranslateProbeSnapshot(pair)).toEqual({ osSupported: true, status: "installed" });
-
-    const second = resolveTranslationProvider(getSettings);
-    expect(second).toBeInstanceOf(DesktopSystemTranslationProvider);
+    const provider = resolveTranslationProvider(getSettings);
+    expect(provider).toBeInstanceOf(DesktopSystemTranslationProvider);
   });
 
-  it("osSupported:false -> falls back to LlmTranslationProvider, never crashes", async () => {
+  it("osSupported:false -> STILL resolves to the native provider (no silent LLM fallback) — an unsupported OS/device surfaces via SystemTranslatorUnavailableError at translate() time instead", async () => {
     const { invoke } = makeFakeInvoke({
       system_translate_probe: () => ({ osSupported: false, status: "unsupported" }),
     });
@@ -114,7 +107,7 @@ describe("resolveTranslationProvider on iOS (IS_IOS true, IS_DESKTOP false)", ()
     const provider = resolveTranslationProvider(() =>
       makeSettings({ translateEngine: "system", language: "en-US", explainLanguage: "zh" }),
     );
-    expect(provider).toBeInstanceOf(LlmTranslationProvider);
+    expect(provider).toBeInstanceOf(DesktopSystemTranslationProvider);
   });
 });
 
