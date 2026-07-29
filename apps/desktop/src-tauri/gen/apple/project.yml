@@ -67,7 +67,7 @@ targets:
         # + tauri.conf.json "version" + here, and check-ios-plist.mjs
         # fails the build if the generated plist drifts from Cargo.toml.
         CFBundleShortVersionString: 0.7.1
-        CFBundleVersion: "0.7.1"
+        CFBundleVersion: "2"
         # TestFlight export compliance, declared once (ASC would otherwise
         # ask per-build): the app uses ONLY standard HTTPS/system TLS —
         # exempt encryption, so false is the honest value. With this key
