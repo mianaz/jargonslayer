@@ -32,7 +32,10 @@ jobs:
 
   native:
     name: cargo + clippy + swift (macos)
-    runs-on: macos-14
+    # macos-26: the audiocap helper compiles against the macOS 26
+    # SpeechAnalyzer SDK surface (SpeechTranscriber/AssetInventory) —
+    # older runner images fail at build-audiocap with missing symbols.
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
