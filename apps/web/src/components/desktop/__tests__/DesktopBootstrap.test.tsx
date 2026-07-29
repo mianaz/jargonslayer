@@ -133,7 +133,7 @@ function makeFakeHandle(initial: DesktopBootstrapState): {
     switchModelProgress$: () => () => {},
     currentSwitchModelProgress: () => null,
     installDiarization: async () => {},
-    readSidecarLog: async () => "",
+    readAppLog: async () => "",
     cancelPrewarm: async () => {},
     cancelSwitchModel: async () => {},
   };

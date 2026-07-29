@@ -49,6 +49,7 @@ import {
   type LiteSession,
 } from "../storage/history";
 import { getSavedLookups, saveLookup } from "../storage/savedLookups";
+import { copyDiagnosticReport } from "../lib/diagReport";
 import { type CapabilityState } from "../translate/availability";
 import {
   checkLanguageDetectorAvailability,
@@ -88,6 +89,8 @@ const captureEmptyHint = document.querySelector<HTMLParagraphElement>("#js-captu
 const historyMount = document.querySelector<HTMLElement>("#js-history-mount")!;
 const packsMount = document.querySelector<HTMLElement>("#js-packs-mount")!;
 const lockedMount = document.querySelector<HTMLElement>("#js-locked-mount")!;
+const diagBtn = document.querySelector<HTMLButtonElement>("#js-diag-btn")!;
+const diagStatus = document.querySelector<HTMLSpanElement>("#js-diag-status")!;
 
 // Footer built-in count, computed not hardcoded (the static "428/11
 // packs" string went stale when v0.6 grew the built-ins to 14 packs).
@@ -525,6 +528,25 @@ translateBtn.addEventListener("click", () => {
       translateOutput.hidden = false;
       translateOutput.textContent = result;
       translateStatus.textContent = "本机翻译已就绪";
+    }
+  })();
+});
+
+// Beta-phase diagnostics audit item 2 — diag.ts's ring buffer's first
+// real reader: builds the redacted Markdown bundle (lib/diagReport.ts)
+// and copies it, mirroring apps/web's 复制诊断信息 success/failure
+// wording. copyDiagnosticReport() never throws (same contract as
+// report.ts's own copyDiagnosticReport), so no try/catch is needed
+// here beyond restoring the button on the `finally` branch.
+diagBtn.addEventListener("click", () => {
+  void (async () => {
+    diagBtn.disabled = true;
+    diagStatus.textContent = "生成中…";
+    try {
+      const ok = await copyDiagnosticReport();
+      diagStatus.textContent = ok ? "已复制到剪贴板" : "复制失败，请检查浏览器剪贴板权限";
+    } finally {
+      diagBtn.disabled = false;
     }
   })();
 });

@@ -7,6 +7,8 @@
 use std::fs;
 use std::path::Path;
 
+use tauri::Manager;
+
 use crate::paths::resolve_app_paths;
 
 #[tauri::command]
@@ -56,18 +58,48 @@ fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+/// Beta-phase diagnostics audit item 1 — generalizes the old single-file
+/// `read_sidecar_log` (whisper_server.log only) to any of the THREE log
+/// files this app's app-log dir ever holds: whisper_server.log
+/// (paths.rs's own `log_path`, written by server.rs's sidecar spawn),
+/// audiocap.log (audiocap.rs's `open_normal_session_log_file`), and
+/// osspeech.log (osspeech.rs's `open_osspeech_log_file`) — all three
+/// already write into the SAME `app.path().app_log_dir()`, so this
+/// command resolves that directory directly rather than going through
+/// `resolve_app_paths` (which also resolves bundled sidecar resources
+/// this read-only command has no use for).
+///
+/// `source` is checked against LOG_SOURCES, an ALLOWLIST of exact
+/// filenames — deliberately never accepted as (or joined onto) a
+/// caller-supplied path: the one design risk this command exists to
+/// guard against is a JS caller passing something like "../../etc/passwd"
+/// and this command obligingly reading it. An unrecognized source
+/// rejects outright rather than falling back to any default file.
+const LOG_SOURCES: [&str; 3] = ["whisper_server.log", "audiocap.log", "osspeech.log"];
+
+fn is_allowed_log_source(source: &str) -> bool {
+    LOG_SOURCES.contains(&source)
+}
+
 #[tauri::command]
-pub fn read_sidecar_log(app: tauri::AppHandle, tail_lines: u32) -> Result<String, String> {
-    let paths = resolve_app_paths(&app)?;
-    match fs::read_to_string(&paths.log_path) {
+pub fn read_app_log(app: tauri::AppHandle, source: String, tail_lines: u32) -> Result<String, String> {
+    if !is_allowed_log_source(&source) {
+        return Err(format!("unknown log source: {source}"));
+    }
+    let log_dir = app
+        .path()
+        .app_log_dir()
+        .map_err(|e| format!("could not resolve the app log dir: {e}"))?;
+    let path = log_dir.join(&source);
+    match fs::read_to_string(&path) {
         Ok(contents) => Ok(tail_lines_of(&contents, tail_lines as usize)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
-        Err(e) => Err(format!("failed to read {}: {e}", paths.log_path.display())),
+        Err(e) => Err(format!("failed to read {}: {e}", path.display())),
     }
 }
 
 /// Pure — the last `n` lines of `contents` (empty when the file doesn't
-/// exist yet, per read_sidecar_log above). Reads/holds the whole file in
+/// exist yet, per read_app_log above). Reads/holds the whole file in
 /// memory rather than a reverse-seek tail; fine at today's log sizes,
 /// worth revisiting if whisper_server.log grows unbounded over very long
 /// sessions.
@@ -128,5 +160,22 @@ mod tests {
         assert_eq!(tail_lines_of(contents, 0), "");
         assert_eq!(tail_lines_of(contents, 100), "a\nb\nc\nd\ne");
         assert_eq!(tail_lines_of("", 5), "");
+    }
+
+    #[test]
+    fn is_allowed_log_source_accepts_exactly_the_three_known_filenames() {
+        assert!(is_allowed_log_source("whisper_server.log"));
+        assert!(is_allowed_log_source("audiocap.log"));
+        assert!(is_allowed_log_source("osspeech.log"));
+    }
+
+    #[test]
+    fn is_allowed_log_source_rejects_anything_else_including_a_path_traversal_attempt() {
+        assert!(!is_allowed_log_source("../../etc/passwd"));
+        assert!(!is_allowed_log_source("/etc/passwd"));
+        assert!(!is_allowed_log_source("whisper_server.log/../../etc/passwd"));
+        assert!(!is_allowed_log_source("WHISPER_SERVER.LOG"));
+        assert!(!is_allowed_log_source(""));
+        assert!(!is_allowed_log_source("audiocap-spike.log")); // real file, but not in the allowlist
     }
 }

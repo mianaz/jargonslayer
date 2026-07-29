@@ -484,6 +484,14 @@ export type DesktopBootstrapState =
   | { phase: "EXTERNAL_UNMANAGED" }
   | { phase: "OSSPEECH_ACTIVE" };
 
+/** Beta-phase diagnostics audit item 1 — the exact allowlist Rust's
+ *  read_app_log (provision.rs's LOG_SOURCES) accepts; kept as a union
+ *  literal type (not a re-exported Rust constant — this crate has no
+ *  TS/Rust codegen bridge) so a caller can't typo a filename that would
+ *  otherwise just reject at runtime with Rust's own "unknown log
+ *  source" error. */
+export type DesktopLogSource = "whisper_server.log" | "audiocap.log" | "osspeech.log";
+
 /** Minimal subscription surface (blueprint chunk 5: "a tiny listener
  *  set, not a new dependency; NOT zustand — this predates store
  *  hydration") — a single subscribe function (returns its own
@@ -745,19 +753,23 @@ export interface DesktopBootstrapHandle {
    *  POV. A non-zero/null run_uv exit code rejects with a zh message
    *  naming the exit code. */
   installDiarization: () => Promise<void>;
-  /** SettingsDialog's desktop-only 诊断信息 → 「查看本地服务日志」: tails
-   *  whisper_server.log via Rust's read_sidecar_log (provision.rs).
-   *  Deliberately routed through THIS handle (reusing the SAME
-   *  deps.invoke bootstrapWithRealDeps already resolved via ONE
-   *  getInvoke() call) rather than having SettingsDialog.tsx call
-   *  getInvoke() itself a second, independent time — every direct
-   *  caller of tauriApi.ts's exported getInvoke/getListen/getTauriFetch
-   *  is its own separate reachability path for the web bundler's tree-
-   *  shaking (see initDesktop()'s own header comment below for the
-   *  concrete tree-shake-grep failure this sidesteps); funneling every
-   *  UI caller through this one already-proven-safe gateway keeps that
-   *  guarantee to exactly one call site, this file's own. */
-  readSidecarLog: (tailLines: number) => Promise<string>;
+  /** Beta-phase diagnostics audit item 1 — SettingsDialog's desktop-only
+   *  诊断信息 log viewer AND diag/report.ts's desktop log-tail section
+   *  both read through this ONE method, which tails whichever of the
+   *  three allowlisted app-log-dir files (LOG_SOURCES, provision.rs) the
+   *  caller names via Rust's read_app_log. Generalizes the old single-
+   *  file readSidecarLog (whisper_server.log only) — SAME call-site
+   *  discipline as that method had: routed through THIS handle (reusing
+   *  the SAME deps.invoke bootstrapWithRealDeps already resolved via ONE
+   *  getInvoke() call) rather than having a caller invoke getInvoke()
+   *  itself a second, independent time — every direct caller of
+   *  tauriApi.ts's exported getInvoke/getListen/getTauriFetch is its own
+   *  separate reachability path for the web bundler's tree-shaking (see
+   *  initDesktop()'s own header comment below for the concrete
+   *  tree-shake-grep failure this sidesteps); funneling every UI caller
+   *  through this one already-proven-safe gateway keeps that guarantee
+   *  to exactly one call site, this file's own. */
+  readAppLog: (source: DesktopLogSource, tailLines: number) => Promise<string>;
   /** Field-test issue 6 (cancellable first-run model downloads) —
    *  DesktopWizard's own 「取消下载」 button (STEP/DOWNLOAD_MODEL/RUNNING)
    *  and the task tray's cancel affordance on a backgrounded prewarm row
@@ -835,7 +847,7 @@ const NOT_DESKTOP_HANDLE: DesktopBootstrapHandle = {
   switchModelProgress$: () => () => {},
   currentSwitchModelProgress: () => null,
   installDiarization: async () => {},
-  readSidecarLog: async () => "",
+  readAppLog: async () => "",
   cancelPrewarm: async () => {},
   cancelSwitchModel: async () => {},
 };
@@ -2422,8 +2434,8 @@ export async function bootstrapDesktop(deps: BootstrapDeps): Promise<DesktopBoot
       });
       return sidecarLifecycleInFlight;
     },
-    async readSidecarLog(tailLines: number) {
-      return deps.invoke<string>("read_sidecar_log", { tailLines });
+    async readAppLog(source: DesktopLogSource, tailLines: number) {
+      return deps.invoke<string>("read_app_log", { source, tailLines });
     },
     async cancelPrewarm() {
       // F4 (review round): recorded unconditionally, regardless of
@@ -2782,7 +2794,7 @@ async function bootstrapWithRealDeps(): Promise<DesktopBootstrapHandle> {
  *  functions already apply to their OWN dynamic `import()` guards —
  *  makes `bootstrapWithRealDeps` provably uncalled in a web build, so
  *  it (and everything it alone reaches) tree-shakes out entirely. This
- *  is also why `readSidecarLog` above is a method on THIS handle rather
+ *  is also why `readAppLog` above is a method on THIS handle rather
  *  than a second direct `getInvoke()` call from SettingsDialog.tsx: a
  *  second independent caller of the SAME exported tauriApi.ts function
  *  would be a second, independent reachability path this ONE fix can't

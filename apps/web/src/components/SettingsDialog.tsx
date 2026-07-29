@@ -75,7 +75,7 @@ import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS, IS_TAURI } from "@/lib/platform/ios";
 import { openExternal } from "@/lib/platform/openExternal";
 import { getInvoke } from "@/lib/desktop/tauriApi";
-import { initDesktop } from "@/lib/desktop/bootstrap";
+import { initDesktop, type DesktopLogSource } from "@/lib/desktop/bootstrap";
 import { trackInstallDiar, trackSwitchModel } from "@/lib/desktop/jobsBridge";
 import { useTasks } from "@/lib/tasks/registry";
 import { connectOpenRouterDesktop } from "@/lib/oauth/openrouterDesktop";
@@ -110,7 +110,7 @@ import {
   SONIOX_PREVIEW_LANE,
 } from "@/lib/deployTier";
 import { clearDiag, getDiagEntries, type DiagEntry } from "@/lib/diag/log";
-import { copyDiagnosticReport } from "@/lib/diag/report";
+import { buildFullDiagnosticReport, copyDiagnosticReport } from "@/lib/diag/report";
 import PreviewLockedBadge from "@/components/PreviewLockedBadge";
 import ToggleSwitch from "@/components/ToggleSwitch";
 import TranslationEngineRow from "@/components/settings/TranslationEngineRow";
@@ -1297,11 +1297,15 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // while open, same "snapshot on open" posture as exportFolderName/
   // packSources above.
   const [diagEntries, setDiagEntries] = useState<DiagEntry[]>([]);
-  // v0.4 S3 chunk 7: desktop-only 「查看本地服务日志」 (read_sidecar_log)
-  // — null = not fetched yet this dialog-open, "" = fetched but empty
-  // (whisper_server.log doesn't exist yet, e.g. never provisioned).
-  const [sidecarLog, setSidecarLog] = useState<string | null>(null);
-  const [loadingSidecarLog, setLoadingSidecarLog] = useState(false);
+  // v0.4 S3 chunk 7, generalized by the beta-phase diagnostics audit
+  // item 1: desktop-only 「查看本地日志」 (read_app_log) — logSource picks
+  // which of the three allowlisted files (DesktopLogSource) the select
+  // below is currently showing; appLogText is null = not fetched yet
+  // this dialog-open/source, "" = fetched but empty (that file doesn't
+  // exist yet, e.g. never provisioned, or that engine never ran).
+  const [logSource, setLogSource] = useState<DesktopLogSource>("whisper_server.log");
+  const [appLogText, setAppLogText] = useState<string | null>(null);
+  const [loadingAppLog, setLoadingAppLog] = useState(false);
   // 转录引擎 category, desktop-only: 「重新运行安装向导」busy flag — see
   // handleReprovisionDesktop below.
   const [reprovisioningDesktop, setReprovisioningDesktop] = useState(false);
@@ -1704,7 +1708,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // installed model via the SAME module-level bootstrap handle
   // DesktopBootstrap.tsx already drives (initDesktop() is idempotent —
   // see bootstrap.ts's own doc comment, and handleReprovisionDesktop/
-  // handleViewSidecarLog's own identical rationale for reusing it
+  // handleViewAppLog's own identical rationale for reusing it
   // rather than calling getInvoke() a second, independent time).
   // Re-runs whenever the section becomes relevant (dialog opens with
   // 由应用管理 already selected, or the user flips 托管模式 into it while
@@ -2590,25 +2594,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     showToast("已开始下载并切换模型，进度见右下角「后台任务」");
   };
 
-  // v0.4 S3 chunk 7: 诊断信息 面板的 「查看本地服务日志」 — desktop-only,
-  // reads whisper_server.log's tail via Rust's read_sidecar_log
-  // (provision.rs). Routed through the SAME module-level bootstrap
-  // handle DesktopBootstrap.tsx already drives (initDesktop() is
-  // idempotent) rather than calling tauriApi.ts's getInvoke() directly
-  // a second time — see bootstrap.ts's readSidecarLog doc comment for
-  // why a second independent caller of that exported function would
-  // reopen the exact web-bundle tree-shake leak this task's own gate
-  // caught and fixed.
-  const handleViewSidecarLog = async () => {
-    setLoadingSidecarLog(true);
+  // v0.4 S3 chunk 7, generalized by the beta-phase diagnostics audit
+  // item 1: 诊断信息 面板的 「查看本地日志」 — desktop-only, reads whichever
+  // of the three allowlisted log files `logSource` currently names via
+  // Rust's read_app_log (provision.rs). Routed through the SAME
+  // module-level bootstrap handle DesktopBootstrap.tsx already drives
+  // (initDesktop() is idempotent) rather than calling tauriApi.ts's
+  // getInvoke() directly a second time — see bootstrap.ts's readAppLog
+  // doc comment for why a second independent caller of that exported
+  // function would reopen the exact web-bundle tree-shake leak this
+  // task's own gate caught and fixed.
+  const handleViewAppLog = async () => {
+    setLoadingAppLog(true);
     try {
       const handle = await initDesktop();
-      const text = await handle.readSidecarLog(200);
-      setSidecarLog(text);
+      const text = await handle.readAppLog(logSource, 200);
+      setAppLogText(text);
     } catch (err) {
-      showToast(err instanceof Error ? `读取本地服务日志失败：${err.message}` : "读取本地服务日志失败");
+      showToast(err instanceof Error ? `读取本地日志失败：${err.message}` : "读取本地日志失败");
     } finally {
-      setLoadingSidecarLog(false);
+      setLoadingAppLog(false);
     }
   };
 
@@ -2791,6 +2796,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const handleCopyDiagnostics = async () => {
     const ok = await copyDiagnosticReport(useApp.getState().settings);
     showToast(ok ? "诊断信息已复制到剪贴板" : "复制失败，请检查浏览器剪贴板权限");
+  };
+
+  // 诊断信息: 导出诊断文件 saves the SAME bundle 复制诊断信息 copies
+  // (buildFullDiagnosticReport — desktop builds also get the three
+  // app-log tails, see report.ts's own doc comment) as a .md file via
+  // export.ts's downloadFile, which already routes iOS through the
+  // system share sheet — never reimplemented here.
+  const handleExportDiagnostics = async () => {
+    const text = await buildFullDiagnosticReport(useApp.getState().settings);
+    const date = new Date().toISOString().slice(0, 10);
+    await downloadFile(`jargonslayer-diagnostics-${date}.md`, text, "text/markdown");
   };
 
   const handleClearDiagnostics = () => {
@@ -5584,33 +5600,56 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </button>
                 <button
                   type="button"
+                  onClick={() => void handleExportDiagnostics()}
+                  className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
+                >
+                  导出诊断文件
+                </button>
+                <button
+                  type="button"
                   onClick={handleClearDiagnostics}
                   className="btn-tactile text-xs text-mut hover:text-warn-soft"
                 >
                   清空
                 </button>
-                {/* v0.4 S3 chunk 7: desktop-only — tails whisper_server.log
-                   via Rust's read_sidecar_log (provision.rs), shown
-                   below in the same monospace box style as the diag
-                   entries list above. */}
+                {/* v0.4 S3 chunk 7, generalized by the beta-phase
+                   diagnostics audit item 1: desktop-only — tails
+                   whichever of the three allowlisted log files the
+                   select below names, via Rust's read_app_log
+                   (provision.rs), shown below in the same monospace box
+                   style as the diag entries list above. */}
                 {IS_DESKTOP && (
-                  <button
-                    type="button"
-                    onClick={() => void handleViewSidecarLog()}
-                    disabled={loadingSidecarLog}
-                    className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {loadingSidecarLog ? "读取中…" : "查看本地服务日志"}
-                  </button>
+                  <>
+                    <select
+                      value={logSource}
+                      onChange={(e) => {
+                        setLogSource(e.target.value as DesktopLogSource);
+                        setAppLogText(null);
+                      }}
+                      className="border border-edge bg-panel2 px-2 py-1.5 text-sm text-fg focus:outline-none"
+                    >
+                      <option value="whisper_server.log">Whisper 服务</option>
+                      <option value="audiocap.log">系统/App 音频</option>
+                      <option value="osspeech.log">系统识别</option>
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => void handleViewAppLog()}
+                      disabled={loadingAppLog}
+                      className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {loadingAppLog ? "读取中…" : "查看本地日志"}
+                    </button>
+                  </>
                 )}
               </div>
 
-              {IS_DESKTOP && sidecarLog !== null && (
+              {IS_DESKTOP && appLogText !== null && (
                 <div className="max-h-40 overflow-y-auto border border-edge bg-panel2 p-2 font-mono text-xs text-mut2">
-                  {sidecarLog === "" ? (
-                    <div className="text-mut2">暂无日志（本地服务还没启动过）</div>
+                  {appLogText === "" ? (
+                    <div className="text-mut2">暂无日志（该服务还没启动过）</div>
                   ) : (
-                    <pre className="whitespace-pre-wrap break-all">{sidecarLog}</pre>
+                    <pre className="whitespace-pre-wrap break-all">{appLogText}</pre>
                   )}
                 </div>
               )}

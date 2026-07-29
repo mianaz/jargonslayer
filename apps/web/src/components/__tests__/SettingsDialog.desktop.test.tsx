@@ -600,7 +600,7 @@ function makeFakeHandle(
     switchModelProgress$: () => () => {},
     currentSwitchModelProgress: () => null,
     installDiarization: () => installPromise,
-    readSidecarLog: async () => "",
+    readAppLog: async () => "",
     cancelPrewarm: async () => {},
     cancelSwitchModel: async () => {},
     ...overrides,

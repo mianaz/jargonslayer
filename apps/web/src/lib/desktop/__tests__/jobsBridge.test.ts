@@ -75,7 +75,7 @@ function fakeHandle(overrides: Partial<DesktopBootstrapHandle> = {}): DesktopBoo
     switchModelProgress$: () => () => {},
     currentSwitchModelProgress: () => null,
     installDiarization: async () => {},
-    readSidecarLog: async () => "",
+    readAppLog: async () => "",
     cancelPrewarm: async () => {},
     cancelSwitchModel: async () => {},
     ...overrides,
