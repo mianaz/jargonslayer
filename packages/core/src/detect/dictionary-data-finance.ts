@@ -21,12 +21,11 @@
 // DictTermEntry.commonWord (see modern-usage's own header for the
 // mechanism, and scanDictionary's commonWord guard for exact rules).
 // "401(k)" is kept as a variant of headword "401k" rather than the other
-// way round — "401(k)" ends in a trailing ")" so scanDictionary's
-// \b...\b term-boundary regex can never match it as a standalone
-// headword in running text (word-boundary \b requires a \w on one side;
-// ")" isn't one), it only still matches as a prefix of a glued plural
-// like "401(k)s". "401k" has no such issue and is what actually matches
-// realistic transcript text.
+// way round for display purposes only — "401k" is what actually appears
+// in a spoken/transcribed sentence, "401(k)" is the written form. (Prior
+// to the v0.7.2 boundary fix, "401(k)" as a headword also could not
+// match standalone at all — see getCachedTermRegex's own doc — but that
+// is no longer why this ordering was chosen.)
 
 import type { DictExpressionEntry, DictTermEntry } from "./dictionary-data";
 

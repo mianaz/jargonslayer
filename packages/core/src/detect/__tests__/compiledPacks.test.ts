@@ -56,13 +56,71 @@ describe("packCounts() — installed remote packs are counted too", () => {
 describe("packCounts() — compiled packs registered with real post-dedupe counts", () => {
   it("includes stats/ml-stats/bioinformatics-edam with the actual post-dedupe counts", () => {
     const counts = packCounts();
-    // Source packs have 48/101/77 terms. Two compiled terms are dropped
-    // by dedupeByKey because base/EXTRA already has a same-key entry:
-    // "regression" (ml-stats, collides with EXTRA_TERMS' "regression")
-    // and "SAM" (bioinformatics-edam, collides with EXTRA_TERMS' "SAM").
+    // Source packs have 48/101/77 terms. v0.7.2 dictionary-audit Bug B
+    // fix: "regression" (ml-stats) and "SAM" (bioinformatics-edam) used
+    // to be silently dropped by the old dedupeByKey chain because
+    // base/EXTRA already had a same-KEY-but-different-MEANING entry
+    // ("regression" the tech-terms bug-report sense, "SAM" the
+    // business-terms market-size acronym) — both compiled entries now
+    // survive as their own pack-tagged sense (mergeTermTables in
+    // dictionary.ts), so these two packs report their full source count.
     expect(counts["stats"]).toBe(48);
-    expect(counts["ml-stats"]).toBe(100);
-    expect(counts["bioinformatics-edam"]).toBe(76);
+    expect(counts["ml-stats"]).toBe(101);
+    expect(counts["bioinformatics-edam"]).toBe(77);
+  });
+});
+
+// v0.7.2 fix (dictionary audit, Bug B): mergeTermTables (dictionary.ts)
+// now keeps BOTH senses of a genuine cross-pack collision instead of
+// silently dropping the one that lost dedupeByKey's normalized-key
+// race, each still tagged with its own source pack and filtered by
+// scanDictionary's own isPackEnabled check like any other entry.
+describe("scanDictionary — Bug B fix: cross-pack collisions no longer delete an entry", () => {
+  it("only bioinformatics-edam enabled -> 'SAM' resolves to the bioinformatics sense", () => {
+    const res = scanDictionary("We stored the alignment in SAM format.", ["bioinformatics-edam"]);
+    const hit = res.terms.find((t) => t.term === "SAM");
+    expect(hit?.gloss_en).toMatch(/Sequence Alignment\/Map/);
+  });
+
+  it("only business-terms enabled -> 'SAM' resolves to the business sense", () => {
+    const res = scanDictionary("Our SAM is much smaller than our TAM.", ["business-terms"]);
+    const hit = res.terms.find((t) => t.term === "SAM");
+    expect(hit?.gloss_en).toMatch(/Serviceable Addressable Market/);
+  });
+
+  it("both enabled -> exactly one 'SAM' card, deterministic (table-priority order)", () => {
+    const res = scanDictionary("Our SAM is much smaller than our TAM.", [
+      "business-terms",
+      "bioinformatics-edam",
+    ]);
+    const hits = res.terms.filter((t) => t.term === "SAM");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].gloss_en).toMatch(/Serviceable Addressable Market/);
+  });
+
+  it("only tech-terms enabled -> 'regression' resolves to the tech-terms sense", () => {
+    const res = scanDictionary("We shipped a regression last week.", ["tech-terms"]);
+    const hit = res.terms.find((t) => t.term === "regression");
+    expect(hit?.gloss_en).toMatch(/previously-working feature/);
+  });
+
+  it("only ml-stats enabled -> 'regression' resolves to the ml-stats sense", () => {
+    const res = scanDictionary("We ran a regression on the dataset.", ["ml-stats"]);
+    const hit = res.terms.find((t) => t.term === "regression");
+    expect(hit?.gloss_en).toMatch(/numerical prediction/);
+  });
+
+  it("both enabled -> exactly one 'regression' card, deterministic (table-priority order)", () => {
+    const res = scanDictionary("We ran a regression on the dataset.", ["tech-terms", "ml-stats"]);
+    const hits = res.terms.filter((t) => t.term === "regression");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].gloss_en).toMatch(/previously-working feature/);
+  });
+
+  it("identical-gloss cross-pack duplicate still collapses to one card (OKR, core + business-terms both enabled)", () => {
+    const res = scanDictionary("We reviewed our OKR this quarter.", ["core", "business-terms"]);
+    const hits = res.terms.filter((t) => t.term === "OKR");
+    expect(hits).toHaveLength(1);
   });
 });
 
