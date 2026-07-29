@@ -172,6 +172,34 @@ describe("scanDictionary — S11 fix: an expression ending in a non-word charact
   });
 });
 
+// v0.7.2 fix (dictionary audit, Bug A): getCachedTermRegex had the same
+// S11 problem above, but for TERMS — 14 built-in term headwords end in
+// ')' (e.g. "stochastic gradient descent (SGD)", "mode (statistics)")
+// and could never satisfy an unconditional trailing \b. Every assertion
+// below fails against pre-fix getCachedTermRegex.
+describe("scanDictionary — Bug A fix: a term ending in a non-word character can actually match", () => {
+  it("matches a '(SGD)'-suffixed term inside realistic text", () => {
+    const res = scanDictionary("We used stochastic gradient descent (SGD) to train the model.", null);
+    expect(res.terms.some((t) => t.term === "stochastic gradient descent (SGD)")).toBe(true);
+  });
+
+  it("matches a '(statistics)'-suffixed term inside realistic text", () => {
+    const res = scanDictionary("The mode (statistics) of this dataset is 7.", null);
+    expect(res.terms.some((t) => t.term === "mode (statistics)")).toBe(true);
+  });
+
+  it("'401(k)' still matches as a variant of headword '401k'", () => {
+    const res = scanDictionary("Do you contribute to your 401(k) every month?", null);
+    const hit = res.terms.find((t) => t.term === "401k");
+    expect(hit).toBeDefined();
+  });
+
+  it("plain terms keep strict word boundaries — no substring match inside a longer word", () => {
+    const res = scanDictionary("The ARRAY was empty.", null);
+    expect(res.terms.some((t) => t.term === "ARR")).toBe(false);
+  });
+});
+
 // Variants enrichment pass (conservative alias sweep, field report):
 // "get the ball rolling" gained explicit keep-family variants since the
 // FIRST word is the light-verb here and buildExpressionRegex only ever
