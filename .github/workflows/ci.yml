@@ -1,0 +1,59 @@
+# CI v1 (2026-07-28): the exact gates every release train runs by hand —
+# root vitest + tsc on Linux, cargo/clippy/swift on macOS. Deliberately
+# excluded for now: sidecar Python asserts (no pinned runner deps — the
+# venv is provisioned by the app's own uv flow, not a requirements file)
+# and any bundling/signing (DMG/IPA stay local until the Apple-creds-in-CI
+# decision, ROADMAP D5).
+name: CI
+
+on:
+  push:
+    branches: [main, dev, ci-setup]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: vitest + typecheck (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+
+  native:
+    name: cargo + clippy + swift (macos)
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # cargo compiles tauri::generate_context!, which needs frontendDist
+      # (apps/web/out) present and the externalBin binaries on disk — npm ci
+      # runs the ffmpeg-assets postinstall; fetch-uv and build-audiocap
+      # produce the two sidecars the bundle config names.
+      - run: npm ci
+      - run: node scripts/fetch-uv.mjs
+      - run: node scripts/build-audiocap.mjs
+      - run: mkdir -p apps/web/out
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: cargo test
+        working-directory: apps/desktop/src-tauri
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: apps/desktop/src-tauri
+      - run: swift test --package-path apps/desktop/src-tauri/audiocap-helper
