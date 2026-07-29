@@ -11,6 +11,9 @@ on:
     branches: [main, dev]
   pull_request:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -21,8 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -38,8 +43,10 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -51,8 +58,17 @@ jobs:
       - run: node scripts/fetch-uv.mjs
       - run: node scripts/build-audiocap.mjs
       - run: mkdir -p apps/web/out
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # Pinned to a specific stable version, not the moving `stable`
+      # channel alias: this job runs `clippy -D warnings`, so a routine
+      # upstream stable-toolchain bump landing a new lint would break CI
+      # on its own with no code change to blame. Matches the toolchain
+      # actually installed on dev machines (`rustc --version` under
+      # apps/desktop/src-tauri) — bump both together, deliberately, when
+      # upgrading.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: apps/desktop/src-tauri
       - run: cargo test

@@ -504,6 +504,55 @@ describe("scanDictionary — regex cache does not block a mid-session pack insta
   });
 });
 
+describe("scanDictionary — remote pack wins a term-key collision (F1 fix, adjudicated review)", () => {
+  function remotePack(id: string, terms: Omit<LoadedRemotePack["terms"][number], "pack">[]): LoadedRemotePack {
+    return {
+      id,
+      name: id,
+      version: 1,
+      expressions: [],
+      terms: terms.map((t) => ({ ...t, pack: id })),
+    };
+  }
+
+  it("remote-vs-builtin collision: the remote pack's gloss surfaces, and the builtin does not also produce a card", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_remote_arr__", [
+        { term: "ARR", type: "other", gloss_en: "Automatic Repeat reQuest", gloss_zh: "自动重传请求" },
+      ]),
+    ]);
+    const res = scanDictionary("The ARR protocol retried the packet.");
+    const arrHits = res.terms.filter((t) => t.term === "ARR");
+    expect(arrHits).toHaveLength(1);
+    expect(arrHits[0].gloss_zh).toBe("自动重传请求");
+  });
+
+  it("remote-vs-remote collision: the first pack in remote registry order wins deterministically", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_remote_first__", [
+        { term: "zzzcollide", type: "other", gloss_en: "", gloss_zh: "第一个包的释义" },
+      ]),
+      remotePack("__test_remote_second__", [
+        { term: "zzzcollide", type: "other", gloss_en: "", gloss_zh: "第二个包的释义" },
+      ]),
+    ]);
+    const res = scanDictionary("we saw zzzcollide today");
+    const hits = res.terms.filter((t) => t.term === "zzzcollide");
+    expect(hits).toHaveLength(1);
+    expect(hits[0].gloss_zh).toBe("第一个包的释义");
+  });
+
+  it("no-collision regression: an existing builtin term still matches when remote packs are present", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_remote_unrelated__", [
+        { term: "zzzunrelated", type: "other", gloss_en: "", gloss_zh: "不冲突的远程词" },
+      ]),
+    ]);
+    const res = scanDictionary("The MVP shipped this week.");
+    expect(res.terms.some((t) => t.term === "MVP" && t.gloss_zh === "最小可行产品")).toBe(true);
+  });
+});
+
 describe("scanDictionary — empty input", () => {
   it("returns empty expressions/terms for empty or whitespace-only text", () => {
     expect(scanDictionary("")).toEqual({ expressions: [], terms: [] });

@@ -320,11 +320,25 @@ const APP_LOG_SOURCES: readonly DesktopLogSource[] = ["whisper_server.log", "aud
  *  carry that identical contract by design — none of them ever write
  *  transcript/translation content to begin with, so there is nothing
  *  left for a generic scrubber to catch that the writer didn't already
- *  keep out. */
+ *  keep out.
+ *
+ *  F3 fix (adjudicated review): the dynamic import + initDesktop() call
+ *  used to sit OUTSIDE any try/catch here — a desktop-bootstrap failure
+ *  (init throwing/rejecting) would reject this whole function instead of
+ *  degrading, taking buildFullDiagnosticReport/copyDiagnosticReport down
+ *  with it even though the sync base report (buildDiagnosticReport) was
+ *  already available. Now caught the same way the per-source read loop
+ *  below already was: any failure standing the desktop handle up just
+ *  means no log-tail sections, never a rejected report. */
 async function appendDesktopLogTails(report: string): Promise<string> {
   if (!IS_DESKTOP) return report;
-  const { initDesktop } = await import("../desktop/bootstrap");
-  const handle = await initDesktop();
+  let handle: Awaited<ReturnType<typeof import("../desktop/bootstrap").initDesktop>>;
+  try {
+    const { initDesktop } = await import("../desktop/bootstrap");
+    handle = await initDesktop();
+  } catch {
+    return report; // desktop bootstrap failed — degrade to the base report
+  }
   const sections: string[] = [];
   for (const source of APP_LOG_SOURCES) {
     try {
@@ -348,17 +362,24 @@ export async function buildFullDiagnosticReport(settings: Settings): Promise<str
 /** Clipboard write for the 复制诊断/复制诊断信息 actions (Toast.tsx,
  *  SettingsDialog.tsx) — one place for the writeText + failure
  *  handling so both callers behave identically. Returns false (never
- *  throws) when the Clipboard API is unavailable or permission was
- *  denied; the caller shows its own success/failure toast. */
+ *  throws) when the Clipboard API is unavailable, permission was
+ *  denied, or the report itself failed to build; the caller shows its
+ *  own success/failure toast.
+ *
+ *  F3 fix (adjudicated review): building `text` used to sit OUTSIDE this
+ *  try — buildFullDiagnosticReport itself no longer rejects on a
+ *  desktop-bootstrap failure (see appendDesktopLogTails above), but this
+ *  keeps the same never-reject contract for ANY future failure while
+ *  building the report, not just the one source this fix closes. */
 export async function copyDiagnosticReport(settings: Settings): Promise<boolean> {
-  const text = await buildFullDiagnosticReport(settings);
   try {
+    const text = await buildFullDiagnosticReport(settings);
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);
       return true;
     }
   } catch {
-    // permission denied / unsupported browser — caller surfaces failure
+    // permission denied / unsupported browser / report build failure
   }
   return false;
 }

@@ -7,24 +7,37 @@
 // secret.desktop.test.ts/mlxCaps.desktop.test.ts already established for
 // the identical constraint (see either pair's own header comment).
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../platform/desktop", () => ({ IS_DESKTOP: true }));
 
 let currentReadAppLog: ((source: string, tailLines: number) => Promise<string>) | null = null;
+// F3 fix coverage: lets a test simulate initDesktop() itself
+// rejecting (desktop-bootstrap failure), separate from readAppLog
+// rejecting on an already-live handle (covered above).
+let initDesktopShouldReject = false;
 vi.mock("../../desktop/bootstrap", () => ({
-  initDesktop: async () => ({
-    readAppLog: (source: string, tailLines: number) => {
-      if (!currentReadAppLog) {
-        throw new Error("report.desktop.test.ts: readAppLog called with no currentReadAppLog set");
-      }
-      return currentReadAppLog(source, tailLines);
-    },
-  }),
+  initDesktop: async () => {
+    if (initDesktopShouldReject) {
+      throw new Error("simulated desktop bootstrap failure");
+    }
+    return {
+      readAppLog: (source: string, tailLines: number) => {
+        if (!currentReadAppLog) {
+          throw new Error("report.desktop.test.ts: readAppLog called with no currentReadAppLog set");
+        }
+        return currentReadAppLog(source, tailLines);
+      },
+    };
+  },
 }));
 
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
-import { buildDiagnosticReport, buildFullDiagnosticReport } from "../report";
+import { buildDiagnosticReport, buildFullDiagnosticReport, copyDiagnosticReport } from "../report";
+
+afterEach(() => {
+  initDesktopShouldReject = false;
+});
 
 describe("buildFullDiagnosticReport — desktop log tails", () => {
   it("appends all three log tails as fenced sections when every source has content", async () => {
@@ -74,5 +87,20 @@ describe("buildFullDiagnosticReport — desktop log tails", () => {
     const base = buildDiagnosticReport(DEFAULT_SETTINGS);
     const text = await buildFullDiagnosticReport(DEFAULT_SETTINGS);
     expect(text).toBe(base);
+  });
+
+  it("F3 fix: degrades to the base report (no log sections) when initDesktop itself rejects", async () => {
+    initDesktopShouldReject = true;
+    const base = buildDiagnosticReport(DEFAULT_SETTINGS);
+    await expect(buildFullDiagnosticReport(DEFAULT_SETTINGS)).resolves.toBe(base);
+  });
+
+  it("F3 fix: copyDiagnosticReport still resolves (never rejects) when initDesktop rejects", async () => {
+    initDesktopShouldReject = true;
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText }, userAgent: "test-agent" });
+    await expect(copyDiagnosticReport(DEFAULT_SETTINGS)).resolves.toBe(true);
+    expect(writeText.mock.calls[0][0]).not.toContain("（最后 40 行）");
+    vi.unstubAllGlobals();
   });
 });

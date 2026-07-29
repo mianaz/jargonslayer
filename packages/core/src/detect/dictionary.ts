@@ -1550,11 +1550,19 @@ export function scanDictionary(
   // a user with both colliding packs enabled would get TWO cards for
   // one surface at the same position — dropSubsumedTerms deliberately
   // does not collapse equal-span hits from different entries (see its
-  // own doc). First entry to match wins, deterministically, per
+  // own doc). First entry to match wins, deterministically.
+  //
+  // Priority fix (adjudicated review, F1): iterate remoteTerms BEFORE
+  // TERM_DICTIONARY. A user-installed remote pack is explicit intent —
+  // it should win any key collision with a built-in entry, not lose to
+  // it silently. So the deterministic order is: remote packs first (in
+  // registry-load order, i.e. remoteTerms' own flattened order), THEN
   // TERM_DICTIONARY's own table-priority order (documented on
-  // mergeTermTables above).
+  // mergeTermTables above) for anything a remote pack didn't already
+  // claim. A user who wants the built-in back can disable the
+  // colliding remote pack.
   const matchedTermKeys = new Set<string>();
-  for (const entry of [...TERM_DICTIONARY, ...remoteTerms]) {
+  for (const entry of [...remoteTerms, ...TERM_DICTIONARY]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     if (matchedTermKeys.has(normalizeDictKey(entry.term))) continue;
     // commonWord guard, PER-ENTRY semantics (v0.6 multi-sense-terms
