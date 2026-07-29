@@ -617,8 +617,9 @@ python whisper_server.py --model small</code></pre>
       </ol>
       <h3>Built-in Packs</h3>
       <p>Dictionary packs let users narrow detection by topic. Fourteen built-in packs ship today: core expressions, meeting flow, project execution, feedback, sales and growth, softening/criticism, academic meetings, chitchat, business terms, tech terms, pharma/biotech, and — added in v0.4.6 — statistics, machine learning, and bioinformatics (about 226 terms across the three, with English and Chinese glosses sourced from Wikipedia, the EDAM ontology, and Google's ML Glossary). The full built-in dictionary is 650+ entries. Every pack toggles on or off per meeting; <code>core</code> is always on. A handful of everyday-English headwords in the stats/ML packs (mean, prior, attention, precision, …) stay opt-in — they only fire once you customize the enabled-pack list, so casual speech is never flagged under the default all-on state.</p>
+      <p><strong>v0.7.2 matching fixes:</strong> a headword ending in a parenthetical qualifier — <i>stochastic gradient descent (SGD)</i>, <i>mode (statistics)</i> — now matches in the transcript (it never could before). And enabling only a specialist pack (e.g. 生信/统计) no longer silently drops a term whose name happens to collide with another pack's — each enabled pack's own definition surfaces.</p>
       <h3>Community Packs</h3>
-      <p>Remote packs are JSON manifests installed from a GitHub raw or jsDelivr URL. They can contain expression entries and term entries; acronyms are <code>terms</code> with <code>type: "acronym"</code>.</p>
+      <p>Remote packs are JSON manifests installed from a GitHub raw or jsDelivr URL. They can contain expression entries and term entries; acronyms are <code>terms</code> with <code>type: "acronym"</code>. As of v0.7.2, an installed pack's own definition takes precedence over a built-in one when both define the same term, instead of the built-in one winning silently.</p>
       <p>Settings also has an official catalog you can browse and install from with one click — six specialized packs (medicine, biopharma, AI/ML, law, finance, engineering; 4,300+ terms total) published at <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>, alongside file or GitHub-URL import for any third-party pack. Installed packs auto-check for updates once a day.</p>
       <pre><code>{
   "id": "biotech-terms",
@@ -720,6 +721,8 @@ python whisper_server.py --model small</code></pre>
       <p>Python virtual environments contain absolute paths. Rebuild the sidecar venv after moving or renaming the repo.</p>
       <h3>Desktop: 本地服务 shows 未知</h3>
       <p>The app hasn't probed the local service yet, or the last probe didn't return. Open 后台任务 (desktop, top right) and click 重新检测 next to 本地服务; if it stays down, check Settings → 转录引擎. See <a href="#desktop-app">Desktop App</a> for the full background task center.</p>
+      <h3>Filing a bug report</h3>
+      <p>诊断信息 in Settings (advanced) holds a local, redacted bundle — recent app events plus a scrubbed settings snapshot, never meeting audio or transcript text. <strong>复制诊断信息</strong> copies it; <strong>导出诊断文件</strong> saves it as a file instead (opens the share sheet on iOS). On desktop the bundle also folds in a tail of the three local logs (Whisper 服务, 系统/App 音频, 系统识别) — the same three you can preview individually with <code>查看本地日志</code>. The Chrome extension has its own, smaller <strong>复制诊断</strong> button in the side panel. Attach whichever applies when you <a href="https://github.com/mianaz/jargonslayer/issues" target="_blank" rel="noopener">file an issue</a>.</p>
     </section>
 
     <section id="deep-specs">
@@ -1065,6 +1068,10 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Bit refresh:</strong> a redrawn body, a warmer color palette, and a greeting-style entrance animation for the status-line mascot.</li>
         <li><strong>Fix:</strong> the source-sentence quote in an expanded expression card no longer clips at two lines.</li>
         <li><strong>iOS fix:</strong> exports (Markdown, docx, backups, Cornell notes) now hand the file to the system share sheet — previously tapping an export button on iOS did nothing.</li>
+        <li><strong>Dictionary matching fixes (v0.7.2):</strong> a headword ending in a parenthetical qualifier — <i>stochastic gradient descent (SGD)</i>, <i>mode (statistics)</i> — now matches in the transcript (it never could before); enabling only a specialist pack (e.g. 生信/统计) no longer silently drops an entry whose name collides with a business-pack term, and each enabled pack's own definition surfaces; an installed dictionary pack now wins over a built-in one when both define the same term.</li>
+        <li><strong>Diagnostics for beta feedback (v0.7.2):</strong> Settings' 诊断信息 log viewer now covers all three local logs (Whisper 服务 / 系统/App 音频 / 系统识别) via a source picker; a new 导出诊断文件 button saves the diagnostics bundle as a file (opens the system share sheet on iOS); the Chrome extension side panel gets its first 复制诊断 button.</li>
+        <li><strong>Local logs never carry meeting speech (v0.7.2):</strong> a hardening fix in the desktop speech-recognition log writer closes the one remaining path where a malformed line could leak raw speech into a local log file.</li>
+        <li><strong>Chrome extension updated to 0.7.2 (v0.7.2):</strong> now carries the dictionary reliability fixes above; the previous release was pinned at 0.6.0.</li>
       </ol>
       <p>Parked items include browser-Whisper realtime streaming and select-to-web-search.</p>
     </section>

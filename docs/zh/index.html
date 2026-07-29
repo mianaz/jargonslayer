@@ -591,8 +591,9 @@ python whisper_server.py --model small</code></pre>
       </ol>
       <h3>内置词典包</h3>
       <p>词典包按主题控制检测范围。目前内置 14 个包：基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药与生物科技，以及 v0.4.6 新增的统计学、机器学习、生物信息学（三个包合计约 226 个术语，中英释义取自 Wikipedia、EDAM 本体和 Google ML Glossary）。内置词典整体 650+ 条。每个包都能按会议单独开关，<code>core</code> 始终开启。统计学/机器学习包里有几个日常英语高频词（mean、prior、attention、precision 等）默认不触发，只有你自己定制过启用列表后才会命中，平时闲聊不会被误标。</p>
+      <p><strong>v0.7.2 匹配修复：</strong>以括号限定结尾的词条——<i>stochastic gradient descent (SGD)</i>、<i>mode (statistics)</i>——现在能在转录里正确命中（之前从未匹配过）。只启用专业词典包（比如生信、统计）时，也不再悄悄丢失和其他包撞名的词条——每个启用的包都会显示自己的释义。</p>
       <h3>社区词典包</h3>
-      <p>远程词典包是从 GitHub raw 或 jsDelivr URL 安装的 JSON manifest。它可以包含表达条目和术语条目；缩写用 <code>terms</code> 且 <code>type: "acronym"</code>。</p>
+      <p>远程词典包是从 GitHub raw 或 jsDelivr URL 安装的 JSON manifest。它可以包含表达条目和术语条目；缩写用 <code>terms</code> 且 <code>type: "acronym"</code>。自 v0.7.2 起，已安装的词典包和内置词典包定义了同一个词条时，优先显示已安装包的释义，不再被内置词典悄悄盖掉。</p>
       <p>设置里还有一个官方词典包目录，可以直接浏览安装——医学、生物医药、AI/ML、法律、金融商务、工程计算机六个专业包，共 4300+ 词条，发布在 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>；第三方包同样可以从文件或 GitHub 链接导入。已安装的包每天自动检查一次更新。</p>
       <pre><code>{
   "id": "biotech-terms",
@@ -695,6 +696,8 @@ python whisper_server.py --model small</code></pre>
       <p>Python 虚拟环境包含绝对路径。移动或重命名仓库后，重建 sidecar venv。</p>
       <h3>桌面版：本地服务显示「未知」</h3>
       <p>应用还没探测过本地服务，或者上一次探测没有返回。打开「后台任务」（桌面版右上角），点「本地服务」旁边的「重新检测」；如果还是不行，去 设置 → 转录引擎 检查。完整的后台任务中心说明见「<a href="#desktop-app">桌面版</a>」。</p>
+      <h3>提交问题反馈</h3>
+      <p>设置（高级）里的「诊断信息」保存一份本地、已脱敏的信息包——最近的应用事件加一份脱敏后的设置快照，绝不包含会议音频或转录文本。<strong>复制诊断信息</strong>直接复制；<strong>导出诊断文件</strong>改为存成文件（iOS 上会打开系统分享面板）。桌面版会自动把三个本地日志（Whisper 服务、系统/App 音频、系统识别）的结尾一并带上，和 <code>查看本地日志</code> 里能单独预览的是同一批日志。Chrome 插件侧边栏也有自己的、更精简的<strong>复制诊断</strong>按钮。提交 <a href="https://github.com/mianaz/jargonslayer/issues" target="_blank" rel="noopener">issue</a> 时附上对应的那份即可。</p>
     </section>
 
     <section id="deep-specs">
@@ -1040,6 +1043,10 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Bit 焕新：</strong>状态栏吉祥物重画了身体、换了更暖的配色，出场动画改成打招呼式。</li>
         <li><strong>修复：</strong>展开的表达卡片里，原文例句不再被截断在两行。</li>
         <li><strong>iOS 修复：</strong>导出（Markdown、docx、备份、康奈尔笔记）改走系统分享面板——之前在 iOS 上点导出没有任何反应。</li>
+        <li><strong>词典匹配修复（v0.7.2）：</strong>以括号限定结尾的词条——<i>stochastic gradient descent (SGD)</i>、<i>mode (statistics)</i>——现在能在转录里正确命中（之前从未匹配过）；只启用专业词典包（比如生信、统计）时不再悄悄丢失和其他包撞名的词条，每个启用的包都会显示自己的释义；已安装的词典包和内置词典包撞名时，现在优先显示已安装包的释义。</li>
+        <li><strong>Beta 反馈诊断增强（v0.7.2）：</strong>设置里「诊断信息」的日志查看器现在覆盖全部三个本地日志（Whisper 服务 / 系统/App 音频 / 系统识别），可以选择查看哪一个；新增「导出诊断文件」按钮把诊断信息包存成文件（iOS 上会打开系统分享面板）；Chrome 插件侧边栏首次获得「复制诊断」按钮。</li>
+        <li><strong>本地日志不再可能带上会议原声（v0.7.2）：</strong>桌面版语音识别日志写入逻辑的一处加固修复，堵上了最后一条畸形行可能泄漏原始语音的路径。</li>
+        <li><strong>Chrome 插件升级到 0.7.2（v0.7.2）：</strong>带上了上面的词典可靠性修复；此前版本停留在 0.6.0。</li>
       </ol>
       <p>暂缓项：浏览器端 Whisper 实时流、划词联网搜索。</p>
     </section>
