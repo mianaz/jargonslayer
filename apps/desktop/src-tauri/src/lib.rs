@@ -157,7 +157,7 @@ pub fn run() {
             server::cancel_prewarm,
             provision::read_provision_marker,
             provision::write_provision_marker,
-            provision::read_sidecar_log,
+            provision::read_app_log,
             audiocap::audiocap_capabilities,
             audiocap::start_app_audio,
             audiocap::stop_app_audio,

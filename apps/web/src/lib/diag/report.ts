@@ -17,6 +17,11 @@ import pkg from "../../../package.json";
 import { PREVIEW_TIER } from "../deployTier";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import { type DiagEntry, getDiagEntries } from "./log";
+import { IS_DESKTOP } from "../platform/desktop";
+// Type-only import — see appendDesktopLogTails below for why the
+// VALUE (initDesktop) is imported dynamically instead, right at its
+// one call site, rather than statically here.
+import type { DesktopLogSource } from "../desktop/bootstrap";
 
 export const DIAG_REPORT_ENTRIES = 50;
 
@@ -278,13 +283,75 @@ export function buildDiagnosticReport(settings: Settings): string {
   return lines.join("\n");
 }
 
+// ---------------------------------------------------------------
+// Beta-phase diagnostics audit item 1 — desktop-only log tails.
+// buildDiagnosticReport above stays SYNC and untouched on purpose (30+
+// existing tests call it directly, unawaited, per string equality —
+// see report.test.ts): the async log-fetching step lives in its own
+// wrapper below instead of forcing every caller/test of the pure
+// builder through a Promise. copyDiagnosticReport/SettingsDialog's new
+// 导出诊断文件 action both go through buildFullDiagnosticReport, so
+// every UI surface that ships a report gets the log tails on desktop.
+// ---------------------------------------------------------------
+
+const APP_LOG_TAIL_LINES = 40;
+const APP_LOG_SOURCES: readonly DesktopLogSource[] = ["whisper_server.log", "audiocap.log", "osspeech.log"];
+
+/** Desktop-only: appends a bounded tail of each of the three
+ *  allowlisted local log files (bootstrap.ts's DesktopLogSource /
+ *  provision.rs's LOG_SOURCES) as fenced Markdown sections, through the
+ *  SAME initDesktop() gateway every other Tauri-command caller in this
+ *  app uses (see bootstrap.ts's readAppLog doc comment for why a
+ *  second direct getInvoke() caller is avoided — this file gains no
+ *  new one). initDesktop() is already reachable from the ordinary web
+ *  bundle via DesktopBootstrap.tsx (mounted unconditionally from
+ *  app/page.tsx), so importing it here opens no new tree-shake leak.
+ *
+ *  Tolerant of a missing log file: read_app_log's own "" == absent
+ *  contract makes that source's section skipped silently rather than
+ *  rendered empty. Tolerant of any OTHER read failure (a resolve error,
+ *  a permissions issue, …) the same way — one bad source never blocks
+ *  the rest of the report or the report itself.
+ *
+ *  No extra redaction runs over the tail text itself: this module's own
+ *  PRIVACY RULE (top of file) already trusts diag-ring-buffer entries
+ *  were scrubbed at their OWN call site rather than re-scrubbing here,
+ *  and the three log writers (audiocap.rs/osspeech.rs/whisper_server.py)
+ *  carry that identical contract by design — none of them ever write
+ *  transcript/translation content to begin with, so there is nothing
+ *  left for a generic scrubber to catch that the writer didn't already
+ *  keep out. */
+async function appendDesktopLogTails(report: string): Promise<string> {
+  if (!IS_DESKTOP) return report;
+  const { initDesktop } = await import("../desktop/bootstrap");
+  const handle = await initDesktop();
+  const sections: string[] = [];
+  for (const source of APP_LOG_SOURCES) {
+    try {
+      const tail = await handle.readAppLog(source, APP_LOG_TAIL_LINES);
+      if (!tail) continue; // missing/not-yet-created file — skip silently
+      sections.push(`## ${source}（最后 ${APP_LOG_TAIL_LINES} 行）\n\`\`\`\n${tail}\n\`\`\``);
+    } catch {
+      // best-effort — a single bad log source never blocks the rest
+    }
+  }
+  return sections.length > 0 ? `${report}\n\n${sections.join("\n\n")}` : report;
+}
+
+/** The full report every UI surface should actually ship (copy AND the
+ *  file-export action): buildDiagnosticReport's sync bundle, plus the
+ *  three desktop log tails on IS_DESKTOP builds (a no-op elsewhere). */
+export async function buildFullDiagnosticReport(settings: Settings): Promise<string> {
+  return appendDesktopLogTails(buildDiagnosticReport(settings));
+}
+
 /** Clipboard write for the 复制诊断/复制诊断信息 actions (Toast.tsx,
  *  SettingsDialog.tsx) — one place for the writeText + failure
  *  handling so both callers behave identically. Returns false (never
  *  throws) when the Clipboard API is unavailable or permission was
  *  denied; the caller shows its own success/failure toast. */
 export async function copyDiagnosticReport(settings: Settings): Promise<boolean> {
-  const text = buildDiagnosticReport(settings);
+  const text = await buildFullDiagnosticReport(settings);
   try {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(text);

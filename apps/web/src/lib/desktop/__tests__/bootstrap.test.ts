@@ -1101,7 +1101,7 @@ describe("initDesktop — idempotency + IS_DESKTOP guard", () => {
     expect(handle.currentState()).toEqual({ phase: "NOT_DESKTOP" });
     await expect(handle.recheckHealth()).resolves.toBeUndefined();
     await expect(handle.reprovision()).resolves.toBeUndefined();
-    await expect(handle.readSidecarLog(200)).resolves.toBe("");
+    await expect(handle.readAppLog("whisper_server.log", 200)).resolves.toBe("");
     // S4 chunk 2: downloadProgress$/currentDownloadProgress are inert
     // outside a desktop build too — same posture as every other handle
     // method above.
@@ -1612,13 +1612,13 @@ describe("bootstrapDesktop — server://exit crash-restart policy wiring (chunk 
   });
 });
 
-describe("bootstrapDesktop — readSidecarLog() (chunk 7 SettingsDialog「查看本地服务日志」)", () => {
-  it('invokes "read_sidecar_log" with the given tailLines and returns the result verbatim — reuses deps.invoke, no second getInvoke() call site', async () => {
+describe("bootstrapDesktop — readAppLog() (chunk 7 SettingsDialog「查看本地日志」, generalized by the beta-phase diagnostics audit item 1)", () => {
+  it('invokes "read_app_log" with the given source/tailLines and returns the result verbatim — reuses deps.invoke, no second getInvoke() call site', async () => {
     const deps: BootstrapDeps = {
       invoke: makeFakeInvoke({
         app_paths: () => paths,
         read_provision_marker: () => null,
-        read_sidecar_log: (args) => `log tail for ${args?.tailLines} lines`,
+        read_app_log: (args) => `${args?.source} tail for ${args?.tailLines} lines`,
       }),
       listen: makeFakeListen(),
       tauriFetch: fakeTauriFetch,
@@ -1628,8 +1628,27 @@ describe("bootstrapDesktop — readSidecarLog() (chunk 7 SettingsDialog「查看
     const handle = await bootstrapDesktop(deps);
     await waitForStable(handle); // -> HEALTHY
 
-    const text = await handle.readSidecarLog(200);
-    expect(text).toBe("log tail for 200 lines");
+    const text = await handle.readAppLog("whisper_server.log", 200);
+    expect(text).toBe("whisper_server.log tail for 200 lines");
+  });
+
+  it("passes through audiocap.log/osspeech.log sources unchanged too — not hardcoded to whisper_server.log", async () => {
+    const deps: BootstrapDeps = {
+      invoke: makeFakeInvoke({
+        app_paths: () => paths,
+        read_provision_marker: () => null,
+        read_app_log: (args) => `${args?.source} tail for ${args?.tailLines} lines`,
+      }),
+      listen: makeFakeListen(),
+      tauriFetch: fakeTauriFetch,
+      setTransport: () => {},
+      probeSidecarFn: async () => ({ up: true }),
+    };
+    const handle = await bootstrapDesktop(deps);
+    await waitForStable(handle);
+
+    expect(await handle.readAppLog("audiocap.log", 40)).toBe("audiocap.log tail for 40 lines");
+    expect(await handle.readAppLog("osspeech.log", 40)).toBe("osspeech.log tail for 40 lines");
   });
 });
 

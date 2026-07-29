@@ -82,7 +82,8 @@ body {
 .js-translate-section,
 .js-results,
 .js-locked-section,
-.js-packs-section {
+.js-packs-section,
+.js-diag-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
