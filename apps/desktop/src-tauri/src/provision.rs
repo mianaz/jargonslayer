@@ -81,6 +81,29 @@ fn is_allowed_log_source(source: &str) -> bool {
     LOG_SOURCES.contains(&source)
 }
 
+/// Defense-in-depth (adjudicated review, F4): `source` is filename-
+/// allowlisted (`is_allowed_log_source` above), but nothing stops
+/// something ELSE from planting a symlink INSIDE app_log_dir under one
+/// of those exact allowlisted names — pointing anywhere on disk this
+/// process can read. `fs::read_to_string` (and plain `fs::metadata`)
+/// follow symlinks transparently, so the allowlist alone can't catch
+/// this. Checked here via `fs::symlink_metadata`, which reports the
+/// path's OWN type without following it: refuses anything that isn't a
+/// regular file (a symlink, a directory, a FIFO, …). A path that simply
+/// doesn't exist yet is NOT refused here — read_app_log's own
+/// `fs::read_to_string` call already turns that into an empty-string
+/// result (a log file not yet created is normal), so this only needs to
+/// gate the case where something IS there and isn't safe to read.
+/// Pure/no-AppHandle so it's unit-testable without spinning up tauri.
+fn refuse_unless_regular_file(path: &Path) -> Result<(), String> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_file() => Ok(()),
+        Ok(_) => Err(format!("{} is not a regular file, refusing to read", path.display())),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("failed to stat {}: {e}", path.display())),
+    }
+}
+
 #[tauri::command]
 pub fn read_app_log(app: tauri::AppHandle, source: String, tail_lines: u32) -> Result<String, String> {
     if !is_allowed_log_source(&source) {
@@ -91,6 +114,7 @@ pub fn read_app_log(app: tauri::AppHandle, source: String, tail_lines: u32) -> R
         .app_log_dir()
         .map_err(|e| format!("could not resolve the app log dir: {e}"))?;
     let path = log_dir.join(&source);
+    refuse_unless_regular_file(&path)?;
     match fs::read_to_string(&path) {
         Ok(contents) => Ok(tail_lines_of(&contents, tail_lines as usize)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -177,5 +201,47 @@ mod tests {
         assert!(!is_allowed_log_source("WHISPER_SERVER.LOG"));
         assert!(!is_allowed_log_source(""));
         assert!(!is_allowed_log_source("audiocap-spike.log")); // real file, but not in the allowlist
+    }
+
+    #[test]
+    fn refuse_unless_regular_file_is_ok_for_a_plain_file() {
+        let dir = scratch_path("regular-file-dir");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("audiocap.log");
+        fs::write(&path, "normal log content").unwrap();
+
+        assert!(refuse_unless_regular_file(&path).is_ok());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn refuse_unless_regular_file_is_ok_when_the_path_does_not_exist_yet() {
+        let path = scratch_path("nonexistent").join("audiocap.log");
+        assert!(refuse_unless_regular_file(&path).is_ok());
+    }
+
+    #[test]
+    fn refuse_unless_regular_file_refuses_a_symlink_named_like_an_allowlisted_log() {
+        let dir = scratch_path("symlink-dir");
+        fs::create_dir_all(&dir).unwrap();
+
+        // The sentinel: a file OUTSIDE app_log_dir a malicious/planted
+        // symlink might try to redirect a read toward.
+        let sentinel = dir.join("sentinel.txt");
+        fs::write(&sentinel, "SENTINEL: must never be reachable via read_app_log").unwrap();
+
+        // The symlink itself: same name read_app_log would join onto
+        // app_log_dir for the "audiocap.log" source.
+        let link_path = dir.join("audiocap.log");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&sentinel, &link_path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&sentinel, &link_path).unwrap();
+
+        let result = refuse_unless_regular_file(&link_path);
+        assert!(result.is_err(), "a symlinked log source must be refused, got {result:?}");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -711,6 +711,114 @@ describe("SettingsDialog (desktop) — F7: a completed diar-install task refresh
   });
 });
 
+describe("SettingsDialog (desktop) — F6: 查看本地日志 discards a stale response after the source select changes", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    useApp.setState({ settings: openRouterSeedSettings(), hydrated: true });
+    mockInitDesktop.mockReset();
+    mockProbeAudiocapCaps.mockClear();
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllGlobals();
+  });
+
+  async function flushUntil(check: () => boolean, maxTicks = 50): Promise<void> {
+    for (let i = 0; i < maxTicks; i++) {
+      if (check()) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+    }
+    if (!check()) throw new Error("flushUntil: condition never became true");
+  }
+
+  function findNavButton(label: string): HTMLButtonElement {
+    const navButtons = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+    const btn = navButtons.find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav button "${label}" not found`);
+    return btn;
+  }
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  it("a readAppLog response for the OLD source, resolving after the <select> already moved to a new source, never paints — the panel shows only the new source's own content", async () => {
+    let resolveWhisper!: (value: string) => void;
+    const whisperPending = new Promise<string>((resolve) => {
+      resolveWhisper = resolve;
+    });
+    const readAppLog = vi.fn((source: string) =>
+      source === "whisper_server.log" ? whisperPending : Promise.resolve("AUDIOCAP_LOG_CONTENT"),
+    );
+    const { handle } = makeFakeHandle({ readAppLog });
+    mockInitDesktop.mockResolvedValue(handle);
+
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await act(async () => {
+      findNavButton("数据与联动").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // Kick off a read for the default source (whisper_server.log) — left
+    // deliberately unresolved. The button disables itself (loadingAppLog)
+    // while it's in flight, so a real user can only switch the SELECT
+    // during this window, not fire a second read yet.
+    await act(async () => {
+      findButtonContaining("查看本地日志").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushUntil(() => readAppLog.mock.calls.length >= 1);
+    expect(readAppLog.mock.calls[0][0]).toBe("whisper_server.log");
+
+    // Switches the source select to audiocap.log WHILE that read is
+    // still in flight.
+    const select = container!.querySelector("select") as HTMLSelectElement;
+    await act(async () => {
+      select.value = "audiocap.log";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    // The stale whisper_server.log response lands only now — must be
+    // discarded (never painted), even though it's the only response the
+    // component has seen so far for the audiocap.log source now shown.
+    await act(async () => {
+      resolveWhisper("WHISPER_STALE_CONTENT");
+      await Promise.resolve();
+    });
+    expect(container!.textContent).not.toContain("WHISPER_STALE_CONTENT");
+
+    // The button is usable again (loadingAppLog cleared) — a real fetch
+    // for the now-selected audiocap.log source works normally.
+    await act(async () => {
+      findButtonContaining("查看本地日志").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushUntil(() => container!.textContent?.includes("AUDIOCAP_LOG_CONTENT") ?? false);
+
+    expect(container!.textContent).not.toContain("WHISPER_STALE_CONTENT");
+    expect(container!.textContent).toContain("AUDIOCAP_LOG_CONTENT");
+  });
+});
+
 describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下载模型 + diarize hint (§3 Worker D)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;

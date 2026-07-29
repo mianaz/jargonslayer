@@ -1321,17 +1321,43 @@ impl OsSpeechSessionLog {
     }
 }
 
+/// True when a line that FAILED to parse into a full `Transcript` record
+/// (adjudicated review, F2) still looks like it carries one — checked at
+/// the raw-byte level, not via `RawOsSpeechLine`, since a malformed line
+/// is exactly the case where re-running that same struct's Deserialize
+/// may not help (e.g. a `text` field present but a wrong/missing type on
+/// some OTHER required field still leaves `text` sitting right there in
+/// the raw bytes). `"type":"transcript"` and a bare `"text"` field are
+/// this file's own transcript schema (see `RawOsSpeechLine`/
+/// `parse_osspeech_line` above) — either substring is enough to treat the
+/// line as unsafe to log verbatim, since `"text"` is the one field that
+/// actually carries live meeting speech.
+fn looks_transcript_shaped(raw_line: &str) -> bool {
+    raw_line.contains("\"type\":\"transcript\"") || raw_line.contains("\"text\"")
+}
+
 /// Decides what actually gets written to the two log lanes (`uv://log` +
 /// `OsSpeechSessionLog`) for one already-parsed stderr line — the single
 /// choke point both the session task and the preinstall task route
 /// through (R1 fix): a `Transcript` record NEVER contributes its `text`
-/// (live meeting content) to either lane, only a metadata line; every
-/// other record — including `Unrecognized` garbage — is logged verbatim,
-/// unchanged from before this fix.
+/// (live meeting content) to either lane, only a metadata line.
+///
+/// F2 fix (adjudicated review): a MALFORMED transcript-shaped line (valid
+/// enough JSON to carry `type`/`text` but missing some other required
+/// field, so it parses to `Unrecognized` rather than `Transcript`) used to
+/// fall through to the verbatim branch below — the raw NDJSON, `text`
+/// field and all, landing straight in `osspeech.log` (now bundled by the
+/// diagnostics export). Caught here via `looks_transcript_shaped`: logged
+/// as metadata only (recoverable kind + raw byte length), never the raw
+/// payload. Every OTHER `Unrecognized` line — genuine non-transcript
+/// garbage — is still logged verbatim, unchanged from before this fix.
 fn log_line_for<'a>(raw_line: &'a str, parsed: &ParsedOsSpeechLine) -> std::borrow::Cow<'a, str> {
     match parsed {
         ParsedOsSpeechLine::Transcript { final_, seq, start_ms, end_ms, text } => {
             std::borrow::Cow::Owned(format!("transcript final={final_} seq={seq} startMs={start_ms} endMs={end_ms} len={}", text.len()))
+        }
+        ParsedOsSpeechLine::Unrecognized if looks_transcript_shaped(raw_line) => {
+            std::borrow::Cow::Owned(format!("transcript (malformed) len={}", raw_line.len()))
         }
         _ => std::borrow::Cow::Borrowed(raw_line),
     }
@@ -1909,6 +1935,29 @@ mod tests {
         let logged = log_line_for(raw, &parsed);
         assert_eq!(logged, "transcript final=false seq=12 startMs=3200 endMs=4100 len=13");
         assert!(!logged.contains("jargon"), "{logged}");
+    }
+
+    #[test]
+    fn log_line_for_redacts_a_malformed_transcript_shaped_line_too() {
+        // Missing `final`/`seq`/`startMs`/`endMs` -> parses to Unrecognized,
+        // NOT Transcript — but the raw bytes still carry a real `text`
+        // field, so the sentinel below must never reach the logged line.
+        let raw = r#"{"type":"transcript","text":"SENTINEL_LEAK jargon slayer meeting content"}"#;
+        let parsed = parse_osspeech_line(raw);
+        assert_eq!(parsed, ParsedOsSpeechLine::Unrecognized);
+        let logged = log_line_for(raw, &parsed);
+        assert!(!logged.contains("SENTINEL_LEAK"), "malformed transcript-shaped lines must not leak meeting text: {logged}");
+        assert_eq!(logged, format!("transcript (malformed) len={}", raw.len()));
+    }
+
+    #[test]
+    fn log_line_for_keeps_verbatim_logging_for_a_malformed_non_transcript_line() {
+        // Missing `state` -> Unrecognized, and nothing about the raw bytes
+        // looks transcript-shaped — existing verbatim behavior must hold.
+        let raw = r#"{"type":"asset"}"#;
+        let parsed = parse_osspeech_line(raw);
+        assert_eq!(parsed, ParsedOsSpeechLine::Unrecognized);
+        assert_eq!(log_line_for(raw, &parsed), raw);
     }
 
     #[test]

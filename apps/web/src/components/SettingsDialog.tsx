@@ -3,7 +3,7 @@
 // Settings modal: transcription engine + AI detection configuration.
 // Edits a local draft; only committed to the store on 保存.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CaretDown, CaretRight, Eye, EyeSlash, X } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
@@ -1306,6 +1306,16 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const [logSource, setLogSource] = useState<DesktopLogSource>("whisper_server.log");
   const [appLogText, setAppLogText] = useState<string | null>(null);
   const [loadingAppLog, setLoadingAppLog] = useState(false);
+  // F6 fix (adjudicated review): ref-mirror of logSource, same
+  // stale-guard shape as this file's other async effects (`let
+  // cancelled` closures above) — but this read is fired from a button
+  // click, not a mount effect, and the source can change out from under
+  // an in-flight request via the <select>'s own onChange (a plain state
+  // read can't see that; a ref can, since it's read AFTER the await).
+  const logSourceRef = useRef(logSource);
+  useEffect(() => {
+    logSourceRef.current = logSource;
+  }, [logSource]);
   // 转录引擎 category, desktop-only: 「重新运行安装向导」busy flag — see
   // handleReprovisionDesktop below.
   const [reprovisioningDesktop, setReprovisioningDesktop] = useState(false);
@@ -2605,10 +2615,17 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // function would reopen the exact web-bundle tree-shake leak this
   // task's own gate caught and fixed.
   const handleViewAppLog = async () => {
+    // F6 fix (adjudicated review): capture the source THIS read is for
+    // before the await — if the user switches the <select> while the
+    // read is in flight, logSourceRef.current has already moved on by
+    // the time the response lands, so the stale response is discarded
+    // instead of painting under the now-selected (different) source.
+    const requestedSource = logSource;
     setLoadingAppLog(true);
     try {
       const handle = await initDesktop();
-      const text = await handle.readAppLog(logSource, 200);
+      const text = await handle.readAppLog(requestedSource, 200);
+      if (logSourceRef.current !== requestedSource) return; // stale — source changed while in flight
       setAppLogText(text);
     } catch (err) {
       showToast(err instanceof Error ? `读取本地日志失败：${err.message}` : "读取本地日志失败");
