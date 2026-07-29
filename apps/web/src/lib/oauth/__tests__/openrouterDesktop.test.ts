@@ -83,8 +83,15 @@ async function flushUntil(check: () => boolean, maxTicks = 50): Promise<void> {
  *  timers. `vi.advanceTimersByTimeAsync` is vitest's documented way to
  *  mix fake timers with genuinely-pending real async work (like
  *  crypto.subtle.digest above): it still yields to the real event loop
- *  on every call, it just ALSO drives the fake clock forward by `ms`. */
-async function flushUntilFake(check: () => boolean, maxTicks = 50): Promise<void> {
+ *  on every call, it just ALSO drives the fake clock forward by `ms`.
+ *
+ *  maxTicks is deliberately generous: each tick is one real event-loop
+ *  hop, and the genuinely-async work being awaited (webcrypto digest on
+ *  a threadpool) needs WALL time, not fake-clock time — on a loaded CI
+ *  runner 50 hops proved flaky (first main-branch CI run, 2026-07-29).
+ *  The loop exits on the first tick where check() holds, so the bound
+ *  only costs anything when the test is already failing. */
+async function flushUntilFake(check: () => boolean, maxTicks = 2000): Promise<void> {
   for (let i = 0; i < maxTicks; i++) {
     if (check()) return;
     await vi.advanceTimersByTimeAsync(0);
