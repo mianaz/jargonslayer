@@ -195,8 +195,8 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "mean",
     type: "metric",
-    gloss_en: "1.",
-    gloss_zh: "平均数是统计中的一个重要概念",
+    gloss_en: "The arithmetic average of a set of values, or the expected value of a random variable.",
+    gloss_zh: "平均数：一组数值的算术平均，或随机变量的期望值。",
     pack: "stats",
     commonWord: true,
   },
@@ -491,7 +491,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "linear regression",
     type: "tech",
-    gloss_en: "A type of machine learning model in which both of the following are true:",
+    gloss_en: "A regression model that predicts a numerical value from a linear combination of input features.",
     gloss_zh: "在统计学中，线性回归是利用称为线性回归方程的最小二乘函数对一个或多个自变量和因变量之间关系进行建模的一种回归分析",
     pack: "ml-stats",
   },
@@ -632,7 +632,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "ReLU",
     type: "acronym",
-    gloss_en: "An activation function with the following behavior:",
+    gloss_en: "An activation function that outputs the input unchanged if it is positive, and 0 otherwise.",
     gloss_zh: "整流线性单位函数，又称修正线性单元，是一种人工神经网络中常用的激励函数，通常指代以斜坡函数及其变种为代表的非线性函数",
     pack: "ml-stats",
   },
@@ -859,7 +859,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "precision",
     type: "metric",
-    gloss_en: "A metric for classification models that answers the following question:",
+    gloss_en: "Of the examples a classification model labeled positive, the fraction that are actually positive.",
     gloss_zh: "精确率：模型预测为正例中真正为正例的比例。",
     pack: "ml-stats",
     commonWord: true,
@@ -867,7 +867,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "recall",
     type: "metric",
-    gloss_en: "A metric for classification models that answers the following question:",
+    gloss_en: "Of all actually positive examples, the fraction a classification model correctly labeled positive.",
     gloss_zh: "召回率：真实正例中被模型正确预测出的比例。",
     pack: "ml-stats",
     commonWord: true,
@@ -1024,7 +1024,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "quantization",
     type: "tech",
-    gloss_en: "Overloaded term that could be used in any of the following ways:",
+    gloss_en: "Reducing the numerical precision of a model's weights or activations to shrink the model and speed up inference.",
     gloss_zh: "量化：多义词，可指将连续特征分桶离散化，或用更低位宽表示模型权重以压缩模型。",
     pack: "ml-stats",
   },
@@ -1045,7 +1045,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "downsampling",
     type: "tech",
-    gloss_en: "Overloaded term that can mean either of the following:",
+    gloss_en: "Reducing the amount of data — for example training on fewer examples of an over-represented class, or lowering an image's resolution.",
     gloss_zh: "下采样：多义词，可指降低特征的分辨率或信息量，或减少多数类样本以缓解类别不平衡。",
     pack: "ml-stats",
   },

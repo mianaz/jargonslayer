@@ -62,8 +62,49 @@ function jsString(s) {
   return JSON.stringify(s);
 }
 
+// Gloss-quality bar for gloss_en. Empty/whitespace was already rejected
+// below; these catch the known ship-broken failure modes (botched numbered
+// Wikipedia extracts like "1.", and Google-glossary first-<p> cuts that
+// end mid-prompt on ':' / ',').
+//
+// Minimum length 12: shorter than a short clause is almost never a real
+// definition (the confirmed failure is "1."), while legitimate short
+// synonym glosses like "Synonym for recall." (19) still pass. Gloss-length
+// policy for long definitions is an open question — this only rejects
+// junk, not long prose.
+const GLOSS_EN_MIN_LEN = 12;
+
+// Pre-existing truncated Google-glossary extracts left for a separate
+// rewrite decision (do not mass-fix here). Still logged loudly on every
+// compile; new violations must NOT be added — fix the gloss instead.
+const GLOSS_EN_QUALITY_DEBT = new Set([
+  // emptied after closing the four dangling-colon ml-stats entries
+  // (linear regression, ReLU, quantization, downsampling)
+]);
+
+function glossEnQualityIssues(gloss) {
+  const t = (gloss ?? "").trim();
+  const issues = [];
+  if (!t) {
+    issues.push("empty/whitespace");
+    return issues;
+  }
+  if (t.length < GLOSS_EN_MIN_LEN) {
+    issues.push(`too short (${t.length} < ${GLOSS_EN_MIN_LEN})`);
+  }
+  if (/[:,]$/.test(t)) {
+    issues.push("ends with ':' or ',' (likely truncated mid-sentence)");
+  }
+  if (/^\d+\.?\s*$/.test(t)) {
+    issues.push("bare list marker (e.g. \"1.\")");
+  }
+  return issues;
+}
+
 async function main() {
   const perPackTerms = new Map();
+  const glossQualityErrors = [];
+  const glossQualityDebt = [];
 
   for (const packId of SOURCE_PACKS) {
     const packPath = path.join(OUT_DIR, `${packId}.pack.json`);
@@ -88,9 +129,35 @@ async function main() {
       if (!term.gloss_zh || !term.gloss_zh.trim()) {
         throw new Error(`[${packId}] empty gloss_zh for term ${jsString(term.term)}`);
       }
+
+      const enIssues = glossEnQualityIssues(term.gloss_en);
+      if (enIssues.length > 0) {
+        const msg =
+          `[${packId}] gloss_en quality: ${jsString(term.term)} — ` +
+          `${enIssues.join("; ")} — ${jsString(term.gloss_en)}`;
+        if (GLOSS_EN_QUALITY_DEBT.has(`${packId}\t${term.term}`)) {
+          glossQualityDebt.push(msg);
+        } else {
+          glossQualityErrors.push(msg);
+        }
+      }
     }
 
     perPackTerms.set(packId, pack.terms ?? []);
+  }
+
+  for (const msg of glossQualityDebt) {
+    console.error(`[gloss-quality DEBT] ${msg}`);
+  }
+  if (glossQualityErrors.length > 0) {
+    console.error("Gloss-quality lint failed — refusing to compile packs:");
+    for (const msg of glossQualityErrors) console.error(" - " + msg);
+    throw new Error(
+      `gloss-quality lint failed: ${glossQualityErrors.length} issue(s)` +
+        (glossQualityDebt.length
+          ? ` (${glossQualityDebt.length} known-debt warning(s) also logged)`
+          : ""),
+    );
   }
 
   const allTerms = SOURCE_PACKS.flatMap((packId) => perPackTerms.get(packId));

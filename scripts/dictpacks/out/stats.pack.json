@@ -190,8 +190,8 @@
     {
       "term": "mean",
       "type": "metric",
-      "gloss_en": "1.",
-      "gloss_zh": "平均数是统计中的一个重要概念",
+      "gloss_en": "The arithmetic average of a set of values, or the expected value of a random variable.",
+      "gloss_zh": "平均数：一组数值的算术平均，或随机变量的期望值。",
       "pack": "stats"
     },
     {
