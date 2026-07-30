@@ -21,7 +21,7 @@ import {
 } from "react";
 import { CaretUp, CaretUpDown } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
-import { getAllPacks } from "@jargonslayer/core/detect/packs";
+import { getPackName } from "@jargonslayer/core/detect/packs";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import { BitCameo } from "@/components/PixelDragon";
@@ -148,7 +148,7 @@ function sourceBadge(source: DetectionSource) {
 
 function packBadge(packId: string | undefined) {
   if (!packId) return null;
-  const name = getAllPacks().find((pack) => pack.id === packId)?.name ?? packId;
+  const name = getPackName(packId);
   return (
     <span className="border border-edge px-1.5 py-0 text-[10px] text-mut">
       <bdi>{name}</bdi>

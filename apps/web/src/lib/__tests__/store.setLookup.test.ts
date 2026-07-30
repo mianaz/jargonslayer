@@ -14,15 +14,21 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockDetectApi = vi.fn();
+const mockDefineApi = vi.fn();
+const mockProviderTranslate = vi.fn();
 vi.mock("../llm/client", () => ({
-  detectApi: (...args: unknown[]) => mockDetectApi(...args),
+  defineApi: (...args: unknown[]) => mockDefineApi(...args),
   NoKeyError: class NoKeyError extends Error {
     constructor(message = "未配置 API Key") {
       super(message);
       this.name = "NoKeyError";
     }
   },
+}));
+
+vi.mock("../translate/providers", () => ({
+  langPairFromSettings: () => ({ source: "en", target: "zh" }),
+  resolveTranslationProvider: () => ({ prepare: vi.fn(), translate: mockProviderTranslate }),
 }));
 
 import { useApp, type LookupRequest } from "../store";
@@ -42,7 +48,14 @@ function makeReq(overrides: Partial<LookupRequest> = {}): LookupRequest {
 
 describe("setLookup (store.ts) — single trigger for the selection-lookup pipeline", () => {
   beforeEach(() => {
-    mockDetectApi.mockReset().mockResolvedValue({ expressions: [], terms: [] });
+    mockDefineApi.mockReset().mockResolvedValue({
+      kind: "expression",
+      headword: "we had lunch and went home",
+      variants: [],
+      chinese_explanation: "我们吃完午饭就回家了。",
+      example: "We had lunch and went home after the meeting.",
+    });
+    mockProviderTranslate.mockReset().mockResolvedValue([{ id: "trigger-1", text: "我们吃完午饭就回家了。" }]);
     useSelectionLookup.setState({ byId: {} });
     useTasks.setState({ tasks: {} });
     useApp.setState((s) => ({
@@ -58,25 +71,25 @@ describe("setLookup (store.ts) — single trigger for the selection-lookup pipel
   });
 
   it("calling setLookup with a non-null request kicks off the pipeline exactly once", async () => {
-    const req = makeReq();
+    const req = makeReq({ text: "we had lunch and went home" });
     useApp.getState().setLookup(req);
 
     expect(useApp.getState().lookup).toEqual(req);
     await vi.waitFor(() => {
       expect(useTasks.getState().tasks[req.id]?.status).toBe("done");
     });
-    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    expect(mockDefineApi).toHaveBeenCalledTimes(1);
   });
 
   it("re-setting the SAME request id does not double-run the pipeline", async () => {
-    const req = makeReq({ id: "trigger-dup" });
+    const req = makeReq({ id: "trigger-dup", text: "we had lunch and went home" });
     useApp.getState().setLookup(req);
     useApp.getState().setLookup(req);
 
     await vi.waitFor(() => {
       expect(useTasks.getState().tasks[req.id]?.status).toBe("done");
     });
-    expect(mockDetectApi).toHaveBeenCalledTimes(1);
+    expect(mockDefineApi).toHaveBeenCalledTimes(1);
   });
 
   it("setLookup(null) never starts a pipeline run", async () => {
@@ -84,7 +97,7 @@ describe("setLookup (store.ts) — single trigger for the selection-lookup pipel
     // Nothing to await — this is a synchronous no-op; give any stray
     // microtask a chance to run before asserting the negative.
     await Promise.resolve();
-    expect(mockDetectApi).not.toHaveBeenCalled();
+    expect(mockDefineApi).not.toHaveBeenCalled();
     expect(useTasks.getState().tasks).toEqual({});
   });
 
@@ -96,7 +109,7 @@ describe("setLookup (store.ts) — single trigger for the selection-lookup pipel
     await vi.waitFor(() => {
       expect(useSelectionLookup.getState().byId[req.id]?.status).toBe("done");
     });
-    expect(mockDetectApi).not.toHaveBeenCalled();
+    expect(mockDefineApi).not.toHaveBeenCalled();
     expect(useTasks.getState().tasks[req.id]).toBeUndefined();
   });
 });
