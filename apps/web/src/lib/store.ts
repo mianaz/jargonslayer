@@ -2485,6 +2485,15 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   renameRosterSpeaker: (from, to) => {
+    // Name only lives on segments (never added to the roster) — fall
+    // through to the plain rename path so segments/aliases/activeSpeaker
+    // still update. Without this, renameRosterSpeakerList's collision
+    // guard would also block a segment-only rename whose `to` happens
+    // to already be on the roster.
+    if (!get().speakerRoster.includes(from)) {
+      get().renameSpeaker(from, to);
+      return;
+    }
     const next = renameRosterSpeakerList(get().speakerRoster, from, to);
     if (next === null) return;
     set({ speakerRoster: next });
@@ -2497,7 +2506,16 @@ export const useApp = create<AppState>((set, get) => ({
   assignSegmentsSpeaker: (segmentIds, name) => {
     const cleaned = name.trim();
     if (!cleaned || segmentIds.length === 0) return;
-    set({ segments: assignSpeakerToSegments(get().segments, segmentIds, cleaned) });
+    // Keep the latch's option list in sync: a name that only lived on
+    // segments (e.g. a diarized label picked from the assign popover's
+    // union list) must also land on the roster, otherwise the live
+    // latch can never select it. addSpeakerToRosterList is a no-op when
+    // the name is already present.
+    const { roster } = addSpeakerToRosterList(get().speakerRoster, cleaned);
+    set({
+      segments: assignSpeakerToSegments(get().segments, segmentIds, cleaned),
+      speakerRoster: roster,
+    });
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(
         () => get().saveCurrentSession(),
@@ -2611,7 +2629,7 @@ export const useApp = create<AppState>((set, get) => ({
   renameSpeaker: (from, to) => {
     const cleaned = to.trim();
     if (!cleaned || from === cleaned) return;
-    const { segments } = get();
+    const { segments, activeSpeaker } = get();
     // Rename-wins: record the alias BEFORE overwriting `speaker` below
     // (aliasesAfterRename reads segments' current `speaker`/`sttSpeaker`
     // to find each affected stable id) — a later applySpeakerUpdate for
@@ -2621,6 +2639,10 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       segments: renameSpeakerInSegments(segments, from, cleaned),
       speakerAliases,
+      // Keep the live latch pointing at the renamed display name —
+      // otherwise addFinal keeps stamping the OLD name onto new finals
+      // and resurrects a ghost duplicate speaker for the rest of the meeting.
+      activeSpeaker: activeSpeaker === from ? cleaned : activeSpeaker,
     });
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(

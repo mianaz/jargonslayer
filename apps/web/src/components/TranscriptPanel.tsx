@@ -229,7 +229,10 @@ function SpeakerRenamePopover({
   request: RenameRequest;
   onClose: () => void;
 }) {
-  const renameSpeaker = useApp((s) => s.renameSpeaker);
+  // Prefer renameRosterSpeaker so the latch's option list stays in
+  // sync; it falls through to renameSpeaker when the old name is not
+  // on the roster (segment-only / diarized display name).
+  const renameRosterSpeaker = useApp((s) => s.renameRosterSpeaker);
   const showToast = useApp((s) => s.showToast);
   const ref = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -273,7 +276,7 @@ function SpeakerRenamePopover({
       onClose();
       return;
     }
-    renameSpeaker(request.speaker, trimmed);
+    renameRosterSpeaker(request.speaker, trimmed);
     showToast("已重命名");
     onClose();
   };
