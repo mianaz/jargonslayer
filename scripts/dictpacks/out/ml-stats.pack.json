@@ -2,7 +2,7 @@
   "id": "ml-stats",
   "name": "机器学习与统计学术语（Google ML Glossary）",
   "description": "机器学习工程与统计学常用术语，取自 Google Machine Learning Glossary。中文释义来自对应中文维基百科条目导言（非机器翻译），部分术语未找到可信中文维基条目，暂缺中文释义。经典统计学词汇（如 p 值、置信区间）在该来源中未收录，详见 provenance 文件与构建脚本注释。",
-  "version": "2026-07-19",
+  "version": "2026-07-30",
   "expressions": [],
   "terms": [
     {
@@ -148,7 +148,7 @@
     {
       "term": "linear regression",
       "type": "tech",
-      "gloss_en": "A type of machine learning model in which both of the following are true:",
+      "gloss_en": "A regression model that predicts a numerical value from a linear combination of input features.",
       "gloss_zh": "在统计学中，线性回归是利用称为线性回归方程的最小二乘函数对一个或多个自变量和因变量之间关系进行建模的一种回归分析",
       "pack": "ml-stats"
     },
@@ -288,7 +288,7 @@
     {
       "term": "ReLU",
       "type": "acronym",
-      "gloss_en": "An activation function with the following behavior:",
+      "gloss_en": "An activation function that outputs the input unchanged if it is positive, and 0 otherwise.",
       "gloss_zh": "整流线性单位函数，又称修正线性单元，是一种人工神经网络中常用的激励函数，通常指代以斜坡函数及其变种为代表的非线性函数",
       "pack": "ml-stats"
     },
@@ -673,7 +673,7 @@
     {
       "term": "quantization",
       "type": "tech",
-      "gloss_en": "Overloaded term that could be used in any of the following ways:",
+      "gloss_en": "Reducing the numerical precision of a model's weights or activations to shrink the model and speed up inference.",
       "gloss_zh": "量化：多义词，可指将连续特征分桶离散化，或用更低位宽表示模型权重以压缩模型。",
       "pack": "ml-stats"
     },
@@ -694,7 +694,7 @@
     {
       "term": "downsampling",
       "type": "tech",
-      "gloss_en": "Overloaded term that can mean either of the following:",
+      "gloss_en": "Reducing the amount of data — for example training on fewer examples of an over-represented class, or lowering an image's resolution.",
       "gloss_zh": "下采样：多义词，可指降低特征的分辨率或信息量，或减少多数类样本以缓解类别不平衡。",
       "pack": "ml-stats"
     },
@@ -718,6 +718,6 @@
   "source": "Google Machine Learning Glossary (developers.google.com/machine-learning/glossary)",
   "sourceUrl": "https://developers.google.com/machine-learning/glossary",
   "citation": "Google. Machine Learning Glossary. Google for Developers. https://developers.google.com/machine-learning/glossary (CC BY 4.0; code samples on that page are Apache 2.0 and are not used here).",
-  "compiledAt": "2026-07-19",
+  "compiledAt": "2026-07-30",
   "glossZhNote": "gloss_zh is enriched per-term via enrich-zh.mjs — follows this entry's derived English Wikipedia title (the Google ML Glossary itself has no Chinese gloss and no wikilink of its own) to its Chinese Wikipedia interwiki counterpart and uses that article's lead paragraph, real human-written CC BY-SA text, never a machine translation. Terms with no confident match keep the placeholder \"暂无中文释义\"; see provenance's per-term zh.status field (and the task report for terms flagged as too ambiguous to auto-resolve safely, e.g. short/generic English words)."
 }

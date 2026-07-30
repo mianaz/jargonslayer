@@ -78,10 +78,8 @@ const GLOSS_EN_MIN_LEN = 12;
 // rewrite decision (do not mass-fix here). Still logged loudly on every
 // compile; new violations must NOT be added — fix the gloss instead.
 const GLOSS_EN_QUALITY_DEBT = new Set([
-  "ml-stats\tlinear regression",
-  "ml-stats\tReLU",
-  "ml-stats\tquantization",
-  "ml-stats\tdownsampling",
+  // emptied after closing the four dangling-colon ml-stats entries
+  // (linear regression, ReLU, quantization, downsampling)
 ]);
 
 function glossEnQualityIssues(gloss) {

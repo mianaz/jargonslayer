@@ -491,7 +491,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "linear regression",
     type: "tech",
-    gloss_en: "A type of machine learning model in which both of the following are true:",
+    gloss_en: "A regression model that predicts a numerical value from a linear combination of input features.",
     gloss_zh: "在统计学中，线性回归是利用称为线性回归方程的最小二乘函数对一个或多个自变量和因变量之间关系进行建模的一种回归分析",
     pack: "ml-stats",
   },
@@ -632,7 +632,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "ReLU",
     type: "acronym",
-    gloss_en: "An activation function with the following behavior:",
+    gloss_en: "An activation function that outputs the input unchanged if it is positive, and 0 otherwise.",
     gloss_zh: "整流线性单位函数，又称修正线性单元，是一种人工神经网络中常用的激励函数，通常指代以斜坡函数及其变种为代表的非线性函数",
     pack: "ml-stats",
   },
@@ -1024,7 +1024,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "quantization",
     type: "tech",
-    gloss_en: "Overloaded term that could be used in any of the following ways:",
+    gloss_en: "Reducing the numerical precision of a model's weights or activations to shrink the model and speed up inference.",
     gloss_zh: "量化：多义词，可指将连续特征分桶离散化，或用更低位宽表示模型权重以压缩模型。",
     pack: "ml-stats",
   },
@@ -1045,7 +1045,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "downsampling",
     type: "tech",
-    gloss_en: "Overloaded term that can mean either of the following:",
+    gloss_en: "Reducing the amount of data — for example training on fewer examples of an over-represented class, or lowering an image's resolution.",
     gloss_zh: "下采样：多义词，可指降低特征的分辨率或信息量，或减少多数类样本以缓解类别不平衡。",
     pack: "ml-stats",
   },

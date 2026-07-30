@@ -152,7 +152,15 @@ const CURATED_TERMS = [
   // two unrelated meanings — kept (it's real, load-bearing ML vocabulary),
   // not silently duplicated. See run output / task report.
   { term: "regression", label: "regression-model", type: "tech" },
-  { term: "linear regression", label: "linear-regression", type: "tech" },
+  // glossEn override: Google's glossary leads with "both of the following
+  // are true:" then a list — first <p> truncates mid-sentence.
+  {
+    term: "linear regression",
+    label: "linear-regression",
+    type: "tech",
+    glossEn:
+      "A regression model that predicts a numerical value from a linear combination of input features.",
+  },
   { term: "logistic regression", label: "logistic-regression", type: "tech" },
   { term: "regularization", label: "regularization", type: "tech" },
   // zhTitle override: auto-derivation's bare "dropout" candidate risks
@@ -191,7 +199,15 @@ const CURATED_TERMS = [
   { term: "activation function", label: "activation-function", type: "tech" },
   { term: "sigmoid function", label: "sigmoid-function", type: "tech" },
   { term: "softmax", label: "softmax", type: "tech" },
-  { term: "ReLU", label: "rectified-linear-unit-relu", type: "acronym" },
+  // glossEn override: Google's glossary leads with "the following
+  // behavior:" then a list — first <p> truncates mid-sentence.
+  {
+    term: "ReLU",
+    label: "rectified-linear-unit-relu",
+    type: "acronym",
+    glossEn:
+      "An activation function that outputs the input unchanged if it is positive, and 0 otherwise.",
+  },
 
   // ---- architectures ----
   {
@@ -342,7 +358,15 @@ const CURATED_TERMS = [
   // (hypothesis-testing sense), a different concept from the Google
   // glossary's "running a trained model" sense
   { term: "inference", label: "inference", type: "tech", zhSkip: true },
-  { term: "quantization", label: "quantization", type: "tech" },
+  // glossEn override: Google's glossary leads with "any of the following
+  // ways:" then a list — first <p> truncates mid-sentence.
+  {
+    term: "quantization",
+    label: "quantization",
+    type: "tech",
+    glossEn:
+      "Reducing the numerical precision of a model's weights or activations to shrink the model and speed up inference.",
+  },
   { term: "knowledge distillation", label: "distillation", type: "tech" },
   // no dedicated ML-sense article — the only correct-topic page
   // ("Oversampling and undersampling in data analysis") has no zh interwiki;
@@ -351,7 +375,16 @@ const CURATED_TERMS = [
   { term: "oversampling", label: "oversampling", type: "tech", zhSkip: true },
   // see "oversampling" above — same missing-zh correct article, same
   // DSP-sense mismatch on the bare-term fallback
-  { term: "downsampling", label: "downsampling", type: "tech", zhSkip: true },
+  // glossEn override: Google's glossary leads with "either of the
+  // following:" then a list — first <p> truncates mid-sentence.
+  {
+    term: "downsampling",
+    label: "downsampling",
+    type: "tech",
+    zhSkip: true,
+    glossEn:
+      "Reducing the amount of data — for example training on fewer examples of an over-represented class, or lowering an image's resolution.",
+  },
   { term: "selection bias", label: "selection-bias", type: "other" },
   { term: "confirmation bias", label: "confirmation-bias", type: "other" },
 ];
