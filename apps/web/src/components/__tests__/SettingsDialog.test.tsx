@@ -597,15 +597,16 @@ describe("SettingsDialog — settings redesign: nav rail + page-per-section", ()
     await flush();
 
     const buttons = navButtons();
-    // Simple-visible categories only: engine/display are whole-section
+    // Simple-visible categories only: engine/keys/display are whole-section
     // "simple"; aiDetect (the one mixed section) always has at least
     // one simple row, so it's always listed too. The four advanced-only
     // whole sections (diarization/taskLlm/dataIntegration/
     // subscriptionDirect) are absent.
-    expect(buttons.map((b) => b.textContent)).toEqual(labelsOf(["engine", "aiDetect", "display"]));
+    expect(buttons.map((b) => b.textContent)).toEqual(labelsOf(["engine", "aiDetect", "keys", "display"]));
     expect(buttons[0].getAttribute("aria-current")).toBe("page");
     expect(buttons[1].getAttribute("aria-current")).toBeNull();
     expect(buttons[2].getAttribute("aria-current")).toBeNull();
+    expect(buttons[3].getAttribute("aria-current")).toBeNull();
   });
 
   it("advanced mode reveals the advanced-only categories too, still excludes 订阅直连 while its build flag is unset", async () => {
@@ -616,7 +617,7 @@ describe("SettingsDialog — settings redesign: nav rail + page-per-section", ()
     await flush();
 
     expect(navButtons().map((b) => b.textContent)).toEqual(
-      labelsOf(["engine", "diarization", "aiDetect", "taskLlm", "dataIntegration", "display"]),
+      labelsOf(["engine", "diarization", "aiDetect", "keys", "taskLlm", "dataIntegration", "display"]),
     );
   });
 
@@ -705,7 +706,7 @@ describe("SettingsDialog — data-ui-level completeness across nav categories (p
 
   it("the union of data-ui-level values rendered across every nav category exactly equals SETTINGS_UI_LEVELS' keys — nothing missing, nothing stray", async () => {
     // Advanced mode + the subscription-direct build flag on: every one
-    // of the 7 nav categories (including the build-gated one) gets a
+    // of the 8 nav categories (including the build-gated one) gets a
     // turn, so every SETTINGS_UI_LEVELS key has a chance to be found —
     // a category/row that's unreachable at every uiMode would otherwise
     // make an exact-union assertion impossible to satisfy honestly.
@@ -720,7 +721,7 @@ describe("SettingsDialog — data-ui-level completeness across nav categories (p
     const navButtons = Array.from(
       container!.querySelectorAll('nav[aria-label="设置分类"] button'),
     ) as HTMLButtonElement[];
-    expect(navButtons.length).toBe(7); // sanity: all 7 categories reachable this run
+    expect(navButtons.length).toBe(8); // sanity: all 8 categories reachable this run
 
     const found = new Set<string>();
     for (const btn of navButtons) {
@@ -748,6 +749,186 @@ describe("SettingsDialog — data-ui-level completeness across nav categories (p
       (k) => k !== "aiDetectPreviewBanner",
     );
     expect(Array.from(found).sort()).toEqual(reachableKeys.sort());
+  });
+});
+
+// ---------------------------------------------------------------
+// 密钥 (ft6): dedicated Keys category — every credential reachable in
+// one place, configured/unconfigured chip per row, and edits write the
+// SAME Settings fields the contextual engine/AI/task rows already use
+// (no duplicated state).
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 密钥 category (ft6 dedicated keys hub)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function navButtons(): HTMLButtonElement[] {
+    return Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+  }
+
+  function clickCategory(label: string) {
+    const btn = navButtons().find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav category "${label}" not found`);
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllEnvs();
+  });
+
+  it("lists every credential field in the 密钥 section (one row per catalog entry)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT", "1");
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "simple" }, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const {
+      ALL_KEYS_CATALOG,
+      keysCatalogFieldId,
+    } = await import("../../lib/settings/keysCatalog");
+    for (const entry of ALL_KEYS_CATALOG) {
+      const id = keysCatalogFieldId(entry);
+      expect(
+        container!.querySelector(`[data-settings-key="${id}"]`),
+        `missing key row ${id}`,
+      ).not.toBeNull();
+    }
+  });
+
+  it("renders configured vs unconfigured status chips per key", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "simple",
+        apiKeyOpenrouter: "sk-configured",
+        sonioxKey: "",
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const openrouterRow = container!.querySelector('[data-settings-key="apiKeyOpenrouter"]');
+    const sonioxRow = container!.querySelector('[data-settings-key="sonioxKey"]');
+    expect(openrouterRow).not.toBeNull();
+    expect(sonioxRow).not.toBeNull();
+    expect(openrouterRow!.querySelector('[data-testid="key-status-chip"]')!.textContent).toBe("已配置");
+    expect(sonioxRow!.querySelector('[data-testid="key-status-chip"]')!.textContent).toBe("未配置");
+  });
+
+  it("editing a key in 密钥 updates the same Settings field the engine section uses (no duplicated state)", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "simple", engine: "soniox", sonioxKey: "" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const keysInput = container!.querySelector(
+      '[data-settings-key="sonioxKey"] input',
+    ) as HTMLInputElement;
+    expect(keysInput).not.toBeNull();
+    expect(keysInput.type).toBe("password");
+
+    await act(async () => {
+      typeInto(keysInput, "sox-from-keys");
+    });
+
+    await act(async () => {
+      clickCategory("转录引擎");
+    });
+
+    const engineInput = container!.querySelector(
+      'input[placeholder="粘贴你的 Soniox API Key"]',
+    ) as HTMLInputElement;
+    expect(engineInput).not.toBeNull();
+    expect(engineInput.value).toBe("sox-from-keys");
+
+    await act(async () => {
+      typeInto(engineInput, "sox-from-engine");
+    });
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const keysInputAgain = container!.querySelector(
+      '[data-settings-key="sonioxKey"] input',
+    ) as HTMLInputElement;
+    expect(keysInputAgain.value).toBe("sox-from-engine");
+  });
+
+  it("editing an LLM provider key in 密钥 updates the same field CredentialFields writes", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        provider: "openai-compat",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKeyOpenrouter: "",
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const keysInput = container!.querySelector(
+      '[data-settings-key="apiKeyOpenrouter"] input',
+    ) as HTMLInputElement;
+    await act(async () => {
+      typeInto(keysInput, "sk-or-from-keys");
+    });
+
+    await act(async () => {
+      clickCategory("AI 检测");
+    });
+
+    // Primary CredentialFields API Key input (password) — resolves the
+    // active OpenRouter provider key, same underlying apiKeyOpenrouter.
+    const credInput = Array.from(container!.querySelectorAll('input[type="password"]')).find(
+      (el) => (el as HTMLInputElement).placeholder === "sk-…",
+    ) as HTMLInputElement | undefined;
+    expect(credInput).toBeTruthy();
+    expect(credInput!.value).toBe("sk-or-from-keys");
   });
 });
 

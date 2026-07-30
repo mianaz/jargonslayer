@@ -29,6 +29,7 @@ describe("SETTINGS_UI_LEVELS — level-tagging completeness", () => {
     "aiDetectPacks",
     "aiDetectPackCatalog",
     "aiDetectPackSources",
+    "keys",
     "taskLlm",
     "dataIntegration",
     "subscriptionDirect",
@@ -54,6 +55,7 @@ describe("SETTINGS_UI_LEVELS — level-tagging completeness", () => {
       [
         "engine",
         "display",
+        "keys",
         "aiDetectPreviewBanner",
         "aiDetectCore",
         "aiDetectExplainLanguage",
@@ -125,6 +127,13 @@ describe("shouldAutoPromoteToAdvanced — auto-promote predicate", () => {
       detect: { enabled: false, model: "claude-sonnet-5" },
     };
     expect(shouldAutoPromoteToAdvanced({ ...DEFAULT_SETTINGS, taskLlm })).toBe(false);
+  });
+
+  it("a taskLlm apiKey alone (even with enabled:false) promotes — Keys hub is simple but 分任务模型 editors stay advanced", () => {
+    const taskLlm: Partial<Record<"translate" | "detect" | "summary", TaskLlmConfig>> = {
+      detect: { enabled: false, apiKey: "sk-task" },
+    };
+    expect(shouldAutoPromoteToAdvanced({ ...DEFAULT_SETTINGS, taskLlm })).toBe(true);
   });
 
   // Simple-tagged fields are already visible in simple mode, so
