@@ -19,6 +19,7 @@ import type {
   TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import type { DomainTracker } from "@jargonslayer/core/detect/domainSignal";
 import { filterDetectSpans } from "./spanQc";
 
 export type DetectMode = "llm" | "dictionary" | "off";
@@ -42,6 +43,9 @@ export interface SchedulerOptions {
   // (or absent-accessor) return means "no context inferred yet",
   // exactly like today's behavior.
   getMeetingContext?: () => string | null;
+  // Owned by the store and reset at every meeting boundary. The optional
+  // shape keeps standalone scheduler tests and callers source-compatible.
+  domainTracker?: DomainTracker;
   // meta.batchWindowStart (llm responses only): when this batch began
   // accumulating — forwarded to mergeDetections as
   // llmCountSuppressSince so floor-counted occurrences aren't counted
@@ -200,7 +204,13 @@ export class DetectionScheduler {
     // segment, whether or not the LLM layer is on. This is the
     // perceived-latency fix — hits render now, not after a ~20s LLM
     // round trip.
-    const res = scanDictionary(seg.text);
+    const res = scanDictionary(seg.text, undefined, {
+      activeDomains: this.opts.domainTracker?.activeDomains(),
+    });
+    // Activation only affects later segments. We deliberately do not
+    // re-scan earlier text; a backfill re-scan is the upgrade path if
+    // recovering those first-minute common-word hits becomes important.
+    this.opts.domainTracker?.observe(res);
     if (res.expressions.length > 0 || res.terms.length > 0) {
       this.opts.onDetection(res, "dictionary");
       this.recordDictDiagHit(res);

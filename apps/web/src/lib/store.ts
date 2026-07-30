@@ -21,6 +21,7 @@ import {
   type TranscriptSegment,
 } from "@jargonslayer/core/types";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
+import { createDomainTracker, type DomainTracker } from "@jargonslayer/core/detect/domainSignal";
 import type { DomainTag } from "@jargonslayer/core/detect/dictionary-data";
 import { CURRENT_PACKS_SCHEMA_VERSION, PACKS_ADDED_AT_VERSION } from "@jargonslayer/core/detect/packs";
 import { sanitizeDomains } from "./llm/tasks/inferContext";
@@ -61,6 +62,20 @@ import { remapOpenRouterModelDefaults } from "./oauth/openrouterModelDefaults";
 // Debounced persistence for post-stop mutations (late detections,
 // transcript edits) — one timer, latest state wins.
 let postStopSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Meeting-only detector evidence stays out of zustand state: it is
+// mutable bookkeeping, never persisted. Replacing it (rather than
+// clearing fields in place) prevents a stale scheduler from feeding a
+// newly started or loaded meeting.
+let meetingDomainTracker = createDomainTracker();
+
+export function getMeetingDomainTracker(): DomainTracker {
+  return meetingDomainTracker;
+}
+
+function resetMeetingDomainTracker(): void {
+  meetingDomainTracker = createDomainTracker();
+}
 
 // R5 fix (v0.7.1 train-2 round-5 review): saveCurrentSession's own
 // failure-retry re-arms this same timer (see its `!saved` branch below)
@@ -2347,7 +2362,8 @@ export const useApp = create<AppState>((set, get) => ({
     set({ status, statusDetail: detail ?? null }),
   setSttEngineMode: (sttEngineMode) => set({ sttEngineMode }),
 
-  beginMeeting: () =>
+  beginMeeting: () => {
+    resetMeetingDomainTracker();
     set((state) => ({
       status: "connecting",
       statusDetail: null,
@@ -2393,7 +2409,8 @@ export const useApp = create<AppState>((set, get) => ({
       focusCardId: null,
       lookup: null,
       activeSessionId: null,
-    })),
+    }));
+  },
 
   // Pause/resume/end (B2). See elapsedActiveMs above for the paired
   // pure math these two actions' state feeds.
@@ -2992,6 +3009,7 @@ export const useApp = create<AppState>((set, get) => ({
     // see resolveSessionElapsedBasis's own doc for the legacy-session
     // (no persisted pauseIntervals) fallback.
     const { startedAt, pauseIntervals } = resolveSessionElapsedBasis(session);
+    resetMeetingDomainTracker();
     set((state) => ({
       status: "stopped",
       statusDetail: null,
@@ -3332,7 +3350,8 @@ export const useApp = create<AppState>((set, get) => ({
     });
   },
 
-  newMeeting: () =>
+  newMeeting: () => {
+    resetMeetingDomainTracker();
     set((state) => ({
       status: "idle",
       statusDetail: null,
@@ -3370,7 +3389,8 @@ export const useApp = create<AppState>((set, get) => ({
       focusCardId: null,
       lookup: null,
       activeSessionId: null,
-    })),
+    }));
+  },
 
   showToast: (toast) => set({ toast }),
   bitCelebrateNonce: 0,

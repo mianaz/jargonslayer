@@ -4,7 +4,7 @@
 // the detection scheduler. Owns the lifecycle of both per meeting.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useApp, currentSessionSnapshot } from "../lib/store";
+import { useApp, currentSessionSnapshot, getMeetingDomainTracker } from "../lib/store";
 import { createEngine } from "../lib/stt";
 import { DetectionScheduler } from "../lib/detect/scheduler";
 import { TranslateQueue } from "../lib/translate/queue";
@@ -877,6 +877,7 @@ export function useMeeting(): UseMeetingResult {
       // auto detect the context for better detection") — see the
       // trigger effect further down for how this gets populated.
       getMeetingContext: () => useApp.getState().inferredContext,
+      domainTracker: getMeetingDomainTracker(),
       onDetection: (res, src, meta) => useApp.getState().applyDetection(res, src, meta),
       onBusyChange: (b) => useApp.getState().setDetectBusy(b),
       onModeChange: (m) => useApp.getState().setDetectMode(m),

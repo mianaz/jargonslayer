@@ -216,6 +216,9 @@ export type ExpressionCategory =
 
 export interface DetectedExpression {
   expression: string;
+  // Built-in or remote dictionary pack that supplied this detection.
+  // LLM and personal-glossary results omit it.
+  pack?: string;
   // Exact transcript surface that triggered a local dictionary/custom
   // match. The canonical `expression` remains the stable card title and
   // dedup key; this optional field lets the transcript highlighter mark
@@ -243,6 +246,9 @@ export type TermType =
 
 export interface DetectedTerm {
   term: string;
+  // Built-in or remote dictionary pack that supplied this detection.
+  // LLM and personal-glossary results omit it.
+  pack?: string;
   type: TermType;
   gloss_en: string;
   gloss_zh: string;

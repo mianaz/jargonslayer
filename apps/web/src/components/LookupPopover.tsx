@@ -61,7 +61,7 @@ function emptyDraft(headword: string): GlossaryDraft {
 // only for genuinely-unknown phrases — where blank is the honest state
 // (editable later in GlossaryPanel).
 function manualDraft(text: string): GlossaryDraft {
-  const scan = scanDictionary(text);
+  const scan = scanDictionary(text, undefined, { bypassCommonWordSuppression: true });
   const expr = scan.expressions[0];
   if (expr) {
     return { ...emptyDraft(expr.expression), chinese_explanation: expr.chinese_explanation };

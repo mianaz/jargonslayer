@@ -122,10 +122,12 @@ describe("buildMarkdownReport — sections", () => {
     expect(report).toContain("## 双语转录");
   });
 
-  it("contains a 术语表 (glossary/terms table) section", () => {
-    const report = buildMarkdownReport(makeSession({ terms: [makeTerm()] }));
+  it("contains a 术语表 (glossary/terms table) section with dictionary provenance", () => {
+    const report = buildMarkdownReport(makeSession({ terms: [makeTerm({ pack: "business-terms" })] }));
     expect(report).toContain("## 术语表");
     expect(report).toContain("ARR");
+    expect(report).toContain("词典包");
+    expect(report).toContain("商务术语");
   });
 
   it("contains a 表达学习卡片 (expression flashcards) section listing card fields", () => {

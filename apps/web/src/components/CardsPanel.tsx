@@ -21,6 +21,7 @@ import {
 } from "react";
 import { CaretUp, CaretUpDown } from "@phosphor-icons/react";
 import { useApp } from "@/lib/store";
+import { getAllPacks } from "@jargonslayer/core/detect/packs";
 import { handleButtonKeyDown } from "@/lib/a11y";
 import { CATEGORY_LABELS, TERM_TYPE_LABELS } from "@/lib/cardLabels";
 import { BitCameo } from "@/components/PixelDragon";
@@ -143,6 +144,16 @@ function sourceBadge(source: DetectionSource) {
     );
   }
   return null;
+}
+
+function packBadge(packId: string | undefined) {
+  if (!packId) return null;
+  const name = getAllPacks().find((pack) => pack.id === packId)?.name ?? packId;
+  return (
+    <span className="border border-edge px-1.5 py-0 text-[10px] text-mut">
+      <bdi>{name}</bdi>
+    </span>
+  );
 }
 
 /** Shared new/repulse animation state, keyed off the same
@@ -490,6 +501,7 @@ function ExpressionCardRow({
         <span className={`font-mono text-xs ${hue.text}`}>×{card.count}</span>
       )}
       {sourceBadge(card.source)}
+      {packBadge(card.pack)}
     </div>
   );
 
@@ -673,6 +685,7 @@ function TermCardRow({
         <span className="font-mono text-xs text-lab-cyan">×{term.count}</span>
       )}
       {sourceBadge(term.source)}
+      {packBadge(term.pack)}
     </div>
   );
 

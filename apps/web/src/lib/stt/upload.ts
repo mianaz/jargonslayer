@@ -21,6 +21,7 @@ import {
 import { detectApi, NoKeyError, RateLimitApiError } from "../llm/client";
 import { resolveTaskCreds } from "../llm/taskConfig";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { createDomainTracker } from "@jargonslayer/core/detect/domainSignal";
 import { getCachedEntries, scanCustomEntries } from "../history/glossary";
 import { getCachedLearnset } from "../learn/store";
 import { mergeDetections } from "@jargonslayer/core/detect/dedupe";
@@ -314,6 +315,7 @@ export async function runDetectionPipeline(
   let cards: ExpressionCard[] = [];
   let terms: TermCard[] = [];
   const now = Date.now();
+  const domainTracker = createDomainTracker();
 
   // ---- batched LLM/dictionary detection over the joined text ----
   const batches = chunkSegmentTexts(segmentTexts);
@@ -419,7 +421,10 @@ export async function runDetectionPipeline(
       terms = merged.terms;
       llmSucceededBatches++;
     } else {
-      const fallback = scanDictionary(batch);
+      const fallback = scanDictionary(batch, undefined, {
+        activeDomains: domainTracker.activeDomains(),
+      });
+      domainTracker.observe(fallback);
       const merged = mergeDetections(
         cards,
         terms,

@@ -10,6 +10,7 @@ import type {
   TermCard,
   TranslationPair,
 } from "@jargonslayer/core/types";
+import { getAllPacks } from "@jargonslayer/core/detect/packs";
 import { formatElapsedClock, resolveSessionElapsedBasis, segmentElapsedMs } from "../segmentElapsed";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
@@ -73,6 +74,11 @@ function formatDuration(startMs: number, endMs: number): string {
 
 function escapeMdTableCell(s: string): string {
   return s.replace(/\|/g, "\\|").replace(/\n/g, " ");
+}
+
+function packName(packId: string | undefined): string {
+  if (!packId) return "-";
+  return getAllPacks().find((pack) => pack.id === packId)?.name ?? packId;
 }
 
 /** Build a full bilingual Markdown report for a completed session. */
@@ -194,13 +200,13 @@ export function buildMarkdownReport(session: MeetingSession): string {
   if (session.terms.length === 0) {
     lines.push("（无）");
   } else {
-    lines.push("| 术语 | 类型 | 英文释义 | 中文释义 |");
-    lines.push("| --- | --- | --- | --- |");
+    lines.push("| 术语 | 类型 | 英文释义 | 中文释义 | 词典包 |");
+    lines.push("| --- | --- | --- | --- | --- |");
     for (const t of session.terms) {
       lines.push(
         `| ${escapeMdTableCell(t.term)} | ${escapeMdTableCell(t.type)} | ${escapeMdTableCell(
           t.gloss_en,
-        )} | ${escapeMdTableCell(t.gloss_zh)} |`,
+        )} | ${escapeMdTableCell(t.gloss_zh)} | ${escapeMdTableCell(packName(t.pack))} |`,
       );
     }
   }

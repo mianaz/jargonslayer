@@ -20,6 +20,7 @@ vi.mock("../remotePacksRegistry", () => ({
 import { findEntryBySurface } from "../../history/glossaryLookup";
 import { getLoadedRemotePacks, getRemotePacksGeneration } from "../remotePacksRegistry";
 import type { LoadedRemotePack } from "../remotePacksRegistry";
+import type { DomainTag } from "../dictionary-data";
 import {
   dropSubsumedTermsForTests,
   packTermsForBias,
@@ -288,18 +289,23 @@ describe("scanDictionary — commonWord expression suppression", () => {
   });
 
   it("still detects the financial-loss idiom when its pack is explicitly enabled", () => {
-    const res = scanDictionary("we are in the red", ["finance-consumer"]);
+    const res = scanDictionary("we are in the red", ["finance-consumer"], {
+      activeDomains: new Set(["finance"]),
+    });
     expect(res.expressions.some((e) => e.expression === "in the red")).toBe(true);
   });
 
   it("does not suppress a financial-loss idiom followed by an ordinary continuation", () => {
-    const res = scanDictionary("we have been in the red for three quarters", ["finance-consumer"]);
+    const res = scanDictionary("we have been in the red for three quarters", ["finance-consumer"], {
+      activeDomains: new Set(["finance"]),
+    });
     expect(res.expressions.some((e) => e.expression === "in the red")).toBe(true);
   });
 
   it("rejects literal underwater contexts but keeps the financial idiom", () => {
-    const literal = scanDictionary("the underwater camera captured the reef", ["finance-consumer"]);
-    const idiom = scanDictionary("the option is underwater after the share price fell", ["finance-consumer"]);
+    const options = { activeDomains: new Set<DomainTag>(["finance"]) };
+    const literal = scanDictionary("the underwater camera captured the reef", ["finance-consumer"], options);
+    const idiom = scanDictionary("the option is underwater after the share price fell", ["finance-consumer"], options);
 
     expect(literal.expressions.some((e) => e.expression === "underwater")).toBe(false);
     expect(idiom.expressions.some((e) => e.expression === "underwater")).toBe(true);
@@ -307,18 +313,19 @@ describe("scanDictionary — commonWord expression suppression", () => {
 });
 
 describe("scanDictionary — grammatical literal-context guards on domain terms", () => {
-  // These four terms are also everyday English. commonWord already
-  // suppresses them under default (null) pack selection — tests below
-  // therefore run with the owning pack EXPLICITLY enabled so a missing
-  // notFollowedBy/notPrecededBy guard cannot hide behind that gate.
+  // These four terms are also everyday English. Tests below provide an
+  // already-active owning domain so a missing literal-context guard
+  // cannot hide behind common-word suppression.
 
   it("rejects 'prior to' as a preposition but still fires on a Bayesian prior", () => {
     const packs = ["ml-stats"];
+    const options = { activeDomains: new Set<DomainTag>(["ml"]) };
     const grammatical = scanDictionary(
       "the QC experiments that we did prior to submitting our samples",
       packs,
+      options,
     );
-    const jargon = scanDictionary("we set a weak prior on the parameter", packs);
+    const jargon = scanDictionary("we set a weak prior on the parameter", packs, options);
 
     expect(grammatical.terms.some((t) => t.term === "prior")).toBe(false);
     expect(jargon.terms.some((t) => t.term === "prior")).toBe(true);
@@ -335,11 +342,13 @@ describe("scanDictionary — grammatical literal-context guards on domain terms"
 
   it("rejects 'I mean' as a verb but still fires on the statistical mean", () => {
     const packs = ["stats"];
+    const options = { activeDomains: new Set<DomainTag>(["stats"]) };
     const grammatical = scanDictionary(
       "I mean, because then I was just wondering",
       packs,
+      options,
     );
-    const jargon = scanDictionary("the mean of the distribution", packs);
+    const jargon = scanDictionary("the mean of the distribution", packs, options);
 
     expect(grammatical.terms.some((t) => t.term === "mean")).toBe(false);
     expect(jargon.terms.some((t) => t.term === "mean")).toBe(true);
@@ -352,10 +361,12 @@ describe("scanDictionary — grammatical literal-context guards on domain terms"
 
   it("rejects 'your attention' but still fires on the attention mechanism", () => {
     const packs = ["ml-stats"];
-    const grammatical = scanDictionary("thank you for your attention", packs);
+    const options = { activeDomains: new Set<DomainTag>(["ml"]) };
+    const grammatical = scanDictionary("thank you for your attention", packs, options);
     const jargon = scanDictionary(
       "the attention mechanism in the transformer",
       packs,
+      options,
     );
 
     expect(grammatical.terms.some((t) => t.term === "attention")).toBe(false);
@@ -369,11 +380,13 @@ describe("scanDictionary — grammatical literal-context guards on domain terms"
 
   it("rejects verb uses of 'recall' but still fires on the classification metric", () => {
     const packs = ["ml-stats"];
-    const iRecall = scanDictionary("I recall that we discussed this", packs);
-    const recallThat = scanDictionary("recall that the model was trained", packs);
+    const options = { activeDomains: new Set<DomainTag>(["ml"]) };
+    const iRecall = scanDictionary("I recall that we discussed this", packs, options);
+    const recallThat = scanDictionary("recall that the model was trained", packs, options);
     const jargon = scanDictionary(
       "higher the precision and higher the recall, better is the model",
       packs,
+      options,
     );
 
     expect(iRecall.terms.some((t) => t.term === "recall")).toBe(false);
@@ -960,6 +973,7 @@ describe("scanDictionary — multi-sense term selection (v0.6 T3)", () => {
     const hit = res.terms.find((t) => t.term === "ARR");
     expect(hit).toEqual({
       term: "ARR",
+      pack: "core",
       type: "metric",
       gloss_en: "Annual Recurring Revenue",
       gloss_zh: "年度经常性收入",
@@ -975,6 +989,7 @@ describe("scanDictionary — multi-sense term selection (v0.6 T3)", () => {
     const hit = res.terms.find((t) => t.term === "EMT");
     expect(hit).toEqual({
       term: "EMT",
+      pack: "__test_sense_pack__",
       type: "other",
       gloss_en: "top-level default gloss",
       gloss_zh: "顶层默认释义",
@@ -1202,7 +1217,9 @@ describe("longest-match-wins across overlapping term surfaces", () => {
   });
 
   it("keeps both when neither surface contains the other", () => {
-    const res = scanDictionary("The sample mean and variance were computed.", ["stats"]);
+    const res = scanDictionary("The sample mean and variance were computed.", ["stats"], {
+      activeDomains: new Set(["stats"]),
+    });
     const surfaces = res.terms.map((t) => t.term);
     expect(surfaces).toContain("sample mean");
     expect(surfaces).toContain("variance");
