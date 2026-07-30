@@ -147,6 +147,22 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
     gloss_en: "Incentive Stock Option — an employee stock option type with favorable tax treatment",
     gloss_zh: "激励型股票期权，税务上更优惠",
     pack: "finance-consumer",
+    senses: [
+      {
+        gloss_en: "Incentive Stock Option — an employee stock option type with favorable tax treatment",
+        gloss_zh: "激励型股票期权，税务上更优惠",
+        domain: "finance",
+        prior: 0.2,
+        senseId: "incentive-stock-option",
+      },
+      {
+        gloss_en: "International Organization for Standardization, the body behind ISO standards",
+        gloss_zh: "国际标准化组织",
+        domain: "ops",
+        prior: 0.8,
+        senseId: "iso-standards",
+      },
+    ],
   },
   {
     term: "NSO",

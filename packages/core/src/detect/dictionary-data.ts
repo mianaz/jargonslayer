@@ -3419,6 +3419,22 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     gloss_en: "Serviceable Addressable Market",
     gloss_zh: "可服务市场规模",
     pack: "business-terms",
+    senses: [
+      {
+        gloss_en: "Serviceable Addressable Market",
+        gloss_zh: "可服务市场规模",
+        domain: "sales",
+        prior: 0.65,
+        senseId: "serviceable-addressable-market",
+      },
+      {
+        gloss_en: "Sequence Alignment/Map format for storing aligned sequencing reads",
+        gloss_zh: "序列比对信息格式",
+        domain: "genomics",
+        prior: 0.35,
+        senseId: "sequence-alignment-map",
+      },
+    ],
   },
   {
     term: "SOM",
@@ -3843,6 +3859,22 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     gloss_en: "a spoken conference presentation, as opposed to a poster",
     gloss_zh: "口头报告",
     pack: "academic",
+    senses: [
+      {
+        gloss_en: "a spoken conference presentation, as opposed to a poster",
+        gloss_zh: "口头报告",
+        domain: "edu",
+        prior: 0.4,
+        senseId: "conference-oral",
+      },
+      {
+        gloss_en: "oral administration, delivering a drug by mouth",
+        gloss_zh: "口服给药",
+        domain: "pharma",
+        prior: 0.6,
+        senseId: "oral-administration",
+      },
+    ],
   },
   {
     term: "LOI",
@@ -3957,6 +3989,23 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     gloss_en: "Pull Request, a proposed code change for review",
     gloss_zh: "代码合并请求",
     pack: "tech-terms",
+    senses: [
+      {
+        gloss_en: "Pull Request, a proposed code change for review",
+        gloss_zh: "代码合并请求",
+        domain: "software",
+        prior: 0.6,
+        senseId: "pull-request",
+      },
+      {
+        gloss_en: "Precision-Recall curve, showing the tradeoff between precision and recall",
+        gloss_zh: "精确率-召回率曲线",
+        type: "metric",
+        domain: "ml",
+        prior: 0.4,
+        senseId: "precision-recall",
+      },
+    ],
   },
   {
     term: "PoC",
@@ -4020,6 +4069,23 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     gloss_en: "a previously-working feature breaking due to a new change",
     gloss_zh: "新改动导致原有功能又坏了",
     pack: "tech-terms",
+    senses: [
+      {
+        gloss_en: "a previously-working feature breaking due to a new change",
+        gloss_zh: "新改动导致原有功能又坏了",
+        domain: "software",
+        prior: 0.6,
+        senseId: "software-regression",
+      },
+      {
+        gloss_en: "statistical regression for predicting a numerical target",
+        gloss_zh: "统计回归（预测数值目标）",
+        type: "tech",
+        domain: "ml",
+        prior: 0.4,
+        senseId: "statistical-regression",
+      },
+    ],
   },
   {
     term: "hotfix",
@@ -4139,6 +4205,22 @@ export const EXTRA_TERMS: DictTermEntry[] = [
     gloss_en: "Pharmacodynamics — the drug's biological effect on the body",
     gloss_zh: "药效动力学",
     pack: "pharma-biotech",
+    senses: [
+      {
+        gloss_en: "Pharmacodynamics — the drug's biological effect on the body",
+        gloss_zh: "药效动力学",
+        domain: "pharma",
+        prior: 0.4,
+        senseId: "pharmacodynamics",
+      },
+      {
+        gloss_en: "Product Development, the organization responsible for developing products",
+        gloss_zh: "产品开发部门",
+        domain: "sales",
+        prior: 0.6,
+        senseId: "product-development",
+      },
+    ],
   },
   {
     term: "ADC",

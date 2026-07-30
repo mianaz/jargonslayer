@@ -252,17 +252,6 @@ const BASE_EXPRESSIONS: ExpressionEntry[] = [
     pack: CORE_PACK,
   },
   {
-    expression: "align",
-    variants: ["align on", "aligned"],
-    category: "phrase",
-    meaning: "reach shared agreement or consistent direction",
-    chinese_explanation: "对齐想法，达成一致的方向",
-    plain_english: "agree on the same direction",
-    tone: "neutral, common business phrase",
-    confidence: 0.9,
-    pack: CORE_PACK,
-  },
-  {
     expression: "touch base",
     variants: ["touching base", "touched base"],
     category: "idiom",
@@ -885,6 +874,48 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Customer Acquisition Cost",
     gloss_zh: "获客成本",
     pack: CORE_PACK,
+    senses: [
+      {
+        gloss_en: "Customer Acquisition Cost",
+        gloss_zh: "获客成本",
+        domain: "sales",
+        prior: 0.7,
+        senseId: "customer-acquisition-cost",
+      },
+      {
+        gloss_en: "Cancer-Associated Cachexia",
+        gloss_zh: "癌症相关恶病质",
+        type: "acronym",
+        domain: "pharma",
+        prior: 0.3,
+        senseId: "cancer-associated-cachexia",
+      },
+    ],
+  },
+  {
+    term: "alignment",
+    variants: ["align", "align on", "aligned"],
+    type: "tech",
+    gloss_en: "making an AI system's actual behavior match what its developers intended",
+    gloss_zh: "让 AI 的行为真正符合开发者意图",
+    pack: CORE_PACK,
+    senses: [
+      {
+        gloss_en: "making an AI system's actual behavior match what its developers intended",
+        gloss_zh: "让 AI 的行为真正符合开发者意图",
+        domain: "ml",
+        prior: 0.3,
+        senseId: "ai-alignment",
+      },
+      {
+        gloss_en: "agreement among a team on goals, decisions, or direction",
+        gloss_zh: "团队对目标和方向达成一致",
+        type: "other",
+        domain: "sales",
+        prior: 0.7,
+        senseId: "team-alignment",
+      },
+    ],
   },
   {
     term: "LTV",
@@ -955,6 +986,22 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
     gloss_en: "Non-Disclosure Agreement",
     gloss_zh: "保密协议",
     pack: CORE_PACK,
+    senses: [
+      {
+        gloss_en: "Non-Disclosure Agreement",
+        gloss_zh: "保密协议",
+        domain: "sales",
+        prior: 0.7,
+        senseId: "non-disclosure-agreement",
+      },
+      {
+        gloss_en: "New Drug Application",
+        gloss_zh: "新药申请",
+        domain: "pharma",
+        prior: 0.3,
+        senseId: "new-drug-application",
+      },
+    ],
   },
   {
     term: "RFP",
@@ -1534,16 +1581,18 @@ interface SenseSelection {
   ambiguous: boolean;
 }
 
-/** score = 0.45*domainWeights[domain] + 0.25*cooccurrence[domain] +
- *  0.15*(entry's own pack explicitly enabled ? 1 : 0) + 0.15*prior —
- *  missing weights count as 0. The pack-bonus term is entry-level (all
- *  of one entry's senses share the same `pack`), so it never changes
- *  which sense WINS within that entry, but it is still part of each
- *  sense's own displayed `score` — implemented exactly as specified.
+/** score = 1.0*(sense domain is active for this meeting) +
+ *  0.45*domainWeights[domain] + 0.25*cooccurrence[domain] +
+ *  0.15*(entry's own pack explicitly enabled ? 1 : 0) + 0.15*prior.
+ *  Missing weights count as 0. The meeting-domain term is deliberately
+ *  larger than every other sense-specific term combined, so two
+ *  unambiguous earlier headwords can override a domain-agnostic prior.
+ *  The pack-bonus term is entry-level (all of one entry's senses share
+ *  the same `pack`), so it never changes which sense WINS within that
+ *  entry, but it remains part of each sense's displayed `score`.
  *
- *  With NO sense context at all (registeredSenseContext === null —
- *  keyless, or before the first inference lands), falls back to plain
- *  `prior` ordering instead of the weighted formula.
+ *  With NO sense context and NO active meeting domain, falls back to
+ *  plain `prior` ordering instead of the weighted formula.
  *
  *  `ambiguous`: true when the top two scores are within
  *  AMBIGUOUS_MARGIN of each other, OR — only on the scored path, since
@@ -1570,15 +1619,18 @@ interface SenseSelection {
 function selectSense(
   entry: { pack: string; senses: DictSense[] },
   enabledPacks: string[] | null,
+  activeDomains: ReadonlySet<DomainTag>,
 ): SenseSelection {
   const ctx = registeredSenseContext;
   const packBonus = isPackExplicitlyEnabled(entry.pack, enabledPacks) ? 1 : 0;
+  const hasScoredContext = ctx !== null || activeDomains.size > 0;
 
   const scored = entry.senses.map((sense) => ({
     sense,
-    score: ctx
-      ? 0.45 * (ctx.domainWeights?.[sense.domain] ?? 0) +
-        0.25 * (ctx.cooccurrence?.[sense.domain] ?? 0) +
+    score: hasScoredContext
+      ? (activeDomains.has(sense.domain) ? 1 : 0) +
+        0.45 * (ctx?.domainWeights?.[sense.domain] ?? 0) +
+        0.25 * (ctx?.cooccurrence?.[sense.domain] ?? 0) +
         0.15 * packBonus +
         0.15 * sense.prior
       : sense.prior,
@@ -1768,6 +1820,7 @@ export function scanDictionary(
       const { chosen, ranked, ambiguous } = selectSense(
         { pack: entry.pack, senses: entry.senses },
         enabledPacks,
+        options.activeDomains ?? EMPTY_ACTIVE_DOMAINS,
       );
       termHits.push({
         term: {

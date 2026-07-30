@@ -235,7 +235,22 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
     gloss_en: "A measure of its statistical dispersion of a random variable, indicating how far from the expected value its values typically are.",
     gloss_zh: "方差又称变异数、变方，在概率论及统计学中，描述的是一个随机变量的离散程度，即一组数字与其平均值之间的距离的度量，是随机变量与其总体均值或样本均值的离差的平方的期望",
     pack: "stats",
-    commonWord: true,
+    senses: [
+      {
+        gloss_en: "A measure of its statistical dispersion of a random variable, indicating how far from the expected value its values typically are.",
+        gloss_zh: "方差又称变异数、变方，在概率论及统计学中，描述的是一个随机变量的离散程度，即一组数字与其平均值之间的距离的度量，是随机变量与其总体均值或样本均值的离差的平方的期望",
+        domain: "stats",
+        prior: 0.6,
+        senseId: "statistical-variance",
+      },
+      {
+        gloss_en: "budget or plan variance, the difference between actual and planned results",
+        gloss_zh: "预算或计划差异",
+        domain: "sales",
+        prior: 0.4,
+        senseId: "plan-variance",
+      },
+    ],
   },
   {
     term: "expected value",

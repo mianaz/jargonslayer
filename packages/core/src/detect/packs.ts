@@ -135,12 +135,16 @@ export const PACKS_ADDED_AT_VERSION: Record<number, string[]> = {
  *  own doc). Deliberately only covers packs whose id/description names
  *  ONE DomainTag unambiguously; a pack with no obvious single domain
  *  (meeting-flow, project, feedback, sales-adjacent softening, chitchat,
- *  business-terms, tech-terms, core) is left OUT rather than guessed —
+ *  tech-terms, core) is left OUT rather than guessed —
  *  an absent mapping just contributes 0 (T3's scoring formula already
  *  treats a missing weight as 0), never a wrong nudge. Remote packs are
  *  never in this map (their own domain signal, if any, is author-set
- *  per SENSE via DictSense.domain, not per-pack). */
+ *  per SENSE via DictSense.domain, not per-pack). `business-terms` is
+ *  the one intentionally broad mapping: its unambiguous SaaS/revenue
+ *  headwords provide the meeting-level business/sales signal used to
+ *  disambiguate otherwise ordinary business language. */
 export const PACK_DOMAINS: Partial<Record<string, DomainTag>> = {
+  "business-terms": "sales",
   sales: "sales",
   academic: "edu",
   "pharma-biotech": "pharma",

@@ -43,7 +43,6 @@ const COMMON_WORDS = new Set([
   "recall",
   "accuracy",
   "token",
-  "variance",
   "epoch",
   "embedding",
 ]);
@@ -60,6 +59,24 @@ const VALID_TYPES = new Set([
 
 function jsString(s) {
   return JSON.stringify(s);
+}
+
+function sensesSource(senses) {
+  if (!Array.isArray(senses) || senses.length === 0) return "";
+  const entries = senses
+    .map(
+      (sense) =>
+        `      {\n` +
+        `        gloss_en: ${jsString(sense.gloss_en)},\n` +
+        `        gloss_zh: ${jsString(sense.gloss_zh)},\n` +
+        (sense.type ? `        type: ${jsString(sense.type)},\n` : ``) +
+        `        domain: ${jsString(sense.domain)},\n` +
+        `        prior: ${sense.prior},\n` +
+        `        senseId: ${jsString(sense.senseId)},\n` +
+        `      },`,
+    )
+    .join("\n");
+  return `    senses: [\n${entries}\n    ],\n`;
 }
 
 // Gloss-quality bar for gloss_en. Empty/whitespace was already rejected
@@ -180,6 +197,7 @@ async function main() {
         `    pack: ${jsString(t.pack)},\n` +
         (COMMON_WORDS.has(t.term) ? `    commonWord: true,\n` : ``) +
         literalGuards +
+        sensesSource(t.senses) +
         `  },`
       );
     })
