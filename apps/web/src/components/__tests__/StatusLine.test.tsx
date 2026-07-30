@@ -629,7 +629,7 @@ describe("StatusLine — engine dropdown", () => {
     return el as HTMLSelectElement;
   }
 
-  it("lists every ENGINE_OPTIONS value once every BYOK cloud key is configured (web build: webspeech/whisper/tabaudio/tabaudio-cloud/soniox/deepgram/elevenlabs, D7 keeps tabaudio; tabaudio-cloud v0.5 Wave-1 F4)", async () => {
+  it("groups every visible engine by its capability family", async () => {
     useApp.setState((s) => ({
       settings: {
         ...s.settings,
@@ -648,25 +648,22 @@ describe("StatusLine — engine dropdown", () => {
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
     expect(values).toEqual([
-      "webspeech",
       "whisper",
       "tabaudio",
+      "webspeech",
       "tabaudio-cloud",
       "soniox",
       "deepgram",
       "elevenlabs",
     ]);
+    expect(Array.from(select().querySelectorAll("optgroup")).map((group) => group.label)).toEqual([
+      "本地 STT 模型",
+      "系统 STT 服务",
+      "第三方 STT 提供商",
+    ]);
   });
 
-  // TestFlight batch fix: a BYOK cloud option with no key configured is
-  // hidden from the list entirely — a fresh install's DEFAULT_SETTINGS
-  // has all three keys empty, so none of the three should render here.
-  // Fix round (adversarial review, MEDIUM): tabaudio-cloud is NOT exempt
-  // either — outside the Soniox preview lane (ambiently off in this
-  // file) it resolves to the soniox provider by default (DEFAULT_SETTINGS.
-  // tabAudioCloudProvider) and needs sonioxKey exactly like the standalone
-  // soniox option, so it now hides here too.
-  it("hides soniox/deepgram/elevenlabs/tabaudio-cloud when their own key is empty (unconfigured, not the selected engine)", async () => {
+  it("keeps third-party providers visible and labels their real catalog-key status", async () => {
     useApp.setState((s) => ({
       settings: { ...s.settings, engine: "whisper", sonioxKey: "", deepgramKey: "", elevenLabsKey: "" },
     }));
@@ -678,7 +675,14 @@ describe("StatusLine — engine dropdown", () => {
     const values = Array.from(select().querySelectorAll("option"))
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
-    expect(values).toEqual(["webspeech", "whisper", "tabaudio"]);
+    expect(values).toContain("soniox");
+    expect(values).toContain("deepgram");
+    expect(values).toContain("elevenlabs");
+    const labelOf = (value: string) =>
+      Array.from(select().querySelectorAll("option")).find((o) => o.value === value)?.textContent;
+    expect(labelOf("soniox")).toBe("Soniox 云端识别 · 未配置");
+    expect(labelOf("deepgram")).toBe("Deepgram 云端识别 · 未配置");
+    expect(labelOf("elevenlabs")).toBe("ElevenLabs 云端识别 · 未配置");
   });
 
   // Same MEDIUM fix: tabaudio-cloud's "own key" is whichever provider
@@ -707,10 +711,7 @@ describe("StatusLine — engine dropdown", () => {
     expect(values).toContain("tabaudio-cloud");
   });
 
-  // Reverse of the above: a soniox key alone doesn't count once the
-  // provider is resolved to deepgram — the WRONG provider's key must not
-  // paper over the missing one.
-  it("hides tabaudio-cloud when resolved to deepgram but deepgramKey is empty (sonioxKey set is irrelevant)", async () => {
+  it("does not let a different provider's key mark Deepgram configured", async () => {
     useApp.setState((s) => ({
       settings: {
         ...s.settings,
@@ -726,16 +727,11 @@ describe("StatusLine — engine dropdown", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    const values = Array.from(select().querySelectorAll("option"))
-      .map((o) => o.getAttribute("value"))
-      .filter((v) => v !== "");
-    expect(values).not.toContain("tabaudio-cloud");
+    const deepgram = Array.from(select().querySelectorAll("option")).find((o) => o.value === "deepgram");
+    expect(deepgram?.textContent).toBe("Deepgram 云端识别 · 未配置");
   });
 
-  // The currently-selected engine must never disappear even unconfigured
-  // — a <select> whose value has no matching <option> silently shows the
-  // wrong thing as selected instead.
-  it("keeps the currently-selected cloud engine visible even with no key configured", async () => {
+  it("keeps all third-party provider choices available even when the selected key is missing", async () => {
     useApp.setState((s) => ({
       settings: { ...s.settings, engine: "soniox", sonioxKey: "", deepgramKey: "", elevenLabsKey: "" },
     }));
@@ -748,16 +744,12 @@ describe("StatusLine — engine dropdown", () => {
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
     expect(values).toContain("soniox");
-    expect(values).not.toContain("deepgram");
-    expect(values).not.toContain("elevenlabs");
+    expect(values).toContain("deepgram");
+    expect(values).toContain("elevenlabs");
     expect(select().value).toBe("soniox");
   });
 
-  // TestFlight batch fix: this SELECT alone gets shorter labels for the
-  // four values Miana flagged — every other engine surface (Header's
-  // EnginePostureChip, SettingsDialog's own cards) keeps the full
-  // 系统识别/Soniox 云端识别/… wording, unasserted here (out of scope).
-  it("shows shortened labels (系统/Soniox/Deepgram/ElevenLabs) for those four option values only", async () => {
+  it("shows configured hints per third-party provider", async () => {
     useApp.setState((s) => ({
       settings: {
         ...s.settings,
@@ -775,11 +767,9 @@ describe("StatusLine — engine dropdown", () => {
     const labelOf = (value: string) =>
       Array.from(select().querySelectorAll("option")).find((o) => o.getAttribute("value") === value)
         ?.textContent;
-    expect(labelOf("soniox")).toBe("Soniox");
-    expect(labelOf("deepgram")).toBe("Deepgram");
-    expect(labelOf("elevenlabs")).toBe("ElevenLabs");
-    // Every OTHER option keeps its full ENGINE_OPTIONS.label untouched —
-    // this select's own override is scoped to the four values above.
+    expect(labelOf("soniox")).toBe("Soniox 云端识别 · 已配置");
+    expect(labelOf("deepgram")).toBe("Deepgram 云端识别 · 已配置");
+    expect(labelOf("elevenlabs")).toBe("ElevenLabs 云端识别 · 已配置");
     expect(labelOf("webspeech")).toBe(ENGINE_OPTIONS.find((o) => o.value === "webspeech")!.label);
   });
 
@@ -837,19 +827,34 @@ describe("StatusLine — engine dropdown", () => {
     expect(placeholder!.textContent).toBe(ENGINE_SELECT_PLACEHOLDER);
   });
 
-  // v0.5 Wave-1 Feature 5 (mode-first UI): this dropdown is reframed as
-  // a power-user override — ModeSelector.tsx's tiles are the primary
-  // way to pick a capture path now. Mechanics stay unchanged (asserted
-  // above/elsewhere in this describe block); only the closed control's
-  // own tooltip is new.
-  it("carries an 引擎覆盖 title hint when the selected option isn't otherwise locked", async () => {
+  it("explains that recognizer and source are separate controls", async () => {
     useApp.setState((s) => ({ status: "idle", settings: { ...s.settings, engine: "whisper" } }));
     renderStatusLine();
     await act(async () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(select().title).toBe("引擎覆盖（模式自动选择的引擎可在此覆盖）");
+    expect(select().title).toBe("选择转录服务；音源在左侧单独设置");
+  });
+
+  it("audio-source control remains enabled mid-session and writes mode without changing engine", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, mode: "mic", engine: "soniox" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const source = container!.querySelector('[data-testid="statusline-audio-source-select"]') as HTMLSelectElement;
+    expect(source.disabled).toBe(false);
+    await act(async () => {
+      source.value = "tab";
+      source.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(useApp.getState().settings.mode).toBe("tab");
+    expect(useApp.getState().settings.engine).toBe("soniox");
   });
 });
 
@@ -1190,4 +1195,3 @@ describe("StatusLine — no mascot perch (retired)", () => {
     },
   );
 });
-

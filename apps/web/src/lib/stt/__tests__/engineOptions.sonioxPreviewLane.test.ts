@@ -27,6 +27,7 @@ describe("engineOptionGate — soniox preview lane ON", () => {
   const whisper: EngineOption = {
     value: "whisper",
     label: "本地 Whisper",
+    family: "local-model",
     posture: "local",
     retentionClass: "local",
     sidecarOnly: true,
@@ -34,6 +35,7 @@ describe("engineOptionGate — soniox preview lane ON", () => {
   const soniox: EngineOption = {
     value: "soniox",
     label: "Soniox 云端识别",
+    family: "third-party-provider",
     posture: "cloud",
     retentionClass: "cloud-transient",
     byokOnly: true,
@@ -41,6 +43,7 @@ describe("engineOptionGate — soniox preview lane ON", () => {
   const deepgram: EngineOption = {
     value: "deepgram",
     label: "Deepgram 云端识别",
+    family: "third-party-provider",
     posture: "cloud",
     retentionClass: "cloud-transient",
     byokOnly: true,
@@ -48,6 +51,7 @@ describe("engineOptionGate — soniox preview lane ON", () => {
   const tabAudioCloud: EngineOption = {
     value: "tabaudio-cloud",
     label: "标签页音频·云端",
+    family: "third-party-provider",
     posture: "cloud",
     retentionClass: "cloud-transient",
     byokOnly: true,

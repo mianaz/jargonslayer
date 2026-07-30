@@ -14,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import {
   derivePosture,
   ENGINE_CAPABILITIES,
+  ENGINE_FAMILY_LABEL,
   resolveEngineCapability,
   resolveTabAudioCloudProvider,
   resolveWebspeechRetentionClass,
@@ -29,26 +30,29 @@ describe("ENGINE_CAPABILITIES — D5 contract shape", () => {
     }
   });
 
-  it("every entry carries a non-empty zh label and a valid retentionClass/biasSupport", () => {
+  it("every entry carries a non-empty zh label, family, and valid retentionClass/biasSupport", () => {
     for (const cap of Object.values(ENGINE_CAPABILITIES)) {
       expect(cap.label.length).toBeGreaterThan(0);
+      expect(ENGINE_FAMILY_LABEL[cap.family]).toBeTruthy();
       expect(["local", "cloud-transient", "cloud-stored"]).toContain(cap.retentionClass);
       expect(["none", "initial_prompt", "keyterms", "context"]).toContain(cap.biasSupport);
     }
   });
 
-  it("no `requires` array and no CUT fields survive on any entry (D5: 7 fields only)", () => {
+  it("no `requires` array and no unowned fields survive on any entry", () => {
     const allowedKeys = new Set([
       "kind",
       "label",
+      "family",
       "retentionClass",
       "biasSupport",
       "sidecarOnly",
       "byokOnly",
+      "keyField",
       "osFloor",
     ]);
     for (const cap of Object.values(ENGINE_CAPABILITIES)) {
-      // Every actual key must be one of the 7 allowed ones — this
+      // Every actual key must be one of the capability-owned ones — this
       // subsumes checking for a stray `requires` (or any other CUT
       // field): it would show up here as a key not in allowedKeys.
       for (const key of Object.keys(cap)) {
@@ -62,9 +66,11 @@ describe("ENGINE_CAPABILITIES — D5 contract shape", () => {
     expect(soniox).toEqual({
       kind: "soniox",
       label: "Soniox 云端识别",
+      family: "third-party-provider",
       retentionClass: "cloud-transient",
       biasSupport: "context",
       byokOnly: true,
+      keyField: "sonioxKey",
     });
   });
 
@@ -73,9 +79,11 @@ describe("ENGINE_CAPABILITIES — D5 contract shape", () => {
     expect(deepgram).toEqual({
       kind: "deepgram",
       label: "Deepgram 云端识别",
+      family: "third-party-provider",
       retentionClass: "cloud-transient",
       biasSupport: "keyterms",
       byokOnly: true,
+      keyField: "deepgramKey",
     });
   });
 
@@ -255,6 +263,7 @@ describe("resolveEngineCapability — A4 provider-aware overlay truth table", ()
     expect(cap).toEqual({
       kind: "tabaudio-cloud",
       label: "标签页音频·云端（Soniox）",
+      family: "third-party-provider",
       retentionClass: "cloud-transient",
       biasSupport: "context",
       byokOnly: true,
@@ -269,6 +278,7 @@ describe("resolveEngineCapability — A4 provider-aware overlay truth table", ()
     expect(cap).toEqual({
       kind: "tabaudio-cloud",
       label: "标签页音频·云端（Deepgram）",
+      family: "third-party-provider",
       retentionClass: "cloud-transient",
       biasSupport: "keyterms",
       byokOnly: true,

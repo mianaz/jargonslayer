@@ -143,7 +143,10 @@ export default function ModeSelector({ onOpenImport, onDemo }: ModeSelectorProps
   if (visibleTiles.has("system-audio")) {
     tiles.push({
       key: "system-audio",
-      label: "听本机会议声音",
+      // Process-tap capture has no microphone branch. State this before
+      // recording so someone speaking in the meeting does not assume their
+      // own voice will be captured too.
+      label: "听本机会议声音（不含我的麦克风）",
       selected: settings.mode === "system-audio",
       onClick: () => pickCapture("system-audio"),
     });

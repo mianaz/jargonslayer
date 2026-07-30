@@ -26,6 +26,7 @@ describe("resolveEngineCapability — tabaudio-cloud on the Soniox preview lane 
     expect(cap).toEqual({
       kind: "tabaudio-cloud",
       label: "标签页音频·云端（Deepgram）",
+      family: "third-party-provider",
       retentionClass: "cloud-transient",
       biasSupport: "keyterms",
       byokOnly: true,

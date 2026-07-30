@@ -24,6 +24,7 @@ describe("ENGINE_OPTIONS (desktop build)", () => {
     expect(osspeech).toEqual({
       value: "osspeech",
       label: "系统识别",
+      family: "system-service",
       posture: "local",
       retentionClass: "local",
     });

@@ -14,7 +14,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "@/lib/store";
-import { SONIOX_PREVIEW_LANE } from "@/lib/deployTier";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
@@ -25,6 +24,9 @@ import {
   resolveEngineRetentionClass,
   useAudiocapCaps,
 } from "@/lib/stt/engineOptions";
+import { ENGINE_FAMILY_LABEL, ENGINE_FAMILY_ORDER } from "@/lib/stt/engineCapabilities";
+import { KEY_STATUS_LABEL, deriveKeyStatus } from "@/lib/settings/keyStatus";
+import { sttProviderKeyValue } from "@/lib/settings/keysCatalog";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
 import { langPairFromSettings } from "@/lib/translate/providers";
 import { isEngineControlBusy } from "@/components/Header";
@@ -32,6 +34,7 @@ import TaskTray from "@/components/TaskTray";
 import AiStatusPanel, { deriveHealthStatus, type AiHealthStatus } from "@/components/AiStatusPanel";
 import { useLlmTelemetry } from "@/lib/llm/telemetry";
 import { resolveTaskCreds } from "@/lib/llm/taskConfig";
+import type { Settings } from "@jargonslayer/core/types";
 
 // Exported (tech-debt ledger #4, 2026-07-17): StatusLine.test.tsx
 // imports this instead of re-pinning its own copy of the zh labels, so
@@ -62,121 +65,83 @@ export const SIDECAR_DOWN_HINT_WEB = "本地 Whisper 未连接——见 设置 �
 // engines" for this exact file.
 const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
 
-// S10 field-fix — engine picker as a bottom-bar dropdown (Miana's
-// explicit ask: 与其作为tab，engine不如改成dropdown，且显示在下方状态栏).
-// Native <select>, same house terminal aesthetic + handler semantics as
-// Header.tsx's pre-S10 mobile <select> variant it replaces (0px radius,
-// mono, border-edge, bg-panel2; same store write on change; same
-// disabled-while-meeting-active gate, isEngineControlBusy — reused
-// verbatim rather than re-implemented, still exported from Header.tsx).
-// Per-<option> gating (engineOptionGate, lib/stt/engineOptions.ts) is
-// the same preview-tier/macOS-floor policy every other engine surface
-// shares. The SELECT's own `title` additionally carries the CURRENTLY
-// SELECTED option's own lock reason (if any) — a per-<option> title is
-// only ever visible while the dropdown is actually open; the closed
-// control needs its own tooltip for a locked selection to be
-// explorable at all.
-//
-// v0.5 Wave-1 Feature 5 (mode-first UI, docs/design-explorations/
-// v05-wave1-blueprint.md §1 Feature 5): this dropdown is now reframed
-// as a POWER-USER OVERRIDE — ModeSelector.tsx's tiles are the primary,
-// mode-first way to pick a capture path, and they derive+write `engine`
-// automatically. This control's own mechanics stay fully unchanged: it
-// still writes `settings.engine` directly on change and never touches
-// `settings.mode` (mode/engine may legitimately diverge — see
-// Settings.mode's own doc comment, types.ts) — only the title hint
-// below is new, so a user hovering the closed control (when no
-// lock reason applies) understands what this control now IS relative
-// to ModeSelector.
-const ENGINE_OVERRIDE_HINT = "引擎覆盖（模式自动选择的引擎可在此覆盖）";
+// This is intentionally two adjacent controls: recognizer family and audio
+// source are independent persisted settings. `engine` still selects the
+// existing implementation, while `mode` records what the user intends to
+// capture; neither write rewrites the other.
+const ENGINE_OVERRIDE_HINT = "选择转录服务；音源在左侧单独设置";
+const AUDIO_SOURCE_PLACEHOLDER = "音源";
+const SYSTEM_AUDIO_CAVEAT = "只捕获对方的系统/App 声音，不包含你的麦克风";
 
-// TestFlight batch fix: the SELECT itself shows shorter labels for four
-// values — every OTHER surface reading ENGINE_OPTIONS.label
-// (EnginePostureChip, SettingsDialog's own ENGINE_CARDS, TutorialOverlay)
-// keeps the full 系统识别/Soniox 云端识别/… wording untouched (Miana's
-// explicit "仅底部选择框" scope) — so this is a display-only override
-// local to this component, never a change to the shared array.
-const ENGINE_SELECT_LABEL_OVERRIDE: Record<string, string> = {
-  osspeech: "系统",
-  soniox: "Soniox",
-  deepgram: "Deepgram",
-  elevenlabs: "ElevenLabs",
-};
+interface AudioSourceOption {
+  value: "mic" | "system-audio" | "tab";
+  label: string;
+  caveat?: string;
+}
 
-// TestFlight batch fix: a BYOK cloud option is only worth showing once
-// its own key is actually configured — an unconfigured pick still fails
-// honestly at engine-start (unchanged), but this select had no way to
-// tell a fresh installer "unconfigured" from "just untried" until they
-// clicked it. osspeech/whisper/tabaudio/etc. need no key at all, so they
-// pass through unconditionally.
-//
-// Fix round (adversarial review, MEDIUM): tabaudio-cloud was wrongly
-// falling into that unconditional "no key needed" bucket above — outside
-// the Soniox preview lane it needs a real key exactly like soniox/
-// deepgram/elevenlabs do, just resolved through Settings.
-// tabAudioCloudProvider first (mirrors resolveTabAudioCloudProvider,
-// lib/stt/engineCapabilities.ts, and tabAudioCloud.ts's own
-// `effectiveProvider === "soniox" && SONIOX_PREVIEW_LANE` mint gate —
-// the lane only ever covers the Soniox resolution, never Deepgram's).
-function isCloudEngineConfigured(
-  value: (typeof ENGINE_OPTIONS)[number]["value"],
-  sonioxKey: string,
-  deepgramKey: string,
-  elevenLabsKey: string,
-  tabAudioCloudProvider: "soniox" | "deepgram",
-): boolean {
-  if (value === "soniox") return !!sonioxKey;
-  if (value === "deepgram") return !!deepgramKey;
-  if (value === "elevenlabs") return !!elevenLabsKey;
-  if (value === "tabaudio-cloud") {
-    const provider = tabAudioCloudProvider === "deepgram" ? "deepgram" : "soniox";
-    if (provider === "soniox" && SONIOX_PREVIEW_LANE) return true;
-    return provider === "deepgram" ? !!deepgramKey : !!sonioxKey;
-  }
-  return true;
+const AUDIO_SOURCE_OPTIONS: readonly AudioSourceOption[] = [
+  { value: "mic", label: "麦克风" },
+  ...(IS_DESKTOP
+    ? ([{ value: "system-audio", label: "系统/App 音频（仅对方，不含麦克风）", caveat: SYSTEM_AUDIO_CAVEAT }] as const)
+    : []),
+  ...(!IS_DESKTOP && !IS_IOS ? ([{ value: "tab", label: "浏览器标签页" }] as const) : []),
+] as const;
+
+function AudioSourceDropdown() {
+  const mode = useApp((s) => s.settings.mode);
+  const updateSettings = useApp((s) => s.updateSettings);
+  const selected = AUDIO_SOURCE_OPTIONS.find((option) => option.value === mode);
+
+  return (
+    <select
+      aria-label="音频来源"
+      aria-description={selected?.caveat}
+      data-testid="statusline-audio-source-select"
+      title={selected?.caveat ?? "选择要捕获的音频来源"}
+      value={selected ? mode : ""}
+      onChange={(e) => updateSettings({ mode: e.target.value as Settings["mode"] })}
+      className="h-full max-w-[7.5rem] shrink-0 border-l border-edge bg-panel2 px-2 font-mono text-fg sm:max-w-[12rem]"
+    >
+      {!selected && (
+        <option value="" disabled>
+          {AUDIO_SOURCE_PLACEHOLDER}
+        </option>
+      )}
+      {AUDIO_SOURCE_OPTIONS.map((option) => (
+        <option key={option.value} value={option.value} title={option.caveat}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function engineOptionLabel(opt: (typeof ENGINE_OPTIONS)[number], settings: Settings): string {
+  if (!opt.keyField) return opt.label;
+  const status = deriveKeyStatus(sttProviderKeyValue(settings, opt.keyField));
+  return `${opt.label} · ${KEY_STATUS_LABEL[status]}`;
 }
 
 function EngineDropdown() {
-  const engine = useApp((s) => s.settings.engine);
-  const sonioxKey = useApp((s) => s.settings.sonioxKey);
-  const deepgramKey = useApp((s) => s.settings.deepgramKey);
-  const elevenLabsKey = useApp((s) => s.settings.elevenLabsKey);
-  const tabAudioCloudProvider = useApp((s) => s.settings.tabAudioCloudProvider);
+  const settings = useApp((s) => s.settings);
+  const engine = settings.engine;
   const status = useApp((s) => s.status);
   const sttEngineMode = useApp((s) => s.sttEngineMode);
   const updateSettings = useApp((s) => s.updateSettings);
   const disabled = isEngineControlBusy(status);
   const audiocapCaps = useAudiocapCaps();
-  // Lead integration fix (S11): without the caps arg the osspeech option
-  // would render enabled on macOS <26 and only fail at start_os_speech's
-  // runtime recheck — pass it so the option locks with a reason, same
-  // posture as the appaudio floor gate.
   const osspeechCaps = useOsSpeechCaps();
   const selectedOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
   const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps, osspeechCaps) : undefined;
-  // The CURRENTLY SELECTED value always stays an <option> even when its
-  // own key is unconfigured — a <select> whose value has no matching
-  // <option> silently renders the wrong thing as selected instead.
-  const visibleOptions = ENGINE_OPTIONS.filter(
-    (opt) =>
-      opt.value === engine ||
-      isCloudEngineConfigured(opt.value, sonioxKey, deepgramKey, elevenLabsKey, tabAudioCloudProvider),
-  );
 
-  // iOS-cloud round: the mobile-UX sprint's static chip is GONE — it
-  // existed only because a ONE-option native select renders a dead
-  // picker chevron (osspeech was iOS's sole engine then). With the BYOK
-  // cloud engines joining IOS_ENGINE_OPTIONS there's a real choice to
-  // make, and WKWebView presents <select> as the native iOS picker
-  // menu — exactly the non-webby affordance the sprint wanted. What iOS
-  // keeps instead: the select's TEXT carries the active engine's
-  // retention color (green=本地 / amber=云端, RETENTION_COPY) — the
-  // privacy sentence to the left is hidden below sm, so on a phone this
-  // color is the bar's only always-visible audio-path signal. While the
-  // select shows the 选择引擎 placeholder (demo/import — no live capture
-  // engine), it stays neutral text-fg (Sol F6): coloring a placeholder
-  // by the HIDDEN sentinel engine's retention class would assign privacy
-  // meaning to a control that names no engine at all.
+  // The group structure is projected from ENGINE_CAPABILITIES via
+  // ENGINE_OPTIONS.family. An engine cannot be added to the exhaustive
+  // capabilities record without selecting one of these families.
+  const groupedOptions = ENGINE_FAMILY_ORDER.map((family) => ({
+    family,
+    options: ENGINE_OPTIONS.filter((option) => option.family === family),
+  })).filter((group) => group.options.length > 0);
+
   const iosTextClass = IS_IOS
     ? engine === "demo" || engine === "import"
       ? "text-fg"
@@ -191,24 +156,28 @@ function EngineDropdown() {
       title={selectedGate?.title ?? ENGINE_OVERRIDE_HINT}
       value={engine === "demo" || engine === "import" ? "" : engine}
       onChange={(e) => {
-        const v = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
-        if (v) updateSettings({ engine: v });
+        const value = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
+        if (value) updateSettings({ engine: value });
       }}
-      className={`h-full max-w-[6.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[8.5rem] sm:px-2 ${iosTextClass}`}
+      className={`h-full max-w-[7.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}
     >
       {(engine === "demo" || engine === "import") && (
         <option value="" disabled>
           {ENGINE_SELECT_PLACEHOLDER}
         </option>
       )}
-      {visibleOptions.map((opt) => {
-        const gate = engineOptionGate(opt, audiocapCaps, osspeechCaps);
-        return (
-          <option key={opt.value} value={opt.value} disabled={gate.disabled} title={gate.title}>
-            {ENGINE_SELECT_LABEL_OVERRIDE[opt.value] ?? opt.label}
-          </option>
-        );
-      })}
+      {groupedOptions.map((group) => (
+        <optgroup key={group.family} label={ENGINE_FAMILY_LABEL[group.family]}>
+          {group.options.map((opt) => {
+            const gate = engineOptionGate(opt, audiocapCaps, osspeechCaps);
+            return (
+              <option key={opt.value} value={opt.value} disabled={gate.disabled} title={gate.title}>
+                {engineOptionLabel(opt, settings)}
+              </option>
+            );
+          })}
+        </optgroup>
+      ))}
     </select>
   );
 }
@@ -589,11 +558,11 @@ export default function StatusLine({ onOpenTaskCenter }: StatusLineProps) {
       >
         {privacyCopy.hint}
       </span>
-      {/* Engine dropdown (S10 field-fix wave 2, EngineDropdown above):
-          right here, between the privacy segment and the latency chip,
-          reads most naturally (STT posture/health cluster together
-          left-to-right) — THE picker at every width now (Header.tsx's
-          old desktop pills + mobile <select> are both gone). */}
+      {/* Audio source stays reachable even after ModeSelector's idle-only
+          overlay disappears. The native option itself carries the honest
+          system-audio/mic caveat; this does not invent a capture state. */}
+      <AudioSourceDropdown />
+      {/* Recognizer picker, grouped by ENGINE_CAPABILITIES.family. */}
       <EngineDropdown />
       {/* S10 field-fix #5/#8: compact caution chip, hidden whenever
           healthy/null/not-listening/not-local-whisper/not-yet-sustained
