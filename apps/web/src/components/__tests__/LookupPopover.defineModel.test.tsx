@@ -111,12 +111,8 @@ describe("LookupPopover — 加入我的词典 forwards the resolved detect-doma
     });
     await flush();
 
-    // This fixture's detect result is zero-hit (aiDetect on, dictFallback
-    // false), so the footer button is the zero-hit primary action
-    // ("AI 解释并加入词典" — see LookupPopover's zeroHit/zeroHitManualOnly),
-    // not the normal-state "＋ 加入我的词典" — both trigger the exact same
-    // handleAddToGlossary/defineApi call this test is about, so match
-    // either label rather than pinning one exact string.
+    // This direct-render fixture has no automatic fallback definition,
+    // so the secondary "＋ 加入我的词典" action still invokes defineApi.
     const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
       /加入.*词典/.test(b.textContent ?? ""),
     ) as HTMLButtonElement | undefined;

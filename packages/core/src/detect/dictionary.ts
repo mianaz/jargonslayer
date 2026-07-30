@@ -82,6 +82,13 @@ export interface ScanDictionaryOptions {
   activeDomains?: ReadonlySet<DomainTag>;
   /** An explicit user lookup should always explain a matched common word. */
   bypassCommonWordSuppression?: boolean;
+  /**
+   * An explicit lookup should expose every enabled dictionary's entry
+   * for a surface. Normal transcript detection still chooses one
+   * deterministic winner per headword so it does not create duplicate
+   * cards for a single occurrence.
+   */
+  includeAllPackMatches?: boolean;
 }
 
 function shouldIncludeCommonWord(
@@ -1076,6 +1083,14 @@ function dedupeByKey<T>(base: T[], extra: T[], keyOf: (item: T) => string): T[] 
 // language (finance-consumer), and the conversational register around
 // meetings (daily-idiom). Merged at the same precedence as EXTRA_*:
 // base still wins a normalized-key collision, these only fill gaps.
+const ALL_EXPRESSION_ENTRIES: ExpressionEntry[] = [
+  ...BASE_EXPRESSIONS,
+  ...EXTRA_EXPRESSIONS,
+  ...MODERN_USAGE_EXPRESSIONS,
+  ...FINANCE_CONSUMER_EXPRESSIONS,
+  ...DAILY_IDIOM_EXPRESSIONS,
+];
+
 const EXPRESSIONS: ExpressionEntry[] = dedupeByKey(
   dedupeByKey(BASE_EXPRESSIONS, EXTRA_EXPRESSIONS, (e) => e.expression),
   [...MODERN_USAGE_EXPRESSIONS, ...FINANCE_CONSUMER_EXPRESSIONS, ...DAILY_IDIOM_EXPRESSIONS],
@@ -1156,12 +1171,15 @@ function mergeTermTables(tables: TermEntry[][]): TermEntry[] {
 // (base > EXTRA > modern/finance > compiled) is also the tie-break
 // order mergeTermTables documents above for a same-key collision that
 // survives as more than one entry.
-const TERM_DICTIONARY: TermEntry[] = mergeTermTables([
+const ALL_TERM_TABLES: TermEntry[][] = [
   BASE_TERM_DICTIONARY,
   EXTRA_TERMS,
   [...MODERN_USAGE_TERMS, ...FINANCE_CONSUMER_TERMS],
   COMPILED_PACK_TERMS,
-]);
+];
+
+const TERM_DICTIONARY: TermEntry[] = mergeTermTables(ALL_TERM_TABLES);
+const ALL_TERM_ENTRIES: TermEntry[] = ALL_TERM_TABLES.flat();
 
 /** Entry counts per pack id, for the Settings dialog (shows how many
  *  items a pack contributes before the user decides to disable it).
@@ -1711,7 +1729,8 @@ export function scanDictionary(
   const remoteExpressions: ExpressionEntry[] = remotePacks.flatMap((p) => p.expressions);
   const remoteTerms: TermEntry[] = remotePacks.flatMap((p) => p.terms);
 
-  for (const entry of [...EXPRESSIONS, ...remoteExpressions]) {
+  const expressionEntries = options.includeAllPackMatches ? ALL_EXPRESSION_ENTRIES : EXPRESSIONS;
+  for (const entry of [...expressionEntries, ...remoteExpressions]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     if (!shouldIncludeCommonWord(entry, enabledPacks, options)) continue;
     // A personal-glossary entry on this exact surface owns the word —
@@ -1765,9 +1784,10 @@ export function scanDictionary(
   // claim. A user who wants the built-in back can disable the
   // colliding remote pack.
   const matchedTermKeys = new Set<string>();
-  for (const entry of [...remoteTerms, ...TERM_DICTIONARY]) {
+  const termEntries = options.includeAllPackMatches ? ALL_TERM_ENTRIES : TERM_DICTIONARY;
+  for (const entry of [...remoteTerms, ...termEntries]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
-    if (matchedTermKeys.has(normalizeDictKey(entry.term))) continue;
+    if (!options.includeAllPackMatches && matchedTermKeys.has(normalizeDictKey(entry.term))) continue;
     // Everyday headwords in a domain pack need evidence that the meeting
     // is actually in that domain. Cross-domain packs keep the old
     // explicit-enable behavior; non-common terms are unaffected.
@@ -1805,7 +1825,7 @@ export function scanDictionary(
       if (match) break;
     }
     if (!match) continue;
-    matchedTermKeys.add(normalizeDictKey(entry.term));
+    if (!options.includeAllPackMatches) matchedTermKeys.add(normalizeDictKey(entry.term));
     const matchStart = match.index;
     const matchEnd = matchStart + match[0].length;
 

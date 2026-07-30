@@ -910,21 +910,12 @@ async function attemptSubscriptionDirect<T>(
   }
 }
 
-/** `systemPromptOverride` (field bug fix, iOS TestFlight "画词 dead
- *  end"): selectionLookup.ts's runSelectionLookup is the ONLY caller
- *  that ever passes this — every other call site (DetectionScheduler,
- *  stt/upload.ts's import pipeline) omits it and keeps resolving
- *  DETECT_SYSTEM_PROMPT exactly as before this param existed. On the
- *  direct-transport branch (detectViaClient -> tasks/detect.ts — the
- *  only transport iOS/desktop ever uses) the string is passed through
- *  verbatim. On the Next path (full-tier self-hosted), detectViaNext
- *  sends only a `selection: true` flag and route.ts rebuilds the SAME
- *  prompt server-side from `lang` — client-supplied prompt text is
- *  never accepted there (shared-key abuse surface; see
- *  DetectRequest.selection's own comment). Consequence: a future
- *  caller passing a DIFFERENT custom override would be honored on
- *  direct transport but coerced to the selection prompt on the Next
- *  path — fine today, since selectionLookup is the only caller. */
+/** `systemPromptOverride` remains available for an explicit detection
+ *  caller. Automatic transcript detection and import paths omit it and
+ *  keep resolving DETECT_SYSTEM_PROMPT. On the direct-transport branch
+ *  the string is passed through verbatim; on the Next path, only a
+ *  `selection: true` flag is sent and route.ts rebuilds the prompt
+ *  server-side, so client-supplied prompt text is never accepted there. */
 export async function detectApi(
   body: DetectRequest,
   settings: Settings,

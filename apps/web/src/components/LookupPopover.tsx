@@ -1,18 +1,8 @@
 "use client";
 
-// Selection-triggered explanation popover: user selects text in the
-// transcript, which kicks off detection (AI or dictionary) on it and
-// feeds any hits into the shared session card stream. Display-only as
-// of v0.5 closeout (background 划词 card generation) — the detect/
-// dictionary pipeline itself runs in lib/tasks/selectionLookup.ts,
-// triggered by store.ts's setLookup and detached from this component's
-// own lifecycle, so closing this popover early no longer discards an
-// in-flight ~20s AI result. This component just renders whatever that
-// pipeline has written for the current request id. Also offers a
-// footer action to save the selected phrase into the personal glossary
-// (AI-defined preview, or a blank hand-filled form) — that flow stays
-// entirely component-local (user-initiated inside an open popover, no
-// background need).
+// Selection-triggered explanation popover. The background task owns the
+// dictionary-first lookup plus contextual AI fallback; this component only
+// renders that answer and offers saving it as an optional glossary entry.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { X } from "@phosphor-icons/react";
@@ -22,8 +12,9 @@ import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 import { useSelectionLookup } from "@/lib/tasks/selectionLookup";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
+import { getPackName } from "@jargonslayer/core/detect/packs";
 import { newId } from "@jargonslayer/core/types";
-import type { CustomEntry, CustomEntryKind } from "@jargonslayer/core/types";
+import type { CustomEntry, CustomEntryKind, DefineResult } from "@jargonslayer/core/types";
 
 const KIND_LABELS: Record<CustomEntryKind, string> = {
   expression: "表达",
@@ -49,6 +40,18 @@ function emptyDraft(headword: string): GlossaryDraft {
     note: "",
     variants: [],
     source: "manual",
+  };
+}
+
+function draftFromDefinition(defined: DefineResult): GlossaryDraft {
+  return {
+    kind: defined.kind,
+    headword: defined.headword,
+    chinese_explanation: defined.chinese_explanation,
+    example: defined.example,
+    note: "",
+    variants: defined.variants,
+    source: "ai",
   };
 }
 
@@ -103,20 +106,13 @@ export default function LookupPopover() {
   const progress = useSelectionLookup((s) => (lookup ? s.byId[lookup.id] : undefined));
   const loading = !progress || progress.status === "loading";
   const error = progress?.status === "error" ? progress.error : null;
-  const result = progress?.status === "done" ? progress.result : null;
-  const dictFallback = progress?.status === "done" && progress.dictFallback;
-
-  // Field bug fix (iOS TestFlight "画词 dead end"): 0 expressions AND 0
-  // terms used to be a silent dead end — no explanation, no way to add
-  // a flashcard. Drives both the zero-hit copy below and the footer
-  // button's relabel-to-primary-action (see the footer render below).
-  const zeroHit =
-    !loading && !error && result !== null && result.expressions.length === 0 && result.terms.length === 0;
-  // aiDetect off (dictionary-only setting) or dictFallback (AI call hit
-  // NoKeyError and silently fell back to the dictionary scan) both land
-  // the user in the same place: no AI available for this lookup, so the
-  // footer action must be "type it yourself", not "ask AI".
-  const zeroHitManualOnly = !settings.aiDetect || dictFallback;
+  const completed = progress?.status === "done" ? progress : null;
+  const result = completed?.result ?? null;
+  const definition = completed?.definition;
+  const translation = completed?.translation;
+  const definitionError = completed?.definitionError;
+  const translationError = completed?.translationError;
+  const dictionaryHit = Boolean(result && (result.expressions.length > 0 || result.terms.length > 0));
 
   // The glossary-draft flow is unrelated to detect progress above (and
   // stays component-local, per design — see handleAddToGlossary below)
@@ -172,6 +168,13 @@ export default function LookupPopover() {
 
   const handleAddToGlossary = async () => {
     if (!lookup) return;
+    // A real dictionary miss already received this contextual definition
+    // automatically. Saving should reuse it rather than make the user
+    // wait for and pay for a second identical request.
+    if (definition) {
+      setDraft(draftFromDefinition(definition));
+      return;
+    }
     if (!settings.aiDetect) {
       setDraft(manualDraft(lookup.text));
       return;
@@ -186,15 +189,7 @@ export default function LookupPopover() {
         },
         settings,
       );
-      setDraft({
-        kind: defined.kind,
-        headword: defined.headword,
-        chinese_explanation: defined.chinese_explanation,
-        example: defined.example,
-        note: "",
-        variants: defined.variants,
-        source: "ai",
-      });
+      setDraft(draftFromDefinition(defined));
     } catch (err) {
       if (err instanceof NoKeyError) {
         setDraft(manualDraft(lookup.text));
@@ -251,17 +246,11 @@ export default function LookupPopover() {
         </button>
       </div>
 
-      {dictFallback && (
-        <span className="mt-1 inline-block border border-lab-orange/30 px-1.5 py-0 text-[10px] text-lab-orange">
-          词典
-        </span>
-      )}
-
       <div className="mt-2">
         {loading && (
           <div className="flex items-center gap-2 text-xs text-mut">
             <span className="h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
-            解释中…
+            查询中…
           </div>
         )}
 
@@ -273,7 +262,14 @@ export default function LookupPopover() {
           <div className="space-y-2">
             {result.expressions.map((e, i) => (
               <div key={i} className="rounded-none bg-panel p-2">
-                <div className="font-medium text-fg">{e.expression}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-fg">{e.expression}</div>
+                  {e.pack && (
+                    <span className="border border-edge px-1.5 py-0 text-[10px] text-mut">
+                      <bdi>{getPackName(e.pack)}</bdi>
+                    </span>
+                  )}
+                </div>
                 <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
                   {e.chinese_explanation}
                 </div>
@@ -282,13 +278,52 @@ export default function LookupPopover() {
             ))}
             {result.terms.map((t, i) => (
               <div key={i} className="rounded-none bg-panel p-2">
-                <div className="font-medium text-fg">{t.term}</div>
-                <div className="mt-2 text-sm text-mut">{t.gloss_zh}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-medium text-fg">{t.term}</div>
+                  {t.pack && (
+                    <span className="border border-edge px-1.5 py-0 text-[10px] text-mut">
+                      <bdi>{getPackName(t.pack)}</bdi>
+                    </span>
+                  )}
+                </div>
+                {t.senses && t.senses.length > 0 ? (
+                  <div className="mt-2 space-y-1.5 text-sm text-mut">
+                    {t.senses.map((sense) => (
+                      <div key={sense.senseId}>
+                        <div>{sense.gloss_zh}</div>
+                        {sense.gloss_en && <div className="mt-0.5 text-xs text-mut2">{sense.gloss_en}</div>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-2 text-sm text-mut">{t.gloss_zh}</div>
+                )}
               </div>
             ))}
-            {zeroHit && (
+            {definition && (
+              <div className="rounded-none bg-panel p-2">
+                <div className="font-medium text-fg">{definition.headword}</div>
+                <div className="mt-2 text-sm font-medium leading-[26px] text-fg">
+                  {definition.chinese_explanation}
+                </div>
+                {definition.example && <div className="mt-2 text-xs text-mut">{definition.example}</div>}
+              </div>
+            )}
+            {translation && (
+              <div className="rounded-none bg-panel p-2">
+                <div className="text-[10px] text-mut2">翻译</div>
+                <div className="mt-1 text-sm leading-[26px] text-fg">{translation}</div>
+              </div>
+            )}
+            {definitionError && (
+              <div className="text-xs text-warn-soft">AI 解释不可用：{definitionError}</div>
+            )}
+            {translationError && (
+              <div className="text-xs text-warn-soft">翻译不可用：{translationError}</div>
+            )}
+            {!dictionaryHit && !definition && !translation && !definitionError && !translationError && (
               <div className="text-xs text-mut">
-                {zeroHitManualOnly ? "未检测到已收录的表达" : "词典与 AI 均未命中所选内容"}
+                {settings.aiDetect ? "词典未收录所选内容" : "词典未收录所选内容；AI 解释已关闭"}
               </div>
             )}
           </div>
@@ -310,23 +345,13 @@ export default function LookupPopover() {
               type="button"
               onClick={() => void handleAddToGlossary()}
               disabled={glossaryLoading}
-              className={
-                // Zero-hit: this is now the primary way forward (was a
-                // dead end before), so it gets the same prominent
-                // filled treatment as the 保存 button below rather than
-                // the normal subtle bordered style.
-                zeroHit
-                  ? "btn-terminal flex w-full items-center justify-center gap-2 rounded-none bg-act px-3 py-1.5 text-xs font-mono font-semibold text-ink hover:bg-act/85 disabled:cursor-not-allowed disabled:opacity-60"
-                  : "btn-tactile flex w-full items-center justify-center gap-2 border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
-              }
+              className="btn-tactile flex w-full items-center justify-center gap-2 border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {glossaryLoading ? (
                 <>
                   <span className="h-3 w-3 animate-spin rounded-full border border-current border-t-transparent" />
                   生成中…
                 </>
-              ) : zeroHit ? (
-                zeroHitManualOnly ? "手动添加到词典" : "AI 解释并加入词典"
               ) : (
                 "＋ 加入我的词典"
               )}

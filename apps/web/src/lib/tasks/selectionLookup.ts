@@ -1,39 +1,39 @@
-// Background 划词 (selection-lookup) card generation — v0.5 closeout.
-//
-// Extracted out of LookupPopover.tsx's own component effect: selecting
-// transcript text used to run detection (AI or dictionary) INSIDE that
-// popover's effect, guarded by a `cancelled` flag set on cleanup —
-// closing the popover (Escape/outside-click/new selection) before the
-// ~20s preview-tier AI detect resolved discarded the result outright
-// (the flag was checked BEFORE applyDetection). On a live meeting the
-// user routinely closes the popover to keep reading, silently losing
-// their lookup. This module runs the EXACT same pipeline logic, moved
-// verbatim, but detached from any component's lifecycle: once started
-// (from store.ts's setLookup — see that action's own doc comment) it
-// always runs to completion, applies its detections, and updates the
-// task registry/toast regardless of whether the triggering popover is
-// still open, still mounted, or long gone.
-//
-// LookupPopover.tsx stays display-only: it subscribes to
-// useSelectionLookup below, keyed by its own current request id,
-// instead of owning any of this itself.
+// Background 划词 (selection lookup) — detached from LookupPopover's
+// lifecycle so closing/reselecting does not discard an in-flight answer.
+// A lookup is deliberately dictionary-first: an explicit selection means
+// “what does this mean?”, not “is this jargon?”. Only a genuine local
+// dictionary miss asks AI for a contextual definition and routes the
+// selected surface through the configured translation provider.
 
 import type {
   DetectionSource,
   DetectResponse,
+  DefineResult,
   Settings,
 } from "@jargonslayer/core/types";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
-import { buildSelectionDetectSystemPrompt } from "@jargonslayer/core/llm/prompts";
 import { create } from "zustand";
 import { useApp, type LookupRequest } from "../store";
-import { detectApi, NoKeyError } from "../llm/client";
+import { defineApi, NoKeyError } from "../llm/client";
 import { resolveTaskCreds } from "../llm/taskConfig";
+import { langPairFromSettings, resolveTranslationProvider } from "../translate/providers";
 import { startTask, completeTask, failTask } from "./registry";
 
 export type LookupProgress =
   | { status: "loading" }
-  | { status: "done"; result: DetectResponse; dictFallback: boolean }
+  | {
+      status: "done";
+      /** Local dictionary entries — always scanned before any AI call. */
+      result: DetectResponse;
+      /** Contextual AI definition, present only after a real dictionary miss. */
+      definition?: DefineResult;
+      /** Translation from the user's configured translation engine. */
+      translation?: string;
+      /** AI definition could not run (usually no configured key). */
+      dictFallback: boolean;
+      definitionError?: string;
+      translationError?: string;
+    }
   | { status: "error"; error: string };
 
 interface SelectionLookupState {
@@ -87,9 +87,13 @@ function startProgress(id: string): void {
   });
 }
 
-function finishProgress(id: string, result: DetectResponse, dictFallback: boolean): void {
+function finishProgress(
+  id: string,
+  result: DetectResponse,
+  details: Omit<Extract<LookupProgress, { status: "done" }>, "status" | "result">,
+): void {
   useSelectionLookup.setState((s) => ({
-    byId: { ...s.byId, [id]: { status: "done", result, dictFallback } },
+    byId: { ...s.byId, [id]: { status: "done", result, ...details } },
   }));
   markCompleted(id);
 }
@@ -113,20 +117,25 @@ function isOpenLookup(id: string): boolean {
  *  result itself (see LookupPopover.tsx). `appliedThisMeeting` (H2)
  *  swaps in a distinct message when hits existed but were withheld
  *  from applyDetection because the owning meeting has since ended —
- *  see applyDetectionForLiveMeeting's own doc below for why. Zero hits
- *  always takes the ordinary 未检出 branch regardless of
- *  `appliedThisMeeting` — ignored there, since there was never
- *  anything to withhold. */
-function notifyIfClosed(id: string, res: DetectResponse, appliedThisMeeting: boolean): void {
+ *  see applyDetectionForLiveMeeting's own doc below for why. A genuine
+ *  dictionary miss instead reports whether its fallback explanation or
+ *  translation completed, independently of the meeting generation. */
+function notifyIfClosed(
+  id: string,
+  res: DetectResponse,
+  appliedThisMeeting: boolean,
+  details: Pick<Extract<LookupProgress, { status: "done" }>, "definition" | "translation" | "dictFallback">,
+): void {
   if (isOpenLookup(id)) return;
   const hasHits = res.expressions.length > 0 || res.terms.length > 0;
   if (!hasHits) {
-    // Field bug fix (iOS TestFlight "画词 dead end"): a zero-hit toast
-    // used to be a dead end with no recovery — the popover is already
-    // closed by the time this fires, so point at LookupPopover's own
-    // zero-hit footer action (手动添加到词典 / AI 解释并加入词典) on
-    // the next selection instead of just reporting nothing was found.
-    useApp.getState().showToast("所选内容未检出术语，可在弹窗中手动加入词典");
+    if (details.definition || details.translation) {
+      useApp.getState().showToast("划词解释完成");
+    } else if (details.dictFallback) {
+      useApp.getState().showToast("词典未收录，AI 解释暂不可用");
+    } else {
+      useApp.getState().showToast("词典未收录所选内容");
+    }
     return;
   }
   useApp.getState().showToast(
@@ -153,11 +162,20 @@ function applyDetectionForLiveMeeting(
   res: DetectResponse,
   source: DetectionSource,
   capturedGen: number,
+  details: Pick<Extract<LookupProgress, { status: "done" }>, "definition" | "translation" | "dictFallback">,
 ): void {
   const hasHits = res.expressions.length > 0 || res.terms.length > 0;
   const sameMeeting = useApp.getState().meetingGen === capturedGen;
   if (hasHits && sameMeeting) useApp.getState().applyDetection(res, source);
-  notifyIfClosed(id, res, sameMeeting);
+  notifyIfClosed(id, res, sameMeeting, details);
+}
+
+function hasDictionaryHit(res: DetectResponse): boolean {
+  return res.expressions.length > 0 || res.terms.length > 0;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "查询失败";
 }
 
 /** Runs the selection-lookup detect/dictionary pipeline for `req` to
@@ -173,7 +191,7 @@ function applyDetectionForLiveMeeting(
  *  bar re-submitting the same LookupRequest): a request id is stable
  *  per SELECTION (minted once — see LookupRequest.id's own doc), so
  *  "already tracked here" means "already started"; bail out rather than
- *  firing a second detectApi round trip / task. `completedIds` (L1)
+ *  firing a second contextual-definition/translation round trip / task. `completedIds` (L1)
  *  extends this guard past a byId prune — see that Set's own doc above.
  *
  *  meetingGen (H2) is captured HERE, before any await, so a meeting
@@ -184,62 +202,81 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
   if (useSelectionLookup.getState().byId[req.id] || completedIds.has(req.id)) return;
 
   const capturedGen = useApp.getState().meetingGen;
-  const source: DetectionSource = settings.aiDetect ? "llm" : "dictionary";
   startProgress(req.id);
+
+  // An explicit lookup is not ordinary transcript detection: keep all
+  // enabled-pack entries for one surface, including common words. This
+  // is synchronous, so known entries render without waiting on any AI.
+  const dictionary = scanDictionary(req.text, undefined, {
+    bypassCommonWordSuppression: true,
+    includeAllPackMatches: true,
+  });
+  if (hasDictionaryHit(dictionary)) {
+    const details = { dictFallback: false };
+    finishProgress(req.id, dictionary, details);
+    applyDetectionForLiveMeeting(req.id, dictionary, "dictionary", capturedGen, details);
+    return;
+  }
 
   if (!settings.aiDetect) {
     // Dictionary-only lookups are instant — no task registered (a task
     // that's born completed is noise; see the TaskKind doc in
     // ./registry).
-    const res = scanDictionary(req.text, undefined, { bypassCommonWordSuppression: true });
-    finishProgress(req.id, res, false);
-    applyDetectionForLiveMeeting(req.id, res, source, capturedGen);
+    const details = { dictFallback: false };
+    finishProgress(req.id, dictionary, details);
+    applyDetectionForLiveMeeting(req.id, dictionary, "dictionary", capturedGen, details);
     return;
   }
 
-  // AI path — this is the ~20s (preview-tier) call the tray needs
-  // visibility into.
+  // Real miss: define in the enclosing transcript context and translate
+  // the selected surface through the same configured provider used for
+  // segment translation. Neither failure hides the other useful result.
   startTask(req.id, "selection-lookup", "解释所选");
   try {
-    // Field bug fix (iOS TestFlight "画词 dead end"): a user selection
-    // is an explicit "explain this", not automatic scanning — pass the
-    // SELECTION_DETECT_SYSTEM_PROMPT override (prompts.ts) so a common-
-    // looking selected phrase never gets silently excluded the way
-    // DETECT_SYSTEM_PROMPT's rule 3/9 would for a passive scan. This is
-    // the ONLY call site that ever sets this override — see detectApi's
-    // own doc in client.ts.
-    const res = await detectApi(
-      {
-        context: req.contextText,
-        new_text: req.text,
-        model: resolveTaskCreds(settings, "detect").model,
-      },
-      settings,
-      buildSelectionDetectSystemPrompt(settings.explainLanguage),
-    );
-    // #48 s1 review item 12c (preserved from the original LookupPopover
-    // effect this pipeline was extracted from): `res` here is shown to
-    // the user as-is — a manually-selected phrase always gets explained
-    // (LookupPopover renders whatever lands in useSelectionLookup for
-    // its open request id), even if its learnKey is suppressed. Only
-    // applyDetection (below) re-filters against the learn-set before
-    // anything becomes a live card, so a suppressed term stays
-    // suppressed (no live card reappears) while the user can still
-    // deliberately look it up on demand. By design in v1 — "known" only
-    // means "stop pushing it at me automatically."
-    finishProgress(req.id, res, false);
+    const pair = langPairFromSettings(settings);
+    const provider = resolveTranslationProvider(() => settings);
+    // This is a no-op for cloud providers. On-device providers use an
+    // existing meeting-start preparation when available; a fresh lookup
+    // also makes the best permitted attempt to prepare its language pair.
+    provider.prepare(pair);
+
+    const [definitionResult, translationResult] = await Promise.allSettled([
+      defineApi(
+        {
+          phrase: req.text,
+          context: req.contextText,
+          lang: settings.explainLanguage,
+          model: resolveTaskCreds(settings, "detect").model,
+        },
+        settings,
+      ),
+      pair.source === pair.target
+        ? Promise.resolve(undefined)
+        : provider
+            .translate([{ id: req.id, text: req.text }], pair.target)
+            .then((translations) => translations.find((item) => item.id === req.id)?.text?.trim() || undefined),
+    ]);
+
+    const definition = definitionResult.status === "fulfilled" ? definitionResult.value : undefined;
+    const translation = translationResult.status === "fulfilled" ? translationResult.value : undefined;
+    const definitionError = definitionResult.status === "rejected" ? errorMessage(definitionResult.reason) : undefined;
+    const translationError = translationResult.status === "rejected" ? errorMessage(translationResult.reason) : undefined;
+    const details = {
+      dictFallback: definitionResult.status === "rejected" && definitionResult.reason instanceof NoKeyError,
+      ...(definition ? { definition } : {}),
+      ...(translation ? { translation } : {}),
+      ...(definitionError ? { definitionError } : {}),
+      ...(translationError ? { translationError } : {}),
+    };
+    finishProgress(req.id, dictionary, details);
     completeTask(req.id);
-    applyDetectionForLiveMeeting(req.id, res, source, capturedGen);
+    applyDetectionForLiveMeeting(req.id, dictionary, "dictionary", capturedGen, details);
   } catch (err) {
-    if (err instanceof NoKeyError) {
-      const dictRes = scanDictionary(req.text, undefined, { bypassCommonWordSuppression: true });
-      finishProgress(req.id, dictRes, true);
-      completeTask(req.id);
-      applyDetectionForLiveMeeting(req.id, dictRes, "dictionary", capturedGen);
-    } else {
-      const message = err instanceof Error ? err.message : "查询失败";
-      errorProgress(req.id, message);
-      failTask(req.id, message);
-    }
+    // This only covers a synchronous provider/setup defect. Individual
+    // definition/translation failures above still land as a readable,
+    // honest completed lookup rather than a dead end.
+    const message = errorMessage(err);
+    errorProgress(req.id, message);
+    failTask(req.id, message);
   }
 }

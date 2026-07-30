@@ -44,9 +44,9 @@ import { diagLog } from "../diag/log";
 //
 // v0.5 closeout (background 划词 card generation) — "selection-lookup"
 // joins the same list: lib/tasks/selectionLookup.ts's runSelectionLookup
-// is its only writer, web AND desktop (the ~20s AI detect on a
-// manually-selected transcript phrase is identical on either platform).
-// Registered only for the AI-detect path — the synchronous
+// is its only writer, web AND desktop (a contextual definition plus
+// configured-engine translation on a dictionary miss).
+// Registered only for the AI-fallback path — the synchronous
 // dictionary-only path never starts a task of this kind (see that
 // file's own doc).
 export type TaskKind =

@@ -201,3 +201,10 @@ export function getAllPacks(): DictPack[] {
   }));
   return [...PACKS, ...remotePacks];
 }
+
+/** Human-readable name for a dictionary-pack id. Shared by every UI
+ *  surface that exposes a dictionary source so remote-pack names stay
+ *  consistent with the cards list. */
+export function getPackName(packId: string): string {
+  return getAllPacks().find((pack) => pack.id === packId)?.name ?? packId;
+}

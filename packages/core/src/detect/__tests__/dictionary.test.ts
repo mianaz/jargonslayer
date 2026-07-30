@@ -705,6 +705,26 @@ describe("scanDictionary — remote pack wins a term-key collision (F1 fix, adju
     expect(hits[0].gloss_zh).toBe("第一个包的释义");
   });
 
+  it("an explicit lookup keeps every enabled pack's entry for the same surface", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePack("__test_lookup_first__", [
+        { term: "zzzlookupcollide", type: "other", gloss_en: "first", gloss_zh: "第一个包的释义" },
+      ]),
+      remotePack("__test_lookup_second__", [
+        { term: "zzzlookupcollide", type: "other", gloss_en: "second", gloss_zh: "第二个包的释义" },
+      ]),
+    ]);
+
+    const res = scanDictionary("we saw zzzlookupcollide today", null, {
+      includeAllPackMatches: true,
+      bypassCommonWordSuppression: true,
+    });
+    expect(res.terms.filter((term) => term.term === "zzzlookupcollide")).toEqual([
+      expect.objectContaining({ pack: "__test_lookup_first__", gloss_zh: "第一个包的释义" }),
+      expect.objectContaining({ pack: "__test_lookup_second__", gloss_zh: "第二个包的释义" }),
+    ]);
+  });
+
   it("no-collision regression: an existing builtin term still matches when remote packs are present", () => {
     mockGetLoadedRemotePacks.mockReturnValue([
       remotePack("__test_remote_unrelated__", [
