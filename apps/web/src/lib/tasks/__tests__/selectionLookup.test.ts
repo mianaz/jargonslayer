@@ -221,6 +221,17 @@ describe("runSelectionLookup — dictionary path", () => {
     expect(useTasks.getState().tasks[req.id]).toBeUndefined();
     expect(useSelectionLookup.getState().byId[req.id]?.status).toBe("done");
   });
+
+  it("bypasses common-word suppression for an explicit selection", async () => {
+    const req = makeReq({ id: "lookup-attention", text: "attention" });
+    await runSelectionLookup(req, makeSettings({ aiDetect: false }));
+
+    const result = useSelectionLookup.getState().byId[req.id];
+    expect(result).toMatchObject({ status: "done", dictFallback: false });
+    expect(result?.status === "done" && result.result.terms.some((term) => term.term === "attention")).toBe(
+      true,
+    );
+  });
 });
 
 // H2 (Sol review 2026-07-20, v0.5 closeout): select text in meeting A,

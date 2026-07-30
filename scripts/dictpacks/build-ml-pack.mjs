@@ -244,7 +244,11 @@ const CURATED_TERMS = [
   { term: "boosting", label: "boosting", type: "tech" },
 
   // ---- NLP / LLM ----
-  { term: "attention", label: "attention", type: "tech" },
+  { term: "attention", label: "attention", type: "tech",
+    // Grammatical false-positive guard: "your/my attention", "pay
+    // attention" are ordinary English, not the neural-network mechanism.
+    notPrecededBy: ["your", "my", "our", "their", "his", "her", "pay", "pays", "paying", "paid", "undivided"],
+  },
   {
     term: "self-attention",
     label: "self-attention-also-called-self-attention-layer",
@@ -295,6 +299,10 @@ const CURATED_TERMS = [
     type: "metric",
     glossEn:
       "Of all actually positive examples, the fraction a classification model correctly labeled positive.",
+    // Grammatical false-positive guard: "I recall...", "recall that..."
+    // are ordinary English verbs, not the classification metric.
+    notPrecededBy: ["i", "you", "we", "they"],
+    notFollowedBy: ["that"],
   },
   // no dedicated ML-classification-sense article ("Accuracy (machine
   // learning)" does not exist) — auto-resolution's only match is the general
@@ -337,7 +345,11 @@ const CURATED_TERMS = [
   // (same one build-stats-pack.mjs's "prior (probability)" entry
   // already uses via its source's own wikilink), so pin it directly
   // rather than rely on a guessed candidate.
-  { term: "prior", label: "prior-belief", type: "tech", zhTitle: "Prior probability" },
+  // notFollowedBy: "prior to" is a preposition in every field, not a
+  // Bayesian prior — grammatical guard, independent of pack selection.
+  { term: "prior", label: "prior-belief", type: "tech", zhTitle: "Prior probability",
+    notFollowedBy: ["to"],
+  },
   { term: "CDF", label: "cumulative-distribution-function-cdf", type: "acronym" },
   {
     term: "PDF (probability density function)",
@@ -613,6 +625,8 @@ async function main() {
         : truncate(found.definition, GLOSS_EN_MAX_LEN) || entry.term,
       gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
       pack: "ml-stats",
+      ...(entry.notFollowedBy ? { notFollowedBy: entry.notFollowedBy } : {}),
+      ...(entry.notPrecededBy ? { notPrecededBy: entry.notPrecededBy } : {}),
     });
     provenance.push({
       term: entry.term,

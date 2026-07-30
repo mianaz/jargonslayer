@@ -150,6 +150,10 @@ const CURATED_TERMS = [
     type: "metric",
     glossEn:
       "The arithmetic average of a set of values, or the expected value of a random variable.",
+    // Grammatical false-positive guard: "I mean...", "you mean...",
+    // "which mean..." are ordinary English verbs, not the statistical
+    // mean. Independent of pack/domain selection.
+    notPrecededBy: ["i", "you", "we", "they", "he", "she", "which", "that"],
   },
   { term: "median", label: "median", type: "metric" },
   { term: "mode (statistics)", label: "mode", type: "metric" },
@@ -457,6 +461,8 @@ async function main() {
         : truncate(gloss_en, GLOSS_EN_MAX_LEN) || entry.term,
       gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
       pack: "stats",
+      ...(entry.notFollowedBy ? { notFollowedBy: entry.notFollowedBy } : {}),
+      ...(entry.notPrecededBy ? { notPrecededBy: entry.notPrecededBy } : {}),
     });
 
     if (!curated && !zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });

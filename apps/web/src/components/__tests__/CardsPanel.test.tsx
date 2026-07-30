@@ -333,6 +333,20 @@ describe("CardsPanel — v0.5 Wave-1 Feature 7 inline card/term edit", () => {
   });
 
   describe("TermCardRow", () => {
+    it("shows a dictionary term's human-readable pack badge", async () => {
+      useApp.setState({
+        cards: [],
+        terms: [makeTerm({ pack: "business-terms", source: "dictionary" })],
+        status: "listening",
+      });
+      render();
+      await act(async () => {
+        root!.render(<CardsPanel />);
+      });
+
+      expect(container!.textContent).toContain("商务术语");
+    });
+
     it("shows no 编辑 affordance while listening (live meetings show none at all)", async () => {
       useApp.setState({ cards: [], terms: [makeTerm()], status: "listening" });
       render();

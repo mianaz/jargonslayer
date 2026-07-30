@@ -164,15 +164,19 @@ describe("commonWord terms stay opt-in under the default all-on state", () => {
     expect(res.terms.some((t) => t.term === "attention")).toBe(false);
   });
 
-  it("DOES fire a common word once the user has customized packs (explicit enabled list)", () => {
+  it("fires a common word once its domain is active", () => {
     // "mean" is checked in its own sentence on purpose: in "the sample
     // mean and variance", the longer entry "sample mean" subsumes it and
     // the shorter card is correctly dropped, which would mask what this
     // test is actually about (the commonWord opt-in gate).
-    expect(scanDictionary("The mean was higher than we expected.", ["stats"]).terms.some((t) => t.term === "mean")).toBe(
-      true,
-    );
-    const res = scanDictionary("The sample mean and variance were computed.", ["stats"]);
+    expect(
+      scanDictionary("The mean was higher than we expected.", ["stats"], {
+        activeDomains: new Set(["stats"]),
+      }).terms.some((t) => t.term === "mean"),
+    ).toBe(true);
+    const res = scanDictionary("The sample mean and variance were computed.", ["stats"], {
+      activeDomains: new Set(["stats"]),
+    });
     expect(res.terms.some((t) => t.term === "variance")).toBe(true);
     expect(res.terms.some((t) => t.term === "sample mean")).toBe(true);
   });

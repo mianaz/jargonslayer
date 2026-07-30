@@ -19,7 +19,7 @@ import { MODERN_USAGE_EXPRESSIONS, MODERN_USAGE_TERMS } from "./dictionary-data-
 import { FINANCE_CONSUMER_EXPRESSIONS, FINANCE_CONSUMER_TERMS } from "./dictionary-data-finance";
 import { DAILY_IDIOM_EXPRESSIONS } from "./dictionary-data-idiom";
 import { findEntryBySurface } from "../history/glossaryLookup";
-import { isPackEnabled, isPackExplicitlyEnabled } from "./packs";
+import { isPackEnabled, isPackExplicitlyEnabled, PACK_DOMAINS } from "./packs";
 import { getLoadedRemotePacks, getRemotePacksGeneration } from "./remotePacksRegistry";
 import { MAX_SOURCE_SENTENCE_CHARS, narrowSourceSentence } from "./sourceSentence";
 
@@ -43,6 +43,9 @@ interface ExpressionEntry {
   // See DictExpressionEntry.notFollowedBy — literal-context followers
   // reject a matched expression regardless of pack selection.
   notFollowedBy?: string[];
+  // See DictExpressionEntry.notPrecededBy — literal-context predecessors
+  // reject a matched expression regardless of pack selection.
+  notPrecededBy?: string[];
 }
 
 interface TermEntry {
@@ -57,6 +60,10 @@ interface TermEntry {
   // See DictTermEntry.commonWord — everyday-English headwords from the
   // compiled domain packs, kept opt-in in scanDictionary's term loop.
   commonWord?: boolean;
+  // See DictTermEntry.notFollowedBy / notPrecededBy — literal-context
+  // neighbors reject a matched term regardless of pack selection.
+  notFollowedBy?: string[];
+  notPrecededBy?: string[];
   // v0.6 multi-sense terms (T1) — see DictTermEntry.senses (dictionary-
   // data.ts) for the full doc; mirrors that field exactly, same as
   // every other field on this internal interface.
@@ -67,6 +74,29 @@ interface TermEntry {
 // which isPackEnabled() treats as permanently enabled regardless of
 // the user's enabledPacks selection.
 const CORE_PACK = "core";
+
+const EMPTY_ACTIVE_DOMAINS: ReadonlySet<DomainTag> = new Set();
+
+export interface ScanDictionaryOptions {
+  /** Domains activated by earlier segments of this meeting. */
+  activeDomains?: ReadonlySet<DomainTag>;
+  /** An explicit user lookup should always explain a matched common word. */
+  bypassCommonWordSuppression?: boolean;
+}
+
+function shouldIncludeCommonWord(
+  entry: { pack: string; commonWord?: boolean },
+  enabledPacks: string[] | null,
+  options: ScanDictionaryOptions,
+): boolean {
+  if (!entry.commonWord || options.bypassCommonWordSuppression) return true;
+
+  const domain = PACK_DOMAINS[entry.pack];
+  if (domain) return (options.activeDomains ?? EMPTY_ACTIVE_DOMAINS).has(domain);
+
+  // Cross-domain packs retain their existing explicit-enable behavior.
+  return isPackExplicitlyEnabled(entry.pack, enabledPacks);
+}
 
 // ---------------------------------------------------------------
 // Expressions (>=60). chinese_explanation: natural business
@@ -1200,32 +1230,11 @@ export function setGlossaryShadowLookup(
  *  term loop reads (minus personal-glossary shadowing, which doesn't
  *  apply here — this list feeds a BIAS hint, not the detector).
  *
- *  commonWord guard, PER-ENTRY semantics (v0.6 multi-sense-terms sprint,
- *  T6 fix round — NOT the earlier "v0.6 dictpacks" T1-T6 labels used
- *  elsewhere in this file for the unrelated remote-packs/variants sprint.
- *  This doc used to be misread as "null -> commonWord entries fire",
- *  which drove packs.ts's now-deleted materializeEnabledPacks into doing
- *  the OPPOSITE of its intent — see that file's git history; the FIX
- *  below closes a second, narrower misread the original fix left open —
- *  see isPackExplicitlyEnabled's own doc, packs.ts):
- *    enabledPacks === null (default, "everything on") -> commonWord
- *      entries are SUPPRESSED (the line below skips them).
- *    enabledPacks is an explicit list that NAMES this entry's own pack
- *      -> commonWord entries are treated like any other term and CAN
- *      fire.
- *    enabledPacks is an explicit list that does NOT name this entry's
- *      own pack -> still SUPPRESSED. In practice this third case is
- *      unreachable for a normal pack (isPackEnabled already filtered
- *      the entry out above) — it only matters for the "core" pack,
- *      which isPackEnabled always treats as enabled regardless of the
- *      list. Before this fix, a hypothetical commonWord entry tagged
- *      "core" fired under ANY explicit selection, even one that never
- *      named "core" at all; now it requires "core" itself to be named.
- *  Rationale: a bias hint toward an everyday English word ("mean",
- *  "precision"...) is at best inert and at worst nudges the decoder the
- *  wrong way on ordinary speech under the default all-on state. See
- *  scanDictionary's own term loop below for the matching (not just
- *  bias-hint) guard, same semantics.
+ *  The commonWord gate mirrors scanDictionary: a pack with a known
+ *  domain needs that domain active; cross-domain packs retain their
+ *  existing explicit-enable behavior. The meeting-start caller has no
+ *  active domains yet, so domain-pack common words never become bias
+ *  hints before the meeting evidence exists.
  *
  *  Expressions are NOT included — recognizer bias earns its keep on
  *  exact jargon/acronym recall; idiom phrasing is already well-modeled
@@ -1234,13 +1243,14 @@ export function setGlossaryShadowLookup(
  *  one consumer). */
 export function packTermsForBias(
   enabledPacks: string[] | null = registeredEnabledPacks,
+  activeDomains: ReadonlySet<DomainTag> = EMPTY_ACTIVE_DOMAINS,
 ): { term: string; pack: string }[] {
   const remotePacks = getLoadedRemotePacks();
   const remoteTerms: TermEntry[] = remotePacks.flatMap((p) => p.terms);
   const result: { term: string; pack: string }[] = [];
   for (const entry of [...TERM_DICTIONARY, ...remoteTerms]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
-    if (entry.commonWord && !isPackExplicitlyEnabled(entry.pack, enabledPacks)) continue;
+    if (!shouldIncludeCommonWord(entry, enabledPacks, { activeDomains })) continue;
     result.push({ term: entry.term, pack: entry.pack });
   }
   return result;
@@ -1286,38 +1296,122 @@ function buildExpressionRegex(phrase: string): RegExp {
   return new RegExp(source, "i");
 }
 
-/** Whether a matched expression is immediately followed (other than
+/** Whether a matched surface is immediately followed (other than
  *  whitespace) by a listed literal-context word. `notFollowedBy` is
  *  dictionary data, but remote-pack entries can also supply it, so escape
  *  every word before constructing this deliberately small check. */
 function hasLiteralContextFollower(
-  sentence: string,
+  text: string,
   matchEnd: number,
   notFollowedBy: readonly string[] | undefined,
 ): boolean {
   if (!notFollowedBy?.length) return false;
-  const following = sentence.slice(matchEnd);
+  const following = text.slice(matchEnd);
   return notFollowedBy.some((word) => new RegExp(`^\\s*${escapeRe(word)}\\b`, "i").test(following));
 }
 
+/** Whether a matched surface is immediately preceded (other than
+ *  whitespace) by a listed literal-context word — same word-list
+ *  semantics as hasLiteralContextFollower, mirrored to the left. */
+function hasLiteralContextPredecessor(
+  text: string,
+  matchStart: number,
+  notPrecededBy: readonly string[] | undefined,
+): boolean {
+  if (!notPrecededBy?.length) return false;
+  const preceding = text.slice(0, matchStart);
+  return notPrecededBy.some((word) => new RegExp(`\\b${escapeRe(word)}\\s*$`, "i").test(preceding));
+}
+
+function isRejectedByLiteralContext(
+  text: string,
+  matchStart: number,
+  matchEnd: number,
+  notFollowedBy: readonly string[] | undefined,
+  notPrecededBy: readonly string[] | undefined,
+): boolean {
+  return (
+    hasLiteralContextFollower(text, matchEnd, notFollowedBy) ||
+    hasLiteralContextPredecessor(text, matchStart, notPrecededBy)
+  );
+}
+
 /** Find the first expression hit that is not rejected by its literal
- *  follower list. A global copy is only needed for guarded entries, but
+ *  neighbor lists. A global copy is only needed for guarded entries, but
  *  lets a later genuine usage still match after an earlier literal one in
  *  the same sentence. */
 function findExpressionMatch(
   re: RegExp,
   sentence: string,
   notFollowedBy: readonly string[] | undefined,
+  notPrecededBy: readonly string[] | undefined,
 ): RegExpExecArray | null {
   const first = re.exec(sentence);
-  if (!first || !hasLiteralContextFollower(sentence, first.index + first[0].length, notFollowedBy)) {
+  if (
+    !first ||
+    !isRejectedByLiteralContext(
+      sentence,
+      first.index,
+      first.index + first[0].length,
+      notFollowedBy,
+      notPrecededBy,
+    )
+  ) {
     return first;
   }
 
   const globalRe = new RegExp(re.source, `${re.flags}g`);
   let match: RegExpExecArray | null;
   while ((match = globalRe.exec(sentence)) !== null) {
-    if (!hasLiteralContextFollower(sentence, match.index + match[0].length, notFollowedBy)) {
+    if (
+      !isRejectedByLiteralContext(
+        sentence,
+        match.index,
+        match.index + match[0].length,
+        notFollowedBy,
+        notPrecededBy,
+      )
+    ) {
+      return match;
+    }
+  }
+  return null;
+}
+
+/** Find the first term hit that is not rejected by its literal neighbor
+ *  lists — same posture as findExpressionMatch, for the term loop. */
+function findTermMatch(
+  re: RegExp,
+  text: string,
+  notFollowedBy: readonly string[] | undefined,
+  notPrecededBy: readonly string[] | undefined,
+): RegExpExecArray | null {
+  const first = re.exec(text);
+  if (
+    !first ||
+    !isRejectedByLiteralContext(
+      text,
+      first.index,
+      first.index + first[0].length,
+      notFollowedBy,
+      notPrecededBy,
+    )
+  ) {
+    return first;
+  }
+
+  const globalRe = new RegExp(re.source, `${re.flags}g`);
+  let match: RegExpExecArray | null;
+  while ((match = globalRe.exec(text)) !== null) {
+    if (
+      !isRejectedByLiteralContext(
+        text,
+        match.index,
+        match.index + match[0].length,
+        notFollowedBy,
+        notPrecededBy,
+      )
+    ) {
       return match;
     }
   }
@@ -1543,6 +1637,7 @@ function selectSense(
 export function scanDictionary(
   text: string,
   enabledPacks: string[] | null = registeredEnabledPacks,
+  options: ScanDictionaryOptions = {},
 ): DetectResponse {
   const sentences = splitSentences(text);
   if (sentences.length === 0) return { expressions: [], terms: [] };
@@ -1566,7 +1661,7 @@ export function scanDictionary(
 
   for (const entry of [...EXPRESSIONS, ...remoteExpressions]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
-    if (entry.commonWord && !isPackExplicitlyEnabled(entry.pack, enabledPacks)) continue;
+    if (!shouldIncludeCommonWord(entry, enabledPacks, options)) continue;
     // A personal-glossary entry on this exact surface owns the word —
     // the custom scan (store.addFinal) already emits it as source
     // "custom"; skip the dictionary's own version entirely. Enabled-
@@ -1578,10 +1673,11 @@ export function scanDictionary(
     for (const sentence of sentences) {
       if (matched) break;
       for (const re of regexes) {
-        const m = findExpressionMatch(re, sentence, entry.notFollowedBy);
+        const m = findExpressionMatch(re, sentence, entry.notFollowedBy, entry.notPrecededBy);
         if (m) {
           expressions.push({
             expression: entry.expression,
+            pack: entry.pack,
             category: entry.category,
             meaning: entry.meaning,
             chinese_explanation: entry.chinese_explanation,
@@ -1620,20 +1716,10 @@ export function scanDictionary(
   for (const entry of [...remoteTerms, ...TERM_DICTIONARY]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
     if (matchedTermKeys.has(normalizeDictKey(entry.term))) continue;
-    // commonWord guard, PER-ENTRY semantics (v0.6 multi-sense-terms
-    // sprint, T6 fix round — see packTermsForBias's own doc above for
-    // the full explanation/history, including the exact case this fix
-    // closes):
-    //   enabledPacks === null (default, "everything on") -> SUPPRESSED.
-    //   enabledPacks explicit AND names this entry's own pack -> FIRES.
-    //   enabledPacks explicit but does NOT name this entry's own pack ->
-    //     SUPPRESSED (previously fired for the "core" pack specifically,
-    //     since isPackEnabled above always lets "core" through).
-    // A few compiled domain-pack terms are also everyday English words
-    // ("mean", "precision", "epoch"...) that would otherwise fire on
-    // casual speech ("I mean...", "pay attention") under the default
-    // all-on state. Non-common terms are unaffected.
-    if (entry.commonWord && !isPackExplicitlyEnabled(entry.pack, enabledPacks)) continue;
+    // Everyday headwords in a domain pack need evidence that the meeting
+    // is actually in that domain. Cross-domain packs keep the old
+    // explicit-enable behavior; non-common terms are unaffected.
+    if (!shouldIncludeCommonWord(entry, enabledPacks, options)) continue;
     // Same personal-glossary shadowing as the expressions loop above
     // (enabled-pack-filtered — Finding 2 fix).
     if (shadowLookup(entry.term)) continue;
@@ -1653,9 +1739,17 @@ export function scanDictionary(
     // g/y flag (see its own doc comment), so .exec() is safe here
     // without mutating any shared lastIndex state. Same "first candidate
     // to hit wins" precedent the emitted headword already follows.
+    // Literal-context neighbor lists (notFollowedBy / notPrecededBy)
+    // reject grammatical usages ("prior to", "I mean", "your attention")
+    // the same way the expression loop does above.
     let match: RegExpExecArray | null = null;
     for (const candidate of candidates) {
-      match = getCachedTermRegex(candidate).exec(text);
+      match = findTermMatch(
+        getCachedTermRegex(candidate),
+        text,
+        entry.notFollowedBy,
+        entry.notPrecededBy,
+      );
       if (match) break;
     }
     if (!match) continue;
@@ -1678,6 +1772,7 @@ export function scanDictionary(
       termHits.push({
         term: {
           term: entry.term,
+          pack: entry.pack,
           type: chosen.type ?? entry.type,
           gloss_en: chosen.gloss_en,
           gloss_zh: chosen.gloss_zh,
@@ -1692,6 +1787,7 @@ export function scanDictionary(
       termHits.push({
         term: {
           term: entry.term,
+          pack: entry.pack,
           type: entry.type,
           gloss_en: entry.gloss_en,
           gloss_zh: entry.gloss_zh,

@@ -191,7 +191,7 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
     // Dictionary-only lookups are instant — no task registered (a task
     // that's born completed is noise; see the TaskKind doc in
     // ./registry).
-    const res = scanDictionary(req.text);
+    const res = scanDictionary(req.text, undefined, { bypassCommonWordSuppression: true });
     finishProgress(req.id, res, false);
     applyDetectionForLiveMeeting(req.id, res, source, capturedGen);
     return;
@@ -232,7 +232,7 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
     applyDetectionForLiveMeeting(req.id, res, source, capturedGen);
   } catch (err) {
     if (err instanceof NoKeyError) {
-      const dictRes = scanDictionary(req.text);
+      const dictRes = scanDictionary(req.text, undefined, { bypassCommonWordSuppression: true });
       finishProgress(req.id, dictRes, true);
       completeTask(req.id);
       applyDetectionForLiveMeeting(req.id, dictRes, "dictionary", capturedGen);
