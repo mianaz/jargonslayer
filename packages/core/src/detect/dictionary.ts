@@ -43,6 +43,9 @@ interface ExpressionEntry {
   // See DictExpressionEntry.notFollowedBy — literal-context followers
   // reject a matched expression regardless of pack selection.
   notFollowedBy?: string[];
+  // See DictExpressionEntry.notPrecededBy — literal-context predecessors
+  // reject a matched expression regardless of pack selection.
+  notPrecededBy?: string[];
 }
 
 interface TermEntry {
@@ -57,6 +60,10 @@ interface TermEntry {
   // See DictTermEntry.commonWord — everyday-English headwords from the
   // compiled domain packs, kept opt-in in scanDictionary's term loop.
   commonWord?: boolean;
+  // See DictTermEntry.notFollowedBy / notPrecededBy — literal-context
+  // neighbors reject a matched term regardless of pack selection.
+  notFollowedBy?: string[];
+  notPrecededBy?: string[];
   // v0.6 multi-sense terms (T1) — see DictTermEntry.senses (dictionary-
   // data.ts) for the full doc; mirrors that field exactly, same as
   // every other field on this internal interface.
@@ -1286,38 +1293,122 @@ function buildExpressionRegex(phrase: string): RegExp {
   return new RegExp(source, "i");
 }
 
-/** Whether a matched expression is immediately followed (other than
+/** Whether a matched surface is immediately followed (other than
  *  whitespace) by a listed literal-context word. `notFollowedBy` is
  *  dictionary data, but remote-pack entries can also supply it, so escape
  *  every word before constructing this deliberately small check. */
 function hasLiteralContextFollower(
-  sentence: string,
+  text: string,
   matchEnd: number,
   notFollowedBy: readonly string[] | undefined,
 ): boolean {
   if (!notFollowedBy?.length) return false;
-  const following = sentence.slice(matchEnd);
+  const following = text.slice(matchEnd);
   return notFollowedBy.some((word) => new RegExp(`^\\s*${escapeRe(word)}\\b`, "i").test(following));
 }
 
+/** Whether a matched surface is immediately preceded (other than
+ *  whitespace) by a listed literal-context word — same word-list
+ *  semantics as hasLiteralContextFollower, mirrored to the left. */
+function hasLiteralContextPredecessor(
+  text: string,
+  matchStart: number,
+  notPrecededBy: readonly string[] | undefined,
+): boolean {
+  if (!notPrecededBy?.length) return false;
+  const preceding = text.slice(0, matchStart);
+  return notPrecededBy.some((word) => new RegExp(`\\b${escapeRe(word)}\\s*$`, "i").test(preceding));
+}
+
+function isRejectedByLiteralContext(
+  text: string,
+  matchStart: number,
+  matchEnd: number,
+  notFollowedBy: readonly string[] | undefined,
+  notPrecededBy: readonly string[] | undefined,
+): boolean {
+  return (
+    hasLiteralContextFollower(text, matchEnd, notFollowedBy) ||
+    hasLiteralContextPredecessor(text, matchStart, notPrecededBy)
+  );
+}
+
 /** Find the first expression hit that is not rejected by its literal
- *  follower list. A global copy is only needed for guarded entries, but
+ *  neighbor lists. A global copy is only needed for guarded entries, but
  *  lets a later genuine usage still match after an earlier literal one in
  *  the same sentence. */
 function findExpressionMatch(
   re: RegExp,
   sentence: string,
   notFollowedBy: readonly string[] | undefined,
+  notPrecededBy: readonly string[] | undefined,
 ): RegExpExecArray | null {
   const first = re.exec(sentence);
-  if (!first || !hasLiteralContextFollower(sentence, first.index + first[0].length, notFollowedBy)) {
+  if (
+    !first ||
+    !isRejectedByLiteralContext(
+      sentence,
+      first.index,
+      first.index + first[0].length,
+      notFollowedBy,
+      notPrecededBy,
+    )
+  ) {
     return first;
   }
 
   const globalRe = new RegExp(re.source, `${re.flags}g`);
   let match: RegExpExecArray | null;
   while ((match = globalRe.exec(sentence)) !== null) {
-    if (!hasLiteralContextFollower(sentence, match.index + match[0].length, notFollowedBy)) {
+    if (
+      !isRejectedByLiteralContext(
+        sentence,
+        match.index,
+        match.index + match[0].length,
+        notFollowedBy,
+        notPrecededBy,
+      )
+    ) {
+      return match;
+    }
+  }
+  return null;
+}
+
+/** Find the first term hit that is not rejected by its literal neighbor
+ *  lists — same posture as findExpressionMatch, for the term loop. */
+function findTermMatch(
+  re: RegExp,
+  text: string,
+  notFollowedBy: readonly string[] | undefined,
+  notPrecededBy: readonly string[] | undefined,
+): RegExpExecArray | null {
+  const first = re.exec(text);
+  if (
+    !first ||
+    !isRejectedByLiteralContext(
+      text,
+      first.index,
+      first.index + first[0].length,
+      notFollowedBy,
+      notPrecededBy,
+    )
+  ) {
+    return first;
+  }
+
+  const globalRe = new RegExp(re.source, `${re.flags}g`);
+  let match: RegExpExecArray | null;
+  while ((match = globalRe.exec(text)) !== null) {
+    if (
+      !isRejectedByLiteralContext(
+        text,
+        match.index,
+        match.index + match[0].length,
+        notFollowedBy,
+        notPrecededBy,
+      )
+    ) {
       return match;
     }
   }
@@ -1578,7 +1669,7 @@ export function scanDictionary(
     for (const sentence of sentences) {
       if (matched) break;
       for (const re of regexes) {
-        const m = findExpressionMatch(re, sentence, entry.notFollowedBy);
+        const m = findExpressionMatch(re, sentence, entry.notFollowedBy, entry.notPrecededBy);
         if (m) {
           expressions.push({
             expression: entry.expression,
@@ -1653,9 +1744,17 @@ export function scanDictionary(
     // g/y flag (see its own doc comment), so .exec() is safe here
     // without mutating any shared lastIndex state. Same "first candidate
     // to hit wins" precedent the emitted headword already follows.
+    // Literal-context neighbor lists (notFollowedBy / notPrecededBy)
+    // reject grammatical usages ("prior to", "I mean", "your attention")
+    // the same way the expression loop does above.
     let match: RegExpExecArray | null = null;
     for (const candidate of candidates) {
-      match = getCachedTermRegex(candidate).exec(text);
+      match = findTermMatch(
+        getCachedTermRegex(candidate),
+        text,
+        entry.notFollowedBy,
+        entry.notPrecededBy,
+      );
       if (match) break;
     }
     if (!match) continue;

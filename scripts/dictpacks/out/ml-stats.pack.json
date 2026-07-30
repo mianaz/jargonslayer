@@ -402,7 +402,8 @@
       "type": "tech",
       "gloss_en": "A mechanism used in a neural network that indicates the importance of a particular word or part of a word.",
       "gloss_zh": "注意力机制是人工神经网络中一种模仿认知注意力的技术",
-      "pack": "ml-stats"
+      "pack": "ml-stats",
+      "notPrecededBy": ["your", "my", "our", "their", "his", "her", "pay", "pays", "paying", "paid", "undivided"]
     },
     {
       "term": "self-attention",
@@ -521,7 +522,9 @@
       "type": "metric",
       "gloss_en": "Of all actually positive examples, the fraction a classification model correctly labeled positive.",
       "gloss_zh": "召回率：真实正例中被模型正确预测出的比例。",
-      "pack": "ml-stats"
+      "pack": "ml-stats",
+      "notPrecededBy": ["i", "you", "we", "they"],
+      "notFollowedBy": ["that"]
     },
     {
       "term": "accuracy",
@@ -626,7 +629,8 @@
       "type": "tech",
       "gloss_en": "What you believe about the data before you begin training on it.",
       "gloss_zh": "在贝叶斯统计中，某一不确定量p的先验概率分布是在考虑“观测数据”前，能表达p不确定性的概率分布",
-      "pack": "ml-stats"
+      "pack": "ml-stats",
+      "notFollowedBy": ["to"]
     },
     {
       "term": "CDF",

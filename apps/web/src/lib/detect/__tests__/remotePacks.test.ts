@@ -848,6 +848,63 @@ describe("remotePacks — expression literal-context guards", () => {
     expect(pack.expressions[1].notFollowedBy).toBeUndefined();
     expect(pack.expressions[2].notFollowedBy).toBeUndefined();
   });
+
+  it("preserves notPrecededBy on expressions and drops malformed input", async () => {
+    mockFetchOnce({
+      id: "literal-precede-pack",
+      name: "Literal Precede Pack",
+      version: 1,
+      expressions: [
+        { expression: "bandwidth", chinese_explanation: "精力", notPrecededBy: ["network", "channel"] },
+        { expression: "granular", chinese_explanation: "细化", notPrecededBy: ["sand", ""] },
+        { expression: "unpack", chinese_explanation: "拆开讲", notPrecededBy: "box" },
+      ],
+    });
+
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/literal-precede.json");
+
+    expect(pack.expressions[0].notPrecededBy).toEqual(["network", "channel"]);
+    expect(pack.expressions[1].notPrecededBy).toBeUndefined();
+    expect(pack.expressions[2].notPrecededBy).toBeUndefined();
+  });
+
+  it("preserves notFollowedBy/notPrecededBy on terms and drops malformed input", async () => {
+    mockFetchOnce({
+      id: "term-literal-context-pack",
+      name: "Term Literal Context Pack",
+      version: 1,
+      terms: [
+        {
+          term: "prior",
+          gloss_zh: "先验",
+          notFollowedBy: ["to"],
+          notPrecededBy: ["weak"],
+        },
+        {
+          term: "mean",
+          gloss_zh: "均值",
+          notPrecededBy: ["i", ""],
+        },
+        {
+          term: "recall",
+          gloss_zh: "召回",
+          notFollowedBy: "that",
+        },
+      ],
+    });
+
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource(
+      "https://example.com/term-literal-context.json",
+    );
+
+    expect(pack.terms[0].notFollowedBy).toEqual(["to"]);
+    expect(pack.terms[0].notPrecededBy).toEqual(["weak"]);
+    expect(pack.terms[1].notPrecededBy).toBeUndefined();
+    expect(pack.terms[1].notFollowedBy).toBeUndefined();
+    expect(pack.terms[2].notFollowedBy).toBeUndefined();
+  });
 });
 
 describe("remotePacks — N5: bidi/zero-width control chars stripped from name/description", () => {

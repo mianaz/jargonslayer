@@ -199,6 +199,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
     gloss_zh: "平均数：一组数值的算术平均，或随机变量的期望值。",
     pack: "stats",
     commonWord: true,
+    notPrecededBy: ["i","you","we","they","he","she","which","that"],
   },
   {
     term: "median",
@@ -748,6 +749,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
     gloss_zh: "注意力机制是人工神经网络中一种模仿认知注意力的技术",
     pack: "ml-stats",
     commonWord: true,
+    notPrecededBy: ["your","my","our","their","his","her","pay","pays","paying","paid","undivided"],
   },
   {
     term: "self-attention",
@@ -871,6 +873,8 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
     gloss_zh: "召回率：真实正例中被模型正确预测出的比例。",
     pack: "ml-stats",
     commonWord: true,
+    notFollowedBy: ["that"],
+    notPrecededBy: ["i","you","we","they"],
   },
   {
     term: "accuracy",
@@ -978,6 +982,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
     gloss_zh: "在贝叶斯统计中，某一不确定量p的先验概率分布是在考虑“观测数据”前，能表达p不确定性的概率分布",
     pack: "ml-stats",
     commonWord: true,
+    notFollowedBy: ["to"],
   },
   {
     term: "CDF",

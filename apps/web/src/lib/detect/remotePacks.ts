@@ -138,6 +138,9 @@ export interface RemotePackExpression {
   // Mirrors DictExpressionEntry.notFollowedBy: literal-context follower
   // words reject an otherwise matching expression regardless of pack state.
   notFollowedBy?: string[];
+  // Mirrors DictExpressionEntry.notPrecededBy: literal-context predecessor
+  // words reject an otherwise matching expression regardless of pack state.
+  notPrecededBy?: string[];
   pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateExpressions)
 }
 
@@ -172,6 +175,11 @@ export interface RemotePackTerm {
   // stays opt-in (only matches once the user has actively customized
   // their pack selection), same as the compiled built-in domain packs.
   commonWord?: boolean;
+  // Mirrors DictTermEntry.notFollowedBy / notPrecededBy: literal-context
+  // neighbor words reject an otherwise matching term regardless of pack
+  // state (e.g. "prior to", "I mean", "your attention").
+  notFollowedBy?: string[];
+  notPrecededBy?: string[];
   // v0.6 multi-sense-terms sprint (see RemotePackSense's own doc just
   // above): <=6 items, each validated like a term itself (clampSenses).
   senses?: RemotePackSense[];
@@ -452,10 +460,11 @@ function clampExpressionVariants(raw: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
-/** Optional expression literal-context list. Unlike variants, every
- *  supplied item must be a usable word; otherwise discard the whole
- *  untrusted field rather than silently changing its intended guard. */
-function validateNotFollowedBy(raw: unknown): string[] | undefined {
+/** Optional literal-context word list (notFollowedBy / notPrecededBy).
+ *  Unlike variants, every supplied item must be a usable word; otherwise
+ *  discard the whole untrusted field rather than silently changing its
+ *  intended guard. */
+function validateLiteralContextWords(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw) || raw.length === 0 || !raw.every(isNonEmptyString)) return undefined;
   return raw.map((word) => word.trim());
 }
@@ -506,7 +515,8 @@ function validateExpressions(
         ? Math.min(1, Math.max(0, e.confidence))
         : 0.85;
     const variants = clampExpressionVariants(e.variants);
-    const notFollowedBy = validateNotFollowedBy(e.notFollowedBy);
+    const notFollowedBy = validateLiteralContextWords(e.notFollowedBy);
+    const notPrecededBy = validateLiteralContextWords(e.notPrecededBy);
     out.push({
       expression: e.expression.trim(),
       variants,
@@ -520,6 +530,7 @@ function validateExpressions(
       confidence,
       commonWord: typeof e.commonWord === "boolean" ? e.commonWord : undefined,
       notFollowedBy,
+      notPrecededBy,
       // Always the manifest's own id — an entry's own `pack` field is
       // untrusted input and is ignored, not merely defaulted, so a
       // malicious/buggy remote entry can't claim `pack: "core"` (or
@@ -555,6 +566,8 @@ function validateTerms(raw: unknown, packId: string): DictTermEntry[] {
       gloss_en: isNonEmptyString(t.gloss_en) ? t.gloss_en : "",
       gloss_zh: clampZh(t.gloss_zh.trim()),
       commonWord: typeof t.commonWord === "boolean" ? t.commonWord : undefined,
+      notFollowedBy: validateLiteralContextWords(t.notFollowedBy),
+      notPrecededBy: validateLiteralContextWords(t.notPrecededBy),
       // v0.6 multi-sense-terms sprint — see clampSenses' own doc above.
       // NOTE: this does NOT enforce T1's core-package invariant
       // (senses[0].gloss_en/gloss_zh === the entry's own top-level

@@ -306,6 +306,87 @@ describe("scanDictionary — commonWord expression suppression", () => {
   });
 });
 
+describe("scanDictionary — grammatical literal-context guards on domain terms", () => {
+  // These four terms are also everyday English. commonWord already
+  // suppresses them under default (null) pack selection — tests below
+  // therefore run with the owning pack EXPLICITLY enabled so a missing
+  // notFollowedBy/notPrecededBy guard cannot hide behind that gate.
+
+  it("rejects 'prior to' as a preposition but still fires on a Bayesian prior", () => {
+    const packs = ["ml-stats"];
+    const grammatical = scanDictionary(
+      "the QC experiments that we did prior to submitting our samples",
+      packs,
+    );
+    const jargon = scanDictionary("we set a weak prior on the parameter", packs);
+
+    expect(grammatical.terms.some((t) => t.term === "prior")).toBe(false);
+    expect(jargon.terms.some((t) => t.term === "prior")).toBe(true);
+
+    // Same under defaults: commonWord already suppresses, guard must not
+    // regress that either.
+    expect(
+      scanDictionary(
+        "the QC experiments that we did prior to submitting our samples",
+        null,
+      ).terms.some((t) => t.term === "prior"),
+    ).toBe(false);
+  });
+
+  it("rejects 'I mean' as a verb but still fires on the statistical mean", () => {
+    const packs = ["stats"];
+    const grammatical = scanDictionary(
+      "I mean, because then I was just wondering",
+      packs,
+    );
+    const jargon = scanDictionary("the mean of the distribution", packs);
+
+    expect(grammatical.terms.some((t) => t.term === "mean")).toBe(false);
+    expect(jargon.terms.some((t) => t.term === "mean")).toBe(true);
+    expect(
+      scanDictionary("I mean, because then I was just wondering", null).terms.some(
+        (t) => t.term === "mean",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects 'your attention' but still fires on the attention mechanism", () => {
+    const packs = ["ml-stats"];
+    const grammatical = scanDictionary("thank you for your attention", packs);
+    const jargon = scanDictionary(
+      "the attention mechanism in the transformer",
+      packs,
+    );
+
+    expect(grammatical.terms.some((t) => t.term === "attention")).toBe(false);
+    expect(jargon.terms.some((t) => t.term === "attention")).toBe(true);
+    expect(
+      scanDictionary("thank you for your attention", null).terms.some(
+        (t) => t.term === "attention",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects verb uses of 'recall' but still fires on the classification metric", () => {
+    const packs = ["ml-stats"];
+    const iRecall = scanDictionary("I recall that we discussed this", packs);
+    const recallThat = scanDictionary("recall that the model was trained", packs);
+    const jargon = scanDictionary(
+      "higher the precision and higher the recall, better is the model",
+      packs,
+    );
+
+    expect(iRecall.terms.some((t) => t.term === "recall")).toBe(false);
+    expect(recallThat.terms.some((t) => t.term === "recall")).toBe(false);
+    expect(jargon.terms.some((t) => t.term === "recall")).toBe(true);
+    expect(
+      scanDictionary("I recall that we discussed this", null).terms.some(
+        (t) => t.term === "recall",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("scanDictionary — back-of-the-envelope ASR variants", () => {
   it("recognizes the reported 'back on the envelope calculation' transcript as the canonical idiom", () => {
     const res = scanDictionary(

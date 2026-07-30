@@ -163,8 +163,15 @@ async function main() {
   const allTerms = SOURCE_PACKS.flatMap((packId) => perPackTerms.get(packId));
 
   const entriesSrc = allTerms
-    .map(
-      (t) =>
+    .map((t) => {
+      const literalGuards =
+        (Array.isArray(t.notFollowedBy) && t.notFollowedBy.length > 0
+          ? `    notFollowedBy: ${jsString(t.notFollowedBy)},\n`
+          : ``) +
+        (Array.isArray(t.notPrecededBy) && t.notPrecededBy.length > 0
+          ? `    notPrecededBy: ${jsString(t.notPrecededBy)},\n`
+          : ``);
+      return (
         `  {\n` +
         `    term: ${jsString(t.term)},\n` +
         `    type: ${jsString(t.type)},\n` +
@@ -172,8 +179,10 @@ async function main() {
         `    gloss_zh: ${jsString(t.gloss_zh)},\n` +
         `    pack: ${jsString(t.pack)},\n` +
         (COMMON_WORDS.has(t.term) ? `    commonWord: true,\n` : ``) +
-        `  },`,
-    )
+        literalGuards +
+        `  },`
+      );
+    })
     .join("\n");
 
   const fileSrc =

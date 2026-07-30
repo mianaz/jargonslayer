@@ -26,6 +26,9 @@ export interface DictExpressionEntry {
   // words. This is independent of pack selection: e.g. a finance user
   // can still be describing "in the red graph" rather than a loss.
   notFollowedBy?: string[];
+  // Same word-list semantics as notFollowedBy, but for the token
+  // immediately BEFORE the match (whitespace allowed, case-insensitive).
+  notPrecededBy?: string[];
 }
 
 // v0.6 T1 — multi-sense terms: a surface like "EMT" is genuinely
@@ -109,6 +112,16 @@ export interface DictTermEntry {
   // customized their pack selection to include this term's own pack,
   // never under the default all-on state. Set by gen-compiled-packs.mjs.
   commonWord?: boolean;
+  // Reject this term when its matched surface is immediately followed
+  // (apart from whitespace) by one of these literal-context words —
+  // same semantics as DictExpressionEntry.notFollowedBy. Independent of
+  // pack selection: "prior to" is a preposition in every field, not a
+  // Bayesian prior. Set by gen-compiled-packs.mjs from pack JSON.
+  notFollowedBy?: string[];
+  // Same word-list semantics as notFollowedBy, but for the token
+  // immediately BEFORE the match (whitespace allowed, case-insensitive).
+  // e.g. "I mean" / "your attention" / "I recall" are ordinary English.
+  notPrecededBy?: string[];
   // v0.6 T1 (multi-sense terms, additive/zero-migration): ranked
   // candidate glosses for a genuinely ambiguous surface — see DictSense
   // above. INVARIANT (enforced by a test, dictionary.test.ts): when
