@@ -17,17 +17,18 @@
 // per the doc's own "(or a sibling)" latitude, rather than growing
 // that already-central module further.
 //
-// D5 (shape): exactly 7 fields — CUT from the original §2 sketch
+// D5 (shape): the original runtime contract stayed deliberately small —
 // (processingRegion, translationPairs, approxCostPerHour, streaming,
-// partialRevisions, timestamps, languages, diarization: no lane-B/C/D
-// consumer for any of them). Also REJECTED: a `requires` array
-// subsuming sidecarOnly/byokOnly/floor-locks into one list — mixing a
-// build-time const with a runtime probe result in one list invites
-// dropping the snapshot (Opus C2/Sol F6). `osFloor` is a purely
-// DECLARATIVE tag here — engineOptionGate (engineOptions.ts) keeps
-// resolving the actual floor against the live audiocapCaps/
-// osspeechCaps probes exactly as it did before this table existed;
-// this table never drives that gate's control flow.
+// partialRevisions, timestamps, languages, diarization remain cut: no
+// consumer needs them). This picker regroup adds only two presentation
+// facts: `family`, and `keyField` for a standalone BYOK provider. Also
+// REJECTED: a `requires` array subsuming sidecarOnly/byokOnly/floor-locks
+// into one list — mixing a build-time const with a runtime probe result
+// in one list invites dropping the snapshot (Opus C2/Sol F6). `osFloor`
+// is a purely DECLARATIVE tag here — engineOptionGate (engineOptions.ts)
+// keeps resolving the actual floor against the live audiocapCaps/
+// osspeechCaps probes exactly as it did before this table existed; this
+// table never drives that gate's control flow.
 //
 // D7 (two-layer truth): this table holds STATIC DEFAULTS, not final
 // truth for a given session — three axes need a runtime overlay the
@@ -43,6 +44,7 @@
 // cloud-transient in OUR integration once Lane D adds it).
 
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
+import type { SttProviderKeyField } from "@/lib/settings/keysCatalog";
 
 // Live capture engines only — excludes "demo" (scripted preview, not a
 // peer engine) and the two file-ingest paths "import"/"browser-whisper"
@@ -59,13 +61,34 @@ export type RetentionClass = "local" | "cloud-transient" | "cloud-stored";
 
 export type BiasSupport = "none" | "initial_prompt" | "keyterms" | "context";
 
+/** What the picker is choosing: the recognizer family, not an audio
+ * source. `mode` remains the independent capture-source setting. */
+export type EngineFamily = "local-model" | "system-service" | "third-party-provider";
+
+/** Presentation order and zh labels live beside the capability contract so
+ * every picker can project the same three families without another list. */
+export const ENGINE_FAMILY_ORDER: readonly EngineFamily[] = [
+  "local-model",
+  "system-service",
+  "third-party-provider",
+];
+
+export const ENGINE_FAMILY_LABEL: Record<EngineFamily, string> = {
+  "local-model": "本地 STT 模型",
+  "system-service": "系统 STT 服务",
+  "third-party-provider": "第三方 STT 提供商",
+};
+
 export interface EngineCapability {
   kind: LiveEngineKind;
   label: string; // zh — single source (S13 veto-#2 drift killer)
+  family: EngineFamily; // picker grouping — keeps audio source out of this axis
   retentionClass: RetentionClass; // static DEFAULT — see D7 above
   biasSupport: BiasSupport; // static DEFAULT — see D7 above
   sidecarOnly?: boolean; // keep the two tested static booleans as-is (D5)
   byokOnly?: boolean;
+  /** The credential catalog field for a standalone BYOK provider. */
+  keyField?: SttProviderKeyField;
   osFloor?: "macos26" | "macos144"; // declarative tag only (D5) — NOT consumed by engineOptionGate
 }
 
@@ -121,12 +144,14 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   webspeech: {
     kind: "webspeech",
     label: "浏览器识别",
+    family: "system-service",
     retentionClass: "cloud-transient",
     biasSupport: "none", // honest no-op (doc §3: "webspeech lands in the none bucket honestly")
   },
   whisper: {
     kind: "whisper",
     label: "本地 Whisper",
+    family: "local-model",
     retentionClass: "local",
     // faster-whisper default; Parakeet models (same kind, different
     // sidecar backend) resolve this to "none" per ACTIVE MODEL — Lane B.
@@ -136,6 +161,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   tabaudio: {
     kind: "tabaudio",
     label: "标签页音频",
+    family: "local-model",
     retentionClass: "local",
     biasSupport: "initial_prompt", // rides the same faster-whisper sidecar as whisper
     sidecarOnly: true,
@@ -143,6 +169,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   appaudio: {
     kind: "appaudio",
     label: "系统/App 音频",
+    family: "local-model",
     retentionClass: "local",
     biasSupport: "initial_prompt", // rides the same faster-whisper sidecar as whisper
     sidecarOnly: true,
@@ -157,6 +184,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     // verbatim (SettingsDialog's ENGINE_CARDS, EngineChoiceScreen's
     // wizard card) moved together, see their own comments.
     label: "系统识别",
+    family: "system-service",
     retentionClass: "local",
     // SpeechAnalyzer's AnalysisContext.contextualStrings — S11's Q11
     // already ships this (doc §3, Sol F16); Lane B migrates the
@@ -168,9 +196,11 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   soniox: {
     kind: "soniox",
     label: "Soniox 云端识别",
+    family: "third-party-provider",
     retentionClass: "cloud-transient", // no-retention default, per Soniox's own docs (doc §4)
     biasSupport: "context",
     byokOnly: true,
+    keyField: "sonioxKey",
   },
   // v0.4.7 Lane D (docs/design-explorations/stt-provider-wiring-2026-07.md
   // §5/§9) — second cloud engine, English-only (no `languages`/`biasSupport`
@@ -180,6 +210,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   deepgram: {
     kind: "deepgram",
     label: "Deepgram 云端识别",
+    family: "third-party-provider",
     // mip_opt_out sent UNCONDITIONALLY (D7) — this is what makes the
     // integration honestly cloud-transient rather than cloud-stored (the
     // doc's own §5 flagged this as a self-contradiction until D7
@@ -187,6 +218,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     retentionClass: "cloud-transient",
     biasSupport: "keyterms", // D1: paid add-on, opt-in only — see deepgramTransport.ts
     byokOnly: true,
+    keyField: "deepgramKey",
   },
   // v0.6 round 2 — third BYOK cloud engine (ElevenLabs Scribe realtime).
   // RETENTION HONESTY (verified against elevenlabs.io/docs/api-
@@ -202,9 +234,11 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   elevenlabs: {
     kind: "elevenlabs",
     label: "ElevenLabs 云端识别",
+    family: "third-party-provider",
     retentionClass: "cloud-stored",
     biasSupport: "keyterms", // default-on (D1 free-mechanism posture) — see lexicon.ts's own projectForElevenLabsKeyterms doc for why this differs from Deepgram's billed opt-in-only "keyterms"
     byokOnly: true,
+    keyField: "elevenLabsKey",
   },
   // v0.5 Wave-1 Foundation (F4 tab-audio-cloud, docs/design-
   // explorations/v05-wave1-blueprint.md §1 Feature 4 + §5 A4): STATIC
@@ -223,6 +257,7 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   "tabaudio-cloud": {
     kind: "tabaudio-cloud",
     label: "标签页音频·云端",
+    family: "third-party-provider",
     retentionClass: "cloud-transient",
     biasSupport: "context",
     byokOnly: true,

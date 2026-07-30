@@ -36,6 +36,7 @@
 
 import { useEffect, useState } from "react";
 import type { Settings, STTEngineKind } from "@jargonslayer/core/types";
+import type { SttProviderKeyField } from "@/lib/settings/keysCatalog";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { PREVIEW_TIER, SONIOX_PREVIEW_LANE } from "@/lib/deployTier";
@@ -58,6 +59,7 @@ import {
   ENGINE_CAPABILITIES,
   IOS_ENGINE_KINDS,
   resolveWebspeechRetentionClass,
+  type EngineFamily,
   type LiveEngineKind,
   type RetentionClass,
 } from "./engineCapabilities";
@@ -90,6 +92,8 @@ import { applyPlatformEngineDefaults, applyTierDefaults } from "@/lib/store";
 export interface EngineOption {
   value: Exclude<STTEngineKind, "demo">;
   label: string;
+  /** Recognizer family for picker grouping; capture source stays in Settings.mode. */
+  family: EngineFamily;
   posture: "local" | "cloud";
   // v0.4.7 Lane C (tri-state privacy label, doc §4/§9 D5-D7): the richer
   // axis StatusLine/Header now read instead of the coarse posture above.
@@ -99,6 +103,8 @@ export interface EngineOption {
   retentionClass: RetentionClass;
   sidecarOnly?: boolean;
   byokOnly?: boolean;
+  /** Credential catalog field for a standalone BYOK provider, if any. */
+  keyField?: SttProviderKeyField;
 }
 
 function toEngineOption(kind: LiveEngineKind): EngineOption {
@@ -106,10 +112,12 @@ function toEngineOption(kind: LiveEngineKind): EngineOption {
   return {
     value: cap.kind,
     label: cap.label,
+    family: cap.family,
     posture: derivePosture(cap.retentionClass),
     retentionClass: cap.retentionClass,
-    sidecarOnly: cap.sidecarOnly,
-    byokOnly: cap.byokOnly,
+    ...(cap.sidecarOnly ? { sidecarOnly: true } : {}),
+    ...(cap.byokOnly ? { byokOnly: true } : {}),
+    ...(cap.keyField ? { keyField: cap.keyField } : {}),
   };
 }
 

@@ -116,6 +116,12 @@ describe("ModeSelector — desktop build", () => {
     expect(container!.querySelector('[data-testid="mode-tile-url"]')).not.toBeNull();
   });
 
+  it("states that system/App audio captures the other party only, not the user's microphone", () => {
+    resetStore();
+    render();
+    expect(tile("system-audio").textContent).toContain("不含我的麦克风");
+  });
+
   it("听本机会议声音: osspeech floor met -> mode:system-audio, engine:osspeech", async () => {
     await setOsSpeechFloor(true);
     resetStore();

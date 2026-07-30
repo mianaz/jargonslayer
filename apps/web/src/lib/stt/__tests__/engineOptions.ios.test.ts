@@ -22,6 +22,7 @@ describe("ENGINE_OPTIONS (iOS build)", () => {
     expect(ENGINE_OPTIONS[0]).toEqual({
       value: "osspeech",
       label: "系统识别",
+      family: "system-service",
       posture: "local",
       retentionClass: "local",
     });

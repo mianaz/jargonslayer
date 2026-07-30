@@ -3,7 +3,7 @@
 // keys; storage shape, resolve-time wiring, and keychain custody are
 // unchanged. SettingsDialog renders one editor row per entry and the
 // contextual engine/translate/AI rows keep writing the same fields.
-import type { LlmTaskDomain } from "@jargonslayer/core/types";
+import type { LlmTaskDomain, Settings } from "@jargonslayer/core/types";
 import {
   PROVIDER_API_KEY_NAMES,
   type ProviderApiKeyName,
@@ -205,6 +205,30 @@ export const SERVICE_KEY_CATALOG: SettingsKeyCatalogEntry[] = [
     subscriptionDirectOnly: true,
   },
 ];
+
+/** The three standalone STT providers exposed by the engine picker. Kept as
+ * a projection of the credential catalog so a picker never owns a second
+ * provider-to-key list or status rule. */
+export type SttProviderKeyField = "sonioxKey" | "deepgramKey" | "elevenLabsKey";
+
+export const STT_PROVIDER_KEY_CATALOG: readonly SettingsKeyCatalogEntry[] = SERVICE_KEY_CATALOG.filter(
+  (entry): entry is SettingsKeyCatalogEntry & { field: SttProviderKeyField } =>
+    entry.field === "sonioxKey" || entry.field === "deepgramKey" || entry.field === "elevenLabsKey",
+);
+
+export function sttProviderKeyCatalogEntry(field: SttProviderKeyField): SettingsKeyCatalogEntry {
+  const entry = STT_PROVIDER_KEY_CATALOG.find((candidate) => candidate.field === field);
+  if (!entry) {
+    throw new Error(`Missing STT provider key catalog entry for ${field}`);
+  }
+  return entry;
+}
+
+/** Reads an STT credential through its catalog field, rather than letting a
+ * picker duplicate a direct settings-field lookup. */
+export function sttProviderKeyValue(settings: Settings, field: SttProviderKeyField): string {
+  return settings[sttProviderKeyCatalogEntry(field).field];
+}
 
 /** Flat list used by completeness tests — every credential the Keys section must reach. */
 export const ALL_KEYS_CATALOG: KeysCatalogEntry[] = [

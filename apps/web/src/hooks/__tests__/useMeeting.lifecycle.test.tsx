@@ -110,6 +110,13 @@ vi.mock("../../lib/stt", () => ({
   }),
 }));
 
+// Local-model starts now verify an unmanaged sidecar before capture. Keep
+// lifecycle races focused on lifecycle behavior; the unavailable branch has
+// its own dedicated preflight coverage.
+vi.mock("../../lib/stt/sidecarHealth", () => ({
+  probeSidecar: vi.fn(async () => ({ up: true })),
+}));
+
 import { useMeeting, type UseMeetingResult } from "../useMeeting";
 import { useApp } from "../../lib/store";
 
@@ -191,11 +198,11 @@ describe("useMeeting — lifecycle races", () => {
       useApp.setState({ settings: { ...useApp.getState().settings, engine: "tabaudio" } });
       nextEngineClass = FakeSoftPauseEngine;
       p = api!.start();
-      // createEngine() has already run synchronously as part of the
-      // call above (before start()'s first await) — safe to restore
-      // immediately so this override never leaks into a later start().
-      nextEngineClass = FakeEngine;
+      // Unmanaged local-model starts now await their availability probe
+      // before constructing an engine. Let that one turn settle before
+      // restoring this test-only factory override.
       await flush();
+      nextEngineClass = FakeEngine;
       engines[0].startResolve!();
       await p;
       engines[0].events!.onStatus("listening");
@@ -213,8 +220,8 @@ describe("useMeeting — lifecycle races", () => {
       useApp.setState({ settings: { ...useApp.getState().settings, engine: "appaudio" } });
       nextEngineClass = FakeAppAudioEngine;
       p = api!.start();
-      nextEngineClass = FakeEngine;
       await flush();
+      nextEngineClass = FakeEngine;
       engines[0].startResolve!();
       await p;
       engines[0].events!.onStatus("listening");

@@ -27,6 +27,11 @@ vi.mock("../../lib/desktop/bootstrap", () => ({
   initDesktop: () => mockInitDesktop(),
 }));
 
+const mockProbeSidecar = vi.fn(async () => ({ up: true }));
+vi.mock("../../lib/stt/sidecarHealth", () => ({
+  probeSidecar: () => mockProbeSidecar(),
+}));
+
 type AnyEvents = {
   onStatus: (status: string, detail?: string) => void;
   onInterim: (text: string, speaker?: string) => void;
@@ -156,6 +161,8 @@ describe("useMeeting — desktop session-start preflight (field-test fix B)", ()
       true;
     engines.length = 0;
     mockInitDesktop.mockReset();
+    mockProbeSidecar.mockClear();
+    mockProbeSidecar.mockResolvedValue({ up: true });
     useApp.setState({
       status: "idle",
       segments: [],
@@ -212,7 +219,7 @@ describe("useMeeting — desktop session-start preflight (field-test fix B)", ()
     expect(handle.requestProvisionCheck).not.toHaveBeenCalled();
   });
 
-  it("external sidecar mode: never even probes the bootstrap handle — proceeds straight to a normal start regardless of sidecar health", async () => {
+  it("external sidecar mode: skips the desktop installer probe but verifies the configured external sidecar", async () => {
     useApp.setState({ settings: { ...useApp.getState().settings, sidecarMode: "external" } });
 
     let p: Promise<void>;
@@ -225,8 +232,23 @@ describe("useMeeting — desktop session-start preflight (field-test fix B)", ()
     });
 
     expect(mockInitDesktop).not.toHaveBeenCalled();
+    expect(mockProbeSidecar).toHaveBeenCalledTimes(1);
     expect(engines.length).toBe(1);
     expect(useApp.getState().status).toBe("listening");
+  });
+
+  it("external sidecar down: stops before construction and gives a human setup message instead of the raw socket error", async () => {
+    mockProbeSidecar.mockResolvedValue({ up: false });
+    useApp.setState({ settings: { ...useApp.getState().settings, sidecarMode: "external" } });
+
+    await act(async () => {
+      await api!.start();
+    });
+
+    expect(mockInitDesktop).not.toHaveBeenCalled();
+    expect(engines).toHaveLength(0);
+    expect(useApp.getState().status).toBe("idle");
+    expect(useApp.getState().toast).toBe("本地 STT 模型尚未就绪。请在 设置 → 转录引擎 配置并启动本地服务后重试。");
   });
 
   it("a non-sidecar engine (webspeech): never probes the bootstrap handle either, even in managed mode", async () => {

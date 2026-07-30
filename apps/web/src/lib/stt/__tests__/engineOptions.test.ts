@@ -56,6 +56,7 @@ describe("ENGINE_OPTIONS (web build, ambient test env)", () => {
     expect(tabaudioCloud).toEqual({
       value: "tabaudio-cloud",
       label: "标签页音频·云端",
+      family: "third-party-provider",
       posture: "cloud",
       retentionClass: "cloud-transient",
       byokOnly: true,
@@ -149,6 +150,7 @@ describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
   const whisper: EngineOption = {
     value: "whisper",
     label: "本地 Whisper",
+    family: "local-model",
     posture: "local",
     retentionClass: "local",
     sidecarOnly: true,
@@ -156,6 +158,7 @@ describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
   const appaudio: EngineOption = {
     value: "appaudio",
     label: "系统/App 音频",
+    family: "local-model",
     posture: "local",
     retentionClass: "local",
     sidecarOnly: true,
@@ -163,12 +166,14 @@ describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
   const osspeech: EngineOption = {
     value: "osspeech",
     label: "系统识别",
+    family: "system-service",
     posture: "local",
     retentionClass: "local",
   };
   const webspeech: EngineOption = {
     value: "webspeech",
     label: "浏览器识别",
+    family: "system-service",
     posture: "cloud",
     retentionClass: "cloud-transient",
   };

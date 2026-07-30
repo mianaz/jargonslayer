@@ -11,6 +11,7 @@ import { TranslateQueue } from "../lib/translate/queue";
 import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator } from "../lib/translate/providers";
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
+import { probeSidecar } from "../lib/stt/sidecarHealth";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
 import { getPreviewSessionSeconds } from "../lib/stt/soniox";
@@ -87,17 +88,10 @@ function ridesManagedSidecar(engine: STTEngineKind): boolean {
  *  checked by callers BEFORE ever calling (let alone awaiting)
  *  preflightManagedSidecar itself — that function unconditionally
  *  awaits initDesktop(), so gating it here means the overwhelmingly
- *  common case (any non-desktop web build, external sidecar mode, or a
- *  non-sidecar engine) costs zero async overhead: no promise, no
- *  microtask tick, same synchronous timing as if this preflight didn't
- *  exist at all. That's not just tidiness — useMeeting.lifecycle.test.
- *  tsx's own startListeningSoft() helper relies on createEngine()
- *  running fully SYNCHRONOUSLY as part of `p = api!.start();` itself
- *  (see that helper's own comment); an unconditional `await
- *  preflightManagedSidecar(...)` at the call site, even one that
- *  resolves "immediately", would still push createEngine() one
- *  microtask later and break that assumption for every non-desktop
- *  test in this file. */
+ *  common case (a non-sidecar engine) costs zero async overhead. Local
+ *  engines outside desktop-managed mode intentionally take the separate
+ *  availability probe below: unlike the managed path, no installer state
+ *  exists there to prevent a raw socket failure. */
 function needsManagedSidecarPreflight(settings: Settings): boolean {
   return IS_DESKTOP && settings.sidecarMode !== "external" && ridesManagedSidecar(settings.engine);
 }
@@ -135,6 +129,24 @@ async function preflightManagedSidecar(): Promise<boolean> {
   if (handle.currentState().phase !== "HEALTHY") {
     useApp.getState().showToast("本地 Whisper 尚未安装，正在打开安装向导…");
     void handle.requestProvisionCheck().catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+/** Web builds and desktop external-sidecar users have no managed installer
+ * to consult. Probe the configured sidecar before microphone capture so an
+ * uninstalled/unreachable local model produces an actionable product message
+ * instead of wsTransport's raw developer connection instructions. */
+function needsExternalSidecarPreflight(settings: Settings): boolean {
+  return ridesManagedSidecar(settings.engine) && (!IS_DESKTOP || settings.sidecarMode === "external");
+}
+
+async function preflightExternalSidecar(settings: Settings): Promise<boolean> {
+  const result = await probeSidecar(settings);
+  useApp.getState().setSidecarUp(result.up);
+  if (!result.up) {
+    useApp.getState().showToast("本地 STT 模型尚未就绪。请在 设置 → 转录引擎 配置并启动本地服务后重试。");
     return true;
   }
   return false;
@@ -830,6 +842,7 @@ export function useMeeting(): UseMeetingResult {
     // has already run and torn down via runStopFlow), there's nothing
     // here to tear down in the first place.
     if (needsManagedSidecarPreflight(settings) && (await preflightManagedSidecar())) return;
+    if (needsExternalSidecarPreflight(settings) && (await preflightExternalSidecar(settings))) return;
 
     diarReadyToastedRef.current = false;
     previewMintNoticeRef.current = false;
@@ -999,6 +1012,13 @@ export function useMeeting(): UseMeetingResult {
       needsFreshAttach &&
       needsManagedSidecarPreflight(settings) &&
       (await preflightManagedSidecar())
+    ) {
+      return;
+    }
+    if (
+      needsFreshAttach &&
+      needsExternalSidecarPreflight(settings) &&
+      (await preflightExternalSidecar(settings))
     ) {
       return;
     }

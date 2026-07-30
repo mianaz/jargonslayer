@@ -98,11 +98,7 @@ describe("StatusLine — iOS build (engine picker)", () => {
     expect(values).toEqual(["osspeech", "soniox", "deepgram", "elevenlabs"]);
   });
 
-  // TestFlight batch fix: 系统 (osspeech) always shows — it needs no
-  // BYOK key at all — but the three cloud engines drop out when
-  // unconfigured (a fresh iOS install's DEFAULT_SETTINGS keys are all
-  // empty).
-  it("hides the 3 BYOK cloud values when no key is configured, keeping only osspeech", async () => {
+  it("keeps the three BYOK providers visible with an unconfigured-key hint", async () => {
     useApp.setState((s) => ({
       status: "idle",
       settings: { ...s.settings, engine: "osspeech", sonioxKey: "", deepgramKey: "", elevenLabsKey: "" },
@@ -115,7 +111,12 @@ describe("StatusLine — iOS build (engine picker)", () => {
     const values = Array.from(engineSelect().querySelectorAll("option"))
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
-    expect(values).toEqual(["osspeech"]);
+    expect(values).toEqual(["osspeech", "soniox", "deepgram", "elevenlabs"]);
+    const labelOf = (value: string) =>
+      Array.from(engineSelect().querySelectorAll("option")).find((option) => option.value === value)?.textContent;
+    expect(labelOf("soniox")).toBe("Soniox 云端识别 · 未配置");
+    expect(labelOf("deepgram")).toBe("Deepgram 云端识别 · 未配置");
+    expect(labelOf("elevenlabs")).toBe("ElevenLabs 云端识别 · 未配置");
   });
 
   it("select text carries the active engine's own retention color — green for local osspeech, amber for cloud-stored elevenlabs", async () => {
