@@ -40,6 +40,9 @@ interface ExpressionEntry {
   // See DictExpressionEntry.commonWord — phrases that are common
   // language outside their own pack stay opt-in in scanDictionary.
   commonWord?: boolean;
+  // See DictExpressionEntry.notFollowedBy — literal-context followers
+  // reject a matched expression regardless of pack selection.
+  notFollowedBy?: string[];
 }
 
 interface TermEntry {
@@ -1283,6 +1286,44 @@ function buildExpressionRegex(phrase: string): RegExp {
   return new RegExp(source, "i");
 }
 
+/** Whether a matched expression is immediately followed (other than
+ *  whitespace) by a listed literal-context word. `notFollowedBy` is
+ *  dictionary data, but remote-pack entries can also supply it, so escape
+ *  every word before constructing this deliberately small check. */
+function hasLiteralContextFollower(
+  sentence: string,
+  matchEnd: number,
+  notFollowedBy: readonly string[] | undefined,
+): boolean {
+  if (!notFollowedBy?.length) return false;
+  const following = sentence.slice(matchEnd);
+  return notFollowedBy.some((word) => new RegExp(`^\\s*${escapeRe(word)}\\b`, "i").test(following));
+}
+
+/** Find the first expression hit that is not rejected by its literal
+ *  follower list. A global copy is only needed for guarded entries, but
+ *  lets a later genuine usage still match after an earlier literal one in
+ *  the same sentence. */
+function findExpressionMatch(
+  re: RegExp,
+  sentence: string,
+  notFollowedBy: readonly string[] | undefined,
+): RegExpExecArray | null {
+  const first = re.exec(sentence);
+  if (!first || !hasLiteralContextFollower(sentence, first.index + first[0].length, notFollowedBy)) {
+    return first;
+  }
+
+  const globalRe = new RegExp(re.source, `${re.flags}g`);
+  let match: RegExpExecArray | null;
+  while ((match = globalRe.exec(sentence)) !== null) {
+    if (!hasLiteralContextFollower(sentence, match.index + match[0].length, notFollowedBy)) {
+      return match;
+    }
+  }
+  return null;
+}
+
 /** Sentence splitter with a clause fallback for long ASR run-ons. Keeps
  *  the original long sentence as a last resort so expressions spanning a
  *  comma/semicolon remain matchable; the emitted context is still narrowed
@@ -1537,7 +1578,7 @@ export function scanDictionary(
     for (const sentence of sentences) {
       if (matched) break;
       for (const re of regexes) {
-        const m = re.exec(sentence);
+        const m = findExpressionMatch(re, sentence, entry.notFollowedBy);
         if (m) {
           expressions.push({
             expression: entry.expression,

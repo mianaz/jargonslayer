@@ -279,9 +279,30 @@ describe("scanDictionary — commonWord expression suppression", () => {
     expect(res.expressions.some((e) => e.expression === "in the red")).toBe(false);
   });
 
+  it.each(["graph", "curve", "line"])("rejects a literal red %s even with finance explicitly enabled", (literalFollower) => {
+    const res = scanDictionary(
+      `we can see in the red ${literalFollower} where they almost always lose weight`,
+      ["finance-consumer"],
+    );
+    expect(res.expressions.some((e) => e.expression === "in the red")).toBe(false);
+  });
+
   it("still detects the financial-loss idiom when its pack is explicitly enabled", () => {
     const res = scanDictionary("we are in the red", ["finance-consumer"]);
     expect(res.expressions.some((e) => e.expression === "in the red")).toBe(true);
+  });
+
+  it("does not suppress a financial-loss idiom followed by an ordinary continuation", () => {
+    const res = scanDictionary("we have been in the red for three quarters", ["finance-consumer"]);
+    expect(res.expressions.some((e) => e.expression === "in the red")).toBe(true);
+  });
+
+  it("rejects literal underwater contexts but keeps the financial idiom", () => {
+    const literal = scanDictionary("the underwater camera captured the reef", ["finance-consumer"]);
+    const idiom = scanDictionary("the option is underwater after the share price fell", ["finance-consumer"]);
+
+    expect(literal.expressions.some((e) => e.expression === "underwater")).toBe(false);
+    expect(idiom.expressions.some((e) => e.expression === "underwater")).toBe(true);
   });
 });
 
