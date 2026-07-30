@@ -159,7 +159,25 @@ const CURATED_TERMS = [
   { term: "mode (statistics)", label: "mode", type: "metric" },
   { term: "standard deviation", label: "standard_deviation", type: "metric" },
   { term: "standard error", label: "standard_error", type: "metric" },
-  { term: "variance", label: "variance", type: "metric" },
+  {
+    term: "variance",
+    label: "variance",
+    type: "metric",
+    senses: [
+      {
+        domain: "stats",
+        prior: 0.6,
+        senseId: "statistical-variance",
+      },
+      {
+        gloss_en: "budget or plan variance, the difference between actual and planned results",
+        gloss_zh: "预算或计划差异",
+        domain: "sales",
+        prior: 0.4,
+        senseId: "plan-variance",
+      },
+    ],
+  },
   { term: "expected value", label: "expected_value", type: "metric" },
   { term: "range (statistics)", label: "range", type: "metric" },
   { term: "quartile", label: "quartile", type: "metric" },
@@ -452,17 +470,32 @@ async function main() {
     // auto-extracted one. Terms absent from the map fall through to the
     // Wikipedia gloss, then to the placeholder.
     const curated = (await loadCuratedZh())[entry.term] ?? null;
+    const resolvedGlossEn = entry.glossEn
+      ? entry.glossEn
+      : truncate(gloss_en, GLOSS_EN_MAX_LEN) || entry.term;
+    const resolvedGlossZh = curated
+      ? curated.gloss_zh
+      : zh.ok
+        ? zh.gloss_zh
+        : GLOSS_ZH_PLACEHOLDER;
 
     terms.push({
       term: entry.term,
       type: entry.type,
-      gloss_en: entry.glossEn
-        ? entry.glossEn
-        : truncate(gloss_en, GLOSS_EN_MAX_LEN) || entry.term,
-      gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
+      gloss_en: resolvedGlossEn,
+      gloss_zh: resolvedGlossZh,
       pack: "stats",
       ...(entry.notFollowedBy ? { notFollowedBy: entry.notFollowedBy } : {}),
       ...(entry.notPrecededBy ? { notPrecededBy: entry.notPrecededBy } : {}),
+      ...(entry.senses
+        ? {
+            senses: entry.senses.map((sense) => ({
+              gloss_en: sense.gloss_en ?? resolvedGlossEn,
+              gloss_zh: sense.gloss_zh ?? resolvedGlossZh,
+              ...sense,
+            })),
+          }
+        : {}),
     });
 
     if (!curated && !zh.ok) zhFlagged.push({ term: entry.term, reason: zh.reason });

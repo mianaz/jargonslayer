@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { COMPILED_PACK_TERMS } from "../dictionary-packs-compiled";
 import { DOMAIN_TAGS, EXTRA_TERMS, type DictTermEntry } from "../dictionary-data";
+import { FINANCE_CONSUMER_TERMS } from "../dictionary-data-finance";
+import { MODERN_USAGE_TERMS } from "../dictionary-data-modern";
 
 describe("DOMAIN_TAGS", () => {
   it("has exactly 16 unique entries, matching the DomainTag union's own value count", () => {
@@ -19,13 +21,14 @@ describe("DOMAIN_TAGS", () => {
 describe("DictTermEntry.senses invariant — senses[0] mirrors the entry's own top-level gloss (v0.6 T1)", () => {
   const TABLES: { name: string; entries: DictTermEntry[] }[] = [
     { name: "EXTRA_TERMS", entries: EXTRA_TERMS },
+    { name: "MODERN_USAGE_TERMS", entries: MODERN_USAGE_TERMS },
+    { name: "FINANCE_CONSUMER_TERMS", entries: FINANCE_CONSUMER_TERMS },
     { name: "COMPILED_PACK_TERMS", entries: COMPILED_PACK_TERMS },
   ];
 
   it(
     "holds for every entry that declares `senses`, across every built-in term table " +
-      "(currently 0 entries populate it — content authoring is a separate workstream; " +
-      "this is the live guard for whenever that lands)",
+      "exported from a dictionary data module",
     () => {
       for (const { name, entries } of TABLES) {
         for (const entry of entries) {

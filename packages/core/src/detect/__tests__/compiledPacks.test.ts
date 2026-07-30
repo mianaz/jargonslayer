@@ -149,7 +149,17 @@ describe("scanDictionary — pack gating excludes disabled compiled packs", () =
 });
 
 describe("commonWord terms stay opt-in under the default all-on state", () => {
-  const COMMON = ["mean", "prior", "attention", "precision", "recall", "accuracy", "token", "variance", "epoch", "embedding"];
+  const COMMON = [
+    "mean",
+    "prior",
+    "attention",
+    "precision",
+    "recall",
+    "accuracy",
+    "token",
+    "epoch",
+    "embedding",
+  ];
 
   it("flags exactly the expected everyday-English headwords", () => {
     const flagged = COMPILED_PACK_TERMS.filter((t) => t.commonWord).map((t) => t.term).sort();

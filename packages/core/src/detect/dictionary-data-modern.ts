@@ -238,13 +238,6 @@ export const MODERN_USAGE_TERMS: DictTermEntry[] = [
     pack: "modern-usage",
   },
   {
-    term: "alignment",
-    type: "tech",
-    gloss_en: "making an AI system's actual behavior match what its developers intended",
-    gloss_zh: "让 AI 的行为真正符合开发者意图",
-    pack: "modern-usage",
-  },
-  {
     term: "compute",
     type: "other",
     gloss_en: "(noun) computing power/hardware, talked about as a resource to allocate",

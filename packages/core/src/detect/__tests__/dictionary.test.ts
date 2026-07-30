@@ -241,15 +241,15 @@ describe("scanDictionary — source_sentence extraction", () => {
     expect(hit!.source_sentence).toBe("Let's circle back tomorrow.");
   });
 
-  it("narrows the reported 60-word-style ASR run-on to the clause containing an aligned match", () => {
-    const runOn = "Now, as for the 2nd deliverable, I helped co-facilitate, uh, a face-to-face workshop for 3 days alongside our project manager, Hannah here, and assisted with event logistics and created a system in order to track and follow up on post-meeting tasks to make sure that the team was aligned post-meeting.";
+  it("narrows the reported 60-word-style ASR run-on to the clause containing a match", () => {
+    const runOn = "Now, as for the 2nd deliverable, I helped co-facilitate, uh, a face-to-face workshop for 3 days alongside our project manager, Hannah here, and assisted with event logistics and created a system in order to track and follow up on post-meeting tasks before we unpack it post-meeting.";
     const res = scanDictionary(runOn);
-    const hit = res.expressions.find((e) => e.expression === "align");
+    const hit = res.expressions.find((e) => e.expression === "unpack");
 
     expect(hit?.source_sentence).toBe(
-      "and assisted with event logistics and created a system in order to track and follow up on post-meeting tasks to make sure that the team was aligned post-meeting.",
+      "and assisted with event logistics and created a system in order to track and follow up on post-meeting tasks before we unpack it post-meeting.",
     );
-    expect(hit?.source_sentence).toContain("aligned");
+    expect(hit?.source_sentence).toContain("unpack");
     expect(hit!.source_sentence.length).toBeLessThan(runOn.length);
   });
 
@@ -265,12 +265,16 @@ describe("scanDictionary — source_sentence extraction", () => {
   it("falls back to a word-safe window around a match when a run-on has no clause boundary", () => {
     const before = Array.from({ length: 50 }, (_, i) => `before${i}`).join(" ");
     const after = Array.from({ length: 50 }, (_, i) => `after${i}`).join(" ");
-    const res = scanDictionary(`${before} aligned ${after}`);
-    const hit = res.expressions.find((e) => e.expression === "align");
+    const res = scanDictionary(`${before} circle back ${after}`);
+    const hit = res.expressions.find((e) => e.expression === "circle back");
 
-    expect(hit?.source_sentence).toContain("aligned");
+    expect(hit?.source_sentence).toContain("circle back");
     expect(hit!.source_sentence.length).toBeLessThanOrEqual(240);
-    expect(hit!.source_sentence.split(/\s+/).every((word) => /^(before|after)\d+$|^aligned$/.test(word))).toBe(true);
+    expect(
+      hit!.source_sentence
+        .split(/\s+/)
+        .every((word) => /^(before|after)\d+$|^circle$|^back$/.test(word)),
+    ).toBe(true);
   });
 });
 
@@ -1048,6 +1052,19 @@ describe("scanDictionary — multi-sense term selection (v0.6 T3)", () => {
       const res = scanDictionary("Discussing EMT today.");
       expect(res.terms.find((t) => t.term === "EMT")!.ambiguous).toBe(false);
     });
+  });
+
+  it("preserves AMBIGUOUS_MARGIN when active-domain evidence boosts two close senses equally", () => {
+    mockGetLoadedRemotePacks.mockReturnValue([
+      remotePackWithSenses([
+        { senseId: "a", gloss_en: "a", gloss_zh: "甲", domain: "biomed", prior: 0.55 },
+        { senseId: "b", gloss_en: "b", gloss_zh: "乙", domain: "biomed", prior: 0.5 },
+      ]),
+    ]);
+    const res = scanDictionary("Discussing EMT today.", null, {
+      activeDomains: new Set(["biomed"]),
+    });
+    expect(res.terms.find((t) => t.term === "EMT")!.ambiguous).toBe(true);
   });
 
   describe("with a sense context — weighted scoring", () => {
