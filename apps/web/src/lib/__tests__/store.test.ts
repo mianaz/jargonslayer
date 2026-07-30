@@ -762,18 +762,80 @@ describe("speaker roster + assignment store actions (v0.5 Wave-1 Feature 1) — 
     expect(useApp.getState().segments[0].speaker).toBe("Alice");
   });
 
+  // Full rename → latch flow (FT3): renaming a roster speaker must keep
+  // roster + activeSpeaker in sync so the live latch can select the NEW
+  // name and addFinal stamps it onto subsequent finals — otherwise the
+  // old name ghosts for the rest of the meeting.
+  it("renameRosterSpeaker keeps roster + activeSpeaker in sync so the latch can select the new name and addFinal stamps it", () => {
+    useApp.setState({
+      speakerRoster: ["说话人 1"],
+      activeSpeaker: "说话人 1",
+      segments: [makeSegment({ id: "a", index: 0, speaker: "说话人 1", speakerLocked: true })],
+      settings: { ...DEFAULT_SETTINGS, autoDetect: false },
+    });
+    useApp.getState().renameRosterSpeaker("说话人 1", "Alice");
+    const afterRename = useApp.getState();
+    expect(afterRename.speakerRoster).toEqual(["Alice"]);
+    expect(afterRename.activeSpeaker).toBe("Alice");
+    expect(afterRename.segments[0].speaker).toBe("Alice");
+    // Latch option list is speakerRoster — renamed speaker must be there.
+    expect(afterRename.speakerRoster).toContain("Alice");
+    expect(afterRename.speakerRoster).not.toContain("说话人 1");
+    // New finals carry the NEW name, not a resurrected ghost.
+    const next = useApp.getState().addFinal("hello after rename");
+    expect(next.speaker).toBe("Alice");
+    expect(next.speakerLocked).toBe(true);
+    expect(useApp.getState().segments.map((s) => s.speaker)).toEqual(["Alice", "Alice"]);
+  });
+
+  it("renameSpeaker alone also rewrites activeSpeaker when it equals the old name", () => {
+    useApp.setState({
+      speakerRoster: ["说话人 1"], // deliberately left stale — renameSpeaker does not touch roster
+      activeSpeaker: "说话人 1",
+      segments: [makeSegment({ id: "a", speaker: "说话人 1" })],
+    });
+    useApp.getState().renameSpeaker("说话人 1", "Alice");
+    expect(useApp.getState().activeSpeaker).toBe("Alice");
+    expect(useApp.getState().segments[0].speaker).toBe("Alice");
+    expect(useApp.getState().speakerRoster).toEqual(["说话人 1"]); // unchanged
+  });
+
+  it("renameRosterSpeaker falls through to renameSpeaker when the old name is not on the roster", () => {
+    useApp.setState({
+      speakerRoster: ["Bob"],
+      activeSpeaker: "Alice",
+      segments: [makeSegment({ id: "a", speaker: "Alice" })],
+    });
+    // `to` collides with an existing roster entry — must still rewrite
+    // segments/activeSpeaker (fallthrough), not no-op like a roster collision.
+    useApp.getState().renameRosterSpeaker("Alice", "Bob");
+    expect(useApp.getState().speakerRoster).toEqual(["Bob"]);
+    expect(useApp.getState().segments[0].speaker).toBe("Bob");
+    expect(useApp.getState().activeSpeaker).toBe("Bob");
+  });
+
   it("assignSegmentsSpeaker (bulk) sets speaker + speakerLocked on the given ids, WHILE status is 'listening' (not gated to stopped)", () => {
     useApp.getState().assignSegmentsSpeaker(["a", "b"], "Alice");
     const s = useApp.getState();
     expect(s.status).toBe("listening"); // never touched
     expect(s.segments[0]).toMatchObject({ speaker: "Alice", speakerLocked: true });
     expect(s.segments[1]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+    expect(s.speakerRoster).toEqual(["Alice"]); // assigned name lands on roster for the latch
   });
 
   it("assignSegmentsSpeaker single assign = a one-element array", () => {
     useApp.getState().assignSegmentsSpeaker(["a"], "Alice");
     expect(useApp.getState().segments[0].speaker).toBe("Alice");
     expect(useApp.getState().segments[1].speaker).toBeUndefined();
+  });
+
+  it("assignSegmentsSpeaker adds a segment-only name to the roster so the latch can select it", () => {
+    useApp.setState({ speakerRoster: [] });
+    useApp.getState().assignSegmentsSpeaker(["a"], "SPEAKER_1");
+    expect(useApp.getState().speakerRoster).toEqual(["SPEAKER_1"]);
+    // Idempotent when already present.
+    useApp.getState().assignSegmentsSpeaker(["b"], "SPEAKER_1");
+    expect(useApp.getState().speakerRoster).toEqual(["SPEAKER_1"]);
   });
 
   it("assignSpeakerFollowing assigns from segmentId through the end", () => {
