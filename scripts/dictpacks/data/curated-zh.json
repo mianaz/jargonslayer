@@ -4,6 +4,7 @@
   "skewness": { "gloss_zh": "偏度：衡量分布相对其均值的不对称程度。", "note": "curated (hand-authored; zh 术语 偏度)" },
   "kurtosis": { "gloss_zh": "峰度：衡量概率分布尾部厚重程度的指标。", "note": "curated (hand-authored, Opus+Sol validated; tailedness not peakedness)" },
   "sample mean": { "gloss_zh": "样本均值：从总体中抽取的一组观测值的算术平均数，通常记作 x̄。", "note": "curated override (zh-Wikipedia lead defined it as a vector; Opus+Sol validated)" },
+  "mean": { "gloss_zh": "平均数：一组数值的算术平均，或随机变量的期望值。", "note": "curated override (wiki lead was vacuous 'important concept'; paired with gloss_en fix for numbered-list cut)" },
 
   "pretraining": { "gloss_zh": "预训练：先在大规模数据上训练模型，作为后续微调的基础。", "note": "curated (hand-authored, standard ML terminology)" },
   "underfitting": { "gloss_zh": "欠拟合：模型过于简单，未能捕捉数据规律，训练与预测均差。", "note": "curated (hand-authored, standard ML terminology)" },

@@ -512,14 +512,14 @@
     {
       "term": "precision",
       "type": "metric",
-      "gloss_en": "A metric for classification models that answers the following question:",
+      "gloss_en": "Of the examples a classification model labeled positive, the fraction that are actually positive.",
       "gloss_zh": "精确率：模型预测为正例中真正为正例的比例。",
       "pack": "ml-stats"
     },
     {
       "term": "recall",
       "type": "metric",
-      "gloss_en": "A metric for classification models that answers the following question:",
+      "gloss_en": "Of all actually positive examples, the fraction a classification model correctly labeled positive.",
       "gloss_zh": "召回率：真实正例中被模型正确预测出的比例。",
       "pack": "ml-stats"
     },

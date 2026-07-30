@@ -263,8 +263,23 @@ const CURATED_TERMS = [
   { term: "perplexity", label: "perplexity", type: "metric" },
 
   // ---- evaluation metrics ----
-  { term: "precision", label: "precision", type: "metric" },
-  { term: "recall", label: "recall", type: "metric" },
+  // glossEn overrides: Google's glossary puts the actual Q/A in a
+  // following list/block, so the first <p> ends on a dangling
+  // "question:" — shipped mid-sentence truncations for both.
+  {
+    term: "precision",
+    label: "precision",
+    type: "metric",
+    glossEn:
+      "Of the examples a classification model labeled positive, the fraction that are actually positive.",
+  },
+  {
+    term: "recall",
+    label: "recall",
+    type: "metric",
+    glossEn:
+      "Of all actually positive examples, the fraction a classification model correctly labeled positive.",
+  },
   // no dedicated ML-classification-sense article ("Accuracy (machine
   // learning)" does not exist) — auto-resolution's only match is the general
   // metrology "Accuracy and precision"
@@ -414,6 +429,15 @@ function firstSentenceEnd(text) {
     const next = text[i + 1];
     if (next !== undefined && next !== " ") continue;
     if (c === "." && /[0-9]/.test(text[i - 1] || "") && /[0-9]/.test(next || "")) continue;
+    // Numbered-list markers ("1. …") are not sentence boundaries — same
+    // guard as build-stats-pack.mjs (shipped "1." for "mean" without it).
+    if (
+      c === "." &&
+      next === " " &&
+      /^\d+$/.test(text.slice(0, i).trim())
+    ) {
+      continue;
+    }
     if (c === "." && SENTENCE_ABBREV_RE.test(text.slice(0, i + 1))) continue;
     return i + 1;
   }
@@ -551,7 +575,9 @@ async function main() {
     terms.push({
       term: entry.term,
       type: entry.type,
-      gloss_en: truncate(found.definition, GLOSS_EN_MAX_LEN) || entry.term,
+      gloss_en: entry.glossEn
+        ? entry.glossEn
+        : truncate(found.definition, GLOSS_EN_MAX_LEN) || entry.term,
       gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
       pack: "ml-stats",
     });

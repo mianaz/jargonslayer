@@ -195,8 +195,8 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "mean",
     type: "metric",
-    gloss_en: "1.",
-    gloss_zh: "平均数是统计中的一个重要概念",
+    gloss_en: "The arithmetic average of a set of values, or the expected value of a random variable.",
+    gloss_zh: "平均数：一组数值的算术平均，或随机变量的期望值。",
     pack: "stats",
     commonWord: true,
   },
@@ -859,7 +859,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "precision",
     type: "metric",
-    gloss_en: "A metric for classification models that answers the following question:",
+    gloss_en: "Of the examples a classification model labeled positive, the fraction that are actually positive.",
     gloss_zh: "精确率：模型预测为正例中真正为正例的比例。",
     pack: "ml-stats",
     commonWord: true,
@@ -867,7 +867,7 @@ export const COMPILED_PACK_TERMS: DictTermEntry[] = [
   {
     term: "recall",
     type: "metric",
-    gloss_en: "A metric for classification models that answers the following question:",
+    gloss_en: "Of all actually positive examples, the fraction a classification model correctly labeled positive.",
     gloss_zh: "召回率：真实正例中被模型正确预测出的比例。",
     pack: "ml-stats",
     commonWord: true,

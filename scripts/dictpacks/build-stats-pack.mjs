@@ -140,7 +140,17 @@ const CURATED_TERMS = [
   { term: "random variable", label: "random_variable", type: "other" },
 
   // ---- descriptive statistics ----
-  { term: "mean", label: "mean", type: "metric" },
+  // glossEn override: the Wikipedia glossary <dd> is a numbered list
+  // ("1. The expected value…"); firstSentenceEnd previously cut that to
+  // literal "1.". Hand-authored one-sentence gloss until/unless the
+  // glossary prose is rewritten upstream.
+  {
+    term: "mean",
+    label: "mean",
+    type: "metric",
+    glossEn:
+      "The arithmetic average of a set of values, or the expected value of a random variable.",
+  },
   { term: "median", label: "median", type: "metric" },
   { term: "mode (statistics)", label: "mode", type: "metric" },
   { term: "standard deviation", label: "standard_deviation", type: "metric" },
@@ -262,6 +272,17 @@ function firstSentenceEnd(text) {
     const next = text[i + 1];
     if (next !== undefined && next !== " ") continue;
     if (c === "." && /[0-9]/.test(text[i - 1] || "") && /[0-9]/.test(next || "")) continue;
+    // Numbered-list markers ("1. The expected value…") — a digit run
+    // immediately before this "." with only whitespace before that is
+    // not a sentence boundary. Without this, truncate() shipped gloss_en
+    // "1." for the stats pack's "mean" entry.
+    if (
+      c === "." &&
+      next === " " &&
+      /^\d+$/.test(text.slice(0, i).trim())
+    ) {
+      continue;
+    }
     if (c === "." && SENTENCE_ABBREV_RE.test(text.slice(0, i + 1))) continue;
     return i + 1;
   }
@@ -431,7 +452,9 @@ async function main() {
     terms.push({
       term: entry.term,
       type: entry.type,
-      gloss_en: truncate(gloss_en, GLOSS_EN_MAX_LEN) || entry.term,
+      gloss_en: entry.glossEn
+        ? entry.glossEn
+        : truncate(gloss_en, GLOSS_EN_MAX_LEN) || entry.term,
       gloss_zh: curated ? curated.gloss_zh : zh.ok ? zh.gloss_zh : GLOSS_ZH_PLACEHOLDER,
       pack: "stats",
     });
