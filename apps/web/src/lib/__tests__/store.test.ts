@@ -2793,23 +2793,93 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
 // time (see sanitizeSecret.ts's own doc).
 describe("migrateSettings — self-heals dirty (zero-width/whitespace) SECRET_NAMES fields", () => {
   it("strips a leading space + zero-width space from a previously-saved apiKey", () => {
-    const s = migrateSettings({ apiKey: " sk-​test-key" } as Partial<Settings>);
-    expect(s.apiKey).toBe("sk-test-key");
+    const s = migrateSettings({ apiKey: " sk-​test-key" } as Partial<Settings> & {
+      apiKey: string;
+    });
+    expect(s.apiKeyOpenrouter).toBe("sk-test-key");
+    expect(s).not.toHaveProperty("apiKey");
   });
 
   it("cleans every SECRET_NAMES field, not just apiKey", () => {
     const s = migrateSettings({
+      apiKeyAnthropic: " ant-‌key ",
+      apiKeyOpenai: " oai-‌key ",
+      apiKeyDeepseek: " ds-‌key ",
+      apiKeyQwen: " qwen-‌key ",
+      apiKeyOpenrouter: " or-‌key ",
+      apiKeyPoe: " poe-‌key ",
+      apiKeyOllama: " ollama-‌key ",
+      apiKeyCustom: " custom-‌key ",
       hfToken: "hf-‌token ",
       sonioxKey: " sonx-‍key",
       deepgramKey: "﻿dg-key",
       elevenLabsKey: " el-key ",
       agentToken: "​agent-token​",
     } as Partial<Settings>);
+    expect(s.apiKeyAnthropic).toBe("ant-key");
+    expect(s.apiKeyOpenai).toBe("oai-key");
+    expect(s.apiKeyDeepseek).toBe("ds-key");
+    expect(s.apiKeyQwen).toBe("qwen-key");
+    expect(s.apiKeyOpenrouter).toBe("or-key");
+    expect(s.apiKeyPoe).toBe("poe-key");
+    expect(s.apiKeyOllama).toBe("ollama-key");
+    expect(s.apiKeyCustom).toBe("custom-key");
     expect(s.hfToken).toBe("hf-token");
     expect(s.sonioxKey).toBe("sonx-key");
     expect(s.deepgramKey).toBe("dg-key");
     expect(s.elevenLabsKey).toBe("el-key");
     expect(s.agentToken).toBe("agent-token");
+  });
+});
+
+describe("migrateSettings — legacy shared LLM key reshape", () => {
+  type LegacySettings = Partial<Settings> & { apiKey?: string };
+
+  it("classifies an Anthropic legacy key into apiKeyAnthropic and deletes apiKey", () => {
+    const migrated = migrateSettings({
+      provider: "anthropic",
+      baseUrl: "",
+      apiKey: "sk-ant-legacy",
+    } as LegacySettings);
+
+    expect(migrated.apiKeyAnthropic).toBe("sk-ant-legacy");
+    expect(migrated).not.toHaveProperty("apiKey");
+  });
+
+  it("classifies OpenRouter by hostname even when the legacy Base URL path differs", () => {
+    const migrated = migrateSettings({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/some/legacy/path?x=1",
+      apiKey: "sk-or-legacy",
+    } as LegacySettings);
+
+    expect(migrated.apiKeyOpenrouter).toBe("sk-or-legacy");
+    expect(migrated).not.toHaveProperty("apiKey");
+  });
+
+  it("classifies an unknown OpenAI-compatible host into the host-bound custom slot", () => {
+    const migrated = migrateSettings({
+      provider: "openai-compat",
+      baseUrl: "https://compat.example.com/v1",
+      apiKey: "sk-custom-legacy",
+    } as LegacySettings);
+
+    expect(migrated.apiKeyCustom).toBe("sk-custom-legacy");
+    expect(migrated.llmCustomHost).toBe("compat.example.com");
+    expect(migrated).not.toHaveProperty("apiKey");
+  });
+
+  it("is idempotent and never overwrites an existing provider-specific key", () => {
+    const once = migrateSettings({
+      provider: "anthropic",
+      apiKey: "sk-old-shared",
+      apiKeyAnthropic: "sk-new-provider-specific",
+    } as LegacySettings);
+    const twice = migrateSettings(once);
+
+    expect(once.apiKeyAnthropic).toBe("sk-new-provider-specific");
+    expect(twice).toEqual(once);
+    expect(twice).not.toHaveProperty("apiKey");
   });
 });
 

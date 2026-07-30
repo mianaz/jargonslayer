@@ -50,6 +50,11 @@ import { IS_DESKTOP } from "./platform/desktop";
 import { IS_IOS } from "./platform/ios";
 import { diagLog } from "./diag/log";
 import { sanitizeSecretValue } from "./settings/sanitizeSecret";
+import {
+  PROVIDER_API_KEY_NAMES,
+  providerApiKeyNameFor,
+  providerApiKeyPatch,
+} from "./llm/providerKeys";
 import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
 import { remapOpenRouterModelDefaults } from "./oauth/openrouterModelDefaults";
 
@@ -1266,8 +1271,11 @@ export function isModeLegalForPlatform(mode: Settings["mode"], platform: ModePla
  *  a user who chose offline-only stays offline-only. The legacy key
  *  is stripped so it doesn't get re-persisted forever. */
 export function migrateSettings(saved: Partial<Settings> | null | undefined): Settings {
-  const legacy = (saved ?? {}) as Partial<Settings> & { dictionaryOnly?: boolean };
-  const settings: Settings = { ...DEFAULT_SETTINGS, ...legacy };
+  const legacy = (saved ?? {}) as Partial<Settings> & {
+    apiKey?: unknown;
+    dictionaryOnly?: boolean;
+  };
+  const settings = { ...DEFAULT_SETTINGS, ...legacy } as Settings & { apiKey?: unknown };
   // Field bug fix (iOS TestFlight): self-heal secret fields already
   // persisted with a dirty (zero-width/whitespace-padded) paste from
   // before this fix shipped — the SECRET_NAMES fields
@@ -1278,7 +1286,23 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // only) lives at hydrate()'s hydrateSecrets merge point instead —
   // this settings-blob path also covers the web/iOS platforms that
   // have no Keychain at all.
-  settings.apiKey = sanitizeSecretValue(settings.apiKey);
+  for (const name of PROVIDER_API_KEY_NAMES) {
+    settings[name] = sanitizeSecretValue(settings[name] ?? "");
+  }
+  const legacyApiKey =
+    typeof legacy.apiKey === "string" ? sanitizeSecretValue(legacy.apiKey) : "";
+  if (legacyApiKey) {
+    const targetName = providerApiKeyNameFor(settings.provider, settings.baseUrl);
+    if (!settings[targetName]) {
+      Object.assign(
+        settings,
+        providerApiKeyPatch(settings.provider, settings.baseUrl, legacyApiKey),
+      );
+    }
+  }
+  // The legacy shared field must never survive the reshape or get
+  // re-persisted. Re-running this migration is therefore a no-op.
+  delete settings.apiKey;
   settings.hfToken = sanitizeSecretValue(settings.hfToken);
   settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
   settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
@@ -1767,7 +1791,7 @@ const globalFlags = globalThis as unknown as Record<symbol, boolean | undefined>
  *  NOTE: taskLlm.*.apiKey (the per-task LLM overrides, #56) intentionally
  *  stays OUT of keychain custody for this v1 — it's deliberately still
  *  persisted in the IDB blob like every other pre-migration Settings
- *  field; only the five top-level SECRET_NAMES fields ever move. */
+ *  field; only the top-level SECRET_NAMES fields ever move. */
 function settingsForPersist(
   state: Pick<AppState, "settings" | "demoOverlayPrevEngine">,
 ): Settings {
@@ -1916,7 +1940,9 @@ export const useApp = create<AppState>((set, get) => ({
         // so a dirty value already sitting in an EARLIER-migrated
         // Keychain entry self-heals too. Idempotent for every field
         // that was already clean.
-        settings.apiKey = sanitizeSecretValue(settings.apiKey);
+        for (const name of PROVIDER_API_KEY_NAMES) {
+          settings[name] = sanitizeSecretValue(settings[name] ?? "");
+        }
         settings.hfToken = sanitizeSecretValue(settings.hfToken);
         settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
         settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);

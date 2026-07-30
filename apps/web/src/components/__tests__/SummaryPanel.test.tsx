@@ -87,7 +87,7 @@ describe("SummaryPanel — Bit celebration on summary generation success (v0.5.1
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     summarizeApiMock.mockReset();
     useApp.setState({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-test" },
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-test" },
       status: "stopped",
       summary: null,
       summarizing: false,
@@ -245,7 +245,7 @@ describe("SummaryPanel — export-path gate (v0.7.1 Chamber C)", () => {
     downloadFileMock.mockReset();
     downloadBlobMock.mockReset();
     useApp.setState({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-test", bilingualTranscript: true },
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-test", bilingualTranscript: true },
       status: "stopped",
       summary: null,
       summarizing: false,

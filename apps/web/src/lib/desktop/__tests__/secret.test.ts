@@ -8,16 +8,29 @@
 
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
-import { hydrateSecrets, readSecrets, SECRET_NAMES, writeSecret } from "../secret";
+import {
+  hydrateSecrets,
+  readSecrets,
+  SECRET_NAMES,
+  STORED_SECRET_NAMES,
+  writeSecret,
+} from "../secret";
 
 describe("secret.ts — IS_DESKTOP guard (ambient, IS_DESKTOP false in this test env)", () => {
   // Translation-rework wave 1: deeplKey joins this list on the TS side
   // (types.ts's own doc). v0.7.1 translation train-2: youdaoAppKey/
   // youdaoAppSecret join it the same way — secret.rs's own ALLOWED array
   // (Rust, apps/desktop/src-tauri) mirrors this list byte-for-byte.
-  it("SECRET_NAMES pins the exact field names secret.rs's own ALLOWED list mirrors", () => {
+  it("current and legacy stored names pin the exact allow-list secret.rs mirrors", () => {
     expect(SECRET_NAMES).toEqual([
-      "apiKey",
+      "apiKeyAnthropic",
+      "apiKeyOpenai",
+      "apiKeyDeepseek",
+      "apiKeyQwen",
+      "apiKeyOpenrouter",
+      "apiKeyPoe",
+      "apiKeyOllama",
+      "apiKeyCustom",
       "hfToken",
       "sonioxKey",
       "deepgramKey",
@@ -27,6 +40,7 @@ describe("secret.ts — IS_DESKTOP guard (ambient, IS_DESKTOP false in this test
       "youdaoAppKey",
       "youdaoAppSecret",
     ]);
+    expect(STORED_SECRET_NAMES).toEqual([...SECRET_NAMES, "apiKey"]);
   });
 
   it("readSecrets() resolves {} immediately, never reaching getInvoke()", async () => {
@@ -40,10 +54,10 @@ describe("secret.ts — IS_DESKTOP guard (ambient, IS_DESKTOP false in this test
   });
 
   it("hydrateSecrets() never migrates anything outside a desktop build — writeSecret's own false leaves values live but out of custody", async () => {
-    const settings = { ...DEFAULT_SETTINGS, apiKey: "sk-plaintext" };
+    const settings = { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plaintext" };
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe("sk-plaintext"); // unchanged — nothing migrated
+    expect(result.settings.apiKeyOpenrouter).toBe("sk-plaintext"); // unchanged — nothing migrated
     expect(result.custodyNames).toEqual([]);
     expect(result.migratedAndClean).toBe(false);
   });

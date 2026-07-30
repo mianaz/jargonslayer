@@ -18,13 +18,16 @@
 import { getInvoke } from "./tauriApi";
 import { IS_DESKTOP } from "../platform/desktop";
 import type { Settings } from "@jargonslayer/core/types";
+import {
+  PROVIDER_API_KEY_NAMES,
+  providerApiKeyNameFor,
+} from "../llm/providerKeys";
 
-/** The only Settings fields this store will ever read/write/delete —
- *  mirrors secret.rs's own ALLOWED array byte-for-byte (that's the
- *  enforcement point; this list is the TS-side source of truth it's kept
- *  in sync with by hand). */
+/** Current Settings fields this store will read/write/delete. Rust's
+ *  ALLOWED list mirrors STORED_SECRET_NAMES below: these names plus the
+ *  legacy shared apiKey retained only for one-time migration. */
 export const SECRET_NAMES = [
-  "apiKey",
+  ...PROVIDER_API_KEY_NAMES,
   "hfToken",
   "sonioxKey",
   "deepgramKey",
@@ -41,6 +44,12 @@ export const SECRET_NAMES = [
   "youdaoAppSecret",
 ] as const;
 export type SecretName = (typeof SECRET_NAMES)[number];
+export const LEGACY_LLM_SECRET_NAME = "apiKey" as const;
+export type StoredSecretName = SecretName | typeof LEGACY_LLM_SECRET_NAME;
+export const STORED_SECRET_NAMES: readonly StoredSecretName[] = [
+  ...SECRET_NAMES,
+  LEGACY_LLM_SECRET_NAME,
+];
 
 // A locked/unavailable Keychain must never hang app boot — hydrateSecrets
 // runs on every startup, in the critical path before the store is marked
@@ -64,11 +73,11 @@ const READ_TIMEOUT_MS = 3000;
  *  one shared race around the whole batch — one hung item (a locked
  *  Keychain prompt stuck on a single ambiguous entry) now only excludes
  *  ITSELF instead of discarding four otherwise-good reads. */
-export async function readSecrets(): Promise<Partial<Record<SecretName, string>>> {
+async function readStoredSecrets(): Promise<Partial<Record<StoredSecretName, string>>> {
   if (!IS_DESKTOP) return {};
   const entries = await Promise.all(
-    SECRET_NAMES.map(async (name): Promise<[SecretName, string] | null> => {
-      const attempt = (async (): Promise<[SecretName, string] | null> => {
+    STORED_SECRET_NAMES.map(async (name): Promise<[StoredSecretName, string] | null> => {
+      const attempt = (async (): Promise<[StoredSecretName, string] | null> => {
         try {
           const invoke = await getInvoke();
           const value = await invoke<string | null>("secret_get", { name });
@@ -79,17 +88,26 @@ export async function readSecrets(): Promise<Partial<Record<SecretName, string>>
       })();
       return Promise.race([
         attempt,
-        new Promise<[SecretName, string] | null>((resolve) => {
+        new Promise<[StoredSecretName, string] | null>((resolve) => {
           setTimeout(() => resolve(null), READ_TIMEOUT_MS);
         }),
       ]);
     }),
   );
-  const result: Partial<Record<SecretName, string>> = {};
+  const result: Partial<Record<StoredSecretName, string>> = {};
   for (const entry of entries) {
     if (entry) result[entry[0]] = entry[1];
   }
   return result;
+}
+
+/** Current-schema secrets only. The legacy shared LLM key is read
+ *  internally by hydrateSecrets for one-time classification, but is
+ *  never overlaid into backups or exposed as a live Settings field. */
+export async function readSecrets(): Promise<Partial<Record<SecretName, string>>> {
+  const stored = await readStoredSecrets();
+  delete stored[LEGACY_LLM_SECRET_NAME];
+  return stored;
 }
 
 /** Writes (non-empty `value`) or deletes (empty `value`) one secret.
@@ -98,7 +116,7 @@ export async function readSecrets(): Promise<Partial<Record<SecretName, string>>
  *  to guard) resolves `false` instead, so callers can fail open (leave
  *  the value in its existing IDB location, out of custody) rather than
  *  crash a settings save over a Keychain hiccup. */
-export async function writeSecret(name: SecretName, value: string): Promise<boolean> {
+export async function writeSecret(name: StoredSecretName, value: string): Promise<boolean> {
   if (!IS_DESKTOP) return false;
   try {
     const invoke = await getInvoke();
@@ -176,17 +194,18 @@ export interface HydrateSecretsResult {
  *  See HydrateSecretsResult's own field docs for what each part of the
  *  return value means to the caller. */
 export async function hydrateSecrets(settings: Settings): Promise<HydrateSecretsResult> {
-  const keychainValues = await readSecrets();
+  const keychainValues = await readStoredSecrets();
   const merged: Settings = { ...settings };
   const custodyNames: SecretName[] = [];
   let anyPlaintextInIdb = false;
   let allWritesOk = true;
 
   const pendingDeletes = new Set(
-    (settings.secretDeletePending ?? []).filter((name): name is SecretName =>
-      (SECRET_NAMES as readonly string[]).includes(name),
+    (settings.secretDeletePending ?? []).filter((name): name is StoredSecretName =>
+      (STORED_SECRET_NAMES as readonly string[]).includes(name),
     ),
   );
+  const tombstonedAtStart = new Set(pendingDeletes);
   for (const name of pendingDeletes) {
     const ok = await writeSecret(name, "");
     delete keychainValues[name]; // never adopt a tombstoned name's raw value below, retry succeeded or not
@@ -210,6 +229,39 @@ export async function hydrateSecrets(settings: Settings): Promise<HydrateSecrets
     if (keychainValue) {
       merged[name] = keychainValue;
       custodyNames.push(name);
+    }
+  }
+
+  // Existing desktop users commonly have the old shared apiKey only in
+  // Keychain because settingsForPersist already blanked it in IndexedDB.
+  // Classify that value with the same provider/baseUrl resolver as the
+  // settings-blob migration, write it under the new per-provider name,
+  // then remove the legacy Keychain item. A newer per-provider value
+  // wins if both exist.
+  const legacyApiKey = keychainValues[LEGACY_LLM_SECRET_NAME];
+  if (legacyApiKey) {
+    anyPlaintextInIdb = true; // asks store.hydrate() to persist the reshaped/tombstone state
+    const targetName = providerApiKeyNameFor(settings.provider, settings.baseUrl);
+    if (!tombstonedAtStart.has(targetName) && !merged[targetName]) {
+      merged[targetName] = legacyApiKey;
+      const targetOk = await writeSecret(targetName, legacyApiKey);
+      if (targetOk) {
+        if (!custodyNames.includes(targetName)) custodyNames.push(targetName);
+      } else {
+        allWritesOk = false;
+      }
+    }
+    if (
+      tombstonedAtStart.has(targetName) ||
+      (merged[targetName] && custodyNames.includes(targetName))
+    ) {
+      const legacyDeleteOk = await writeSecret(LEGACY_LLM_SECRET_NAME, "");
+      if (legacyDeleteOk) {
+        pendingDeletes.delete(LEGACY_LLM_SECRET_NAME);
+      } else {
+        pendingDeletes.add(LEGACY_LLM_SECRET_NAME);
+        allWritesOk = false;
+      }
     }
   }
   merged.secretDeletePending = [...pendingDeletes];

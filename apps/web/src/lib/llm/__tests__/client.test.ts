@@ -609,7 +609,7 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
     mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
 
     await expect(
-      detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" })),
+      detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKeyOpenrouter: "" })),
     ).rejects.toThrow();
 
     const entries = getDiagEntries().filter((e) => e.tag === "llm-detect");
@@ -627,7 +627,7 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
     await expect(
       detectApi(
         { context: "", new_text: "hi" },
-        makeSettings({ apiKey: "sk-real-key", provider: "anthropic" }),
+        makeSettings({ apiKeyAnthropic: "sk-real-key", provider: "anthropic" }),
       ),
     ).rejects.toThrow();
 
@@ -641,7 +641,7 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
     mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
 
     await expect(
-      summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKey: "" })),
+      summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKeyOpenrouter: "" })),
     ).rejects.toThrow();
 
     const entries = getDiagEntries().filter((e) => e.tag === "llm-summary");
@@ -653,7 +653,7 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
     mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
 
     await expect(
-      translateApi({ segments: [], lang: "zh" }, makeSettings({ apiKey: "" })),
+      translateApi({ segments: [], lang: "zh" }, makeSettings({ apiKeyOpenrouter: "" })),
     ).rejects.toThrow();
 
     const entries = getDiagEntries().filter((e) => e.tag === "llm-translate");
@@ -665,7 +665,7 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
     mockFetch.mockResolvedValue(errorResponseJson({ error: "x", code: "upstream" }, 502));
 
     await expect(
-      defineApi({ phrase: "boil the ocean", context: "" }, makeSettings({ apiKey: "" })),
+      defineApi({ phrase: "boil the ocean", context: "" }, makeSettings({ apiKeyOpenrouter: "" })),
     ).rejects.toThrow();
 
     const entries = getDiagEntries().filter((e) => e.tag === "llm-define");
@@ -701,13 +701,13 @@ describe("diag ctx.provider (item 5) — 'server' when the request ran keyless, 
 describe("usage-ledger call-count instrumentation (S4 fix, v0.6 round-2 review)", () => {
   it("detectApi: keyless (shared/server-managed key) success records provider:'server'", async () => {
     mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
-    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" }));
+    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKeyOpenrouter: "" }));
     expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "server", kind: "llm", metric: "calls", value: 1 });
   });
 
   it("detectApi: a configured Anthropic key records provider:'anthropic', not 'server'", async () => {
     mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
-    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "sk-real-key", provider: "anthropic" }));
+    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKeyAnthropic: "sk-real-key", provider: "anthropic" }));
     expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "anthropic", kind: "llm", metric: "calls", value: 1 });
   });
 
@@ -715,7 +715,7 @@ describe("usage-ledger call-count instrumentation (S4 fix, v0.6 round-2 review)"
     mockFetch.mockResolvedValue(detectResponseJson({ expressions: [], terms: [] }));
     await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ apiKey: "sk-x", provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }),
+      makeSettings({ apiKeyOpenrouter: "sk-x", provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }),
     );
     expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "openrouter.ai", kind: "llm", metric: "calls", value: 1 });
   });
@@ -733,7 +733,7 @@ describe("usage-ledger call-count instrumentation (S4 fix, v0.6 round-2 review)"
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
-    await defineApi({ phrase: "x", context: "" }, makeSettings({ apiKey: "" }));
+    await defineApi({ phrase: "x", context: "" }, makeSettings({ apiKeyOpenrouter: "" }));
     expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "server", kind: "llm", metric: "calls", value: 1 });
   });
 
@@ -741,7 +741,7 @@ describe("usage-ledger call-count instrumentation (S4 fix, v0.6 round-2 review)"
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ segments: [] }), { status: 200, headers: { "Content-Type": "application/json" } }),
     );
-    await translateApi({ segments: [], lang: "zh" }, makeSettings({ apiKey: "sk-x", provider: "anthropic" }));
+    await translateApi({ segments: [], lang: "zh" }, makeSettings({ apiKeyAnthropic: "sk-x", provider: "anthropic" }));
     expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "anthropic", kind: "llm", metric: "calls", value: 1 });
   });
 
@@ -749,7 +749,7 @@ describe("usage-ledger call-count instrumentation (S4 fix, v0.6 round-2 review)"
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({}), { status: 200, headers: { "Content-Type": "application/json" } }),
     );
-    await summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKey: "" }));
+    await summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKeyOpenrouter: "" }));
     expect(mockRecordUsage).toHaveBeenCalledWith({ provider: "server", kind: "llm", metric: "calls", value: 1 });
   });
 });

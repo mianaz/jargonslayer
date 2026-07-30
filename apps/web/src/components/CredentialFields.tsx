@@ -15,24 +15,14 @@ import { Eye, EyeSlash } from "@phosphor-icons/react";
 import type { LlmProvider } from "@jargonslayer/core/types";
 import { useProviderModels } from "@/hooks/useProviderModels";
 import { KEY_STATUS_LABEL, type KeyStatus } from "@/lib/settings/keyStatus";
+import {
+  presetIdFor,
+  type ProviderPreset,
+  type ProviderPresetId,
+} from "@/lib/llm/providerKeys";
 
-export type ProviderPresetId =
-  | "anthropic"
-  | "openai"
-  | "deepseek"
-  | "qwen"
-  | "openrouter"
-  | "poe"
-  | "ollama"
-  | "custom";
-
-export interface ProviderPreset {
-  id: ProviderPresetId;
-  label: string;
-  provider: LlmProvider;
-  baseUrl: string; // "" for custom — user fills it in
-  modelHint?: string;
-}
+export { presetIdFor };
+export type { ProviderPreset, ProviderPresetId };
 
 // S14 credential-health chip text color per KeyStatus — PreviewLockedBadge's
 // own square-corner/muted-border framing (border-edge, px-1.5 py-0.5,
@@ -62,22 +52,6 @@ export function KeyStatusChip({ status }: { status: KeyStatus }) {
       {KEY_STATUS_LABEL[status]}
     </span>
   );
-}
-
-/** Reverse-match a provider/baseUrl pair to a preset id for the
- *  select's displayed value (falls back to "custom" for any
- *  openai-compat baseUrl that doesn't match a known preset). Generic
- *  over any {provider,baseUrl} shape — Settings' primary fields AND a
- *  TaskLlmConfig override both fit. */
-export function presetIdFor(
-  presets: ProviderPreset[],
-  creds: { provider: LlmProvider; baseUrl: string },
-): ProviderPresetId {
-  if (creds.provider === "anthropic") return "anthropic";
-  const hit = presets.find(
-    (p) => p.provider === "openai-compat" && p.baseUrl && p.baseUrl === creds.baseUrl,
-  );
-  return hit?.id ?? "custom";
 }
 
 export interface CredentialFieldsModel {

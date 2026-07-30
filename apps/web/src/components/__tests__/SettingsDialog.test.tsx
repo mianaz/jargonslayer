@@ -38,10 +38,10 @@ function labelsOf(ids: SettingsCategoryId[]): string[] {
 
 function deviantSettings(): Settings {
   // shouldAutoPromoteToAdvanced (settingsSections.ts) trips on ANY
-  // deviation from DEFAULT_SETTINGS — apiKey is the simplest one (and
+  // deviation from DEFAULT_SETTINGS — apiKeyOpenrouter is the simplest one (and
   // the exact field the bug report calls out: "their BYOK key field
   // hidden").
-  return { ...DEFAULT_SETTINGS, apiKey: "sk-real-user-key" };
+  return { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-real-user-key" };
 }
 
 function resetStore() {
@@ -138,7 +138,7 @@ describe("SettingsDialog — tag-blocker BLOCKER 1: auto-promote waits for hydra
 // false->true flip, so a dialog opened before store.hydrate() resolves
 // kept a DEFAULT_SETTINGS draft even after the real settings landed —
 // clicking 保存 then spread those stale defaults straight over the
-// user's real apiKey/engine/themeId. Same race as tag-blocker BLOCKER 1
+// user's real apiKeyOpenrouter/engine/themeId. Same race as tag-blocker BLOCKER 1
 // above (mirrors its exact mount/flip pattern), different effect.
 describe("SettingsDialog — F1: draft re-seeds on hydration completing while the dialog is open", () => {
   let container: HTMLDivElement | null = null;
@@ -176,11 +176,11 @@ describe("SettingsDialog — F1: draft re-seeds on hydration completing while th
 
     // hydrate()'s single synchronous `set` publishes the real persisted
     // settings + hydrated:true together (store.ts's own hydrate() shape)
-    // — apiKey/engine/themeId all deviate from default so a revert to
+    // — apiKeyOpenrouter/engine/themeId all deviate from default so a revert to
     // defaults is unambiguous.
     const hydratedSettings: Settings = {
       ...DEFAULT_SETTINGS,
-      apiKey: "sk-real-user-key",
+      apiKeyOpenrouter: "sk-real-user-key",
       engine: "soniox",
       themeId: "clarity",
     };
@@ -195,7 +195,7 @@ describe("SettingsDialog — F1: draft re-seeds on hydration completing while th
     });
 
     const saved = useApp.getState().settings;
-    expect(saved.apiKey).toBe("sk-real-user-key");
+    expect(saved.apiKeyOpenrouter).toBe("sk-real-user-key");
     expect(saved.engine).toBe("soniox");
     expect(saved.themeId).toBe("clarity");
   });
@@ -2266,7 +2266,7 @@ describe("SettingsDialog — sanitizes a pasted API Key (zero-width chars + whit
       findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(useApp.getState().settings.apiKey).toBe("sk-test-key");
+    expect(useApp.getState().settings.apiKeyOpenrouter).toBe("sk-test-key");
     expect(useApp.getState().toast).toBe("设置已保存");
   });
 });
@@ -2603,7 +2603,7 @@ describe("SettingsDialog — S14 credential-health chips", () => {
   beforeEach(() => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     useApp.setState({
-      settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", apiKey: "sk-real-key" },
+      settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", apiKeyOpenrouter: "sk-real-key" },
       hydrated: true,
     });
     container = document.createElement("div");
@@ -2620,7 +2620,7 @@ describe("SettingsDialog — S14 credential-health chips", () => {
     resetLlmTelemetry();
   });
 
-  it("renders a 已配置 chip next to the primary API Key row once apiKey is set with no telemetry evidence yet", async () => {
+  it("renders a 已配置 chip next to the primary API Key row once apiKeyOpenrouter is set with no telemetry evidence yet", async () => {
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
     });
@@ -2641,7 +2641,7 @@ describe("SettingsDialog — S14 credential-health chips", () => {
   });
 
   it("renders no chip at all for the empty primary key (未配置 is still shown, just via deriveKeyStatus's own unconfigured branch)", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", apiKey: "" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, uiMode: "advanced", apiKeyOpenrouter: "" }, hydrated: true });
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
     });
@@ -2662,7 +2662,7 @@ describe("SettingsDialog — S14 credential-health chips", () => {
 
   // FINDING 5 (S14 fix round): stale evidence attribution — test key A,
   // paste key B must not let B's chip immediately inherit A's 正常. The
-  // saved settings' apiKey ("sk-real-key", seeded by beforeEach above)
+  // saved settings' apiKeyOpenrouter ("sk-real-key", seeded by beforeEach above)
   // matches the draft at open time, so the mocked telemetry success
   // legitimately backs 正常 first; editing the draft key away from the
   // saved value must cap the chip back at 已配置 (credsMatch no longer
@@ -2697,6 +2697,56 @@ describe("SettingsDialog — S14 credential-health chips", () => {
     expect(chips.some((c) => c.textContent === "已配置")).toBe(true);
     expect(chips.some((c) => c.textContent === "正常")).toBe(false);
     expect(chips.some((c) => c.textContent === "异常")).toBe(false);
+  });
+
+  it("shows and edits only the currently selected provider's key", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        apiKeyOpenrouter: "sk-openrouter",
+        apiKeyAnthropic: "sk-anthropic",
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    const aiDetectBtn = Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ).find((b) => b.textContent === "AI 检测");
+    if (!aiDetectBtn) throw new Error('nav category "AI 检测" not found');
+    await act(async () => {
+      aiDetectBtn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const providerLabel = Array.from(container!.querySelectorAll("label")).find(
+      (label) => label.textContent === "提供方",
+    );
+    const providerSelect = providerLabel?.parentElement?.querySelector("select");
+    const apiKeyInput = container!.querySelector(
+      'input[placeholder="sk-…"]',
+    ) as HTMLInputElement | null;
+    if (!providerSelect || !apiKeyInput) throw new Error("primary credential fields not found");
+
+    expect(apiKeyInput.value).toBe("sk-openrouter");
+    await act(async () => {
+      providerSelect.value = "anthropic";
+      providerSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(apiKeyInput.value).toBe("sk-anthropic");
+
+    await act(async () => {
+      typeInto(apiKeyInput, "sk-anthropic-updated");
+    });
+    expect(apiKeyInput.value).toBe("sk-anthropic-updated");
+    await act(async () => {
+      providerSelect.value = "openrouter";
+      providerSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(apiKeyInput.value).toBe("sk-openrouter");
   });
 });
 

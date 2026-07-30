@@ -375,7 +375,7 @@ describe("CorrectionReview", () => {
     useApp.setState({
       segments: [seg({ id: "s1", text: "scar an seek" })],
       status: "stopped",
-      settings: makeSettings({ apiKey: "byok-key", explainLanguage: "zh" }),
+      settings: makeSettings({ apiKeyOpenrouter: "byok-key", explainLanguage: "zh" }),
       activeSessionId: "sess-1",
       translations: { s1: "旧翻译" },
     });
@@ -397,7 +397,7 @@ describe("CorrectionReview", () => {
     useApp.setState({
       segments: [seg({ id: "s1", text: "scar an seek" })],
       status: "stopped",
-      settings: makeSettings({ apiKey: "byok-key" }),
+      settings: makeSettings({ apiKeyOpenrouter: "byok-key" }),
       activeSessionId: "sess-1",
       translations: {},
     });
@@ -415,7 +415,7 @@ describe("CorrectionReview", () => {
     useApp.setState({
       segments: [seg({ id: "s1", text: "scar an seek" })],
       status: "stopped",
-      settings: makeSettings({ apiKey: "" }),
+      settings: makeSettings({ apiKeyOpenrouter: "" }),
       activeSessionId: "sess-1",
       translations: { s1: "旧翻译" },
     });

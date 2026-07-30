@@ -272,7 +272,7 @@ describe("Header — iOS brand removal + icon-only transport buttons (mobile ico
     useApp.setState({
       settings: {
         ...DEFAULT_SETTINGS,
-        apiKey: "byok-key",
+        apiKeyOpenrouter: "byok-key",
         bilingualTranscript: true,
         language: "en-US",
         explainLanguage: "zh",

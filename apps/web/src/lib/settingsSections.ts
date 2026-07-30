@@ -8,6 +8,7 @@
 // state handling.
 
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
+import { hasAnyProviderApiKey } from "./llm/providerKeys";
 
 export type UiLevel = Settings["uiMode"];
 
@@ -78,7 +79,7 @@ export function shouldAutoPromoteToAdvanced(settings: Settings): boolean {
   return (
     settings.provider !== DEFAULT_SETTINGS.provider ||
     settings.baseUrl !== DEFAULT_SETTINGS.baseUrl ||
-    settings.apiKey !== DEFAULT_SETTINGS.apiKey ||
+    hasAnyProviderApiKey(settings) ||
     settings.detectModel !== DEFAULT_SETTINGS.detectModel ||
     settings.summaryModel !== DEFAULT_SETTINGS.summaryModel ||
     hasEnabledTaskLlm(settings) ||

@@ -250,7 +250,7 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     useApp.setState({
       segments: [seg({ id: "s1" })],
       status: "listening",
-      settings: makeSettings({ apiKey: "byok-key" }),
+      settings: makeSettings({ apiKeyOpenrouter: "byok-key" }),
     });
     await renderPanel();
     expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
@@ -260,7 +260,7 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     useApp.setState({
       segments: [seg({ id: "s1" })],
       status: "stopped",
-      settings: makeSettings({ apiKey: "", provider: "anthropic" }),
+      settings: makeSettings({ apiKeyAnthropic: "", provider: "anthropic" }),
     });
     await renderPanel();
     expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
@@ -270,7 +270,7 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     useApp.setState({
       segments: [seg({ id: "s1" })],
       status: "stopped",
-      settings: makeSettings({ apiKey: "byok-key" }),
+      settings: makeSettings({ apiKeyOpenrouter: "byok-key" }),
     });
     await renderPanel();
     expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeTruthy();
@@ -281,7 +281,7 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
       segments: [seg({ id: "s1" })],
       status: "stopped",
       settings: makeSettings({
-        apiKey: "",
+        apiKeyOpenrouter: "",
         taskLlm: { detect: { enabled: true, apiKey: "detect-only-key" } },
       }),
     });
@@ -290,7 +290,7 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
   });
 
   it("AI 校正 button hidden when there are no segments even if stopped + configured", async () => {
-    useApp.setState({ segments: [], status: "stopped", settings: makeSettings({ apiKey: "byok-key" }) });
+    useApp.setState({ segments: [], status: "stopped", settings: makeSettings({ apiKeyOpenrouter: "byok-key" }) });
     await renderPanel();
     expect(container!.querySelector('[data-testid="btn-ai-correct"]')).toBeNull();
   });
@@ -378,7 +378,7 @@ describe("TranscriptPanel — selection mode / bulk assign / live latch / AI 校
     useApp.setState({
       segments: [seg({ id: "s1" })],
       status: "listening",
-      settings: makeSettings({ apiKey: "byok-key" }),
+      settings: makeSettings({ apiKeyOpenrouter: "byok-key" }),
     });
     await renderPanel({ isMobileLayout: true });
 

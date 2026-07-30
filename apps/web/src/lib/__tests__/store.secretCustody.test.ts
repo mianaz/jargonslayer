@@ -16,7 +16,7 @@ import * as storageModule from "../history/storage";
 const mockWriteSecret = vi.fn();
 const mockHydrateSecrets = vi.fn();
 vi.mock("../desktop/secret", () => ({
-  SECRET_NAMES: ["apiKey", "hfToken", "sonioxKey", "deepgramKey", "agentToken"],
+  SECRET_NAMES: ["apiKeyOpenrouter", "hfToken", "sonioxKey", "deepgramKey", "agentToken"],
   readSecrets: vi.fn(async () => ({})),
   writeSecret: (name: string, value: string) => mockWriteSecret(name, value),
   hydrateSecrets: (settings: unknown) => mockHydrateSecrets(settings),
@@ -36,13 +36,13 @@ describe("updateSettings / settingsForPersist — web build (IS_DESKTOP false)",
   it("changing a SECRET_NAMES field never touches lib/desktop/secret.ts", async () => {
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
 
-    useApp.getState().updateSettings({ apiKey: "sk-plain" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-plain" });
     await useApp.getState().flushSecrets(); // no-op on web — nothing was ever enqueued
 
     expect(mockWriteSecret).not.toHaveBeenCalled();
     // The plaintext value persists exactly as before this feature
     // existed — nothing on web is ever stripped.
-    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "sk-plain" }));
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ apiKeyOpenrouter: "sk-plain" }));
   });
 
   it("flushSecrets() resolves immediately — nothing was ever enqueued to wait on", async () => {
@@ -50,11 +50,11 @@ describe("updateSettings / settingsForPersist — web build (IS_DESKTOP false)",
   });
 
   it("hydrate() never calls hydrateSecrets()", async () => {
-    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKey: "sk-plain" });
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plain" });
 
     await useApp.getState().hydrate();
 
     expect(mockHydrateSecrets).not.toHaveBeenCalled();
-    expect(useApp.getState().settings.apiKey).toBe("sk-plain"); // passes through untouched
+    expect(useApp.getState().settings.apiKeyOpenrouter).toBe("sk-plain"); // passes through untouched
   });
 });

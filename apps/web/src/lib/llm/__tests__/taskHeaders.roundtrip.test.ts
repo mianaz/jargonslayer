@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, PROVIDER_HEADERS, type Settings } from "@jargonslayer/core/types";
 import { detectApi, defineApi, summarizeApi, taskHeaders, translateApi } from "../client";
+import { resolveProviderApiKey } from "../providerKeys";
 
 const mockFetch = vi.fn();
 
@@ -57,8 +58,9 @@ function legacyAuthHeaders(settings: Settings): Record<string, string> {
   const headers: Record<string, string> = {
     [PROVIDER_HEADERS.provider]: settings.provider,
   };
-  if (settings.apiKey) {
-    headers[PROVIDER_HEADERS.key] = settings.apiKey;
+  const apiKey = resolveProviderApiKey(settings);
+  if (apiKey) {
+    headers[PROVIDER_HEADERS.key] = apiKey;
   }
   if (settings.provider === "openai-compat" && settings.baseUrl) {
     headers[PROVIDER_HEADERS.baseUrl] = settings.baseUrl;
@@ -69,8 +71,8 @@ function legacyAuthHeaders(settings: Settings): Record<string, string> {
 describe("round-trip equivalence — no taskLlm ≡ legacy, for every Next.js-routed call site", () => {
   const legacySettingsVariants: Partial<Settings>[] = [
     {},
-    { provider: "openai-compat", baseUrl: "https://api.deepseek.com", apiKey: "sk-legacy", detectModel: "deepseek-chat", summaryModel: "deepseek-chat" },
-    { provider: "anthropic", apiKey: "sk-ant-legacy" },
+    { provider: "openai-compat", baseUrl: "https://api.deepseek.com", apiKeyDeepseek: "sk-legacy", detectModel: "deepseek-chat", summaryModel: "deepseek-chat" },
+    { provider: "anthropic", apiKeyAnthropic: "sk-ant-legacy" },
   ];
 
   for (const [i, overrides] of legacySettingsVariants.entries()) {
@@ -141,10 +143,10 @@ describe("round-trip equivalence — no taskLlm ≡ legacy, for every Next.js-ro
 
 describe("taskHeaders — SECURITY: a disabled/absent per-domain override never leaks", () => {
   it("{enabled:false, provider:'openai-compat', ...} produces the SAME headers as no entry at all", () => {
-    const primary = makeSettings({ provider: "anthropic", apiKey: "primary-key" });
+    const primary = makeSettings({ provider: "anthropic", apiKeyAnthropic: "primary-key" });
     const withDisabled = makeSettings({
       provider: "anthropic",
-      apiKey: "primary-key",
+      apiKeyAnthropic: "primary-key",
       taskLlm: {
         translate: {
           enabled: false,
@@ -157,13 +159,48 @@ describe("taskHeaders — SECURITY: a disabled/absent per-domain override never 
     expect(taskHeaders(withDisabled, "translate")).toEqual(taskHeaders(primary, "translate"));
     expect(taskHeaders(withDisabled, "translate")).not.toHaveProperty(PROVIDER_HEADERS.baseUrl);
   });
+
+  it("switching providers never emits the previously selected provider's key", () => {
+    const switchedToOpenRouter = makeSettings({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKeyAnthropic: "sk-must-not-leak",
+      apiKeyOpenrouter: "",
+    });
+
+    expect(taskHeaders(switchedToOpenRouter, "detect")).toEqual({
+      [PROVIDER_HEADERS.provider]: "openai-compat",
+      [PROVIDER_HEADERS.baseUrl]: "https://openrouter.ai/api/v1",
+    });
+    expect(taskHeaders(switchedToOpenRouter, "detect")).not.toHaveProperty(
+      PROVIDER_HEADERS.key,
+    );
+  });
+
+  it("a blank per-task key inherits only the effective override provider's stored key", () => {
+    const settings = makeSettings({
+      provider: "anthropic",
+      apiKeyAnthropic: "sk-anthropic",
+      apiKeyDeepseek: "",
+      taskLlm: {
+        detect: {
+          enabled: true,
+          provider: "openai-compat",
+          baseUrl: "https://api.deepseek.com",
+          apiKey: "",
+        },
+      },
+    });
+
+    expect(taskHeaders(settings, "detect")).not.toHaveProperty(PROVIDER_HEADERS.key);
+  });
 });
 
 describe("per-domain routing — distinct providers per domain reach the correct headers, independently", () => {
   it("detect configured with its own openai-compat provider does not affect summary/translate's headers", async () => {
     const settings = makeSettings({
       provider: "anthropic",
-      apiKey: "primary-anthropic-key",
+      apiKeyAnthropic: "primary-anthropic-key",
       detectModel: "claude-haiku-4-5",
       summaryModel: "claude-sonnet-5",
       taskLlm: {

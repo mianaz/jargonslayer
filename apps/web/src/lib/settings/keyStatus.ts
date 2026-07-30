@@ -48,7 +48,7 @@ export interface KeyStatusEvidence {
   hasFailure?: boolean;
 }
 
-/** value: the raw credential string (Settings.apiKey/.hfToken/
+/** value: the raw credential string (a resolved provider key/.hfToken/
  *  .sonioxKey/TaskLlmConfig.apiKey). "" is always unconfigured
  *  regardless of evidence — stale evidence from a key the user just
  *  cleared must never read as configured/active. */
@@ -118,11 +118,11 @@ export function credsMatch(a: CredsTriple, b: CredsTriple): boolean {
 }
 
 /** True when `domain` currently resolves to its OWN taskLlm override
- *  key rather than inheriting the primary Settings.apiKey — mirrors
- *  taskConfig.ts's resolveTaskCreds exactly (`t.apiKey || settings.
- *  apiKey`): enabled:true with a BLANK per-domain key still inherits
- *  the primary credential, so its telemetry must attribute to the
- *  primary chip, not a chip of its own. */
+ *  key rather than inheriting a top-level provider-specific key —
+ *  mirrors taskConfig.ts's resolveTaskCreds: enabled:true with a BLANK
+ *  per-domain key still inherits the primary credential, so its
+ *  telemetry must attribute to the primary chip, not a chip of its
+ *  own. */
 export function domainUsesOwnKey(settings: Settings, domain: LlmTaskDomain): boolean {
   const t = settings.taskLlm?.[domain];
   return !!(t?.enabled && t.apiKey);

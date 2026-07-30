@@ -40,7 +40,7 @@ const mockFetch = vi.fn();
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     ...DEFAULT_SETTINGS,
-    apiKey: "sk-ant-BYOK-test-key",
+    apiKeyAnthropic: "sk-ant-BYOK-test-key",
     provider: "anthropic",
     ...overrides,
   };
@@ -121,28 +121,28 @@ describe("flag off — client transport never engaged, even with BYOK configured
 describe("flag on, no apiKey configured — NoKeyError without dispatching any request", () => {
   it("detectApi", async () => {
     await expect(
-      detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" })),
+      detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKeyAnthropic: "" })),
     ).rejects.toBeInstanceOf(NoKeyError);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("defineApi", async () => {
     await expect(
-      defineApi({ phrase: "x", context: "" }, makeSettings({ apiKey: "" })),
+      defineApi({ phrase: "x", context: "" }, makeSettings({ apiKeyAnthropic: "" })),
     ).rejects.toBeInstanceOf(NoKeyError);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("translateApi", async () => {
     await expect(
-      translateApi({ segments: [{ id: "1", text: "hi" }], lang: "zh" }, makeSettings({ apiKey: "" })),
+      translateApi({ segments: [{ id: "1", text: "hi" }], lang: "zh" }, makeSettings({ apiKeyAnthropic: "" })),
     ).rejects.toBeInstanceOf(NoKeyError);
     expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it("summarizeApi", async () => {
     await expect(
-      summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKey: "" })),
+      summarizeApi({ segments: [], expressions: [], terms: [] }, makeSettings({ apiKeyAnthropic: "" })),
     ).rejects.toBeInstanceOf(NoKeyError);
     expect(mockFetch).not.toHaveBeenCalled();
   });
@@ -155,7 +155,7 @@ describe("flag on, no apiKey configured — NoKeyError without dispatching any r
   // two indistinguishable in a copied diag report. Both must now read
   // differently.
   it("logs a distinct diag message/detail — never the real-401 phrase, never status=401", async () => {
-    const err = await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" })).catch((e) => e);
+    const err = await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKeyAnthropic: "" })).catch((e) => e);
 
     expect(err).toBeInstanceOf(NoKeyError);
     expect((err as Error).message).toBe("未配置 API Key（本地拦截，未发出请求）");
@@ -251,7 +251,11 @@ describe("detectApi — client transport — transport-level (pre-HTTP) rejectio
 
     const err = await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }),
+      makeSettings({
+        provider: "openai-compat",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKeyOpenrouter: "sk-openrouter-test-key",
+      }),
     ).catch((e) => e);
 
     expect(err).toBeInstanceOf(UpstreamError);
@@ -281,7 +285,11 @@ describe("detectApi — client transport — transport-level (pre-HTTP) rejectio
 
     const err = await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ provider: "openai-compat", baseUrl: "https://openrouter.ai/api/v1" }),
+      makeSettings({
+        provider: "openai-compat",
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKeyOpenrouter: "sk-openrouter-test-key",
+      }),
     ).catch((e) => e);
 
     expect(err).toBeInstanceOf(UpstreamError);
@@ -509,7 +517,7 @@ describe("summarizeApi — client transport — request-size caps (F4)", () => {
 
     const err = await summarizeApi(
       { segments, expressions: [], terms: [] },
-      makeSettings({ apiKey: "" }),
+      makeSettings({ apiKeyAnthropic: "" }),
     ).catch((e) => e);
 
     // NOT NoKeyError — the size cap is checked first (see
@@ -570,7 +578,7 @@ describe("detectApi — client transport — echoing endpoint never leaks the BY
 
     const err = await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ apiKey: SECRET }),
+      makeSettings({ apiKeyAnthropic: SECRET }),
     ).catch((e) => e);
 
     expect(err).toBeInstanceOf(UpstreamError);
@@ -611,7 +619,7 @@ describe("summarizeApi — client transport — echoing endpoint never leaks the
           expressions: [],
           terms: [],
         },
-        makeSettings({ apiKey: SECRET }),
+        makeSettings({ apiKeyAnthropic: SECRET }),
       );
 
       // Fail-soft, unchanged behavior: still resolves despite
