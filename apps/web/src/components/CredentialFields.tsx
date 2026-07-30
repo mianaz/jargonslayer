@@ -54,6 +54,72 @@ export function KeyStatusChip({ status }: { status: KeyStatus }) {
   );
 }
 
+/** One masked (or plain-text, matching today's agentToken/youdaoAppKey
+ *  posture) credential editor used by the dedicated「密钥」section —
+ *  same password + eye-toggle idiom as this file's API Key row and
+ *  SettingsDialog's engine/translate hand-rolled fields. Owns its own
+ *  show/hide state so the dialog doesn't grow one useState per key. */
+export function SecretKeyRow({
+  fieldId,
+  label,
+  purpose,
+  value,
+  onChange,
+  placeholder,
+  status,
+  inputType = "password",
+  disabled,
+  hint,
+}: {
+  fieldId: string;
+  label: string;
+  purpose: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  status: KeyStatus;
+  inputType?: "password" | "text";
+  disabled?: boolean;
+  hint?: React.ReactNode;
+}) {
+  const [show, setShow] = useState(false);
+  const masked = inputType === "password";
+
+  return (
+    <div data-settings-key={fieldId} className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <label className="text-xs text-mut">{label}</label>
+          <div className="text-[10px] leading-[1.6] text-mut2">{purpose}</div>
+        </div>
+        <KeyStatusChip status={status} />
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type={masked ? (show ? "text" : "password") : "text"}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="w-full border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg placeholder:text-mut2 focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+        />
+        {masked && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => setShow((v) => !v)}
+            aria-label={show ? "隐藏" : "显示"}
+            className="flex h-8 w-8 shrink-0 items-center justify-center text-mut hover:bg-panel3 hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {show ? <EyeSlash size={18} weight="regular" /> : <Eye size={18} weight="regular" />}
+          </button>
+        )}
+      </div>
+      {hint && <div className="text-xs leading-[1.7] text-mut2">{hint}</div>}
+    </div>
+  );
+}
+
 export interface CredentialFieldsModel {
   key: string; // stable react key + datalist id suffix
   label: string;

@@ -122,10 +122,17 @@ import ModelPicker from "@/components/desktop/ModelPicker";
 import { MODEL_CATALOG } from "@/lib/desktop/modelCatalog";
 import CredentialFields, {
   KeyStatusChip,
+  SecretKeyRow,
   presetIdFor,
   type ProviderPreset,
   type ProviderPresetId,
 } from "@/components/CredentialFields";
+import {
+  keysCatalogFieldId,
+  PROVIDER_KEY_CATALOG,
+  SERVICE_KEY_CATALOG,
+  TASK_KEY_CATALOG,
+} from "@/lib/settings/keysCatalog";
 import AiStatusPanel from "@/components/AiStatusPanel";
 // v0.6 field-fix (item 3): the merged 检测模式 segmented control reuses
 // StatusLine's own off/dictionary/llm label strings verbatim — single
@@ -139,7 +146,9 @@ import {
   OAUTH_VERIFIER_STORAGE_KEY,
 } from "@/lib/oauth/openrouterPkce";
 import {
+  providerApiKeyNameFor,
   providerApiKeyPatch,
+  providerHostFor,
   resolveProviderApiKey,
 } from "@/lib/llm/providerKeys";
 
@@ -510,6 +519,7 @@ export type SettingsCategoryId =
   | "engine"
   | "diarization"
   | "aiDetect"
+  | "keys"
   | "taskLlm"
   | "dataIntegration"
   | "subscriptionDirect"
@@ -523,6 +533,7 @@ export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = 
   { id: "engine", label: "转录引擎" },
   { id: "diarization", label: "说话人分离" },
   { id: "aiDetect", label: "AI 检测" },
+  { id: "keys", label: "密钥" },
   { id: "taskLlm", label: "分任务模型（高级）" },
   { id: "dataIntegration", label: "数据与联动" },
   { id: "subscriptionDirect", label: "订阅直连（实验性）" },
@@ -535,6 +546,8 @@ export const SETTINGS_CATEGORIES: { id: SettingsCategoryId; label: string }[] = 
 // categoryVisible on iOS below, Part A #1); subscriptionDirect is also
 // excluded because it requires a computer-side localhost agent. Data
 // integration stays available, but below 高级 rather than in 常用.
+// 「密钥」stays in 常用 (simple-tagged) so every credential is reachable
+// without opening 高级 — matching the dedicated Keys hub's purpose.
 //
 // #58 fix round FIX 5 (Opus MEDIUM): 常用 has no list of its own below —
 // it's everything in visibleCategories NOT tagged advanced here. A twin
@@ -1424,6 +1437,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     engine: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.engine),
     diarization: !IS_IOS && isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.diarization),
     aiDetect: AI_DETECT_ROW_LEVELS.some((l) => isSectionVisible(uiVisibilityLevel, l)),
+    keys: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.keys),
     taskLlm: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.taskLlm),
     dataIntegration: isSectionVisible(uiVisibilityLevel, SETTINGS_UI_LEVELS.dataIntegration),
     subscriptionDirect:
@@ -5281,6 +5295,150 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               </div>
             </div>
             )}
+          </section>
+          )}
+
+          {/* 密钥 (ft6): dedicated credential hub — one field per provider/
+             service, each labelled with what it backs and a configured/
+             unconfigured (or healthier) chip via keyStatus.ts. Canonical
+             editor for every credential; contextual engine/translate/AI/
+             task/subscription rows below keep writing the SAME draft
+             fields (never a second copy of state). Presentation only —
+             storage shape, resolve-time routing, and keychain custody
+             are unchanged. */}
+          {activeCategory === "keys" && isSectionVisible(level, SETTINGS_UI_LEVELS.keys) && (
+          <section
+            className="space-y-4 border-t border-edge pt-5"
+            data-ui-level="keys"
+          >
+            <SectionHeading>密钥</SectionHeading>
+            <div className="text-xs leading-[1.7] text-mut2">
+              所有凭据集中在此：每个提供方一个字段，状态显示是否已配置。引擎/翻译旁的入口写入同一字段，不会另存一份。
+            </div>
+
+            <div className="space-y-3">
+              <div className="text-xs font-medium text-mut">LLM 提供方</div>
+              {PROVIDER_KEY_CATALOG.map((entry) => {
+                const value = draft[entry.field] ?? "";
+                // Evidence only describes the SAVED primary credential —
+                // gate on this row still being the draft's resolved
+                // provider key AND matching what's saved (same FINDING 5
+                // rule as the AI 检测 CredentialFields chip).
+                const isActiveProviderKey =
+                  providerApiKeyNameFor(draft.provider, draft.baseUrl) === entry.field &&
+                  (entry.field !== "apiKeyCustom" ||
+                    (draft.llmCustomHost ?? "") === providerHostFor(draft.baseUrl));
+                const status = deriveKeyStatus(
+                  value,
+                  isActiveProviderKey &&
+                    credsMatch(
+                      { provider: draft.provider, baseUrl: draft.baseUrl, apiKey: draftApiKey },
+                      { provider: settings.provider, baseUrl: settings.baseUrl, apiKey: savedApiKey },
+                    )
+                    ? llmKeyEvidence(
+                        primaryTelemetryDomains(draft).map((d) => telemetry[d]),
+                        domainUsesOwnKey(draft, "detect") ? undefined : testConnectionOk,
+                      )
+                    : undefined,
+                );
+                return (
+                  <SecretKeyRow
+                    key={entry.field}
+                    fieldId={keysCatalogFieldId(entry)}
+                    label={entry.label}
+                    purpose={entry.purpose}
+                    value={value}
+                    onChange={(apiKey) => patch({ [entry.field]: apiKey })}
+                    placeholder={entry.placeholder}
+                    status={status}
+                    inputType={entry.inputType}
+                  />
+                );
+              })}
+            </div>
+
+            <div className="space-y-3 border-t border-edge pt-3">
+              <div className="text-xs font-medium text-mut">分任务覆盖（可选）</div>
+              {TASK_KEY_CATALOG.map((entry) => {
+                const value = draft.taskLlm?.[entry.domain]?.apiKey ?? "";
+                const status = deriveKeyStatus(
+                  value,
+                  credsMatch(
+                    resolveTaskCreds(draft, entry.domain),
+                    resolveTaskCreds(settings, entry.domain),
+                  )
+                    ? llmKeyEvidence(
+                        TASK_DOMAIN_TELEMETRY[entry.domain].map((d) => telemetry[d]),
+                        entry.domain === "detect" && domainUsesOwnKey(draft, "detect")
+                          ? testConnectionOk
+                          : undefined,
+                      )
+                    : undefined,
+                );
+                return (
+                  <SecretKeyRow
+                    key={entry.domain}
+                    fieldId={keysCatalogFieldId(entry)}
+                    label={entry.label}
+                    purpose={entry.purpose}
+                    value={value}
+                    onChange={(apiKey) => {
+                      const prev = draft.taskLlm?.[entry.domain];
+                      handleTaskLlmChange(entry.domain, {
+                        enabled: prev?.enabled ?? false,
+                        provider: prev?.provider,
+                        baseUrl: prev?.baseUrl,
+                        apiKey,
+                        model: prev?.model,
+                      });
+                    }}
+                    placeholder={entry.placeholder}
+                    status={status}
+                    inputType={entry.inputType}
+                  />
+                );
+              })}
+            </div>
+
+            <div className="space-y-3 border-t border-edge pt-3">
+              <div className="text-xs font-medium text-mut">转录 / 分离 / 翻译 / 订阅</div>
+              {SERVICE_KEY_CATALOG.filter(
+                (entry) =>
+                  !entry.subscriptionDirectOnly ||
+                  process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1",
+              ).map((entry) => {
+                const value = draft[entry.field] ?? "";
+                // youdao status historically requires BOTH id+secret —
+                // keep that honesty for the pair while still editing
+                // one field per row.
+                const statusValue =
+                  entry.field === "youdaoAppKey" || entry.field === "youdaoAppSecret"
+                    ? draft.youdaoAppKey && draft.youdaoAppSecret
+                      ? value
+                      : ""
+                    : value;
+                const status = deriveKeyStatus(
+                  statusValue,
+                  entry.field === "hfToken" && !PREVIEW_TIER
+                    ? { hasSuccess: sidecarStatus?.diarize === true }
+                    : undefined,
+                );
+                return (
+                  <SecretKeyRow
+                    key={entry.field}
+                    fieldId={keysCatalogFieldId(entry)}
+                    label={entry.label}
+                    purpose={entry.purpose}
+                    value={value}
+                    onChange={(next) => patch({ [entry.field]: next })}
+                    placeholder={entry.placeholder}
+                    status={status}
+                    inputType={entry.inputType}
+                    disabled={entry.field === "hfToken" && PREVIEW_TIER}
+                  />
+                );
+              })}
+            </div>
           </section>
           )}
 

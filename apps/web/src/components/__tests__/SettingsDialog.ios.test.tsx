@@ -150,6 +150,7 @@ describe("SettingsDialog — iOS build", () => {
     // needed during ordinary use.
     expect(findRow("转录引擎")).toBeTruthy();
     expect(findRow("AI 检测")).toBeTruthy();
+    expect(findRow("密钥")).toBeTruthy();
     expect(findRow("显示")).toBeTruthy();
     // 高级
     expect(findRow("数据与联动")).toBeTruthy();
@@ -161,6 +162,8 @@ describe("SettingsDialog — iOS build", () => {
     const rootText = container!.textContent ?? "";
     expect(rootText.indexOf("显示")).toBeLessThan(rootText.indexOf("高级"));
     expect(rootText.indexOf("数据与联动")).toBeGreaterThan(rootText.indexOf("高级"));
+    // 「密钥」is simple-tagged → 常用, before the 高级 group header.
+    expect(rootText.indexOf("密钥")).toBeLessThan(rootText.indexOf("高级"));
     // Part A #1: 说话人分离 (pyannote+sidecar) is impossible on iOS —
     // nowhere in the rendered nav/list.
     expect(container!.textContent).not.toContain("说话人分离");

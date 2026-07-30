@@ -37,6 +37,10 @@ export const SETTINGS_UI_LEVELS = {
   aiDetectPacks: "simple", // 词典主题包 (v0.6: promoted from advanced — installable dict packs are mainstream now)
   aiDetectPackCatalog: "simple", // 词典库 (v0.6 T6: catalog browse, simple alongside aiDetectPacks/aiDetectPackSources)
   aiDetectPackSources: "simple", // 词典源 (v0.6: promoted alongside aiDetectPacks)
+  // 密钥 — dedicated credential hub (ft6). Simple so every configured
+  // key is visible at a glance without flipping 高级; storage/resolve
+  // paths are unchanged — this is presentation only.
+  keys: "simple",
   // 分任务模型（高级）— whole section (#56, BYOK-only).
   taskLlm: "advanced",
   // 数据与联动 — whole section (export/webhook/backup).
@@ -75,7 +79,23 @@ function hasEnabledTaskLlm(settings: Settings): boolean {
  *  true, so nothing a user configured is ever silently hidden from
  *  them. No stored flag, no migration — the same settings blob always
  *  produces the same answer (see v0.3.0 plan §4 point 5). */
+/** True when any per-task LLM override carries its own apiKey — even
+ *  with enabled:false the secret is real stored material the Keys
+ *  section surfaces; promoting still reveals the advanced 分任务模型
+ *  editors that own provider/model alongside that key. */
+function hasTaskLlmApiKey(settings: Settings): boolean {
+  const taskLlm = settings.taskLlm;
+  if (!taskLlm) return false;
+  return Object.values(taskLlm).some((cfg) => !!cfg?.apiKey);
+}
+
 export function shouldAutoPromoteToAdvanced(settings: Settings): boolean {
+  // Provider / HF / agent keys remain promote triggers because their
+  // *engine* editors (AI 检测 credentials, 说话人分离, 订阅直连) are
+  // still advanced-only. Transcription/translate keys (sonioxKey,
+  // deepgramKey, elevenLabsKey, deeplKey, youdao*) live under simple
+  // engine/translate rows AND the simple「密钥」hub, so they do not
+  // need to force advanced on their own.
   return (
     settings.provider !== DEFAULT_SETTINGS.provider ||
     settings.baseUrl !== DEFAULT_SETTINGS.baseUrl ||
@@ -83,6 +103,7 @@ export function shouldAutoPromoteToAdvanced(settings: Settings): boolean {
     settings.detectModel !== DEFAULT_SETTINGS.detectModel ||
     settings.summaryModel !== DEFAULT_SETTINGS.summaryModel ||
     hasEnabledTaskLlm(settings) ||
+    hasTaskLlmApiKey(settings) ||
     settings.minConfidence !== DEFAULT_SETTINGS.minConfidence ||
     settings.autoExport !== DEFAULT_SETTINGS.autoExport ||
     settings.webhookUrl !== DEFAULT_SETTINGS.webhookUrl ||
