@@ -27,6 +27,7 @@
 // callback_url when appending its own `?code=`, undocumented either
 // way), unrelated to the still-open hostname caveat just above.
 import type { Settings } from "@jargonslayer/core/types";
+import { providerApiKeyPatch } from "../llm/providerKeys";
 
 import {
   getInvoke,
@@ -262,7 +263,11 @@ export async function connectOpenRouterDesktopWith(deps: ConnectOpenRouterDeskto
                 deps.updateSettings({
                   provider: "openai-compat",
                   baseUrl: "https://openrouter.ai/api/v1",
-                  apiKey: key,
+                  ...providerApiKeyPatch(
+                    "openai-compat",
+                    "https://openrouter.ai/api/v1",
+                    key,
+                  ),
                   ...remapOpenRouterModelDefaults(deps.getSettings()),
                 });
                 settle({ ok: true });

@@ -50,7 +50,7 @@ describe("useDirectTransport — preview tier", () => {
   it("keyless: routes through /api/detect (the shared-key trial lane, unchanged)", async () => {
     mockFetch.mockResolvedValue(detectRouteFixture());
 
-    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" }));
+    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKeyOpenrouter: "" }));
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url] = mockFetch.mock.calls[0];
@@ -63,7 +63,7 @@ describe("useDirectTransport — preview tier", () => {
 
     await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ apiKey: "sk-ant-preview-byok-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-preview-byok-key", provider: "anthropic" }),
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -77,7 +77,7 @@ describe("useDirectTransport — preview tier", () => {
 
     await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ apiKey: "sk-ant-desktop-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-desktop-key", provider: "anthropic" }),
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -112,7 +112,7 @@ describe("useDirectTransport — preview tier, with a key: every *Api call site 
 
     await defineApi(
       { phrase: "circle back", context: "c" },
-      makeSettings({ apiKey: "sk-ant-preview-byok-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-preview-byok-key", provider: "anthropic" }),
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -126,7 +126,7 @@ describe("useDirectTransport — preview tier, with a key: every *Api call site 
 
     await translateApi(
       { segments: [{ id: "1", text: "hi" }], lang: "zh" },
-      makeSettings({ apiKey: "sk-ant-preview-byok-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-preview-byok-key", provider: "anthropic" }),
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -151,7 +151,7 @@ describe("useDirectTransport — preview tier, with a key: every *Api call site 
 
     await summarizeApi(
       { segments: [], expressions: [], terms: [] },
-      makeSettings({ apiKey: "sk-ant-preview-byok-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-preview-byok-key", provider: "anthropic" }),
     );
 
     // Summary is a multi-stage orchestration (summary + translation +
@@ -167,7 +167,7 @@ describe("useDirectTransport — preview tier, with a key: every *Api call site 
 
     await correctApi(
       { segments: [{ id: "1", text: "hi" }], context: "", lexicon: [] },
-      makeSettings({ apiKey: "sk-ant-preview-byok-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-preview-byok-key", provider: "anthropic" }),
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -191,7 +191,7 @@ describe("useDirectTransport — preview tier, per-domain split (taskLlm overrid
     });
 
     const settings = makeSettings({
-      apiKey: "", // primary keyless — detect (no override) stays on the trial lane
+      apiKeyOpenrouter: "", // primary keyless — detect (no override) stays on the trial lane
       taskLlm: {
         translate: { enabled: true, provider: "anthropic", apiKey: "sk-ant-translate-only-key" },
       },
@@ -221,7 +221,7 @@ describe("useDirectTransport — preview tier, per-domain split (taskLlm overrid
     mockFetch.mockResolvedValue(anthropicDirectFixture(JSON.stringify({ expressions: [], terms: [] })));
 
     const settings = makeSettings({
-      apiKey: "sk-ant-primary-key",
+      apiKeyAnthropic: "sk-ant-primary-key",
       provider: "anthropic",
       taskLlm: { detect: { enabled: true, apiKey: "" } },
     });

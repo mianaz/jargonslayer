@@ -502,8 +502,9 @@ export type LlmProvider = "anthropic" | "openai-compat";
 export type LlmTaskDomain = "translate" | "detect" | "summary";
 
 // A per-domain override. Every field optional — an absent field
-// inherits the primary (top-level Settings.provider/baseUrl/apiKey +
-// the domain's legacy model field). enabled:false (or no entry at
+// inherits the primary (top-level Settings.provider/baseUrl plus that
+// endpoint's provider-specific key + the domain's legacy model field).
+// enabled:false (or no entry at
 // all) means the domain uses the primary entirely, exactly as before
 // this feature existed.
 export interface TaskLlmConfig {
@@ -576,6 +577,21 @@ export interface Settings {
   whisperModel: string;
   provider: LlmProvider;
   baseUrl: string; // openai-compat only, e.g. https://api.deepseek.com/v1
+  // LLM BYOK keys are flat, provider-specific fields so every one can
+  // stay under desktop Keychain custody. Request-time resolution must
+  // go through lib/llm/providerKeys.ts; never select one by presence or
+  // fall back across providers. llmCustomHost binds apiKeyCustom to the
+  // endpoint host it was entered for, preventing custom Base URL edits
+  // from recreating the same cross-host leak.
+  apiKeyAnthropic: string;
+  apiKeyOpenai: string;
+  apiKeyDeepseek: string;
+  apiKeyQwen: string;
+  apiKeyOpenrouter: string;
+  apiKeyPoe: string;
+  apiKeyOllama: string;
+  apiKeyCustom: string;
+  llmCustomHost: string;
   // W2 desktop proxy support — desktop-only (meaningless/unread on a web
   // build), manual escape hatch for whatever tauri-plugin-http's own
   // macOS-system-proxy auto-detection can't see: env-var-only setups
@@ -586,13 +602,12 @@ export interface Settings {
   // schemes; userinfo (user:pass@) is allowed for proxy basic auth — see
   // SettingsDialog.tsx's own isValidProxyUrl for the exact validation.
   proxyUrl: string;
-  apiKey: string; // "" = rely on server-side env ANTHROPIC_API_KEY
   detectModel: string;
   summaryModel: string;
   // Per-task provider/model overrides (#56, BYOK-only — never affects
   // the server-key/allowlist path (#61) or subscription-direct). Keyed
   // by LlmTaskDomain; a domain absent from the map (or present with
-  // enabled:false) inherits provider/baseUrl/apiKey above and the
+  // enabled:false) inherits provider/baseUrl/provider-specific key and the
   // matching legacy model field entirely — see lib/llm/taskConfig.ts's
   // resolveTaskCreds, the single source of truth for this inheritance.
   // undefined (the default) is byte-identical to pre-#56 behavior.
@@ -1011,8 +1026,16 @@ export const DEFAULT_SETTINGS: Settings = {
   // this only changes what an UNTOUCHED default looks like.
   provider: "openai-compat",
   baseUrl: "https://openrouter.ai/api/v1",
+  apiKeyAnthropic: "",
+  apiKeyOpenai: "",
+  apiKeyDeepseek: "",
+  apiKeyQwen: "",
+  apiKeyOpenrouter: "",
+  apiKeyPoe: "",
+  apiKeyOllama: "",
+  apiKeyCustom: "",
+  llmCustomHost: "",
   proxyUrl: "",
-  apiKey: "",
   // Field-test fix (v0.4.4, real user report): these were bare
   // Anthropic ids (claude-haiku-4-5/claude-sonnet-5) — 400s the moment
   // provider is "openai-compat" pointed at OpenRouter (e.g. the

@@ -10,7 +10,7 @@ import { DEFAULT_SETTINGS } from "@jargonslayer/core/types";
 import { buildByokKeyPatch, buildHfTokenPatch, describeOAuthFailure } from "../onboardingSettings";
 
 describe("buildByokKeyPatch", () => {
-  it("trims and returns the EXACT settings shape the web OAuth callback writes (provider/baseUrl/apiKey), unchanged when the current models are already slash-shaped", () => {
+  it("trims and returns the EXACT settings shape the web OAuth callback writes (provider/baseUrl/apiKeyOpenrouter), unchanged when the current models are already slash-shaped", () => {
     expect(
       buildByokKeyPatch("  sk-or-abc123  ", {
         detectModel: "deepseek/deepseek-v4-flash",
@@ -19,7 +19,7 @@ describe("buildByokKeyPatch", () => {
     ).toEqual({
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: "sk-or-abc123",
+      apiKeyOpenrouter: "sk-or-abc123",
     });
   });
 
@@ -34,7 +34,7 @@ describe("buildByokKeyPatch", () => {
   // (openrouterDesktop.ts's connectOpenRouterDesktopWith,
   // app/oauth/openrouter/page.tsx's handleConnect effect), which both
   // already spread remapOpenRouterModelDefaults(currentSettings)
-  // alongside the identical provider/baseUrl/apiKey write.
+  // alongside the identical provider/baseUrl/apiKeyOpenrouter write.
   it("R4: remaps bare legacy (pre-fix) detectModel/summaryModel to the DeepSeek OpenRouter defaults", () => {
     const patch = buildByokKeyPatch("sk-or-abc123", {
       detectModel: "claude-haiku-4-5",
@@ -43,7 +43,7 @@ describe("buildByokKeyPatch", () => {
     expect(patch).toEqual({
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: "sk-or-abc123",
+      apiKeyOpenrouter: "sk-or-abc123",
       detectModel: "deepseek/deepseek-v4-flash",
       summaryModel: "deepseek/deepseek-v4-pro",
     });
@@ -57,7 +57,7 @@ describe("buildByokKeyPatch", () => {
     expect(patch).toEqual({
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: "sk-or-abc123",
+      apiKeyOpenrouter: "sk-or-abc123",
     });
   });
 });

@@ -26,6 +26,12 @@ import { IS_DESKTOP } from "../platform/desktop";
 // secret.ts's own header for why either style is safe here: it never
 // imports back from store.ts, so there's no cycle to avoid either way).
 import { readSecrets, writeSecret, type SecretName } from "../desktop/secret";
+import {
+  hasAnyProviderApiKey,
+  PROVIDER_API_KEY_NAMES,
+  providerApiKeyNameFor,
+  providerApiKeyPatch,
+} from "../llm/providerKeys";
 // v0.6 T7 (dict pack backup inclusion) — remotePacks.ts (detect/) never
 // imports anything under history/, so this is a safe one-directional
 // edge (no cycle): addPackSource/addPackFromManifest reinstall a
@@ -263,6 +269,7 @@ export async function postTaskWebhook(
  *  overrides (#56) each carry their own optional apiKey too. */
 function stripKeyMaterial(settings: Settings): Settings {
   const { taskLlm, ...rest } = settings;
+  delete (rest as Record<string, unknown>).apiKey;
   const strippedTaskLlm = taskLlm
     ? (Object.fromEntries(
         Object.entries(taskLlm).map(([domain, cfg]) => [
@@ -273,7 +280,14 @@ function stripKeyMaterial(settings: Settings): Settings {
     : taskLlm;
   return {
     ...rest,
-    apiKey: "",
+    apiKeyAnthropic: "",
+    apiKeyOpenai: "",
+    apiKeyDeepseek: "",
+    apiKeyQwen: "",
+    apiKeyOpenrouter: "",
+    apiKeyPoe: "",
+    apiKeyOllama: "",
+    apiKeyCustom: "",
     hfToken: "",
     // v0.4 S4 (blueprint decision E): Soniox BYOK key — same hand-listed
     // strip as the other BYOK/pairing fields here (types.ts's own
@@ -494,7 +508,10 @@ export function previewBackup(json: string): {
     learnset: learnsetCount,
     packSources: packSourceCount,
     hasSettings: !!parsed.settings,
-    hasApiKey: !!parsed.settings?.apiKey,
+    hasApiKey:
+      !!parsed.settings &&
+      (hasAnyProviderApiKey(parsed.settings) ||
+        !!(parsed.settings as Settings & { apiKey?: unknown }).apiKey),
   };
 }
 
@@ -695,7 +712,14 @@ export function sanitizeRestoredPackSource(raw: unknown): PackSourceBackupEntry 
  *  other failed delete would. */
 async function routeRestoredSecretsToKeychain(settings: Settings, priorPending: string[]): Promise<Settings> {
   const RESTORE_SECRET_NAMES: readonly SecretName[] = [
-    "apiKey",
+    "apiKeyAnthropic",
+    "apiKeyOpenai",
+    "apiKeyDeepseek",
+    "apiKeyQwen",
+    "apiKeyOpenrouter",
+    "apiKeyPoe",
+    "apiKeyOllama",
+    "apiKeyCustom",
     "hfToken",
     "sonioxKey",
     "deepgramKey",
@@ -949,11 +973,32 @@ export function sanitizeRestoredSettings(raw: Partial<Settings>): Partial<Settin
   // Object.keys(DEFAULT_SETTINGS) alone would silently strip them from
   // every restored backup. Everything else stays governed by the
   // generic allow-list below.
-  const allowed = new Set([...Object.keys(DEFAULT_SETTINGS), "taskLlm", "packAutoUpdateCheckedAt"]);
+  const allowed = new Set([
+    ...Object.keys(DEFAULT_SETTINGS),
+    ...PROVIDER_API_KEY_NAMES,
+    "llmCustomHost",
+    "apiKey",
+    "taskLlm",
+    "packAutoUpdateCheckedAt",
+  ]);
   const picked: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(raw)) {
     if (allowed.has(k)) picked[k] = v;
   }
+  const legacyApiKey = typeof picked.apiKey === "string" ? picked.apiKey : "";
+  if (legacyApiKey) {
+    const provider =
+      picked.provider === "anthropic" || picked.provider === "openai-compat"
+        ? picked.provider
+        : DEFAULT_SETTINGS.provider;
+    const baseUrl =
+      typeof picked.baseUrl === "string" ? picked.baseUrl : DEFAULT_SETTINGS.baseUrl;
+    const targetName = providerApiKeyNameFor(provider, baseUrl);
+    if (!picked[targetName]) {
+      Object.assign(picked, providerApiKeyPatch(provider, baseUrl, legacyApiKey));
+    }
+  }
+  delete picked.apiKey;
   picked.subscriptionDirect = false;
   picked.agentUrl = DEFAULT_SETTINGS.agentUrl;
   picked.agentToken = "";

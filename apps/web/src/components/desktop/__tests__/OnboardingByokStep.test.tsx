@@ -40,7 +40,7 @@ const { updateSettings, connectOpenRouterDesktop, cancelOpenRouterConnect, openE
 // (buildByokKeyPatch's currentSettings param, for the
 // remapOpenRouterModelDefaults spread) — already slash-shaped models
 // by default so every PRE-EXISTING assertion below (a bare provider/
-// baseUrl/apiKey patch, no extra fields) stays valid; setMockSettings
+// baseUrl/apiKeyOpenrouter patch, no extra fields) stays valid; setMockSettings
 // lets the R4-specific bare-model test further down override it.
 vi.mock("@/lib/store", () => ({
   useApp: (
@@ -128,7 +128,7 @@ describe("OnboardingByokStep", () => {
     expect(updateSettings).toHaveBeenCalledWith({
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: "sk-or-abc123",
+      apiKeyOpenrouter: "sk-or-abc123",
     });
     expect(onNext).toHaveBeenCalledTimes(1);
   });
@@ -137,7 +137,7 @@ describe("OnboardingByokStep", () => {
   // remap a bare (pre-fix) Anthropic-flavored detectModel/summaryModel
   // — mirroring the two REAL OAuth-completion sites (openrouterDesktop.ts,
   // app/oauth/openrouter/page.tsx), which already spread this remap
-  // alongside the identical provider/baseUrl/apiKey write. RED against
+  // alongside the identical provider/baseUrl/apiKeyOpenrouter write. RED against
   // the pre-fix buildByokKeyPatch(key) (no currentSettings param at
   // all): updateSettings would have been called with the bare patch
   // ONLY, leaving "claude-haiku-4-5"/"claude-sonnet-5" live to 400 on
@@ -160,7 +160,7 @@ describe("OnboardingByokStep", () => {
     expect(updateSettings).toHaveBeenCalledWith({
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: "sk-or-abc123",
+      apiKeyOpenrouter: "sk-or-abc123",
       detectModel: "deepseek/deepseek-v4-flash",
       summaryModel: "deepseek/deepseek-v4-pro",
     });
@@ -346,7 +346,7 @@ describe("OnboardingByokStep", () => {
       expect(updateSettings).toHaveBeenCalledWith({
         provider: "openai-compat",
         baseUrl: "https://openrouter.ai/api/v1",
-        apiKey: "sk-or-pasted",
+        apiKeyOpenrouter: "sk-or-pasted",
       });
       expect(onNext).toHaveBeenCalledTimes(1);
     });

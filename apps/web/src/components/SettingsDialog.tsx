@@ -138,6 +138,10 @@ import {
   OAUTH_STATE_STORAGE_KEY,
   OAUTH_VERIFIER_STORAGE_KEY,
 } from "@/lib/oauth/openrouterPkce";
+import {
+  providerApiKeyPatch,
+  resolveProviderApiKey,
+} from "@/lib/llm/providerKeys";
 
 export interface SettingsDialogProps {
   open: boolean;
@@ -682,7 +686,7 @@ const PROVIDER_PRESETS: SettingsProviderPreset[] = [
 // model <select> shows. Reusing this one function at both points keeps
 // the allowlist check itself defined exactly once.
 function coercePreviewModels(draft: Settings): Settings {
-  if (!PREVIEW_TIER || draft.apiKey) return draft;
+  if (!PREVIEW_TIER || resolveProviderApiKey(draft)) return draft;
   const patch: Partial<Settings> = {};
   if (!(PREVIEW_LIVE_MODELS as readonly string[]).includes(draft.detectModel)) {
     patch.detectModel = PREVIEW_LIVE_MODELS[0];
@@ -2306,7 +2310,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
       // SECRET_NAMES field at this same save boundary — mirrors
       // normalizeBaseUrl above, just for each allowed secret-shaped field
       // instead of baseUrl.
-      apiKey: sanitizeSecretValue(draft.apiKey),
+      apiKeyAnthropic: sanitizeSecretValue(draft.apiKeyAnthropic ?? ""),
+      apiKeyOpenai: sanitizeSecretValue(draft.apiKeyOpenai ?? ""),
+      apiKeyDeepseek: sanitizeSecretValue(draft.apiKeyDeepseek ?? ""),
+      apiKeyQwen: sanitizeSecretValue(draft.apiKeyQwen ?? ""),
+      apiKeyOpenrouter: sanitizeSecretValue(draft.apiKeyOpenrouter ?? ""),
+      apiKeyPoe: sanitizeSecretValue(draft.apiKeyPoe ?? ""),
+      apiKeyOllama: sanitizeSecretValue(draft.apiKeyOllama ?? ""),
+      apiKeyCustom: sanitizeSecretValue(draft.apiKeyCustom ?? ""),
       hfToken: sanitizeSecretValue(draft.hfToken),
       sonioxKey: sanitizeSecretValue(draft.sonioxKey),
       deepgramKey: sanitizeSecretValue(draft.deepgramKey),
@@ -2483,7 +2494,11 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               ...d,
               provider: live.provider,
               baseUrl: live.baseUrl,
-              apiKey: live.apiKey,
+              ...providerApiKeyPatch(
+                live.provider,
+                live.baseUrl,
+                resolveProviderApiKey(live),
+              ),
               ...(d.detectModel === beforeSettings.detectModel
                 ? { detectModel: live.detectModel }
                 : {}),
@@ -2833,6 +2848,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   };
 
   const activePreset = presetIdFor(PROVIDER_PRESETS, draft);
+  const draftApiKey = resolveProviderApiKey(draft);
+  const savedApiKey = resolveProviderApiKey(settings);
   // 实时说话人分离（beta）: only meaningful for the local-audio engines
   // that go through wsTransport.ts (whisper/tabaudio, and appaudio —
   // S9/D7 — since AppAudioEngine drives the SAME WsTransport seam via
@@ -2893,7 +2910,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // actually differs from the primary's.
   const taskLlmRoutingDiverges = TASK_DOMAIN_META.some((meta) => {
     if (!draft.taskLlm?.[meta.domain]?.enabled) return false;
-    return !!resolveTaskCreds(draft, meta.domain).apiKey !== !!draft.apiKey;
+    return !!resolveTaskCreds(draft, meta.domain).apiKey !== !!draftApiKey;
   });
 
   // F4 fix (field-test batch C, Sol M3): the desktop transport wrapper
@@ -4184,7 +4201,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                nothing here is locked anymore). */}
             {PREVIEW_TIER && (
               <div className="space-y-1" data-ui-level="aiDetectPreviewBanner">
-                {draft.apiKey ? (
+                {draftApiKey ? (
                   <div className="text-xs leading-[1.7] text-mut2">
                     自带 Key 由浏览器直连你的模型服务商，Key 与会议内容不经过本站服务器
                   </div>
@@ -4232,10 +4249,12 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   idPrefix="primary"
                   provider={draft.provider}
                   baseUrl={draft.baseUrl}
-                  apiKey={draft.apiKey}
+                  apiKey={draftApiKey}
                   onSelectPreset={handleSelectPreset}
                   onBaseUrlChange={(baseUrl) => patch({ baseUrl })}
-                  onApiKeyChange={(apiKey) => patch({ apiKey })}
+                  onApiKeyChange={(apiKey) =>
+                    patch(providerApiKeyPatch(draft.provider, draft.baseUrl, apiKey))
+                  }
                   apiKeyPlaceholder="sk-…"
                   // Desktop keychain custody (v0.5.1 desktop keychain
                   // migration): honest per the actual threat model — the
@@ -4264,7 +4283,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   // now that the field is live there too, this reads the
                   // same evidence full tier always has, unconditionally.
                   apiKeyStatus={deriveKeyStatus(
-                    draft.apiKey,
+                    draftApiKey,
                     // FINDING 5 (S14 fix round): telemetry/
                     // testConnection describe calls made against
                     // the SAVED settings' primary credential —
@@ -4275,8 +4294,8 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     // 已配置 instead of keeping the OLD key's 正常/
                     // 异常.
                     credsMatch(
-                      { provider: draft.provider, baseUrl: draft.baseUrl, apiKey: draft.apiKey },
-                      { provider: settings.provider, baseUrl: settings.baseUrl, apiKey: settings.apiKey },
+                      { provider: draft.provider, baseUrl: draft.baseUrl, apiKey: draftApiKey },
+                      { provider: settings.provider, baseUrl: settings.baseUrl, apiKey: savedApiKey },
                     )
                       ? llmKeyEvidence(
                           primaryTelemetryDomains(draft).map((d) => telemetry[d]),
@@ -4293,7 +4312,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   // keyless still rides the locked <select>, no Base URL
                   // typing to warn about yet).
                   baseUrlHint={
-                    PREVIEW_TIER && draft.apiKey ? (
+                    PREVIEW_TIER && draftApiKey ? (
                       <>自定义端点需支持浏览器跨域（CORS）；不支持时请使用本地版</>
                     ) : undefined
                   }
@@ -4334,9 +4353,9 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       // full tier already shows for this now-identical
                       // free-text field, rather than repeating the
                       // banner's data-path line a second time on screen.
-                      previewOptions: PREVIEW_TIER && !draft.apiKey ? PREVIEW_LIVE_MODELS : undefined,
+                      previewOptions: PREVIEW_TIER && !draftApiKey ? PREVIEW_LIVE_MODELS : undefined,
                       hint:
-                        PREVIEW_TIER && !draft.apiKey ? (
+                        PREVIEW_TIER && !draftApiKey ? (
                           <div className="mt-1 text-xs leading-[1.7] text-mut2">
                             体验版由服务端在预置模型内代理调用，下拉所选即实际使用的模型；检测用轻量模型（更快），报告可用更强模型
                           </div>
@@ -4352,7 +4371,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       value: draft.summaryModel,
                       onChange: (v) => patch({ summaryModel: v }),
                       staticOptions: SUMMARY_MODEL_OPTIONS,
-                      previewOptions: PREVIEW_TIER && !draft.apiKey ? PREVIEW_SUMMARY_MODELS : undefined,
+                      previewOptions: PREVIEW_TIER && !draftApiKey ? PREVIEW_SUMMARY_MODELS : undefined,
                     },
                   ]}
                 />

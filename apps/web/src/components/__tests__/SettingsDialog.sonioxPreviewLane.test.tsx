@@ -310,7 +310,7 @@ describe("SettingsDialog — BYOK preview sprint: settings-UI unlock", () => {
   }
 
   it("keyless: primary Key input is enabled, model fields stay the locked <select>, demo-key banner shows, and a chip renders", async () => {
-    await openOnAiDetect({ apiKey: "" });
+    await openOnAiDetect({ apiKeyOpenrouter: "" });
 
     const apiKeyInput = container!.querySelector('input[placeholder="sk-…"]') as HTMLInputElement | null;
     expect(apiKeyInput).not.toBeNull();
@@ -327,7 +327,7 @@ describe("SettingsDialog — BYOK preview sprint: settings-UI unlock", () => {
   });
 
   it("with a draft key: model fields become free-text (a custom value survives — coercePreviewModels skipped), banner switches to the BYOK copy, chip reads 已配置", async () => {
-    await openOnAiDetect({ apiKey: "sk-byok-user", detectModel: "not-on-the-preview-allowlist" });
+    await openOnAiDetect({ apiKeyOpenrouter: "sk-byok-user", detectModel: "not-on-the-preview-allowlist" });
 
     const detectControl = findModelControl("检测模型");
     expect(detectControl.tagName).toBe("INPUT");
@@ -345,7 +345,8 @@ describe("SettingsDialog — BYOK preview sprint: settings-UI unlock", () => {
 
   it("the CORS hint appears near Base URL once a custom openai-compat endpoint + key are drafted", async () => {
     await openOnAiDetect({
-      apiKey: "sk-byok-user",
+      apiKeyCustom: "sk-byok-user",
+      llmCustomHost: "my-endpoint.example.com",
       provider: "openai-compat",
       baseUrl: "https://my-endpoint.example.com",
     });
@@ -586,7 +587,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
 
   it("Sol #3a: a keyless taskLlm domain shows the locked <select>, scoped to its own allowlist (detect-class -> PREVIEW_LIVE_MODELS, summary -> PREVIEW_SUMMARY_MODELS)", async () => {
     await openOnTaskLlmExpanded({
-      apiKey: "",
+      apiKeyOpenrouter: "",
       taskLlm: {
         detect: { enabled: true },
         summary: { enabled: true },
@@ -608,7 +609,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
 
   it("Sol #3a: a domain with its OWN key keeps the free-text field (a custom off-allowlist value survives)", async () => {
     await openOnTaskLlmExpanded({
-      apiKey: "",
+      apiKeyOpenrouter: "",
       taskLlm: {
         detect: { enabled: true, apiKey: "sk-domain-own", model: "not-on-the-preview-allowlist" },
       },
@@ -621,7 +622,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
 
   it("Sol #3a: a domain INHERITING a keyed primary (blank domain key) also stays free-text", async () => {
     await openOnTaskLlmExpanded({
-      apiKey: "sk-primary",
+      apiKeyOpenrouter: "sk-primary",
       taskLlm: {
         translate: { enabled: true, model: "not-on-the-preview-allowlist" },
       },
@@ -636,7 +637,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
 
   it("Sol #3b: clearing the primary Key mid-dialog, then 保存, coerces the now-keyless draft's models onto the allowlist", async () => {
     await openOnAiDetect({
-      apiKey: "sk-was-byok",
+      apiKeyOpenrouter: "sk-was-byok",
       detectModel: "claude-sonnet-5",
       summaryModel: "claude-opus-4-8",
     });
@@ -659,7 +660,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
   // pinned here so a regression in the shared coercePreviewModels call
   // at 保存 fails this too, not just (b)'s own test above.
   it("Sol #3c: a keyless preset pick (OpenAI) writes off-allowlist models straight into the draft; 保存 still coerces them", async () => {
-    await openOnAiDetect({ apiKey: "" });
+    await openOnAiDetect({ apiKeyOpenrouter: "" });
 
     const providerLabel = Array.from(container!.querySelectorAll("label")).find(
       (l) => l.textContent === "提供方",
@@ -732,7 +733,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
 
   it("Sol #7a: an ENABLED taskLlm override with its OWN key on a keyless primary appends the per-domain routing line", async () => {
     await openOnAiDetect({
-      apiKey: "",
+      apiKeyOpenrouter: "",
       taskLlm: { detect: { enabled: true, apiKey: "sk-domain-own" } },
     });
 
@@ -743,7 +744,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
 
   it("Sol #7a: no mixed-routing line when an enabled override's blank key just inherits the (keyed) primary — not a real split", async () => {
     await openOnAiDetect({
-      apiKey: "sk-primary",
+      apiKeyOpenrouter: "sk-primary",
       taskLlm: { summary: { enabled: true } },
     });
 
@@ -751,7 +752,7 @@ describe("SettingsDialog — BYOK preview sprint fix round: allowlist + routing-
   });
 
   it("Sol #7a: no mixed-routing line with no taskLlm overrides at all (no regression on the plain banner)", async () => {
-    await openOnAiDetect({ apiKey: "" });
+    await openOnAiDetect({ apiKeyOpenrouter: "" });
     expect(container!.textContent).not.toContain("分任务配置按各自 Key 路由");
   });
 });

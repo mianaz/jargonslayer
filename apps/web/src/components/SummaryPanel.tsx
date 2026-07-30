@@ -369,7 +369,7 @@ function GenerateCta() {
       <div className="text-xs text-mut">
         双语纪要 · 全文翻译 · 学习卡片（约 1–2 分钟）
       </div>
-      {!settings.apiKey && (
+      {!resolveTaskCreds(settings, "summary").apiKey && (
         <div className="max-w-xs text-xs leading-[1.7] text-mut2">
           需要 API Key（设置里填），无 Key 也可以直接导出词典卡片
         </div>

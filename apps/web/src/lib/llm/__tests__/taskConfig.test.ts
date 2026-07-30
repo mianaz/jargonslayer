@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, PROVIDER_HEADERS, type LlmTaskDomain, type Settings } from "@jargonslayer/core/types";
 import { resolveTaskCreds } from "../taskConfig";
+import { resolveProviderApiKey } from "../providerKeys";
 
 const DOMAINS: LlmTaskDomain[] = ["translate", "detect", "summary"];
 
@@ -25,8 +26,9 @@ function legacyAuthHeaders(settings: Settings): Record<string, string> {
   const headers: Record<string, string> = {
     [PROVIDER_HEADERS.provider]: settings.provider,
   };
-  if (settings.apiKey) {
-    headers[PROVIDER_HEADERS.key] = settings.apiKey;
+  const apiKey = resolveProviderApiKey(settings);
+  if (apiKey) {
+    headers[PROVIDER_HEADERS.key] = apiKey;
   }
   if (settings.provider === "openai-compat" && settings.baseUrl) {
     headers[PROVIDER_HEADERS.baseUrl] = settings.baseUrl;
@@ -52,11 +54,11 @@ function headersFromResolved(creds: { provider: string; baseUrl: string; apiKey:
 describe("resolveTaskCreds — round-trip equivalence (absent taskLlm ≡ legacy)", () => {
   const legacyShapedSettings: Partial<Settings>[] = [
     {}, // pure defaults: anthropic, no key
-    { provider: "openai-compat", baseUrl: "https://api.deepseek.com", apiKey: "sk-legacy" },
-    { provider: "anthropic", apiKey: "sk-ant-legacy" },
+    { provider: "openai-compat", baseUrl: "https://api.deepseek.com", apiKeyDeepseek: "sk-legacy" },
+    { provider: "anthropic", apiKeyAnthropic: "sk-ant-legacy" },
     // openai-compat with NO baseUrl set — legacy authHeaders omits the
     // base-url header in this case; resolver must match exactly.
-    { provider: "openai-compat", baseUrl: "", apiKey: "sk-legacy" },
+    { provider: "openai-compat", baseUrl: "", apiKeyCustom: "sk-legacy", llmCustomHost: "" },
   ];
 
   for (const domain of DOMAINS) {
@@ -106,7 +108,7 @@ describe("resolveTaskCreds — disabled/absent entry falls through to primary", 
     const settings = makeSettings({
       provider: "anthropic",
       baseUrl: "",
-      apiKey: "primary-key",
+      apiKeyAnthropic: "primary-key",
       detectModel: "claude-haiku-4-5",
       taskLlm: {
         translate: {
@@ -132,6 +134,28 @@ describe("resolveTaskCreds — disabled/absent entry falls through to primary", 
       expect(resolveTaskCreds(settingsUndefined, domain)).toEqual(resolveTaskCreds(settingsEmptyMap, domain));
     }
   });
+
+  it("SECURITY: switching to an unconfigured provider resolves no key, never the previous provider's key", () => {
+    const settings = makeSettings({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/api/v1",
+      apiKeyAnthropic: "sk-anthropic-must-not-cross-hosts",
+      apiKeyOpenrouter: "",
+    });
+
+    expect(resolveTaskCreds(settings, "detect").apiKey).toBe("");
+  });
+
+  it("SECURITY: changing a custom endpoint host invalidates the custom key binding", () => {
+    const settings = makeSettings({
+      provider: "openai-compat",
+      baseUrl: "https://second.example.com/v1",
+      apiKeyCustom: "sk-first-host-only",
+      llmCustomHost: "first.example.com",
+    });
+
+    expect(resolveTaskCreds(settings, "detect").apiKey).toBe("");
+  });
 });
 
 describe("resolveTaskCreds — enabled override inheritance, field by field", () => {
@@ -139,7 +163,7 @@ describe("resolveTaskCreds — enabled override inheritance, field by field", ()
     const settings = makeSettings({
       provider: "anthropic",
       baseUrl: "",
-      apiKey: "primary-key",
+      apiKeyAnthropic: "primary-key",
       detectModel: "claude-haiku-4-5",
       taskLlm: {
         detect: {
@@ -161,7 +185,7 @@ describe("resolveTaskCreds — enabled override inheritance, field by field", ()
 
   it("enabled:true with a blank apiKey inherits the PRIMARY key (documented 'blank per-domain key = inherit primary key' rule)", () => {
     const settings = makeSettings({
-      apiKey: "primary-key",
+      apiKeyOpenrouter: "primary-key",
       taskLlm: { summary: { enabled: true, apiKey: "" } },
     });
     expect(resolveTaskCreds(settings, "summary").apiKey).toBe("primary-key");
@@ -171,7 +195,7 @@ describe("resolveTaskCreds — enabled override inheritance, field by field", ()
     const settings = makeSettings({
       provider: "anthropic",
       baseUrl: "",
-      apiKey: "primary-key",
+      apiKeyAnthropic: "primary-key",
       summaryModel: "claude-sonnet-5",
       taskLlm: { summary: { enabled: true, model: "claude-opus-4-8" } },
     });

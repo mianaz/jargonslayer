@@ -18,6 +18,7 @@ import {
   OAUTH_VERIFIER_STORAGE_KEY,
 } from "@/lib/oauth/openrouterPkce";
 import { remapOpenRouterModelDefaults } from "@/lib/oauth/openrouterModelDefaults";
+import { providerApiKeyPatch } from "@/lib/llm/providerKeys";
 
 type Phase = "exchanging" | "success" | "error";
 
@@ -89,7 +90,11 @@ export default function OpenRouterOAuthCallbackPage() {
         updateSettings({
           provider: "openai-compat",
           baseUrl: "https://openrouter.ai/api/v1",
-          apiKey: key,
+          ...providerApiKeyPatch(
+            "openai-compat",
+            "https://openrouter.ai/api/v1",
+            key,
+          ),
           ...remapOpenRouterModelDefaults(useApp.getState().settings),
         });
         setPhase("success");

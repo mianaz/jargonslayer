@@ -18,13 +18,36 @@ const SENTINELS = {
 function settingsWithSecrets(): Settings {
   return {
     ...DEFAULT_SETTINGS,
-    apiKey: SENTINELS.apiKey,
+    apiKeyAnthropic: SENTINELS.apiKey,
+    apiKeyOpenai: SENTINELS.apiKey,
+    apiKeyDeepseek: SENTINELS.apiKey,
+    apiKeyQwen: SENTINELS.apiKey,
+    apiKeyOpenrouter: SENTINELS.apiKey,
+    apiKeyPoe: SENTINELS.apiKey,
+    apiKeyOllama: SENTINELS.apiKey,
+    apiKeyCustom: SENTINELS.apiKey,
+    llmCustomHost: "custom.example.com",
     hfToken: SENTINELS.hfToken,
     agentToken: SENTINELS.agentToken,
     webhookUrl: SENTINELS.webhookUrl,
     taskLlm: {
       detect: { enabled: true, provider: "openai-compat", apiKey: SENTINELS.taskApiKey },
     },
+  };
+}
+
+function currentDefaultSettings(): Settings {
+  return {
+    ...DEFAULT_SETTINGS,
+    apiKeyAnthropic: "",
+    apiKeyOpenai: "",
+    apiKeyDeepseek: "",
+    apiKeyQwen: "",
+    apiKeyOpenrouter: "",
+    apiKeyPoe: "",
+    apiKeyOllama: "",
+    apiKeyCustom: "",
+    llmCustomHost: "",
   };
 }
 
@@ -40,7 +63,9 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       expect(report).not.toContain(SENTINELS.hfToken);
       expect(report).not.toContain(SENTINELS.agentToken);
       expect(report).not.toContain(SENTINELS.webhookUrl);
-      expect(report).toContain('"hasApiKey": true');
+      expect(report).toContain('"hasApiKeyOpenrouter": true');
+      expect(report).toContain('"hasApiKeyAnthropic": true');
+      expect(report).toContain('"hasApiKeyCustom": true');
       expect(report).toContain('"hasHfToken": true');
       expect(report).toContain('"hasAgentToken": true');
       expect(report).toContain('"hasWebhookUrl": true');
@@ -74,8 +99,8 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
     });
 
     it("reports hasApiKey:false etc. for default (empty-string) settings", () => {
-      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
-      expect(report).toContain('"hasApiKey": false');
+      const report = buildDiagnosticReport(currentDefaultSettings());
+      expect(report).toContain('"hasApiKeyOpenrouter": false');
       expect(report).toContain('"hasHfToken": false');
       expect(report).toContain('"hasAgentToken": false');
       expect(report).toContain('"hasWebhookUrl": false');
@@ -88,12 +113,12 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
     it("apiKeyChars reports the key's length, never its content", () => {
       const report = buildDiagnosticReport(settingsWithSecrets());
       expect(report).not.toContain(SENTINELS.apiKey);
-      expect(report).toContain(`"apiKeyChars": ${SENTINELS.apiKey.length}`);
+      expect(report).toContain(`"apiKeyOpenrouterChars": ${SENTINELS.apiKey.length}`);
     });
 
     it("apiKeyChars is 0 for an unconfigured (empty-string) apiKey", () => {
-      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
-      expect(report).toContain('"apiKeyChars": 0');
+      const report = buildDiagnosticReport(currentDefaultSettings());
+      expect(report).toContain('"apiKeyOpenrouterChars": 0');
     });
 
     it("does not extend the Chars treatment to other secret-shaped fields", () => {
@@ -114,7 +139,7 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
 
   describe("content — version/tier/browser/theme/diag entries", () => {
     it("includes the app version from package.json", () => {
-      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
+      const report = buildDiagnosticReport(currentDefaultSettings());
       expect(report).toContain(pkg.version);
     });
 
@@ -176,7 +201,7 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
       const report = buildDiagnosticReport({
         ...DEFAULT_SETTINGS,
         provider: "anthropic",
-        apiKey: SENTINELS.apiKey,
+        apiKeyAnthropic: SENTINELS.apiKey,
       });
       expect(report).toContain('"provider": "anthropic"');
       expect(report).not.toContain('"provider": "(未配置)"');
@@ -387,9 +412,9 @@ describe("diag/report.ts — buildDiagnosticReport", () => {
     });
 
     it("never tags a secret-shaped field's has<Key> presence boolean — it stays a real, untagged JSON boolean", () => {
-      const report = buildDiagnosticReport(DEFAULT_SETTINGS);
-      expect(report).toContain('"hasApiKey": false');
-      expect(report).not.toContain('"hasApiKey": "false');
+      const report = buildDiagnosticReport(currentDefaultSettings());
+      expect(report).toContain('"hasApiKeyOpenrouter": false');
+      expect(report).not.toContain('"hasApiKeyOpenrouter": "false');
     });
 
     it("never tags an object/array field — customThemes/taskLlm carry no marker even though the whole object is untouched from default", () => {

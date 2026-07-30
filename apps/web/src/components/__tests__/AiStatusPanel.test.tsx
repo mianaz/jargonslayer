@@ -65,7 +65,7 @@ describe("AiStatusPanel", () => {
       settings: {
         ...s.settings,
         provider: "anthropic",
-        apiKey: "sk-test",
+        apiKeyAnthropic: "sk-test",
         detectModel: "claude-haiku-4-5",
         summaryModel: "claude-sonnet-5",
       },
@@ -121,7 +121,7 @@ describe("AiStatusPanel", () => {
   // render GREY, not amber/red, per the owner's ruling (a designed
   // dictionary degrade, not a fault).
   it("keyless detect (a real recorded nokey 'failure') renders GREY, not amber/red", async () => {
-    useApp.setState((s) => ({ settings: { ...s.settings, apiKey: "" } }));
+    useApp.setState((s) => ({ settings: { ...s.settings, apiKeyOpenrouter: "" } }));
     recordLlmCall("detect", { kind: "nokey" });
     render();
     await act(async () => {
@@ -175,7 +175,7 @@ describe("AiStatusPanel", () => {
   });
 
   it("zero-config banner shows the full/desktop keyless copy when apiKey is empty (ambient test env is not preview tier)", async () => {
-    useApp.setState((s) => ({ settings: { ...s.settings, apiKey: "" } }));
+    useApp.setState((s) => ({ settings: { ...s.settings, apiKeyOpenrouter: "" } }));
     render();
     await act(async () => {
       root!.render(<AiStatusPanel />);
@@ -187,7 +187,7 @@ describe("AiStatusPanel", () => {
   });
 
   it("no zero-config banner once an apiKey is set", async () => {
-    useApp.setState((s) => ({ settings: { ...s.settings, apiKey: "sk-real" } }));
+    useApp.setState((s) => ({ settings: { ...s.settings, apiKeyOpenrouter: "sk-real" } }));
     render();
     await act(async () => {
       root!.render(<AiStatusPanel />);
@@ -206,7 +206,7 @@ describe("AiStatusPanel", () => {
     useApp.setState((s) => ({
       settings: {
         ...s.settings,
-        apiKey: "",
+        apiKeyOpenrouter: "",
         taskLlm: { ...s.settings.taskLlm, translate: { enabled: true, apiKey: "sk-task-only" } },
       },
     }));

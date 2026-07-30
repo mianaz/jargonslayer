@@ -154,7 +154,7 @@ const PROFILE_STRING = renderProfileHint(PROFILE_OBJ)!;
 function byokSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     ...DEFAULT_SETTINGS,
-    apiKey: "byok-client-parity-test-key",
+    apiKeyAnthropic: "byok-client-parity-test-key",
     provider: "anthropic",
     ...overrides,
   };

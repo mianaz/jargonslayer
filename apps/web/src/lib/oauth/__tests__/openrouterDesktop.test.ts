@@ -154,7 +154,7 @@ describe("connectOpenRouterDesktopWith — happy path", () => {
     expect(updateSettings).toHaveBeenCalledWith({
       provider: "openai-compat",
       baseUrl: "https://openrouter.ai/api/v1",
-      apiKey: "sk-or-v1-abc",
+      apiKeyOpenrouter: "sk-or-v1-abc",
       detectModel: "deepseek/deepseek-v4-flash",
       summaryModel: "deepseek/deepseek-v4-pro",
     });
@@ -169,7 +169,7 @@ describe("connectOpenRouterDesktopWith — happy path", () => {
   // Anthropic defaults) connects OpenRouter, then their very first
   // detect/summary call 400s ("claude-haiku-4-5 is not a valid model
   // ID") because nothing remapped the model. RED against the pre-fix
-  // code (which wrote only provider/baseUrl/apiKey): this exact
+  // code (which wrote only provider/baseUrl/apiKeyOpenrouter): this exact
   // assertion — detectModel/summaryModel present in the updateSettings
   // call — would have failed before openrouterModelDefaults.ts existed.
   it("field-test fix: a bare pre-fix detectModel/summaryModel gets remapped to the DeepSeek OpenRouter defaults alongside the key", async () => {

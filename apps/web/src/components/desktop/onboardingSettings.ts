@@ -40,13 +40,14 @@ const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 export function buildByokKeyPatch(
   rawKey: string,
   currentSettings: Pick<Settings, "detectModel" | "summaryModel">,
-): (Pick<Settings, "provider" | "baseUrl" | "apiKey"> & Partial<Pick<Settings, "detectModel" | "summaryModel">>) | null {
+): (Pick<Settings, "provider" | "baseUrl" | "apiKeyOpenrouter"> &
+  Partial<Pick<Settings, "detectModel" | "summaryModel">>) | null {
   const trimmed = rawKey.trim();
   if (!trimmed) return null;
   return {
     provider: "openai-compat",
     baseUrl: OPENROUTER_BASE_URL,
-    apiKey: trimmed,
+    apiKeyOpenrouter: trimmed,
     ...remapOpenRouterModelDefaults(currentSettings),
   };
 }

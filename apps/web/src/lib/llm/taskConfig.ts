@@ -11,6 +11,7 @@
 // keep reading settings.subscriptionProvider directly and never
 // consult taskLlm.
 import type { LlmProvider, LlmTaskDomain, Settings } from "@jargonslayer/core/types";
+import { resolveProviderApiKey } from "./providerKeys";
 
 export interface ResolvedTaskCreds {
   provider: LlmProvider;
@@ -44,20 +45,24 @@ export function resolveTaskCreds(settings: Settings, domain: LlmTaskDomain): Res
     return {
       provider: settings.provider,
       baseUrl: settings.baseUrl,
-      apiKey: settings.apiKey,
+      apiKey: resolveProviderApiKey(settings),
       model: primaryModel,
     };
   }
+  const provider = t.provider ?? settings.provider;
+  const baseUrl = t.baseUrl ?? settings.baseUrl;
   return {
-    provider: t.provider ?? settings.provider,
-    baseUrl: t.baseUrl ?? settings.baseUrl,
+    provider,
+    baseUrl,
     // Blank per-domain key inherits the primary key (design Q5's
     // placeholder: 「留空则用主配置的 Key」) — `||`, not `??`, because an
     // explicitly-typed empty string in the domain's own Key field is
     // indistinguishable from "never set" and must fall through, same
     // as every other blank-string Settings field in this codebase
     // (e.g. apiKey/baseUrl's own "" = unset convention).
-    apiKey: t.apiKey || settings.apiKey,
+    // Resolve inheritance against this override's effective endpoint,
+    // never against whichever different provider is selected globally.
+    apiKey: t.apiKey || resolveProviderApiKey(settings, provider, baseUrl),
     model: t.model ?? primaryModel,
   };
 }
