@@ -21,6 +21,7 @@ import { DAILY_IDIOM_EXPRESSIONS } from "./dictionary-data-idiom";
 import { findEntryBySurface } from "../history/glossaryLookup";
 import { isPackEnabled, isPackExplicitlyEnabled } from "./packs";
 import { getLoadedRemotePacks, getRemotePacksGeneration } from "./remotePacksRegistry";
+import { MAX_SOURCE_SENTENCE_CHARS, narrowSourceSentence } from "./sourceSentence";
 
 // ---------------------------------------------------------------
 // Dictionary entry shapes (internal — not part of the wire schema)
@@ -36,6 +37,9 @@ interface ExpressionEntry {
   tone: string;
   confidence: number;
   pack: string;
+  // See DictExpressionEntry.commonWord — phrases that are common
+  // language outside their own pack stay opt-in in scanDictionary.
+  commonWord?: boolean;
 }
 
 interface TermEntry {
@@ -1279,13 +1283,22 @@ function buildExpressionRegex(phrase: string): RegExp {
   return new RegExp(source, "i");
 }
 
-/** Naive sentence splitter — keeps original substrings, splits on
- *  ./?/! followed by whitespace (or end of string). */
+/** Sentence splitter with a clause fallback for long ASR run-ons. Keeps
+ *  the original long sentence as a last resort so expressions spanning a
+ *  comma/semicolon remain matchable; the emitted context is still narrowed
+ *  around the actual match below. */
 function splitSentences(text: string): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
   const raw = trimmed.split(/(?<=[.?!])\s+/);
-  return raw.map((s) => s.trim()).filter(Boolean);
+  return raw.flatMap((sentence) => {
+    const normalized = sentence.trim();
+    if (!normalized || normalized.length <= MAX_SOURCE_SENTENCE_CHARS) {
+      return normalized ? [normalized] : [];
+    }
+    const clauses = normalized.split(/(?<=[,;])\s+/).map((s) => s.trim()).filter(Boolean);
+    return clauses.length > 1 ? [...clauses, normalized] : [normalized];
+  });
 }
 
 // ---------------------------------------------------------------
@@ -1512,6 +1525,7 @@ export function scanDictionary(
 
   for (const entry of [...EXPRESSIONS, ...remoteExpressions]) {
     if (!isPackEnabled(entry.pack, enabledPacks)) continue;
+    if (entry.commonWord && !isPackExplicitlyEnabled(entry.pack, enabledPacks)) continue;
     // A personal-glossary entry on this exact surface owns the word —
     // the custom scan (store.addFinal) already emits it as source
     // "custom"; skip the dictionary's own version entirely. Enabled-
@@ -1533,7 +1547,7 @@ export function scanDictionary(
             plain_english: entry.plain_english,
             tone: entry.tone,
             confidence: entry.confidence,
-            source_sentence: sentence.trim(),
+            source_sentence: narrowSourceSentence(sentence, m[0]),
             matched_surface: m[0],
           });
           matched = true;

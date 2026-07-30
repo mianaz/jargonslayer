@@ -16,6 +16,10 @@ export interface DictExpressionEntry {
   tone: string;
   confidence: number; // 0.9 for dictionary entries
   pack: string; // theme pack id, see packs.ts — matches the // ===== 主题 ===== block below
+  // Like DictTermEntry.commonWord, an expression that is ordinary
+  // language outside its pack stays opt-in under the default all-on
+  // setting. This protects literal uses such as "in the red graph".
+  commonWord?: boolean;
 }
 
 // v0.6 T1 — multi-sense terms: a surface like "EMT" is genuinely

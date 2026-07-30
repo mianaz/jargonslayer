@@ -11,6 +11,7 @@
 
 import type { DetectResponse, ExplainLanguage, LlmProvider } from "@jargonslayer/core/types";
 import { buildDetectSystemPrompt, buildDetectUserMessage } from "@jargonslayer/core/llm/prompts";
+import { narrowSourceSentence } from "@jargonslayer/core/detect/sourceSentence";
 import { DetectResponseSchema, clampConfidence, type ProviderCaller } from "../providerCore";
 
 /** BYOK/no-override fallback model — single-sourced so route.ts's
@@ -73,7 +74,11 @@ function postFilter(res: DetectResponse, newText: string): DetectResponse {
 
   const expressions = res.expressions
     .filter((e) => haystack.includes(e.expression.toLowerCase()))
-    .map((e) => ({ ...e, confidence: clampConfidence(e.confidence) }))
+    .map((e) => ({
+      ...e,
+      confidence: clampConfidence(e.confidence),
+      source_sentence: narrowSourceSentence(newText, e.expression),
+    }))
     .slice(0, MAX_EXPRESSIONS);
 
   const terms = res.terms.slice(0, MAX_TERMS);

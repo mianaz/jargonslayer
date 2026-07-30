@@ -132,6 +132,9 @@ export interface RemotePackExpression {
   plain_english?: string;
   tone?: string;
   confidence?: number;
+  // Mirrors DictExpressionEntry.commonWord: an ordinary-language phrase
+  // is only detected after the user explicitly enables this pack.
+  commonWord?: boolean;
   pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateExpressions)
 }
 
@@ -503,6 +506,7 @@ function validateExpressions(
         : e.expression.trim(),
       tone: isNonEmptyString(e.tone) ? e.tone : "community pack entry",
       confidence,
+      commonWord: typeof e.commonWord === "boolean" ? e.commonWord : undefined,
       // Always the manifest's own id — an entry's own `pack` field is
       // untrusted input and is ignored, not merely defaulted, so a
       // malicious/buggy remote entry can't claim `pack: "core"` (or

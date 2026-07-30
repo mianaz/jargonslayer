@@ -19,6 +19,7 @@ import {
   type TermCard,
 } from "../types";
 import { AMBIGUOUS_MARGIN } from "./dictionary";
+import { narrowSourceSentence } from "./sourceSentence";
 
 export const EXPRESSION_TTL_MS = 8 * 60 * 1000;
 
@@ -134,7 +135,7 @@ function mergeExpressions(
         existing.tone = det.tone;
         existing.category = det.category;
         existing.confidence = det.confidence;
-        existing.source_sentence = det.source_sentence;
+        existing.source_sentence = narrowSourceSentence(det.source_sentence, det.expression);
         existing.source = "llm";
       }
       continue;

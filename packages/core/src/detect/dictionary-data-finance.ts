@@ -390,6 +390,7 @@ export const FINANCE_CONSUMER_EXPRESSIONS: DictExpressionEntry[] = [
     tone: "neutral, common business phrase",
     confidence: 0.9,
     pack: "finance-consumer",
+    commonWord: true,
   },
   {
     expression: "in the black",
@@ -400,6 +401,7 @@ export const FINANCE_CONSUMER_EXPRESSIONS: DictExpressionEntry[] = [
     tone: "neutral, common business phrase",
     confidence: 0.9,
     pack: "finance-consumer",
+    commonWord: true,
   },
   {
     expression: "underwater",
@@ -411,6 +413,7 @@ export const FINANCE_CONSUMER_EXPRESSIONS: DictExpressionEntry[] = [
     tone: "neutral, common business phrase",
     confidence: 0.9,
     pack: "finance-consumer",
+    commonWord: true,
   },
   {
     expression: "golden handcuffs",
