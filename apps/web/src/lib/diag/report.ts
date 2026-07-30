@@ -16,6 +16,7 @@
 import pkg from "../../../package.json";
 import { PREVIEW_TIER } from "../deployTier";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
+import { resolveProviderApiKey } from "../llm/providerKeys";
 import { type DiagEntry, getDiagEntries } from "./log";
 import { IS_DESKTOP } from "../platform/desktop";
 // Type-only import — see appendDesktopLogTails below for why the
@@ -166,7 +167,7 @@ function redactSettingsObject(obj: Record<string, unknown>): Record<string, unkn
       // key itself. apiKey only, deliberately not extended to every
       // SECRET_NAMES field — this is the one report.ts's `hasApiKey`
       // line couldn't already tell apart from a genuinely missing key.
-      if (key === "apiKey") out.apiKeyChars = value.length;
+      if (key.startsWith("apiKey")) out[`${key}Chars`] = value.length;
       continue;
     }
     if (typeof value === "string" && isUrlShapedKey(key)) {
@@ -244,7 +245,7 @@ function tagDefaultValues(settings: Settings, redacted: Record<string, unknown>)
  *  never chosen by anything, just the field's default value. */
 function buildFullConfigSnapshot(settings: Settings): Record<string, unknown> {
   const redacted = redactSettingsObject(settings as unknown as Record<string, unknown>);
-  redacted.provider = hasSecret(settings.apiKey) ? settings.provider : "(未配置)";
+  redacted.provider = hasSecret(resolveProviderApiKey(settings)) ? settings.provider : "(未配置)";
   tagDefaultValues(settings, redacted);
   return redacted;
 }

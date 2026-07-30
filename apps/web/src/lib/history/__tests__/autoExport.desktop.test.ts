@@ -21,7 +21,7 @@ import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 vi.mock("../../platform/desktop", () => ({ IS_DESKTOP: true }));
 
 const SECRET_NAMES = [
-  "apiKey",
+  "apiKeyOpenrouter",
   "hfToken",
   "sonioxKey",
   "deepgramKey",
@@ -67,7 +67,7 @@ vi.mock("idb-keyval", () => ({
 function keyedSettings(overrides: Partial<Settings> = {}): Settings {
   return {
     ...DEFAULT_SETTINGS,
-    apiKey: "sk-ant-secret",
+    apiKeyOpenrouter: "sk-ant-secret",
     hfToken: "hf-secret",
     sonioxKey: "soniox-secret",
     deepgramKey: "deepgram-secret",
@@ -99,28 +99,28 @@ describe("buildFullBackup — desktop keychain overlay (v0.5.1)", () => {
     const storage = await import("../storage");
     // Post-migration shape: the IDB blob itself is keyless, the real
     // values only live in the (mocked) Keychain.
-    await storage.saveSettings({ ...DEFAULT_SETTINGS, apiKey: "", hfToken: "" });
-    keychain.set("apiKey", "sk-from-keychain");
+    await storage.saveSettings({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "", hfToken: "" });
+    keychain.set("apiKeyOpenrouter", "sk-from-keychain");
     keychain.set("hfToken", "hf-from-keychain");
 
     const autoExport = await import("../autoExport");
     const json = await autoExport.buildFullBackup({ includeKeys: true });
     const parsed = JSON.parse(json) as { settings: Settings };
 
-    expect(parsed.settings.apiKey).toBe("sk-from-keychain");
+    expect(parsed.settings.apiKeyOpenrouter).toBe("sk-from-keychain");
     expect(parsed.settings.hfToken).toBe("hf-from-keychain");
   });
 
   it("an IDB value present alongside a Keychain value still exports the IDB value (readSecrets is just an overlay onto the loaded blob, not a full substitute)", async () => {
     const storage = await import("../storage");
-    await storage.saveSettings({ ...DEFAULT_SETTINGS, apiKey: "sk-in-idb" });
-    keychain.set("apiKey", "sk-in-keychain-stale");
+    await storage.saveSettings({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-in-idb" });
+    keychain.set("apiKeyOpenrouter", "sk-in-keychain-stale");
 
     const autoExport = await import("../autoExport");
     const json = await autoExport.buildFullBackup({ includeKeys: true });
     const parsed = JSON.parse(json) as { settings: Settings };
 
-    expect(parsed.settings.apiKey).toBe("sk-in-idb");
+    expect(parsed.settings.apiKeyOpenrouter).toBe("sk-in-idb");
   });
 
   it("includeKeys:false never reads the Keychain at all — stripping makes it pointless", async () => {
@@ -132,7 +132,7 @@ describe("buildFullBackup — desktop keychain overlay (v0.5.1)", () => {
     const parsed = JSON.parse(json) as { settings: Settings };
 
     expect(mockReadSecrets).not.toHaveBeenCalled();
-    expect(parsed.settings.apiKey).toBe("");
+    expect(parsed.settings.apiKeyOpenrouter).toBe("");
     expect(parsed.settings.hfToken).toBe("");
   });
 
@@ -147,7 +147,7 @@ describe("buildFullBackup — desktop keychain overlay (v0.5.1)", () => {
 });
 
 describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
-  it("routes every non-empty apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/deeplKey/youdaoAppKey/youdaoAppSecret to the Keychain and blanks them on the object that gets saved to IDB; also deletes any stale Keychain agentToken (F6 fix, keychain-custody fix round)", async () => {
+  it("routes every non-empty apiKeyOpenrouter/hfToken/sonioxKey/deepgramKey/elevenLabsKey/deeplKey/youdaoAppKey/youdaoAppSecret to the Keychain and blanks them on the object that gets saved to IDB; also deletes any stale Keychain agentToken (F6 fix, keychain-custody fix round)", async () => {
     const storage = await import("../storage");
     const saveSpy = vi.spyOn(storage, "saveSettings");
     const autoExport = await import("../autoExport");
@@ -162,7 +162,7 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
 
     await autoExport.restoreFullBackup(backup);
 
-    expect(mockWriteSecret).toHaveBeenCalledWith("apiKey", "sk-ant-secret");
+    expect(mockWriteSecret).toHaveBeenCalledWith("apiKeyOpenrouter", "sk-ant-secret");
     expect(mockWriteSecret).toHaveBeenCalledWith("hfToken", "hf-secret");
     expect(mockWriteSecret).toHaveBeenCalledWith("sonioxKey", "soniox-secret");
     expect(mockWriteSecret).toHaveBeenCalledWith("deepgramKey", "deepgram-secret");
@@ -177,7 +177,7 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
     expect(mockWriteSecret).toHaveBeenCalledWith("agentToken", "");
 
     const saved = saveSpy.mock.calls[0][0];
-    expect(saved.apiKey).toBe("");
+    expect(saved.apiKeyOpenrouter).toBe("");
     expect(saved.hfToken).toBe("");
     expect(saved.sonioxKey).toBe("");
     expect(saved.deepgramKey).toBe("");
@@ -188,7 +188,7 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
     expect(saved.agentToken).toBe(""); // sanitizeRestoredSettings' own force-clear
     expect(saved.secretDeletePending).toEqual([]); // every routed name (including agentToken) resolved cleanly
 
-    expect(keychain.get("apiKey")).toBe("sk-ant-secret");
+    expect(keychain.get("apiKeyOpenrouter")).toBe("sk-ant-secret");
     expect(keychain.get("hfToken")).toBe("hf-secret");
     expect(keychain.get("elevenLabsKey")).toBe("elevenlabs-secret");
     expect(keychain.get("deeplKey")).toBe("deepl-secret");
@@ -213,7 +213,7 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
     await autoExport.restoreFullBackup(backup);
 
     const saved = saveSpy.mock.calls[0][0];
-    expect(saved.apiKey).toBe(""); // routed fine
+    expect(saved.apiKeyOpenrouter).toBe(""); // routed fine
     expect(saved.hfToken).toBe("hf-secret"); // write failed — stays plaintext
     expect(keychain.has("hfToken")).toBe(false);
   });
@@ -230,7 +230,7 @@ describe("restoreFullBackup — desktop keychain routing (v0.5.1)", () => {
 
     await autoExport.restoreFullBackup(backup);
 
-    expect(mockWriteSecret).not.toHaveBeenCalledWith("apiKey", expect.anything());
+    expect(mockWriteSecret).not.toHaveBeenCalledWith("apiKeyOpenrouter", expect.anything());
     expect(mockWriteSecret).not.toHaveBeenCalledWith("hfToken", expect.anything());
     expect(mockWriteSecret).not.toHaveBeenCalledWith("sonioxKey", expect.anything());
     expect(mockWriteSecret).not.toHaveBeenCalledWith("deepgramKey", expect.anything());
@@ -260,7 +260,7 @@ describe("restoreFullBackup — secretDeletePending carries forward across a res
       kind: "jargonslayer-backup",
       sessions: [],
       glossary: [],
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-ant-secret" }, // hfToken absent/blank in the donor backup
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-ant-secret" }, // hfToken absent/blank in the donor backup
     });
 
     await autoExport.restoreFullBackup(backup);

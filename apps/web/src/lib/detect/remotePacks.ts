@@ -132,6 +132,12 @@ export interface RemotePackExpression {
   plain_english?: string;
   tone?: string;
   confidence?: number;
+  // Mirrors DictExpressionEntry.commonWord: an ordinary-language phrase
+  // is only detected after the user explicitly enables this pack.
+  commonWord?: boolean;
+  // Mirrors DictExpressionEntry.notFollowedBy: literal-context follower
+  // words reject an otherwise matching expression regardless of pack state.
+  notFollowedBy?: string[];
   pack?: string; // ignored on import — always overwritten with the manifest's own id (see validateExpressions)
 }
 
@@ -446,6 +452,14 @@ function clampExpressionVariants(raw: unknown): string[] | undefined {
   return out.length > 0 ? out : undefined;
 }
 
+/** Optional expression literal-context list. Unlike variants, every
+ *  supplied item must be a usable word; otherwise discard the whole
+ *  untrusted field rather than silently changing its intended guard. */
+function validateNotFollowedBy(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0 || !raw.every(isNonEmptyString)) return undefined;
+  return raw.map((word) => word.trim());
+}
+
 /** Tiny semver-ish comparator (T1) — good enough for plain "x.y.z"
  *  strings (no pre-release/build metadata support, which neither this
  *  app's own package.json version nor any dict-pack's minAppVersion has
@@ -492,6 +506,7 @@ function validateExpressions(
         ? Math.min(1, Math.max(0, e.confidence))
         : 0.85;
     const variants = clampExpressionVariants(e.variants);
+    const notFollowedBy = validateNotFollowedBy(e.notFollowedBy);
     out.push({
       expression: e.expression.trim(),
       variants,
@@ -503,6 +518,8 @@ function validateExpressions(
         : e.expression.trim(),
       tone: isNonEmptyString(e.tone) ? e.tone : "community pack entry",
       confidence,
+      commonWord: typeof e.commonWord === "boolean" ? e.commonWord : undefined,
+      notFollowedBy,
       // Always the manifest's own id — an entry's own `pack` field is
       // untrusted input and is ignored, not merely defaulted, so a
       // malicious/buggy remote entry can't claim `pack: "core"` (or

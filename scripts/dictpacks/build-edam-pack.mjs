@@ -338,6 +338,15 @@ function firstSentenceEnd(text) {
     const next = text[i + 1];
     if (next !== undefined && next !== " ") continue;
     if (c === "." && /[0-9]/.test(text[i - 1] || "") && /[0-9]/.test(next || "")) continue;
+    // Numbered-list markers ("1. …") are not sentence boundaries — same
+    // guard as build-stats-pack.mjs / build-ml-pack.mjs.
+    if (
+      c === "." &&
+      next === " " &&
+      /^\d+$/.test(text.slice(0, i).trim())
+    ) {
+      continue;
+    }
     if (c === "." && SENTENCE_ABBREV_RE.test(text.slice(0, i + 1))) continue;
     return i + 1;
   }

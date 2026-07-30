@@ -390,6 +390,12 @@ export const FINANCE_CONSUMER_EXPRESSIONS: DictExpressionEntry[] = [
     tone: "neutral, common business phrase",
     confidence: 0.9,
     pack: "finance-consumer",
+    commonWord: true,
+    notFollowedBy: [
+      "graph", "curve", "line", "chart", "plot", "bar", "box", "arrow", "region",
+      "area", "zone", "dot", "point", "trace", "panel", "circle", "square", "text",
+      "label", "marker", "band", "shading", "column", "cluster", "highlight",
+    ],
   },
   {
     expression: "in the black",
@@ -400,6 +406,12 @@ export const FINANCE_CONSUMER_EXPRESSIONS: DictExpressionEntry[] = [
     tone: "neutral, common business phrase",
     confidence: 0.9,
     pack: "finance-consumer",
+    commonWord: true,
+    notFollowedBy: [
+      "graph", "curve", "line", "chart", "plot", "bar", "box", "arrow", "region",
+      "area", "zone", "dot", "point", "trace", "panel", "circle", "square", "text",
+      "label", "marker", "band", "shading", "column", "cluster", "highlight",
+    ],
   },
   {
     expression: "underwater",
@@ -411,6 +423,11 @@ export const FINANCE_CONSUMER_EXPRESSIONS: DictExpressionEntry[] = [
     tone: "neutral, common business phrase",
     confidence: 0.9,
     pack: "finance-consumer",
+    commonWord: true,
+    notFollowedBy: [
+      "camera", "photography", "photo", "vehicle", "drone", "robot", "housing",
+      "welding", "cable", "habitat", "tunnel", "volcano",
+    ],
   },
   {
     expression: "golden handcuffs",

@@ -49,7 +49,7 @@ describe("useDirectTransport — full-tier web (ambient PREVIEW_TIER false)", ()
   it("keyless: routes through /api/detect", async () => {
     mockFetch.mockResolvedValue(detectRouteFixture());
 
-    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKey: "" }));
+    await detectApi({ context: "", new_text: "hi" }, makeSettings({ apiKeyOpenrouter: "" }));
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url] = mockFetch.mock.calls[0];
@@ -62,7 +62,7 @@ describe("useDirectTransport — full-tier web (ambient PREVIEW_TIER false)", ()
 
     await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ apiKey: "sk-ant-full-tier-byok-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-full-tier-byok-key", provider: "anthropic" }),
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -79,7 +79,7 @@ describe("useDirectTransport — desktop (llmTransport.ts's client-transport fla
 
     await detectApi(
       { context: "", new_text: "hi" },
-      makeSettings({ apiKey: "sk-ant-desktop-key", provider: "anthropic" }),
+      makeSettings({ apiKeyAnthropic: "sk-ant-desktop-key", provider: "anthropic" }),
     );
 
     expect(mockFetch).toHaveBeenCalledTimes(1);

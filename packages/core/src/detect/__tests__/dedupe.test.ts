@@ -275,6 +275,32 @@ describe("mergeDetections — minConfidence filtering", () => {
 });
 
 describe("mergeDetections — dictionary -> llm content upgrade", () => {
+  it("does not let a long LLM source sentence overwrite a compact dictionary context", () => {
+    const existing: ExpressionCard[] = [
+      {
+        ...makeExpression({ source_sentence: "Let's circle back tomorrow." }),
+        id: "dict-card-context",
+        normKey: "circle back",
+        firstSeenAt: 100,
+        lastSeenAt: 100,
+        count: 1,
+        source: "dictionary",
+      },
+    ];
+    const longLlmContext = "We spent the first part of the meeting walking through the customer feedback in detail and listing every concern the support team had heard this week, we need to circle back on the revised release plan with design tomorrow, and after that we will send the final notes to the launch team with every owner and due date confirmed before the end of the day";
+    const res = makeDetectResponse({
+      expressions: [makeExpression({ source_sentence: longLlmContext })],
+    });
+
+    const { cards } = mergeDetections(existing, [], res, "llm", 0.5, 200);
+
+    expect(cards[0].source_sentence).toBe(
+      "we need to circle back on the revised release plan with design tomorrow,",
+    );
+    expect(cards[0].source_sentence).toContain("circle back");
+    expect(cards[0].source_sentence.length).toBeLessThan(longLlmContext.length);
+  });
+
   it("upgrades an existing dictionary ExpressionCard's fields when an llm hit lands, preserving count/id/normKey/firstSeenAt", () => {
     const firstSeen = 10_000;
     const existing: ExpressionCard[] = [

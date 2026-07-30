@@ -50,6 +50,11 @@ import { IS_DESKTOP } from "./platform/desktop";
 import { IS_IOS } from "./platform/ios";
 import { diagLog } from "./diag/log";
 import { sanitizeSecretValue } from "./settings/sanitizeSecret";
+import {
+  PROVIDER_API_KEY_NAMES,
+  providerApiKeyNameFor,
+  providerApiKeyPatch,
+} from "./llm/providerKeys";
 import { resolveSessionElapsedBasis, type PauseInterval } from "./segmentElapsed";
 import { remapOpenRouterModelDefaults } from "./oauth/openrouterModelDefaults";
 
@@ -1266,8 +1271,11 @@ export function isModeLegalForPlatform(mode: Settings["mode"], platform: ModePla
  *  a user who chose offline-only stays offline-only. The legacy key
  *  is stripped so it doesn't get re-persisted forever. */
 export function migrateSettings(saved: Partial<Settings> | null | undefined): Settings {
-  const legacy = (saved ?? {}) as Partial<Settings> & { dictionaryOnly?: boolean };
-  const settings: Settings = { ...DEFAULT_SETTINGS, ...legacy };
+  const legacy = (saved ?? {}) as Partial<Settings> & {
+    apiKey?: unknown;
+    dictionaryOnly?: boolean;
+  };
+  const settings = { ...DEFAULT_SETTINGS, ...legacy } as Settings & { apiKey?: unknown };
   // Field bug fix (iOS TestFlight): self-heal secret fields already
   // persisted with a dirty (zero-width/whitespace-padded) paste from
   // before this fix shipped — the SECRET_NAMES fields
@@ -1278,7 +1286,23 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // only) lives at hydrate()'s hydrateSecrets merge point instead —
   // this settings-blob path also covers the web/iOS platforms that
   // have no Keychain at all.
-  settings.apiKey = sanitizeSecretValue(settings.apiKey);
+  for (const name of PROVIDER_API_KEY_NAMES) {
+    settings[name] = sanitizeSecretValue(settings[name] ?? "");
+  }
+  const legacyApiKey =
+    typeof legacy.apiKey === "string" ? sanitizeSecretValue(legacy.apiKey) : "";
+  if (legacyApiKey) {
+    const targetName = providerApiKeyNameFor(settings.provider, settings.baseUrl);
+    if (!settings[targetName]) {
+      Object.assign(
+        settings,
+        providerApiKeyPatch(settings.provider, settings.baseUrl, legacyApiKey),
+      );
+    }
+  }
+  // The legacy shared field must never survive the reshape or get
+  // re-persisted. Re-running this migration is therefore a no-op.
+  delete settings.apiKey;
   settings.hfToken = sanitizeSecretValue(settings.hfToken);
   settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
   settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
@@ -1767,7 +1791,7 @@ const globalFlags = globalThis as unknown as Record<symbol, boolean | undefined>
  *  NOTE: taskLlm.*.apiKey (the per-task LLM overrides, #56) intentionally
  *  stays OUT of keychain custody for this v1 — it's deliberately still
  *  persisted in the IDB blob like every other pre-migration Settings
- *  field; only the five top-level SECRET_NAMES fields ever move. */
+ *  field; only the top-level SECRET_NAMES fields ever move. */
 function settingsForPersist(
   state: Pick<AppState, "settings" | "demoOverlayPrevEngine">,
 ): Settings {
@@ -1916,7 +1940,9 @@ export const useApp = create<AppState>((set, get) => ({
         // so a dirty value already sitting in an EARLIER-migrated
         // Keychain entry self-heals too. Idempotent for every field
         // that was already clean.
-        settings.apiKey = sanitizeSecretValue(settings.apiKey);
+        for (const name of PROVIDER_API_KEY_NAMES) {
+          settings[name] = sanitizeSecretValue(settings[name] ?? "");
+        }
         settings.hfToken = sanitizeSecretValue(settings.hfToken);
         settings.sonioxKey = sanitizeSecretValue(settings.sonioxKey);
         settings.deepgramKey = sanitizeSecretValue(settings.deepgramKey);
@@ -2485,6 +2511,15 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   renameRosterSpeaker: (from, to) => {
+    // Name only lives on segments (never added to the roster) — fall
+    // through to the plain rename path so segments/aliases/activeSpeaker
+    // still update. Without this, renameRosterSpeakerList's collision
+    // guard would also block a segment-only rename whose `to` happens
+    // to already be on the roster.
+    if (!get().speakerRoster.includes(from)) {
+      get().renameSpeaker(from, to);
+      return;
+    }
     const next = renameRosterSpeakerList(get().speakerRoster, from, to);
     if (next === null) return;
     set({ speakerRoster: next });
@@ -2497,7 +2532,16 @@ export const useApp = create<AppState>((set, get) => ({
   assignSegmentsSpeaker: (segmentIds, name) => {
     const cleaned = name.trim();
     if (!cleaned || segmentIds.length === 0) return;
-    set({ segments: assignSpeakerToSegments(get().segments, segmentIds, cleaned) });
+    // Keep the latch's option list in sync: a name that only lived on
+    // segments (e.g. a diarized label picked from the assign popover's
+    // union list) must also land on the roster, otherwise the live
+    // latch can never select it. addSpeakerToRosterList is a no-op when
+    // the name is already present.
+    const { roster } = addSpeakerToRosterList(get().speakerRoster, cleaned);
+    set({
+      segments: assignSpeakerToSegments(get().segments, segmentIds, cleaned),
+      speakerRoster: roster,
+    });
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(
         () => get().saveCurrentSession(),
@@ -2611,7 +2655,7 @@ export const useApp = create<AppState>((set, get) => ({
   renameSpeaker: (from, to) => {
     const cleaned = to.trim();
     if (!cleaned || from === cleaned) return;
-    const { segments } = get();
+    const { segments, activeSpeaker } = get();
     // Rename-wins: record the alias BEFORE overwriting `speaker` below
     // (aliasesAfterRename reads segments' current `speaker`/`sttSpeaker`
     // to find each affected stable id) — a later applySpeakerUpdate for
@@ -2621,6 +2665,10 @@ export const useApp = create<AppState>((set, get) => ({
     set({
       segments: renameSpeakerInSegments(segments, from, cleaned),
       speakerAliases,
+      // Keep the live latch pointing at the renamed display name —
+      // otherwise addFinal keeps stamping the OLD name onto new finals
+      // and resurrects a ghost duplicate speaker for the rest of the meeting.
+      activeSpeaker: activeSpeaker === from ? cleaned : activeSpeaker,
     });
     if (get().status === "stopped" && get().segments.length > 0) {
       scheduleSessionSave(

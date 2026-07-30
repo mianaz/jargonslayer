@@ -70,7 +70,15 @@ function makeLearnRecord(overrides: Partial<LearnRecord> = {}): LearnRecord {
 
 const keyedSettings: Settings = {
   ...DEFAULT_SETTINGS,
-  apiKey: "sk-ant-secret",
+  apiKeyAnthropic: "sk-anthropic-secret",
+  apiKeyOpenai: "sk-openai-secret",
+  apiKeyDeepseek: "sk-deepseek-secret",
+  apiKeyQwen: "sk-qwen-secret",
+  apiKeyOpenrouter: "sk-openrouter-secret",
+  apiKeyPoe: "sk-poe-secret",
+  apiKeyOllama: "sk-ollama-secret",
+  apiKeyCustom: "sk-custom-secret",
+  llmCustomHost: "custom.example.com",
   hfToken: "hf_secret",
   // v0.4 S4 (blueprint decision E): Soniox BYOK key — hand-listed
   // stripped field, same as hfToken/agentToken (see stripKeyMaterial).
@@ -150,8 +158,10 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       // sanitizeRestoredSettings force-resets the machine-local
       // pairing/kill-switch trio on every restore (Codex v0.2.3
       // MEDIUM) — everything else round-trips exactly.
+      const expectedSettings = { ...keyedSettings } as Settings & { apiKey?: string };
+      delete expectedSettings.apiKey;
       expect(await storage.loadSettings()).toEqual({
-        ...keyedSettings,
+        ...expectedSettings,
         subscriptionDirect: false,
         agentUrl: DEFAULT_SETTINGS.agentUrl,
         agentToken: "",
@@ -206,7 +216,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
 
     it("a backup with no settings field leaves current settings untouched and reports settingsRestored:false", async () => {
       const storage = await import("../storage");
-      await storage.saveSettings({ ...DEFAULT_SETTINGS, apiKey: "keep-me" });
+      await storage.saveSettings({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "keep-me" });
 
       const autoExport = await import("../autoExport");
       const bareBackup = JSON.stringify({
@@ -220,7 +230,7 @@ describe("autoExport.ts — backup/restore (#57)", () => {
 
       const result = await autoExport.restoreFullBackup(bareBackup);
       expect(result.settingsRestored).toBe(false);
-      expect(await storage.loadSettings()).toMatchObject({ apiKey: "keep-me" });
+      expect(await storage.loadSettings()).toMatchObject({ apiKeyOpenrouter: "keep-me" });
     });
 
     it("rejects a JSON file that isn't a jargonslayer/meetlingo backup", async () => {
@@ -771,7 +781,14 @@ describe("autoExport.ts — backup/restore (#57)", () => {
 
       for (const json of [jsonDefault, jsonExplicit]) {
         const parsed = JSON.parse(json) as { settings: Settings };
-        expect(parsed.settings.apiKey).toBe("sk-ant-secret");
+        expect(parsed.settings.apiKeyAnthropic).toBe("sk-anthropic-secret");
+        expect(parsed.settings.apiKeyOpenai).toBe("sk-openai-secret");
+        expect(parsed.settings.apiKeyDeepseek).toBe("sk-deepseek-secret");
+        expect(parsed.settings.apiKeyQwen).toBe("sk-qwen-secret");
+        expect(parsed.settings.apiKeyOpenrouter).toBe("sk-openrouter-secret");
+        expect(parsed.settings.apiKeyPoe).toBe("sk-poe-secret");
+        expect(parsed.settings.apiKeyOllama).toBe("sk-ollama-secret");
+        expect(parsed.settings.apiKeyCustom).toBe("sk-custom-secret");
         expect(parsed.settings.hfToken).toBe("hf_secret");
         expect(parsed.settings.sonioxKey).toBe("soniox-secret");
         expect(parsed.settings.deepgramKey).toBe("deepgram-secret");
@@ -792,7 +809,14 @@ describe("autoExport.ts — backup/restore (#57)", () => {
       const json = await autoExport.buildFullBackup({ includeKeys: false });
       const parsed = JSON.parse(json) as { settings: Settings };
 
-      expect(parsed.settings.apiKey).toBe("");
+      expect(parsed.settings.apiKeyAnthropic).toBe("");
+      expect(parsed.settings.apiKeyOpenai).toBe("");
+      expect(parsed.settings.apiKeyDeepseek).toBe("");
+      expect(parsed.settings.apiKeyQwen).toBe("");
+      expect(parsed.settings.apiKeyOpenrouter).toBe("");
+      expect(parsed.settings.apiKeyPoe).toBe("");
+      expect(parsed.settings.apiKeyOllama).toBe("");
+      expect(parsed.settings.apiKeyCustom).toBe("");
       expect(parsed.settings.hfToken).toBe("");
       expect(parsed.settings.sonioxKey).toBe("");
       expect(parsed.settings.deepgramKey).toBe("");
@@ -1199,11 +1223,13 @@ describe("stripKeyMaterial — Codex v0.2.3 LOW (webhookUrl is credential-like)"
     await storage.saveSettings({
       ...DEFAULT_SETTINGS,
       webhookUrl: "https://hooks.example.com/secret-token-path",
-      apiKey: "sk-x",
+      apiKeyOpenrouter: "sk-x",
     });
     const json = await autoExport.buildFullBackup({ includeKeys: false });
-    const backup = JSON.parse(json) as { settings: { webhookUrl: string; apiKey: string } };
+    const backup = JSON.parse(json) as {
+      settings: { webhookUrl: string; apiKeyOpenrouter: string };
+    };
     expect(backup.settings.webhookUrl).toBe("");
-    expect(backup.settings.apiKey).toBe("");
+    expect(backup.settings.apiKeyOpenrouter).toBe("");
   });
 });

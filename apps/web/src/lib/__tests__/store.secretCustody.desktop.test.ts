@@ -29,7 +29,7 @@ const mockHydrateSecrets = vi.fn(async (settings: Settings) => ({
   migratedAndClean: false,
 }));
 vi.mock("../desktop/secret", () => ({
-  SECRET_NAMES: ["apiKey", "hfToken", "sonioxKey", "deepgramKey", "agentToken"],
+  SECRET_NAMES: ["apiKeyOpenrouter", "hfToken", "sonioxKey", "deepgramKey", "agentToken"],
   readSecrets: () => mockReadSecrets(),
   writeSecret: (name: string, value: string) => mockWriteSecret(name, value),
   hydrateSecrets: (settings: Settings) => mockHydrateSecrets(settings),
@@ -62,9 +62,9 @@ describe("updateSettings — enqueues a Keychain write only for a changed SECRET
   });
 
   it("the SAME value is a no-op — no write enqueued", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "sk-same" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-same" }, hydrated: true });
 
-    useApp.getState().updateSettings({ apiKey: "sk-same" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-same" });
     await useApp.getState().flushSecrets();
 
     expect(mockWriteSecret).not.toHaveBeenCalled();
@@ -80,32 +80,32 @@ describe("updateSettings — enqueues a Keychain write only for a changed SECRET
   });
 
   it("a genuinely changed value enqueues exactly one write with the new value", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "sk-old" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-old" }, hydrated: true });
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" });
     await useApp.getState().flushSecrets();
 
     expect(mockWriteSecret).toHaveBeenCalledTimes(1);
-    expect(mockWriteSecret).toHaveBeenCalledWith("apiKey", "sk-new");
+    expect(mockWriteSecret).toHaveBeenCalledWith("apiKeyOpenrouter", "sk-new");
   });
 
   it("fires regardless of opts.persist:false", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "sk-old" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-old" }, hydrated: true });
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" }, { persist: false });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" }, { persist: false });
     await useApp.getState().flushSecrets();
 
-    expect(mockWriteSecret).toHaveBeenCalledWith("apiKey", "sk-new");
+    expect(mockWriteSecret).toHaveBeenCalledWith("apiKeyOpenrouter", "sk-new");
   });
 
   it("a multi-field patch enqueues one write per CHANGED SECRET_NAMES field it touches", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "sk-old", hfToken: "" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-old", hfToken: "" }, hydrated: true });
 
-    useApp.getState().updateSettings({ apiKey: "sk-new", hfToken: "hf-new", aiDetect: false });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new", hfToken: "hf-new", aiDetect: false });
     await useApp.getState().flushSecrets();
 
     expect(mockWriteSecret).toHaveBeenCalledTimes(2);
-    expect(mockWriteSecret).toHaveBeenCalledWith("apiKey", "sk-new");
+    expect(mockWriteSecret).toHaveBeenCalledWith("apiKeyOpenrouter", "sk-new");
     expect(mockWriteSecret).toHaveBeenCalledWith("hfToken", "hf-new");
   });
 });
@@ -119,49 +119,49 @@ describe("settingsForPersist — custody-gated strip (never a field merely NAMED
 
   it("strips a field once its write succeeds; leaves an untouched SECRET_NAMES field alone", async () => {
     useApp.setState({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "", hfToken: "hf-plain" },
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "", hfToken: "hf-plain" },
       hydrated: true,
     });
-    useApp.getState().updateSettings({ apiKey: "sk-new" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" });
     await useApp.getState().flushSecrets();
 
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
     await useApp.getState().flushSettings();
 
     const saved = saveSpy.mock.calls[0][0];
-    expect(saved.apiKey).toBe(""); // stripped — confirmed in custody
+    expect(saved.apiKeyOpenrouter).toBe(""); // stripped — confirmed in custody
     expect(saved.hfToken).toBe("hf-plain"); // never confirmed — left as-is
   });
 
   it("a failed write never strips — the plaintext value keeps riding the persisted blob (fail-open)", async () => {
     mockWriteSecret.mockResolvedValueOnce(false);
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
-    useApp.getState().updateSettings({ apiKey: "sk-new" });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" });
     await useApp.getState().flushSecrets();
 
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
     await useApp.getState().flushSettings();
 
-    expect(saveSpy.mock.calls[0][0].apiKey).toBe("sk-new");
+    expect(saveSpy.mock.calls[0][0].apiKeyOpenrouter).toBe("sk-new");
   });
 
   it("clearing a custody field (write success, empty value) removes it from custody — a plaintext value that reappears later is no longer incorrectly stripped", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
-    useApp.getState().updateSettings({ apiKey: "sk-new" }); // -> custody gains apiKey
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" }); // -> custody gains apiKeyOpenrouter
     await useApp.getState().flushSecrets();
 
-    useApp.getState().updateSettings({ apiKey: "" }); // clears it -> custody LOSES apiKey
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "" }); // clears it -> custody LOSES apiKeyOpenrouter
     await useApp.getState().flushSecrets();
 
     // Simulate a plaintext value reappearing in live settings WITHOUT
     // going through updateSettings again (e.g. a restored backup) —
     // proves custody genuinely forgot the name, not merely that its
     // current value happens to be empty.
-    useApp.setState({ settings: { ...useApp.getState().settings, apiKey: "sk-reappeared" } });
+    useApp.setState({ settings: { ...useApp.getState().settings, apiKeyOpenrouter: "sk-reappeared" } });
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
     await useApp.getState().flushSettings();
 
-    expect(saveSpy.mock.calls[0][0].apiKey).toBe("sk-reappeared");
+    expect(saveSpy.mock.calls[0][0].apiKeyOpenrouter).toBe("sk-reappeared");
   });
 });
 
@@ -174,14 +174,14 @@ describe("write failure — fail-open custody + non-blocking toast", () => {
 
   it("the value stays live in memory, stays in the persisted IDB blob, and shows the warning toast", async () => {
     mockWriteSecret.mockResolvedValueOnce(false);
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" });
     await useApp.getState().flushSecrets();
 
-    expect(useApp.getState().settings.apiKey).toBe("sk-new");
-    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "sk-new" }));
+    expect(useApp.getState().settings.apiKeyOpenrouter).toBe("sk-new");
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ apiKeyOpenrouter: "sk-new" }));
     expect(useApp.getState().toast).toBe("API Key 未能存入系统钥匙串，已临时保存在本地");
   });
 });
@@ -205,9 +205,9 @@ describe("flushSecrets — resolves only after every enqueued write has settled"
           };
         }),
     );
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" });
     const flushed = useApp.getState().flushSecrets().then(() => order.push("flush"));
 
     // A macrotask tick drains every pending microtask (the dynamic
@@ -233,25 +233,25 @@ describe("hydrate() — keychain migration orchestration", () => {
   });
 
   it("adopts hydrateSecrets' merged settings and, when migratedAndClean, flushes the now-stripped blob", async () => {
-    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKey: "sk-plain" });
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plain" });
     mockHydrateSecrets.mockResolvedValueOnce({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-plain" },
-      custodyNames: ["apiKey"],
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plain" },
+      custodyNames: ["apiKeyOpenrouter"],
       migratedAndClean: true,
     });
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
 
     await useApp.getState().hydrate();
 
-    expect(useApp.getState().settings.apiKey).toBe("sk-plain");
-    // The cleanup flush strips apiKey — custody now confirms it.
-    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ apiKey: "" }));
+    expect(useApp.getState().settings.apiKeyOpenrouter).toBe("sk-plain");
+    // The cleanup flush strips apiKeyOpenrouter — custody now confirms it.
+    expect(saveSpy).toHaveBeenCalledWith(expect.objectContaining({ apiKeyOpenrouter: "" }));
   });
 
   it("migratedAndClean:false does NOT trigger a follow-up flush", async () => {
-    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKey: "sk-plain" });
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plain" });
     mockHydrateSecrets.mockResolvedValueOnce({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-plain" },
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plain" },
       custodyNames: [],
       migratedAndClean: false,
     });
@@ -263,29 +263,29 @@ describe("hydrate() — keychain migration orchestration", () => {
   });
 
   it("custodyNames populates custody even when migratedAndClean is false (an already-migrated field from an earlier boot) — a LATER save still strips it", async () => {
-    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKey: "" });
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" });
     mockHydrateSecrets.mockResolvedValueOnce({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-from-keychain" },
-      custodyNames: ["apiKey"],
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-from-keychain" },
+      custodyNames: ["apiKeyOpenrouter"],
       migratedAndClean: false,
     });
 
     await useApp.getState().hydrate();
-    expect(useApp.getState().settings.apiKey).toBe("sk-from-keychain");
+    expect(useApp.getState().settings.apiKeyOpenrouter).toBe("sk-from-keychain");
 
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
     await useApp.getState().flushSettings();
-    expect(saveSpy.mock.calls[0][0].apiKey).toBe(""); // stripped — already in custody
+    expect(saveSpy.mock.calls[0][0].apiKeyOpenrouter).toBe(""); // stripped — already in custody
   });
 
   it("a hydrateSecrets() failure fails open — hydrate() still completes, settings keep whatever the loaded blob already had", async () => {
-    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKey: "sk-plain" });
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plain" });
     mockHydrateSecrets.mockRejectedValueOnce(new Error("keychain hydration boom"));
 
     await useApp.getState().hydrate();
 
     expect(useApp.getState().hydrated).toBe(true);
-    expect(useApp.getState().settings.apiKey).toBe("sk-plain");
+    expect(useApp.getState().settings.apiKeyOpenrouter).toBe("sk-plain");
   });
 
   // F5 fix (Sol MEDIUM #13, keychain-custody fix round): custody is
@@ -293,18 +293,18 @@ describe("hydrate() — keychain migration orchestration", () => {
   // added to — a stale name from an earlier hydrate must not survive a
   // later one that no longer confirms it.
   it("a name custodied by an EARLIER hydrate is no longer stripped once a LATER hydrate's result stops confirming it", async () => {
-    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKey: "" });
+    vi.spyOn(storageModule, "loadSettings").mockResolvedValue({ ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" });
     mockHydrateSecrets.mockResolvedValueOnce({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-from-keychain" },
-      custodyNames: ["apiKey"],
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-from-keychain" },
+      custodyNames: ["apiKeyOpenrouter"],
       migratedAndClean: false,
     });
-    await useApp.getState().hydrate(); // first hydrate — apiKey enters custody
+    await useApp.getState().hydrate(); // first hydrate — apiKeyOpenrouter enters custody
 
     // A second hydrate (e.g. a re-hydrate after a restore) whose result
-    // no longer confirms apiKey in the Keychain at all.
+    // no longer confirms apiKeyOpenrouter in the Keychain at all.
     mockHydrateSecrets.mockResolvedValueOnce({
-      settings: { ...DEFAULT_SETTINGS, apiKey: "sk-plaintext-again" },
+      settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "sk-plaintext-again" },
       custodyNames: [],
       migratedAndClean: false,
     });
@@ -313,14 +313,14 @@ describe("hydrate() — keychain migration orchestration", () => {
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
     await useApp.getState().flushSettings();
 
-    expect(saveSpy.mock.calls[0][0].apiKey).toBe("sk-plaintext-again"); // NOT stripped — stale custody didn't linger
+    expect(saveSpy.mock.calls[0][0].apiKeyOpenrouter).toBe("sk-plaintext-again"); // NOT stripped — stale custody didn't linger
   });
 });
 
 // F1 fix (Sol HIGH #3, keychain-custody fix round): a custody transition
 // now kicks its own flushSettings() from inside syncSecretCustody, so a
 // non-dialog writer (OAuth callback, onboarding steps — a bare
-// updateSettings({apiKey/hfToken}) with no flushSettings/flushSecrets of
+// updateSettings({apiKeyOpenrouter/hfToken}) with no flushSettings/flushSecrets of
 // its own) still gets a durable, correctly-stripped-or-fail-open persist.
 describe("F1 fix — a custody transition auto-persists without needing an explicit flushSettings call", () => {
   beforeEach(resetAll);
@@ -329,35 +329,35 @@ describe("F1 fix — a custody transition auto-persists without needing an expli
     resetAll();
   });
 
-  it("a bare OAuth-style updateSettings(apiKey) lands a stripped IDB blob once the write settles, with no flushSettings call of its own", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
+  it("a bare OAuth-style updateSettings(apiKeyOpenrouter) lands a stripped IDB blob once the write settles, with no flushSettings call of its own", async () => {
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" }); // e.g. oauth/openrouterDesktop.ts's callback
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" }); // e.g. oauth/openrouterDesktop.ts's callback
     await useApp.getState().flushSecrets(); // NOT flushSettings — proves the follow-up is automatic
 
-    const stripped = saveSpy.mock.calls.find((call) => call[0].apiKey === "");
+    const stripped = saveSpy.mock.calls.find((call) => call[0].apiKeyOpenrouter === "");
     expect(stripped).toBeDefined();
   });
 
   it("a write FAILURE on an already-custodied name still persists the NEW plaintext value (no missed-pagehide reversion to the old one)", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
-    useApp.getState().updateSettings({ apiKey: "sk-old" }); // -> custody gains apiKey
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-old" }); // -> custody gains apiKeyOpenrouter
     await useApp.getState().flushSecrets();
-    expect(useApp.getState().settings.apiKey).toBe("sk-old");
+    expect(useApp.getState().settings.apiKeyOpenrouter).toBe("sk-old");
 
     mockWriteSecret.mockResolvedValueOnce(false); // this NEXT write (the new value) fails
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
-    useApp.getState().updateSettings({ apiKey: "sk-new" }); // no flushSettings call of its own
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" }); // no flushSettings call of its own
 
     // The FIRST fire-and-forget persist (still mid-flight custody, taken
     // synchronously inside updateSettings before the Keychain write even
-    // starts) strips apiKey — that alone would be the old, buggy end
+    // starts) strips apiKeyOpenrouter — that alone would be the old, buggy end
     // state. The point of this test is what happens AFTER the write
     // settles.
     await useApp.getState().flushSecrets();
 
-    const landed = saveSpy.mock.calls.find((call) => call[0].apiKey === "sk-new");
+    const landed = saveSpy.mock.calls.find((call) => call[0].apiKeyOpenrouter === "sk-new");
     expect(landed).toBeDefined(); // the new value reached IDB — custody no longer strips it
   });
 });
@@ -375,34 +375,34 @@ describe("F2 fix — delete-failure toast + secretDeletePending tombstone bookke
   });
 
   it("a failed delete shows the delete-specific toast and durably persists the tombstone", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
-    useApp.getState().updateSettings({ apiKey: "sk-old" }); // -> custody gains apiKey
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-old" }); // -> custody gains apiKeyOpenrouter
     await useApp.getState().flushSecrets();
 
     mockWriteSecret.mockResolvedValueOnce(false); // the delete itself fails
     const saveSpy = vi.spyOn(storageModule, "saveSettings").mockResolvedValue(undefined);
-    useApp.getState().updateSettings({ apiKey: "" }); // user clears the key
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "" }); // user clears the key
     await useApp.getState().flushSecrets();
 
     expect(useApp.getState().toast).toBe("钥匙串中的旧 Key 删除失败，重启后可能重新出现，请重试清除");
-    expect(useApp.getState().settings.secretDeletePending).toEqual(["apiKey"]);
+    expect(useApp.getState().settings.secretDeletePending).toEqual(["apiKeyOpenrouter"]);
     const persisted = saveSpy.mock.calls.find(
-      (call) => Array.isArray(call[0].secretDeletePending) && call[0].secretDeletePending.includes("apiKey"),
+      (call) => Array.isArray(call[0].secretDeletePending) && call[0].secretDeletePending.includes("apiKeyOpenrouter"),
     );
     expect(persisted).toBeDefined(); // landed in IDB, not just live in memory
   });
 
   it("a later successful re-set of the same name clears its tombstone", async () => {
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
-    useApp.getState().updateSettings({ apiKey: "sk-old" });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-old" });
     await useApp.getState().flushSecrets();
 
     mockWriteSecret.mockResolvedValueOnce(false);
-    useApp.getState().updateSettings({ apiKey: "" }); // delete fails -> tombstoned
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "" }); // delete fails -> tombstoned
     await useApp.getState().flushSecrets();
-    expect(useApp.getState().settings.secretDeletePending).toEqual(["apiKey"]);
+    expect(useApp.getState().settings.secretDeletePending).toEqual(["apiKeyOpenrouter"]);
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" }); // a fresh set succeeds this time
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" }); // a fresh set succeeds this time
     await useApp.getState().flushSecrets();
 
     expect(useApp.getState().settings.secretDeletePending).toEqual([]);
@@ -410,9 +410,9 @@ describe("F2 fix — delete-failure toast + secretDeletePending tombstone bookke
 
   it("a SET failure (non-empty value) still shows the ORIGINAL toast, not the delete-specific one", async () => {
     mockWriteSecret.mockResolvedValueOnce(false);
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "" }, hydrated: true });
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" });
     await useApp.getState().flushSecrets();
 
     expect(useApp.getState().toast).toBe("API Key 未能存入系统钥匙串，已临时保存在本地");
@@ -435,7 +435,7 @@ describe("F4 fix — pendingSecretWrites serializes across separate updateSettin
     let resolveFirst: (() => void) | undefined;
     mockWriteSecret.mockImplementation(async (name: string) => {
       order.push(`start:${name}`);
-      if (name === "apiKey") {
+      if (name === "apiKeyOpenrouter") {
         await new Promise<void>((resolve) => {
           resolveFirst = resolve;
         });
@@ -443,19 +443,19 @@ describe("F4 fix — pendingSecretWrites serializes across separate updateSettin
       order.push(`end:${name}`);
       return true;
     });
-    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKey: "", hfToken: "" }, hydrated: true });
+    useApp.setState({ settings: { ...DEFAULT_SETTINGS, apiKeyOpenrouter: "", hfToken: "" }, hydrated: true });
 
-    useApp.getState().updateSettings({ apiKey: "sk-new" });
+    useApp.getState().updateSettings({ apiKeyOpenrouter: "sk-new" });
     useApp.getState().updateSettings({ hfToken: "hf-new" });
 
     // A macrotask tick drains every pending microtask (both calls' own
     // dynamic import() + .then chains) without resolving the gate.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(order).toEqual(["start:apiKey"]); // the second write hasn't even started yet
+    expect(order).toEqual(["start:apiKeyOpenrouter"]); // the second write hasn't even started yet
 
     resolveFirst!();
     await useApp.getState().flushSecrets();
 
-    expect(order).toEqual(["start:apiKey", "end:apiKey", "start:hfToken", "end:hfToken"]);
+    expect(order).toEqual(["start:apiKeyOpenrouter", "end:apiKeyOpenrouter", "start:hfToken", "end:hfToken"]);
   });
 });

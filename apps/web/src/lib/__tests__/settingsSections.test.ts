@@ -93,7 +93,7 @@ describe("shouldAutoPromoteToAdvanced — auto-promote predicate", () => {
     // still actually differs from the default.
     { name: "provider", patch: { provider: "anthropic" } },
     { name: "baseUrl", patch: { baseUrl: "https://api.deepseek.com" } },
-    { name: "apiKey", patch: { apiKey: "sk-test" } },
+    { name: "apiKeyOpenrouter", patch: { apiKeyOpenrouter: "sk-test" } },
     { name: "detectModel", patch: { detectModel: "claude-sonnet-5" } },
     { name: "summaryModel", patch: { summaryModel: "claude-opus-4-8" } },
     { name: "minConfidence", patch: { minConfidence: 0.75 } },
@@ -157,7 +157,7 @@ describe("shouldAutoPromoteToAdvanced — auto-promote predicate", () => {
     expect(
       shouldAutoPromoteToAdvanced({
         ...DEFAULT_SETTINGS,
-        apiKey: "sk-test",
+        apiKeyOpenrouter: "sk-test",
         webhookUrl: "https://example.com/hook",
         minConfidence: 0.75,
       }),

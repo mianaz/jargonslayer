@@ -16,6 +16,16 @@ export interface DictExpressionEntry {
   tone: string;
   confidence: number; // 0.9 for dictionary entries
   pack: string; // theme pack id, see packs.ts — matches the // ===== 主题 ===== block below
+  // Like DictTermEntry.commonWord, an expression that is ordinary
+  // language outside its pack stays opt-in under the default all-on
+  // setting. This is a domain-relevance guard, separate from the
+  // literal-usage guard below.
+  commonWord?: boolean;
+  // Reject this expression when its matched surface is immediately
+  // followed (apart from whitespace) by one of these literal-context
+  // words. This is independent of pack selection: e.g. a finance user
+  // can still be describing "in the red graph" rather than a loss.
+  notFollowedBy?: string[];
 }
 
 // v0.6 T1 — multi-sense terms: a surface like "EMT" is genuinely

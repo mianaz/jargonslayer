@@ -239,6 +239,71 @@ describe("scanDictionary — source_sentence extraction", () => {
     expect(hit).toBeDefined();
     expect(hit!.source_sentence).toBe("Let's circle back tomorrow.");
   });
+
+  it("narrows the reported 60-word-style ASR run-on to the clause containing an aligned match", () => {
+    const runOn = "Now, as for the 2nd deliverable, I helped co-facilitate, uh, a face-to-face workshop for 3 days alongside our project manager, Hannah here, and assisted with event logistics and created a system in order to track and follow up on post-meeting tasks to make sure that the team was aligned post-meeting.";
+    const res = scanDictionary(runOn);
+    const hit = res.expressions.find((e) => e.expression === "align");
+
+    expect(hit?.source_sentence).toBe(
+      "and assisted with event logistics and created a system in order to track and follow up on post-meeting tasks to make sure that the team was aligned post-meeting.",
+    );
+    expect(hit?.source_sentence).toContain("aligned");
+    expect(hit!.source_sentence.length).toBeLessThan(runOn.length);
+  });
+
+  it("uses comma-bounded context for an unpunctuated multi-clause ASR segment", () => {
+    const runOn = "We spent the first part of the meeting walking through the customer feedback in detail and listing every concern the support team had heard this week, we need to circle back on the revised release plan with design tomorrow, and after that we will send the final notes to the launch team with every owner and due date confirmed before the end of the day";
+    const res = scanDictionary(runOn);
+    const hit = res.expressions.find((e) => e.expression === "circle back");
+
+    expect(hit?.source_sentence).toBe("we need to circle back on the revised release plan with design tomorrow,");
+    expect(hit!.source_sentence.length).toBeLessThan(runOn.length);
+  });
+
+  it("falls back to a word-safe window around a match when a run-on has no clause boundary", () => {
+    const before = Array.from({ length: 50 }, (_, i) => `before${i}`).join(" ");
+    const after = Array.from({ length: 50 }, (_, i) => `after${i}`).join(" ");
+    const res = scanDictionary(`${before} aligned ${after}`);
+    const hit = res.expressions.find((e) => e.expression === "align");
+
+    expect(hit?.source_sentence).toContain("aligned");
+    expect(hit!.source_sentence.length).toBeLessThanOrEqual(240);
+    expect(hit!.source_sentence.split(/\s+/).every((word) => /^(before|after)\d+$|^aligned$/.test(word))).toBe(true);
+  });
+});
+
+describe("scanDictionary — commonWord expression suppression", () => {
+  it("does not mistake a literal red graph for the financial-loss idiom", () => {
+    const res = scanDictionary("we can see in the red graph where they almost always lose weight");
+    expect(res.expressions.some((e) => e.expression === "in the red")).toBe(false);
+  });
+
+  it.each(["graph", "curve", "line"])("rejects a literal red %s even with finance explicitly enabled", (literalFollower) => {
+    const res = scanDictionary(
+      `we can see in the red ${literalFollower} where they almost always lose weight`,
+      ["finance-consumer"],
+    );
+    expect(res.expressions.some((e) => e.expression === "in the red")).toBe(false);
+  });
+
+  it("still detects the financial-loss idiom when its pack is explicitly enabled", () => {
+    const res = scanDictionary("we are in the red", ["finance-consumer"]);
+    expect(res.expressions.some((e) => e.expression === "in the red")).toBe(true);
+  });
+
+  it("does not suppress a financial-loss idiom followed by an ordinary continuation", () => {
+    const res = scanDictionary("we have been in the red for three quarters", ["finance-consumer"]);
+    expect(res.expressions.some((e) => e.expression === "in the red")).toBe(true);
+  });
+
+  it("rejects literal underwater contexts but keeps the financial idiom", () => {
+    const literal = scanDictionary("the underwater camera captured the reef", ["finance-consumer"]);
+    const idiom = scanDictionary("the option is underwater after the share price fell", ["finance-consumer"]);
+
+    expect(literal.expressions.some((e) => e.expression === "underwater")).toBe(false);
+    expect(idiom.expressions.some((e) => e.expression === "underwater")).toBe(true);
+  });
 });
 
 describe("scanDictionary — back-of-the-envelope ASR variants", () => {

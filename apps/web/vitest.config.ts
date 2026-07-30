@@ -5,6 +5,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      // Keep Vitest on this worktree's core source, matching the
+      // TypeScript path mapping. Without this, a linked node_modules
+      // workspace can resolve @jargonslayer/core from a sibling checkout.
+      "@jargonslayer/core": path.resolve(__dirname, "../../packages/core/src"),
     },
   },
   // tsconfig.json's jsx:"preserve" is for Next.js's own compiler —

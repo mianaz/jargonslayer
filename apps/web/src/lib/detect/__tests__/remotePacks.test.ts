@@ -817,6 +817,39 @@ describe("remotePacks — N3: expression variants capped + total surface budget"
   });
 });
 
+describe("remotePacks — expression literal-context guards", () => {
+  beforeEach(() => {
+    memStore.clear();
+    vi.resetModules();
+    (globalThis as { indexedDB?: unknown }).indexedDB = {} as never;
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    delete (globalThis as { indexedDB?: unknown }).indexedDB;
+  });
+
+  it("preserves a non-empty string list and drops malformed notFollowedBy input", async () => {
+    mockFetchOnce({
+      id: "literal-context-pack",
+      name: "Literal Context Pack",
+      version: 1,
+      expressions: [
+        { expression: "in the red", chinese_explanation: "亏损", notFollowedBy: ["graph", "curve"] },
+        { expression: "underwater", chinese_explanation: "资不抵债", notFollowedBy: ["camera", ""] },
+        { expression: "in the black", chinese_explanation: "盈利", notFollowedBy: "chart" },
+      ],
+    });
+
+    const remotePacks = await import("../remotePacks");
+    const { pack } = await remotePacks.addPackSource("https://example.com/literal-context.json");
+
+    expect(pack.expressions[0].notFollowedBy).toEqual(["graph", "curve"]);
+    expect(pack.expressions[1].notFollowedBy).toBeUndefined();
+    expect(pack.expressions[2].notFollowedBy).toBeUndefined();
+  });
+});
+
 describe("remotePacks — N5: bidi/zero-width control chars stripped from name/description", () => {
   beforeEach(() => {
     memStore.clear();

@@ -1,5 +1,6 @@
-// v0.5.1 desktop keychain custody design — API-key material (Settings.
-// apiKey/hfToken/sonioxKey/deepgramKey/elevenLabsKey/agentToken, see
+// v0.5.1 desktop keychain custody design — API-key material (Settings'
+// provider-specific LLM keys/hfToken/sonioxKey/deepgramKey/
+// elevenLabsKey/agentToken, see
 // packages/core/src/types.ts's own field docs) moves out of the plaintext IndexedDB
 // settings blob into the macOS Keychain. This module owns exactly the
 // Rust half of that: three thin app-owned commands (secret_set/
@@ -54,14 +55,24 @@ use crate::paths::resolve_app_paths;
 const SERVICE: &str = "com.bioinfospace.jargonslayer";
 
 /// The only secret names this store will ever read/write/delete —
-/// mirrors lib/desktop/secret.ts's own SECRET_NAMES byte-for-byte (TS is
-/// the source of truth for which Settings fields are secret; kept in
-/// sync by hand, same cross-lane-pinned-contract posture as diskspace.
+/// mirrors lib/desktop/secret.ts's STORED_SECRET_NAMES byte-for-byte
+/// (TS is the source of truth for current Settings secrets plus the
+/// legacy migration name; kept in sync by hand, same posture as diskspace.
 /// rs's own DiskFreeResult shape). Rejecting anything else keeps this
 /// from ever becoming an arbitrary keychain-write primitive for a
 /// compromised renderer.
-const ALLOWED: [&str; 9] = [
+const ALLOWED: [&str; 17] = [
+    // Legacy shared LLM key: retained only so upgraded builds can read,
+    // classify, and delete an existing Keychain item.
     "apiKey",
+    "apiKeyAnthropic",
+    "apiKeyOpenai",
+    "apiKeyDeepseek",
+    "apiKeyQwen",
+    "apiKeyOpenrouter",
+    "apiKeyPoe",
+    "apiKeyOllama",
+    "apiKeyCustom",
     "hfToken",
     "sonioxKey",
     "deepgramKey",

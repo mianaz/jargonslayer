@@ -762,18 +762,80 @@ describe("speaker roster + assignment store actions (v0.5 Wave-1 Feature 1) — 
     expect(useApp.getState().segments[0].speaker).toBe("Alice");
   });
 
+  // Full rename → latch flow (FT3): renaming a roster speaker must keep
+  // roster + activeSpeaker in sync so the live latch can select the NEW
+  // name and addFinal stamps it onto subsequent finals — otherwise the
+  // old name ghosts for the rest of the meeting.
+  it("renameRosterSpeaker keeps roster + activeSpeaker in sync so the latch can select the new name and addFinal stamps it", () => {
+    useApp.setState({
+      speakerRoster: ["说话人 1"],
+      activeSpeaker: "说话人 1",
+      segments: [makeSegment({ id: "a", index: 0, speaker: "说话人 1", speakerLocked: true })],
+      settings: { ...DEFAULT_SETTINGS, autoDetect: false },
+    });
+    useApp.getState().renameRosterSpeaker("说话人 1", "Alice");
+    const afterRename = useApp.getState();
+    expect(afterRename.speakerRoster).toEqual(["Alice"]);
+    expect(afterRename.activeSpeaker).toBe("Alice");
+    expect(afterRename.segments[0].speaker).toBe("Alice");
+    // Latch option list is speakerRoster — renamed speaker must be there.
+    expect(afterRename.speakerRoster).toContain("Alice");
+    expect(afterRename.speakerRoster).not.toContain("说话人 1");
+    // New finals carry the NEW name, not a resurrected ghost.
+    const next = useApp.getState().addFinal("hello after rename");
+    expect(next.speaker).toBe("Alice");
+    expect(next.speakerLocked).toBe(true);
+    expect(useApp.getState().segments.map((s) => s.speaker)).toEqual(["Alice", "Alice"]);
+  });
+
+  it("renameSpeaker alone also rewrites activeSpeaker when it equals the old name", () => {
+    useApp.setState({
+      speakerRoster: ["说话人 1"], // deliberately left stale — renameSpeaker does not touch roster
+      activeSpeaker: "说话人 1",
+      segments: [makeSegment({ id: "a", speaker: "说话人 1" })],
+    });
+    useApp.getState().renameSpeaker("说话人 1", "Alice");
+    expect(useApp.getState().activeSpeaker).toBe("Alice");
+    expect(useApp.getState().segments[0].speaker).toBe("Alice");
+    expect(useApp.getState().speakerRoster).toEqual(["说话人 1"]); // unchanged
+  });
+
+  it("renameRosterSpeaker falls through to renameSpeaker when the old name is not on the roster", () => {
+    useApp.setState({
+      speakerRoster: ["Bob"],
+      activeSpeaker: "Alice",
+      segments: [makeSegment({ id: "a", speaker: "Alice" })],
+    });
+    // `to` collides with an existing roster entry — must still rewrite
+    // segments/activeSpeaker (fallthrough), not no-op like a roster collision.
+    useApp.getState().renameRosterSpeaker("Alice", "Bob");
+    expect(useApp.getState().speakerRoster).toEqual(["Bob"]);
+    expect(useApp.getState().segments[0].speaker).toBe("Bob");
+    expect(useApp.getState().activeSpeaker).toBe("Bob");
+  });
+
   it("assignSegmentsSpeaker (bulk) sets speaker + speakerLocked on the given ids, WHILE status is 'listening' (not gated to stopped)", () => {
     useApp.getState().assignSegmentsSpeaker(["a", "b"], "Alice");
     const s = useApp.getState();
     expect(s.status).toBe("listening"); // never touched
     expect(s.segments[0]).toMatchObject({ speaker: "Alice", speakerLocked: true });
     expect(s.segments[1]).toMatchObject({ speaker: "Alice", speakerLocked: true });
+    expect(s.speakerRoster).toEqual(["Alice"]); // assigned name lands on roster for the latch
   });
 
   it("assignSegmentsSpeaker single assign = a one-element array", () => {
     useApp.getState().assignSegmentsSpeaker(["a"], "Alice");
     expect(useApp.getState().segments[0].speaker).toBe("Alice");
     expect(useApp.getState().segments[1].speaker).toBeUndefined();
+  });
+
+  it("assignSegmentsSpeaker adds a segment-only name to the roster so the latch can select it", () => {
+    useApp.setState({ speakerRoster: [] });
+    useApp.getState().assignSegmentsSpeaker(["a"], "SPEAKER_1");
+    expect(useApp.getState().speakerRoster).toEqual(["SPEAKER_1"]);
+    // Idempotent when already present.
+    useApp.getState().assignSegmentsSpeaker(["b"], "SPEAKER_1");
+    expect(useApp.getState().speakerRoster).toEqual(["SPEAKER_1"]);
   });
 
   it("assignSpeakerFollowing assigns from segmentId through the end", () => {
@@ -2731,23 +2793,93 @@ describe("migrateSettings — #54 dictionaryOnly → aiDetect", () => {
 // time (see sanitizeSecret.ts's own doc).
 describe("migrateSettings — self-heals dirty (zero-width/whitespace) SECRET_NAMES fields", () => {
   it("strips a leading space + zero-width space from a previously-saved apiKey", () => {
-    const s = migrateSettings({ apiKey: " sk-​test-key" } as Partial<Settings>);
-    expect(s.apiKey).toBe("sk-test-key");
+    const s = migrateSettings({ apiKey: " sk-​test-key" } as Partial<Settings> & {
+      apiKey: string;
+    });
+    expect(s.apiKeyOpenrouter).toBe("sk-test-key");
+    expect(s).not.toHaveProperty("apiKey");
   });
 
   it("cleans every SECRET_NAMES field, not just apiKey", () => {
     const s = migrateSettings({
+      apiKeyAnthropic: " ant-‌key ",
+      apiKeyOpenai: " oai-‌key ",
+      apiKeyDeepseek: " ds-‌key ",
+      apiKeyQwen: " qwen-‌key ",
+      apiKeyOpenrouter: " or-‌key ",
+      apiKeyPoe: " poe-‌key ",
+      apiKeyOllama: " ollama-‌key ",
+      apiKeyCustom: " custom-‌key ",
       hfToken: "hf-‌token ",
       sonioxKey: " sonx-‍key",
       deepgramKey: "﻿dg-key",
       elevenLabsKey: " el-key ",
       agentToken: "​agent-token​",
     } as Partial<Settings>);
+    expect(s.apiKeyAnthropic).toBe("ant-key");
+    expect(s.apiKeyOpenai).toBe("oai-key");
+    expect(s.apiKeyDeepseek).toBe("ds-key");
+    expect(s.apiKeyQwen).toBe("qwen-key");
+    expect(s.apiKeyOpenrouter).toBe("or-key");
+    expect(s.apiKeyPoe).toBe("poe-key");
+    expect(s.apiKeyOllama).toBe("ollama-key");
+    expect(s.apiKeyCustom).toBe("custom-key");
     expect(s.hfToken).toBe("hf-token");
     expect(s.sonioxKey).toBe("sonx-key");
     expect(s.deepgramKey).toBe("dg-key");
     expect(s.elevenLabsKey).toBe("el-key");
     expect(s.agentToken).toBe("agent-token");
+  });
+});
+
+describe("migrateSettings — legacy shared LLM key reshape", () => {
+  type LegacySettings = Partial<Settings> & { apiKey?: string };
+
+  it("classifies an Anthropic legacy key into apiKeyAnthropic and deletes apiKey", () => {
+    const migrated = migrateSettings({
+      provider: "anthropic",
+      baseUrl: "",
+      apiKey: "sk-ant-legacy",
+    } as LegacySettings);
+
+    expect(migrated.apiKeyAnthropic).toBe("sk-ant-legacy");
+    expect(migrated).not.toHaveProperty("apiKey");
+  });
+
+  it("classifies OpenRouter by hostname even when the legacy Base URL path differs", () => {
+    const migrated = migrateSettings({
+      provider: "openai-compat",
+      baseUrl: "https://openrouter.ai/some/legacy/path?x=1",
+      apiKey: "sk-or-legacy",
+    } as LegacySettings);
+
+    expect(migrated.apiKeyOpenrouter).toBe("sk-or-legacy");
+    expect(migrated).not.toHaveProperty("apiKey");
+  });
+
+  it("classifies an unknown OpenAI-compatible host into the host-bound custom slot", () => {
+    const migrated = migrateSettings({
+      provider: "openai-compat",
+      baseUrl: "https://compat.example.com/v1",
+      apiKey: "sk-custom-legacy",
+    } as LegacySettings);
+
+    expect(migrated.apiKeyCustom).toBe("sk-custom-legacy");
+    expect(migrated.llmCustomHost).toBe("compat.example.com");
+    expect(migrated).not.toHaveProperty("apiKey");
+  });
+
+  it("is idempotent and never overwrites an existing provider-specific key", () => {
+    const once = migrateSettings({
+      provider: "anthropic",
+      apiKey: "sk-old-shared",
+      apiKeyAnthropic: "sk-new-provider-specific",
+    } as LegacySettings);
+    const twice = migrateSettings(once);
+
+    expect(once.apiKeyAnthropic).toBe("sk-new-provider-specific");
+    expect(twice).toEqual(once);
+    expect(twice).not.toHaveProperty("apiKey");
   });
 });
 

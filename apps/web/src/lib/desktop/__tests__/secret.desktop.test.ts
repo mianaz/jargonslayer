@@ -28,7 +28,13 @@ vi.mock("../tauriApi", () => ({
   },
 }));
 
-import { hydrateSecrets, readSecrets, SECRET_NAMES, writeSecret, type SecretName } from "../secret";
+import {
+  hydrateSecrets,
+  readSecrets,
+  SECRET_NAMES,
+  writeSecret,
+  type StoredSecretName,
+} from "../secret";
 import { DEFAULT_SETTINGS, type Settings } from "@jargonslayer/core/types";
 import type { InvokeFn } from "../tauriApi";
 
@@ -44,7 +50,7 @@ import type { InvokeFn } from "../tauriApi";
  *  Ok(None) mapping; the get-failure path is exercised separately via
  *  failGetNames below). */
 function makeFakeKeychain(
-  initial: Partial<Record<SecretName, string>> = {},
+  initial: Partial<Record<StoredSecretName, string>> = {},
   opts: { failNames?: Set<string>; failGetNames?: Set<string> } = {},
 ): { invoke: InvokeFn; store: Map<string, string> } {
   const store = new Map<string, string>(Object.entries(initial));
@@ -83,10 +89,10 @@ afterEach(() => {
 
 describe("readSecrets", () => {
   it("returns only the non-empty values, keyed by name", async () => {
-    const fake = makeFakeKeychain({ apiKey: "sk-secret", hfToken: "" });
+    const fake = makeFakeKeychain({ apiKeyOpenrouter: "sk-secret", hfToken: "" });
     currentInvoke = fake.invoke;
 
-    await expect(readSecrets()).resolves.toEqual({ apiKey: "sk-secret" });
+    await expect(readSecrets()).resolves.toEqual({ apiKeyOpenrouter: "sk-secret" });
   });
 
   it("resolves {} when nothing is stored for any name", async () => {
@@ -96,12 +102,12 @@ describe("readSecrets", () => {
 
   it("omits a name whose secret_get call rejects, without failing the whole read", async () => {
     const fake = makeFakeKeychain(
-      { apiKey: "sk-secret", hfToken: "hf-secret" },
+      { apiKeyOpenrouter: "sk-secret", hfToken: "hf-secret" },
       { failGetNames: new Set(["hfToken"]) },
     );
     currentInvoke = fake.invoke;
 
-    await expect(readSecrets()).resolves.toEqual({ apiKey: "sk-secret" });
+    await expect(readSecrets()).resolves.toEqual({ apiKeyOpenrouter: "sk-secret" });
   });
 
   it("fail-opens to {} when getInvoke() itself fails", async () => {
@@ -125,7 +131,7 @@ describe("readSecrets", () => {
   it("a hung read for ONE name still returns the other four (per-key timeout, not one shared race)", async () => {
     vi.useFakeTimers();
     const fake = makeFakeKeychain({
-      apiKey: "sk-secret",
+      apiKeyOpenrouter: "sk-secret",
       sonioxKey: "sx-secret",
       deepgramKey: "dg-secret",
       agentToken: "at-secret",
@@ -142,7 +148,7 @@ describe("readSecrets", () => {
     await vi.advanceTimersByTimeAsync(3000);
 
     await expect(promise).resolves.toEqual({
-      apiKey: "sk-secret",
+      apiKeyOpenrouter: "sk-secret",
       sonioxKey: "sx-secret",
       deepgramKey: "dg-secret",
       agentToken: "at-secret",
@@ -155,28 +161,28 @@ describe("writeSecret", () => {
     const fake = makeFakeKeychain();
     currentInvoke = fake.invoke;
 
-    await expect(writeSecret("apiKey", "sk-new")).resolves.toBe(true);
-    expect(fake.store.get("apiKey")).toBe("sk-new");
+    await expect(writeSecret("apiKeyOpenrouter", "sk-new")).resolves.toBe(true);
+    expect(fake.store.get("apiKeyOpenrouter")).toBe("sk-new");
   });
 
   it("an empty value calls secret_delete (not secret_set) and resolves true", async () => {
-    const fake = makeFakeKeychain({ apiKey: "sk-old" });
+    const fake = makeFakeKeychain({ apiKeyOpenrouter: "sk-old" });
     currentInvoke = fake.invoke;
 
-    await expect(writeSecret("apiKey", "")).resolves.toBe(true);
-    expect(fake.store.has("apiKey")).toBe(false);
+    await expect(writeSecret("apiKeyOpenrouter", "")).resolves.toBe(true);
+    expect(fake.store.has("apiKeyOpenrouter")).toBe(false);
   });
 
   it("never throws — a rejected secret_set resolves false instead", async () => {
-    const fake = makeFakeKeychain({}, { failNames: new Set(["apiKey"]) });
+    const fake = makeFakeKeychain({}, { failNames: new Set(["apiKeyOpenrouter"]) });
     currentInvoke = fake.invoke;
 
-    await expect(writeSecret("apiKey", "sk-new")).resolves.toBe(false);
+    await expect(writeSecret("apiKeyOpenrouter", "sk-new")).resolves.toBe(false);
   });
 
   it("never throws — getInvoke() itself failing resolves false", async () => {
     currentInvoke = null;
-    await expect(writeSecret("apiKey", "sk-new")).resolves.toBe(false);
+    await expect(writeSecret("apiKeyOpenrouter", "sk-new")).resolves.toBe(false);
   });
 });
 
@@ -185,37 +191,37 @@ describe("hydrateSecrets — migration + custody", () => {
   it("(a) plaintext IDB + empty keychain: copies up, custody set, migratedAndClean true", async () => {
     const fake = makeFakeKeychain();
     currentInvoke = fake.invoke;
-    const settings = makeSettings({ apiKey: "sk-plain", hfToken: "hf-plain" });
+    const settings = makeSettings({ apiKeyOpenrouter: "sk-plain", hfToken: "hf-plain" });
 
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe("sk-plain");
+    expect(result.settings.apiKeyOpenrouter).toBe("sk-plain");
     expect(result.settings.hfToken).toBe("hf-plain");
-    expect(new Set(result.custodyNames)).toEqual(new Set(["apiKey", "hfToken"]));
+    expect(new Set(result.custodyNames)).toEqual(new Set(["apiKeyOpenrouter", "hfToken"]));
     expect(result.migratedAndClean).toBe(true);
-    expect(fake.store.get("apiKey")).toBe("sk-plain");
+    expect(fake.store.get("apiKeyOpenrouter")).toBe("sk-plain");
     expect(fake.store.get("hfToken")).toBe("hf-plain");
   });
 
   it("(b) a write failure on ONE field: the others still migrate, the failed one stays in IDB and OUT of custody, migratedAndClean false", async () => {
     const fake = makeFakeKeychain({}, { failNames: new Set(["hfToken"]) });
     currentInvoke = fake.invoke;
-    const settings = makeSettings({ apiKey: "sk-plain", hfToken: "hf-plain", sonioxKey: "sx-plain" });
+    const settings = makeSettings({ apiKeyOpenrouter: "sk-plain", hfToken: "hf-plain", sonioxKey: "sx-plain" });
 
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe("sk-plain");
+    expect(result.settings.apiKeyOpenrouter).toBe("sk-plain");
     expect(result.settings.hfToken).toBe("hf-plain"); // stays live in memory either way
     expect(result.settings.sonioxKey).toBe("sx-plain");
-    expect(result.custodyNames.sort()).toEqual(["apiKey", "sonioxKey"]);
+    expect(result.custodyNames.sort()).toEqual(["apiKeyOpenrouter", "sonioxKey"]);
     expect(result.custodyNames).not.toContain("hfToken");
     expect(result.migratedAndClean).toBe(false); // NOT all-or-nothing clean this boot
-    expect(fake.store.get("apiKey")).toBe("sk-plain");
+    expect(fake.store.get("apiKeyOpenrouter")).toBe("sk-plain");
     expect(fake.store.has("hfToken")).toBe(false); // the failed write never landed
   });
 
   it("(c) a completed migration re-run (IDB already stripped, keychain already holds the values) is a no-op — adopts live, no writes, migratedAndClean false", async () => {
-    const fake = makeFakeKeychain({ apiKey: "sk-already-migrated" });
+    const fake = makeFakeKeychain({ apiKeyOpenrouter: "sk-already-migrated" });
     currentInvoke = fake.invoke;
     // Wrap to count secret_set calls specifically.
     let setCalls = 0;
@@ -223,28 +229,28 @@ describe("hydrateSecrets — migration + custody", () => {
       if (cmd === "secret_set") setCalls += 1;
       return fake.invoke(cmd, args);
     }) as InvokeFn;
-    const settings = makeSettings({ apiKey: "" }); // already stripped from IDB
+    const settings = makeSettings({ apiKeyOpenrouter: "" }); // already stripped from IDB
 
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe("sk-already-migrated"); // adopted live from the keychain
-    expect(result.custodyNames).toEqual(["apiKey"]);
+    expect(result.settings.apiKeyOpenrouter).toBe("sk-already-migrated"); // adopted live from the keychain
+    expect(result.custodyNames).toEqual(["apiKeyOpenrouter"]);
     expect(result.migratedAndClean).toBe(false); // nothing NEW to migrate this boot
     expect(setCalls).toBe(0); // no redundant write
   });
 
   it("(d) a keychain read failure fail-opens the boot: fields stay whatever the IDB blob already had, nothing wiped, nothing migrated", async () => {
     currentInvoke = null; // readSecrets() -> {} (fail-open, see secret.test.ts's own coverage)
-    const settings = makeSettings({ apiKey: "" }); // nothing in IDB either (already-migrated scenario)
+    const settings = makeSettings({ apiKeyOpenrouter: "" }); // nothing in IDB either (already-migrated scenario)
 
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe(""); // absent, not wiped from anywhere real
+    expect(result.settings.apiKeyOpenrouter).toBe(""); // absent, not wiped from anywhere real
     expect(result.custodyNames).toEqual([]);
     expect(result.migratedAndClean).toBe(false);
   });
 
-  it("every SECRET_NAMES field participates, not just apiKey", async () => {
+  it("every SECRET_NAMES field participates, not just apiKeyOpenrouter", async () => {
     const fake = makeFakeKeychain();
     currentInvoke = fake.invoke;
     const settings = makeSettings(
@@ -259,45 +265,58 @@ describe("hydrateSecrets — migration + custody", () => {
       expect(fake.store.get(name)).toBe(`${name}-plain`);
     }
   });
+
+  it("migrates a legacy Keychain-only apiKey into the selected provider field and deletes the old item", async () => {
+    const fake = makeFakeKeychain({ apiKey: "sk-legacy-keychain-only" });
+    currentInvoke = fake.invoke;
+
+    const result = await hydrateSecrets(makeSettings());
+
+    expect(result.settings.apiKeyOpenrouter).toBe("sk-legacy-keychain-only");
+    expect(result.custodyNames).toContain("apiKeyOpenrouter");
+    expect(fake.store.get("apiKeyOpenrouter")).toBe("sk-legacy-keychain-only");
+    expect(fake.store.has("apiKey")).toBe(false);
+    expect(result.migratedAndClean).toBe(true);
+  });
 });
 
 // F2 fix (Sol HIGH #4, keychain-custody fix round) — secretDeletePending
 // consult-first retry, see hydrateSecrets' own doc.
 describe("hydrateSecrets — F2 delete-tombstone retry", () => {
   it("retries the delete instead of adopting the stale keychain value; success clears the tombstone", async () => {
-    const fake = makeFakeKeychain({ apiKey: "sk-stale-undeleted" });
+    const fake = makeFakeKeychain({ apiKeyOpenrouter: "sk-stale-undeleted" });
     currentInvoke = fake.invoke;
-    const settings = makeSettings({ apiKey: "", secretDeletePending: ["apiKey"] });
+    const settings = makeSettings({ apiKeyOpenrouter: "", secretDeletePending: ["apiKeyOpenrouter"] });
 
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe(""); // never adopted
-    expect(result.custodyNames).not.toContain("apiKey");
+    expect(result.settings.apiKeyOpenrouter).toBe(""); // never adopted
+    expect(result.custodyNames).not.toContain("apiKeyOpenrouter");
     expect(result.settings.secretDeletePending).toEqual([]); // retry succeeded — tombstone cleared
-    expect(fake.store.has("apiKey")).toBe(false); // actually gone from the keychain now
+    expect(fake.store.has("apiKeyOpenrouter")).toBe(false); // actually gone from the keychain now
   });
 
   it("a retry that ALSO fails keeps the tombstone pending and still does not adopt", async () => {
-    const fake = makeFakeKeychain({ apiKey: "sk-stale-undeleted" }, { failNames: new Set(["apiKey"]) });
+    const fake = makeFakeKeychain({ apiKeyOpenrouter: "sk-stale-undeleted" }, { failNames: new Set(["apiKeyOpenrouter"]) });
     currentInvoke = fake.invoke;
-    const settings = makeSettings({ apiKey: "", secretDeletePending: ["apiKey"] });
+    const settings = makeSettings({ apiKeyOpenrouter: "", secretDeletePending: ["apiKeyOpenrouter"] });
 
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe(""); // still not adopted
-    expect(result.settings.secretDeletePending).toEqual(["apiKey"]); // retry failed — stays pending
-    expect(fake.store.get("apiKey")).toBe("sk-stale-undeleted"); // untouched
+    expect(result.settings.apiKeyOpenrouter).toBe(""); // still not adopted
+    expect(result.settings.secretDeletePending).toEqual(["apiKeyOpenrouter"]); // retry failed — stays pending
+    expect(fake.store.get("apiKeyOpenrouter")).toBe("sk-stale-undeleted"); // untouched
   });
 
   it("an unrelated tombstoned name is left alone and does not block ordinary migration of the others", async () => {
     const fake = makeFakeKeychain({ hfToken: "hf-stale-undeleted" });
     currentInvoke = fake.invoke;
-    const settings = makeSettings({ apiKey: "sk-plain", hfToken: "", secretDeletePending: ["hfToken"] });
+    const settings = makeSettings({ apiKeyOpenrouter: "sk-plain", hfToken: "", secretDeletePending: ["hfToken"] });
 
     const result = await hydrateSecrets(settings);
 
-    expect(result.settings.apiKey).toBe("sk-plain");
-    expect(result.custodyNames).toContain("apiKey");
+    expect(result.settings.apiKeyOpenrouter).toBe("sk-plain");
+    expect(result.custodyNames).toContain("apiKeyOpenrouter");
     expect(result.settings.hfToken).toBe(""); // not adopted
     expect(result.settings.secretDeletePending).toEqual([]);
   });

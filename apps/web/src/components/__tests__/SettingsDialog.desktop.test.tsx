@@ -93,7 +93,7 @@ vi.mock("@/lib/desktop/mlxCaps", () => ({
 // contract (flushSecrets before flushSettings).
 const mockWriteSecret = vi.fn(async (_name: string, _value: string) => true);
 vi.mock("@/lib/desktop/secret", () => ({
-  SECRET_NAMES: ["apiKey", "hfToken", "sonioxKey", "deepgramKey", "agentToken"],
+  SECRET_NAMES: ["apiKeyOpenrouter", "hfToken", "sonioxKey", "deepgramKey", "agentToken"],
   writeSecret: (name: string, value: string) => mockWriteSecret(name, value),
   readSecrets: async () => ({}),
   hydrateSecrets: async (settings: unknown) => ({ settings, custodyNames: [], migratedAndClean: false }),
@@ -138,7 +138,7 @@ function openRouterSeedSettings(): Settings {
     sidecarMode: "external",
     provider: "openai-compat",
     baseUrl: "https://openrouter.ai/api/v1",
-    apiKey: "sk-or-original",
+    apiKeyOpenrouter: "sk-or-original",
   };
 }
 
@@ -209,7 +209,7 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
     return btn as HTMLButtonElement;
   }
 
-  it("connecting via OAuth merges ONLY provider/baseUrl/apiKey into the draft — an unrelated draft-only 检测模型 edit survives, and the new key lands", async () => {
+  it("connecting via OAuth merges ONLY provider/baseUrl/apiKeyOpenrouter into the draft — an unrelated draft-only 检测模型 edit survives, and the new key lands", async () => {
     mockConnectOpenRouterDesktop.mockImplementation(async () => {
       // Mirrors connectOpenRouterDesktop's own PINNED contract (writes
       // straight to the LIVE store on success — see that module's own
@@ -218,7 +218,7 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
       useApp.getState().updateSettings({
         provider: "openai-compat",
         baseUrl: "https://openrouter.ai/api/v1",
-        apiKey: "sk-or-newly-issued",
+        apiKeyOpenrouter: "sk-or-newly-issued",
       });
       return { ok: true };
     });
@@ -265,7 +265,7 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
     // post-connect resync above — this is scenario (2) from the task's
     // own investigation list ("does the typed draft value survive
     // 保存?"). detectModel was UNCHANGED by this mock's own updateSettings
-    // (only provider/baseUrl/apiKey), so the diff-based model resync
+    // (only provider/baseUrl/apiKeyOpenrouter), so the diff-based model resync
     // (see handleConnectOpenRouter's own beforeSettings comment) never
     // touches draft.detectModel — 保存 writes the user's typed value
     // straight through.
@@ -278,12 +278,12 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
   // Field-test fix (real user report) — the bug this whole diff-based
   // resync closes: connectOpenRouterDesktop's own conditional
   // detectModel/summaryModel remap (openrouterModelDefaults.ts) lands
-  // on the LIVE store same as provider/baseUrl/apiKey, but the ORIGINAL
+  // on the LIVE store same as provider/baseUrl/apiKeyOpenrouter, but the ORIGINAL
   // F5 merge above never resynced those two fields into `draft` — so a
   // user who never touched the 检测模型/会议报告模型 fields at all would
   // click 保存 (writing their STALE open-time draft, still the bare
   // pre-fix model) and silently revert the very fix OAuth just applied.
-  // RED against the pre-fix merge (provider/baseUrl/apiKey only): this
+  // RED against the pre-fix merge (provider/baseUrl/apiKeyOpenrouter only): this
   // test's final two assertions would have failed (settings reverted to
   // "claude-haiku-4-5"/"claude-sonnet-5") before the diff-based
   // detectModel/summaryModel merge existed.
@@ -301,11 +301,11 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
       // Mirrors the REAL connectOpenRouterDesktop's conditional remap
       // (openrouterModelDefaults.ts): live detectModel/summaryModel
       // were bare, so the real OAuth completion would ALSO have
-      // patched them alongside provider/baseUrl/apiKey.
+      // patched them alongside provider/baseUrl/apiKeyOpenrouter.
       useApp.getState().updateSettings({
         provider: "openai-compat",
         baseUrl: "https://openrouter.ai/api/v1",
-        apiKey: "sk-or-newly-issued",
+        apiKeyOpenrouter: "sk-or-newly-issued",
         detectModel: "deepseek/deepseek-v4-flash",
         summaryModel: "deepseek/deepseek-v4-pro",
       });
@@ -370,7 +370,7 @@ describe("SettingsDialog (desktop) — F5: OAuth-success draft resync must not c
       useApp.getState().updateSettings({
         provider: "openai-compat",
         baseUrl: "https://openrouter.ai/api/v1",
-        apiKey: "sk-or-newly-issued",
+        apiKeyOpenrouter: "sk-or-newly-issued",
         ...remapOpenRouterModelDefaults(liveNow),
       });
       return { ok: true };
@@ -1470,7 +1470,7 @@ describe("SettingsDialog (desktop) — v0.5.1 desktop keychain custody: handleSa
     });
     await flush();
 
-    expect(mockWriteSecret).toHaveBeenCalledWith("apiKey", "sk-new-desktop-key");
+    expect(mockWriteSecret).toHaveBeenCalledWith("apiKeyOpenrouter", "sk-new-desktop-key");
     // updateSettings' own fire-and-forget persist (call #1) always
     // captures the PRE-custody snapshot — that's inherent, not what this
     // test pins. flushSettings' OWN save (the LAST call) only happens
@@ -1479,7 +1479,7 @@ describe("SettingsDialog (desktop) — v0.5.1 desktop keychain custody: handleSa
     // still carry the plaintext key.
     expect(saveSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
     const lastCall = saveSpy.mock.calls[saveSpy.mock.calls.length - 1][0];
-    expect(lastCall.apiKey).toBe("");
+    expect(lastCall.apiKeyOpenrouter).toBe("");
   });
 
   it("a Keychain write failure still lets 保存 complete (non-blocking) — the plaintext key rides the persisted blob (fail-open) and the dialog still closes", async () => {
@@ -1513,7 +1513,7 @@ describe("SettingsDialog (desktop) — v0.5.1 desktop keychain custody: handleSa
 
     expect(closed).toBe(true); // handleSave ran to completion, not aborted by the write failure
     const lastCall = saveSpy.mock.calls[saveSpy.mock.calls.length - 1][0];
-    expect(lastCall.apiKey).toBe("sk-new-desktop-key"); // never entered custody — fail-open
+    expect(lastCall.apiKeyOpenrouter).toBe("sk-new-desktop-key"); // never entered custody — fail-open
   });
 
   it("shows the desktop Keychain custody hint near the primary API Key field (honest per threat model — not \"加密无法读取\")", async () => {
