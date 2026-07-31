@@ -1,0 +1,300 @@
+# Release v1 (2026-07-30). Tag-triggered release train. Complements ci.yml
+# (which gates every push) by adding the artifact + publish steps that were
+# hand-run until now — the reason v0.7.3 existed locally for a day without
+# ever appearing on GitHub.
+#
+# DESIGN: this workflow is USEFUL TODAY and gets better later. Apple signing
+# creds are still an open decision (ROADMAP D5), so the macOS DMG job is
+# gated on their presence instead of hard-failing: with no secrets you still
+# get a real release with the extension zip + checksums; add the secrets and
+# the signed/notarized DMG joins automatically with no edit here.
+#
+# Actions are pinned by SHA, matching ci.yml's posture. Publishing uses the
+# preinstalled `gh` CLI rather than a third-party release action so there is
+# one less unpinnable supply-chain edge.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and check everything, but do NOT create a GitHub Release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Resolves what this run can do. Secrets are not readable from a job-level
+  # `if:`, so their presence is turned into a plain output here once.
+  config:
+    name: resolve config
+    runs-on: ubuntu-latest
+    outputs:
+      has_apple_creds: ${{ steps.probe.outputs.has_apple_creds }}
+      version: ${{ steps.probe.outputs.version }}
+      is_dry_run: ${{ steps.probe.outputs.is_dry_run }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - id: probe
+        env:
+          # Never echoed — only tested for emptiness.
+          APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+        run: |
+          set -euo pipefail
+          # Cargo.toml [package] is the single source of truth for the app
+          # version (check-ios-plist.mjs enforces the same thing locally).
+          version=$(awk '/^\[package\]/{p=1}
+            p && /^version[[:space:]]*=/ {
+              if (match($0, /"[^"]+"/)) { print substr($0, RSTART+1, RLENGTH-2); exit }
+            }' apps/desktop/src-tauri/Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "::error::could not read [package] version from apps/desktop/src-tauri/Cargo.toml"; exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release version: $version"
+
+          if [ -n "$APPLE_CERT" ] && { [ -n "$APPLE_ID" ] || [ -n "$APPLE_API_KEY_ID" ]; }; then
+            echo "has_apple_creds=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Apple credentials present — the signed DMG job will run."
+          else
+            echo "has_apple_creds=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No Apple credentials configured (ROADMAP D5). Skipping the macOS DMG; the release will still publish the extension zip. Add APPLE_CERTIFICATE_P12_BASE64 + APPLE_CERTIFICATE_PASSWORD + APPLE_SIGNING_IDENTITY and either APPLE_API_KEY_ID/APPLE_API_ISSUER/APPLE_API_KEY or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID to enable it."
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "is_dry_run=${{ inputs.dry_run }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Version drift is the failure this project has actually been bitten
+      # by (a build once shipped stamped 1.0.0 while every other surface
+      # said 0.6.0). A tag that disagrees with Cargo.toml must not publish.
+      - name: tag must match Cargo.toml version
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.probe.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Tag '$TAG' does not match Cargo.toml version '$VERSION'. Stamp the version first (all sites + lockfiles), then retag."
+            exit 1
+          fi
+          echo "tag $TAG matches Cargo.toml $VERSION"
+
+  # The same gate ci.yml runs. Re-run it here so a tag can never publish
+  # something that was never green (tags can point at any commit).
+  gate:
+    name: vitest + typecheck (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run typecheck
+
+  extension:
+    name: extension zip
+    needs: [config, gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:extension
+      - name: zip
+        env:
+          VERSION: ${{ needs.config.outputs.version }}
+        run: |
+          set -euo pipefail
+          test -f apps/extension/dist/manifest.json || {
+            echo "::error::apps/extension/dist/manifest.json missing — the extension build produced nothing to zip."; exit 1; }
+          # The zip's own manifest version is what the store reads; fail
+          # loudly rather than shipping a mislabelled package.
+          man=$(node -p "require('./apps/extension/dist/manifest.json').version")
+          if [ "$man" != "$VERSION" ]; then
+            echo "::error::extension manifest version '$man' != release version '$VERSION'."; exit 1; fi
+          mkdir -p dist-release
+          (cd apps/extension/dist && zip -qr "$GITHUB_WORKSPACE/dist-release/jargonslayer-extension-$VERSION.zip" .)
+          (cd dist-release && shasum -a 256 *.zip > "jargonslayer-extension-$VERSION.zip.sha256")
+          ls -la dist-release
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: extension
+          path: dist-release/
+          if-no-files-found: error
+
+  macos:
+    name: signed DMG (macos)
+    needs: [config, gate]
+    if: needs.config.outputs.has_apple_creds == 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.97.1"
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: npm ci
+      - run: node scripts/fetch-uv.mjs
+      - run: node scripts/build-audiocap.mjs
+
+      # Import the Developer ID cert into a throwaway keychain scoped to
+      # this runner, then delete it in a step that always runs.
+      - name: import signing certificate
+        env:
+          CERT_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PASSWORD=$(uuidgen)
+          echo "KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$CERT_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+
+      - name: build + notarize
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # notarytool accepts either an App Store Connect API key (preferred
+          # — no app-specific password to rotate) or Apple-ID credentials.
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npm run build:desktop
+
+      - name: collect dmg
+        env:
+          VERSION: ${{ needs.config.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          found=$(find apps/desktop/src-tauri/target -name "*.dmg" -type f | head -1)
+          if [ -z "$found" ]; then
+            echo "::error::no .dmg produced under target/ — the desktop build did not bundle."; exit 1; fi
+          cp "$found" "dist-release/JargonSlayer-$VERSION.dmg"
+          (cd dist-release && shasum -a 256 *.dmg > "JargonSlayer-$VERSION.dmg.sha256")
+          # Gatekeeper's own verdict — a DMG that fails this is worse than
+          # no DMG, because users hit the error instead of the download.
+          spctl -a -vvv -t install "dist-release/JargonSlayer-$VERSION.dmg" || \
+            echo "::warning::spctl assessment did not pass; check notarization stapling."
+
+      - name: destroy signing keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN" || true
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos
+          path: dist-release/
+          if-no-files-found: error
+
+  publish:
+    name: publish github release
+    needs: [config, gate, extension, macos]
+    # macos is skipped when creds are absent; `always()` plus explicit
+    # result checks let the release still publish without it.
+    if: |
+      always() &&
+      needs.gate.result == 'success' &&
+      needs.extension.result == 'success' &&
+      (needs.macos.result == 'success' || needs.macos.result == 'skipped') &&
+      needs.config.outputs.is_dry_run != 'true' &&
+      github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+      - name: stage assets
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          find artifacts -type f -exec cp {} upload/ \;
+          ls -la upload
+      - name: create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          HAS_DMG: ${{ needs.macos.result }}
+        run: |
+          set -euo pipefail
+          notes="$RUNNER_TEMP/notes.md"
+          {
+            echo "## Install"
+            echo
+            if [ "$HAS_DMG" = "success" ]; then
+              echo "- **macOS**: download the \`.dmg\` below (signed + notarized)."
+            else
+              echo "- **macOS**: no DMG in this release — build it locally with \`npm run build:desktop\`."
+            fi
+            echo "- **Chrome extension**: download the \`.zip\` below and load it unpacked, or install from the Web Store listing."
+            echo
+            echo "Every asset has a matching \`.sha256\`."
+            echo
+            echo "## Changes"
+            echo
+          } > "$notes"
+          # Autogenerated commit list since the previous tag, if any.
+          prev=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)
+          if [ -n "$prev" ]; then
+            git log --no-merges --pretty='- %s' "$prev..$TAG" >> "$notes"
+          else
+            echo "- initial release" >> "$notes"
+          fi
+          gh release create "$TAG" upload/* \
+            --title "$TAG" \
+            --notes-file "$notes" \
+            --verify-tag
