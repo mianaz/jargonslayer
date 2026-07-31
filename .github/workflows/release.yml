@@ -50,7 +50,7 @@ jobs:
           # Never echoed — only tested for emptiness.
           APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         run: |
           set -euo pipefail
           # Cargo.toml [package] is the single source of truth for the app
@@ -65,12 +65,12 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "release version: $version"
 
-          if [ -n "$APPLE_CERT" ] && { [ -n "$APPLE_ID" ] || [ -n "$APPLE_API_KEY_ID" ]; }; then
+          if [ -n "$APPLE_CERT" ] && { [ -n "$APPLE_ID" ] || [ -n "$APPLE_API_KEY" ]; }; then
             echo "has_apple_creds=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Apple credentials present — the signed DMG job will run."
           else
             echo "has_apple_creds=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::No Apple credentials configured (ROADMAP D5). Skipping the macOS DMG; the release will still publish the extension zip. Add APPLE_CERTIFICATE_P12_BASE64 + APPLE_CERTIFICATE_PASSWORD + APPLE_SIGNING_IDENTITY and either APPLE_API_KEY_ID/APPLE_API_ISSUER/APPLE_API_KEY or APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID to enable it."
+            echo "::warning::No Apple credentials configured (ROADMAP D5). Skipping the macOS DMG; the release still publishes the extension zip. To enable: APPLE_CERTIFICATE_P12_BASE64 + APPLE_CERTIFICATE_PASSWORD + APPLE_SIGNING_IDENTITY, plus EITHER APPLE_API_ISSUER + APPLE_API_KEY (the 10-char key id) + APPLE_API_KEY_P8_BASE64, OR APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID. The cert must be a 'Developer ID Application' certificate — an 'Apple Distribution' cert signs for the App Store and will NOT pass Gatekeeper for a direct download."
           fi
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -200,14 +200,35 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           # notarytool accepts either an App Store Connect API key (preferred
-          # — no app-specific password to rotate) or Apple-ID credentials.
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          # — nothing to rotate on a schedule) or Apple-ID credentials.
+          # NOTE Tauri's contract: APPLE_API_KEY is the 10-character KEY ID,
+          # and the .p8 itself is referenced by PATH, not by value. So the
+          # secret holds the base64 of the .p8 and we materialise it here.
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run build:desktop
+        run: |
+          set -euo pipefail
+          if [ -n "${APPLE_API_KEY_P8_BASE64:-}" ]; then
+            printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/asc-api-key.p8"
+            chmod 600 "$RUNNER_TEMP/asc-api-key.p8"
+            export APPLE_API_KEY_PATH="$RUNNER_TEMP/asc-api-key.p8"
+            echo "notarizing with the App Store Connect API key"
+          elif [ -n "${APPLE_ID:-}" ]; then
+            echo "notarizing with Apple-ID credentials"
+          else
+            echo "::error::signing cert present but no notarization credentials — set APPLE_API_ISSUER + APPLE_API_KEY + APPLE_API_KEY_P8_BASE64, or APPLE_ID + APPLE_PASSWORD + APPLE_TEAM_ID."
+            exit 1
+          fi
+          unset APPLE_API_KEY_P8_BASE64
+          npm run build:desktop
+
+      - name: destroy notarization key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc-api-key.p8" || true
 
       - name: collect dmg
         env:
