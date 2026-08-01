@@ -507,7 +507,7 @@ python whisper_server.py --model small</code></pre>
       <p>桌面版把同一个应用装进原生 Tauri 外壳，本地 Whisper 由应用自己安装和管理——安装步骤见「<a href="#quickstart">快速开始</a>」。这一节只讲桌面版独有的部分：系统/App 音频引擎、两步可选引导、后台任务中心、延迟提示、更新检查。</p>
 
       <h3>系统/App 音频</h3>
-      <p>在引擎下拉菜单里选<strong>系统/App 音频</strong>，就能转录 Zoom、Teams、微信这类原生 App 里对方说的话——不需要虚拟声卡，不需要装 BlackHole/VB-Cable。它替换了桌面版旧版那个只能失败的「标签页音频」——Tauri 的 webview 里没有标签页分享选择器可以调用；网页版的标签页音频不受影响。</p>
+      <p>选<strong>系统/App 音频</strong>做音频来源，就能转录 Zoom、Teams、微信这类原生 App 里对方说的话——不需要虚拟声卡，不需要装 BlackHole/VB-Cable。它替换了桌面版旧版那个只能失败的「标签页音频」——Tauri 的 webview 里没有标签页分享选择器可以调用；网页版的标签页音频不受影响。</p>
       <ul>
         <li><strong>捕获范围：</strong>这台 Mac 当前正在播放的所有声音——会议对方的话，但如果同时在放音乐或弹通知音，也会被录进去。它从不捕获麦克风。</li>
         <li><strong>权限：</strong>macOS 会在你真正开始用这个引擎监听时（不是选中它的那一刻）弹一次「系统音频录制」授权——这是它自己的 TCC 权限类别，和麦克风、屏幕录制完全分开。</li>

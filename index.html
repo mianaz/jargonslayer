@@ -731,8 +731,8 @@
       <div class="feat c-orange reveal">
         <div class="feat-key">system / app audio (desktop)</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>系统/App 音频（桌面版，macOS 14.4+）</b>：开会用 Zoom、Teams、微信这类原生 App 时，桌面版能直接转录对方说的话——不需要虚拟声卡，不需要装 BlackHole。引擎选「系统/App 音频」，macOS 会弹一次「系统音频录制」授权——这是它自己的权限类别，跟麦克风、屏幕录制都无关。它只捕获这台 Mac 正在播放的声音，从不碰麦克风；音频只送到本机的 Whisper 服务，「音频在本地处理」标识照常亮起。低于 14.4 的系统会看到该选项置灰并注明原因。它替换了桌面版旧版那个只能失败的「标签页音频」选项——Web 版的标签页音频不受影响。</span>
-          <span class="lang-en"><b>System/App audio (desktop, macOS 14.4+)</b>: when your meeting runs in a native app — Zoom, Teams, WeChat — the desktop app transcribes the other side directly. No virtual audio device, no BlackHole. Pick 系统/App 音频 in the engine picker; macOS prompts once for "System Audio Recording" permission — its own category, unrelated to the microphone or Screen Recording. It captures only what this Mac is playing, never the microphone, and audio goes only to the local Whisper sidecar (the 音频在本地处理 badge still applies). Below macOS 14.4 the option shows disabled with an explanation. It replaces the desktop's old tab-audio option, which could only fail inside the app shell; the web app's tab audio is unchanged.</span>
+          <span class="lang-zh"><b>系统/App 音频（桌面版，macOS 14.4+）</b>：开会用 Zoom、Teams、微信这类原生 App 时，桌面版能直接转录对方说的话——不需要虚拟声卡，不需要装 BlackHole。音频来源选「系统/App 音频」，macOS 会弹一次「系统音频录制」授权——这是它自己的权限类别，跟麦克风、屏幕录制都无关。它只捕获这台 Mac 正在播放的声音，从不碰麦克风；音频只送到本机的 Whisper 服务，「音频在本地处理」标识照常亮起。低于 14.4 的系统会看到该选项置灰并注明原因。它替换了桌面版旧版那个只能失败的「标签页音频」选项——Web 版的标签页音频不受影响。</span>
+          <span class="lang-en"><b>System/App audio (desktop, macOS 14.4+)</b>: when your meeting runs in a native app — Zoom, Teams, WeChat — the desktop app transcribes the other side directly. No virtual audio device, no BlackHole. Pick 系统/App 音频 as the audio source; macOS prompts once for "System Audio Recording" permission — its own category, unrelated to the microphone or Screen Recording. It captures only what this Mac is playing, never the microphone, and audio goes only to the local Whisper sidecar (the 音频在本地处理 badge still applies). Below macOS 14.4 the option shows disabled with an explanation. It replaces the desktop's old tab-audio option, which could only fail inside the app shell; the web app's tab audio is unchanged.</span>
         </div>
       </div>
 
@@ -843,8 +843,8 @@
       <div class="feat c-cyan reveal">
         <div class="feat-key">card experience</div>
         <div class="feat-body">
-          <span class="lang-zh"><b>卡片体验</b>：表达/术语共享同一块状样式，分类色左边条区分；重复出现只计数不刷屏；转录内高亮表达可点定位；选中任意文字即席查询——解释在后台生成，关掉弹窗也不会丢，做完自动并入卡片列表，可一键收进「我的词典」；存词时记的是它在这场会议里实际出现的说法，不只是词典的标准写法，复习时更好认。</span>
-          <span class="lang-en"><b>Card experience</b>: expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text for an ad-hoc lookup — it keeps generating in the background even after you close the popup, lands in the card list when done, and one-click saves to your glossary; saving records the exact wording it appeared as in that meeting, not just the dictionary's canonical form, so it reads better on review.</span>
+          <span class="lang-zh"><b>卡片体验</b>：表达/术语共享同一块状样式，分类色左边条区分；重复出现只计数不刷屏；转录内高亮表达可点定位；选中任意文字先查词典——命中的包和义项全部列出，真查不到时 AI 结合上下文解释并翻译，「加入我的词典」退到次要位置；存词时记的是它在这场会议里实际出现的说法，不只是词典的标准写法，复习时更好认。</span>
+          <span class="lang-en"><b>Card experience</b>: expression and term cards share one block style with category-colored status bars; repeats increment a counter instead of flooding the feed; underlined expressions in the transcript jump to their card; select any text to look it up in the dictionary first — every matching pack and sense lists, and a genuine miss falls through to an AI explanation with translation; adding it to your glossary is a secondary action, not the default one; saving records the exact wording it appeared as in that meeting, not just the dictionary's canonical form, so it reads better on review.</span>
         </div>
       </div>
 
