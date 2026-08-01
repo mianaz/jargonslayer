@@ -12,6 +12,11 @@
 # Actions are pinned by SHA, matching ci.yml's posture. Publishing uses the
 # preinstalled `gh` CLI rather than a third-party release action so there is
 # one less unpinnable supply-chain edge.
+#
+# RE-RUNNING FOR A TAG THAT ALREADY HAS A RELEASE: `gh release create` in the
+# `publish` job dies because the release already exists. Recovery is manual —
+# `gh release delete "$TAG"` (add `--cleanup-tag` only if the tag itself must
+# go too) — then re-run the workflow.
 name: Release
 
 on:
@@ -112,6 +117,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
+      - run: npm run check:versions
 
   extension:
     name: extension zip
@@ -212,6 +218,13 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           set -euo pipefail
+          # Finding 4: Tauri only signs when this resolves. Empty here means
+          # a silently unsigned, unnotarized bundle — catch it before the
+          # build runs rather than after an artifact is already staged.
+          if [ -z "${APPLE_SIGNING_IDENTITY:-}" ]; then
+            echo "::error::APPLE_SIGNING_IDENTITY is not set — Tauri would build an UNSIGNED, unnotarized DMG. Set the APPLE_SIGNING_IDENTITY secret (a 'Developer ID Application: ...' identity string) before re-running."
+            exit 1
+          fi
           if [ -n "${APPLE_API_KEY_P8_BASE64:-}" ]; then
             printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/asc-api-key.p8"
             chmod 600 "$RUNNER_TEMP/asc-api-key.p8"
@@ -247,8 +260,11 @@ jobs:
           (cd dist-release && shasum -a 256 *.dmg > "JargonSlayer-$VERSION.dmg.sha256")
           # Gatekeeper's own verdict — a DMG that fails this is worse than
           # no DMG, because users hit the error instead of the download.
-          spctl -a -vvv -t install "dist-release/JargonSlayer-$VERSION.dmg" || \
-            echo "::warning::spctl assessment did not pass; check notarization stapling."
+          # FATAL on purpose: an unsigned/unnotarized DMG must never upload.
+          spctl -a -vvv -t install "dist-release/JargonSlayer-$VERSION.dmg" || {
+            echo "::error::spctl assessment FAILED for JargonSlayer-$VERSION.dmg — Gatekeeper will refuse this DMG. Check notarization stapling; refusing to upload it."
+            exit 1
+          }
 
       - name: destroy signing keychain
         if: always()

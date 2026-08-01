@@ -34,6 +34,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run typecheck
+      - run: npm run check:versions
 
   native:
     name: cargo + clippy + swift (macos)

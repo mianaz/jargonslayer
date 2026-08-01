@@ -25,6 +25,7 @@
     "build:ios": "BUILD_TARGET=ios node scripts/build-desktop.mjs",
     "dev:ios": "node scripts/check-ios-plist.mjs && PATH=\"$HOME/.cargo/bin:$PATH\" npm run tauri -w apps/desktop -- ios dev",
     "build:ios-app": "node scripts/check-ios-plist.mjs && PATH=\"$HOME/.cargo/bin:$PATH\" npm run tauri -w apps/desktop -- ios build",
+    "check:versions": "node scripts/check-versions.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "vitest run",
     "test:watch": "vitest",
