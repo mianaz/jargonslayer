@@ -315,7 +315,15 @@ jobs:
           else
             echo "- initial release" >> "$notes"
           fi
+          # DRAFT on purpose. Two things this workflow cannot do yet: build the
+          # signed DMG (no Apple secrets — ROADMAP D5) and write the bilingual
+          # release notes this project ships. So it stages what it can and a
+          # human attaches the DMG, replaces the notes, and publishes with
+          # `gh release edit "$TAG" --draft=false`. Drop --draft once D5 lands
+          # and the notes are generated ahead of the tag.
           gh release create "$TAG" upload/* \
+            --draft \
             --title "$TAG" \
             --notes-file "$notes" \
             --verify-tag
+          echo "::notice::Draft release staged for $TAG. Attach the DMG, replace the notes, then: gh release edit $TAG --draft=false"
