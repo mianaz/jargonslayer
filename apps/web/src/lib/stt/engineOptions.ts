@@ -474,8 +474,6 @@ export function deriveEngineForMode(
               ? !!settings.elevenLabsKey
               : false;
       candidate = iosCloudKeyFor ? settings.engine : "osspeech";
-    } else if (isDesktop) {
-      candidate = osspeechFloorMet ? "osspeech" : "whisper";
     } else {
       // whisper is respected UNCONDITIONALLY (local sidecar, needs no
       // key — a local-first user's deliberate choice must survive a
@@ -508,8 +506,23 @@ export function deriveEngineForMode(
               settings.engine === "elevenlabs"
               ? !!settings.elevenLabsKey
               : false;
-      candidate =
-        settings.engine === "whisper" || cloudKeyFor ? settings.engine : "webspeech";
+      // v0.7.4 field bug (silence under a 麦克风 label): desktop mic
+      // NEVER derives osspeech. Desktop osspeech is the CoreAudio
+      // system-OUTPUT process tap — the audiocap helper has no
+      // input-device branch at all (main.swift runTranscribe), which is
+      // exactly why modeForPersistedEngine (store.ts) maps desktop
+      // osspeech -> "system-audio". The old `osspeechFloorMet ?
+      // "osspeech" : "whisper"` here ran the output tap while the UI
+      // claimed mic capture, producing all-zero audio (peak=0, finals=0).
+      // whisper is desktop's only local mic engine; a keyed cloud pick
+      // is respected under the same rule as the web branch above.
+      candidate = isDesktop
+        ? cloudKeyFor
+          ? settings.engine
+          : "whisper"
+        : settings.engine === "whisper" || cloudKeyFor
+          ? settings.engine
+          : "webspeech";
     }
   }
 

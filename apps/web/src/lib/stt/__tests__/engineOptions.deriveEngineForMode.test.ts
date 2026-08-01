@@ -82,10 +82,21 @@ describe("deriveEngineForMode", () => {
     });
   });
 
-  describe("mic — desktop: osspeech-if-floor else whisper (never appaudio — that's system audio, not mic)", () => {
-    it("floor met -> osspeech", async () => {
+  // v0.7.4 field bug: desktop osspeech is the CoreAudio system-OUTPUT
+  // tap — the audiocap helper has no mic branch (main.swift
+  // runTranscribe; modeForPersistedEngine maps desktop osspeech ->
+  // "system-audio" for the same reason) — so the old osspeech-if-floor
+  // derivation here ran the output tap under a 麦克风 label and
+  // captured all-zero audio. Desktop mic is whisper regardless of the
+  // osspeech floor; a keyed cloud pick is respected, same rule as the
+  // web branch below.
+  describe("mic — desktop: whisper — NEVER osspeech (system-output tap, not a mic); keyed cloud pick respected", () => {
+    it("floor met -> STILL whisper (osspeech would record the output mix, not the mic)", async () => {
       await setOsSpeechFloor(true);
-      expect(deriveEngineForMode("mic", DESKTOP, settings())).toBe("osspeech");
+      expect(deriveEngineForMode("mic", DESKTOP, settings())).toBe("whisper");
+      expect(deriveEngineForMode("mic", DESKTOP, settings({ engine: "osspeech" }))).toBe(
+        "whisper",
+      );
     });
 
     it("floor NOT met -> whisper", async () => {
@@ -93,8 +104,12 @@ describe("deriveEngineForMode", () => {
       expect(deriveEngineForMode("mic", DESKTOP, settings())).toBe("whisper");
     });
 
-    it("floor not yet resolved (null snapshot) fails OPEN to osspeech — same D6 policy isOsSpeechFloorLocked already uses", () => {
-      expect(deriveEngineForMode("mic", DESKTOP, settings())).toBe("osspeech");
+    it("keyed cloud pick respected; keyless cloud pick resets to whisper", async () => {
+      await setOsSpeechFloor(true);
+      expect(
+        deriveEngineForMode("mic", DESKTOP, settings({ engine: "soniox", sonioxKey: "sk-x" })),
+      ).toBe("soniox");
+      expect(deriveEngineForMode("mic", DESKTOP, settings({ engine: "soniox" }))).toBe("whisper");
     });
   });
 

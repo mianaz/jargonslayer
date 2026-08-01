@@ -3925,9 +3925,25 @@ describe("isModeLegalForPlatform — platform-legality matrix (Finding 4)", () =
 });
 
 describe("migrateSettings — mode back-derivation end-to-end (§5 A3, real web build)", () => {
-  it("an explicit, VALID saved mode round-trips unchanged (wins over back-derivation)", () => {
+  // v0.7.4 osspeech-silence fix: this REVERSES the original A3 "saved
+  // mode wins" pin. `mode` is display-only (the engine decides what's
+  // captured) and every live engine has exactly one true source, so a
+  // saved live mode that contradicts the engine is a lie about the
+  // capture — the concrete field bug was a desktop install hydrating
+  // {engine:"osspeech", mode:"mic"} and rendering 麦克风 over the live
+  // system-output tap. Live modes now always back-derive.
+  it("a saved LIVE mode that contradicts the engine is back-derived, NOT kept (mode is display-only)", () => {
     const s = migrateSettings({ mode: "tab", engine: "whisper" } as Partial<Settings>);
-    expect(s.mode).toBe("tab"); // NOT back-derived from engine:"whisper" (which would be "mic")
+    expect(s.mode).toBe("mic"); // derived from engine:"whisper"; the stale "tab" claim never survives
+  });
+
+  it("import/url saved modes are standalone user intent and DO round-trip unchanged", () => {
+    expect(migrateSettings({ mode: "import", engine: "whisper" } as Partial<Settings>).mode).toBe(
+      "import",
+    );
+    expect(migrateSettings({ mode: "url", engine: "whisper" } as Partial<Settings>).mode).toBe(
+      "url",
+    );
   });
 
   // Finding 4 fix (pre-merge review, cross-platform-restore): a

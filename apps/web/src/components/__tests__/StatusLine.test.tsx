@@ -832,10 +832,10 @@ describe("StatusLine — engine dropdown", () => {
     expect(labelOf()).toContain("已配置");
   });
 
-  it("changing the value writes settings.engine (same store write as the old mobile <select>)", async () => {
+  it("changing the value writes settings.engine AND back-derives a matching mode (v0.7.4 pairing — the source label follows what the engine actually captures)", async () => {
     useApp.setState((s) => ({
       status: "idle",
-      settings: { ...s.settings, engine: "whisper", sonioxKey: "sk-test" },
+      settings: { ...s.settings, engine: "whisper", mode: "tab", sonioxKey: "sk-test" },
     }));
     renderStatusLine();
     await act(async () => {
@@ -848,6 +848,9 @@ describe("StatusLine — engine dropdown", () => {
     });
 
     expect(useApp.getState().settings.engine).toBe("soniox");
+    // modeForPersistedEngine("soniox", …, "web") — the stale "tab" claim
+    // can't survive an engine pick (inverse of the FINDING 1 pairing).
+    expect(useApp.getState().settings.mode).toBe("mic");
   });
 
   it("disabled while a meeting is connecting/listening (isEngineControlBusy) — same gate the old header controls used", async () => {
@@ -893,7 +896,7 @@ describe("StatusLine — engine dropdown", () => {
       root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
     });
 
-    expect(select().title).toBe("选择转录服务；音源在左侧单独设置");
+    expect(select().title).toBe("选择转录服务；音源随之切换");
   });
 
   // FINDING 1 fix (BLOCKER): the source dropdown used to write `mode`

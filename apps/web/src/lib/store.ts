@@ -1378,17 +1378,22 @@ export function migrateSettings(saved: Partial<Settings> | null | undefined): Se
   // Runs LAST (after platform/tier coercion) so it derives `mode` from a
   // legal `engine`, per A3's own ordering requirement.
   //
-  // Finding 4 fix (pre-merge review): hadSavedMode (isValidMode) alone
-  // used to be the whole gate — kept unchanged as the FIRST half of
-  // this check (a persisted mode must still be a syntactically real
-  // value to even consider keeping) — now ALSO requires the value be
-  // legal on THIS platform (isModeLegalForPlatform); when it isn't, a
-  // platform-illegal-but-syntactically-valid persisted mode falls
-  // through to the exact same back-derivation the no-saved-mode path
-  // below already uses, rather than surviving hydration as a stale,
-  // unavailable intent.
+  // v0.7.4 osspeech-silence fix — supersedes both the A3 "saved mode
+  // wins" ruling and Finding 4's platform-legality gate for the LIVE
+  // capture modes (mic/system-audio/tab): `mode` is display-only
+  // (nothing reads it at capture time — the engine decides what's
+  // recorded) and every live engine has exactly ONE true source
+  // (modeForPersistedEngine), so a persisted live mode that disagrees
+  // with the engine is a lie about what's being captured. The old gate
+  // kept any platform-legal saved mode, which let a desktop install
+  // hydrate {engine:"osspeech", mode:"mic"} and render 麦克风 over the
+  // live system-output tap. Live modes now ALWAYS back-derive from the
+  // legal engine — platform legality comes free (the engine was already
+  // platform-coerced above), so isModeLegalForPlatform is no longer
+  // consulted here. Only the import-family modes remain standalone user
+  // intent worth keeping verbatim (never tied to a capture engine).
   const platform: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
-  if (isValidMode(legacy.mode) && isModeLegalForPlatform(legacy.mode, platform)) {
+  if (isValidMode(legacy.mode) && (legacy.mode === "import" || legacy.mode === "url")) {
     return openRouterSettings;
   }
   return {

@@ -13,7 +13,7 @@
 // and BitCelebrationOverlay.tsx.
 
 import { useEffect, useRef, useState } from "react";
-import { useApp } from "@/lib/store";
+import { modeForPersistedEngine, useApp, type ModePlatform } from "@/lib/store";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { useLatencyStats } from "@/lib/stt/latencyStats";
@@ -71,12 +71,17 @@ export const SIDECAR_DOWN_HINT_WEB = "本地 Whisper 未连接——见 设置 �
 const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
 
 // This is intentionally two adjacent controls: recognizer family and audio
-// source are independent persisted settings, and the source dropdown's own
-// onChange below writes both together (mirrors ModeSelector.pickCapture
-// exactly) so `engine` never silently drifts from what `mode` claims is
-// being captured — see AudioSourceDropdown's own doc comment (FINDING 1
-// fix) for the bug this closes.
-const ENGINE_OVERRIDE_HINT = "选择转录服务；音源在左侧单独设置";
+// source are independent persisted settings, and BOTH dropdowns write the
+// pair together — the source dropdown derives a matching engine (FINDING 1
+// fix, see AudioSourceDropdown's doc comment) and the engine dropdown
+// back-derives the matching source via modeForPersistedEngine (v0.7.4
+// osspeech-silence round: picking 系统 used to leave a persisted
+// mode:"mic" claiming 麦克风 over the live output tap). Same pairing
+// TutorialOverlay's engine grid already uses.
+const ENGINE_OVERRIDE_HINT = "选择转录服务；音源随之切换";
+// Platform shape for modeForPersistedEngine — same construction
+// TutorialOverlay's ITEM 4 fix uses.
+const MODE_PLATFORM: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
 const AUDIO_SOURCE_PLACEHOLDER = "音源";
 const SYSTEM_AUDIO_CAVEAT = "只捕获对方的系统/App 声音，不包含你的麦克风";
 
@@ -213,7 +218,11 @@ function EngineDropdown() {
       value={engine === "demo" || engine === "import" ? "" : engine}
       onChange={(e) => {
         const value = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
-        if (value) updateSettings({ engine: value });
+        if (value)
+          updateSettings({
+            engine: value,
+            mode: modeForPersistedEngine(value, value, MODE_PLATFORM),
+          });
       }}
       className={`h-full max-w-[7.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}
     >
