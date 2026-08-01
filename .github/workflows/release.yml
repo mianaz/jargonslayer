@@ -224,7 +224,11 @@ jobs:
             exit 1
           fi
           unset APPLE_API_KEY_P8_BASE64
-          npm run build:desktop
+          # `build:desktop` is ONLY the web static export — it bundles nothing.
+          # The DMG comes from `tauri build`, whose beforeBuildCommand runs
+          # fetch:uv + build:audiocap + build:desktop itself (the two explicit
+          # steps above just surface a toolchain failure earlier and cheaply).
+          npm run tauri:build
 
       - name: destroy notarization key
         if: always()
