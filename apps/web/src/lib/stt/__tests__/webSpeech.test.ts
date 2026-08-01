@@ -614,7 +614,7 @@ describe("WebSpeechEngine — engine-level", () => {
         {
           status: "error",
           detail:
-            "当前浏览器不支持语音识别，请使用 Chrome/Edge，或切换到本地 Whisper / 演示模式，也可点击「导入」上传音频/文稿，无需麦克风与 API Key，任何浏览器都能用",
+            "当前浏览器不支持语音识别，请使用 Chrome/Edge，或切换到本地模型 / 演示模式，也可点击「导入」上传音频/文稿，无需麦克风与 API Key，任何浏览器都能用",
         },
       ]);
       await engine.stop();

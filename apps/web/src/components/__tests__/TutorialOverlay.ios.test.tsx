@@ -64,7 +64,7 @@ describe("TutorialOverlay — iOS engine picker (S13 §6 Sol F5)", () => {
     expect(cardLabels.some((t) => t?.includes("Deepgram 云端"))).toBe(true);
     expect(cardLabels.some((t) => t?.includes("ElevenLabs 云端"))).toBe(true);
     expect(cardLabels.some((t) => t?.includes("浏览器识别"))).toBe(false);
-    expect(cardLabels.some((t) => t?.includes("本地 Whisper"))).toBe(false);
+    expect(cardLabels.some((t) => t?.includes("本地模型"))).toBe(false);
     expect(cardLabels.some((t) => t?.includes("标签页音频"))).toBe(false);
     expect(cardLabels.some((t) => t?.includes("系统/App 音频"))).toBe(false);
   });

@@ -63,7 +63,7 @@ export const DETECT_MODE_LABEL: Record<string, string> = {
 // hint below, both pinned by exact-equality assertions in
 // StatusLine.test.tsx.
 export const ENGINE_SELECT_PLACEHOLDER = "引擎";
-export const SIDECAR_DOWN_HINT_WEB = "本地 Whisper 未连接——见 设置 → 转录引擎";
+export const SIDECAR_DOWN_HINT_WEB = "本地转录服务未连接——见 设置 → 转录引擎";
 
 // S10 field-fix #5: engines whose transcription actually flows through
 // wsTransport.ts (the ONE lag_ms producer, via the local Whisper

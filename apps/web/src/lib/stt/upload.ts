@@ -667,7 +667,7 @@ export interface ImportOptions {
  * can't tell a sidecar-path failure from a browser-path one to
  * reproduce that itself, so the two sidecar call sites in ImportHub
  * wrap their onError with withSidecarHint to restore it. */
-export const SIDECAR_UNREACHABLE_HINT = "，确认本地 Whisper 服务已启动且 --http-port 开启";
+export const SIDECAR_UNREACHABLE_HINT = "，确认本地转录服务已启动且 --http-port 开启";
 
 /** R7 field fix (Sol F8, client half — WIRE CONTRACT with the sidecar):
  *  the sidecar surfaces a model-LOAD failure (as opposed to "can't
@@ -684,12 +684,12 @@ const MODEL_LOAD_FAILURE_PREFIX = "模型加载失败";
  *
  * R7 exception (Sol F8): a MODEL_LOAD_FAILURE_PREFIX-prefixed message
  * means the sidecar was reached and answered — it just couldn't load
- * the configured Whisper model — so the "start the sidecar" connection
- * advice is skipped in favor of an honest "本地 Whisper 模型加载失败：
- * <detail>" message. */
+ * the configured model (Whisper or Parakeet) — so the "start the
+ * sidecar" connection advice is skipped in favor of an honest "本地
+ * 模型加载失败：<detail>" message. */
 export function withSidecarHint(message: string): string {
   if (message.startsWith(MODEL_LOAD_FAILURE_PREFIX)) {
-    return `本地 Whisper ${message}`;
+    return `本地${message}`;
   }
   return `${message}${SIDECAR_UNREACHABLE_HINT}`;
 }

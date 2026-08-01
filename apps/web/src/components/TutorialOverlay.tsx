@@ -9,7 +9,7 @@ import { useState } from "react";
 import { CaretRight, CheckCircle } from "@phosphor-icons/react";
 import { modeForPersistedEngine, useApp, type ModePlatform } from "@/lib/store";
 import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
-import { IOS_ENGINE_KINDS } from "@/lib/stt/engineCapabilities";
+import { ENGINE_CAPABILITIES, IOS_ENGINE_KINDS } from "@/lib/stt/engineCapabilities";
 import type { STTEngineKind } from "@jargonslayer/core/types";
 import { withBase } from "@/lib/basePath";
 import { IS_DESKTOP } from "@/lib/platform/desktop";
@@ -143,33 +143,51 @@ const ENGINE_OPTIONS: {
     // the shared resolver automatically. osspeech stays FIRST (the
     // zero-config default) via the list's own order.
     IOS_ENGINE_KINDS.map((kind) => ({ value: kind, ...IOS_TUTORIAL_CARD_COPY[kind] }))
-  : [
-      {
-        value: "webspeech",
-        label: "麦克风 · 浏览器识别",
-        hint: "零配置，Chrome/Edge 最佳，开箱即用",
-      },
-      {
-        value: "whisper",
-        label: "麦克风 · 本地识别",
-        hint: "隐私保护最强，需启动本地 Whisper",
-      },
-      ...(IS_DESKTOP
-        ? [
-            {
-              value: "appaudio" as const,
-              label: "本机会议声音",
-              hint: "转录对方与其他声音，非你的麦克风",
-            },
-          ]
-        : [
-            {
-              value: TAB_CARD_ENGINE,
-              label: "浏览器标签页",
-              hint: "共享标签页，听懂对方声音",
-            },
-          ]),
-    ];
+  : IS_DESKTOP
+    ? // Miana 2026-08-01 taxonomy fix: this list used to be shared with
+      // the web branch below (webspeech + whisper + appaudio), which
+      // silently offered a webspeech card that can NEVER work inside
+      // Tauri's WKWebView (no SpeechRecognition API — see this file's
+      // own S10 field-fix header comment; ENGINE_OPTIONS/ENGINE_CARDS
+      // already drop it elsewhere). Desktop now gets its own two-card
+      // list instead: osspeech (系统识别, zero-config, no sidecar to
+      // install) first, then ONE local-sidecar card for whisper/appaudio
+      // — same recognizer, mic vs system-audio source (StatusLine's own
+      // LOCAL_SIDECAR_VALUE collapse). This picker is a first-run,
+      // mic-oriented surface with no live `mode` to resolve against
+      // (unlike StatusLine/SettingsDialog), so the card writes the
+      // plain "whisper" (mic) engine directly rather than resolving via
+      // sidecarEngineForMode — a user who wants the system-audio lane
+      // switches source afterward via the 音源 dropdown or 设置.
+      [
+        {
+          value: "osspeech" as const,
+          label: ENGINE_CAPABILITIES.osspeech.label,
+          hint: "本机会议声音，免安装免下载，需 macOS 26+",
+        },
+        {
+          value: "whisper" as const,
+          label: ENGINE_CAPABILITIES.whisper.label,
+          hint: "隐私保护最强，需安装本地转录服务",
+        },
+      ]
+    : [
+        {
+          value: "webspeech",
+          label: "麦克风 · 浏览器识别",
+          hint: "零配置，Chrome/Edge 最佳，开箱即用",
+        },
+        {
+          value: "whisper",
+          label: "麦克风 · 本地识别",
+          hint: "隐私保护最强，需安装本地转录服务",
+        },
+        {
+          value: TAB_CARD_ENGINE,
+          label: "浏览器标签页",
+          hint: "共享标签页，听懂对方声音",
+        },
+      ];
 
 function EnginePickerStep({ onStartDemo }: { onStartDemo: () => void }) {
   const engine = useApp((s) => s.settings.engine);
@@ -349,7 +367,7 @@ export default function TutorialOverlay({
                   <div className="text-sm font-medium text-fg">{IS_IOS ? "本地优先" : "全离线"}</div>
                   <div className="mt-2 text-xs leading-[1.7] text-mut">
                     {/* #58 fix round FIX 9 (Sol MEDIUM): the desktop/web
-                       copy names 本地 Whisper + Ollama — neither exists
+                       copy names 本地模型 + Ollama — neither exists
                        on iOS v1 (no Python sidecar at all, see ios.ts's
                        own header comment). iOS's actual offline story is
                        narrower: 系统识别 transcribes on-device, 词典检测
@@ -362,7 +380,7 @@ export default function TutorialOverlay({
                        the live surface of the same fact. */}
                     {IS_IOS
                       ? "默认系统识别，全程本机转录；切换云端识别引擎后音频会发往对应服务商。词典检测离线可用，AI 解释需配置 API Key。"
-                      : "本地 Whisper + Ollama，音频和内容完全不出本机。"}
+                      : "本地模型 + Ollama，音频和内容完全不出本机。"}
                   </div>
                 </div>
               </div>

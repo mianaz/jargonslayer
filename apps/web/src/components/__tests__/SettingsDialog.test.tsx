@@ -1643,6 +1643,19 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: retention badge agrees w
     return btn as HTMLButtonElement;
   }
 
+  // Exact label match, not substring: 浏览器识别's OWN hint recommends
+  // "标签页音频或本地模型" as an alternative, so a plain
+  // `findButtonContaining("本地模型")` scan would match that EARLIER card
+  // instead of the 本地模型 card itself (mirrors the identical collision
+  // this file's own "hint copy" describe block below already documents).
+  function findCardLabeled(label: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find(
+      (b) => b.querySelector(".font-medium")?.textContent === label,
+    );
+    if (!btn) throw new Error(`card labeled "${label}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
   beforeEach(() => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     useApp.setState({ settings: { ...DEFAULT_SETTINGS, engine: "webspeech" }, hydrated: true });
@@ -1676,34 +1689,35 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: retention badge agrees w
     expect(badge).toBeUndefined();
   });
 
-  it("本地 Whisper (local) shows RETENTION_COPY's 本地 label", async () => {
+  it("本地模型 (local) shows RETENTION_COPY's 本地 label", async () => {
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
     });
     await flush();
 
-    const card = findButtonContaining("本地 Whisper");
+    const card = findCardLabeled("本地模型");
     expect(card.textContent).toContain(RETENTION_COPY.local.label);
   });
 });
 
 // ---------------------------------------------------------------
-// Field-test fix: 本地 Whisper and 系统/App 音频 both transcribe with
-// Whisper, but only 本地 Whisper's own hint used to name an engine —
-// 系统/App 音频 named only its audio source. Both cards' hints must now
-// name BOTH halves. 系统/App 音频 itself only renders once IS_DESKTOP is
-// mocked true (SettingsDialog.desktop.test.tsx), so its own copy
-// assertion lives there instead of here.
+// Miana 2026-08-01 taxonomy collapse: whisper/系统/App 音频/标签页音频
+// merged into ONE 本地模型 card whose hint now names both halves — the
+// Whisper/Parakeet backend AND (folded in from the old appaudio card)
+// the system-audio-only caveat. 系统/App 音频 no longer exists as its
+// own card; the merged card's copy is identical on desktop and web, so
+// its own assertion also lives in SettingsDialog.desktop.test.tsx
+// (desktop-only render) rather than duplicating it here.
 // ---------------------------------------------------------------
 
-describe("SettingsDialog — 转录引擎 ENGINE_CARDS: hint copy names both audio source and recognition backend (field-test fix)", () => {
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS: 本地模型 card names every source and both recognizer models (taxonomy collapse)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
   // Exact label match, not substring: 浏览器识别's OWN hint recommends
-  // "标签页音频或本地 Whisper" as an alternative, so a plain `.includes("本地
-  // Whisper")` scan (this file's usual findButtonContaining idiom) would
-  // match that EARLIER card instead of the 本地 Whisper card itself.
+  // "标签页音频或本地模型" as an alternative, so a plain `.includes("本地
+  // 模型")` scan (this file's usual findButtonContaining idiom) would
+  // match that EARLIER card instead of the 本地模型 card itself.
   function findCardLabeled(label: string): HTMLButtonElement {
     const btn = Array.from(container!.querySelectorAll("button")).find(
       (b) => b.querySelector(".font-medium")?.textContent === label,
@@ -1728,14 +1742,19 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: hint copy names both aud
     resetStore();
   });
 
-  it("本地 Whisper card names the mic as the source and Whisper as the backend", async () => {
+  it("本地模型 card names the Whisper/Parakeet backend, every audio source, and the system-audio-only caveat", async () => {
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
     });
     await flush();
 
-    const card = findCardLabeled("本地 Whisper");
-    expect(card.textContent).toContain("麦克风收音，本地 Whisper 模型识别，音频不出设备");
+    const card = findCardLabeled("本地模型");
+    expect(card.textContent).toContain("Whisper/Parakeet");
+    expect(card.textContent).toContain("音频不出设备");
+    expect(card.textContent).toContain("麦克风");
+    expect(card.textContent).toContain("系统/标签页音频");
+    expect(card.textContent).toContain("音源");
+    expect(card.textContent).toContain("系统音频仅捕获对方声音、不含你的麦克风");
   });
 });
 

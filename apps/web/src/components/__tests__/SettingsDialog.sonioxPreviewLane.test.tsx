@@ -257,8 +257,8 @@ describe("SettingsDialog — BYOK preview sprint: settings-UI unlock", () => {
   // ENGINE_CARDS' own label span (`<span className="min-w-0 font-medium">`,
   // SettingsDialog.tsx) exact-matched — unlike findButtonContaining's
   // substring search, this can't accidentally return the WRONG card: the
-  // 浏览器识别 card's own hint text ("…建议标签页音频或本地 Whisper") happens
-  // to contain the "本地 Whisper" card's exact label as a substring, and
+  // 浏览器识别 card's own hint text ("…建议标签页音频或本地模型") happens
+  // to contain the "本地模型" card's exact label as a substring, and
   // it sorts first in ENGINE_CARDS.
   function findEngineCard(label: string): HTMLButtonElement {
     const span = Array.from(container!.querySelectorAll("button span.font-medium")).find(
@@ -438,7 +438,7 @@ describe("SettingsDialog — BYOK preview sprint: settings-UI unlock", () => {
     });
     await flush();
 
-    const whisperCard = findEngineCard("本地 Whisper");
+    const whisperCard = findEngineCard("本地模型");
     expect(whisperCard.disabled).toBe(true);
     expect(whisperCard.title).toBe("本地版功能：体验版暂未开放");
 

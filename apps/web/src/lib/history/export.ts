@@ -18,7 +18,7 @@ import { IS_IOS } from "@/lib/platform/ios";
 const ENGINE_LABELS: Record<STTEngineKind, string> = {
   demo: "演示模式",
   webspeech: "浏览器识别",
-  whisper: "本地 Whisper",
+  whisper: "本地模型",
   tabaudio: "标签页音频",
   appaudio: "系统/App 音频",
   // S11 (v0.4.3): terse noun form for the export label, matching every

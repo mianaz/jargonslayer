@@ -103,7 +103,7 @@ export default function AnkiConnectSection({ value, onChange }: AnkiConnectSecti
           className="mt-1 w-32 border border-edge bg-panel2 px-3 py-1.5 text-sm text-fg focus:outline-none"
         />
         <div className="mt-1 text-xs leading-[1.7] text-mut2">
-          若同时使用本地 Whisper（默认同为 8765 端口），需在 Anki 的 AnkiConnect
+          若同时使用本地转录服务（默认同为 8765 端口），需在 Anki 的 AnkiConnect
           配置中改用其他端口，并在此同步修改
         </div>
       </div>

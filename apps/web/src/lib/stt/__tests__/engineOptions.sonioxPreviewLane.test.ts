@@ -26,7 +26,7 @@ import {
 describe("engineOptionGate — soniox preview lane ON", () => {
   const whisper: EngineOption = {
     value: "whisper",
-    label: "本地 Whisper",
+    label: "本地模型",
     family: "local-model",
     posture: "local",
     retentionClass: "local",

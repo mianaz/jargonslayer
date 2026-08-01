@@ -47,7 +47,12 @@ import {
 import { downloadFile } from "@/lib/history/export";
 import { fetchSidecarHealth } from "@/lib/stt/upload";
 import { probeSidecar, type SidecarProbeResult } from "@/lib/stt/sidecarHealth";
-import { RETENTION_COPY, resolveEngineRetentionClass } from "@/lib/stt/engineOptions";
+import {
+  isSidecarFamily,
+  RETENTION_COPY,
+  resolveEngineRetentionClass,
+  sidecarEngineForMode,
+} from "@/lib/stt/engineOptions";
 import {
   appAudioLockReason,
   isAppAudioFloorLocked,
@@ -195,6 +200,15 @@ const ALL_ENGINE_CARDS: {
   // engine is, by definition, still opt-in experimental — see soniox's
   // own hint copy).
   byokOnly?: boolean;
+  // Miana 2026-08-01 taxonomy collapse: marks the ONE card standing in
+  // for whisper/appaudio/tabaudio — a single recognizer (the local
+  // sidecar, Whisper or Parakeet) fed by whichever source the 音源
+  // dropdown picks, same collapse StatusLine's EngineDropdown already
+  // did (LOCAL_SIDECAR_VALUE). `value` below is a nominal placeholder
+  // ("whisper") only for the React key/IOS_ENGINE_CARD_VALUES filter —
+  // the render loop resolves the REAL target via sidecarEngineForMode
+  // instead of reading it directly.
+  sidecarFamily?: boolean;
 }[] = [
   {
     value: "webspeech",
@@ -204,41 +218,25 @@ const ALL_ENGINE_CARDS: {
     // meeting audio comes through weak, and that is not fixable from
     // our side (the local engines are: whisperSocket.ts acquires its
     // own stream with raw-capture constraints).
-    hint: "由浏览器厂商云端识别（音频会离开设备）；扬声器外放拾音较弱，线上会议建议标签页音频或本地 Whisper",
+    hint: "由浏览器厂商云端识别（音频会离开设备）；扬声器外放拾音较弱，线上会议建议标签页音频或本地模型",
   },
+  // Miana 2026-08-01: whisper/appaudio/tabaudio collapse into ONE card
+  // — they are the same recognizer (本地 sidecar, Whisper or Parakeet),
+  // just fed by three different audio sources (mic/system/tab), and the
+  // 音源 dropdown already owns that axis. Mirrors StatusLine's
+  // LOCAL_SIDECAR_VALUE sentinel: selecting this card writes
+  // sidecarEngineForMode(mode) — whichever of the three kinds serves
+  // the CURRENT source — and its gate is that resolved kind's own
+  // (appaudio's macOS-14.4 floor, sidecarOnly's preview lock). Folds in
+  // the old appaudio card's "对方声音，不含你的麦克风" caveat since this
+  // one card now also covers that source.
   {
     value: "whisper",
-    label: "本地 Whisper",
-    hint: "麦克风收音，本地 Whisper 模型识别，音频不出设备",
+    label: "本地模型",
+    hint: "本地 sidecar 运行 Whisper/Parakeet 模型（在下方「模型」选择），音频不出设备；听麦克风还是系统/标签页音频由「音源」决定，系统音频仅捕获对方声音、不含你的麦克风",
     sidecarOnly: true,
+    sidecarFamily: true,
   },
-  // D7 desktop tabaudio replacement (docs/design-explorations/
-  // s9-app-audio-tap-blueprint.md): tabaudio (getDisplayMedia) can only
-  // ever fail inside Tauri's WKWebView — there is no tab-share picker
-  // to launch there — so desktop shows 系统/App 音频 (a CoreAudio process
-  // tap, S9) in its slot instead; the web build keeps 标签页音频 exactly
-  // as before (D7 pinned decision: browser behavior stays
-  // byte-identical). D3/D4: captures what plays out of THIS Mac —
-  // including other apps/sounds, not just the call's other side — never
-  // the user's own microphone. Unlike tabaudio's static `disabled`
-  // above, appaudio's disabled/title is computed dynamically below
-  // (audiocapCaps, the audiocap_capabilities() probe) — whether it's
-  // selectable depends on THIS machine's macOS version (D6's "shown-but-
-  // disabled below floor", never hidden), not a fixed product decision.
-  IS_DESKTOP
-    ? {
-        value: "appaudio",
-        label: "系统/App 音频",
-        hint: "捕获 Mac 系统/App 播放的声音（对方语音，不含你的麦克风），同样由本地 Whisper 识别",
-        sidecarOnly: true,
-      }
-    : {
-        value: "tabaudio",
-        label: "标签页音频",
-        hint: "在本机转录标签页音频",
-        disabled: true,
-        sidecarOnly: true,
-      },
   // v0.5 Wave-1 Feature 4 (tab audio without the sidecar, cloud path —
   // docs/design-explorations/v05-wave1-blueprint.md §1 Feature 4 + §5
   // A4): web-only, same `!IS_DESKTOP` guard lib/stt/engineOptions.ts's
@@ -1744,7 +1742,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   // interrupted by an engine switch, not just a close.
   useEffect(() => {
     if (!open || PREVIEW_TIER) return;
-    if (draft.engine !== "whisper" && draft.engine !== "tabaudio" && draft.engine !== "appaudio") return;
+    if (!isSidecarFamily(draft.engine)) return;
     setSidecarStatus(null);
     setCheckingSidecarStatus(true);
     let cancelled = false;
@@ -2743,7 +2741,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
     try {
       const health = await fetchSidecarHealth(draft);
       if (!health) {
-        showToast("无法连接本地 Whisper，请先启动（README）");
+        showToast("无法连接本地转录服务，请先启动（README）");
         return;
       }
       if (health.diarization_ready) {
@@ -2942,7 +2940,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
   const isParakeetSelectedOrInstalled = isMlxOnlyModel(draft.whisperModel) || isMlxOnlyModel(installedModel);
   const realtimeDiarizeAvailable =
     !PREVIEW_TIER &&
-    (draft.engine === "whisper" || draft.engine === "tabaudio" || draft.engine === "appaudio") &&
+    isSidecarFamily(draft.engine) &&
     !isParakeetSelectedOrInstalled &&
     !!draft.hfToken;
   // 双语转录 (#42): the translation target IS explainLanguage — "en"
@@ -3279,6 +3277,19 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   opt.value === "tabaudio-cloud" && SONIOX_PREVIEW_LANE && !tabCloudResolvesToSoniox
                     ? TABAUDIO_CLOUD_NEUTRAL_HINT
                     : opt.hint;
+                // Miana 2026-08-01: the merged 本地模型 card has no single
+                // `value` of its own — it resolves to whichever sidecar
+                // kind serves the CURRENT source (settings.mode, the LIVE
+                // store value — mirrors StatusLine's own localTargetOpt,
+                // not draft.mode, which this dialog never edits and can
+                // go stale against a source flip made elsewhere while
+                // open). Every other card's gate/retention/click below
+                // keeps reading opt.value unchanged via this same
+                // fallback.
+                const resolvedSidecarKind = opt.sidecarFamily
+                  ? sidecarEngineForMode(settings.mode)
+                  : undefined;
+                const gateValue = resolvedSidecarKind ?? opt.value;
                 // S9.4, D6 (F9): 系统/App 音频's own macOS-floor gate —
                 // "shown-but-disabled below floor", never hidden (see
                 // ENGINE_CARDS' own appaudio doc comment above for why
@@ -3292,23 +3303,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 // POLICY doc). S11 osspeech blueprint (§3 Worker D): joins
                 // the SAME "shown-but-disabled below floor" gate via
                 // isOsSpeechFloorLocked/osSpeechLockReason — a structural
-                // no-op for every card besides osspeech, same as
-                // isAppAudioFloorLocked is for every card besides appaudio,
-                // so the two OR together safely.
-                const appAudioLocked = isAppAudioFloorLocked(opt.value, audiocapCaps);
-                const osSpeechLocked = isOsSpeechFloorLocked(opt.value, osSpeechCaps);
+                // no-op for every card besides appaudio/osspeech, so the
+                // two OR together safely; reading gateValue (not opt.value)
+                // means the merged card only picks up the appaudio floor
+                // while it actually resolves to appaudio (source:
+                // system-audio) — never for whisper/tabaudio.
+                const appAudioLocked = isAppAudioFloorLocked(gateValue, audiocapCaps);
+                const osSpeechLocked = isOsSpeechFloorLocked(gateValue, osSpeechCaps);
                 const floorLocked = appAudioLocked || osSpeechLocked;
                 // ITEM 2 fix: tri-state retention badge, sourced from the
                 // SAME resolver/copy table Header/StatusLine already use
                 // (lib/stt/engineOptions.ts) — replaces the old hand-rolled
                 // `posture`/POSTURE_LABEL pair this array used to carry.
-                const retention = RETENTION_COPY[resolveEngineRetentionClass(opt.value, sttEngineMode)];
+                const retention = RETENTION_COPY[resolveEngineRetentionClass(gateValue, sttEngineMode)];
+                const selected = opt.sidecarFamily
+                  ? isSidecarFamily(draft.engine)
+                  : draft.engine === opt.value;
                 return (
                   <button
                     key={opt.value}
                     type="button"
                     disabled={opt.disabled || previewLocked || floorLocked || engineLockedByMeeting}
-                    onClick={() => patch({ engine: opt.value })}
+                    onClick={() => patch({ engine: gateValue })}
                     title={
                       previewLocked
                         ? "本地版功能：体验版暂未开放"
@@ -3319,7 +3335,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                             : undefined
                     }
                     className={`border p-3 text-left text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                      draft.engine === opt.value
+                      selected
                         ? "border-act bg-panel3 text-fg"
                         : "border-edge text-fg hover:bg-panel3"
                     }`}
@@ -3416,8 +3432,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                identically to a confirmed-down result, mirroring 订阅直连's
                own agentHealthState `!agentHealthState` idiom below
                rather than adding a third "checking" visual state. */}
-            {!PREVIEW_TIER &&
-              (draft.engine === "whisper" || draft.engine === "tabaudio" || draft.engine === "appaudio") && (
+            {!PREVIEW_TIER && isSidecarFamily(draft.engine) && (
               <div className="space-y-2 border border-edge bg-panel2 p-3">
                 <div className="flex items-center justify-between gap-3">
                   <div className="min-w-0 text-sm text-fg">
@@ -3447,7 +3462,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 {!sidecarStatus?.up && (
                   <div className="text-xs leading-[1.7] text-mut2">
-                    需要本地 Whisper——见{" "}
+                    需要本地转录服务——见{" "}
                     <button
                       type="button"
                       onClick={() => void openExternal("https://github.com/mianaz/jargonslayer#readme")}
@@ -3772,7 +3787,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   </option>
                 ))}
               </select>
-              <div className="mt-1 text-xs text-mut2">仅本地 Whisper 生效</div>
+              <div className="mt-1 text-xs text-mut2">仅本地模型生效</div>
             </div>
             )}
 
@@ -3973,14 +3988,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                — mirrors 麦克风/识别语言's own "always shown, hint
                explains scope" posture in this same section.
                S13 iOS mobile-UX round (Part A #2): own copy says "仅本地
-               Whisper 引擎生效" — genuinely inert on iOS's osspeech-only
+               模型引擎生效" — genuinely inert on iOS's osspeech-only
                engine, so hidden there like the two rows just above. */}
             {!IS_IOS && (
             <label className="flex items-center justify-between gap-3 border-t border-edge pt-3 py-1">
               <div>
                 <div className="text-sm text-fg">实时转录预览</div>
                 <div className="mt-0.5 text-xs leading-[26px] text-mut2">
-                  转录过程中先显示灰色临时文字（打字机效果），句子完成后落定。仅本地 Whisper 引擎生效。
+                  转录过程中先显示灰色临时文字（打字机效果），句子完成后落定。仅本地模型引擎生效。
                 </div>
               </div>
               <ToggleSwitch checked={draft.partials} onChange={(checked) => patch({ partials: checked })} />
@@ -4197,7 +4212,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     （不接受会得到 403）
                   </li>
                   <li>
-                    <span className="font-mono text-fg">③</span> 粘贴 token 并保存；上传录音时选择「本地 Whisper」即可自动分离说话人
+                    <span className="font-mono text-fg">③</span> 粘贴 token 并保存；上传录音时选择「本地模型」即可自动分离说话人
                   </li>
                 </ol>
               </div>
@@ -4219,7 +4234,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 </div>
                 <div className="mt-0.5 text-xs leading-[26px] text-mut2">
                   {PREVIEW_TIER
-                    ? "需要本地版 + 本地 Whisper"
+                    ? "需要本地版 + 本地模型"
                     : realtimeDiarizeAvailable
                       ? "为本地实时转录标注说话人（SPEAKER_1/2…），可随时在转录里重命名。分离过程在本机完成，音频不离开设备。beta：标签会延迟几秒出现，随会议推进逐步修正，可能增加 CPU 占用；转录本身不受影响。"
                       : draft.engine === "osspeech"

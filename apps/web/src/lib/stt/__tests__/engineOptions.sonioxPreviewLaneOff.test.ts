@@ -24,7 +24,7 @@ import { engineOptionGate, PREVIEW_LOCKED_TITLE, type EngineOption } from "../en
 describe("engineOptionGate — soniox preview lane OFF (preview tier, trial flag not set)", () => {
   const whisper: EngineOption = {
     value: "whisper",
-    label: "本地 Whisper",
+    label: "本地模型",
     family: "local-model",
     posture: "local",
     retentionClass: "local",

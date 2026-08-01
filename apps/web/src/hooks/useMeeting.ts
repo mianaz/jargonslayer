@@ -128,7 +128,7 @@ function needsManagedSidecarPreflight(settings: Settings): boolean {
 async function preflightManagedSidecar(): Promise<boolean> {
   const handle = await initDesktop();
   if (handle.currentState().phase !== "HEALTHY") {
-    useApp.getState().showToast("本地 Whisper 尚未安装，正在打开安装向导…");
+    useApp.getState().showToast("本地转录服务尚未安装，正在打开安装向导…");
     void handle.requestProvisionCheck().catch(() => {});
     return true;
   }

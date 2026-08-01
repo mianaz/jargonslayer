@@ -65,7 +65,7 @@ export class AudioTooLongError extends Error {
 }
 
 export class AudioTooLargeError extends Error {
-  constructor(message = "音频过大（超过 200 MB），请改用本地 Whisper 转录") {
+  constructor(message = "音频过大（超过 200 MB），请改用本地模型转录") {
     super(message);
     this.name = "AudioTooLargeError";
   }

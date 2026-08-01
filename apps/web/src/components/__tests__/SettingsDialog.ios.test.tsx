@@ -184,8 +184,8 @@ describe("SettingsDialog — iOS build", () => {
     // Detail view: 识别语言 (osspeech's own language picker) stays.
     expect(hasLabel("识别语言")).toBe(true);
     // Part A #2: whisper-only rows gone (麦克风 device picker + its
-    // 仅本地 Whisper 生效 hint, Whisper 地址 field, 实时转录预览 toggle).
-    expect(container!.textContent).not.toContain("仅本地 Whisper 生效");
+    // 仅本地模型生效 hint, Whisper 地址 field, 实时转录预览 toggle).
+    expect(container!.textContent).not.toContain("仅本地模型生效");
     expect(hasLabel("Whisper 地址")).toBe(false);
     expect(container!.textContent).not.toContain("实时转录预览");
 
@@ -281,7 +281,7 @@ describe("SettingsDialog — iOS build", () => {
   // osspeech + the 3 BYOK cloud cards (IOS_ENGINE_CARD_VALUES) — mirrors
   // lib/stt/engineOptions.ts's own IOS_ENGINE_OPTIONS widening
   // (engineOptions.ios.test.ts) one level up in the same feature.
-  it("转录引擎 detail: ENGINE_CARDS keeps osspeech + the 3 BYOK cloud cards, drops 本地 Whisper/标签页音频/浏览器识别; picking ElevenLabs reveals its own API Key field", async () => {
+  it("转录引擎 detail: ENGINE_CARDS keeps osspeech + the 3 BYOK cloud cards, drops 本地模型/标签页音频/浏览器识别; picking ElevenLabs reveals its own API Key field", async () => {
     await render();
     act(() => {
       findRow("转录引擎").dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -291,7 +291,7 @@ describe("SettingsDialog — iOS build", () => {
     expect(findButtonContaining("Soniox 云端识别")).toBeTruthy();
     expect(findButtonContaining("Deepgram 云端识别")).toBeTruthy();
     expect(findButtonContaining("ElevenLabs 云端识别")).toBeTruthy();
-    expect(buttons().some((b) => b.textContent?.includes("本地 Whisper"))).toBe(false);
+    expect(buttons().some((b) => b.textContent?.includes("本地模型"))).toBe(false);
     expect(buttons().some((b) => b.textContent?.includes("标签页音频"))).toBe(false);
     expect(buttons().some((b) => b.textContent?.includes("浏览器识别"))).toBe(false);
 

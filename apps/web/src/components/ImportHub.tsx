@@ -3,7 +3,7 @@
 // ImportHub (#58 design decision 3) — the single 导入 entrance
 // consolidating every path that used to be scattered across
 // HistoryDrawer's 导入录音 popover + a separate ImportTranscriptDialog:
-//   - 文件: an audio OR video file, via either 本地 Whisper（sidecar —
+//   - 文件: an audio OR video file, via either 本地模型（sidecar —
 //     faster-whisper quality + diarization, local tier only) or 浏览器
 //     转录（ffmpeg.wasm + in-browser Whisper, never leaves the tab).
 //     decideVideoRouting (design decision 6) picks the recommended
@@ -43,7 +43,7 @@ import { IS_DESKTOP } from "@/lib/platform/desktop";
 import { IS_IOS } from "@/lib/platform/ios";
 import { decideVideoRouting, resolveImportPath, type ImportPath } from "@/lib/tasks/videoRouting";
 
-const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地 Whisper";
+const PREVIEW_SIDECAR_TITLE = "本地版功能：需要本地转录服务";
 const FILE_ACCEPT = "audio/*,.m4a,.mp3,.wav,.flac,.mp4,.webm,.mov,.mkv,.m4v,video/*";
 const PARSE_DEBOUNCE_MS = 300;
 
@@ -115,7 +115,7 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
 
   const [tab, setTab] = useState<HubTab>("file");
 
-  // 本地 Whisper sidecar reachability — fetched lazily each time the
+  // 本地转录服务 sidecar reachability — fetched lazily each time the
   // hub opens (not on mount), same posture as the old popover. Preview
   // tier never probes (showroom rule: no probing to unlock). #58 fix
   // round FIX 8 (Sol HIGH): iOS never probes either (no Python sidecar
@@ -416,19 +416,19 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
                   }`}
                 >
                   <div className="flex items-center gap-1.5 font-medium">
-                    本地 Whisper（推荐）
+                    本地模型（推荐）
                     {routing.sidecarLocked && <PreviewLockedBadge />}
                   </div>
                   <div className="mt-0.5 text-xs leading-[1.7] text-mut">
                     {/* iOS v1: there is no Python sidecar to reach AT ALL
                        (not merely "currently unreachable") — telling the
-                       user to "start local Whisper" implies an action
-                       they could actually take, which doesn't exist on
-                       iOS. This card is always disabled here on iOS
-                       (routing.sidecarAvailable can never be true —
-                       decideVideoRouting/fetchSidecarHealth always
+                       user to "start the local transcription service"
+                       implies an action they could actually take, which
+                       doesn't exist on iOS. This card is always disabled
+                       here on iOS (routing.sidecarAvailable can never be
+                       true — decideVideoRouting/fetchSidecarHealth always
                        resolves null, nothing to reach). */}
-                    {IS_IOS ? "此设备不支持" : "需启动本地 Whisper·音频与视频均支持"}
+                    {IS_IOS ? "此设备不支持" : "需启动本地转录服务·音频与视频均支持"}
                   </div>
                   {routing.sidecarAvailable && diarizationHealth !== undefined && (
                     <div className="mt-0.5 text-[10px] leading-[1.7]">
@@ -568,10 +568,10 @@ export default function ImportHub({ open, onClose, initialTab }: ImportHubProps)
           </div>
           <div className="text-xs leading-[1.7] text-mut">
             {PREVIEW_TIER
-              ? "需本地 Whisper（体验版不提供）"
+              ? "需本地转录服务（体验版不提供）"
               : sidecarReachable
-                ? "通过本地 Whisper 下载并转录，仅限本地版·请确保你有权处理该内容"
-                : "需本地 Whisper，未检测到运行中的本地服务"}
+                ? "通过本地转录服务下载并转录，仅限本地版·请确保你有权处理该内容"
+                : "需本地转录服务，未检测到运行中的本地服务"}
           </div>
           <input
             type="text"

@@ -93,10 +93,10 @@ describe("ImportHub — iOS full-screen page (S15)", () => {
 
   // Bonus (task 3b verification): the sidecar-recommended card's own
   // disabled-state copy used to unconditionally read "需启动本地
-  // Whisper" — an action the user could take on desktop, but not on iOS
+  // 转录服务" — an action the user could take on desktop, but not on iOS
   // (no Python sidecar there at all, see decideVideoRouting/
   // fetchSidecarHealth). This card only renders once a file is staged.
-  it("本地 Whisper card reads 此设备不支持, not 需启动本地 Whisper (no sidecar to ever reach on iOS)", async () => {
+  it("本地模型 card reads 此设备不支持, not 需启动本地转录服务 (no sidecar to ever reach on iOS)", async () => {
     await renderOpen();
 
     const fileInput = container!.querySelector('input[type="file"]') as HTMLInputElement;
@@ -105,7 +105,7 @@ describe("ImportHub — iOS full-screen page (S15)", () => {
     });
 
     expect(container!.textContent).toContain("此设备不支持");
-    expect(container!.textContent).not.toContain("需启动本地 Whisper");
+    expect(container!.textContent).not.toContain("需启动本地转录服务");
   });
 
   // #58 fix round FIX 8 (Sol HIGH): lib/tasks/videoRouting.ts's
