@@ -325,7 +325,7 @@ const EXTERNAL_SIDECAR_MODE_MESSAGE = "当前为外部管理模式，此操作�
  *  field-test bug this const exists for; also soniox/webspeech/demo)
  *  never opens a ws connection to the sidecar at all — though an
  *  osspeech user can still legitimately reach the sidecar's OWN :8766
- *  upload-a-recording HTTP job API via ImportHub's "本地 Whisper" file-
+ *  upload-a-recording HTTP job API via ImportHub's "本地模型" file-
  *  import option (offered whenever the health probe answers), which is
  *  exactly why this hotfix does NOT skip start_server for these
  *  engines entirely (that fuller dormancy redesign is deliberately

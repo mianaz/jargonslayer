@@ -326,7 +326,7 @@ export class AppAudioEngine implements STTEngine {
       settings,
       lexicon,
       connectFailureMessage: (url) =>
-        `系统音频捕获需要本地 Whisper（见 README），无法连接 ${url}`,
+        `系统音频捕获需要本地转录服务（见 README），无法连接 ${url}`,
     });
 
     unlisten = await listen<AudiocapStatusPayload>("audiocap://status", (event) => {

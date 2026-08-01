@@ -56,8 +56,8 @@ export class WhisperSocketEngine implements STTEngine {
       // unchanged — those users legitimately run the sidecar by hand.
       connectFailureMessage: (url) =>
         IS_DESKTOP
-          ? "无法连接本地 Whisper。请在 设置 → 转录引擎 完成安装或检查本地服务状态"
-          : `无法连接本地 Whisper（${url}）。请先启动本地 Whisper 服务：cd sidecar && python whisper_server.py（详见 README）`,
+          ? "无法连接本地转录服务。请在 设置 → 转录引擎 完成安装或检查本地服务状态"
+          : `无法连接本地转录服务（${url}）。请先启动本地转录服务：cd sidecar && python whisper_server.py（详见 README）`,
     });
     this.transport = transport;
 

@@ -149,7 +149,7 @@ describe("resolveEngineRetentionClass — D7 runtime resolution", () => {
 describe("engineOptionGate — preview-tier + macOS-floor gate", () => {
   const whisper: EngineOption = {
     value: "whisper",
-    label: "本地 Whisper",
+    label: "本地模型",
     family: "local-model",
     posture: "local",
     retentionClass: "local",

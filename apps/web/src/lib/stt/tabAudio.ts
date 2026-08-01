@@ -1,8 +1,9 @@
 // Tab/system audio capture engine: transcribes the OTHER side of a
 // Zoom/Teams/Meet call (or any tab/window audio) via getDisplayMedia,
 // with zero extra software — no virtual audio cable, no OS-level
-// loopback setup. Requires the local Whisper sidecar; audio flows
-// only to that local sidecar process and never leaves the machine.
+// loopback setup. Requires the local transcription sidecar (Whisper or
+// Parakeet); audio flows only to that local sidecar process and never
+// leaves the machine.
 
 import type { MeetingLexicon, STTEngine, STTEngineKind, STTEvents, Settings } from "@jargonslayer/core/types";
 import { WsTransport } from "./wsTransport";
@@ -77,7 +78,7 @@ export class TabAudioEngine implements STTEngine {
       settings,
       lexicon,
       connectFailureMessage: (url) =>
-        `标签页音频需要本地 Whisper（见 README），无法连接 ${url}`,
+        `标签页音频需要本地转录服务（见 README），无法连接 ${url}`,
     });
     this.transport = transport;
 

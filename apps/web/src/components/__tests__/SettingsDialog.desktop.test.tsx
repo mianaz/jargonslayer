@@ -981,14 +981,20 @@ describe("SettingsDialog (desktop) — S11 osspeech ENGINE_CARD gating + 预下�
 });
 
 // ---------------------------------------------------------------
-// Field-test fix: 本地 Whisper and 系统/App 音频 both transcribe with
-// Whisper, but 系统/App 音频's own hint used to name only its audio
-// source, never the recognition backend. This card only renders once
-// IS_DESKTOP is mocked true (this file), so its copy assertion lives
-// here rather than in the ambient SettingsDialog.test.tsx.
+// Miana 2026-08-01 taxonomy collapse: whisper/系统/App 音频/标签页音频
+// merged into ONE 本地模型 card (same recognizer, three audio sources —
+// see ALL_ENGINE_CARDS's own doc comment, SettingsDialog.tsx). The old
+// 系统/App 音频-only hint-copy assertion below is replaced by a check
+// that the merged card's copy still names both halves: the Whisper/
+// Parakeet backend AND the system-audio-only caveat (仅对方，不含你的
+// 麦克风) folded in from the old appaudio card. This card only renders
+// once IS_DESKTOP is mocked true (this file) with the SAME copy the
+// ambient (web) SettingsDialog.test.tsx sees — the merged hint no
+// longer varies per platform — so this suite only needs to confirm it
+// survives a desktop mount, not re-derive platform-specific wording.
 // ---------------------------------------------------------------
 
-describe("SettingsDialog (desktop) — 转录引擎 系统/App 音频 card hint copy (field-test fix)", () => {
+describe("SettingsDialog (desktop) — 转录引擎 本地模型 card hint copy (taxonomy collapse)", () => {
   let container: HTMLDivElement | null = null;
   let root: Root | null = null;
 
@@ -1016,15 +1022,14 @@ describe("SettingsDialog (desktop) — 转录引擎 系统/App 音频 card hint 
     resetStore();
   });
 
-  it("names both the captured audio source and the Whisper backend", async () => {
+  it("names the Whisper/Parakeet backend and the system-audio-only caveat", async () => {
     await act(async () => {
       root!.render(<SettingsDialog open={true} onClose={() => {}} />);
     });
 
-    const card = findButtonContaining("系统/App 音频");
-    expect(card.textContent).toContain(
-      "捕获 Mac 系统/App 播放的声音（对方语音，不含你的麦克风），同样由本地 Whisper 识别",
-    );
+    const card = findButtonContaining("本地模型");
+    expect(card.textContent).toContain("Whisper/Parakeet");
+    expect(card.textContent).toContain("系统音频仅捕获对方声音、不含你的麦克风");
   });
 });
 

@@ -242,7 +242,7 @@ describe("importAudio", () => {
     ).rejects.toThrow(AudioTooLargeError);
     await expect(
       importAudio({ file, translate: false, settings: makeSettings(), onProgress: vi.fn() }),
-    ).rejects.toThrow("音频过大（超过 200 MB），请改用本地 Whisper 转录");
+    ).rejects.toThrow("音频过大（超过 200 MB），请改用本地模型转录");
 
     expect(mockTranscribeInBrowser).not.toHaveBeenCalled();
   });

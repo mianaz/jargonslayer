@@ -993,8 +993,8 @@ describe("withSidecarHint — ImportHub sidecar-path error hint (#58 review fix 
     expect(withSidecarHint("转录失败")).toBe(`转录失败${SIDECAR_UNREACHABLE_HINT}`);
   });
 
-  it("the hint text itself is the exact pre-#58 HistoryDrawer copy", () => {
-    expect(SIDECAR_UNREACHABLE_HINT).toBe("，确认本地 Whisper 服务已启动且 --http-port 开启");
+  it("the hint text names the local transcription service, not a specific model brand (Miana 2026-08-01 taxonomy)", () => {
+    expect(SIDECAR_UNREACHABLE_HINT).toBe("，确认本地转录服务已启动且 --http-port 开启");
   });
 
   // R7 field fix (Sol F8, client half — wire contract with the
@@ -1004,8 +1004,8 @@ describe("withSidecarHint — ImportHub sidecar-path error hint (#58 review fix 
   // pinned contract string directly (passes without the sibling's own
   // server-side change landing first, since this only exercises the
   // client half of the contract).
-  it("R7: a message starting with the 模型加载失败 prefix skips the connection advice, surfacing 本地 Whisper 模型加载失败 instead", () => {
-    expect(withSidecarHint("模型加载失败：磁盘空间不足")).toBe("本地 Whisper 模型加载失败：磁盘空间不足");
+  it("R7: a message starting with the 模型加载失败 prefix skips the connection advice, surfacing 本地模型加载失败 instead", () => {
+    expect(withSidecarHint("模型加载失败：磁盘空间不足")).toBe("本地模型加载失败：磁盘空间不足");
     expect(withSidecarHint("模型加载失败：磁盘空间不足")).not.toContain(SIDECAR_UNREACHABLE_HINT);
   });
 

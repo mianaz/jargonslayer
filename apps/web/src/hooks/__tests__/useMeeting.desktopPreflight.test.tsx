@@ -197,7 +197,7 @@ describe("useMeeting — desktop session-start preflight (field-test fix B)", ()
     expect(engines.length).toBe(0); // no engine ever constructed/attached
     expect(useApp.getState().status).toBe("idle"); // unchanged — beginMeeting() never ran
     expect(useApp.getState().meetingGen).toBe(0); // unchanged
-    expect(useApp.getState().toast).toBe("本地 Whisper 尚未安装，正在打开安装向导…");
+    expect(useApp.getState().toast).toBe("本地转录服务尚未安装，正在打开安装向导…");
     expect(handle.requestProvisionCheck).toHaveBeenCalledTimes(1);
   });
 
@@ -388,7 +388,7 @@ describe("useMeeting — desktop session-start preflight (field-test fix B)", ()
     expect(oldEngine.resumeCalls).toBe(0); // never soft-resumed either
     expect(engines.length).toBe(1); // no new engine ever constructed
     expect(unhealthyHandle.requestProvisionCheck).toHaveBeenCalledTimes(1);
-    expect(useApp.getState().toast).toBe("本地 Whisper 尚未安装，正在打开安装向导…");
+    expect(useApp.getState().toast).toBe("本地转录服务尚未安装，正在打开安装向导…");
   });
 
   it("resume(): switched to a DIFFERENT sidecar engine while paused + handle HEALTHY — reconcile proceeds normally (old engine stopped, new one attached)", async () => {

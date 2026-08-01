@@ -5,7 +5,7 @@
 // to target a specific input device via this API (nor to disable the
 // browser's echo-cancellation/noise-suppression chain, which is why
 // this engine picks up speaker-played "external" audio poorly — the
-// local Whisper engine or tab-audio mode are the answers there).
+// local-model engine or tab-audio mode are the answers there).
 //
 // Continuous-speech hardening (see webSpeechSession.ts for the
 // segmentation rationale, sttSupervisor.ts for the full rotation/
@@ -281,7 +281,7 @@ const WATCHDOG_TICK_MS = 500;
 const CLOUD_FINALIZE_GRACE_MS = 2_000;
 
 const STEER_NOTICE =
-  "一直在说话但识别不出，可能语言不匹配，试试本地 Whisper 或标签页音频模式";
+  "一直在说话但识别不出，可能语言不匹配，试试本地模型或标签页音频模式";
 
 export class WebSpeechEngine implements STTEngine {
   readonly kind: STTEngineKind = "webspeech";
@@ -369,7 +369,7 @@ export class WebSpeechEngine implements STTEngine {
       // browser.
       events.onStatus(
         "error",
-        "当前浏览器不支持语音识别，请使用 Chrome/Edge，或切换到本地 Whisper / 演示模式，也可点击「导入」上传音频/文稿，无需麦克风与 API Key，任何浏览器都能用",
+        "当前浏览器不支持语音识别，请使用 Chrome/Edge，或切换到本地模型 / 演示模式，也可点击「导入」上传音频/文稿，无需麦克风与 API Key，任何浏览器都能用",
       );
       return;
     }
@@ -519,7 +519,7 @@ export class WebSpeechEngine implements STTEngine {
       case "network":
         this.events.onStatus(
           "error",
-          "语音识别网络错误，Web Speech 需要联网，可切换到本地 Whisper 引擎",
+          "语音识别网络错误，Web Speech 需要联网，可切换到本地模型引擎",
         );
         return;
       default:

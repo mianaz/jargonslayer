@@ -150,7 +150,7 @@ describe("AnkiConnectSection", () => {
 
   it("shows the port-clash note verbatim", () => {
     const el = mount(value, () => {});
-    expect(el.textContent).toContain("若同时使用本地 Whisper");
+    expect(el.textContent).toContain("若同时使用本地转录服务");
     expect(el.textContent).toContain("需在 Anki 的 AnkiConnect");
   });
 });
