@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer Docs — Changelog</title>
+<meta name="description" content="JargonSlayer release history: every version from v0.1 to today, with dates and user-facing changes.">
+<link rel="icon" type="image/png" href="../assets/icon-192.png">
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / changelog</div>
+  <div class="spacer"></div>
+  <a href="../">Landing</a>
+  <a href="zh/changelog.html">中文</a>
+  <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
+  <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation sections">
+    <div class="label">Docs</div>
+    <a href="./">User Guide</a>
+    <a href="features.html">Features</a>
+    <a href="changelog.html" class="current">Changelog</a>
+    <a href="advanced.html">Power Users</a>
+
+    <div class="label">Versions</div>
+    <a href="#v074">v0.7.4</a>
+    <a href="#v073">v0.7.3</a>
+    <a href="#v072">v0.7.2</a>
+    <a href="#v071">v0.7.1</a>
+    <a href="#v06">v0.6</a>
+    <a href="#v051">v0.5.1</a>
+    <a href="#v05">v0.5.0</a>
+    <a href="#v04">v0.4 series</a>
+    <a href="#v03">v0.3.0</a>
+    <a href="#early">v0.2 and earlier</a>
+  </nav>
+
+  <main>
+    <section class="hero">
+      <span class="eyebrow">Changelog</span>
+      <h1>Release History</h1>
+      <p class="lead">Every user-visible change, newest first. Versions cover the web app, the macOS desktop app, the iOS beta, and the Chrome extension together unless a change names a specific platform. Release downloads live on <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>; what's planned next is on the <a href="features.html#next">Features page</a>.</p>
+    </section>
+
+    <section id="v074">
+      <h2>v0.7</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.7.4</h3><span class="ver-date">August 2026</span><span class="ver-tag">Latest</span></div>
+        <ul>
+          <li><strong>Domain-aware multi-sense definitions:</strong> a headword with more than one definition now ranks them by the meeting's domain — CAC resolves to Cancer-Associated Cachexia in a cachexia talk rather than Customer Acquisition Cost, NDA to New Drug Application inside "IND … or NDA or BLA," and PR to precision-recall rather than Pull Request in an ML talk; an unclear domain still returns a usable definition.</li>
+          <li><strong>划词 lookup rework:</strong> selecting text now runs a dictionary lookup first — every matching pack and sense is listed instead of a single winner — and a genuine miss is explained in context and translated; <code>加入我的词典</code> drops to a secondary action.</li>
+          <li><strong>Engine picker grouped by kind:</strong> 本地 STT 模型 / 系统 STT 服务 / 第三方 STT 提供商 replace one flat list; unconfigured third-party providers stay visible with a 已配置/未配置 hint instead of disappearing.</li>
+          <li><strong>Audio source as its own control:</strong> changeable mid-meeting now instead of only before one starts; system/app audio states plainly that it captures the other party, never your microphone.</li>
+          <li><strong>One 密钥 settings category:</strong> every API key — LLM provider, transcription, translation, diarization token — now lives under a single 设置 → 密钥 screen instead of five scattered entry points; storage and Keychain custody are unchanged.</li>
+          <li><strong>Readable connection errors:</strong> the web build shows a plain-language setup message when it can't reach a self-hosted transcription service, instead of a raw socket error.</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v073">
+        <div class="ver-head"><h3>v0.7.3</h3><span class="ver-date">2026-07-30</span><span class="ver-tag fix">Fix train</span></div>
+        <ul>
+          <li><strong>Per-provider API keys:</strong> switching LLM providers no longer risks sending the previous provider's key to the new provider's host — each provider's key is now stored and sent in isolation, migrated automatically, still Keychain-backed on desktop.</li>
+          <li><strong>Speaker rename fix:</strong> renaming a speaker now updates the roster and the live speaker picker immediately; it used to stick on the old name for the rest of the meeting.</li>
+          <li><strong>Tighter card context:</strong> an expression card's quoted context is now the clause around the match, not the full 60-word ASR run-on it came from.</li>
+          <li><strong>Fewer false positives, cleaner glosses:</strong> <i>in the red</i> no longer fires on unrelated phrases like <i>the red graph</i>, and broken built-in glosses (<code>mean</code> shipping as literally "1.") are fixed at the source, with a new build-time lint to catch the next one.</li>
+          <li><strong>Sharper meeting-domain inference:</strong> "thank you for your attention" no longer produces an attention card in a biology talk, while precision/recall still fire correctly in an ML talk.</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v072">
+        <div class="ver-head"><h3>v0.7.2</h3><span class="ver-date">2026-07-28</span><span class="ver-tag fix">Fix train</span></div>
+        <ul>
+          <li><strong>Dictionary matching fixes:</strong> a headword ending in a parenthetical qualifier — <i>stochastic gradient descent (SGD)</i>, <i>mode (statistics)</i> — now matches in the transcript (it never could before); enabling only a specialist pack (e.g. 生信/统计) no longer silently drops an entry whose name collides with a business-pack term, and each enabled pack's own definition surfaces; an installed dictionary pack now wins over a built-in one when both define the same term.</li>
+          <li><strong>Diagnostics for beta feedback:</strong> Settings' 诊断信息 log viewer now covers all three local logs (Whisper 服务 / 系统/App 音频 / 系统识别) via a source picker; a new 导出诊断文件 button saves the diagnostics bundle as a file (opens the system share sheet on iOS); the Chrome extension side panel gets its first 复制诊断 button.</li>
+          <li><strong>Local logs never carry meeting speech:</strong> a hardening fix in the desktop speech-recognition log writer closes the one remaining path where a malformed line could leak raw speech into a local log file.</li>
+          <li><strong>Chrome extension updated to 0.7.2:</strong> carries the dictionary reliability fixes above; the previous release was pinned at 0.6.0.</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v071">
+        <div class="ver-head"><h3>v0.7.1</h3><span class="ver-date">2026-07-28</span></div>
+        <ul>
+          <li><strong>有道翻译 Youdao translation engine (BYOK):</strong> another translation-engine option alongside the on-device translators, the LLM, and DeepL — bring your own 应用ID/应用密钥, billed per use; native-app only (desktop/iOS) since Youdao's API has no cross-origin support for the web app.</li>
+          <li><strong>会后补全翻译 post-meeting gap-fill:</strong> a one-click toolbar button after the meeting stops re-translates any segment that was missed, through whichever translation engine is configured.</li>
+          <li><strong>Exports follow translations:</strong> Markdown, docx, and copy-to-clipboard exports now carry existing translations instead of only the ones an LLM summary happened to produce; if segments are still untranslated, you're offered a gap-fill-then-export option, with a 未翻译 marker for whatever remains.</li>
+          <li><strong>存词 glossary surface capture:</strong> saving a card to your glossary now keeps the exact wording it appeared as in that meeting, not just the dictionary's canonical form.</li>
+          <li><strong>Mobile UI polish:</strong> a single-row header on phone widths, full-word status chips instead of abbreviations, and unified control sizing.</li>
+          <li><strong>Bit refresh:</strong> a redrawn body, a warmer color palette, and a greeting-style entrance animation for the status-line mascot.</li>
+          <li><strong>Fix:</strong> the source-sentence quote in an expanded expression card no longer clips at two lines.</li>
+          <li><strong>iOS fix:</strong> exports (Markdown, docx, backups, Cornell notes) now hand the file to the system share sheet — previously tapping an export button on iOS did nothing.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v06">
+      <h2>v0.6</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.6.0</h3><span class="ver-date">2026-07-24</span></div>
+        <ul>
+          <li><strong>Dictionary packs — 17 packs, 1,000+ entries:</strong> the built-in dictionary grew to 17 packs with multi-sense ranking that sorts definitions by meeting context. Variant matching (85 entries) catches inflected and alternate forms — say <i>keep the ball rolling</i> and the dictionary's <i>get the ball rolling</i> still hits.</li>
+          <li><strong>Apple on-device translation on iOS:</strong> the Apple Translation engine, previously desktop-only, now runs on iOS 26+ as well — fully on-device, no API key, text never leaves the device.</li>
+          <li><strong>iOS enters TestFlight beta:</strong> JargonSlayer is now available on iOS through TestFlight (by invite, iOS 26+). On-device system speech recognition and Apple Translation both run locally on the phone.</li>
+          <li><strong>Mobile main-screen redesign:</strong> the transcript now fills the phone screen, with explanation cards in a swipeable bottom strip — newest on the left, tap a highlighted term to jump to its card.</li>
+          <li><strong>Dictionary mode is now the default:</strong> new installs start in dictionary mode (the always-on, fully offline detection layer); AI mode moves to opt-in beta.</li>
+          <li><strong>0.6.1 / 0.6.2 follow-ups:</strong> iOS build surfaced in the titlebar, and Apple on-device translation reaching every desktop and iOS surface it applies to.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v051">
+      <h2>v0.5</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.5.1</h3><span class="ver-date">July 2026</span></div>
+        <ul>
+          <li><strong>Appearance expansion:</strong> two more built-in themes — 像素 (8-bit quest log) and 笔记 (classroom notebook) — bringing the total to nine; a custom theme editor with live contrast hints and JSON import/export; separate UI and monospace font pickers; an optional frosted-glass overlay; and independent global/transcript type-size controls.</li>
+          <li><strong>Bit's wardrobe:</strong> the status-line mascot dresses to match each built-in theme, with manual pinning and sleep/celebration animations.</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v05">
+        <div class="ver-head"><h3>v0.5.0</h3><span class="ver-date">2026-07-20</span></div>
+        <ul>
+          <li><strong>Mode-first UI:</strong> before a meeting, pick how you're listening (microphone / tab audio / system-app audio / an imported file) instead of an engine directly; the app matches the right engine to your platform and configuration automatically, and onboarding was rewritten to match.</li>
+          <li><strong>Speaker tools:</strong> per-line or batch speaker assignment, "apply to this and following," and a live "current speaker" tag; manually assigned lines are locked and survive later automatic diarization updates.</li>
+          <li><strong>AI transcript correction (reviewed):</strong> one click after the meeting has the AI read the transcript and flag recognition errors, listing the original and a suggested fix segment by segment — nothing changes until you accept it, and accepted segments re-translate automatically.</li>
+          <li><strong>Crash recovery:</strong> the meeting is auto-drafted in real time; after a page refresh or a browser crash, history offers a one-click 「恢复到历史记录」 restore.</li>
+          <li><strong>Background term lookup:</strong> a selection lookup's explanation keeps generating in the background and lands in the card list even if you close the popup.</li>
+          <li><strong>Exports and integrations:</strong> a new docx export; AnkiConnect syncs new cards into your local Anki in one click with dedup; the personal glossary can split into multiple named custom packs.</li>
+          <li><strong>Translation engine choice:</strong> bilingual subtitles and full-transcript translation can use the browser's built-in on-device translator (Chrome 138+, no key required) instead of the LLM; the desktop and iOS apps add Apple's on-device translation (macOS 26+ / iOS 26+), another local, key-free option.</li>
+          <li><strong>Deepgram cloud recognition (BYOK, English):</strong> a new cloud STT engine option for English-only meetings.</li>
+          <li><strong>Hosted preview's limited trial:</strong> a built-in Soniox cloud-recognition trial (no key, up to 3 clips per person per day, ~10 minutes max per clip, shared first-come quota); tab audio is back in the hosted preview on the same trial quota.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v04">
+      <h2>v0.4 series</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.4.0 – v0.4.6</h3><span class="ver-date">2026-07-12 → 2026-07-19</span></div>
+        <ul>
+          <li><strong>Desktop app (Tauri, macOS, v0.4.0):</strong> self-managed local Whisper — consent-gated wizard, model picker + live model switching, one-click diarization add-on. Signed, notarized DMG on releases.</li>
+          <li><strong>On-device browser recognition:</strong> Chrome 139+ prefers local speech recognition, automatic cloud fallback.</li>
+          <li><strong>Soniox realtime engine (experimental, BYOK):</strong> aimed at code-switched zh-en; stays experimental until it clears the in-house benchmark.</li>
+          <li><strong>System/App audio (desktop, macOS 14.4+):</strong> CoreAudio process-tap capture of what the Mac is playing, replacing desktop's old tab-audio slot.</li>
+          <li><strong>系统识别 System Speech (desktop, macOS 26+, v0.4.3):</strong> zero-install engine on macOS's native SpeechAnalyzer — no model download, no Python; audio never leaves the capturing process.</li>
+          <li><strong>英文加速 Parakeet (desktop, Apple Silicon, v0.4.4):</strong> opt-in, MLX-accelerated English engine in the model picker — far faster than Whisper (~100x realtime in batch), no realtime speaker diarization yet.</li>
+          <li><strong>Chrome extension (Lite):</strong> MV3 side panel with live mic capture, the built-in dictionary, and on-device translation.</li>
+          <li><strong>Desktop shell features:</strong> background task center, engine dropdown in the status bar, first-run onboarding (OpenRouter OAuth + diarization token), and a release update check.</li>
+          <li><strong>AI transparency panel + domain dictionary packs (v0.4.6):</strong> a per-task AI status panel (detection / explanation / translation / reports) with model, routing, and call/failure/QC-drop counts plus a status-line chip; three new built-in dictionary packs — statistics, machine learning, bioinformatics (~226 terms); and a detection-quality fix so ordinary sentences are no longer mislabeled as jargon.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v03">
+      <h2>v0.3</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.3.0</h3><span class="ver-date">2026-07-10</span></div>
+        <ul>
+          <li><strong>The learning release:</strong> glossary-only mastery grew into a first-class learn-set — known-word suppression on live cards plus a due-driven review loop (SM-2-lite scheduling) under <code>/review → 到期复习</code>.</li>
+          <li><strong>Unified import hub + background task center:</strong> transcript, recording, and URL imports in one place, with job progress tracking.</li>
+          <li><strong>Simple/advanced settings:</strong> settings split into a simple tier for daily use and an advanced tier for the full surface.</li>
+          <li><strong>Four new themes</strong> joined the original terminal pair.</li>
+          <li><strong>STT reliability:</strong> a VAD supervisor fix closed a transcript-loss path in live recognition.</li>
+          <li><strong>Diagnostics:</strong> the first redacted diagnostics bundle for bug reports.</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="early">
+      <h2>Early Versions</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.2.0 – v0.2.3</h3><span class="ver-date">2026-07-06 → 2026-07-07</span></div>
+        <ul>
+          <li><strong>Content ingestion phase 2 (v0.2.0):</strong> audio, video, and URL import; bilingual transcription; OpenRouter one-click OAuth.</li>
+          <li><strong>v0.2.1 – v0.2.3:</strong> copy polish, server-route hardening after an adversarial review pass, and a translate-route model-compatibility fix.</li>
+        </ul>
+      </div>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.1.0</h3><span class="ver-date">2026-07-06</span></div>
+        <ul>
+          <li><strong>First cut:</strong> live transcription with browser recognition, the built-in dictionary's instant detection floor, LLM explanation cards, bilingual summary, and local session history.</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="footer">
+      <span>JargonSlayer · <a href="./">User Guide</a> · <a href="features.html">Features</a> · <a href="advanced.html">Power Users</a> · <a href="../privacy.html">Privacy</a> · <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a></span>
+    </div>
+  </main>
+</div>
+</body>
+</html>

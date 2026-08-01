@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer Docs — Power Users</title>
+<meta name="description" content="JargonSlayer for power users: self-hosting, the Whisper and agent sidecars, the full settings reference, model routing, custom themes, dictionary pack authoring, webhooks and automation, architecture, storage, behavior specs, and testing.">
+<link rel="icon" type="image/png" href="../assets/icon-192.png">
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / power users</div>
+  <div class="spacer"></div>
+  <a href="../">Landing</a>
+  <a href="zh/advanced.html">中文</a>
+  <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
+  <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation sections">
+    <div class="label">Docs</div>
+    <a href="./">User Guide</a>
+    <a href="features.html">Features</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="advanced.html" class="current">Power Users</a>
+
+    <div class="label">Run It Yourself</div>
+    <a href="#selfhost">Self-hosting</a>
+    <a href="#sidecars">Whisper Sidecar</a>
+    <a href="#agent-sidecar">Agent Sidecar</a>
+
+    <div class="label">Customize</div>
+    <a href="#settings">Settings Reference</a>
+    <a href="#routing">Model Routing</a>
+    <a href="#themes">Theming</a>
+    <a href="#packs">Pack Authoring</a>
+    <a href="#automation">Automation</a>
+
+    <div class="label">Internals</div>
+    <a href="#architecture">Architecture</a>
+    <a href="#storage">Data and Storage</a>
+    <a href="#specs">Behavior Specs</a>
+    <a href="#async">Async Delegation</a>
+    <a href="#testing">Testing</a>
+  </nav>
+
+  <main>
+    <section class="hero">
+      <span class="eyebrow">Power Users</span>
+      <h1>Run, Customize, Extend</h1>
+      <p class="lead">This page is for operators and developers: running JargonSlayer from source, standing up the local sidecars, the full settings reference, theming and dictionary-pack internals, webhook payloads, and the app's own architecture and test suite. If you just want to use the app, the <a href="./">User Guide</a> covers that.</p>
+      <div class="pill-row">
+        <span class="pill">npm workspace</span>
+        <span class="pill">Local Whisper sidecar</span>
+        <span class="pill">17-token themes</span>
+        <span class="pill">Remote pack manifests</span>
+        <span class="pill">Webhooks</span>
+        <span class="pill">IndexedDB</span>
+      </div>
+    </section>
+
+    <section id="selfhost">
+      <h2>Self-hosting the Web App</h2>
+      <p>The web app is a normal Next.js project. Clone, install, and run:</p>
+      <pre><code>git clone https://github.com/mianaz/jargonslayer.git
+cd jargonslayer
+npm install
+npm run dev
+# open http://localhost:3000</code></pre>
+      <p>For a production-like local run, build and start instead of using the dev server:</p>
+      <pre><code>npm run build
+npm start</code></pre>
+      <p>Before committing changes, run the same checks CI runs:</p>
+      <pre><code>npm run typecheck
+npm test
+npm run build</code></pre>
+      <p>Server-side provider keys go in <code>.env.local</code> and are never shipped to the browser:</p>
+      <pre><code>ANTHROPIC_API_KEY=sk-ant-...</code></pre>
+      <h3>Deploy tiers</h3>
+      <p>The default build is the <strong>full local-first build</strong> — every feature is available, gated only by what the visitor configures. Setting <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code> switches to the <strong>hosted-preview tier</strong>: sidecar-dependent features (local Whisper, tab audio through the sidecar, video URL import, subscription-direct) show disabled/greyed with an explanation instead of failing, and zero-key AI use is backed by the preview server's own configured model path — see <a href="./#ai">AI Modes</a> in the User Guide for what that means for privacy.</p>
+      <h3>PWA install</h3>
+      <p>The web app installs as a Progressive Web App off its existing manifest and icons — no separate build. From Chrome/Edge desktop it installs as a windowed app; from Safari on iOS/iPadOS it adds to the home screen.</p>
+    </section>
+
+    <section id="sidecars">
+      <h2>Local Whisper Sidecar</h2>
+      <p>Local Whisper, tab audio, and sidecar-based recording/URL import on the <strong>web app</strong> all go through one Python process, <code>sidecar/whisper_server.py</code>. On the <strong>desktop app</strong> this is provisioned and self-managed by the first-run wizard — nothing below is needed there unless you're pointing it at an external sidecar (see <code>sidecarMode</code> below). For the web app, set it up by hand:</p>
+      <pre><code>cd sidecar
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python whisper_server.py --model small</code></pre>
+      <p>It serves live realtime transcription over <code>ws://127.0.0.1:8765</code> and a local HTTP job API for recording and video-URL imports, built on faster-whisper, energy-based VAD, optional local audio saving, and pyannote for diarization when configured.</p>
+      <h3>Model choices</h3>
+      <p><code>--model</code> accepts <code>tiny</code>, <code>base</code>, <code>small</code>, <code>medium</code>, <code>large-v3</code>, <code>large-v3-turbo</code>, and <code>parakeet-tdt-0.6b-v3</code> (MLX-accelerated, English-priority — the manual-sidecar counterpart to desktop's 英文加速 engine). <code>small</code> is a reasonable daily-use default for this manual path. The desktop wizard's own curated picker is narrower and macOS-specific: <code>small</code> / <code>medium</code> / <code>large-v3</code> / <code>large-v3-turbo</code> plus an available Parakeet entry, with <code>medium</code> pre-selected.</p>
+      <h3>Speaker diarization</h3>
+      <p>Configure a Hugging Face token (<code>hfToken</code> in Settings, or pasted during desktop's first-run onboarding — see <a href="./#desktop-app">Desktop App</a> in the User Guide) after accepting the usage terms for pyannote's segmentation and speaker-diarization models on Hugging Face. Batch imports diarize the whole recording. Realtime diarization is beta: the sidecar re-runs pyannote on a recent tail window, matches speakers against a stable registry, and pushes label updates back to the UI without blocking transcription.</p>
+      <h3>Moved-directory gotcha</h3>
+      <p>Python virtual environments bake in absolute paths. If you move or rename the repository, the venv breaks silently; rebuild it (<code>rm -rf sidecar/.venv</code>, then repeat the setup above).</p>
+      <h3>sidecarMode (desktop)</h3>
+      <p>The desktop build's <code>sidecarMode</code> setting is <code>managed</code> (default — the app installs, starts, and restarts its own bundled sidecar) or <code>external</code> (point it at a sidecar you started yourself, same as the web build). The web build is always effectively <code>external</code>.</p>
+      <div class="callout info"><strong>No sidecar README yet.</strong> This page and the sidecar's own test files (see <a href="#testing">Testing</a>) are the current runbook for sidecar operation.</div>
+    </section>
+
+    <section id="agent-sidecar">
+      <h2>Subscription-direct Agent Sidecar (experimental)</h2>
+      <p><code>sidecar/agent_server.py</code> is experimental and local-only. It drives your own already-authenticated <code>claude</code> or <code>codex</code> CLI login for <strong>detect/define only</strong> — translation and summary/reports always go through the normal app routes, in every build.</p>
+      <ul>
+        <li>Default loopback host: <code>http://127.0.0.1:8767</code>.</li>
+        <li>Endpoints: <code>GET /agent/health</code>, <code>POST /agent/detect</code>, <code>POST /agent/define</code>.</li>
+        <li>Detect/define calls require a loopback Origin plus a one-time connection code printed on sidecar startup, copied by hand into Settings.</li>
+        <li>Feature gate: <code>NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1</code> at build time — unset, the whole UI section and call branch don't exist in the built bundle.</li>
+        <li>If the sidecar is unreachable, not logged in, or quota-limited, the app falls back to dictionary detection instead of failing.</li>
+      </ul>
+      <div class="callout risk"><strong>Environment warning:</strong> if <code>ANTHROPIC_API_KEY</code> is present in the agent sidecar's own environment, Claude calls may prefer that key over your subscription login. The sidecar warns about this but does not unset it — clear it from the sidecar's shell environment if you want subscription login to win.</div>
+    </section>
+
+    <section id="settings">
+      <h2>Settings Reference</h2>
+      <p>One settings object controls transcription, model routing, detection, translation, display, and integrations. As of v0.7.3, LLM provider keys are stored and sent per-provider, never as one shared key; as of v0.7.4, <code>设置 → 密钥</code> is the single UI home for every key and token in the table below.</p>
+      <div class="callout risk"><strong>There is no single <code>apiKey</code> field anymore.</strong> Each provider preset has its own field — <code>apiKeyAnthropic</code>, <code>apiKeyOpenai</code>, <code>apiKeyDeepseek</code>, <code>apiKeyQwen</code>, <code>apiKeyOpenrouter</code>, <code>apiKeyPoe</code>, <code>apiKeyOllama</code>, <code>apiKeyCustom</code> (plus <code>llmCustomHost</code> for the custom endpoint) — so switching providers can never carry the previous provider's key to the new one's host. A bare <code>apiKey</code> only still exists inside a per-task <code>taskLlm</code> override.</div>
+
+      <h3>Transcription</h3>
+      <table>
+        <thead><tr><th>Field</th><th>What it controls</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>engine</code></td><td>Live capture engine choice.</td><td><code>import</code> and <code>browser-whisper</code> are stored on imported sessions but are not selectable live engines.</td></tr>
+          <tr><td><code>mode</code></td><td>Audio source: <code>mic</code> / <code>tab</code> / <code>system-audio</code> / <code>import</code> / <code>url</code>.</td><td>Its own control since v0.7.4 — changeable mid-meeting, not just before one starts.</td></tr>
+          <tr><td><code>language</code></td><td>BCP-47 language passed to Web Speech.</td><td>e.g. <code>en-US</code>.</td></tr>
+          <tr><td><code>whisperUrl</code></td><td>Local Whisper websocket URL.</td><td>Default <code>ws://localhost:8765</code>.</td></tr>
+          <tr><td><code>whisperModel</code></td><td>Sidecar model name.</td><td>Default <code>small</code> — see <a href="#sidecars">Whisper Sidecar</a> for the full choice list.</td></tr>
+          <tr><td><code>proxyUrl</code></td><td>Desktop-only manual proxy override.</td><td><code>""</code> (default) follows the system proxy; otherwise <code>http://</code>/<code>https://</code>/<code>socks5://</code>/<code>socks5h://</code>, userinfo allowed for basic auth — for env-var-only or PAC-only networks the OS auto-detection can't see.</td></tr>
+          <tr><td><code>partials</code></td><td>Whether the sidecar streams interim (non-final) text.</td><td>Default on.</td></tr>
+          <tr><td><code>preferOnDeviceSpeech</code></td><td>Prefer the browser's on-device recognizer over its cloud fallback.</td><td>Default on.</td></tr>
+          <tr><td><code>sidecarMode</code></td><td>Desktop only: <code>managed</code> or <code>external</code>.</td><td>See <a href="#sidecars">Whisper Sidecar</a>.</td></tr>
+          <tr><td><code>tabAudioCloudProvider</code></td><td>Which BYOK cloud engine tab audio uses.</td><td><code>soniox</code> or <code>deepgram</code>.</td></tr>
+          <tr><td><code>sonioxKey</code> / <code>deepgramKey</code> / <code>elevenLabsKey</code></td><td>BYOK keys for the three third-party cloud STT engines.</td><td>Stored under <code>设置 → 密钥</code>.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>AI routing</h3>
+      <table>
+        <thead><tr><th>Field</th><th>What it controls</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>provider</code></td><td>Primary LLM route.</td><td><code>anthropic</code> or <code>openai-compat</code>.</td></tr>
+          <tr><td><code>baseUrl</code></td><td>Base URL for <code>openai-compat</code> providers.</td><td>e.g. <code>https://api.deepseek.com/v1</code>.</td></tr>
+          <tr><td><code>apiKeyAnthropic</code> / <code>apiKeyOpenai</code> / <code>apiKeyDeepseek</code> / <code>apiKeyQwen</code> / <code>apiKeyOpenrouter</code> / <code>apiKeyPoe</code> / <code>apiKeyOllama</code> / <code>apiKeyCustom</code></td><td>Per-provider key.</td><td>Isolated since v0.7.3 — see the callout above.</td></tr>
+          <tr><td><code>llmCustomHost</code></td><td>Binds <code>apiKeyCustom</code> to whichever base URL the 自定义 preset points at.</td><td></td></tr>
+          <tr><td><code>taskLlm</code></td><td>Optional per-task provider/model overrides for <code>translate</code>, <code>detect</code>, <code>summary</code>.</td><td>Define always rides <code>detect</code>'s config; a domain absent (or <code>enabled:false</code>) inherits the primary route entirely.</td></tr>
+          <tr><td><code>agentUrl</code></td><td>Subscription-direct agent sidecar base URL.</td><td>Default <code>http://127.0.0.1:8767</code> — see <a href="#agent-sidecar">Agent Sidecar</a>.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Detection</h3>
+      <table>
+        <thead><tr><th>Field</th><th>What it controls</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>autoDetect</code></td><td>Live detection on/off, the master switch.</td><td></td></tr>
+          <tr><td><code>aiDetect</code></td><td>Only controls the LLM layer.</td><td>The dictionary floor stays instant and offline regardless of this flag.</td></tr>
+          <tr><td><code>minConfidence</code></td><td>Threshold applied when merging detections.</td><td></td></tr>
+          <tr><td><code>enabledPacks</code></td><td>Which built-in/installed dictionary packs are active.</td><td><code>null</code> = all packs enabled; <code>core</code> is always on regardless.</td></tr>
+          <tr><td><code>detectIdiomMaxWords</code> / <code>detectIdiomMaxChars</code></td><td>Length ceiling above which an idiom/slang span is dropped as an over-selected sentence.</td><td>Default 12 words / 90 chars.</td></tr>
+          <tr><td><code>packAutoUpdate</code></td><td>Installed remote packs auto-check for a newer version.</td><td>Once a day.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Translation</h3>
+      <table>
+        <thead><tr><th>Field</th><th>What it controls</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>bilingualTranscript</code></td><td>Live segment-by-segment translation on/off.</td><td>Feeds <code>explainLanguage</code>.</td></tr>
+          <tr><td><code>explainLanguage</code></td><td>Target language for explanations/translation.</td><td><code>zh</code> (default) or <code>en</code>.</td></tr>
+          <tr><td><code>translateEngine</code></td><td>Which translation engine runs.</td><td><code>"system"</code> (on-device, default) | <code>"deepl"</code> | <code>"youdao"</code> | <code>"llm"</code>.</td></tr>
+          <tr><td><code>deeplKey</code></td><td>BYOK DeepL key.</td><td></td></tr>
+          <tr><td><code>youdaoAppKey</code> / <code>youdaoAppSecret</code></td><td>BYOK 有道 (Youdao) 应用ID/应用密钥.</td><td>Native-app only (desktop/iOS) — Youdao's API has no cross-origin support for the web app.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Display</h3>
+      <table>
+        <thead><tr><th>Field</th><th>What it controls</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>uiMode</code></td><td>Settings tier.</td><td><code>simple</code> or <code>advanced</code>.</td></tr>
+          <tr><td><code>themeId</code> / <code>customThemes</code></td><td>Active theme id and user-authored theme definitions.</td><td>See <a href="#themes">Theming</a>.</td></tr>
+          <tr><td><code>uiFont</code> / <code>monoFont</code></td><td>Interface and monospace font pickers.</td><td>See <a href="#themes">Theming</a>.</td></tr>
+          <tr><td><code>overlayGlass</code></td><td>Frosted-glass overlay toggle.</td><td>Off by default.</td></tr>
+          <tr><td><code>fontSize</code> / <code>transcriptScale</code> / <code>transcriptLeading</code></td><td>Global, transcript-only, and line-spacing type-size controls.</td><td></td></tr>
+          <tr><td><code>bitCostume</code></td><td>Bit's wardrobe pin.</td><td><code>"auto"</code> (follow theme, default), <code>"none"</code>, or a specific costume id.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Integrations</h3>
+      <table>
+        <thead><tr><th>Field</th><th>What it controls</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>hfToken</code> / <code>realtimeDiarize</code></td><td>Diarization token and the realtime-beta toggle.</td><td>See <a href="#sidecars">Whisper Sidecar</a>.</td></tr>
+          <tr><td><code>ankiConnect</code></td><td><code>{ enabled, deckName, port }</code> — AnkiConnect sync target.</td><td>Port defaults to 8765, independently configurable since it collides with <code>whisperUrl</code>'s own default port. See <a href="#automation">Automation</a>.</td></tr>
+          <tr><td><code>usageTracking</code></td><td>Local, on-device usage ledger (STT seconds, LLM calls/tokens per day+provider).</td><td>No telemetry — nothing here ever leaves the browser/desktop app.</td></tr>
+          <tr><td><code>autoExport</code> / <code>webhookUrl</code> / <code>exportFrontmatter</code></td><td>Folder auto-export, webhook URL (<code>""</code> = off), and Markdown frontmatter.</td><td>See <a href="#automation">Automation</a> for payloads and file naming.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="routing">
+      <h2>Model Routing</h2>
+      <h3>Per-task models</h3>
+      <p>Advanced settings can point detection, translation, and reports at different providers or models via <code>taskLlm</code> (see <a href="#settings">Settings Reference</a> above). The normal split is a fast/cheap model for live detection and a stronger model for post-meeting reports; define always rides detect's configuration.</p>
+      <h3>Provider presets</h3>
+      <p><code>设置 → AI 检测</code> ships eight presets:</p>
+      <ul>
+        <li><strong>Anthropic 官方</strong> — api.anthropic.com, native provider.</li>
+        <li><strong>OpenAI</strong> — api.openai.com/v1.</li>
+        <li><strong>DeepSeek</strong> — api.deepseek.com.</li>
+        <li><strong>通义千问</strong> — dashscope.aliyuncs.com/compatible-mode/v1.</li>
+        <li><strong>OpenRouter</strong> — openrouter.ai/api/v1, also reachable via one-click OAuth.</li>
+        <li><strong>Poe 订阅</strong> — api.poe.com/v1, a Poe subscription driving any OpenAI-compatible client.</li>
+        <li><strong>Ollama 本地</strong> — localhost:11434/v1, fully local inference.</li>
+        <li><strong>自定义</strong> — any other OpenAI-compatible endpoint.</li>
+      </ul>
+      <p>Every preset besides Anthropic maps to the shared <code>openai-compat</code> provider type with a different base URL. Each preset's key is stored and sent in isolation — a v0.7.3 fix so switching providers never sends the previous provider's key to the new one's host.</p>
+      <h3>BYOK key handling paths</h3>
+      <table>
+        <thead><tr><th>Path</th><th>Where the key lives</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Browser-stored</td><td>Local browser storage</td><td>Entered under <code>设置 → 密钥</code>; every path below starts here.</td></tr>
+          <tr><td>Self-hosted web, relay</td><td>Relayed in memory through your own server's API routes</td><td>Never persisted server-side.</td></tr>
+          <tr><td>Hosted preview, BYOK</td><td>Browser-direct to the provider</td><td>Never touches the project server; the server rejects key-carrying relay requests outright.</td></tr>
+          <tr><td>Environment keys</td><td><code>.env.local</code> server variable, e.g. <code>ANTHROPIC_API_KEY</code></td><td>The key never enters the browser at all.</td></tr>
+          <tr><td>Desktop, OAuth</td><td>macOS Keychain, via RFC 8252 loopback OAuth</td><td>The system browser opens for OpenRouter login instead of an in-app popup, same flow as first-run onboarding.</td></tr>
+        </tbody>
+      </table>
+      <p><code>proxyUrl</code> (desktop only) is a manual escape hatch for reaching a BYOK endpoint when the OS-level auto-detection can't see the route — an env-var-only proxy setup, or a PAC-only network the app can't execute a script against.</p>
+    </section>
+
+    <section id="themes">
+      <h2>Theming</h2>
+      <p>Every theme — built-in or custom — is a flat token-to-hex map plus a scheme flag. Every value must match strict hex, <code>#RGB</code> or <code>#RRGGBB</code> — <code>rgb()</code>, <code>hsl()</code>, named colors, and CSS variables are all rejected outright — and values are injected as CSS custom properties rather than raw strings. Every theme is checked against WCAG AA contrast. <code>scheme</code> (<code>dark</code> or <code>light</code>) is a separate structural field, not an 18th token — it drives native form-control/scrollbar chrome and the in-UI icon swap.</p>
+      <h3>The 17 tokens</h3>
+      <p><code>ink</code>, <code>panel</code>, <code>panel2</code>, <code>panel3</code>, <code>edge</code>, <code>edge2</code>, <code>fg</code>, <code>mut</code>, <code>mut2</code>, <code>lab-red</code>, <code>lab-orange</code>, <code>lab-yellow</code>, <code>lab-green</code>, <code>lab-purple</code>, <code>lab-cyan</code>, <code>act</code>, <code>warn-soft</code>.</p>
+      <h3>Editor behavior</h3>
+      <ul>
+        <li>The theme grid's <code>新建</code> tile creates a theme from scratch or duplicates any theme, built-in or custom.</li>
+        <li>A live preview applies as you edit each token and reverts to the saved theme if you cancel.</li>
+        <li>Contrast hints flag tokens that fall below the AA/UI-contrast bars as you go — they warn, they never block saving.</li>
+        <li>Export to a JSON file, or import by pasting or picking a file; an imported theme is re-validated and its <code>id</code> is re-minted on import, so an imported file can never shadow or overwrite a built-in.</li>
+        <li>Deleting a theme asks for confirmation; deleting the active theme falls back to the terminal default.</li>
+      </ul>
+      <h3>Example custom theme</h3>
+      <pre><code>{
+  "id": "custom-1737421200000",
+  "label": "深海蓝调",
+  "scheme": "dark",
+  "tokens": {
+    "ink": "#050b14",
+    "panel": "#0d1620",
+    "panel2": "#14202c",
+    "panel3": "#1b2c3a",
+    "edge": "#25384a",
+    "edge2": "#37516a",
+    "fg": "#e8f1fb",
+    "mut": "#93a9bd",
+    "mut2": "#5c7186",
+    "lab-red": "#ff6b6b",
+    "lab-orange": "#ffa552",
+    "lab-yellow": "#f4d35e",
+    "lab-green": "#4ade80",
+    "lab-purple": "#b895ff",
+    "lab-cyan": "#41d1e0",
+    "act": "#2fd0e8",
+    "warn-soft": "#ffcf7a"
+  }
+}</code></pre>
+      <div class="callout info"><strong>Fonts are deliberately excluded</strong> from the theme schema and from exported theme files — a shared theme JSON can never change which fonts your app loads. Fonts are two separate settings, <code>界面字体</code> (UI font) and <code>等宽字体</code> (monospace), each with zero-download system presets (UI: default / serif / rounded; monospace: bundled JetBrains Mono default / your system monospace) or a custom system font name you type in. <code>uiFont</code>/<code>monoFont</code> accept <code>"default"</code>, a preset id, or <code>"custom:&lt;family&gt;"</code>; a custom name is sanitized before use.</div>
+    </section>
+
+    <section id="packs">
+      <h2>Dictionary Pack Authoring</h2>
+      <p>Remote packs are JSON manifests, validated and normalized into an in-memory registry, then shown in Settings alongside the built-in packs. Publish one at a GitHub raw URL or a jsDelivr URL and install it by pasting that URL, or share the file directly for file import.</p>
+      <h3>Manifest format</h3>
+      <pre><code>{
+  "id": "biotech-terms",
+  "name": "Biotech Terms",
+  "version": "1.2.0",
+  "terms": [{
+    "term": "IND",
+    "type": "acronym",
+    "gloss_en": "Investigational New Drug application",
+    "gloss_zh": "美国 FDA 新药临床试验申请"
+  }],
+  "expressions": [{
+    "expression": "go/no-go",
+    "category": "phrase",
+    "meaning": "a decision point to proceed or stop a program",
+    "chinese_explanation": "继续或终止（项目决策点）",
+    "plain_english": "decide whether to continue or stop",
+    "tone": "neutral, common in R&amp;D governance"
+  }]
+}</code></pre>
+      <p><code>id</code>, <code>name</code>, and <code>version</code> are required at the manifest root; <code>terms</code> and <code>expressions</code> are both optional arrays. Acronyms are just <code>terms</code> entries with <code>"type": "acronym"</code> — there is no separate acronym shape.</p>
+      <h3>Validation behavior</h3>
+      <ul>
+        <li>Malformed entries are dropped individually with a warning; the whole pack only fails to install when the manifest itself is unusable.</li>
+        <li>An entry-level <code>pack</code> field is ignored and overwritten with the manifest's own <code>id</code> — an entry can't spoof another pack's id.</li>
+        <li>Changing <code>version</code> is enough to trigger an update; installed packs auto-check for a newer version once a day (<code>packAutoUpdate</code>).</li>
+      </ul>
+      <h3>Official catalog</h3>
+      <p>Settings has a one-click browse-and-install catalog — six specialized packs (medicine, biopharma, AI/ML, law, finance, engineering; 4,300+ terms total) published at <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a> — alongside file or GitHub-URL import for any third-party pack.</p>
+      <h3>Precedence</h3>
+      <p><code>personal glossary &gt; installed packs &gt; built-ins</code>. Personal glossary entries shadow every dictionary match. An installed pack's own definition taking precedence over a built-in one (rather than the built-in silently winning) shipped in v0.7.2.</p>
+      <div class="callout"><strong>Filter before importing large acronym sources.</strong> A global acronym dump is candidate data, not a ready pack — filter by domain and quality, and publish the result as an optional pack, before promoting any entries into the built-ins.</div>
+    </section>
+
+    <section id="automation">
+      <h2>Automation and Integrations</h2>
+      <h3>Auto-export folder</h3>
+      <p>Settings can save every session to a folder as Markdown plus JSON on each save, named <code>YYYY-MM-DD-HHmm-jargonslayer.md</code> and a matching <code>.json</code>. This uses the File System Access API, so it's Chromium-oriented (Chrome/Edge) — built for Obsidian vaults and agent workflows, not a general cross-browser feature.</p>
+      <h3>Webhook</h3>
+      <p>Setting a webhook URL POSTs a <code>meeting.saved</code> payload after each session save:</p>
+      <pre><code>{
+  "schemaVersion": 1,
+  "event": "meeting.saved",
+  "exportedAt": 1735689600000,
+  "session": { /* full MeetingSession */ }
+}</code></pre>
+      <p>The same URL also receives background-task lifecycle events — <code>task.started</code>, <code>task.done</code>, <code>task.error</code> — envelope-identical apart from carrying a <code>task</code> object (id, kind, label, stage, progress, status, error, sessionId, timestamps) instead of a full session; these mirror the desktop <a href="./#desktop-app">后台任务</a> task registry (model downloads, diarization install, import jobs). Every call has an 8-second timeout and no retry — a slow or down receiver just misses that event, it doesn't block or requeue.</p>
+      <p>Receivers should return 200 fast and do the real work asynchronously:</p>
+      <pre><code>app.post("/jargonslayer-webhook", (req, res) => {
+  res.sendStatus(200);                   // ack immediately, before the 8s timeout
+  queue.add("process-event", req.body);  // do the real work off-request
+});</code></pre>
+      <h3>AnkiConnect</h3>
+      <p>Enabling <code>ankiConnect</code> fires an <code>addNotes</code> call to a local AnkiConnect instance on every session save, reusing the same flashcard projection as manual Anki TSV export, with dedup so re-saving a session doesn't duplicate cards. Its default port <code>8765</code> collides with the Whisper sidecar's own websocket default, so it's independently configurable rather than hardcoded — check <code>ankiConnect.port</code> if both run on the same machine.</p>
+      <h3>Obsidian</h3>
+      <p>Markdown exports can include YAML frontmatter (<code>exportFrontmatter</code>) for Obsidian/Dataview — combine it with folder auto-export to build a vault that updates itself after every meeting.</p>
+      <h3>Backup and restore</h3>
+      <p>A full backup exports sessions, glossary, and settings together. The export dialog's <code>不包含 API Key</code> option is checked by default, stripping every API key, the Hugging Face token, the subscription-direct agent token, the webhook URL, and per-task API keys from the embedded settings before download; uncheck it to keep them in the file. Restoring a backup previews its contents before writing anything, re-sanitizes those same fields regardless of how the backup was exported, and clears subscription-direct connection state so a restored backup can't silently reconnect to an old local agent sidecar.</p>
+    </section>
+
+    <section id="architecture">
+      <h2>Architecture</h2>
+      <p>The repository is an npm workspace: <code>apps/web</code> (Next.js 15, TypeScript, Tailwind, zustand, IndexedDB, server route proxies for LLM calls) plus <code>packages/core</code> (the pure-TS shared core — dictionary, types), <code>apps/desktop</code> (the Tauri shell), and <code>apps/extension</code> (the Chrome MV3 side panel). The zustand store in <code>apps/web</code> is the shared bus for transcript segments, interim text, cards, terms, summary output, settings, and sessions.</p>
+      <pre><code>apps/web (browser client)
+  transcription engines
+    demo | Web Speech | local Whisper | tab audio | appaudio (desktop)
+  zustand store
+    segments | cards | terms | summaries | settings | sessions
+  detection
+    dictionary instant floor
+    LLM scheduler and dedupe
+  UI
+    transcript | cards | history | summary | review
+
+Server routes
+  /api/detect
+  /api/define
+  /api/translate
+  /api/summarize
+
+Sidecars (Python)
+  whisper_server.py
+  agent_server.py
+
+apps/desktop (Tauri v2, macOS)
+  Rust core: provisions an isolated Python via a pinned uv,
+    manages the sidecar process, CoreAudio process-tap pipeline
+  jargonslayer-audiocap: signed Swift helper (CoreAudio process taps)
+
+apps/extension (Chrome MV3)
+  side panel: Web Speech capture + built-in dictionary + on-device Translator API
+  own IndexedDB database + chrome.storage.local, independent of apps/web's storage
+
+packages/core
+  shared types + built-in dictionary, consumed by web and extension</code></pre>
+      <ul>
+        <li><code>apps/web/src/lib/types.ts</code> (re-exporting <code>@jargonslayer/core</code>) owns cross-module contracts.</li>
+        <li><code>apps/web/src/lib/store.ts</code> is the app bus; STT and detection communicate through it rather than importing each other.</li>
+        <li><code>apps/web/src/lib/detect/dictionary.ts</code> is the synchronous instant floor.</li>
+        <li><code>apps/web/src/lib/detect/scheduler.ts</code> batches LLM detection and falls back to dictionary mode.</li>
+        <li><code>apps/web/src/lib/detect/dedupe.ts</code> merges repeats and upgrades dictionary hits with contextual LLM explanations.</li>
+        <li><code>apps/web/src/app/api/summarize/route.ts</code> orchestrates summary, chunked translation, and missed-item gap fill.</li>
+        <li><code>apps/desktop/src-tauri/src/audiocap.rs</code> supervises the Swift capture helper and resamples its output into the existing transcription pipeline.</li>
+      </ul>
+    </section>
+
+    <section id="storage">
+      <h2>Data and Storage</h2>
+      <p>All app data is IndexedDB, accessed through <code>idb-keyval</code> — not <code>localStorage</code>. Legacy <code>meetlingo:*</code> keys are copy-migrated forward on startup and left in place for rollback safety.</p>
+      <table>
+        <thead><tr><th>Surface</th><th>Storage key</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Settings</td><td><code>jargonslayer:settings</code></td><td>Local configuration.</td></tr>
+          <tr><td>Sessions</td><td><code>jargonslayer:sessions:index</code> + <code>jargonslayer:session:&lt;id&gt;</code></td><td>Index array plus one full <code>MeetingSession</code> record per key.</td></tr>
+          <tr><td>Glossary</td><td><code>jargonslayer:glossary</code></td><td>Personal entries and mastery state.</td></tr>
+          <tr><td>Auto-save folder</td><td><code>jargonslayer:export-dir</code></td><td>Browser file-handle; Chromium-oriented.</td></tr>
+          <tr><td>Remote packs</td><td><code>jargonslayer:remote-packs</code></td><td>Installed pack source URLs and validated manifests.</td></tr>
+        </tbody>
+      </table>
+      <p>Schema version 1 covers session JSON, Markdown frontmatter, webhook payloads, full backup, and remote dictionary packs.</p>
+      <p>The only true <code>localStorage</code> keys in the app are a theme FOUC (flash-of-unstyled-content) mirror, <code>js-display</code>, read synchronously before IndexedDB resolves so the very first paint already has the right theme/font-size; and an update-check ETag cache, <code>js-update-etag-cache</code>, that makes repeat GitHub-release checks cheap.</p>
+      <div class="callout info"><strong>This table is the web/desktop app.</strong> The Chrome extension (Lite) keeps its own, separate storage — a dedicated IndexedDB database for session history plus <code>chrome.storage.local</code> for saved lookups — never synced or shared with the web app's storage.</div>
+    </section>
+
+    <section id="specs">
+      <h2>Behavior Specs</h2>
+      <p>These are the behaviors most worth knowing when debugging a setup or extending the tool.</p>
+
+      <h3>Detection Spec</h3>
+      <ul>
+        <li>Every finalized segment is scanned synchronously by the dictionary when detection is enabled.</li>
+        <li>The LLM layer batches fresh text and uses the previous context tail only for disambiguation.</li>
+        <li>LLM results can upgrade dictionary cards in place; they do not retract dictionary hits.</li>
+        <li>Repeated expressions are merged by normalized key, with count and last-seen metadata.</li>
+        <li>Personal glossary entries shadow built-in dictionary matches and are never overwritten by the AI.</li>
+        <li>All-caps acronyms use stricter matching to avoid false positives; ordinary mixed-case terms are matched more flexibly.</li>
+      </ul>
+
+      <h3>Translation Spec</h3>
+      <ul>
+        <li>Live bilingual transcript translates finalized segments in small batches keyed by segment id.</li>
+        <li>Toggling bilingual transcript on mid-meeting backfills the most recent untranslated finalized segments.</li>
+        <li>If a segment is manually edited, its stale translation is invalidated and re-queued while the meeting is live.</li>
+        <li>No-key pauses are self-healing: once a key is added, new translation work can resume without restarting the meeting.</li>
+        <li>Repeated 429s pause and eventually skip the oldest stuck batch so newer segments are not starved forever.</li>
+        <li>Post-meeting report translation is separate: it chunks the full transcript by segment index and repairs missing indices where possible.</li>
+      </ul>
+
+      <h3>Import Spec</h3>
+      <table>
+        <thead><tr><th>Import Path</th><th>Processing</th><th>Limits / Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Transcript paste / <code>.txt</code> / <code>.srt</code> / <code>.vtt</code></td><td>Parse, build synthetic session, run detection, optional translation, save.</td><td>Timestamped cues are normalized to the import time; plain text gets synthetic spacing.</td></tr>
+          <tr><td>Browser audio import</td><td>Decode with browser AudioContext, resample to 16 kHz mono, run browser Whisper worker.</td><td>45-minute duration cap; 200 MB compressed audio cap.</td></tr>
+          <tr><td>Browser video import</td><td>Extract audio with ffmpeg.wasm, then reuse the browser audio path.</td><td>Video extraction has its own size gate; first run may download browser-side model assets.</td></tr>
+          <tr><td>Sidecar recording import</td><td>Local job API handles transcription and optional diarization.</td><td>Requires local sidecar; progress display is UI-local and may disappear on refresh while the job continues.</td></tr>
+          <tr><td>Video URL import</td><td>Local sidecar uses <code>yt-dlp</code>, then transcribes through the same job pipeline.</td><td>Local tier only; user is responsible for rights and platform terms.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Failure and Recovery Spec</h3>
+      <ul>
+        <li><strong>No API key:</strong> detection falls back to dictionary; live translation pauses; report generation asks for a key.</li>
+        <li><strong>Rate limits:</strong> detection retries once with jitter for 429; translation pauses and avoids starving newer work indefinitely.</li>
+        <li><strong>Sidecar unreachable:</strong> local Whisper, sidecar import, URL import, diarization, and subscription-direct cannot run; browser-local import still works for supported files.</li>
+        <li><strong>Meeting changed:</strong> async results carry <code>meetingGen</code>; stale results from an old meeting are dropped.</li>
+        <li><strong>Background tab:</strong> browsers throttle timers, so detection also flushes on segment arrival and visibility changes.</li>
+        <li><strong>Post-stop late results:</strong> detection and translation can land after stop; the store schedules a save top-up so history is not missing tail results.</li>
+      </ul>
+
+      <h3>Glossary and Learning Spec</h3>
+      <ul>
+        <li>Personal glossary entries are the durable learning home today; meeting sessions stay immutable archives.</li>
+        <li>Entries can be manual, AI-defined from selected text, or collected from a meeting's cards.</li>
+        <li>Each entry stores headword, variants, explanation, example, original context, user note, source, timestamps, and review state.</li>
+        <li>Expression entries may store category, meaning, plain-English rewrite, and tone. Term entries may store term type and English gloss.</li>
+        <li>Review state includes mastered, review count, and last reviewed time — a true learn-set and due-review loop (SM-2-lite scheduling) since v0.3.0.</li>
+      </ul>
+    </section>
+
+    <section id="async">
+      <h2>Async Delegation Design</h2>
+      <p>The product should feel like one calm foreground process with specialized background workers. The foreground owns listening, transcript editing, user focus, and saved session state. Expensive work runs as asynchronous delegates and reports back when results are ready.</p>
+      <div class="callout info"><strong>Conceptual, not the literal schema:</strong> this section describes the coverage model live detection/translation already follow informally. The shipped, user-visible <a href="./#desktop-app">后台任务 / background task center</a> tracks a simpler, coarser set of whole-job tasks (imports, model downloads, diarization install) with its own in-memory registry — it does not implement this per-segment ledger or the <code>translate | detect | search | diarize</code> kinds below.</div>
+      <div class="cards">
+        <div class="card">
+          <h3>Foreground</h3>
+          <p>Append finalized transcript segments, keep focus stable, let the user edit/review, and render the best available state without blocking on AI or search.</p>
+        </div>
+        <div class="card">
+          <h3>Delegates</h3>
+          <p>Run translation, LLM detection, realtime search, diarization, and post-meeting report work in independent queues with priorities and retry policy.</p>
+        </div>
+        <div class="card">
+          <h3>Ledger</h3>
+          <p>Track per-segment coverage: dictionary done, LLM detection pending/done/failed, translation pending/done/skipped, search pending/done/stale.</p>
+        </div>
+      </div>
+      <pre><code>{
+  "id": "job_x",
+  "kind": "translate | detect | search | diarize",
+  "meetingGen": 12,
+  "segmentIds": ["seg_1", "seg_2"],
+  "textHash": "...",
+  "priority": 2,
+  "status": "queued | running | done | failed | stale",
+  "attempts": 0
+}</code></pre>
+      <p>Results should apply only when the meeting generation still matches, target segments still exist, and the source text hash is still current. A result should patch the relevant field; it should never replace the foreground transcript or steal the user's focus.</p>
+      <div class="callout info"><strong>Why this matters:</strong> translation and detection can fail, pause, or complete late. A job ledger makes those states visible, so text is never silently lost; it is processed, pending, stale, skipped with a reason, or retryable.</div>
+      <p>Realtime search fits this model naturally: a card can request background search using the current expression plus recent context, keep showing the local explanation immediately, then attach references or disambiguation notes when the search delegate returns. Search should be triggered by ambiguity, user request, or explicit pack/card action, not every card by default; results should attach to the card as references or context notes, not replace the local explanation; search jobs should stay lower priority than live transcription, dictionary scan, and visible-card detection; and privacy settings should clearly distinguish local dictionary, provider AI, and web search calls.</p>
+    </section>
+
+    <section id="testing">
+      <h2>Testing</h2>
+      <h3>Web App</h3>
+      <pre><code>npm run typecheck
+npm test
+npm run build</code></pre>
+      <h3>Sidecar</h3>
+      <pre><code>sidecar/.venv/bin/python sidecar/test_agent_json.py
+sidecar/.venv/bin/python sidecar/test_agent_postfilter.py
+sidecar/.venv/bin/python sidecar/test_agent_server.py
+sidecar/.venv/bin/python sidecar/test_download.py
+sidecar/.venv/bin/python sidecar/test_ingest_url.py
+sidecar/.venv/bin/python sidecar/test_lazy_load.py
+sidecar/.venv/bin/python sidecar/test_model_registry.py
+sidecar/.venv/bin/python sidecar/test_parakeet_backend.py
+sidecar/.venv/bin/python sidecar/test_realtime_diar.py
+sidecar/.venv/bin/python sidecar/test_whisper_protocol.py</code></pre>
+      <p>Sidecar tests are plain-assert scripts and assume dependencies from <code>sidecar/requirements.txt</code>. The local Whisper and agent sidecars are independent processes, so test the one you changed.</p>
+      <h3>Desktop (Rust + Swift)</h3>
+      <pre><code>cd apps/desktop/src-tauri && cargo test
+cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
+      <p>The Rust core (process supervision, resampling, the CoreAudio framing protocol) and the signed Swift capture helper each have their own suite; CI has no live CoreAudio session, so the audio-capture tests are designed around fakes/seams rather than a real tap.</p>
+      <h3>Extension</h3>
+      <pre><code>npm test -w apps/extension</code></pre>
+    </section>
+
+    <div class="footer">
+      <span>JargonSlayer · <a href="./">User Guide</a> · <a href="features.html">Features</a> · <a href="changelog.html">Changelog</a> · <a href="../privacy.html">Privacy</a> · <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a></span>
+    </div>
+  </main>
+</div>
+</body>
+</html>

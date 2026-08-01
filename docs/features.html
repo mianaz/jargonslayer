@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer Docs — Features</title>
+<meta name="description" content="A tour of what JargonSlayer does: live comprehension cards, transcription engines and audio sources, bilingual translation, speaker tools, the learning center, dictionary packs, exports, appearance, platforms, privacy, and the capability matrix.">
+<link rel="icon" type="image/png" href="../assets/icon-192.png">
+<link rel="stylesheet" href="docs.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / features</div>
+  <div class="spacer"></div>
+  <a href="../">Landing</a>
+  <a href="zh/features.html">中文</a>
+  <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
+  <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="Documentation sections">
+    <div class="label">Docs</div>
+    <a href="./">User Guide</a>
+    <a href="features.html" class="current">Features</a>
+    <a href="changelog.html">Changelog</a>
+    <a href="advanced.html">Power Users</a>
+
+    <div class="label">Capabilities</div>
+    <a href="#live">Live Comprehension</a>
+    <a href="#engines">Transcription Engines</a>
+    <a href="#translation">Translation</a>
+    <a href="#speakers">Speaker Tools</a>
+    <a href="#learning">Learning Center</a>
+    <a href="#packs">Dictionary Packs</a>
+    <a href="#exports">Exports and Integrations</a>
+    <a href="#appearance">Appearance and Bit</a>
+
+    <div class="label">Platforms and Trust</div>
+    <a href="#platforms">Platforms</a>
+    <a href="#privacy">Privacy</a>
+
+    <div class="label">Reference</div>
+    <a href="#matrix">Capability Matrix</a>
+    <a href="#next">What's Next</a>
+  </nav>
+
+  <main>
+    <section id="overview" class="hero">
+      <span class="eyebrow">Features</span>
+      <h1>What JargonSlayer Does</h1>
+      <p class="lead">JargonSlayer is a real-time English-meeting comprehension assistant for non-native speakers. It listens to a meeting, catches the parts a dictionary alone would miss — idioms, business slang, indirect phrasing, acronyms, proper nouns, domain terms — and turns them into short cards while the meeting is still running. After it stops, the same session becomes a bilingual summary, a translated transcript, and a personal study deck.</p>
+      <div class="pill-row">
+        <span class="pill">Dictionary + LLM cards</span>
+        <span class="pill">Bilingual subtitles</span>
+        <span class="pill">17 packs · 1,000+ terms</span>
+        <span class="pill">Spaced-repetition review</span>
+        <span class="pill">9 themes</span>
+        <span class="pill">BYOK AI</span>
+        <span class="pill">macOS desktop app</span>
+        <span class="pill">iOS beta</span>
+        <span class="pill">Chrome extension</span>
+      </div>
+      <div class="cards">
+        <a class="card" href="#live">
+          <h3>Live, in the meeting</h3>
+          <p>Dictionary detection is instant and fully offline. Turn on AI and it upgrades the same cards with fuller, context-aware explanations, and lets you look up anything by selecting it.</p>
+        </a>
+        <a class="card" href="#learning">
+          <h3>After the meeting</h3>
+          <p>Bilingual summaries, full-transcript translation, and a spaced-repetition review queue turn a transcript into study material.</p>
+        </a>
+        <a class="card" href="#privacy">
+          <h3>Your data stays yours</h3>
+          <p>Every mode has an explicit data path. Dictionary-only, local Whisper, and 系统识别 never send audio anywhere; AI and cloud STT are opt-in and bring-your-own-key.</p>
+        </a>
+      </div>
+    </section>
+
+    <section id="live">
+      <h2>Live Comprehension</h2>
+      <p>Detection has two layers. The built-in dictionary matches idioms, acronyms, and domain terms the instant they're spoken, entirely offline — no key, no cost, and the default for new installs since v0.6. Turning on <code>AI 检测</code> layers an LLM on top: it explains meaning in context and catches things the dictionary doesn't know, using whichever provider you've configured — Anthropic, OpenAI, DeepSeek, 通义千问, OpenRouter, Poe, a local Ollama model, or any OpenAI-compatible endpoint.</p>
+      <p>The right panel shows explanation cards for expressions — idioms, indirect phrasing, softened criticism — and term cards for acronyms, companies, products, metrics, and technical terms. A repeated hit increments the original card instead of flooding the feed, and clicking an underlined expression in the transcript jumps straight to its card.</p>
+      <p><strong>Multi-sense, domain-aware definitions (v0.7.4):</strong> a headword with more than one definition now ranks them by the meeting's domain. CAC resolves to Cancer-Associated Cachexia in a cachexia talk rather than Customer Acquisition Cost, NDA to New Drug Application inside "IND … or NDA or BLA," and PR to precision-recall rather than Pull Request in an ML talk. An unclear domain still returns a usable definition.</p>
+      <p><strong>划词 lookup, rebuilt for lookup-first (v0.7.4):</strong> select any transcript text to look it up. Matching dictionary packs and senses are listed first; a genuine miss falls through to an AI explanation with translation, using surrounding context. The lookup keeps generating in the background and lands in the card list even if you close the popover — adding it to your glossary (<code>加入我的词典</code>) is a secondary action inside it, not the default one.</p>
+      <figure class="solo">
+        <img src="../assets/live.png" alt="JargonSlayer live meeting view" loading="lazy">
+        <figcaption>Live meeting: transcript with highlighted expressions, explanation cards on the right</figcaption>
+      </figure>
+    </section>
+
+    <section id="engines">
+      <h2>Transcription Engines and Audio Sources</h2>
+      <p>The web app and the desktop app offer different engine lineups — desktop drops browser-based recognition entirely (Tauri's webview has no Web Speech API) and adds a CoreAudio-based system/app audio capture the web app can't do. As of v0.7.4 the engine picker groups every option into three families:</p>
+      <ul>
+        <li><strong>本地 STT 模型</strong> (local STT models) — models you run yourself: local Whisper (bundled and self-managed on desktop, a manual sidecar on web) and 英文加速 Parakeet (Apple Silicon, MLX-accelerated, opt-in in the model picker, ~100x realtime in batch inference; no realtime speaker diarization yet).</li>
+        <li><strong>系统 STT 服务</strong> (system STT services) — the OS or browser's own recognizer: browser recognition (on-device on Chrome 139+ when a language pack is available, otherwise the browser vendor's cloud service) and 系统识别 System Speech on desktop (macOS 26+, zero install, no model download, no Python, audio never leaves the capturing process; ~30 locales; no speaker diarization; Chinese output may lack punctuation).</li>
+        <li><strong>第三方 STT 提供商</strong> (third-party STT providers) — BYOK cloud vendors: Soniox (experimental, aimed at code-switched zh-en), Deepgram (English-only), and ElevenLabs (retains transcripts by default unless you're on an enterprise no-retention plan). These stay visible even without a key configured, each labeled 已配置 or 未配置, instead of disappearing until you set one up.</li>
+      </ul>
+      <p>For audio sources: the web app can capture <strong>tab audio</strong> to hear the other side of an online meeting. The desktop app replaces that slot with <strong>系统/App 音频</strong> — a CoreAudio process tap that captures whatever the Mac is currently playing, with no virtual sound card and no BlackHole/VB-Cable setup. It never captures your microphone. As of v0.7.4, audio source is its own control and can be changed mid-meeting, not just before one starts.</p>
+      <p>Full setup tables — install steps, audio destination, and best-for guidance for every engine on both platforms — are in the <a href="./#transcription">User Guide</a>.</p>
+      <figure class="solo">
+        <video src="../assets/demo-desktop-16x9.mp4" poster="../assets/demo-desktop-poster.jpg" controls muted playsinline preload="none"></video>
+        <figcaption>51-second silent demo: desktop build — system/app audio, engine lineup, floating captions (recorded at v0.7.1)</figcaption>
+      </figure>
+    </section>
+
+    <section id="translation">
+      <h2>Bilingual Transcript and Translation</h2>
+      <p>Live bilingual subtitles and full-transcript translation share one setting, with four engines to choose from: the platform's on-device translator (<strong>系统翻译</strong> — Chrome's built-in Translator API on the web app, Apple's Translation framework on desktop/iOS; the default, no key needed), the LLM, DeepL (BYOK), and <strong>有道翻译</strong> Youdao (BYOK, v0.7.1+). DeepL and Youdao are native-app engines only — neither API allows cross-origin browser requests, so the web app shows them disabled in the picker and the practical web choices are on-device or LLM.</p>
+      <p>After a meeting stops, a <code>补全翻译 (N)</code> button appears whenever bilingual subtitles are on and N segments were never translated — a missed API call, a pause with no key configured, and so on. It re-runs just those segments through the configured translation engine in small batches and disappears once they're filled.</p>
+      <p>Markdown, docx, and copy-to-clipboard exports carry your existing translations. If any segments are still untranslated at export time, a dialog offers to gap-fill first and then export, export now with a <code>未翻译</code> marker on what's missing, or cancel.</p>
+      <p><strong>AI transcript correction (reviewed, since v0.5):</strong> one click after the meeting has the AI read the transcript and flag recognition errors, listing the original and a suggested fix segment by segment. Nothing changes until you accept it, and accepted segments re-translate automatically.</p>
+    </section>
+
+    <section id="speakers">
+      <h2>Speaker Tools</h2>
+      <p>Assign speakers by hand — one line, or several selected lines at once — with an "apply to this and following" option; a live "current speaker" tag tracks along while you listen. A manually assigned line is locked and survives later automatic diarization. Click any speaker label to rename it — a v0.7.3 fix means the rename now updates the roster and the live speaker picker immediately, instead of sticking on the old name for the rest of the meeting.</p>
+      <p>Batch imports can diarize recordings through the local sidecar (pyannote), gated behind a Hugging Face token you provide once, after accepting pyannote's segmentation and speaker-diarization usage terms on Hugging Face. Realtime diarization is beta: the sidecar re-runs pyannote on a recent tail window, matches speakers against a stable registry, and sends label updates back to the UI without blocking transcription.</p>
+    </section>
+
+    <section id="learning">
+      <h2>Learning Center</h2>
+      <p>The personal glossary (<code>我的词典</code>) and the <code>/review</code> page turn detected cards into a lightweight learning center.</p>
+      <ul>
+        <li>Add glossary entries manually, or select transcript text to look it up first — matching packs and senses are listed, and a genuine miss is explained and translated — then choose <code>加入我的词典</code> as a secondary action. Split entries across multiple named custom packs, each toggled on or off per meeting.</li>
+        <li><strong>Surface-form capture (v0.7.1):</strong> saving a card records the exact wording it appeared as in that meeting, not just the dictionary's canonical form — save it after hearing "back on the envelope" and the entry keeps that surface form even though the headword is <i>back of the envelope</i>, so review and future detection both recognize the variant you actually heard.</li>
+        <li><strong>Known-word suppression:</strong> words you've mastered are suppressed on live cards, so the feed stays focused on what's still new.</li>
+        <li><strong>Due-driven review:</strong> <code>到期复习</code> is a due-driven review queue with SM-2-lite spaced scheduling.</li>
+        <li>A stats strip (meeting count, cumulative expressions/terms, recent activity), a word cloud, a Top 10 list, and flashcards for quick practice.</li>
+        <li>Anki TSV export, or one-click AnkiConnect sync (with dedup) into your local Anki, for serious spaced repetition.</li>
+      </ul>
+      <figure class="solo">
+        <img src="../assets/review.png" alt="JargonSlayer review page" loading="lazy">
+        <figcaption>Review page: stats, word cloud, frequency list, and practice deck</figcaption>
+      </figure>
+    </section>
+
+    <section id="packs">
+      <h2>Dictionary Packs</h2>
+      <p>Seventeen built-in packs ship today — core expressions, meeting flow, project execution, feedback, sales and growth, softening/criticism, academic meetings, chitchat, business terms, tech terms, pharma/biotech, statistics, machine learning, bioinformatics, and more — over 1,000 entries in total. Every pack toggles on or off per meeting; <code>core</code> is always on.</p>
+      <p><strong>Variant matching</strong> (85 entries) catches inflected and alternate forms — say <i>keep the ball rolling</i> and the dictionary's <i>get the ball rolling</i> still hits. A handful of everyday-English headwords in the stats/ML packs (mean, prior, attention, precision, …) stay opt-in — they only fire once you customize the enabled-pack list, so casual speech is never flagged under the default all-on state.</p>
+      <p>Settings has an official catalog you can browse and install from with one click — six specialized packs (medicine, biopharma, AI/ML, law, finance, engineering; 4,300+ terms total) published at <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>, alongside file or GitHub-URL import for any third-party pack. Installed packs auto-check for updates once a day, and an installed pack's own definition takes precedence over a built-in one when both define the same term (v0.7.2+).</p>
+      <p>Want to build and publish your own pack? The manifest format, validation rules, and publishing walkthrough are in <a href="advanced.html#packs">Power Users → Pack Authoring</a>.</p>
+    </section>
+
+    <section id="exports">
+      <h2>Exports and Integrations</h2>
+      <ul>
+        <li>Markdown report, optionally with frontmatter for Obsidian/Dataview.</li>
+        <li>docx export, ready to open as an editable Word file.</li>
+        <li>Anki TSV for study cards, or one-click sync into your local Anki via AnkiConnect (with dedup).</li>
+        <li>Full session JSON with <code>schemaVersion: 1</code>.</li>
+        <li>Copy-to-clipboard summary.</li>
+        <li>Cornell note export as PNG or Markdown.</li>
+      </ul>
+      <p>On iOS, every export hands the file to the system share sheet.</p>
+      <p>Settings can also save every session to a folder as Markdown plus JSON (File System Access API, built for Obsidian vaults and agent workflows), POST a <code>meeting.saved</code> webhook to a custom URL after each save, and take a full backup of sessions, glossary, and settings — restores preview the contents before writing and sanitize risky settings. Payload formats, file-naming, and an example webhook receiver are in <a href="advanced.html#automation">Power Users → Automation</a>.</p>
+    </section>
+
+    <section id="appearance">
+      <h2>Appearance and Bit</h2>
+      <p>Nine built-in themes ride a strict 17-token engine — hex-only, validated, injected as CSS custom properties rather than raw strings — each contrast-checked against WCAG AA, from the terminal defaults to a gothic gilt 魔典 and a pixel-art 像素 quest log. Beyond the built-ins, a custom theme editor lets you create from scratch or duplicate any theme, edit all 17 tokens with a native color picker plus a hex field each, and set a light/dark scheme. Contrast hints flag tokens that fall below the AA/UI-contrast bars as you go — they warn, they never block. Export a theme to JSON or import one; imported themes are re-minted with a new id, so an imported file can never shadow or overwrite a built-in.</p>
+      <p>Two independent font pickers (UI font, monospace font), an opt-in frosted-glass overlay for panels and drawers, and three type-size controls (global size, transcript-only size, transcript line spacing) round out the display settings — all local to this browser or app, none of it travels with your data.</p>
+      <p>The status-line pixel dragon, Bit, dresses to match each built-in theme by default — round reading glasses for 清晰, a straw hat for 水墨, a wizard hat for 魔典 — or any piece can be pinned manually. He spreads his wings and throws pixel sparks when a report finishes generating or the review queue clears.</p>
+      <figure class="solo">
+        <img src="../assets/bit.png" alt="Bit, the JargonSlayer status-line mascot" loading="lazy">
+        <figcaption>Bit, the status-line pixel dragon</figcaption>
+      </figure>
+    </section>
+
+    <section id="platforms">
+      <h2>Platforms</h2>
+      <p>The <strong>macOS desktop app</strong> (Apple Silicon only, no Intel build) is the flagship surface: a signed, notarized DMG from <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>, self-managed local Whisper, and the system/app audio and 系统识别 engines the web app can't offer.</p>
+      <p>The <strong>web app</strong> installs as a PWA — from Chrome/Edge as a desktop-like window, or to an iOS/iPadOS home screen through Safari — or runs locally/LAN-hosted from a Next.js server. The <strong>hosted preview</strong> needs no install and includes a limited Soniox cloud-recognition trial (no key required, up to 3 clips per person per day, ~10 minutes max per clip, shared first-come quota); enter your own Soniox or Deepgram key and the preview switches to browser-direct BYOK with no trial caps.</p>
+      <p>The <strong>iOS app</strong> is in TestFlight beta, by invite, and needs iOS 26+; it runs on-device system speech recognition and on-device Apple Translation, no API key required.</p>
+      <p>The <strong>Chrome extension (Lite)</strong> installs load-unpacked from the release zip — it isn't on the Chrome Web Store — and is in maintenance mode: live mic capture plus the built-in dictionary and on-device translation in a side panel, and nothing beyond that (no LLM detection, no tab/system audio, no account).</p>
+      <figure class="solo">
+        <video src="../assets/demo-mobile-16x9.mp4" poster="../assets/demo-mobile-poster.jpg" controls muted playsinline preload="none"></video>
+        <figcaption>68s silent demo: iOS Safari (PWA) run at v0.7.1</figcaption>
+      </figure>
+    </section>
+
+    <section id="privacy">
+      <h2>Privacy by Design</h2>
+      <ul>
+        <li>Every engine and mode has an explicit data path — not a blanket privacy promise.</li>
+        <li>No account. History, settings, and keys live in local browser/app storage.</li>
+        <li>Dictionary-only mode is fully local: no audio and no transcript text ever leaves the machine.</li>
+        <li>BYOK keys are isolated per provider (v0.7.3) — switching LLM providers can no longer carry the previous provider's key to the new one's host.</li>
+        <li>Local logs are hardened so they never carry meeting speech (v0.7.2).</li>
+        <li><code>诊断信息</code> gives you a redacted diagnostics bundle for bug reports — recent app events and a scrubbed settings snapshot, never meeting audio or transcript text.</li>
+      </ul>
+      <p>The full data-path table, engine by engine, is in the User Guide's <a href="./#privacy">Privacy</a> section; the formal policy lives at <a href="../privacy.html">privacy.html</a>.</p>
+    </section>
+
+    <section id="matrix">
+      <h2>Deployment and Capabilities</h2>
+      <p>The web app ships as a web app and PWA; it can be installed from Chrome/Edge as a desktop-like window, added to iOS/iPadOS home screen through Safari, or run locally/LAN-hosted from a Next.js server. The macOS desktop app and the Chrome extension are separate, independently versioned packages.</p>
+      <table>
+        <thead><tr><th>Form</th><th>Status</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Hosted preview</td><td>Available</td><td>Preview tier with transparent limits and greyed local-only features</td></tr>
+          <tr><td>Local web app</td><td>Available</td><td>Full local-first build</td></tr>
+          <tr><td>PWA install</td><td>Available</td><td>Uses existing manifest and icons</td></tr>
+          <tr><td>macOS desktop app (Tauri)</td><td>Available</td><td>Signed, notarized DMG on <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>; Apple Silicon only, no Intel build</td></tr>
+          <tr><td>Chrome extension (Lite)</td><td>Available, load-unpacked</td><td>Zip on releases; load-unpacked is the supported path (no Web Store listing for now); maintenance mode</td></tr>
+          <tr><td>iOS / iPadOS (beta)</td><td>TestFlight, by invite</td><td>Get in touch for an invite; iOS 26+, on-device system speech recognition, on-device system translation (Apple Translation, no key required). No Android or store listing planned — the PWA covers most mobile use cases</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Capability Matrix</h3>
+      <table>
+        <thead><tr><th>Capability</th><th>Chrome extension (Lite)</th><th>Preview (hosted)</th><th>Local web / Desktop</th></tr></thead>
+        <tbody>
+          <tr><td>Dictionary detection (instant, offline)</td><td>✓</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Live transcription</td><td>Web Speech (mic only)</td><td>Web Speech · Soniox limited trial (no key) · tab audio (same trial quota)</td><td>Web Speech · local Whisper · tab audio · system/app audio (desktop) · Soniox (BYOK, experimental) · Deepgram (BYOK) · ElevenLabs (BYOK)</td></tr>
+          <tr><td>AI detection / translation / summary</td><td>—</td><td>✓ built-in demo key (rate-limited)</td><td>✓ your own key (BYOK)</td></tr>
+          <tr><td>Import text / audio / video</td><td>—</td><td>✓</td><td>✓</td></tr>
+          <tr><td>Speaker diarization</td><td>—</td><td>shown, needs local sidecar</td><td>✓</td></tr>
+          <tr><td>History</td><td>Local IndexedDB, own database</td><td>IndexedDB</td><td>IndexedDB</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="next">
+      <h2>What's Next</h2>
+      <p>None of this is promised on a date — development happens in short trains, and priorities move with field feedback. The macOS desktop app is the flagship surface going forward; the Chrome extension stays in maintenance mode.</p>
+      <ul>
+        <li><strong>Jargon-density control</strong> (in design) — pick the domains your meetings live in and a difficulty tier, so detection matches your own vocabulary level instead of firing on everything the dictionary knows.</li>
+        <li><strong>Session artifacts</strong> (in design) — opt-in audio retention alongside a saved session, plus attachments (slides, notes) that feed into the post-meeting summary.</li>
+        <li><strong>English-only UI option</strong> (planned) — a full interface localization, so the app reads entirely in English end to end, not just its detection and definitions.</li>
+        <li><strong>Phone-first UI polish</strong> (planned) — tighter mobile chrome and clearer touch targets across the app.</li>
+        <li><strong>Automated signed releases</strong> (in progress) — CI already builds and gates every change; the remaining piece is signing and publishing the macOS DMG without a manual step.</li>
+      </ul>
+      <p>Parked for now: realtime streaming transcription through the browser (an in-browser alternative to today's Whisper sidecar) and selecting transcript text to run a live web search. Screen capture as a session artifact is explicitly deferred past v1.0.</p>
+    </section>
+
+    <div class="footer">
+      <span>JargonSlayer · <a href="./">User Guide</a> · <a href="changelog.html">Changelog</a> · <a href="advanced.html">Power Users</a> · <a href="../privacy.html">Privacy</a> · <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a></span>
+    </div>
+  </main>
+</div>
+</body>
+</html>
