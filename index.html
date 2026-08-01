@@ -824,6 +824,22 @@
         </div>
       </div>
 
+      <div class="feat c-red reveal">
+        <div class="feat-key">词典多义按场景选 domain-aware senses (v0.7.4)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>词典多义按场景选</b>：词典学会按场景选义项。讲癌症恶病质时，CAC 解释成 Cancer-Associated Cachexia，不再默认是获客成本。「IND … or NDA or BLA」句子里，NDA 认成新药申请。机器学习语境里，PR 指 precision-recall，不是 Pull Request。释义跟着会议领域走，领域不明时也能给出一版可用的解释。</span>
+          <span class="lang-en"><b>Domain-aware senses</b>: the dictionary now reads context before picking a sense — in a cachexia talk, CAC resolves to Cancer-Associated Cachexia instead of defaulting to Customer Acquisition Cost; inside "IND … or NDA or BLA," NDA becomes New Drug Application; in an ML talk, PR means precision-recall, not Pull Request. Sense selection follows the meeting's domain, and an unclear domain still returns a usable definition.</span>
+        </div>
+      </div>
+
+      <div class="feat c-purple reveal">
+        <div class="feat-key">划词先查词典 select-to-lookup rework (v0.7.4)</div>
+        <div class="feat-body">
+          <span class="lang-zh"><b>划词先查词典</b>：选中任意文字，先查词典。命中的词典包和义项全部列出，不再只留一个赢家。真查不到时，AI 结合上下文解释并翻译。「加入我的词典」退到弹窗里的次要位置，不再是唯一动作。</span>
+          <span class="lang-en"><b>Select-to-lookup rework</b>: selecting text now runs a dictionary lookup first — every matching pack and sense gets listed instead of a single winner. A genuine miss falls through to an AI explanation with translation, using surrounding context. 加入我的词典 drops to a secondary action in the popover instead of being the only one.</span>
+        </div>
+      </div>
+
       <div class="feat c-cyan reveal">
         <div class="feat-key">card experience</div>
         <div class="feat-body">

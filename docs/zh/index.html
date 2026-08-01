@@ -405,7 +405,7 @@ npm run dev
       <div class="cards">
         <div class="card">
           <h3>1. 开始监听</h3>
-          <p>先选「收听方式」（用麦克风 / 浏览器标签页 / 系统·App 音频 / 导入——会前的模式卡片，引擎自动匹配），再点 <code>开始监听</code>。最终转录片段会进入正文区域；未定稿的中间结果会以更弱的样式显示。</p>
+          <p>先选「音频来源」（麦克风 / 浏览器标签页 / 系统音频 / 导入），再选引擎——选择器里按 本地 STT 模型 / 系统 STT 服务 / 第三方 STT 提供商 分组——然后点 <code>开始监听</code>。音频来源从 v0.7.4 起是独立控件，会议进行中也能随时切换，不再只能会前选定。最终转录片段会进入正文区域；未定稿的中间结果会以更弱的样式显示。</p>
         </div>
         <div class="card">
           <h3>2. 阅读卡片</h3>
@@ -418,7 +418,7 @@ npm run dev
       </div>
       <ul>
         <li>点击转录里的下划线表达，可以跳到对应卡片。</li>
-        <li>选中任意转录文本即可即时查询并存进个人词典。解释在后台生成，关掉弹窗也不会丢，做完自动并入卡片列表。</li>
+        <li>选中任意转录文本即可查询。v0.7.4 起，先列出命中的词典包和义项；真查不到时结合上下文解释并翻译。解释在后台生成，关掉弹窗也不会丢，做完自动并入卡片列表。<code>加入我的词典</code>是弹窗里的次要动作，不再是唯一出口。</li>
         <li>说话人可以手动指定：单句，或一次选中多句一起改，单句操作里有「应用到本句及之后」；实时监听时侧边跟着一个「当前说话人」标记。手动指定过的句子会被锁定，后续自动说话人分离不会覆盖它。点击说话人标签即可改名。</li>
       </ul>
       <h3>悬浮字幕</h3>
@@ -433,6 +433,7 @@ npm run dev
     <section id="transcription">
       <h2>转录引擎</h2>
       <p>网页版和桌面版的引擎清单<strong>不一样</strong>——桌面版完全没有浏览器识别（Tauri 的 webview 没有 Web Speech API），但多了网页版做不到的、基于 CoreAudio 的系统/App 音频捕获。引擎选择器本身的位置也变了：现在不管什么屏幕宽度，都是<strong>底部状态栏</strong>里的一个下拉菜单（以前是 Header 里的 tab/pill）。</p>
+      <p><strong>按类型分组（v0.7.4）：</strong>引擎选择器现在分三组——本地 STT 模型（本地 Whisper、英文加速这类自己跑的模型）、系统 STT 服务（浏览器识别、系统识别这类系统自带的识别）、第三方 STT 提供商（Soniox、Deepgram、ElevenLabs 这类自备 Key 的云端服务）。第三方服务没配 Key 也常驻显示，标注「已配置」或「未配置」，不会因为没配置就被隐藏。</p>
 
       <h3>网页版</h3>
       <table>
@@ -521,7 +522,7 @@ python whisper_server.py --model small</code></pre>
         <li><strong>连接 OpenRouter</strong>——直接粘贴已有的 Key，或者点「使用 OpenRouter 登录」走一键 OAuth：应用会打开你的系统默认浏览器完成登录，再自动把控制权交还给应用。如果 OAuth 失败，会有一个回退链接指向 <code>openrouter.ai/keys</code>，去创建并粘贴 Key。这一步打通的是 AI 检测、翻译和会后报告。</li>
         <li><strong>说话人分离 token</strong>——粘贴一个 Hugging Face token，前提是已经在 Hugging Face 上接受了 pyannote 的 segmentation 和 speaker-diarization 两个模型的使用条款（这一步直接给出两个链接）。跳过是零摩擦的默认选项——说话人分离会保持关闭，直到你回来配置。</li>
       </ol>
-      <p>这两步写入的设置，跟手动在设置里填的完全是同一处：这里填过的值，和之后在 设置 → AI 检测 / 设置 → 说话人分离 里填的效果完全一样。两步都跳过也完全不影响正常使用云端/无需 BYOK 的功能。</p>
+      <p>这两步写入的设置和手动填写是同一处。v0.7.4 起，Key/token 本身存在 设置 → 密钥 里，这里填过的值和之后手动填的效果完全一样。两步都跳过也完全不影响正常使用云端/无需 BYOK 的功能。</p>
 
       <h3>后台任务中心</h3>
       <p>Header 里有一个「后台任务」入口（仅桌面版），有任务在跑或者有新版本可用时会亮一个提示点。打开后分两个区：</p>
@@ -547,13 +548,13 @@ python whisper_server.py --model small</code></pre>
       <p>填入自己的 Key 后，在线体验切换为浏览器直连：每次 AI 调用都从你的浏览器直接发往你配置的服务商，模型随意选，Key 和会议内容不经过项目服务器——服务端还会直接拒绝任何带 Key 的转发请求。自定义 OpenAI 兼容端点在体验版上需要支持浏览器跨域（CORS），不支持的端点请用自托管或桌面版。</p>
       <h3>BYOK AI</h3>
       <ol>
-        <li>打开 <code>设置</code>，进入 <code>AI 检测</code>。</li>
-        <li>选择 Anthropic，或 DeepSeek、Qwen、OpenRouter、Poe 预设、Ollama 等 OpenAI 兼容端点。</li>
+        <li>打开 <code>设置 → AI 检测</code>，选择 Anthropic，或 DeepSeek、Qwen、OpenRouter、Poe 预设、Ollama 等 OpenAI 兼容端点。</li>
         <li>按需填写 base URL。</li>
-        <li>在 UI 中输入 API Key、用一键 OAuth 连接 OpenRouter，或使用 <code>ANTHROPIC_API_KEY</code> 等服务端环境变量。</li>
-        <li>选择检测模型和报告模型，测试连接并保存。</li>
+        <li>在 <code>设置 → 密钥</code> 里输入 API Key（见下方说明）、用一键 OAuth 连接 OpenRouter，或使用 <code>ANTHROPIC_API_KEY</code> 等服务端环境变量。</li>
+        <li>回到 <code>AI 检测</code>，选择检测模型和报告模型，测试连接并保存。</li>
       </ol>
-      <div class="callout"><strong>Key 处理：</strong>UI 输入的 Key 存在本地浏览器。自托管网页版调用时经你自己服务器的 API 路由内存转发，不落盘；在线体验则完全不把 Key 发给项目服务器——调用由浏览器直连服务商。环境变量方式可以让 Key 完全不进入浏览器。桌面版的 OAuth 走的是系统默认浏览器（RFC 8252 loopback），不是应用内弹窗——这个流程首次启动时的版本见「<a href="#desktop-app">桌面版</a>」。</div>
+      <div class="callout info"><strong>密钥统一入口（v0.7.4）：</strong><code>设置 → 密钥</code> 现在收着所有 API Key 和 token——LLM 提供商、转录（Soniox/Deepgram/ElevenLabs）、翻译（DeepL/有道）、说话人分离用的 Hugging Face token——此前这些分散在五个不同功能区各自的入口里。存储位置和钥匙串托管方式都没变。</div>
+      <div class="callout"><strong>Key 处理：</strong>UI 输入的 Key 存在本地浏览器。自托管网页版调用时经你自己服务器的 API 路由内存转发，不落盘；在线体验则完全不把 Key 发给项目服务器——调用由浏览器直连服务商。环境变量方式可以让 Key 完全不进入浏览器。桌面版的 OAuth 走的是系统默认浏览器（RFC 8252 loopback），不是应用内弹窗——这个流程首次启动时的版本见「<a href="#desktop-app">桌面版</a>」。v0.7.3 起，各服务商的 Key 各自独立存储、独立发送，切换服务商不会把上一个的 Key 带到新的那边。</div>
       <h3>分任务模型</h3>
       <p>高级设置可以为检测、翻译、报告使用不同提供商或模型。常见策略是实时检测用快而便宜的模型，会后报告用更强的模型。</p>
       <h3>AI 状态面板</h3>
@@ -583,7 +584,7 @@ python whisper_server.py --model small</code></pre>
       <h3>个人词典</h3>
       <ol>
         <li>在应用中打开 <code>我的词典</code>。</li>
-        <li>手动添加条目，或选中转录文本后点击 <code>加入我的词典</code>。</li>
+        <li>手动添加条目，或选中转录文本先查词典——命中的包和义项会列出来，真查不到时给出解释和翻译——再点 <code>加入我的词典</code>，作为次要动作。</li>
         <li>存词时记的是它在这场会议里实际出现的说法，不只是词典的标准写法——转录里说的是「back on the envelope」，词典收录的词条是 <i>back of the envelope</i>，存下来的仍然是会议里那句实际说法，后续复习和检测都认得这个变体。</li>
         <li>个人词典会参与后续会议检测，并优先于内置词典。</li>
         <li>可以拆成多个自定义命名词包，各自开关，按会议场景勾选启用。</li>
@@ -592,6 +593,8 @@ python whisper_server.py --model small</code></pre>
       <h3>内置词典包</h3>
       <p>词典包按主题控制检测范围。目前内置 14 个包：基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药与生物科技，以及 v0.4.6 新增的统计学、机器学习、生物信息学（三个包合计约 226 个术语，中英释义取自 Wikipedia、EDAM 本体和 Google ML Glossary）。内置词典整体 650+ 条。每个包都能按会议单独开关，<code>core</code> 始终开启。统计学/机器学习包里有几个日常英语高频词（mean、prior、attention、precision 等）默认不触发，只有你自己定制过启用列表后才会命中，平时闲聊不会被误标。</p>
       <p><strong>v0.7.2 匹配修复：</strong>以括号限定结尾的词条——<i>stochastic gradient descent (SGD)</i>、<i>mode (statistics)</i>——现在能在转录里正确命中（之前从未匹配过）。只启用专业词典包（比如生信、统计）时，也不再悄悄丢失和其他包撞名的词条——每个启用的包都会显示自己的释义。</p>
+      <p><strong>v0.7.3 修复：</strong><i>in the red</i> 不再被 <i>the red graph</i> 这类短语带偏；内置释义里被错发成字面 <code>1.</code> 的 mean 之类条目已在源头修好，新增构建时的释义检查。检测对会议领域的判断也更准——生物学讲座里的「thank you for your attention」不再生出 attention 卡片，机器学习讲座里 precision、recall 依旧正常触发。</p>
+      <p><strong>v0.7.4 词典多义：</strong>讲癌症恶病质时 CAC 解释成 Cancer-Associated Cachexia，不再是获客成本；「IND … or NDA or BLA」里的 NDA 认成新药申请；机器学习语境里 PR 指 precision-recall，不是 Pull Request。释义按会议领域排序，领域不明时依然给出一版可用的解释。</p>
       <h3>社区词典包</h3>
       <p>远程词典包是从 GitHub raw 或 jsDelivr URL 安装的 JSON manifest。它可以包含表达条目和术语条目；缩写用 <code>terms</code> 且 <code>type: "acronym"</code>。自 v0.7.2 起，已安装的词典包和内置词典包定义了同一个词条时，优先显示已安装包的释义，不再被内置词典悄悄盖掉。</p>
       <p>设置里还有一个官方词典包目录，可以直接浏览安装——医学、生物医药、AI/ML、法律、金融商务、工程计算机六个专业包，共 4300+ 词条，发布在 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>；第三方包同样可以从文件或 GitHub 链接导入。已安装的包每天自动检查一次更新。</p>
@@ -687,7 +690,7 @@ python whisper_server.py --model small</code></pre>
       <h3>浏览器不支持语音识别</h3>
       <p>浏览器识别推荐 Chrome 或 Edge；也可以切换到本地 Whisper。</p>
       <h3>Whisper 连接不上</h3>
-      <p>确认 sidecar 终端正在运行，URL 是 <code>ws://localhost:8765</code>，本地防火墙没有拦截 loopback。</p>
+      <p>确认 sidecar 终端正在运行，URL 是 <code>ws://localhost:8765</code>，本地防火墙没有拦截 loopback。v0.7.4 起，网页版连不上自建转录服务时会给一句人话提示，不再是开发者才看得懂的 socket 报错。</p>
       <h3>检测太多或太少</h3>
       <p>调整置信度阈值，启用/禁用词典包，或按会议场景开关 AI 检测。</p>
       <h3>报告生成慢</h3>
@@ -1047,6 +1050,17 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Beta 反馈诊断增强（v0.7.2）：</strong>设置里「诊断信息」的日志查看器现在覆盖全部三个本地日志（Whisper 服务 / 系统/App 音频 / 系统识别），可以选择查看哪一个；新增「导出诊断文件」按钮把诊断信息包存成文件（iOS 上会打开系统分享面板）；Chrome 插件侧边栏首次获得「复制诊断」按钮。</li>
         <li><strong>本地日志不再可能带上会议原声（v0.7.2）：</strong>桌面版语音识别日志写入逻辑的一处加固修复，堵上了最后一条畸形行可能泄漏原始语音的路径。</li>
         <li><strong>Chrome 插件升级到 0.7.2（v0.7.2）：</strong>带上了上面的词典可靠性修复；此前版本停留在 0.6.0。</li>
+        <li><strong>API 密钥按提供商隔离（v0.7.3）：</strong>以前切换 LLM 提供商，上一个提供商的 Key 可能被一并发到新提供商那边；现在每个提供商的 Key 各自隔离存储、自动迁移，仍托管在 macOS 钥匙串。</li>
+        <li><strong>说话人改名修复（v0.7.3）：</strong>改名后花名册和实时选择器以前会卡在旧名字，直到会议结束才刷新；现在改名立刻在两处生效。</li>
+        <li><strong>卡片上下文收紧（v0.7.3）：</strong>表达卡片引用的原句以前是整段 60 词左右的 ASR 长句，现在只截取命中词周围的那个分句。</li>
+        <li><strong>误判和释义修复（v0.7.3）：</strong><i>in the red</i> 不再被 <i>the red graph</i> 这类短语带偏；内置释义里错发成字面 <code>1.</code> 的 mean 已经在源头修好，新增构建时的释义检查。</li>
+        <li><strong>会议领域推断更准（v0.7.3）：</strong>生物学讲座里的「thank you for your attention」不再生出 attention 卡片，机器学习讲座里 precision、recall 依旧正常触发。</li>
+        <li><strong>词典多义按会议领域选（v0.7.4）：</strong>讲癌症恶病质时 CAC 解释成 Cancer-Associated Cachexia，不再是获客成本；「IND … or NDA or BLA」里的 NDA 认成新药申请；机器学习语境里 PR 指 precision-recall，不是 Pull Request；领域不明时依然给出一版可用的解释。</li>
+        <li><strong>划词改成先查词典（v0.7.4）：</strong>选中任意文字先查词典，命中的词典包和义项全部列出，不再只留一个赢家；真查不到时结合上下文解释并翻译；「加入我的词典」退到弹窗里的次要位置。</li>
+        <li><strong>转录引擎按类型分组（v0.7.4）：</strong>本地 STT 模型、系统 STT 服务、第三方 STT 提供商三组替换掉原来的一份平铺列表；第三方服务没配 Key 也常驻显示，标注「已配置」或「未配置」。</li>
+        <li><strong>音频来源独立成控件（v0.7.4）：</strong>会议进行中也能随时切换，不再是开会前才能选的浮层；系统/App 音频现在写明：录的是对方的声音，不含你自己的麦克风。</li>
+        <li><strong>连接失败提示更好懂（v0.7.4）：</strong>网页版连不上自建转录服务时，现在给一句人话提示，以前甩的是开发者才看得懂的 socket 报错。</li>
+        <li><strong>API 密钥集中到「密钥」分类（v0.7.4）：</strong>LLM、转录、翻译、说话人分离 token 等 12 个填 Key 入口，此前散在五个不相关的设置分区；现在全部收进 设置 → 密钥 一个界面，存储位置和钥匙串托管不变。</li>
       </ol>
       <p>暂缓项：浏览器端 Whisper 实时流、划词联网搜索。</p>
     </section>

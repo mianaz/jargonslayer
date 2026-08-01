@@ -431,7 +431,7 @@ npm run dev
       <div class="cards">
         <div class="card">
           <h3>1. Listen</h3>
-          <p>Pick how you want to listen (mic / browser tab / system audio / import — the mode tiles shown before a meeting; the engine matches automatically) and click <code>开始监听</code>. Final transcript segments appear in the transcript panel; interim text appears in a lighter style while speech is still being recognized.</p>
+          <p>Pick an audio source (mic / browser tab / system audio / import) and an engine — grouped into 本地 STT 模型 / 系统 STT 服务 / 第三方 STT 提供商 in the picker — then click <code>开始监听</code>. As of v0.7.4, audio source is its own control and can be changed mid-meeting, not just before one starts. Final transcript segments appear in the transcript panel; interim text appears in a lighter style while speech is still being recognized.</p>
         </div>
         <div class="card">
           <h3>2. Read Cards</h3>
@@ -444,7 +444,7 @@ npm run dev
       </div>
       <ul>
         <li>Click underlined expressions in the transcript to jump to their cards.</li>
-        <li>Select any transcript text to run an ad-hoc lookup and optionally save it to your personal glossary. The explanation keeps generating in the background and lands in the card list even if you close the popover.</li>
+        <li>Select any transcript text to look it up. As of v0.7.4, matching dictionary packs and senses are listed first; a genuine miss falls through to an AI explanation with translation, using surrounding context. The lookup keeps generating in the background and lands in the card list even if you close the popover; <code>加入我的词典</code> is a secondary action inside it, not the default one.</li>
         <li>Assign speakers by hand — one line, or several selected lines at once — with an "apply to this and following" option; a live "current speaker" tag tracks along while you listen. A manually assigned line is locked and survives later automatic diarization. Click any speaker label to rename it.</li>
       </ul>
       <h3>Floating Captions (悬浮字幕)</h3>
@@ -459,6 +459,7 @@ npm run dev
     <section id="transcription">
       <h2>Transcription Engines</h2>
       <p>The web app and the desktop app offer <strong>different engine lineups</strong> — desktop drops browser-based recognition entirely (Tauri's webview has no Web Speech API) and adds a CoreAudio-based system/app audio capture that the web app can't do. The engine picker itself also moved: it now lives as a dropdown in the <strong>bottom status bar</strong> on every screen size (it used to be tabs/pills in the header).</p>
+      <p><strong>Grouped by kind (v0.7.4):</strong> the picker sorts engines into three families — <strong>本地 STT 模型</strong> (local models you run yourself, like local Whisper or 英文加速), <strong>系统 STT 服务</strong> (the OS/browser's own recognizer — browser recognition on the web, 系统识别 on desktop), and <strong>第三方 STT 提供商</strong> (BYOK cloud vendors — Soniox, Deepgram, ElevenLabs). Third-party providers stay visible even without a key configured, each labeled 已配置 or 未配置, instead of disappearing until you set one up.</p>
 
       <h3>Web app</h3>
       <table>
@@ -547,7 +548,7 @@ python whisper_server.py --model small</code></pre>
         <li><strong>Connect OpenRouter</strong> — paste an existing key, or click 使用 OpenRouter 登录 for one-click OAuth: the app opens your system browser to complete login, then hands control back automatically. If OAuth fails, a fallback link to <code>openrouter.ai/keys</code> lets you create and paste a key instead. This unlocks AI detection, translation, and post-meeting reports.</li>
         <li><strong>Speaker diarization token</strong> — paste a Hugging Face token, after accepting the usage terms for pyannote's segmentation and speaker-diarization models on Hugging Face (the step links directly to both). Skipping this is the zero-friction default — diarization stays off until you come back to it.</li>
       </ol>
-      <p>Both steps write to the same Settings the manual paths use, so a value entered here behaves identically to one entered later in Settings → AI 检测 or Settings → 说话人分离. Skipping either one leaves the app fully usable with cloud/BYOK-less features.</p>
+      <p>Both steps write to the same Settings the manual paths use — as of v0.7.4, the key/token itself lives under Settings → 密钥 — so a value entered here behaves identically to one entered later by hand. Skipping either one leaves the app fully usable with cloud/BYOK-less features.</p>
 
       <h3>Background Task Center</h3>
       <p>A 后台任务 launcher lives in the header (desktop only), with an activity dot when a task is running or an app update is available. Opening it shows two zones:</p>
@@ -573,13 +574,13 @@ python whisper_server.py --model small</code></pre>
       <p>With your own key entered, the hosted preview switches to browser-direct BYOK: every AI call goes straight from your browser to your configured provider, any model is allowed, and the key and meeting content never touch the project server — the server even rejects key-carrying relay requests outright. Custom OpenAI-compatible endpoints must support browser CORS on the preview; endpoints without it need the self-hosted or desktop build.</p>
       <h3>BYOK AI</h3>
       <ol>
-        <li>Open <code>设置</code> and go to <code>AI 检测</code>.</li>
-        <li>Choose Anthropic or an OpenAI-compatible endpoint such as DeepSeek, Qwen, OpenRouter, Poe-compatible presets, or Ollama.</li>
+        <li>Open <code>设置 → AI 检测</code> and choose Anthropic or an OpenAI-compatible endpoint such as DeepSeek, Qwen, OpenRouter, Poe-compatible presets, or Ollama.</li>
         <li>Set the base URL if required.</li>
-        <li>Enter an API key in the UI, connect OpenRouter with one-click OAuth, or use a server environment variable such as <code>ANTHROPIC_API_KEY</code>.</li>
-        <li>Choose detection and report models, test the connection, and save.</li>
+        <li>Enter an API key under <code>设置 → 密钥</code> (see the note below), connect OpenRouter with one-click OAuth, or use a server environment variable such as <code>ANTHROPIC_API_KEY</code>.</li>
+        <li>Back in <code>AI 检测</code>, choose detection and report models, test the connection, and save.</li>
       </ol>
-      <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser. On self-hosted web builds it is relayed in memory through your own server's API routes, never persisted; on the hosted preview it is never sent to the project server at all — calls go browser-direct to the provider. Environment keys keep the key out of the browser entirely. On the desktop build, OAuth opens your system browser (RFC 8252 loopback) instead of an in-app popup — see <a href="#desktop-app">Desktop App</a> for the first-run version of this same flow.</div>
+      <div class="callout info"><strong>All keys live in one place (v0.7.4):</strong> <code>设置 → 密钥</code> now holds every API key and token — LLM provider, transcription (Soniox/Deepgram/ElevenLabs), translation (DeepL/有道), and the Hugging Face diarization token — instead of five separate entry points scattered across their feature sections. Storage and Keychain custody are unchanged.</div>
+      <div class="callout"><strong>Key handling:</strong> a UI-entered key is stored in the local browser. On self-hosted web builds it is relayed in memory through your own server's API routes, never persisted; on the hosted preview it is never sent to the project server at all — calls go browser-direct to the provider. Environment keys keep the key out of the browser entirely. On the desktop build, OAuth opens your system browser (RFC 8252 loopback) instead of an in-app popup — see <a href="#desktop-app">Desktop App</a> for the first-run version of this same flow. As of v0.7.3, each provider's key is stored and sent separately — switching providers no longer risks carrying the previous provider's key to the new one's host.</div>
       <h3>Per-task Models</h3>
       <p>Advanced settings can use different providers or models for detection, translation, and reports. The normal split is fast/cheap for live detection and stronger models for post-meeting reports.</p>
       <h3>AI Status Panel (AI 状态)</h3>
@@ -609,7 +610,7 @@ python whisper_server.py --model small</code></pre>
       <h3>Personal Glossary</h3>
       <ol>
         <li>Open <code>我的词典</code> from the app.</li>
-        <li>Add entries manually or select transcript text and choose <code>加入我的词典</code>.</li>
+        <li>Add entries manually, or select transcript text to look it up first — matching packs and senses are listed, and a genuine miss is explained and translated — then choose <code>加入我的词典</code> as a secondary action.</li>
         <li>Saving records the exact wording it appeared as in that meeting, not just the dictionary's canonical form — save it after hearing "back on the envelope" and the entry keeps that surface form even though the dictionary headword is <i>back of the envelope</i>, so review and future detection both recognize the variant you actually heard.</li>
         <li>Saved entries participate in future detection and shadow built-in dictionary matches.</li>
         <li>Split entries across multiple named custom packs, each toggled on or off per meeting.</li>
@@ -618,6 +619,8 @@ python whisper_server.py --model small</code></pre>
       <h3>Built-in Packs</h3>
       <p>Dictionary packs let users narrow detection by topic. Fourteen built-in packs ship today: core expressions, meeting flow, project execution, feedback, sales and growth, softening/criticism, academic meetings, chitchat, business terms, tech terms, pharma/biotech, and — added in v0.4.6 — statistics, machine learning, and bioinformatics (about 226 terms across the three, with English and Chinese glosses sourced from Wikipedia, the EDAM ontology, and Google's ML Glossary). The full built-in dictionary is 650+ entries. Every pack toggles on or off per meeting; <code>core</code> is always on. A handful of everyday-English headwords in the stats/ML packs (mean, prior, attention, precision, …) stay opt-in — they only fire once you customize the enabled-pack list, so casual speech is never flagged under the default all-on state.</p>
       <p><strong>v0.7.2 matching fixes:</strong> a headword ending in a parenthetical qualifier — <i>stochastic gradient descent (SGD)</i>, <i>mode (statistics)</i> — now matches in the transcript (it never could before). And enabling only a specialist pack (e.g. 生信/统计) no longer silently drops a term whose name happens to collide with another pack's — each enabled pack's own definition surfaces.</p>
+      <p><strong>v0.7.3 fixes:</strong> <i>in the red</i> no longer fires on unrelated phrases like <i>the red graph</i>, and a handful of broken built-in glosses — <code>mean</code> was shipping as literally "1." — are repaired at the source, with a new build-time lint to catch the next one. Detection also reads meeting domain more precisely: "thank you for your attention" no longer produces an attention card in a biology talk, while precision/recall still fire correctly in an ML talk.</p>
+      <p><strong>v0.7.4 multi-sense selection:</strong> a headword with more than one definition now ranks them by the meeting's domain — CAC resolves to Cancer-Associated Cachexia in a cachexia talk rather than Customer Acquisition Cost, NDA to New Drug Application inside "IND … or NDA or BLA," and PR to precision-recall rather than Pull Request in an ML talk. An unclear domain still returns a usable definition.</p>
       <h3>Community Packs</h3>
       <p>Remote packs are JSON manifests installed from a GitHub raw or jsDelivr URL. They can contain expression entries and term entries; acronyms are <code>terms</code> with <code>type: "acronym"</code>. As of v0.7.2, an installed pack's own definition takes precedence over a built-in one when both define the same term, instead of the built-in one winning silently.</p>
       <p>Settings also has an official catalog you can browse and install from with one click — six specialized packs (medicine, biopharma, AI/ML, law, finance, engineering; 4,300+ terms total) published at <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>, alongside file or GitHub-URL import for any third-party pack. Installed packs auto-check for updates once a day.</p>
@@ -712,7 +715,7 @@ python whisper_server.py --model small</code></pre>
       <h3>Speech recognition is unsupported</h3>
       <p>Use Chrome or Edge for browser recognition, or switch to local Whisper.</p>
       <h3>Whisper will not connect</h3>
-      <p>Confirm the sidecar terminal is running, the URL is <code>ws://localhost:8765</code>, and the local firewall is not blocking loopback traffic.</p>
+      <p>Confirm the sidecar terminal is running, the URL is <code>ws://localhost:8765</code>, and the local firewall is not blocking loopback traffic. As of v0.7.4, a failed connection to a self-hosted transcription service shows a readable setup message instead of a raw socket error.</p>
       <h3>Detection is too noisy or too quiet</h3>
       <p>Adjust the confidence threshold, enable/disable packs, or switch AI detection on or off depending on the meeting.</p>
       <h3>Report generation is slow</h3>
@@ -1072,6 +1075,17 @@ cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
         <li><strong>Diagnostics for beta feedback (v0.7.2):</strong> Settings' 诊断信息 log viewer now covers all three local logs (Whisper 服务 / 系统/App 音频 / 系统识别) via a source picker; a new 导出诊断文件 button saves the diagnostics bundle as a file (opens the system share sheet on iOS); the Chrome extension side panel gets its first 复制诊断 button.</li>
         <li><strong>Local logs never carry meeting speech (v0.7.2):</strong> a hardening fix in the desktop speech-recognition log writer closes the one remaining path where a malformed line could leak raw speech into a local log file.</li>
         <li><strong>Chrome extension updated to 0.7.2 (v0.7.2):</strong> now carries the dictionary reliability fixes above; the previous release was pinned at 0.6.0.</li>
+        <li><strong>Per-provider API keys (v0.7.3):</strong> switching LLM providers no longer risks sending the previous provider's key to the new provider's host — each provider's key is now stored and sent in isolation, migrated automatically, still Keychain-backed on desktop.</li>
+        <li><strong>Speaker rename fix (v0.7.3):</strong> renaming a speaker now updates the roster and the live speaker picker immediately; it used to stick on the old name for the rest of the meeting.</li>
+        <li><strong>Tighter card context (v0.7.3):</strong> an expression card's quoted context is now the clause around the match, not the full 60-word ASR run-on it came from.</li>
+        <li><strong>Fewer false positives, cleaner glosses (v0.7.3):</strong> <i>in the red</i> no longer fires on unrelated phrases like <i>the red graph</i>, and broken built-in glosses (<code>mean</code> shipping as literally "1.") are fixed at the source, with a new build-time lint to catch the next one.</li>
+        <li><strong>Sharper meeting-domain inference (v0.7.3):</strong> "thank you for your attention" no longer produces an attention card in a biology talk, while precision/recall still fire correctly in an ML talk.</li>
+        <li><strong>Domain-aware multi-sense definitions (v0.7.4):</strong> CAC resolves to Cancer-Associated Cachexia in a cachexia talk rather than Customer Acquisition Cost, NDA to New Drug Application inside "IND … or NDA or BLA," and PR to precision-recall rather than Pull Request in an ML talk; an unclear domain still returns a usable definition.</li>
+        <li><strong>划词 lookup rework (v0.7.4):</strong> selecting text now runs a dictionary lookup first — every matching pack and sense is listed instead of a single winner — and a genuine miss is explained in context and translated; <code>加入我的词典</code> drops to a secondary action.</li>
+        <li><strong>Engine picker grouped by kind (v0.7.4):</strong> 本地 STT 模型 / 系统 STT 服务 / 第三方 STT 提供商 replace one flat list; unconfigured third-party providers stay visible with a 已配置/未配置 hint instead of disappearing.</li>
+        <li><strong>Audio source as its own control (v0.7.4):</strong> changeable mid-meeting now instead of only before one starts; system/app audio states plainly that it captures the other party, never your microphone.</li>
+        <li><strong>Readable connection errors (v0.7.4):</strong> the web build shows a plain-language setup message when it can't reach a self-hosted transcription service, instead of a raw socket error.</li>
+        <li><strong>One 密钥 settings category (v0.7.4):</strong> every API key — LLM provider, transcription, translation, diarization token — now lives under a single 设置 → 密钥 screen instead of five scattered entry points; storage and Keychain custody are unchanged.</li>
       </ol>
       <p>Parked items include browser-Whisper realtime streaming and select-to-web-search.</p>
     </section>
