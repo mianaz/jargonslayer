@@ -159,6 +159,19 @@ export const FINANCE_CONSUMER_TERMS: DictTermEntry[] = [
         gloss_en: "International Organization for Standardization, the body behind ISO standards",
         gloss_zh: "国际标准化组织",
         domain: "ops",
+        // No pack maps to "ops" in PACK_DOMAINS (packs.ts), so that tag
+        // alone can NEVER win the meeting-tracker's 1.0-weight domain
+        // match — it is silently inert against activeDomains, unlike
+        // the sibling incentive-stock-option sense's reachable "finance"
+        // tag. Harmless while this sense's own 0.8 prior still dominates
+        // 0.2 by default, but NOT harmless if a compensation-heavy
+        // conversation (RSU/NSO/vesting cliff -> "finance" active) also
+        // happens inside a GMP/audit talk — exactly the roadmap's own
+        // "ninth trap ... any GMP/audit talk" scenario — since finance
+        // would then win outright on its own domain match alone. GMP/
+        // audit vocabulary is pharma-biotech pack territory (IND/BLA/PK
+        // etc.), hence "pharma" here — see DictSense.altDomains' own doc.
+        altDomains: ["pharma"],
         prior: 0.8,
         senseId: "iso-standards",
       },

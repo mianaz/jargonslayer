@@ -604,6 +604,21 @@ describe("scanDictionary — term variants (v0.6 T2)", () => {
     const res = scanDictionary("The ARR figure is up.");
     expect(res.terms.some((t) => t.term === "ARR")).toBe(true);
   });
+
+  // Review finding: "alignment" replaced the old "align" EXPRESSION,
+  // whose buildExpressionRegex auto-appended (?:s|es|ed|d|ing)? to the
+  // last word. Term-candidate matching (getCachedTermRegex) has no such
+  // inflection tolerance, so "aligning"/"aligns" silently stopped
+  // producing a card unless listed as their own literal variant.
+  it("matches the 'aligning' inflection of the alignment term", () => {
+    const res = scanDictionary("We're aligning on the roadmap this week.");
+    expect(res.terms.some((t) => t.term === "alignment")).toBe(true);
+  });
+
+  it("matches the 'aligns' inflection of the alignment term", () => {
+    const res = scanDictionary("That aligns with Q3 as well.");
+    expect(res.terms.some((t) => t.term === "alignment")).toBe(true);
+  });
 });
 
 describe("scanDictionary — commonWord term suppression (H1/H2 doc fix pin, v0.6 dictpacks fix round)", () => {

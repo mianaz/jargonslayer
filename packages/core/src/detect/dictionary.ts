@@ -901,7 +901,14 @@ const BASE_TERM_DICTIONARY: TermEntry[] = [
   },
   {
     term: "alignment",
-    variants: ["align", "align on", "aligned"],
+    // Term-candidate matching has no inflection tolerance (unlike the
+    // OLD "align" expression this term replaced — buildExpressionRegex
+    // appended `(?:s|es|ed|d|ing)?` automatically; getCachedTermRegex,
+    // used for every term/variant candidate below, does not — see that
+    // function's own doc comment). So every inflected surface form the
+    // old expression covered for free needs its own literal entry here:
+    // "aligning"/"aligns" alongside the base "align"/"align on"/"aligned".
+    variants: ["align", "align on", "aligned", "aligning", "aligns"],
     type: "tech",
     gloss_en: "making an AI system's actual behavior match what its developers intended",
     gloss_zh: "让 AI 的行为真正符合开发者意图",
@@ -1634,6 +1641,16 @@ interface SenseSelection {
  *  on a non-empty domainWeights map restores the intended meaning:
  *  ambiguous only from a genuine domain mismatch, never from simply not
  *  knowing the domain yet. */
+/** `[sense.domain, ...sense.altDomains]` — see DictSense.altDomains'
+ *  own doc comment for why a sense can have more than one qualifying
+ *  domain (a genuinely cross-domain concept whose different real-world
+ *  evidence packs map to different DomainTags). Every consumer of a
+ *  sense's domain for scoring/ambiguity purposes must check the WHOLE
+ *  set, not just the primary `domain` field. */
+function senseDomains(sense: DictSense): DomainTag[] {
+  return sense.altDomains?.length ? [sense.domain, ...sense.altDomains] : [sense.domain];
+}
+
 function selectSense(
   entry: { pack: string; senses: DictSense[] },
   enabledPacks: string[] | null,
@@ -1643,16 +1660,19 @@ function selectSense(
   const packBonus = isPackExplicitlyEnabled(entry.pack, enabledPacks) ? 1 : 0;
   const hasScoredContext = ctx !== null || activeDomains.size > 0;
 
-  const scored = entry.senses.map((sense) => ({
-    sense,
-    score: hasScoredContext
-      ? (activeDomains.has(sense.domain) ? 1 : 0) +
-        0.45 * (ctx?.domainWeights?.[sense.domain] ?? 0) +
-        0.25 * (ctx?.cooccurrence?.[sense.domain] ?? 0) +
-        0.15 * packBonus +
-        0.15 * sense.prior
-      : sense.prior,
-  }));
+  const scored = entry.senses.map((sense) => {
+    const domains = senseDomains(sense);
+    return {
+      sense,
+      score: hasScoredContext
+        ? (domains.some((d) => activeDomains.has(d)) ? 1 : 0) +
+          0.45 * Math.max(0, ...domains.map((d) => ctx?.domainWeights?.[d] ?? 0)) +
+          0.25 * Math.max(0, ...domains.map((d) => ctx?.cooccurrence?.[d] ?? 0)) +
+          0.15 * packBonus +
+          0.15 * sense.prior
+        : sense.prior,
+    };
+  });
   scored.sort((a, b) => b.score - a.score);
 
   const top1 = scored[0];
@@ -1661,7 +1681,7 @@ function selectSense(
   const domainMismatchAmbiguous =
     ctx !== null &&
     Object.keys(ctx.domainWeights ?? {}).length > 0 &&
-    (ctx.domainWeights?.[top1.sense.domain] ?? 0) === 0;
+    senseDomains(top1.sense).every((d) => (ctx.domainWeights?.[d] ?? 0) === 0);
   const ambiguous = marginAmbiguous || domainMismatchAmbiguous;
 
   return {

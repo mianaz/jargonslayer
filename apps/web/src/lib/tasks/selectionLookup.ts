@@ -13,10 +13,14 @@ import type {
 } from "@jargonslayer/core/types";
 import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
 import { create } from "zustand";
-import { useApp, type LookupRequest } from "../store";
+import { useApp, getMeetingDomainTracker, type LookupRequest } from "../store";
 import { defineApi, NoKeyError } from "../llm/client";
 import { resolveTaskCreds } from "../llm/taskConfig";
-import { langPairFromSettings, resolveTranslationProvider } from "../translate/providers";
+import {
+  langPairFromSettings,
+  resolveTranslationProvider,
+  SystemTranslatorUnavailableError,
+} from "../translate/providers";
 import { startTask, completeTask, failTask } from "./registry";
 
 export type LookupProgress =
@@ -210,6 +214,7 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
   const dictionary = scanDictionary(req.text, undefined, {
     bypassCommonWordSuppression: true,
     includeAllPackMatches: true,
+    activeDomains: getMeetingDomainTracker().activeDomains(),
   });
   if (hasDictionaryHit(dictionary)) {
     const details = { dictFallback: false };
@@ -240,8 +245,23 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
     // also makes the best permitted attempt to prepare its language pair.
     provider.prepare(pair);
 
-    const [definitionResult, translationResult] = await Promise.allSettled([
-      defineApi(
+    // Definition is sequenced BEFORE translation rather than raced
+    // against it. `prepare()` above only KICKS OFF an on-device
+    // provider's model download/session creation (ChromeTranslator
+    // Provider) — it does not wait for it. Firing translate() in the
+    // very same tick as prepare() (the old Promise.allSettled pairing)
+    // meant a cold model's cache entry was still "pending" 100% of the
+    // time, so a provider's very first lookup this page load always
+    // threw. defineApi's own network round trip gives that
+    // download/session real wall-clock time to finish before translate()
+    // is even attempted. Each result is still reported independently —
+    // a definition failure never hides a working translation or vice
+    // versa.
+    let definition: DefineResult | undefined;
+    let definitionError: string | undefined;
+    let dictFallback = false;
+    try {
+      definition = await defineApi(
         {
           phrase: req.text,
           context: req.contextText,
@@ -249,20 +269,34 @@ export async function runSelectionLookup(req: LookupRequest, settings: Settings)
           model: resolveTaskCreds(settings, "detect").model,
         },
         settings,
-      ),
-      pair.source === pair.target
-        ? Promise.resolve(undefined)
-        : provider
-            .translate([{ id: req.id, text: req.text }], pair.target)
-            .then((translations) => translations.find((item) => item.id === req.id)?.text?.trim() || undefined),
-    ]);
+      );
+    } catch (err) {
+      definitionError = errorMessage(err);
+      dictFallback = err instanceof NoKeyError;
+    }
 
-    const definition = definitionResult.status === "fulfilled" ? definitionResult.value : undefined;
-    const translation = translationResult.status === "fulfilled" ? translationResult.value : undefined;
-    const definitionError = definitionResult.status === "rejected" ? errorMessage(definitionResult.reason) : undefined;
-    const translationError = translationResult.status === "rejected" ? errorMessage(translationResult.reason) : undefined;
+    let translation: string | undefined;
+    let translationError: string | undefined;
+    if (pair.source !== pair.target) {
+      try {
+        const translations = await provider.translate([{ id: req.id, text: req.text }], pair.target);
+        translation = translations.find((item) => item.id === req.id)?.text?.trim() || undefined;
+      } catch (err) {
+        // A provider that is genuinely unavailable (model still
+        // downloading, browser lacks the Translator API at all, native
+        // child failed to start) is not something the user can act on
+        // from this popover — quietly omitting the translation line is
+        // correct; a permanent red error for a condition with no
+        // available fix is not. Any OTHER translation failure (a BYOK
+        // key/quota problem, say) is still surfaced as before.
+        if (!(err instanceof SystemTranslatorUnavailableError)) {
+          translationError = errorMessage(err);
+        }
+      }
+    }
+
     const details = {
-      dictFallback: definitionResult.status === "rejected" && definitionResult.reason instanceof NoKeyError,
+      dictFallback,
       ...(definition ? { definition } : {}),
       ...(translation ? { translation } : {}),
       ...(definitionError ? { definitionError } : {}),

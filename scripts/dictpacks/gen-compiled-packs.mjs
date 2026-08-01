@@ -45,6 +45,7 @@ const COMMON_WORDS = new Set([
   "token",
   "epoch",
   "embedding",
+  "variance",
 ]);
 
 const VALID_TYPES = new Set([

@@ -90,6 +90,18 @@ export interface DictSense {
   gloss_zh: string;
   type?: TermType; // absent = inherit the parent entry's own `type`
   domain: DomainTag;
+  // A genuinely cross-domain sense (e.g. "regression" the statistical/
+  // predictive-modeling technique is core vocabulary in BOTH a
+  // stats-flavored meeting and an ml-flavored one, but PACK_DOMAINS maps
+  // their respective evidence packs — stats, ml-stats — to two DIFFERENT
+  // domain tags: "stats" and "ml") needs more than one qualifying
+  // domain. Every one of `[domain, ...altDomains]` is an EQUALLY-weighted
+  // candidate match against activeDomains/domainWeights/cooccurrence in
+  // selectSense — this is not a secondary/weaker signal, just more than
+  // one accepted value for the same check. `domain` alone still remains
+  // the one reported on `ranked`/emitted-card output. Optional: absent
+  // for every ordinary single-domain sense.
+  altDomains?: DomainTag[];
   prior: number; // 0..1, domain-agnostic base rate for this sense
   senseId: string;
 }
@@ -4082,6 +4094,13 @@ export const EXTRA_TERMS: DictTermEntry[] = [
         gloss_zh: "统计回归（预测数值目标）",
         type: "tech",
         domain: "ml",
+        // "regression" is core vocabulary in a plain-stats meeting too
+        // (p-value/confidence-interval talk, no ML jargon at all) — that
+        // evidence activates the "stats" pack's own domain tag, not
+        // "ml" (PACK_DOMAINS: stats -> "stats", ml-stats -> "ml"). Without
+        // this, a stats-only meeting's "we fit a regression" loses to the
+        // domain-agnostic 0.6 prior on software-regression.
+        altDomains: ["stats"],
         prior: 0.4,
         senseId: "statistical-regression",
       },

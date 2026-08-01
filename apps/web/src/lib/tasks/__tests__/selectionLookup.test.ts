@@ -22,12 +22,22 @@ vi.mock("../../llm/client", () => ({
 vi.mock("../../translate/providers", () => ({
   langPairFromSettings: () => ({ source: "en", target: "zh" }),
   resolveTranslationProvider: (...args: unknown[]) => mockResolveTranslationProvider(...args),
+  SystemTranslatorUnavailableError: class SystemTranslatorUnavailableError extends Error {
+    reason: "unavailable" | "downloading";
+    constructor(reason: "unavailable" | "downloading" = "unavailable", message = "系统翻译不可用") {
+      super(message);
+      this.name = "SystemTranslatorUnavailableError";
+      this.reason = reason;
+    }
+  },
 }));
 
-import { useApp, type LookupRequest } from "../../store";
+import { useApp, getMeetingDomainTracker, type LookupRequest } from "../../store";
 import { useTasks } from "../registry";
 import { runSelectionLookup, useSelectionLookup } from "../selectionLookup";
 import { NoKeyError } from "../../llm/client";
+import { SystemTranslatorUnavailableError } from "../../translate/providers";
+import { scanDictionary } from "@jargonslayer/core/detect/dictionary";
 import { DEFAULT_SETTINGS, type DefineResult, type Settings } from "@jargonslayer/core/types";
 
 function makeSettings(overrides: Partial<Settings> = {}): Settings {
@@ -90,6 +100,26 @@ describe("runSelectionLookup", () => {
     expect(progress?.status === "done" && progress.result.terms.some((term) => term.term === "attention")).toBe(
       true,
     );
+  });
+
+  // Finding 5: an explicit lookup used to omit the meeting-domain signal,
+  // so it could contradict the transcript card for the SAME term in the
+  // SAME meeting (e.g. the transcript correctly reads CAC as Cancer-
+  // Associated Cachexia in a pharma talk, but the 划词 popover ranked
+  // 获客成本 first because it never saw the active domain).
+  it("feeds the meeting-domain signal into the lookup so it agrees with the transcript card", async () => {
+    // Prime the SAME tracker the live transcript pipeline feeds
+    // (scheduler.ts's own domainTracker.observe call) with two
+    // pharma-pack hits, exactly as an acronym-dense pharma talk would
+    // before the user selects "CAC" to double-check it.
+    getMeetingDomainTracker().observe(scanDictionary("The IND, BLA, and PK plans are ready."));
+
+    const req = makeReq({ id: "lookup-domain-signal", text: "CAC" });
+    await runSelectionLookup(req, makeSettings({ aiDetect: true }));
+
+    const progress = useSelectionLookup.getState().byId[req.id];
+    const cac = progress?.status === "done" ? progress.result.terms.find((t) => t.term === "CAC") : undefined;
+    expect(cac?.gloss_zh).toBe("癌症相关恶病质");
   });
 
   it("on a genuine miss automatically defines in context and uses the configured translation provider", async () => {
@@ -164,6 +194,24 @@ describe("runSelectionLookup", () => {
     });
   });
 
+  // Finding 7: a genuinely UNAVAILABLE translation provider (model still
+  // downloading, or the browser has no Translator API at all) is not
+  // something the user can act on — the fix omits the translation line
+  // entirely instead of rendering a permanent red error, while any OTHER
+  // translation failure (e.g. a real provider error) still surfaces.
+  it("omits the translation line (no error shown) when the provider is genuinely unavailable", async () => {
+    const req = makeReq({ id: "lookup-translator-unavailable" });
+    mockProviderTranslate.mockRejectedValueOnce(new SystemTranslatorUnavailableError("downloading"));
+    await runSelectionLookup(req, makeSettings({ aiDetect: true }));
+
+    expect(useSelectionLookup.getState().byId[req.id]).toEqual({
+      status: "done",
+      result: { expressions: [], terms: [] },
+      dictFallback: false,
+      definition: DEFINITION,
+    });
+  });
+
   it("does not run the fallback twice when the same selection is submitted twice", async () => {
     const req = makeReq({ id: "lookup-duplicate" });
     await Promise.all([
@@ -227,10 +275,14 @@ describe("runSelectionLookup", () => {
     const first = runSelectionLookup(req, makeSettings({ aiDetect: true }));
     const second = runSelectionLookup(req, makeSettings({ aiDetect: true }));
     expect(mockDefineApi).toHaveBeenCalledTimes(1);
-    expect(mockProviderTranslate).toHaveBeenCalledTimes(1);
 
     resolveDefinition(DEFINITION);
     await Promise.all([first, second]);
+
+    // Translation is sequenced AFTER definition settles (not raced
+    // against it — see runSelectionLookup's own doc), so it only shows
+    // up once both requests have fully resolved.
+    expect(mockProviderTranslate).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a completed id rejected after a new lookup prunes its done progress entry", async () => {
@@ -373,4 +425,9 @@ afterEach(() => {
   useSelectionLookup.setState({ byId: {} });
   useTasks.setState({ tasks: {} });
   useApp.setState({ cards: [], terms: [], lookup: null, toast: null });
+  // getMeetingDomainTracker() is a module-level singleton (store.ts),
+  // not zustand state — newMeeting()'s own reset is the only way to
+  // clear it, same as a real meeting boundary. Needed so a test that
+  // primes it (Finding 5) can't leak active domains into a later test.
+  useApp.getState().newMeeting();
 });

@@ -159,6 +159,7 @@ describe("commonWord terms stay opt-in under the default all-on state", () => {
     "token",
     "epoch",
     "embedding",
+    "variance",
   ];
 
   it("flags exactly the expected everyday-English headwords", () => {
@@ -172,6 +173,15 @@ describe("commonWord terms stay opt-in under the default all-on state", () => {
     const res = scanDictionary("I mean, we should pay attention to the details.", null);
     expect(res.terms.some((t) => t.term === "mean")).toBe(false);
     expect(res.terms.some((t) => t.term === "attention")).toBe(false);
+  });
+
+  it("does NOT fire 'variance' as a business-usage common word under the shipping default", () => {
+    // Regression guard: "variance" briefly shipped WITHOUT commonWord,
+    // so under the default (all packs on, no active stats domain) an
+    // ordinary business sentence produced an unwanted ~100-char 方差
+    // gloss card, using the wrong (statistical) default sense.
+    const res = scanDictionary("There's a lot of variance quarter to quarter.", null);
+    expect(res.terms.some((t) => t.term === "variance")).toBe(false);
   });
 
   it("fires a common word once its domain is active", () => {

@@ -187,7 +187,31 @@ describe("meeting domain signal", () => {
       expect(regression.gloss_en).not.toMatch(/previously-working feature/);
     });
 
+    // Review finding: statistical-regression used to be tagged domain
+    // "ml" ONLY (PACK_DOMAINS: ml-stats -> "ml"), so a plain stats talk
+    // with zero ML vocabulary — evidence from the SEPARATE "stats" pack
+    // (PACK_DOMAINS: stats -> "stats") — never boosted it, and the
+    // domain-agnostic 0.6 prior on software-regression won instead.
+    it("uses prior STATS evidence (no ML vocabulary at all) to resolve regression as statistical regression", () => {
+      const tracker = createDomainTracker();
+      const stats = scanSegment(tracker, "The p-value and confidence interval are significant.");
+      expect(termNames(stats)).toEqual(expect.arrayContaining(["p-value", "confidence interval"]));
+      expect(tracker.activeDomains()).toContain("stats");
+      expect(tracker.activeDomains()).not.toContain("ml");
+
+      const regression = findTerm(scanSegment(tracker, "We fit a regression to predict the outcome."), "regression");
+      expect(regression.senseId).toBe("statistical-regression");
+      expect(regression.gloss_en).not.toMatch(/previously-working feature/);
+    });
+
     it("falls back to a usable higher-prior sense for every affected headword", () => {
+      // "variance" is deliberately excluded from this loop: unlike its
+      // nine siblings here, it is a commonWord (see the compiledPacks
+      // suite) — a bare scan with zero active domains and no bypass is
+      // correctly SUPPRESSED entirely (no card at all), not just
+      // defaulted to a sense. Its own prior-fallback ordering is
+      // covered separately right below, the same way an explicit
+      // dictionary lookup actually observes it (bypassCommonWordSuppression).
       const cases = [
         ["CAC", "CAC", "customer-acquisition-cost"],
         ["NDA", "NDA", "non-disclosure-agreement"],
@@ -195,7 +219,6 @@ describe("meeting domain signal", () => {
         ["regression", "regression", "software-regression"],
         ["oral", "oral", "oral-administration"],
         ["PD", "PD", "product-development"],
-        ["variance", "variance", "statistical-variance"],
         ["alignment", "alignment", "team-alignment"],
         ["ISO", "ISO", "iso-standards"],
         ["SAM", "SAM", "serviceable-addressable-market"],
@@ -211,7 +234,32 @@ describe("meeting domain signal", () => {
       }
     });
 
-    it("uses a business/sales sequence for plan variance and team alignment", () => {
+    it("falls back to statistical-variance (higher prior) once commonWord suppression is bypassed", () => {
+      // Mirrors how the real 划词 explicit-lookup caller always scans
+      // (bypassCommonWordSuppression: true) — with no domain context at
+      // all, the higher-prior sense (0.6 statistical vs 0.4 plan) wins.
+      const res = scanDictionary("variance", null, { bypassCommonWordSuppression: true });
+      const variance = findTerm(res, "variance");
+      expect(variance.senseId).toBe("statistical-variance");
+    });
+
+    it("still resolves plan-variance once its own domain is active and suppression is bypassed", () => {
+      // Same sales-domain evidence as the business/sales sequence test
+      // below, but scanned the way an explicit 划词 lookup on "variance"
+      // actually would (bypassCommonWordSuppression) — confirms the
+      // multi-sense ranking itself is unaffected by the commonWord gate,
+      // it only decides whether a card shows up AT ALL in ordinary
+      // (non-bypassed) transcript detection.
+      const res = scanDictionary("We added variance tracking.", null, {
+        activeDomains: new Set(["sales"]),
+        bypassCommonWordSuppression: true,
+      });
+      const variance = findTerm(res, "variance");
+      expect(variance.senseId).toBe("plan-variance");
+      expect(variance.gloss_zh).toBe("预算或计划差异");
+    });
+
+    it("uses a business/sales sequence for team alignment (plan-variance is covered separately)", () => {
       const tracker = createDomainTracker();
       const business = scanSegment(
         tracker,
@@ -227,9 +275,15 @@ describe("meeting domain signal", () => {
       expect(pd.senseId).toBe("product-development");
       expect(pd.gloss_zh).toBe("产品开发部门");
 
-      const variance = findTerm(scanSegment(tracker, "We added variance tracking."), "variance");
-      expect(variance.senseId).toBe("plan-variance");
-      expect(variance.gloss_zh).toBe("预算或计划差异");
+      // "variance" itself is NOT asserted here: its commonWord gate is
+      // keyed to its OWN entry pack's domain ("stats" — see
+      // shouldIncludeCommonWord, dictionary.ts), independent of which
+      // SENSE would eventually win. A sales-only meeting with zero
+      // stats vocabulary never activates "stats", so the term is
+      // correctly suppressed outright — same restored-commonWord
+      // behavior compiledPacks.test.ts pins, not a sense-selection
+      // question. See the standalone bypass-suppression test above for
+      // plan-variance's own sense-ranking coverage.
 
       const alignment = findTerm(
         scanSegment(tracker, "After the meeting, the team was aligned."),
@@ -251,6 +305,30 @@ describe("meeting domain signal", () => {
       );
       expect(sam.senseId).toBe("sequence-alignment-map");
       expect(sam.gloss_zh).toBe("序列比对信息格式");
+    });
+
+    // Review finding (audit follow-up): iso-standards was tagged domain
+    // "ops" ONLY, but no pack maps to "ops" in PACK_DOMAINS — that tag
+    // can never win the tracker's 1.0 domain match on its own. The
+    // roadmap's own "ninth trap ... any GMP/audit talk" scenario is a
+    // compensation conversation (RSU/NSO -> "finance" active, boosting
+    // the sibling incentive-stock-option sense) happening INSIDE a
+    // GMP/audit meeting (IND/BLA -> "pharma" active) — without a
+    // reachable altDomains tag, "finance"'s clean domain match used to
+    // beat iso-standards' own 0.8 prior outright.
+    it("keeps ISO as ISO-standards (not the stock-option sense) in a GMP/audit talk that also mentions compensation", () => {
+      const tracker = createDomainTracker();
+      const pharma = scanSegment(tracker, "The IND and BLA filings are under GMP audit.");
+      expect(termNames(pharma)).toEqual(expect.arrayContaining(["IND", "BLA"]));
+      expect(tracker.activeDomains()).toContain("pharma");
+
+      const finance = scanSegment(tracker, "Compensation includes RSU and NSO grants.");
+      expect(termNames(finance)).toEqual(expect.arrayContaining(["RSU", "NSO"]));
+      expect(tracker.activeDomains()).toContain("finance");
+
+      const iso = findTerm(scanSegment(tracker, "Every ISO certificate needs renewal this quarter."), "ISO");
+      expect(iso.senseId).toBe("iso-standards");
+      expect(iso.gloss_zh).toBe("国际标准化组织");
     });
   });
 });
