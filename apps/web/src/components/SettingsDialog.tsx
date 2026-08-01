@@ -63,6 +63,7 @@ import {
 import type {
   EnglishLevel,
   ExplainLanguage,
+  LlmProvider,
   LlmTaskDomain,
   STTEngineKind,
   Settings,
@@ -955,6 +956,36 @@ function TaskDomainBlock({
     onChange({ enabled, provider: config?.provider, baseUrl: config?.baseUrl, apiKey: config?.apiKey, model: config?.model, ...p });
   };
 
+  // FINDING 11 (escalated HIGH, second review): a per-task override has
+  // exactly ONE apiKey field — unlike the primary block, which stores a
+  // separate field per provider (providerKeys.ts) plus a host binding
+  // for the custom-endpoint case — so switching THIS domain's provider/
+  // Base URL used to silently carry the OLD key forward into
+  // resolveTaskCreds' NEW provider/baseUrl (taskConfig.ts:65 `t.apiKey
+  // || resolveProviderApiKey(...)` sends whatever's in `t.apiKey`
+  // as-is). That's the exact FT-2 cross-host-leak class v0.7.3
+  // reshaped the flat keys to stop, reopened here. Per-provider storage
+  // for task overrides would be its own reshape (out of this fix's
+  // scope), so the safe minimum every host change gets is: drop the
+  // stale key and fall back to "留空则用主配置的 Key" (resolveTaskCreds'
+  // own inherit rule) — exactly what a freshly-enabled override already
+  // does with an empty apiKey.
+  const patchConfigForHost = (p: Partial<TaskLlmConfig> & { provider?: LlmProvider; baseUrl?: string }) => {
+    const currentProvider = config?.provider ?? primary.provider;
+    const currentBaseUrl = config?.baseUrl ?? primary.baseUrl;
+    const nextProvider = p.provider ?? currentProvider;
+    const nextBaseUrl = p.baseUrl ?? currentBaseUrl;
+    // baseUrl is inert for "anthropic" (presetIdFor short-circuits on
+    // provider alone — providerKeys.ts) and CredentialFields never even
+    // renders a Base URL input for it, so only compare hosts once both
+    // sides are openai-compat; a bare provider flip already counts as a
+    // host change on its own.
+    const hostChanged =
+      nextProvider !== currentProvider ||
+      (nextProvider === "openai-compat" && providerHostFor(nextBaseUrl) !== providerHostFor(currentBaseUrl));
+    patchConfig(hostChanged ? { ...p, apiKey: "" } : p);
+  };
+
   return (
     <div className="space-y-2 border border-edge bg-panel2 p-3">
       <label className="flex items-center justify-between gap-3">
@@ -979,9 +1010,9 @@ function TaskDomainBlock({
             onSelectPreset={(id) => {
               const preset = PROVIDER_PRESETS.find((p) => p.id === id);
               if (!preset) return;
-              patchConfig({ provider: preset.provider, baseUrl: preset.baseUrl });
+              patchConfigForHost({ provider: preset.provider, baseUrl: preset.baseUrl });
             }}
-            onBaseUrlChange={(baseUrl) => patchConfig({ baseUrl })}
+            onBaseUrlChange={(baseUrl) => patchConfigForHost({ baseUrl })}
             onApiKeyChange={(apiKey) => patchConfig({ apiKey })}
             apiKeyPlaceholder="留空则用主配置的 Key"
             apiKeyStatus={apiKeyStatus}
@@ -2257,6 +2288,28 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
         return;
       }
       normalizedTaskLlm = { ...normalizedTaskLlm, [domain]: { ...override, baseUrl: normalized } };
+    }
+    // FINDING 11 fix: taskLlm.*.apiKey is the one credential `toSave`
+    // below never ran through sanitizeSecretValue — every top-level
+    // SECRET_NAMES field gets the zero-width/whitespace self-heal (see
+    // that block's own comment), but a per-task override key never did,
+    // even though the 密钥 hub's 分任务覆盖 rows now offer it as a
+    // first-class paste target. Deliberately its OWN unconditional pass,
+    // not folded into the loop above: that loop skips any override that
+    // is disabled or missing baseUrl, but the hub's SecretKeyRow onChange
+    // can leave an override sitting `enabled:false` with only `apiKey`
+    // set (it preserves whatever `enabled` already was), so a dirty
+    // paste there must still self-heal regardless.
+    for (const { domain } of TASK_DOMAIN_META) {
+      const override = normalizedTaskLlm?.[domain];
+      if (!override?.apiKey) continue;
+      const sanitizedApiKey = sanitizeSecretValue(override.apiKey);
+      if (sanitizedApiKey !== override.apiKey) {
+        normalizedTaskLlm = {
+          ...normalizedTaskLlm,
+          [domain]: { ...override, apiKey: sanitizedApiKey },
+        };
+      }
     }
 
     const enabledPacks = allPacksChecked ? null : nonCorePackIds.filter((id) => checkedPacks.has(id));
@@ -5320,12 +5373,13 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
               <div className="text-xs font-medium text-mut">LLM 提供方</div>
               {PROVIDER_KEY_CATALOG.map((entry) => {
                 const value = draft[entry.field] ?? "";
+                const activeProviderKeyName = providerApiKeyNameFor(draft.provider, draft.baseUrl);
                 // Evidence only describes the SAVED primary credential —
                 // gate on this row still being the draft's resolved
                 // provider key AND matching what's saved (same FINDING 5
                 // rule as the AI 检测 CredentialFields chip).
                 const isActiveProviderKey =
-                  providerApiKeyNameFor(draft.provider, draft.baseUrl) === entry.field &&
+                  activeProviderKeyName === entry.field &&
                   (entry.field !== "apiKeyCustom" ||
                     (draft.llmCustomHost ?? "") === providerHostFor(draft.baseUrl));
                 const status = deriveKeyStatus(
@@ -5341,6 +5395,27 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                       )
                     : undefined,
                 );
+                // FINDING 2 fix: apiKeyCustom is host-bound
+                // (resolveProviderApiKey returns "" unless
+                // llmCustomHost === providerHostFor(baseUrl), see
+                // providerKeys.ts). Writing it with a bare
+                // `patch({ apiKeyCustom })` — as every OTHER row here
+                // safely does — left the host binding stale, so the
+                // key this row just saved either never resolved (dead
+                // key on 自定义端点) or, worse, resolved against
+                // whatever custom host the draft used to be bound to
+                // (the FT-2 cross-host leak class). Route through the
+                // same providerApiKeyPatch contract the primary "AI
+                // 检测" editor uses instead of inventing a second
+                // write path, and only when the draft's OWN provider/
+                // baseUrl actually resolves to apiKeyCustom — while
+                // the draft sits on a named preset there is no
+                // meaningful host to bind, so disable the row rather
+                // than silently writing a binding that doesn't apply
+                // to what's currently selected.
+                const isCustomKeyField = entry.field === "apiKeyCustom";
+                const customKeyBindable =
+                  !isCustomKeyField || activeProviderKeyName === "apiKeyCustom";
                 return (
                   <SecretKeyRow
                     key={entry.field}
@@ -5348,10 +5423,22 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     label={entry.label}
                     purpose={entry.purpose}
                     value={value}
-                    onChange={(apiKey) => patch({ [entry.field]: apiKey })}
+                    onChange={(apiKey) =>
+                      patch(
+                        isCustomKeyField
+                          ? providerApiKeyPatch(draft.provider, draft.baseUrl, apiKey)
+                          : { [entry.field]: apiKey },
+                      )
+                    }
                     placeholder={entry.placeholder}
                     status={status}
                     inputType={entry.inputType}
+                    disabled={!customKeyBindable}
+                    hint={
+                      customKeyBindable
+                        ? undefined
+                        : "当前「提供方」不是自定义端点，此处无法绑定 Host；先在「AI 检测」将提供方切换为自定义端点后再填写"
+                    }
                   />
                 );
               })}
@@ -5359,6 +5446,26 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
 
             <div className="space-y-3 border-t border-edge pt-3">
               <div className="text-xs font-medium text-mut">分任务覆盖（可选）</div>
+              {/* FINDING 11 custody-copy decision: keep these rows.
+                 Escalated review's actual blocking concern — a provider/
+                 host switch silently carrying the old key to the new
+                 host (the FT-2 class) — is now closed at the source
+                 (patchConfigForHost above), so what's left is a genuine
+                 custody gap, not a leak: store.ts's settingsForPersist
+                 only ever strips secretCustody fields, and
+                 taskLlm.*.apiKey deliberately never joins SECRET_NAMES
+                 (see that file's own NOTE on settingsForPersist) — so on
+                 desktop these three fields are the one exception to
+                 "已配置 == 存于系统钥匙串". Pulling the rows back out of
+                 the hub would hide that gap, not close it (the
+                 pre-existing 分任务模型（高级） editor could still write
+                 the same plaintext field); saying so plainly here is the
+                 honest fix. */}
+              {IS_DESKTOP && (
+                <div className="text-xs leading-[1.7] text-mut2">
+                  与上方不同：分任务 Key 不进入 macOS 系统钥匙串，仍以明文存于本机应用数据中
+                </div>
+              )}
               {TASK_KEY_CATALOG.map((entry) => {
                 const value = draft.taskLlm?.[entry.domain]?.apiKey ?? "";
                 const status = deriveKeyStatus(

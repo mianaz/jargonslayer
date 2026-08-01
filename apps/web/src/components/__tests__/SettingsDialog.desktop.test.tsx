@@ -1530,4 +1530,24 @@ describe("SettingsDialog (desktop) — v0.5.1 desktop keychain custody: handleSa
     );
     expect(container!.textContent).not.toContain("加密无法读取");
   });
+
+  // FINDING 11 custody-copy fix: taskLlm.*.apiKey deliberately never
+  // joins secret.ts's SECRET_NAMES (store.ts's settingsForPersist NOTE),
+  // so it's the one row in 密钥 not covered by the Keychain custody
+  // every other row above it gets — the 分任务覆盖 subsection must say
+  // so instead of implying uniform custody via the section's own
+  // "所有凭据集中在此" opener.
+  it("密钥's 分任务覆盖 subsection discloses it is NOT Keychain-backed, unlike the rows above it", async () => {
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+    await act(async () => {
+      findNavButton("密钥").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container!.textContent).toContain(
+      "分任务 Key 不进入 macOS 系统钥匙串，仍以明文存于本机应用数据中",
+    );
+  });
 });

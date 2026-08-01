@@ -775,6 +775,12 @@ describe("SettingsDialog — 密钥 category (ft6 dedicated keys hub)", () => {
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }
 
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
   beforeEach(() => {
     (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
     container = document.createElement("div");
@@ -929,6 +935,87 @@ describe("SettingsDialog — 密钥 category (ft6 dedicated keys hub)", () => {
     ) as HTMLInputElement | undefined;
     expect(credInput).toBeTruthy();
     expect(credInput!.value).toBe("sk-or-from-keys");
+  });
+
+  // FINDING 2 (HIGH, review round before v0.7.4): the hub's 自定义端点
+  // row used to write a bare `patch({ apiKeyCustom })`, unlike the
+  // primary editor's providerApiKeyPatch contract — leaving
+  // llmCustomHost stale. resolveProviderApiKey (providerKeys.ts) returns
+  // "" whenever llmCustomHost !== providerHostFor(baseUrl), so the key
+  // this row just saved either never resolves (dead key) or, worse,
+  // keeps resolving against whatever OLD custom host llmCustomHost was
+  // still pointing at (cross-host leak, the exact FT-2 class v0.7.3
+  // fixed for this field once already).
+  it("editing the 自定义端点 key in 密钥 binds llmCustomHost to the CURRENT Base URL (both halves of providerApiKeyPatch), not left pointing at a stale host", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "simple",
+        provider: "openai-compat",
+        baseUrl: "https://custom-a.example/v1",
+        // Deliberately stale/mismatched — the exact pre-existing state
+        // the cross-host leak scenario in the finding describes (an
+        // earlier custom-host binding left over from a different
+        // endpoint).
+        llmCustomHost: "stale-host.example",
+        apiKeyCustom: "",
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const keysInput = container!.querySelector(
+      '[data-settings-key="apiKeyCustom"] input',
+    ) as HTMLInputElement;
+    expect(keysInput).not.toBeNull();
+    expect(keysInput.disabled).toBe(false);
+
+    await act(async () => {
+      typeInto(keysInput, "sk-custom-from-hub");
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    // Both halves of the patch — the key itself, AND the host binding
+    // that makes resolveProviderApiKey actually return it for THIS
+    // baseUrl instead of "" or a different host's key.
+    expect(useApp.getState().settings.apiKeyCustom).toBe("sk-custom-from-hub");
+    expect(useApp.getState().settings.llmCustomHost).toBe("custom-a.example");
+  });
+
+  it("disables the 自定义端点 row (with a reason) while the draft's active provider key is a NAMED preset, not apiKeyCustom", async () => {
+    // DEFAULT_SETTINGS' own provider/baseUrl resolve to the "openrouter"
+    // preset (apiKeyOpenrouter) — nothing here is bound to a custom
+    // host, so typing into apiKeyCustom would write a binding
+    // (llmCustomHost) that doesn't describe what's currently selected.
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "simple" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const row = container!.querySelector('[data-settings-key="apiKeyCustom"]');
+    expect(row).not.toBeNull();
+    const input = row!.querySelector("input") as HTMLInputElement;
+    expect(input.disabled).toBe(true);
+    // A disabled row with no reason is just as confusing as the bug —
+    // the row must say WHY (Fast-Worker fix spec: "disable-with-a-reason").
+    expect(row!.textContent).toContain("无法绑定 Host");
   });
 });
 
@@ -1884,6 +1971,197 @@ describe("SettingsDialog — 数据与联动: backup key-strip hint lists Soniox
 
     expect(container!.textContent).toContain("Soniox Key");
     expect(container!.textContent).toContain("Deepgram Key");
+  });
+});
+
+// ---------------------------------------------------------------
+// FINDING 11 (MEDIUM, escalated to HIGH by a second reviewer): the 密钥
+// hub's 分任务覆盖 rows promote taskLlm.*.apiKey into a simple-tier
+// "所有凭据集中在此" section, but that field (a) never ran through
+// toSave's sanitizeSecretValue pass every other credential gets, and
+// (b) — the escalated half — has no per-provider storage or host
+// binding at all (unlike the flat apiKey* fields, see providerKeys.ts),
+// so a domain's provider/Base URL switch used to silently carry the
+// OLD key into the NEW host at runtime (taskConfig.ts's
+// `t.apiKey || resolveProviderApiKey(...)`) — the exact FT-2 cross-
+// host-leak class v0.7.3 reshaped the flat keys to stop.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — FINDING 11: 分任务覆盖 key sanitization + host safety", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("no network in tests")));
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+    vi.unstubAllGlobals();
+  });
+
+  function navButtons(): HTMLButtonElement[] {
+    return Array.from(
+      container!.querySelectorAll('nav[aria-label="设置分类"] button'),
+    ) as HTMLButtonElement[];
+  }
+
+  function clickCategory(label: string) {
+    const btn = navButtons().find((b) => b.textContent === label);
+    if (!btn) throw new Error(`nav category "${label}" not found`);
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  }
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  it("a per-task key pasted via 密钥's 分任务覆盖 row (zero-width chars + whitespace) is sanitized at 保存, same as every other credential", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "simple" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const keysInput = container!.querySelector(
+      '[data-settings-key="taskLlm.detect.apiKey"] input',
+    ) as HTMLInputElement;
+    expect(keysInput).not.toBeNull();
+
+    await act(async () => {
+      typeInto(keysInput, " sk-​task-key ");
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(useApp.getState().settings.taskLlm?.detect?.apiKey).toBe("sk-task-key");
+  });
+
+  function clickExpand() {
+    const span = Array.from(container!.querySelectorAll("button span")).find(
+      (s) => s.textContent === "展开",
+    );
+    if (!span) throw new Error("展开 toggle not found");
+    (span.closest("button") as HTMLButtonElement).dispatchEvent(
+      new MouseEvent("click", { bubbles: true }),
+    );
+  }
+
+  function findProviderSelect(): HTMLSelectElement {
+    const label = Array.from(container!.querySelectorAll("label")).find(
+      (l) => l.textContent === "提供方",
+    );
+    const select = label?.parentElement?.querySelector("select");
+    if (!select) throw new Error("提供方 select not found");
+    return select as HTMLSelectElement;
+  }
+
+  it("switching an ENABLED task override's provider preset in 分任务模型（高级） drops the stale key instead of sending it to the new host", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        taskLlm: {
+          detect: {
+            enabled: true,
+            provider: "openai-compat",
+            baseUrl: "https://old-host.example/v1",
+            apiKey: "leaked-task-key",
+          },
+        },
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("分任务模型（高级）");
+    });
+    await act(async () => {
+      clickExpand();
+    });
+
+    const select = findProviderSelect();
+    await act(async () => {
+      select.value = "openrouter";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const saved = useApp.getState().settings.taskLlm?.detect;
+    expect(saved?.baseUrl).toBe("https://openrouter.ai/api/v1");
+    // The FT-2 class this guards against: the OLD host's key must never
+    // ride along to the NEW host's requests.
+    expect(saved?.apiKey ?? "").toBe("");
+  });
+
+  it("editing an ENABLED task override's Base URL in place (same provider, different host) also drops the stale key", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "advanced",
+        taskLlm: {
+          detect: {
+            enabled: true,
+            provider: "openai-compat",
+            baseUrl: "https://old-host.example/v1",
+            apiKey: "leaked-task-key",
+          },
+        },
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("分任务模型（高级）");
+    });
+    await act(async () => {
+      clickExpand();
+    });
+
+    const baseUrlLabel = Array.from(container!.querySelectorAll("label")).find(
+      (l) => l.textContent === "Base URL",
+    );
+    const baseUrlInput = baseUrlLabel?.parentElement?.querySelector("input") as HTMLInputElement;
+    expect(baseUrlInput).toBeTruthy();
+
+    await act(async () => {
+      typeInto(baseUrlInput, "https://new-host.example/v1");
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    const saved = useApp.getState().settings.taskLlm?.detect;
+    expect(saved?.baseUrl).toBe("https://new-host.example/v1");
+    expect(saved?.apiKey ?? "").toBe("");
   });
 });
 
