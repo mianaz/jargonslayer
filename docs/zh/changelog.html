@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JargonSlayer 文档 — 更新日志</title>
+<meta name="description" content="JargonSlayer 发布历史：从 v0.1 到今天的每一个版本，附日期和用户可感知的变化。">
+<link rel="icon" type="image/png" href="../../assets/icon-192.png">
+<link rel="stylesheet" href="../docs.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / zh / 更新日志</div>
+  <div class="spacer"></div>
+  <a href="../../">主页</a>
+  <a href="../changelog.html">English</a>
+  <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
+  <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" aria-label="文档目录">
+    <div class="label">文档</div>
+    <a href="./">使用指南</a>
+    <a href="features.html">功能</a>
+    <a href="changelog.html" class="current">更新日志</a>
+    <a href="advanced.html">高级玩法</a>
+
+    <div class="label">版本</div>
+    <a href="#v074">v0.7.4</a>
+    <a href="#v073">v0.7.3</a>
+    <a href="#v072">v0.7.2</a>
+    <a href="#v071">v0.7.1</a>
+    <a href="#v06">v0.6</a>
+    <a href="#v051">v0.5.1</a>
+    <a href="#v05">v0.5.0</a>
+    <a href="#v04">v0.4 系列</a>
+    <a href="#v03">v0.3.0</a>
+    <a href="#early">v0.2 及更早</a>
+  </nav>
+
+  <main>
+    <section class="hero">
+      <span class="eyebrow">更新日志</span>
+      <h1>发布历史</h1>
+      <p class="lead">每一条用户能感知到的变化，按时间倒序排列。除非条目里写明具体平台，否则版本号同时覆盖网页版、macOS 桌面版、iOS 测试版和 Chrome 插件。发布下载在 <a href="https://github.com/mianaz/jargonslayer/releases" target="_blank" rel="noopener">GitHub releases</a>；接下来打算做什么见「<a href="features.html#next">功能页</a>」。</p>
+    </section>
+
+    <section id="v074">
+      <h2>v0.7</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.7.4</h3><span class="ver-date">2026 年 8 月</span><span class="ver-tag">最新</span></div>
+        <ul>
+          <li><strong>多义、按领域排序的释义：</strong>一个词有多种释义时，现在会按会议领域排序——讲癌症恶病质时 CAC 解释成 Cancer-Associated Cachexia，不再是获客成本；「IND … or NDA or BLA」里的 NDA 认成新药申请；机器学习语境里 PR 指 precision-recall，不是 Pull Request；领域不明时依然给出一版可用的解释。</li>
+          <li><strong>划词 lookup 重做：</strong>选中任意文字先查词典，命中的词典包和义项全部列出，不再只留一个赢家；真查不到时结合上下文解释并翻译；<code>加入我的词典</code>退到弹窗里的次要位置。</li>
+          <li><strong>引擎选择器按类型分组：</strong>本地 STT 模型 / 系统 STT 服务 / 第三方 STT 提供商三组替换掉原来的一份平铺列表；第三方服务没配 Key 也常驻显示，标注「已配置」或「未配置」。</li>
+          <li><strong>音频来源独立成控件：</strong>会议进行中也能随时切换，不再是开会前才能选的浮层；系统/App 音频现在写明：录的是对方的声音，不含你自己的麦克风。</li>
+          <li><strong>密钥收进一个分类：</strong>LLM 提供商、转录、翻译、说话人分离 token 等所有 API Key，现在都在同一个 设置 → 密钥 界面里，不再散落在五个不同的设置分区；存储位置和钥匙串托管方式不变。</li>
+          <li><strong>连接失败提示更好懂：</strong>网页版连不上自建转录服务时，现在给一句人话提示，以前甩的是开发者才看得懂的 socket 报错。</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v073">
+        <div class="ver-head"><h3>v0.7.3</h3><span class="ver-date">2026-07-30</span><span class="ver-tag fix">修复列车</span></div>
+        <ul>
+          <li><strong>API 密钥按提供商隔离：</strong>以前切换 LLM 提供商，上一个提供商的 Key 可能被一并发到新提供商那边；现在每个提供商的 Key 各自隔离存储、自动迁移，仍托管在 macOS 钥匙串。</li>
+          <li><strong>说话人改名修复：</strong>改名后花名册和实时选择器以前会卡在旧名字，直到会议结束才刷新；现在改名立刻在两处生效。</li>
+          <li><strong>卡片上下文收紧：</strong>表达卡片引用的原句以前是整段 60 词左右的 ASR 长句，现在只截取命中词周围的那个分句。</li>
+          <li><strong>误判和释义修复：</strong><i>in the red</i> 不再被 <i>the red graph</i> 这类短语带偏；内置释义里错发成字面 <code>1.</code> 的 mean 已经在源头修好，新增构建时的释义检查。</li>
+          <li><strong>会议领域推断更准：</strong>生物学讲座里的「thank you for your attention」不再生出 attention 卡片，机器学习讲座里 precision、recall 依旧正常触发。</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v072">
+        <div class="ver-head"><h3>v0.7.2</h3><span class="ver-date">2026-07-28</span><span class="ver-tag fix">修复列车</span></div>
+        <ul>
+          <li><strong>词典匹配修复：</strong>以括号限定结尾的词条——<i>stochastic gradient descent (SGD)</i>、<i>mode (statistics)</i>——现在能在转录里正确命中（之前从未匹配过）；只启用专业词典包（比如生信、统计）时不再悄悄丢失和其他包撞名的词条，每个启用的包都会显示自己的释义；已安装的词典包和内置词典包撞名时，现在优先显示已安装包的释义。</li>
+          <li><strong>Beta 反馈诊断增强：</strong>设置里「诊断信息」的日志查看器现在覆盖全部三个本地日志（Whisper 服务 / 系统/App 音频 / 系统识别），可以选择查看哪一个；新增「导出诊断文件」按钮把诊断信息包存成文件（iOS 上会打开系统分享面板）；Chrome 插件侧边栏首次获得「复制诊断」按钮。</li>
+          <li><strong>本地日志不再可能带上会议原声：</strong>桌面版语音识别日志写入逻辑的一处加固修复，堵上了最后一条畸形行可能泄漏原始语音的路径。</li>
+          <li><strong>Chrome 插件升级到 0.7.2：</strong>带上了上面的词典可靠性修复；此前版本停留在 0.6.0。</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v071">
+        <div class="ver-head"><h3>v0.7.1</h3><span class="ver-date">2026-07-28</span></div>
+        <ul>
+          <li><strong>有道翻译引擎（BYOK）：</strong>翻译引擎又添一项——除了 LLM、平台自带的本机翻译和 DeepL，还能选有道，自备应用ID/应用密钥，按量计费；只在原生 App（桌面版/iOS）可用，网页版因有道 API 不支持跨域而不提供。</li>
+          <li><strong>会后补全翻译：</strong>会议结束后，工具栏一键把没翻译成功的片段用当前配置的翻译引擎补齐。</li>
+          <li><strong>导出跟随翻译：</strong>Markdown、docx、复制纪要导出现在带上已有的翻译，不再只认 AI 报告顺带生成的那份；还有没翻译的片段会先问你要不要补全后再导出，剩下的原地标出「未翻译」。</li>
+          <li><strong>存词改进：</strong>加入我的词典时记下这个词在会议里实际出现的形式，不只是词典的标准写法。</li>
+          <li><strong>手机端 UI 打磨：</strong>手机宽度下头部收成单行、状态芯片改回完整词而不是缩写、控件尺寸统一。</li>
+          <li><strong>Bit 焕新：</strong>状态栏吉祥物重画了身体、换了更暖的配色，出场动画改成打招呼式。</li>
+          <li><strong>修复：</strong>展开的表达卡片里，原文例句不再被截断在两行。</li>
+          <li><strong>iOS 修复：</strong>导出（Markdown、docx、备份、康奈尔笔记）改走系统分享面板——之前在 iOS 上点导出没有任何反应。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v06">
+      <h2>v0.6</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.6.0</h3><span class="ver-date">2026-07-24</span></div>
+        <ul>
+          <li><strong>词典包扩展——17 包、上千词条：</strong>内置词典扩充到 17 个主题包，多义词按会议语境排序；新增变体匹配（85 条），能识别词条的屈折变化和近似形式——词典收录的是 <i>get the ball rolling</i>，说话人说成 <i>keep the ball rolling</i> 同样命中。</li>
+          <li><strong>Apple 系统翻译扩展到 iOS：</strong>原先仅桌面版可用的 Apple 翻译引擎，现在也跑在 iOS 26+ 上——完全本机处理，不需要 API Key，文本不出设备。</li>
+          <li><strong>iOS 版进入 TestFlight 内测：</strong>JargonSlayer 的 iOS 版现已通过 TestFlight 开放内测（受邀制，iOS 26+），系统语音识别和 Apple 翻译都在手机本地运行。</li>
+          <li><strong>手机主界面重构：</strong>转录占满手机主屏，解释卡片收进底部一条可左右滑动的卡片条——最新卡在最左，点转录里的高亮词直接跳到对应卡片。</li>
+          <li><strong>词典模式成为默认：</strong>新安装默认进入词典模式（始终开启、完全离线的检测底座）；AI 模式转为可选的 Beta。</li>
+          <li><strong>0.6.1 / 0.6.2 后续修复：</strong>iOS 版本号显示在标题栏；Apple 系统翻译覆盖到桌面版和 iOS 版所有适用的界面。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v051">
+      <h2>v0.5</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.5.1</h3><span class="ver-date">2026 年 7 月</span></div>
+        <ul>
+          <li><strong>外观扩展：</strong>再加两套内置主题——像素（8-bit 任务日志）和笔记（课堂手绘）——凑满九套；自定义主题编辑器带实时对比度提示和 JSON 导入导出；界面字体和等宽字体独立选择器；可选的毛玻璃浮层；全局/转录区字号独立控制。</li>
+          <li><strong>Bit 装扮：</strong>状态栏吉祥物按每套内置主题换装，可手动指定，加上睡眠/庆祝动画。</li>
+        </ul>
+      </div>
+
+      <div class="ver" id="v05">
+        <div class="ver-head"><h3>v0.5.0</h3><span class="ver-date">2026-07-20</span></div>
+        <ul>
+          <li><strong>模式优先 UI：</strong>会前先选「怎么听」（麦克风 / 标签页音频 / 系统/App 音频 / 导入文件）而不是先挑引擎，应用按平台和配置自动匹配对应引擎；新手引导同步重写。</li>
+          <li><strong>说话人工具：</strong>单句/批量指定说话人、「应用到本句及之后」、实时「当前说话人」标记；手动指定的句子会被锁定，不会被后续自动说话人分离覆盖。</li>
+          <li><strong>AI 转写修订（审阅制）：</strong>会后一键通读转录、挑出识别错误，逐段列出原文与修正建议，接受才生效；接受后自动重新翻译。</li>
+          <li><strong>崩溃恢复：</strong>会议实时写自动草稿，页面刷新或浏览器崩溃后，历史里一键「恢复到历史记录」。</li>
+          <li><strong>划词解释后台生成：</strong>选中文本的解释在后台完成、自动并入卡片列表，关掉弹窗也不会丢。</li>
+          <li><strong>导出与联动：</strong>新增 docx 导出；AnkiConnect 一键把生词卡同步进本地 Anki（自动去重）；个人词典可拆成多个自定义命名词包。</li>
+          <li><strong>翻译引擎可选：</strong>双语字幕和全文翻译默认用 LLM，Chrome 138+ 可切到浏览器内置的本地翻译（免 Key）；桌面版和 iOS 版现在还能选 Apple 系统翻译（macOS 26+ / iOS 26+），同样本机运行、免 Key。</li>
+          <li><strong>Deepgram 云端识别（BYOK，英文）：</strong>新增一个纯英文场景的云端识别引擎选项。</li>
+          <li><strong>在线体验的限量试用：</strong>内置 Soniox 云端识别限量试用（免 Key，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得）；标签页音频回归在线体验，走同一试用额度。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v04">
+      <h2>v0.4 系列</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.4.0 – v0.4.6</h3><span class="ver-date">2026-07-12 → 2026-07-19</span></div>
+        <ul>
+          <li><strong>桌面版（Tauri，macOS，v0.4.0）：</strong>应用自己托管本地 Whisper——需要用户同意才继续安装的向导、模型选择器加实时切换模型、说话人分离扩展一键安装。签名并公证的 DMG 在 releases 页面。</li>
+          <li><strong>设备端浏览器识别：</strong>Chrome 139+ 优先本地识别，云端自动兜底。</li>
+          <li><strong>Soniox 实时引擎（实验，自备 Key）：</strong>面向中英夹杂场景；通过内部基准测试前保持「实验」标记。</li>
+          <li><strong>系统/App 音频（桌面版，macOS 14.4+）：</strong>基于 CoreAudio process tap，捕获这台 Mac 正在播放的声音，替换了桌面版旧版的标签页音频。</li>
+          <li><strong>系统识别（桌面版，macOS 26+，v0.4.3）：</strong>基于 macOS 原生 SpeechAnalyzer 的零安装引擎——不下载模型、不装 Python，音频不出捕获进程。</li>
+          <li><strong>英文加速（桌面版，Apple 芯片，v0.4.4）：</strong>模型选择器里的可选引擎（非默认）——比 Whisper 快得多（批量推理约百倍实时），暂不支持实时说话人分离。</li>
+          <li><strong>Chrome 插件（Lite）：</strong>MV3 侧边栏，含实时麦克风捕获、内置词典、设备端翻译。</li>
+          <li><strong>桌面版外壳功能：</strong>后台任务中心、状态栏里的引擎下拉菜单、首次引导（OpenRouter OAuth + 说话人分离 token），以及发布更新检查。</li>
+          <li><strong>AI 透明面板 + 领域词典包（v0.4.6）：</strong>按任务的 AI 状态面板（检测/解释/翻译/报告），显示模型、路由方式和调用/失败/QC 丢弃次数，外加状态栏小标；三个新内置词典包——统计学、机器学习、生物信息学（约 226 个术语）；以及一处检测质量修复，普通句子不再被误判成黑话。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="v03">
+      <h2>v0.3</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.3.0</h3><span class="ver-date">2026-07-10</span></div>
+        <ul>
+          <li><strong>学习功能版：</strong>单纯的个人词典掌握状态升级为一等的学习集——实时卡片上会抑制已掌握的词，外加 <code>/review → 到期复习</code> 下由到期驱动的复习循环（SM-2 简化排期）。</li>
+          <li><strong>统一导入中心与后台任务中心：</strong>文稿、录音、URL 导入汇总到一处，任务进度可追踪。</li>
+          <li><strong>简单/高级设置：</strong>设置拆成日常用的简单档和覆盖全部功能的高级档。</li>
+          <li><strong>四套新主题</strong>加入最初的两套终端主题。</li>
+          <li><strong>STT 稳定性：</strong>VAD 监督器的一处修复堵上了实时识别中一条会丢转录的路径。</li>
+          <li><strong>诊断信息：</strong>面向问题反馈的第一版脱敏诊断信息包。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="early">
+      <h2>早期版本</h2>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.2.0 – v0.2.3</h3><span class="ver-date">2026-07-06 → 2026-07-07</span></div>
+        <ul>
+          <li><strong>内容导入第二阶段（v0.2.0）：</strong>音频、视频、URL 导入；双语转录；OpenRouter 一键 OAuth。</li>
+          <li><strong>v0.2.1 – v0.2.3：</strong>文案打磨、经过一轮对抗性审查后的服务端路由加固，以及一处翻译路由的模型兼容性修复。</li>
+        </ul>
+      </div>
+      <div class="ver">
+        <div class="ver-head"><h3>v0.1.0</h3><span class="ver-date">2026-07-06</span></div>
+        <ul>
+          <li><strong>第一版：</strong>浏览器识别实时转录、内置词典的即时检测底座、LLM 解释卡片、双语纪要、本地会话历史。</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="footer">
+      <span>JargonSlayer · <a href="./">使用指南</a> · <a href="features.html">功能</a> · <a href="advanced.html">高级玩法</a> · <a href="../../privacy.html">隐私</a> · <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a></span>
+    </div>
+  </main>
+</div>
+</body>
+</html>

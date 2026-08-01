@@ -3,401 +3,148 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>JargonSlayer 中文文档</title>
-<meta name="description" content="JargonSlayer 完整中文文档：用户指南、本地部署、隐私边界、导入、词典包、导出、架构、sidecar、测试与路线图。">
+<title>JargonSlayer 文档 — 使用指南</title>
+<meta name="description" content="JargonSlayer 使用指南：快速开始、会议流程、转录引擎、导入、桌面版、AI 配置、复习与学习、词典包、导出、隐私与常见问题。">
 <link rel="icon" type="image/png" href="../../assets/icon-192.png">
-<style>
-  :root {
-    --bg: #0a0a0a;
-    --panel: #121212;
-    --panel2: #1a1a1a;
-    --edge: #2b2b2b;
-    --edge2: #3a3a3a;
-    --fg: #ededed;
-    --mut: #a0a0a0;
-    --mut2: #6b6b6b;
-    --green: #4ade80;
-    --cyan: #22d3ee;
-    --orange: #ffaa44;
-    --red: #ff5f56;
-    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
-    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  }
-  * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; background: var(--bg); }
-  body {
-    margin: 0;
-    background: var(--bg);
-    color: var(--fg);
-    font-family: var(--sans);
-    line-height: 1.78;
-    -webkit-font-smoothing: antialiased;
-  }
-  a { color: inherit; }
-  code, pre, .mono { font-family: var(--mono); }
-  code {
-    border: 1px solid var(--edge);
-    background: var(--panel2);
-    padding: 0.12rem 0.32rem;
-    font-size: 0.92em;
-  }
-  pre {
-    margin: 1rem 0;
-    overflow-x: auto;
-    border: 1px solid var(--edge);
-    background: #050505;
-    padding: 1rem;
-    color: var(--fg);
-    font-size: 0.92rem;
-    line-height: 1.65;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 1rem 0 1.5rem;
-    font-size: 0.94rem;
-  }
-  th, td {
-    border: 1px solid var(--edge);
-    padding: 0.72rem 0.8rem;
-    text-align: left;
-    vertical-align: top;
-  }
-  th {
-    background: var(--panel2);
-    color: var(--fg);
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  td { color: var(--mut); }
-  strong { color: var(--fg); }
-  .topbar {
-    position: sticky;
-    top: 0;
-    z-index: 10;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    gap: 0.9rem;
-    padding: 0 1rem;
-    border-bottom: 1px solid var(--edge);
-    background: rgba(18, 18, 18, 0.94);
-    backdrop-filter: blur(10px);
-    font-family: var(--mono);
-    font-size: 0.8rem;
-  }
-  .dots { display: flex; gap: 7px; }
-  .dot { width: 10px; height: 10px; border-radius: 999px; display: block; }
-  .dot.red { background: var(--red); }
-  .dot.yellow { background: var(--orange); }
-  .dot.green { background: var(--green); }
-  .topbar .path { color: var(--mut); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .topbar .path strong { color: var(--fg); }
-  .topbar .spacer { flex: 1; }
-  .topbar a {
-    color: var(--mut);
-    text-decoration: none;
-    border: 1px solid var(--edge);
-    padding: 0.3rem 0.55rem;
-    white-space: nowrap;
-  }
-  .topbar a:hover { color: var(--fg); border-color: var(--edge2); }
-  .layout {
-    display: grid;
-    grid-template-columns: 280px minmax(0, 1fr);
-    max-width: 1320px;
-    margin: 0 auto;
-  }
-  nav {
-    position: sticky;
-    top: 44px;
-    height: calc(100vh - 44px);
-    overflow-y: auto;
-    border-right: 1px solid var(--edge);
-    padding: 1.5rem 1rem 2rem;
-  }
-  nav .label {
-    color: var(--mut2);
-    font-family: var(--mono);
-    font-size: 0.74rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    margin: 1.1rem 0 0.42rem;
-  }
-  nav a {
-    display: block;
-    padding: 0.34rem 0.5rem;
-    color: var(--mut);
-    text-decoration: none;
-    border-left: 2px solid transparent;
-    font-size: 0.9rem;
-  }
-  nav a:hover {
-    color: var(--fg);
-    background: var(--panel);
-    border-left-color: var(--green);
-  }
-  main { min-width: 0; padding: 3rem 2rem 5rem; }
-  .hero {
-    border-bottom: 1px solid var(--edge);
-    padding-bottom: 2.2rem;
-    margin-bottom: 2.4rem;
-  }
-  .eyebrow {
-    color: var(--green);
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  h1, h2, h3 { line-height: 1.25; letter-spacing: 0; }
-  h1 {
-    margin: 0.72rem 0 1rem;
-    font-size: clamp(2.4rem, 6vw, 4.6rem);
-    max-width: 920px;
-  }
-  h2 {
-    margin: 3.2rem 0 1rem;
-    padding-top: 0.4rem;
-    font-size: clamp(1.55rem, 2.6vw, 2.2rem);
-    border-top: 1px solid var(--edge);
-  }
-  h3 { margin: 1.8rem 0 0.75rem; color: var(--fg); font-size: 1.1rem; }
-  p, li { color: var(--mut); }
-  p.lead { max-width: 840px; color: var(--mut); font-size: 1.08rem; }
-  ul, ol { padding-left: 1.35rem; }
-  li { margin: 0.34rem 0; }
-  .cards {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1rem;
-    margin: 1.5rem 0;
-  }
-  .card {
-    border: 1px solid var(--edge);
-    background: var(--panel);
-    padding: 1rem;
-  }
-  .card h3 {
-    margin-top: 0;
-    color: var(--fg);
-    font-family: var(--mono);
-    font-size: 0.96rem;
-  }
-  .card p { margin-bottom: 0; }
-  .callout {
-    border: 1px solid var(--edge);
-    border-left: 3px solid var(--orange);
-    background: var(--panel);
-    padding: 0.9rem 1rem;
-    margin: 1rem 0 1.4rem;
-    color: var(--mut);
-  }
-  .callout.local { border-left-color: var(--green); }
-  .callout.risk { border-left-color: var(--red); }
-  .callout.info { border-left-color: var(--cyan); }
-  .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 1rem 0; }
-  .pill {
-    border: 1px solid var(--edge);
-    background: var(--panel2);
-    color: var(--mut);
-    padding: 0.3rem 0.52rem;
-    font-family: var(--mono);
-    font-size: 0.78rem;
-  }
-  .shot-grid, .split {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
-    margin: 1.5rem 0;
-  }
-  figure { margin: 0; border: 1px solid var(--edge); background: var(--panel); }
-  figure img { display: block; width: 100%; height: auto; }
-  figcaption {
-    border-top: 1px solid var(--edge);
-    color: var(--mut);
-    font-family: var(--mono);
-    font-size: 0.78rem;
-    padding: 0.55rem 0.7rem;
-  }
-  .footer {
-    margin-top: 4rem;
-    border-top: 1px solid var(--edge);
-    padding-top: 1rem;
-    color: var(--mut2);
-    font-family: var(--mono);
-    font-size: 0.82rem;
-  }
-  @media (max-width: 900px) {
-    .layout { display: block; }
-    nav {
-      position: static;
-      height: auto;
-      border-right: 0;
-      border-bottom: 1px solid var(--edge);
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0 0.5rem;
-    }
-    nav .label { grid-column: 1 / -1; }
-    main { padding: 2rem 1rem 4rem; }
-    .cards, .shot-grid, .split { grid-template-columns: 1fr; }
-  }
-  @media (max-width: 520px) {
-    .topbar .path { display: none; }
-    nav { grid-template-columns: 1fr; }
-    h1 { font-size: 2.35rem; }
-  }
-</style>
+<link rel="stylesheet" href="../docs.css">
 </head>
 <body>
 <header class="topbar">
   <div class="dots" aria-hidden="true"><span class="dot red"></span><span class="dot yellow"></span><span class="dot green"></span></div>
-  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / zh / 网页版 · 桌面版 · 插件</div>
+  <div class="path"><strong>mianaz/jargonslayer</strong> / docs / zh / 使用指南</div>
   <div class="spacer"></div>
-  <a href="../../">首页</a>
+  <a href="../../">主页</a>
   <a href="../">English</a>
   <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">App</a>
   <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a>
 </header>
 
 <div class="layout">
-  <nav aria-label="文档章节">
-    <div class="label">Start</div>
+  <nav class="sidebar" aria-label="文档目录">
+    <div class="label">文档</div>
+    <a href="./" class="current">使用指南</a>
+    <a href="features.html">功能</a>
+    <a href="changelog.html">更新日志</a>
+    <a href="advanced.html">高级玩法</a>
+
+    <div class="label">开始</div>
     <a href="#overview">概览</a>
-    <a href="#reader-topics">读者关心的问题</a>
     <a href="#quickstart">快速开始</a>
+    <a href="#choosing">选择适合的配置</a>
+
+    <div class="label">使用</div>
     <a href="#workflow">会议流程</a>
     <a href="#transcription">转录引擎</a>
     <a href="#imports">导入</a>
     <a href="#desktop-app">桌面版</a>
-
-    <div class="label">Use</div>
     <a href="#ai">AI 模式</a>
     <a href="#review">复习与学习</a>
     <a href="#glossary">词典与词典包</a>
     <a href="#appearance">外观</a>
     <a href="#exports">导出与备份</a>
-    <a href="#privacy">隐私</a>
-    <a href="#faq">FAQ</a>
 
-    <div class="label">Operate</div>
-    <a href="#deep-specs">深入规格</a>
-    <a href="#async-delegation">异步委派设计</a>
-    <a href="#architecture">架构</a>
-    <a href="#storage">数据与存储</a>
-    <a href="#local-dev">本地开发</a>
-    <a href="#sidecars">Sidecar</a>
-    <a href="#remote-packs">远程词典包</a>
-    <a href="#deployment">部署与打包</a>
-    <a href="#testing">测试</a>
-    <a href="#roadmap">路线图</a>
+    <div class="label">信任</div>
+    <a href="#privacy">隐私</a>
+    <a href="#faq">FAQ 与故障排查</a>
   </nav>
 
   <main>
     <section id="overview" class="hero">
-      <span class="eyebrow">完整中文文档</span>
+      <span class="eyebrow">使用指南</span>
       <h1>JargonSlayer 文档</h1>
-      <p class="lead">JargonSlayer 是面向非英语母语者的英文会议实时理解助手。它把会议转录成文本，识别习语、商务黑话、委婉表达、缩写、专有名词和领域术语，并实时生成简短解释卡片。会议结束后，可以生成双语纪要、全文翻译、学习卡片和可导出的笔记。</p>
+      <p class="lead">JargonSlayer 是面向非英语母语者的英文会议实时理解助手。它把会议转录成文本，识别习语、商务黑话、委婉表达、缩写、专有名词和领域术语，并生成简短解释卡片。会议结束后，可以生成双语纪要、全文翻译、学习卡片和可导出的笔记。</p>
       <div class="pill-row">
         <span class="pill">无账号</span>
         <span class="pill">词典模式</span>
-        <span class="pill">自带 Key</span>
+        <span class="pill">BYOK AI</span>
         <span class="pill">本地 Whisper</span>
         <span class="pill">IndexedDB 历史</span>
-        <span class="pill">社区词典包</span>
+        <span class="pill">远程词典包</span>
         <span class="pill">macOS 桌面版</span>
+        <span class="pill">iOS 测试版</span>
         <span class="pill">Chrome 插件</span>
       </div>
-      <div class="shot-grid">
-        <figure>
-          <img src="../../assets/live.png" alt="JargonSlayer 实时会议界面">
-          <figcaption>实时转录与解释卡片</figcaption>
-        </figure>
-        <figure>
-          <img src="../../assets/summary.png" alt="JargonSlayer 纪要和导出界面">
-          <figcaption>会后纪要与导出</figcaption>
-        </figure>
-      </div>
-    </section>
-
-    <section id="reader-topics">
-      <h2>读者关心的问题</h2>
-      <p>这份文档按真实用户和维护者会问的问题组织：开会前能不能信任、出问题时怎么判断、想扩展时应该从哪里下手。</p>
+      <p>这一页是动手指南：安装、开一场会议、会后复盘。另外三个页面讲得更深：</p>
       <div class="cards">
-        <div class="card">
-          <h3>我该用哪种模式？</h3>
-          <p>根据隐私和配置成本，在在线体验、本地 Web、词典模式、BYOK AI、本地 Whisper、sidecar 功能之间选择。</p>
-        </div>
-        <div class="card">
-          <h3>哪些数据会离开本机？</h3>
-          <p>音频和文本是两条独立路径。浏览器识别会把音频给浏览器厂商；AI 会把文本给配置的模型端点；词典模式文本留在本机。</p>
-        </div>
-        <div class="card">
-          <h3>为什么卡片晚到？</h3>
-          <p>词典命中是即时的。LLM 检测、翻译、搜索和说话人分离都是后台任务，可能稍后返回并补丁式更新会话。</p>
-        </div>
-        <div class="card">
-          <h3>文本会不会丢？</h3>
-          <p>转录文本是前台状态。后台结果可能失败或晚到，所以路线图会引入按片段记录覆盖情况的任务账本。</p>
-        </div>
-        <div class="card">
-          <h3>各种导入有什么区别？</h3>
-          <p>文稿导入先解析。浏览器音视频导入在浏览器内跑 Whisper。sidecar 导入可以处理更重任务和说话人分离。URL 导入只在本地版。</p>
-        </div>
-        <div class="card">
-          <h3>如何扩展词典？</h3>
-          <p>个人词典适合自己的术语；远程词典包适合共享数据。大型缩写源应先筛选，再作为可选词典包导入。</p>
-        </div>
+        <a class="card" href="features.html">
+          <h3>功能</h3>
+          <p>全面梳理这个应用能做的一切，配截图和演示视频，外加能力对照表和下一步计划。</p>
+        </a>
+        <a class="card" href="changelog.html">
+          <h3>更新日志</h3>
+          <p>按版本记录的发布历史，从 v0.1 到今天，带日期。</p>
+        </a>
+        <a class="card" href="advanced.html">
+          <h3>高级玩法</h3>
+          <p>自托管、sidecar、设置项参考、自定义主题、词典包编写、webhook、架构与测试。</p>
+        </a>
       </div>
-      <h3>完整主题列表</h3>
-      <ul>
-        <li>模式选择与部署层级：在线体验、本地 Web、PWA、macOS 桌面版、Chrome 插件。</li>
-        <li>转录路径：浏览器识别、本地 Whisper、标签页音频（本地/云端）、Soniox、Deepgram、演示、文稿导入、浏览器 Whisper 导入；桌面版的引擎清单不一样（麦克风 · 本地 Whisper、系统/App 音频），见「桌面版」。</li>
-        <li>线上会议音频捕获：麦克风、标签页音频、虚拟声卡、loopback，或（桌面版）系统/App 音频。</li>
-        <li>桌面版专属：系统/App 音频权限流程、首次引导（BYOK OAuth/粘贴、说话人分离 token）、后台任务中心、更新检查。</li>
-        <li>检测行为：词典底座、LLM 升级、置信度阈值、去重、个人词典优先级。</li>
-        <li>翻译行为：实时双语转录、导入时翻译、会后全文翻译。</li>
-        <li>AI 提供商配置：Anthropic、OpenAI 兼容端点、OpenRouter、Poe、Ollama、分任务模型。</li>
-        <li>隐私边界：音频、转录文本、API Key、历史、自动导出、webhook。</li>
-        <li>导入限制：文件类型、浏览器模型下载、45 分钟浏览器音频上限、200 MB 浏览器音频上限、视频提取。</li>
-        <li>说话人标签：批处理分离、实时分离 beta、用户改名优先；另有单句/批量手动指定与「应用到本句及之后」，以及审阅制的 AI 转写修订。</li>
-        <li>会议中的其他能力：悬浮字幕（网页 Document 画中画、桌面版字幕条）、崩溃恢复草稿、划词解释后台生成。</li>
-        <li>外观：九套内置主题、自定义主题编辑器（JSON 导入导出）、界面字体与等宽字体、毛玻璃开关、字号控制。</li>
-        <li>AI 透明度：按任务（检测/解释/翻译/报告）显示所用模型、路由方式与调用/失败/QC 丢弃次数。</li>
-        <li>导出和自动化：Markdown、JSON、Anki TSV、Cornell 笔记、文件夹自动保存、webhook payload。</li>
-        <li>失败模式：无 Key、限流、sidecar 不可达、后台标签页节流、过期异步结果。</li>
-        <li>未来实时搜索：后台增强，不抢走会议中的前台焦点。</li>
-      </ul>
+      <figure class="solo">
+        <video src="../../assets/demo-web-16x9.mp4" poster="../../assets/demo-web-poster.jpg" controls muted playsinline preload="none"></video>
+        <figcaption>79 秒无声演示：实时转录、解释卡片、双语纪要（网页版，录制于 v0.7.1）</figcaption>
+      </figure>
     </section>
 
     <section id="quickstart">
       <h2>快速开始</h2>
-      <p>三条路都能跑起来 JargonSlayer，全部免费：macOS 桌面版（最省事，签名安装包）、网页版（在线体验或本地自托管）、Chrome 插件（轻量划词查词）。</p>
+      <p>三条路都能跑起来 JargonSlayer，全部免费：macOS 桌面版（最省事，签名安装包）、网页版（在线体验或本地自托管）、Chrome 插件（轻量划词查词）。iOS 测试版可通过 TestFlight 受邀使用。</p>
 
       <h3>桌面版（macOS，Apple Silicon）</h3>
       <ol>
         <li>在 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a> 下载签名并公证的 DMG。</li>
         <li>打开 DMG，把 JargonSlayer 拖进「应用程序」，启动它。</li>
-        <li>首次启动会出现一个全屏向导。macOS 26+ 上第一步是选引擎：<strong>系统识别（开箱即用）</strong>——选它就跳过整个安装流程，直接可用；或 <strong>Whisper（更高质量）</strong>——继续原有安装。选 Whisper 后，点击 <code>开始安装</code> 之前不会下载任何东西：随后它会把独立的 Python 运行环境、faster-whisper 和你选的模型（预选 medium）全部装进应用自己的数据目录，不碰系统 Python。</li>
+        <li>首次启动会出现一个全屏向导。macOS 26+ 上第一步是选引擎：<strong>系统识别（System Speech，零安装）</strong>——选它就跳过整个安装流程，直接可用；或 <strong>Whisper（更高质量）</strong>，继续原有安装流程。Whisper 路径下，点击 <code>开始安装</code> 之前不会下载任何东西：随后它会把独立的 Python 运行环境、faster-whisper 和你选的模型（预选 medium）全部装进应用自己的数据目录，不碰系统 Python。</li>
         <li>向导结束后还有两步可跳过的引导：连接 OpenRouter（用于 AI 检测/解释）、填入 Hugging Face token（用于说话人分离）。详见下方「<a href="#desktop-app">桌面版</a>」。</li>
       </ol>
-      <div class="callout local"><strong>仅支持 Apple Silicon</strong>，没有 Intel 版本。应用本身在较旧的 macOS 上也能装，但「系统/App 音频」这一个引擎需要 macOS 14.4+，「系统识别」需要 macOS 26+，「英文加速」（parakeet）模型需要 macOS 14+；低于对应版本会在选项里显示为置灰并注明原因。</div>
+      <div class="callout local"><strong>仅支持 Apple Silicon</strong>——没有 Intel 版本。应用本身在更旧的 macOS 上也能装，但「系统/App 音频」这一个引擎需要 macOS 14.4+，「系统识别」（System Speech）需要 macOS 26+，「英文加速」（Parakeet）模型需要 macOS 14+；低于对应版本时，每个选项都会显示为禁用并附带说明。</div>
 
       <h3>网页版</h3>
-      <p>先试试 <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">在线体验</a>——零安装。不管走哪条路，最快理解产品的方式都是内置演示：打开 <code>≡</code> 菜单 → <code>演示</code>，不需要麦克风，也不需要 API Key。</p>
+      <p>先试试 <a href="https://apps.bioinfospace.com/jargonslayer" target="_blank" rel="noopener">在线体验</a>——零安装。不管走哪条路，最快理解产品的方式都是内置演示：打开 <code>≡</code> 菜单 → <code>演示</code>，不需要麦克风，也不需要 API Key。它会回放一段脚本化的产品会议，走完整条流水线——转录、高亮表达、卡片，配置了 AI 的话还有双语纪要。</p>
       <p>或者自己跑起来：</p>
       <pre><code>git clone https://github.com/mianaz/jargonslayer.git
 cd jargonslayer
 npm install
 npm run dev
 # 打开 http://localhost:3000</code></pre>
-      <p>如果需要更接近生产环境的本地运行方式，使用 <code>npm run build</code> 和 <code>npm start</code>。</p>
+      <p>如果需要更接近生产环境的本地运行方式，使用 <code>npm run build</code> 和 <code>npm start</code>。环境变量、部署层级和本地 Whisper sidecar 的说明见「<a href="advanced.html">高级玩法</a>」。</p>
 
       <h3>Chrome 插件（JargonSlayer Lite）</h3>
-      <p>在 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases</a> 下载 zip 并解压，然后打开 <code>chrome://extensions</code> → 开启「开发者模式」→「加载已解压的扩展程序」→ 选中解压后的文件夹。插件暂不上架 Chrome 网上应用店，手动加载就是正式的安装方式（和很多开发者工具的分发方式一样）。Lite 在侧边栏里提供实时麦克风转录 + 内置词典 + 设备端翻译——没有 LLM 检测，没有标签页/系统音频，也没有账号；完整能力对比见下方「<a href="#deployment">部署与打包</a>」。</p>
+      <p>在 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases</a> 下载 zip 并解压，然后打开 <code>chrome://extensions</code> → 开启「开发者模式」→「加载已解压的扩展程序」→ 选中解压后的文件夹。插件暂不上架 Chrome 网上应用店，手动加载就是正式的安装方式（和很多开发者工具的分发方式一样）。Lite 在侧边栏里提供实时麦克风转录、内置词典和设备端翻译——没有 LLM 检测，没有标签页/系统音频，也没有账号；完整能力对比见「<a href="features.html#matrix">功能页的能力矩阵</a>」。</p>
+
+      <h3>iOS（TestFlight 内测）</h3>
+      <p>iOS 版目前是 TestFlight 内测，受邀制——<a href="https://github.com/mianaz/jargonslayer/issues" target="_blank" rel="noopener">联系作者</a>获取邀请。需要 iOS 26+，识别和翻译都在设备本地完成（系统语音识别 + Apple 翻译），不需要 API Key。如果现在就想在手机上用 JargonSlayer，网页版也能通过 Safari 添加到主屏幕，作为 PWA 使用。</p>
+    </section>
+
+    <section id="choosing">
+      <h2>选择适合的配置</h2>
+      <p>合适的模式取决于会议本身——主要看音频有多敏感、愿意花多少功夫配置。从最接近的一行开始：</p>
+      <table>
+        <thead><tr><th>使用场景</th><th>推荐配置</th><th>取舍</th></tr></thead>
+        <tbody>
+          <tr><td>30 秒体验产品</td><td>在线体验 + 演示</td><td>零配置，但预览 AI 文本走预览提供商路径。</td></tr>
+          <tr><td>日常低敏会议</td><td>浏览器识别 + BYOK AI</td><td>实时配置最简单；音频会进入浏览器厂商语音服务。</td></tr>
+          <tr><td>隐私敏感会议</td><td>本地 Whisper + 词典模式</td><td>音频和文本都留在本机，但解释能力限于词典和个人词典。</td></tr>
+          <tr><td>既要隐私又要上下文检测</td><td>本地 Whisper + Ollama OpenAI 兼容端点</td><td>可全本地，但质量取决于本地模型。</td></tr>
+          <tr><td>听懂线上会议中对方声音</td><td>macOS 桌面版：系统/App 音频，零额外配置。网页版：标签页音频或虚拟声卡 + 本地 Whisper。</td><td>桌面版只需要一次性授权；网页版需要 sidecar，用虚拟声卡还要额外的系统级路由设置。</td></tr>
+          <tr><td>分析会后录音</td><td>短文件用浏览器音视频导入；大文件/说话人分离用 sidecar 导入</td><td>浏览器路径最省事；sidecar 路径适合重任务。</td></tr>
+        </tbody>
+      </table>
+
+      <h3>示例：完全本地配置，一步步来</h3>
+      <p>最严格的配方——什么都不出这台机器，不需要 Key，也不需要账号：</p>
+      <ol>
+        <li><strong>桌面版：</strong>从 DMG 安装，向导里选 Whisper（macOS 26+ 也可以选系统识别）。<strong>网页版：</strong>本地运行，并启动 <a href="advanced.html#sidecars">Whisper sidecar</a>。</li>
+        <li>在设置里关掉 <code>AI 检测</code>——内置词典仍会即时检测，完全离线。</li>
+        <li>如果需要实时翻译，在 <code>翻译引擎</code> 里选平台自带的本机引擎（网页版是 Chrome 内置翻译器，桌面版/iOS 是 Apple 翻译框架），而不是 LLM。</li>
+        <li>webhook 和文件夹自动导出不配置，或者只指向本机路径。</li>
+      </ol>
+      <p>其他每种配置下具体有哪些数据会离开本机，见下方「<a href="#privacy">隐私</a>」表格。</p>
+
+      <h3>示例：线上会议需要听到对方声音</h3>
+      <ol>
+        <li>macOS 桌面版：选<strong>系统/App 音频</strong>作为音频来源，开始监听，授权一次性的「系统音频录制」权限——就这样。Zoom、Teams、微信里的声音都能进来；这个来源永远不会捕获你自己的麦克风。</li>
+        <li>网页版：用标签页音频分享会议标签（在线体验内置一个免 Key 的限量试用），或者用 BlackHole（macOS）/ VB-Cable（Windows）等虚拟声卡把系统音频路由进本地 Whisper。</li>
+      </ol>
     </section>
 
     <section id="workflow">
@@ -426,22 +173,22 @@ npm run dev
       <h3>崩溃恢复</h3>
       <p>会议进行中会实时写自动草稿。页面刷新、标签页被关、浏览器崩溃后重新打开，历史里会出现一条<code>恢复到历史记录</code>横幅，把中断前的内容一键找回，一次意外不至于赔掉整场会议。</p>
       <h3>翻译</h3>
-      <p>实时双语字幕和全文翻译共用一套设置：设置里的<code>双语转录</code>开关正上方是<code>翻译引擎</code>选择器。可选项有 LLM（默认）、平台自带的本机翻译（网页版是 Chrome 的 Translator API，桌面版/iOS 是 Apple 翻译框架）、DeepL（自备 Key），以及 v0.7.1 新增的<strong>有道翻译</strong>（自备 Key）。有道需要在 <a href="https://ai.youdao.com" target="_blank" rel="noopener">ai.youdao.com</a> 创建应用（服务选「文本翻译」、接入方式选「API」）拿到应用ID和应用密钥，按字符量计费（英译中约 ¥48/百万字符，新用户有体验金），且只在原生 App（桌面版/iOS）可用——网页版因为 <code>openapi.youdao.com</code> 不支持浏览器跨域请求而禁用该选项。</p>
+      <p>实时双语字幕和全文翻译共用一套设置：设置里的 <code>双语转录</code> 开关正上方是 <code>翻译引擎</code> 选择器。四种引擎可选：平台自带的本机翻译（<strong>系统翻译</strong>——网页版是 Chrome 内置的 Translator API，桌面版/iOS 是 Apple 翻译框架；默认选项，不需要 Key）、LLM、DeepL（自备 Key），以及<strong>有道翻译</strong>（Youdao，自备 Key，v0.7.1+）。DeepL 和有道都是原生 App 专属引擎——网页版会把它们显示为禁用，因为两家 API 都不支持浏览器跨域请求，所以网页版实际能选的只有本机翻译或 LLM。有道需要在 <a href="https://ai.youdao.com" target="_blank" rel="noopener">ai.youdao.com</a> 创建应用（服务选「文本翻译」、接入方式选「API」）拿到应用ID和应用密钥，按字符量计费（英译中约 ¥48/百万字符，新用户有体验金）。</p>
       <p>会议结束后，只要双语字幕开着、还有没翻译成功的片段（比如某次 API 调用失败，或翻译时没配 Key），工具栏就会出现<code>补全翻译 (N)</code>按钮——点一下用当前配置的翻译引擎分批补齐，补完自动消失。</p>
     </section>
 
     <section id="transcription">
       <h2>转录引擎</h2>
-      <p>网页版和桌面版的引擎清单<strong>不一样</strong>——桌面版完全没有浏览器识别（Tauri 的 webview 没有 Web Speech API），但多了网页版做不到的、基于 CoreAudio 的系统/App 音频捕获。引擎选择器本身的位置也变了：现在不管什么屏幕宽度，都是<strong>底部状态栏</strong>里的一个下拉菜单（以前是 Header 里的 tab/pill）。</p>
+      <p>网页版和桌面版的引擎清单<strong>不一样</strong>——桌面版完全没有浏览器识别（Tauri 的 webview 没有 Web Speech API），但多了网页版做不到的、基于 CoreAudio 的系统/App 音频捕获。引擎选择器是<strong>底部状态栏</strong>里的一个下拉菜单，各种屏幕宽度下都一样。</p>
       <p><strong>按类型分组（v0.7.4）：</strong>引擎选择器现在分三组——本地 STT 模型（本地 Whisper、英文加速这类自己跑的模型）、系统 STT 服务（浏览器识别、系统识别这类系统自带的识别）、第三方 STT 提供商（Soniox、Deepgram、ElevenLabs 这类自备 Key 的云端服务）。第三方服务没配 Key 也常驻显示，标注「已配置」或「未配置」，不会因为没配置就被隐藏。</p>
 
       <h3>网页版</h3>
       <table>
         <thead><tr><th>引擎</th><th>配置成本</th><th>音频去向</th><th>适合场景</th></tr></thead>
         <tbody>
-          <tr><td><strong>演示</strong></td><td>无需配置</td><td>无音频；脚本回放</td><td>快速体验完整流程</td></tr>
+          <tr><td><strong>演示</strong></td><td>无需配置</td><td>无音频；脚本回放</td><td>无需麦克风或 Key 即可体验</td></tr>
           <tr><td><strong>浏览器识别</strong></td><td>无需配置，推荐 Chrome/Edge</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商的语音服务（云端）</td><td>日常低敏会议</td></tr>
-          <tr><td><strong>本地 Whisper</strong></td><td>Python sidecar（手动安装）</td><td>本机 <code>127.0.0.1</code></td><td>隐私敏感、离线、稳定转录</td></tr>
+          <tr><td><strong>本地 Whisper</strong></td><td>Python sidecar（手动安装，见「<a href="advanced.html#sidecars">高级玩法</a>」）</td><td>本机 <code>127.0.0.1</code></td><td>隐私敏感、离线、稳定转录</td></tr>
           <tr><td><strong>标签页音频</strong></td><td>同一个本地 sidecar</td><td>本机</td><td>捕获线上会议中对方的声音</td></tr>
           <tr><td><strong>Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>中英夹杂实时场景；通过内部基准测试前保持「实验」标记；在线体验另有限量试用，见下方说明</td></tr>
           <tr><td><strong>Deepgram</strong></td><td>Deepgram API Key（自备）</td><td>云端处理（Deepgram，你自己的 Key）</td><td>纯英文会议，追求云端识别质量</td></tr>
@@ -458,24 +205,16 @@ npm run dev
           <tr><td><strong>麦克风 · 本地 Whisper</strong></td><td>无需配置——应用自带自管</td><td>本机</td><td>默认日常引擎，开箱自带 medium 模型</td></tr>
           <tr><td><strong>麦克风 · Soniox（实验）</strong></td><td>Soniox API Key（自备）</td><td>直连 Soniox 实时接口（云端，你自己的 Key）</td><td>和网页版一样，面向中英夹杂场景</td></tr>
           <tr><td><strong>系统/App 音频</strong></td><td>无需配置——同一个内置本地 Whisper</td><td>本机</td><td>捕获在 Zoom、Teams、微信等原生 App 里开会时对方的声音，不用虚拟声卡</td></tr>
-          <tr><td><strong>系统识别 · 开箱即用</strong>（v0.4.3）</td><td>无需配置——macOS 原生识别，不下载模型、不装 Python</td><td>本机，且音频不出捕获进程</td><td>macOS 26+ 上免安装的第一场会；约 30 种语言，术语表参与识别偏置；不支持说话人分离，中文可能不带标点</td></tr>
+          <tr><td><strong>系统识别</strong>（System Speech，v0.4.3）</td><td>无需配置——macOS 原生识别，不下载模型、不装 Python</td><td>本机，且音频不出捕获进程</td><td>macOS 26+ 上免安装的第一场会；约 30 种语言，术语表参与识别偏置；不支持说话人分离，中文可能不带标点</td></tr>
           <tr><td><strong>英文加速</strong>（Parakeet，v0.4.4）</td><td>模型选择器里手动开启，非默认——需 Apple 芯片（M 系列）+ macOS 14+，约 2.5GB（含约 1GB MLX 运行环境）</td><td>本机，音频不离开这台设备</td><td>英文优先的会议；比 Whisper 快得多（批量推理约百倍实时）；暂不支持实时说话人分离</td></tr>
         </tbody>
       </table>
       <p>桌面版没有浏览器识别引擎；网页版的标签页音频，在桌面版对应的位置是<strong>系统/App 音频</strong>。权限流程和捕获范围见下方「<a href="#desktop-app">桌面版</a>」。</p>
-
-      <h3>本地 Whisper（网页版手动安装）</h3>
-      <p>下面这套手动安装的 sidecar 是给<strong>网页版</strong>用的。桌面版通过首次启动向导自己安装、自己管理本地 Whisper，不用碰终端——见「<a href="#desktop-app">桌面版</a>」。</p>
-      <pre><code>cd sidecar
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python whisper_server.py --model small</code></pre>
-      <p>sidecar 通过 <code>ws://127.0.0.1:8765</code> 提供实时 websocket 转录，并通过本地 HTTP job API 处理录音导入。这条手动路径的模型可选 <code>tiny</code>、<code>base</code>、<code>small</code>、<code>medium</code>、<code>large-v3</code>，日常默认推荐 <code>small</code>（桌面版向导的模型清单是精选过的 <code>small</code>/<code>medium</code>/<code>large-v3</code>/<code>large-v3-turbo</code> 四档，预选 <code>medium</code>）。</p>
     </section>
 
     <section id="imports">
       <h2>导入</h2>
+      <p>所有导入都归到 <code>历史</code> 里——导入中心覆盖粘贴的文稿、文件和 URL，每次导入的结果都会变成一个可以正常分析、翻译、导出的已保存会话。</p>
       <div class="split">
         <div>
           <h3>文稿导入</h3>
@@ -497,14 +236,19 @@ python whisper_server.py --model small</code></pre>
           </ol>
         </div>
       </div>
+      <div class="callout info"><strong>浏览器导入的限制：</strong>单个文件最长 45 分钟、最大 200 MB；首次使用会下载浏览器侧 Whisper 模型资源。时长更长或体积更大的录音建议走 sidecar 路径，同时还能解锁说话人分离。</div>
       <h3>视频 URL 导入</h3>
       <p>视频 URL 导入只属于本地版。sidecar 会在你的机器上调用 <code>yt-dlp</code>，再走本地转录任务管线；在线体验不提供这个服务器侧能力。</p>
-      <div class="callout risk"><strong>谨慎使用 URL 导入。</strong>服务器侧抓取第三方视频涉及平台条款和法律风险，所以项目把这条路径限制在用户自己的机器上。</div>
+      <div class="callout risk"><strong>谨慎使用 URL 导入。</strong>服务器侧抓取第三方视频涉及平台条款和法律风险，所以项目把这条路径限制在用户自己的机器上，而不是放进在线体验演示。</div>
     </section>
 
     <section id="desktop-app">
       <h2>桌面版</h2>
       <p>桌面版把同一个应用装进原生 Tauri 外壳，本地 Whisper 由应用自己安装和管理——安装步骤见「<a href="#quickstart">快速开始</a>」。这一节只讲桌面版独有的部分：系统/App 音频引擎、两步可选引导、后台任务中心、延迟提示、更新检查。</p>
+      <figure class="solo">
+        <video src="../../assets/demo-desktop-16x9.mp4" poster="../../assets/demo-desktop-poster.jpg" controls muted playsinline preload="none"></video>
+        <figcaption>51 秒无声演示：桌面版——系统/App 音频、引擎清单、悬浮字幕（录制于 v0.7.1）</figcaption>
+      </figure>
 
       <h3>系统/App 音频</h3>
       <p>选<strong>系统/App 音频</strong>做音频来源，就能转录 Zoom、Teams、微信这类原生 App 里对方说的话——不需要虚拟声卡，不需要装 BlackHole/VB-Cable。它替换了桌面版旧版那个只能失败的「标签页音频」——Tauri 的 webview 里没有标签页分享选择器可以调用；网页版的标签页音频不受影响。</p>
@@ -542,31 +286,34 @@ python whisper_server.py --model small</code></pre>
     <section id="ai">
       <h2>AI 模式与模型配置</h2>
       <h3>词典模式</h3>
-      <p>在设置中关闭 <code>AI 检测</code>，转录文本就不会因为 AI 检测离开本机。内置词典仍会即时检测固定表达和术语。这是零 Key、零成本、本地文本路径。</p>
+      <p>在设置中关闭 <code>AI 检测</code>，转录文本就不会因为 AI 检测离开本机。内置词典仍会即时检测固定表达和术语。这是零 Key、零成本、本地文本路径——自 v0.6 起，这是新安装的默认模式；AI 模式转为可选。</p>
       <h3>在线体验 AI</h3>
       <p>没配 Key 时，在线体验走预览服务器配置好的模型路径：文本经项目服务器内存中转，再转发到 OpenRouter，带 <code>data_collection=allow</code>，模型只能在预置列表里选。请把这条路径下的 AI 文本视为会与模型提供商共享。</p>
       <p>填入自己的 Key 后，在线体验切换为浏览器直连：每次 AI 调用都从你的浏览器直接发往你配置的服务商，模型随意选，Key 和会议内容不经过项目服务器——服务端还会直接拒绝任何带 Key 的转发请求。自定义 OpenAI 兼容端点在体验版上需要支持浏览器跨域（CORS），不支持的端点请用自托管或桌面版。</p>
       <h3>BYOK AI</h3>
       <ol>
-        <li>打开 <code>设置 → AI 检测</code>，选择 Anthropic，或 DeepSeek、Qwen、OpenRouter、Poe 预设、Ollama 等 OpenAI 兼容端点。</li>
+        <li>打开 <code>设置 → AI 检测</code>，选择服务商预设——Anthropic、OpenAI、DeepSeek、通义千问、OpenRouter、Poe、本地 Ollama，或自定义 OpenAI 兼容端点。</li>
         <li>按需填写 base URL。</li>
         <li>在 <code>设置 → 密钥</code> 里输入 API Key（见下方说明）、用一键 OAuth 连接 OpenRouter，或使用 <code>ANTHROPIC_API_KEY</code> 等服务端环境变量。</li>
         <li>回到 <code>AI 检测</code>，选择检测模型和报告模型，测试连接并保存。</li>
       </ol>
       <div class="callout info"><strong>密钥统一入口（v0.7.4）：</strong><code>设置 → 密钥</code> 现在收着所有 API Key 和 token——LLM 提供商、转录（Soniox/Deepgram/ElevenLabs）、翻译（DeepL/有道）、说话人分离用的 Hugging Face token——此前这些分散在五个不同功能区各自的入口里。存储位置和钥匙串托管方式都没变。</div>
+      <figure class="solo">
+        <img src="../../assets/keys-hub.png" alt="设置里的密钥统一入口，每个服务商一个独立字段" loading="lazy">
+        <figcaption>设置 → 密钥（v0.7.4）：所有 Key 和 token 收在一处，每个服务商一个独立字段</figcaption>
+      </figure>
       <div class="callout"><strong>Key 处理：</strong>UI 输入的 Key 存在本地浏览器。自托管网页版调用时经你自己服务器的 API 路由内存转发，不落盘；在线体验则完全不把 Key 发给项目服务器——调用由浏览器直连服务商。环境变量方式可以让 Key 完全不进入浏览器。桌面版的 OAuth 走的是系统默认浏览器（RFC 8252 loopback），不是应用内弹窗——这个流程首次启动时的版本见「<a href="#desktop-app">桌面版</a>」。v0.7.3 起，各服务商的 Key 各自独立存储、独立发送，切换服务商不会把上一个的 Key 带到新的那边。</div>
       <h3>分任务模型</h3>
-      <p>高级设置可以为检测、翻译、报告使用不同提供商或模型。常见策略是实时检测用快而便宜的模型，会后报告用更强的模型。</p>
+      <p>高级设置可以为检测、翻译、报告使用不同提供商或模型。常见策略是实时检测用快而便宜的模型，会后报告用更强的模型。完整设置项参考见「<a href="advanced.html#settings">高级玩法</a>」。</p>
       <h3>AI 状态面板</h3>
-      <p>从底部状态栏打开<code>AI 状态</code>，能一眼看清 AI 到底在做什么。检测、解释、翻译、报告四类任务分别显示各自用的模型、路由方式（<strong>自带 Key</strong> / <strong>服务端代理</strong> / <strong>未配置</strong>），以及调用、失败、QC 丢弃的累计次数。状态栏还有一个随时能瞄一眼的状态小标。没配 Key 时，面板会直接告诉你哪些功能回退到词典、哪些暂不可用，而不是默默出错。</p>
-      <div class="callout info"><strong>v0.4.6 加入。</strong>同一版还修掉了整句被误判成「黑话」的问题——只有真正的成语、俗语才放宽长度上限，普通句子不再被误标。</div>
+      <p>从底部状态栏打开 <code>AI 状态</code>，能一眼看清 AI 到底在做什么。检测、解释、翻译、报告四类任务分别显示各自用的模型、路由方式（<strong>自带 Key</strong> / <strong>服务端代理</strong> / <strong>未配置</strong>），以及调用、失败、QC 丢弃的累计次数。状态栏还有一个随时能瞄一眼的状态小标。没配 Key 时，面板会直接告诉你哪些功能回退到词典、哪些暂不可用，而不是默默出错。</p>
     </section>
 
     <section id="review">
       <h2>复习与学习</h2>
       <p><code>/review</code> 页面把历史会议和个人词典变成轻量学习中心。</p>
-      <figure>
-        <img src="../../assets/review.png" alt="JargonSlayer 复习页面">
+      <figure class="solo">
+        <img src="../../assets/review.png" alt="JargonSlayer 复习页面" loading="lazy">
         <figcaption>复习页：统计、词云、高频列表、翻卡练习</figcaption>
       </figure>
       <ul>
@@ -574,9 +321,9 @@ python whisper_server.py --model small</code></pre>
         <li>词云用于快速扫过反复出现的表达和术语。</li>
         <li>Top 10 列表用于集中复习最高频项目。</li>
         <li>翻卡练习适合快速巩固；可以标记认识/不认识。</li>
-        <li>重度间隔重复仍建议导出 Anki TSV。</li>
+        <li>用 <code>到期复习</code>——由到期驱动的复习队列，用 SM-2 简化排期；已经掌握的词会在实时卡片上收起，让信息流始终聚焦真正新的内容。</li>
+        <li>重度间隔重复用 Anki TSV 导出（或一键 AnkiConnect 同步）。</li>
       </ul>
-      <div class="callout info"><strong>v0.3.0 已上线：</strong>个人词典掌握状态已升级为一等的 learn-set——实时卡片上可标记「太简单 / 别再提示」，/review 里有到期复习循环。</div>
     </section>
 
     <section id="glossary">
@@ -591,25 +338,11 @@ python whisper_server.py --model small</code></pre>
         <li>需要独立复习流程时，可导出为 Anki TSV。</li>
       </ol>
       <h3>内置词典包</h3>
-      <p>词典包按主题控制检测范围。目前内置 14 个包：基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药与生物科技，以及 v0.4.6 新增的统计学、机器学习、生物信息学（三个包合计约 226 个术语，中英释义取自 Wikipedia、EDAM 本体和 Google ML Glossary）。内置词典整体 650+ 条。每个包都能按会议单独开关，<code>core</code> 始终开启。统计学/机器学习包里有几个日常英语高频词（mean、prior、attention、precision 等）默认不触发，只有你自己定制过启用列表后才会命中，平时闲聊不会被误标。</p>
-      <p><strong>v0.7.2 匹配修复：</strong>以括号限定结尾的词条——<i>stochastic gradient descent (SGD)</i>、<i>mode (statistics)</i>——现在能在转录里正确命中（之前从未匹配过）。只启用专业词典包（比如生信、统计）时，也不再悄悄丢失和其他包撞名的词条——每个启用的包都会显示自己的释义。</p>
-      <p><strong>v0.7.3 修复：</strong><i>in the red</i> 不再被 <i>the red graph</i> 这类短语带偏；内置释义里被错发成字面 <code>1.</code> 的 mean 之类条目已在源头修好，新增构建时的释义检查。检测对会议领域的判断也更准——生物学讲座里的「thank you for your attention」不再生出 attention 卡片，机器学习讲座里 precision、recall 依旧正常触发。</p>
-      <p><strong>v0.7.4 词典多义：</strong>讲癌症恶病质时 CAC 解释成 Cancer-Associated Cachexia，不再是获客成本；「IND … or NDA or BLA」里的 NDA 认成新药申请；机器学习语境里 PR 指 precision-recall，不是 Pull Request。释义按会议领域排序，领域不明时依然给出一版可用的解释。</p>
+      <p>词典包按主题缩小检测范围。目前内置 17 个包——基础表达、会议流程、项目执行、反馈、销售增长、委婉批评、学术会议、闲聊过渡、商务术语、技术术语、医药生物科技、统计学、机器学习、生物信息学等——合计 1,000+ 条，配多义排序（按会议语境给释义排序）和变体匹配（能识别词条的屈折变化和近似形式，比如词典收录的是 <i>get the ball rolling</i>，说话人说成 <i>keep the ball rolling</i> 同样命中）。每个包都能按会议单独开关，<code>core</code> 始终开启。统计学/机器学习包里有几个日常英语高频词（mean、prior、attention、precision 等）默认不触发——只有自己定制过启用列表才会命中，默认全开状态下不会误标平时闲聊。</p>
+      <p><strong>多义、按领域排序的释义（v0.7.4）：</strong>讲癌症恶病质时 CAC 解释成 Cancer-Associated Cachexia，不再是获客成本；「IND … or NDA or BLA」里的 NDA 认成新药申请；机器学习语境里 PR 指 precision-recall，不是 Pull Request。释义按会议领域排序，领域不明时依然给出一版可用的解释。</p>
       <h3>社区词典包</h3>
-      <p>远程词典包是从 GitHub raw 或 jsDelivr URL 安装的 JSON manifest。它可以包含表达条目和术语条目；缩写用 <code>terms</code> 且 <code>type: "acronym"</code>。自 v0.7.2 起，已安装的词典包和内置词典包定义了同一个词条时，优先显示已安装包的释义，不再被内置词典悄悄盖掉。</p>
-      <p>设置里还有一个官方词典包目录，可以直接浏览安装——医学、生物医药、AI/ML、法律、金融商务、工程计算机六个专业包，共 4300+ 词条，发布在 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>；第三方包同样可以从文件或 GitHub 链接导入。已安装的包每天自动检查一次更新。</p>
-      <pre><code>{
-  "id": "biotech-terms",
-  "name": "Biotech Terms",
-  "version": "1.2.0",
-  "terms": [{
-    "term": "IND",
-    "type": "acronym",
-    "gloss_en": "Investigational New Drug application",
-    "gloss_zh": "美国 FDA 新药临床试验申请"
-  }]
-}</code></pre>
-      <div class="callout risk"><strong>已知问题：</strong>如果内置词典和远程词典包有同一术语，目前可能双重命中。导入大型缩写包前，应先修复跨来源术语去重。</div>
+      <p>设置里有一个官方词典包目录，可以直接浏览安装——医学、生物医药、AI/ML、法律、金融商务、工程计算机六个专业包，共 4,300+ 词条，发布在 <a href="https://github.com/mianaz/jargonslayer-dicts" target="_blank" rel="noopener">jargonslayer-dicts</a>，此外还能从文件或 GitHub 链接导入任意第三方包。已安装的包每天自动检查一次更新；已安装词典包和内置词典包定义了同一个词条时，优先显示已安装包的释义（v0.7.2+）。</p>
+      <p>想自己编写并发布词典包？manifest 格式、校验规则和发布流程见「<a href="advanced.html#packs">高级玩法 → 词典包编写</a>」。</p>
     </section>
 
     <section id="appearance">
@@ -625,19 +358,23 @@ python whisper_server.py --model small</code></pre>
         <li><strong>魔典（哥特烫金）</strong>——皮面烫金的哥特风（深色）。</li>
         <li><strong>黑金（黑色电影）</strong>——黑金编辑部的黑色电影感（深色）。</li>
         <li><strong>青绿（矿彩山水）</strong>——矿物色青绿山水（深色）。</li>
-        <li><strong>像素（8-bit 任务日志）</strong>——深靛蓝底、红黄绿蓝紫五色像素点缀的任务日志风（深色）。<em>本次新增。</em></li>
-        <li><strong>笔记（课堂手绘）</strong>——白纸卡片、铅笔蓝与红笔批注的课堂笔记风（浅色）。<em>本次新增。</em></li>
+        <li><strong>像素（8-bit 任务日志）</strong>——深靛蓝底、精灵色点缀的任务日志风（深色）。</li>
+        <li><strong>笔记（课堂手绘）</strong>——白纸卡片、铅笔蓝与红笔批注的课堂笔记风（浅色）。</li>
       </ul>
       <h3>自定义主题编辑器</h3>
-      <p>内置主题之外，主题网格里有一个<code>新建</code>格子，点开是就地编辑器。可以从零建一套，也可以复制任意主题（内置或自定义）再改。17 个 token 每个都配一个原生取色器加一个 hex 输入框，可设深浅方案、起名字。编辑时有实时预览，取消就回到已保存的那套。哪个 token 掉到 AA/控件对比度门槛以下，会即时给对比度提示——只警告，不拦你。主题可导出成 JSON 文件，也能粘贴或选文件导入；导入的主题会经校验并重新分配 id，任何导入文件都盖不掉、也覆盖不了内置主题。删除要二次确认；删掉当前正用的那套会回退到终端默认。</p>
+      <p>内置主题之外，主题网格里有一个 <code>新建</code> 格子，点开是就地编辑器。可以从零建一套，也可以复制任意主题（内置或自定义）再改。17 个 token 每个都配一个原生取色器加一个 hex 输入框，可设深浅方案、起名字。编辑时有实时预览，取消就回到已保存的那套。哪个 token 掉到 AA/控件对比度门槛以下，会即时给对比度提示——只警告，不拦你。主题可导出成 JSON 文件，也能粘贴或选文件导入；导入的主题会经校验并重新分配 id，任何导入文件都盖不掉、也覆盖不了内置主题。删除要二次确认；删掉当前正用的那套会回退到终端默认。token schema 和一份完整的示例主题 JSON 见「<a href="advanced.html#themes">高级玩法 → 主题定制</a>」。</p>
+      <figure class="solo">
+        <img src="../../assets/theme-grid.png" alt="设置里的主题网格，九套内置主题加一个新建主题格子" loading="lazy">
+        <figcaption>设置 → 显示：九套内置主题、新建主题格子和字号控制</figcaption>
+      </figure>
       <div class="callout info"><strong>主题只带颜色。</strong>字体被特意排除在主题 schema 和导出的主题文件之外——它是单独的设置（见下），分享出去的主题 JSON 永远改不了你加载的是哪套字体。</div>
       <h3>字体</h3>
-      <p>两个独立选择器——<code>界面字体</code>和<code>等宽字体</code>——各自给零下载的系统预设，或你自己输入的系统字体名。界面字体预设有 默认 / 衬线 / 圆体；等宽字体预设有内置的 JetBrains Mono 默认 / 你的系统等宽。自定义名字在使用前会做净化处理。</p>
+      <p>两个独立选择器——<code>界面字体</code> 和 <code>等宽字体</code>——各自给零下载的系统预设，或你自己输入的系统字体名。界面字体预设有 默认 / 衬线 / 圆体；等宽字体预设有内置的 JetBrains Mono 默认 / 你的系统等宽。自定义名字在使用前会做净化处理。</p>
       <h3>毛玻璃与字号</h3>
-      <p><code>毛玻璃</code>开关默认关闭；打开后会给真正的浮层——设置面板、抽屉、弹出层、悬浮卡、导入中心——加一层背景模糊。旁边有三个字号控制：<code>全局字号</code>（整体大小，四档 小 / 标准 / 大 / 特大，类似浏览器缩放）、<code>转录字号</code>（只放大转录区，独立于全局）、<code>转录行距</code>（转录区行距）。</p>
+      <p><code>毛玻璃</code>（frosted glass）开关默认关闭；打开后会给真正的浮层——设置面板、抽屉、弹出层、悬浮卡、导入中心——加一层背景模糊。旁边有三个字号控制：<code>全局字号</code>（整体大小，四档 小 / 标准 / 大 / 特大，类似浏览器缩放）、<code>转录字号</code>（只放大转录区，独立于全局）、<code>转录行距</code>（转录区行距）。</p>
       <div class="callout"><strong>毛玻璃的可读性是尽力而为。</strong>半透明加模糊的表面上，对比度取决于底下透出来什么，没法像纯色主题那样保证——毛玻璃是可选项，正是这个原因。</div>
       <h3>Bit 装扮</h3>
-      <p>状态栏的像素龙 Bit 有一柜子穿搭。<code>跟随主题</code>（默认）时每套内置主题给它配一件：清晰是圆框眼镜，水墨是斗笠，魔典是巫师帽，黑金是礼帽，青绿是玉冠，像素是勇者头带，笔记是耳后铅笔；两套终端主题和自定义主题保持原装。也可以手动指定任意一件（或选<code>原装</code>脱掉），不受主题限制。睡着时帽子还戴着；翻肚皮的时候会掉在旁边。报告生成完、复习队列清空时它会张开翅膀撒一把像素火花庆祝，学习中心的角落里也蹲着一只。</p>
+      <p>状态栏的像素龙 Bit 有一柜子穿搭。<code>跟随主题</code>（默认）时每套内置主题给它配一件：清晰是圆框眼镜，水墨是斗笠，魔典是巫师帽，黑金是礼帽，青绿是玉冠，像素是勇者头带，笔记是耳后铅笔——两套终端主题和自定义主题保持原装。也可以手动指定任意一件（或选 <code>原装</code> 脱掉），不受主题限制。睡着时帽子还戴着；翻肚皮的时候会掉在旁边。报告生成完、复习队列清空时它会张开翅膀撒一把像素火花庆祝，学习中心的角落里也蹲着一只。</p>
     </section>
 
     <section id="exports">
@@ -651,13 +388,9 @@ python whisper_server.py --model small</code></pre>
         <li>复制纪要到剪贴板。</li>
         <li>Cornell 笔记可导出 PNG 或 Markdown。</li>
       </ul>
-      <p>Markdown、docx 和复制纪要导出会带上已有的翻译。如果会议里还有没翻译成功的片段，会弹一个对话框——<code>补全后导出</code>（先跑一遍补全翻译再导出，仍失败的会 toast 提示）、<code>直接导出</code>（现在就导出，未翻译片段原地标出「未翻译」）、<code>取消</code>。JSON、Anki TSV、Cornell 笔记导出不受这道确认影响。</p>
-      <h3>自动导出</h3>
-      <p>设置中可以把每次会议自动保存为 Markdown + JSON 到指定文件夹。该能力依赖 File System Access API，因此更偏 Chromium 浏览器。它适合本地自动化、Obsidian vault 和 agent 工作流。</p>
-      <h3>Webhook</h3>
-      <p>设置中可以配置 URL，在每次保存会议后 POST <code>{ event: "meeting.saved", session }</code>。接收端应尽快返回 200 并异步处理；客户端超时 8 秒，无重试。</p>
-      <h3>全量备份</h3>
-      <p>全量备份包含会议、词典和设置。恢复时会先预览内容，并清理订阅直连连接状态等风险设置。</p>
+      <p>Markdown、docx 和复制纪要导出会带上已有的翻译。如果会议里还有没翻译成功的片段，会弹一个对话框——<code>补全后导出</code>（先跑一遍补全翻译再导出，仍失败的会 toast 提示）、<code>直接导出</code>（现在就导出，未翻译片段原地标出「未翻译」）、<code>取消</code>。JSON、Anki TSV、Cornell 笔记导出不受这道确认影响。iOS 上所有导出都会走系统分享面板。</p>
+      <h3>自动导出、Webhook 与全量备份</h3>
+      <p>设置中可以把每次会议自动保存到文件夹，存成 Markdown 加 JSON（依赖 File System Access API，因此偏 Chromium 浏览器——为 Obsidian vault 和 agent 工作流设计），也可以在每次保存后向自定义 URL POST 一个 <code>meeting.saved</code> webhook，还能对会议、词典和设置做一次全量备份。恢复备份时会先预览内容，并清理有风险的设置项。payload 格式、文件命名规则和一个 webhook 接收端示例见「<a href="advanced.html#automation">高级玩法 → 自动化</a>」。</p>
     </section>
 
     <section id="privacy">
@@ -666,27 +399,28 @@ python whisper_server.py --model small</code></pre>
       <table>
         <thead><tr><th>数据</th><th>去向</th></tr></thead>
         <tbody>
-          <tr><td>本地 Whisper / 标签页音频 / 系统/App 音频（桌面版）</td><td>仅本机——loopback websocket，或（系统/App 音频）本机进程通道进同一个内置 sidecar</td></tr>
-          <tr><td>系统识别（桌面版，macOS 26+）</td><td>仅本机——音频在捕获它的进程内直接转成文字，不经过任何本机通道</td></tr>
-          <tr><td>英文加速 Parakeet（桌面版，Apple 芯片）</td><td>仅本机——和本地 Whisper 一样音频不出本机；模型本身首次使用时从 Hugging Face 下载一次</td></tr>
-          <tr><td>浏览器识别音频</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商语音服务</td></tr>
-          <tr><td>音频（Soniox 引擎，自备 Key，实验）</td><td>云端即时处理不留存——用你自己的 Key 经 WSS 直连 Soniox 实时接口</td></tr>
-          <tr><td>音频（在线体验：Soniox 限量试用 / 标签页音频）</td><td>云端即时处理不留存——无需 Key；每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得</td></tr>
+          <tr><td>音频，本地 Whisper / 标签页音频 / 系统/App 音频（桌面版）</td><td>仅本机——loopback websocket，或（系统/App 音频）本机进程通道进同一个内置 sidecar</td></tr>
+          <tr><td>音频，系统识别 System Speech（桌面版，macOS 26+）</td><td>仅本机——音频在捕获它的进程内直接转成文字，不经过任何通道，包括本机通道</td></tr>
+          <tr><td>音频，英文加速 Parakeet（桌面版，Apple 芯片）</td><td>仅本机——和本地 Whisper 一样完全本地；模型本身首次使用时从 Hugging Face 下载一次</td></tr>
+          <tr><td>音频，浏览器识别</td><td>Chrome 139+ 有本地语言包时仅本机（设备端）；否则浏览器厂商的语音服务</td></tr>
+          <tr><td>音频（Soniox 引擎，自备 Key，实验）</td><td>云端即时处理，不留存——用你自己的 Key 经 WSS 直连 Soniox 实时接口</td></tr>
+          <tr><td>音频（在线体验：Soniox 限量试用 / 标签页音频）</td><td>云端即时处理，不留存——无需 Key；每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得</td></tr>
           <tr><td>音频（Deepgram 引擎，自备 Key，英文）</td><td>云端处理——用你自己的 Key，转写在 Deepgram 云端完成</td></tr>
+          <tr><td>音频（ElevenLabs 引擎，自备 Key）</td><td>云端处理，用你自己的 Key；默认会留存转录内容，企业版才有免留存选项</td></tr>
           <tr><td>音频/视频文件导入</td><td>浏览器内转录；文件不上传</td></tr>
-          <tr><td>在线体验 AI 文本（未配 Key）</td><td>项目服务器内存中转，再到 OpenRouter，带 <code>data_collection=allow</code></td></tr>
-          <tr><td>在线体验 AI 文本（自带 Key）</td><td>浏览器直连你配置的服务商，不经过项目服务器</td></tr>
+          <tr><td>在线体验 AI 文本</td><td>项目服务器内存中转，再到 OpenRouter，带 <code>data_collection=allow</code></td></tr>
           <tr><td>BYOK AI 文本</td><td>你配置的模型提供商端点</td></tr>
-          <tr><td>订阅直连 detect/define</td><td>本地 <code>claude</code> 或 <code>codex</code> CLI</td></tr>
+          <tr><td>订阅直连 detect/define</td><td>本地 <code>claude</code> 或 <code>codex</code> CLI，经 sidecar</td></tr>
           <tr><td>词典模式文本</td><td>仅本机</td></tr>
           <tr><td>历史、设置、Key</td><td>本地浏览器存储；无账号</td></tr>
         </tbody>
       </table>
-      <div class="callout local"><strong>全本地文本路径：</strong>使用本地 Whisper 或标签页音频，关闭 <code>AI 检测</code>，并避免把 webhook/自动导出指向外部位置。</div>
+      <div class="callout local"><strong>全本地文本路径：</strong>使用本地 Whisper 或标签页音频，关闭 <code>AI 检测</code>，并避免把 webhook/自动导出指向外部位置。分步版本见「<a href="#choosing">选择适合的配置</a>」。</div>
+      <p>正式的隐私政策见 <a href="../../privacy.html">privacy.html</a>；本地日志已加固，不会带上会议原声（v0.7.2+）。</p>
     </section>
 
     <section id="faq">
-      <h2>FAQ</h2>
+      <h2>FAQ 与故障排查</h2>
       <h3>浏览器不支持语音识别</h3>
       <p>浏览器识别推荐 Chrome 或 Edge；也可以切换到本地 Whisper。</p>
       <h3>Whisper 连接不上</h3>
@@ -703,367 +437,9 @@ python whisper_server.py --model small</code></pre>
       <p>设置（高级）里的「诊断信息」保存一份本地、已脱敏的信息包——最近的应用事件加一份脱敏后的设置快照，绝不包含会议音频或转录文本。<strong>复制诊断信息</strong>直接复制；<strong>导出诊断文件</strong>改为存成文件（iOS 上会打开系统分享面板）。桌面版会自动把三个本地日志（Whisper 服务、系统/App 音频、系统识别）的结尾一并带上，和 <code>查看本地日志</code> 里能单独预览的是同一批日志。Chrome 插件侧边栏也有自己的、更精简的<strong>复制诊断</strong>按钮。提交 <a href="https://github.com/mianaz/jargonslayer/issues" target="_blank" rel="noopener">issue</a> 时附上对应的那份即可。</p>
     </section>
 
-    <section id="deep-specs">
-      <h2>深入规格</h2>
-      <p>这些规格面向真正使用和维护这个工具的人：什么时候该信任它、出问题如何判断、要扩展时有哪些边界。</p>
-
-      <h3>模式选择矩阵</h3>
-      <table>
-        <thead><tr><th>使用场景</th><th>推荐配置</th><th>取舍</th></tr></thead>
-        <tbody>
-          <tr><td>30 秒体验产品</td><td>在线体验 + 演示</td><td>零配置，但预览 AI 文本走预览提供商路径。</td></tr>
-          <tr><td>日常低敏会议</td><td>浏览器识别 + BYOK AI</td><td>实时配置最简单；音频会进入浏览器厂商语音服务。</td></tr>
-          <tr><td>隐私敏感会议</td><td>本地 Whisper + 词典模式</td><td>音频和文本都留在本机，但解释能力限于词典和个人词典。</td></tr>
-          <tr><td>既要隐私又要上下文检测</td><td>本地 Whisper + Ollama OpenAI 兼容端点</td><td>可全本地，但质量取决于本地模型。</td></tr>
-          <tr><td>听懂线上会议中对方声音</td><td>macOS 桌面版：系统/App 音频，零额外配置。网页版：标签页音频或虚拟声卡 + 本地 Whisper。</td><td>桌面版只需要一次性授权；网页版需要 sidecar，用虚拟声卡还要额外的系统级路由设置。</td></tr>
-          <tr><td>分析会后录音</td><td>短文件用浏览器音视频导入；大文件/说话人分离用 sidecar 导入</td><td>浏览器路径最省事；sidecar 路径适合重任务。</td></tr>
-        </tbody>
-      </table>
-
-      <h3>设置契约</h3>
-      <p>主设置对象控制转录、模型路由、检测、导出、显示、说话人分离、双语转录和订阅直连。</p>
-      <ul>
-        <li><code>engine</code>：实时捕获引擎。<code>import</code> 和 <code>browser-whisper</code> 只出现在导入会话中，不是实时引擎选项。</li>
-        <li><code>language</code>：传给 Web Speech 的 BCP-47 语言，例如 <code>en-US</code>。</li>
-        <li><code>whisperUrl</code>：本地 Whisper websocket，默认 <code>ws://localhost:8765</code>。</li>
-        <li><code>provider</code>、<code>baseUrl</code>、<code>apiKey</code>：主 LLM 路由。Key 为空时，服务端 route 可以依赖环境变量。</li>
-        <li><code>taskLlm</code>：可选分任务 provider/model 覆盖，支持 <code>translate</code>、<code>detect</code>、<code>summary</code>。划词解释跟随 detect 配置。</li>
-        <li><code>autoDetect</code>：整体开关。<code>aiDetect</code> 只控制 LLM 层；开启检测时，词典层仍是即时本地底座。</li>
-        <li><code>minConfidence</code>：合并检测结果时使用的置信度阈值。</li>
-        <li><code>enabledPacks</code>：<code>null</code> 表示启用所有词典包；<code>core</code> 始终开启。</li>
-        <li><code>bilingualTranscript</code>：把每个最终片段实时翻译成 <code>explainLanguage</code>。</li>
-        <li><code>hfToken</code> 和 <code>realtimeDiarize</code>：本地 sidecar 说话人分离配置。</li>
-        <li><code>themeId</code>、<code>customThemes</code>、<code>uiFont</code>、<code>monoFont</code>、<code>overlayGlass</code>、<code>fontSize</code>、<code>transcriptScale</code>、<code>transcriptLeading</code>：显示设置（见<a href="#appearance">外观</a>），独立于主题 token 持久化；<code>customThemes</code> 存用户自建的主题定义，字体按设计单独存、不进主题 JSON。</li>
-        <li><code>sidecarMode</code>（仅桌面版）：<code>managed</code>（默认——应用自己安装/启动/重启 sidecar）或 <code>external</code>（连接你自己起的 sidecar，跟网页版一样）。</li>
-      </ul>
-
-      <h3>检测规格</h3>
-      <ul>
-        <li>启用检测时，每个最终转录片段都会被词典同步扫描。</li>
-        <li>LLM 层只批处理新增文本，之前的 context tail 仅用于消歧。</li>
-        <li>LLM 结果可以原地升级词典卡片，但不会撤回词典命中。</li>
-        <li>重复表达按归一化 key 合并，更新 count 和 last-seen 元数据。</li>
-        <li>个人词典优先于内置词典，且不会被 AI 覆盖。</li>
-        <li>全大写缩写使用更严格匹配，降低误报；普通混合大小写术语匹配更宽松。</li>
-      </ul>
-      <div class="callout info"><strong>当前限制：</strong>远程包术语会和内置词典一起扫描，但跨来源术语去重还需要修复；导入大型缩写包前应先处理。</div>
-
-      <h3>翻译规格</h3>
-      <ul>
-        <li>实时双语转录按 segment id 分小批翻译最终片段。</li>
-        <li>会议中打开双语转录时，会补翻最近几个尚未翻译的最终片段。</li>
-        <li>手动修改某个片段文本时，旧翻译会失效；会议仍在进行且开关开启时，会重新入队。</li>
-        <li>无 Key 暂停是可自愈的：填入 Key 后，新翻译工作可以恢复，不必重启会议。</li>
-        <li>连续 429 会暂停，并最终跳过最老的卡住批次，避免新片段一直被阻塞。</li>
-        <li>会后报告翻译是另一条路径：按 segment index 分块翻译，并尽量修复缺失 index。</li>
-      </ul>
-
-      <h3>导入规格</h3>
-      <table>
-        <thead><tr><th>导入路径</th><th>处理方式</th><th>限制 / 说明</th></tr></thead>
-        <tbody>
-          <tr><td>文稿粘贴 / <code>.txt</code> / <code>.srt</code> / <code>.vtt</code></td><td>解析、构建合成会话、检测、可选翻译、保存。</td><td>有时间戳的 cue 会归一到导入时间；纯文本会使用合成时间间隔。</td></tr>
-          <tr><td>浏览器音频导入</td><td>浏览器 AudioContext 解码，重采样到 16 kHz mono，交给浏览器 Whisper worker。</td><td>45 分钟时长上限；200 MB 压缩音频上限。</td></tr>
-          <tr><td>浏览器视频导入</td><td>用 ffmpeg.wasm 提取音轨，再复用浏览器音频路径。</td><td>视频提取有单独大小限制；首次运行可能下载浏览器侧模型资源。</td></tr>
-          <tr><td>Sidecar 录音导入</td><td>本地 job API 处理转录和可选说话人分离。</td><td>需要本地 sidecar；进度显示是 UI 本地状态，刷新会丢失显示但任务可继续。</td></tr>
-          <tr><td>视频 URL 导入</td><td>本地 sidecar 使用 <code>yt-dlp</code>，再走同一转录 job 管线。</td><td>仅本地版；用户自行负责版权和平台条款。</td></tr>
-        </tbody>
-      </table>
-
-      <h3>失败与恢复规格</h3>
-      <ul>
-        <li><strong>无 API Key：</strong>检测回退到词典；实时翻译暂停；生成报告会提示需要 Key。</li>
-        <li><strong>限流：</strong>检测对 429 带抖动重试一次；翻译会暂停，并避免老批次永久阻塞新片段。</li>
-        <li><strong>Sidecar 不可达：</strong>本地 Whisper、sidecar 导入、URL 导入、说话人分离、订阅直连不可用；浏览器本地导入仍可处理支持文件。</li>
-        <li><strong>会议已切换：</strong>异步结果携带 <code>meetingGen</code>；旧会议的过期结果会被丢弃。</li>
-        <li><strong>后台标签页：</strong>浏览器会节流 timer，所以检测也会在片段到达和可见性变化时触发 flush。</li>
-        <li><strong>停止后的晚到结果：</strong>检测和翻译可能在停止后到达；store 会安排补保存，避免历史记录缺尾部结果。</li>
-      </ul>
-
-      <h3>词典与学习规格</h3>
-      <ul>
-        <li>今天个人词典是持久学习主场；会议记录保持为不可变归档。</li>
-        <li>条目可以手动创建、由划词 AI 定义创建，也可以从本场卡片收藏。</li>
-        <li>每个条目保存 headword、variants、解释、例句、原始上下文、用户笔记、来源、时间戳和复习状态。</li>
-        <li>表达条目可保存分类、英文含义、plain-English 改写和语气。术语条目可保存术语类型和英文 gloss。</li>
-        <li>复习状态包括 mastered、review count、last reviewed time。v0.3.0 已升级为真正的 learn-set 和到期复习循环（SM-2 简化排期）。</li>
-      </ul>
-
-      <h3>自动化规格</h3>
-      <ul>
-        <li>自动导出会写入 <code>YYYY-MM-DD-HHmm-jargonslayer.md</code> 和同名 <code>.json</code>。</li>
-        <li>文件夹自动保存依赖 File System Access API，因此主要面向 Chromium。</li>
-        <li>Webhook 发送 <code>meeting.saved</code> payload，包含 <code>schemaVersion: 1</code>、<code>exportedAt</code> 和完整 <code>session</code>。</li>
-        <li>全量备份包含会议、词典和设置。默认可剥离 API Key、HF token、agent token、webhook URL 和分任务 API Key。</li>
-        <li>恢复备份会清理订阅直连状态，避免静默重连到旧的本地 agent sidecar。</li>
-      </ul>
-
-      <h3>未来实时搜索规格</h3>
-      <p>实时搜索应该是可选的后台增强委派者，而不是实时检测的阻塞步骤。它接收表达、最近上下文、meeting generation 和 segment ids；返回简短引用或消歧说明；再补丁式挂到现有卡片上，不改变转录焦点。</p>
-      <ul>
-        <li>搜索应由歧义、用户请求或显式卡片操作触发，而不是默认搜索每张卡。</li>
-        <li>结果应作为 reference 或 context note 附加到卡片，不替换本地解释。</li>
-        <li>搜索 job 的优先级应低于实时转录、词典扫描和可见卡片检测。</li>
-        <li>隐私设置需要明确区分本地词典、模型提供商 AI、联网搜索调用。</li>
-      </ul>
-    </section>
-
-    <section id="async-delegation">
-      <h2>异步委派设计</h2>
-      <p>产品体验应该像一个稳定的前台进程，背后有多个专业后台 worker。前台负责监听、文本编辑、用户焦点和已保存会议状态；昂贵任务交给异步委派者，结果准备好后再自然合并回来。</p>
-      <div class="callout info"><strong>这是概念设计，不是字面 schema：</strong>这一节描述的是实时检测/翻译目前已经在遵循的覆盖率模型，属于概念层面。真正上线、用户看得见的「<a href="#desktop-app">后台任务中心</a>」，跟踪的是更粗粒度的整任务（导入、模型下载、说话人分离扩展安装），用的是它自己的内存 registry——并不是下面这套按片段的账本，也没有 <code>translate | detect | search | diarize</code> 这几种 kind。</div>
-      <div class="cards">
-        <div class="card">
-          <h3>前台</h3>
-          <p>追加最终转录片段，保持用户焦点稳定，允许编辑和复盘，渲染当前最好的状态，不等待 AI 或搜索。</p>
-        </div>
-        <div class="card">
-          <h3>委派者</h3>
-          <p>翻译、LLM 检测、实时搜索、说话人分离、会后报告各自排队运行，有优先级和重试策略。</p>
-        </div>
-        <div class="card">
-          <h3>任务账本</h3>
-          <p>按片段记录覆盖情况：词典已完成、LLM 检测待处理/完成/失败、翻译待处理/完成/跳过、搜索待处理/完成/过期。</p>
-        </div>
-      </div>
-      <pre><code>{
-  "id": "job_x",
-  "kind": "translate | detect | search | diarize",
-  "meetingGen": 12,
-  "segmentIds": ["seg_1", "seg_2"],
-  "textHash": "...",
-  "priority": 2,
-  "status": "queued | running | done | failed | stale",
-  "attempts": 0
-}</code></pre>
-      <p>结果只有在 meeting generation 仍匹配、目标片段仍存在、源文本 hash 仍是当前版本时才应用。结果应该以 patch 方式合并到相关字段，不能替换前台转录，也不能抢走用户焦点。</p>
-      <div class="callout info"><strong>为什么重要：</strong>翻译和检测可能失败、暂停或延迟完成。任务账本能让这些状态可见，避免文本“静默丢失”：它要么已处理，要么待处理，要么过期，要么带原因跳过，要么可重试。</div>
-      <p>未来实时搜索也天然适合这个模型：卡片用当前表达和最近上下文发起后台搜索，先显示本地解释；搜索返回后再附加参考来源或消歧说明。</p>
-    </section>
-
-    <section id="architecture">
-      <h2>架构</h2>
-      <p>仓库是一个 npm workspace：<code>apps/web</code>（Next.js 15、TypeScript、Tailwind、zustand、IndexedDB、服务端 LLM route proxy）加上 <code>packages/core</code>（纯 TS 共享核心——词典、类型定义）、<code>apps/desktop</code>（Tauri 外壳）、<code>apps/extension</code>（Chrome MV3 侧边栏）。<code>apps/web</code> 里的 zustand store 是转录片段、中间结果、卡片、术语、纪要、设置和会议历史的共享总线。</p>
-      <pre><code>apps/web（浏览器客户端）
-  transcription engines
-    demo | Web Speech | local Whisper | tab audio | appaudio（桌面版）
-  zustand store
-    segments | cards | terms | summaries | settings | sessions
-  detection
-    dictionary instant floor
-    LLM scheduler and dedupe
-  UI
-    transcript | cards | history | summary | review
-
-Server routes
-  /api/detect
-  /api/define
-  /api/translate
-  /api/summarize
-
-Sidecars（Python）
-  whisper_server.py
-  agent_server.py
-
-apps/desktop（Tauri v2，macOS）
-  Rust 核心：用固定版本的 uv 装独立 Python、
-    管理 sidecar 进程、CoreAudio process-tap 管线
-  jargonslayer-audiocap：签名的 Swift 辅助进程（CoreAudio process tap）
-
-apps/extension（Chrome MV3）
-  侧边栏：Web Speech 实时捕获 + 内置词典 + 设备端 Translator API
-  自己的 IndexedDB 数据库 + chrome.storage.local，跟 apps/web 的存储互不相通
-
-packages/core
-  共享类型 + 内置词典，网页版和插件都消费它</code></pre>
-      <ul>
-        <li><code>apps/web/src/lib/types.ts</code>（转出自 <code>@jargonslayer/core</code>）维护跨模块契约。</li>
-        <li><code>apps/web/src/lib/store.ts</code> 是应用总线；STT 和检测通过 store 通信，而不是直接互相依赖。</li>
-        <li><code>apps/web/src/lib/detect/dictionary.ts</code> 是同步即时词典层。</li>
-        <li><code>apps/web/src/lib/detect/scheduler.ts</code> 负责 LLM 批处理和词典模式 fallback。</li>
-        <li><code>apps/web/src/lib/detect/dedupe.ts</code> 合并重复命中，并用 LLM 结果原地升级词典卡片。</li>
-        <li><code>apps/web/src/app/api/summarize/route.ts</code> 编排总结、分块翻译和漏检补扫。</li>
-        <li><code>apps/desktop/src-tauri/src/audiocap.rs</code> 监管 Swift 捕获辅助进程，把它的输出重采样后接入既有转录管线。</li>
-      </ul>
-    </section>
-
-    <section id="storage">
-      <h2>数据与存储</h2>
-      <p>主要持久化都在本地浏览器存储。历史 <code>meetlingo:*</code> IndexedDB key 会在启动时复制迁移到新命名空间，并保留原数据以便回退。</p>
-      <table>
-        <thead><tr><th>对象</th><th>存储</th><th>说明</th></tr></thead>
-        <tbody>
-          <tr><td>会议</td><td>IndexedDB</td><td>会议归档和索引</td></tr>
-          <tr><td>个人词典</td><td><code>jargonslayer:glossary</code></td><td>个人条目和掌握状态</td></tr>
-          <tr><td>设置</td><td><code>jargonslayer:settings</code></td><td>本地配置</td></tr>
-          <tr><td>自动导出文件夹</td><td><code>jargonslayer:export-dir</code></td><td>浏览器目录 handle；偏 Chromium</td></tr>
-          <tr><td>远程词典包</td><td><code>jargonslayer:remote-packs</code></td><td>安装来源 URL 和已校验 manifest</td></tr>
-        </tbody>
-      </table>
-      <p>Schema version 1 覆盖会议 JSON、Markdown frontmatter、webhook payload、全量备份和远程词典包。</p>
-      <div class="callout info"><strong>这张表说的是网页版/桌面版。</strong>Chrome 插件（Lite）有自己完全独立的本地存储——一个专用的 IndexedDB 数据库存会话历史，<code>chrome.storage.local</code> 存收藏的查词记录——从不和网页版的存储同步或共享。</div>
-    </section>
-
-    <section id="local-dev">
-      <h2>本地开发</h2>
-      <pre><code>npm install
-npm run dev
-
-# checks
-npm run typecheck
-npm test
-npm run build</code></pre>
-      <p>本地服务端模型 Key 可以放在 <code>.env.local</code>。例如：</p>
-      <pre><code>ANTHROPIC_API_KEY=sk-ant-...</code></pre>
-      <div class="callout info"><strong>当前快照没有 sidecar/README.md。</strong>仓库 README、docs、sidecar 测试和代码注释是现阶段的运行手册。</div>
-    </section>
-
-    <section id="sidecars">
-      <h2>Sidecar</h2>
-      <h3>Whisper Sidecar</h3>
-      <p><code>sidecar/whisper_server.py</code> 处理本地 websocket 实时转录和录音 HTTP job。它使用 faster-whisper、能量 VAD、可选音频保存，并在配置后使用 pyannote 做说话人分离。</p>
-      <h3>说话人分离</h3>
-      <p>录音导入可以做批处理说话人分离。实时说话人分离仍是 beta：sidecar 会在最近一段音频窗口上反复运行 pyannote，把说话人匹配到稳定 registry，再把标签更新发回 UI，不阻塞转录。</p>
-      <h3>订阅直连</h3>
-      <p><code>sidecar/agent_server.py</code> 是实验性的本地功能。它调用用户自己已经登录的 <code>claude</code> 或 <code>codex</code> CLI，仅用于 detect/define。翻译和总结仍走正常应用 route。</p>
-      <ul>
-        <li>默认 loopback 地址：<code>127.0.0.1:8767</code>。</li>
-        <li>端点：<code>GET /agent/health</code>、<code>POST /agent/detect</code>、<code>POST /agent/define</code>。</li>
-        <li>detect/define 要求 loopback Origin 和启动时打印的一次性连接码。</li>
-        <li>构建开关：<code>NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT=1</code>。</li>
-        <li>sidecar 不可达、未登录或额度失败时，应用回退到词典检测。</li>
-      </ul>
-      <div class="callout risk"><strong>环境变量警告：</strong>如果 agent sidecar 环境中存在 <code>ANTHROPIC_API_KEY</code>，Claude 调用可能优先使用这个 Key，而不是订阅登录。sidecar 会警告，但不会替你 unset。</div>
-    </section>
-
-    <section id="remote-packs">
-      <h2>远程词典包</h2>
-      <p>远程词典包会被校验、归一化，并载入内存 registry。加载后，设置页会把它们和内置词典包一起展示。</p>
-      <ul>
-        <li>manifest 需要 <code>id</code>、<code>name</code>、<code>version</code>。</li>
-        <li>坏条目会被丢弃并打印 warning；只有 manifest 本身不可用时整个包才失败。</li>
-        <li>条目级 <code>pack</code> 字段会被忽略，并强制改成 manifest id。</li>
-        <li>只要 <code>version</code> 改变，就会触发更新。</li>
-        <li>远程包来自任意 URL，用户应把它视作内容导入。</li>
-      </ul>
-      <p>Global Acronym 这类大缩写源应该先作为候选数据使用，按领域和质量过滤，发布成可选词典包；通过验证后再考虑提升进内置词典。</p>
-    </section>
-
-    <section id="deployment">
-      <h2>部署与打包</h2>
-      <p>网页版的形态是 Web App 和 PWA：可以在 Chrome/Edge 中安装成接近桌面应用的窗口，也可以在 iOS/iPadOS Safari 中添加到主屏幕，或作为本地/LAN Next.js 服务运行。macOS 桌面版和 Chrome 插件是两个独立打包、独立发版的产物。</p>
-      <table>
-        <thead><tr><th>形态</th><th>状态</th><th>说明</th></tr></thead>
-        <tbody>
-          <tr><td>在线体验</td><td>可用</td><td>预览层，明确标出限制，本地功能灰显</td></tr>
-          <tr><td>本地 Web App</td><td>可用</td><td>完整本地优先构建</td></tr>
-          <tr><td>PWA 安装</td><td>可用</td><td>使用已有 manifest 和图标</td></tr>
-          <tr><td>macOS 桌面版（Tauri）</td><td>可用</td><td>签名并公证的 DMG，见 <a href="https://github.com/mianaz/jargonslayer/releases/latest" target="_blank" rel="noopener">releases/latest</a>；仅 Apple Silicon，无 Intel 版本</td></tr>
-          <tr><td>Chrome 插件（Lite）</td><td>可用，手动加载</td><td>zip 在 releases 页面；暂不上架网上应用店，手动加载即正式安装方式</td></tr>
-          <tr><td>iOS / iPadOS（测试版）</td><td>TestFlight 邀请制</td><td>需要时联系作者获取邀请；iOS 26+，系统语音识别在设备本地转录，系统翻译引擎在设备本地翻译（Apple 翻译，无需 Key）。Android 与商店上架暂无计划，PWA 已覆盖主要移动场景</td></tr>
-        </tbody>
-      </table>
-      <p>预览部署使用 <code>NEXT_PUBLIC_DEPLOY_TIER=preview</code>。默认构建是完整本地优先构建。</p>
-
-      <h3>能力对照表</h3>
-      <table>
-        <thead><tr><th>能力</th><th>Chrome 插件（Lite）</th><th>在线体验（预览）</th><th>本地 Web / 桌面版</th></tr></thead>
-        <tbody>
-          <tr><td>词典检测（即时、离线）</td><td>✓</td><td>✓</td><td>✓</td></tr>
-          <tr><td>实时转录</td><td>Web Speech（仅麦克风）</td><td>Web Speech · Soniox 限量试用（免 Key）· 标签页音频（同一试用额度）</td><td>Web Speech · 本地 Whisper · 标签页音频 · 系统/App 音频（桌面版）· Soniox（BYOK，实验）· Deepgram（BYOK）</td></tr>
-          <tr><td>AI 检测/翻译/纪要</td><td>—</td><td>✓ 内置体验 Key（限流）</td><td>✓ 自备 Key（BYOK）</td></tr>
-          <tr><td>导入文本/音频/视频</td><td>—</td><td>✓</td><td>✓</td></tr>
-          <tr><td>说话人分离</td><td>—</td><td>展示但需要本地 sidecar</td><td>✓</td></tr>
-          <tr><td>历史记录</td><td>本地 IndexedDB，独立数据库</td><td>IndexedDB</td><td>IndexedDB</td></tr>
-        </tbody>
-      </table>
-    </section>
-
-    <section id="testing">
-      <h2>测试</h2>
-      <h3>Web App</h3>
-      <pre><code>npm run typecheck
-npm test
-npm run build</code></pre>
-      <h3>Sidecar</h3>
-      <pre><code>sidecar/.venv/bin/python sidecar/test_agent_json.py
-sidecar/.venv/bin/python sidecar/test_agent_postfilter.py
-sidecar/.venv/bin/python sidecar/test_agent_server.py
-sidecar/.venv/bin/python sidecar/test_ingest_url.py
-sidecar/.venv/bin/python sidecar/test_realtime_diar.py</code></pre>
-      <p>sidecar 测试是 plain-assert 脚本，依赖 <code>sidecar/requirements.txt</code>。本地 Whisper 和 agent sidecar 是独立进程，改哪个测哪个。</p>
-      <h3>桌面版（Rust + Swift）</h3>
-      <pre><code>cd apps/desktop/src-tauri && cargo test
-cd apps/desktop/src-tauri/audiocap-helper && swift test</code></pre>
-      <p>Rust 核心（进程监管、重采样、CoreAudio framing 协议）和签名的 Swift 捕获辅助进程各有自己的测试套件；CI 环境没有真实 CoreAudio session，所以音频捕获相关的测试都是围绕 fake/seam 设计的，不依赖真实 tap。</p>
-      <h3>插件</h3>
-      <pre><code>npm test -w apps/extension</code></pre>
-    </section>
-
-    <section id="roadmap">
-      <h2>路线图</h2>
-      <p>v0.3.0 的全部计划项已上线：学习循环（#48）、统一导入与任务中心（#58）、简单/高级设置（#62）、四套新主题（#52）。v0.4 的全部计划项已上线：</p>
-      <ol>
-        <li><strong>桌面应用（Tauri，macOS）：</strong>应用自己托管本地 Whisper——安装向导、模型可选可换、说话人分离扩展一键安装；macOS 26+ 另有零安装的「系统识别」引擎（v0.4.3）。签名并公证的 DMG 在 releases 页面。</li>
-        <li><strong>设备端浏览器识别：</strong>Chrome 139+ 优先本地识别，云端自动兜底。</li>
-        <li><strong>Soniox 实时引擎（实验，自备 Key）：</strong>面向中英夹杂场景；通过内部基准测试前保持「实验」标记。</li>
-        <li><strong>系统/App 音频（桌面版，macOS 14.4+）：</strong>基于 CoreAudio process tap，捕获这台 Mac 正在播放的声音，替换了桌面版旧版的标签页音频——见「<a href="#desktop-app">桌面版</a>」。</li>
-        <li><strong>系统识别（桌面版，macOS 26+，v0.4.3）：</strong>基于 macOS 原生 SpeechAnalyzer 的零安装引擎——不下载模型、不装 Python，音频不出捕获进程。</li>
-        <li><strong>英文加速（桌面版，Apple 芯片，v0.4.4）：</strong>模型选择器里的可选引擎（非默认）——比 Whisper 快得多（批量推理约百倍实时），暂不支持实时说话人分离。</li>
-        <li><strong>Chrome 插件（Lite）：</strong>MV3 侧边栏，含实时麦克风捕获、内置词典、设备端翻译。</li>
-        <li><strong>后台任务中心、引擎下拉菜单、首次引导、更新检查（桌面版）：</strong>四项都在「<a href="#desktop-app">桌面版</a>」里有完整说明。</li>
-        <li><strong>AI 透明面板 + 领域词典包（v0.4.6）：</strong>按任务的 <a href="#ai">AI 状态面板</a>（检测/解释/翻译/报告），显示模型、路由方式和调用/失败/QC 丢弃次数，外加状态栏小标；三个新内置词典包——统计学、机器学习、生物信息学（约 226 个术语）；以及一处检测质量修复，普通句子不再被误判成黑话。</li>
-      </ol>
-      <p>v0.5 目前已上线：</p>
-      <ol>
-        <li><strong>模式优先 UI：</strong>会前先选「怎么听」（麦克风 / 标签页音频 / 系统/App 音频 / 导入文件）而不是先挑引擎，应用按平台和配置自动匹配对应引擎；新手引导同步重写。</li>
-        <li><strong>说话人工具：</strong>单句/批量指定说话人、「应用到本句及之后」、实时「当前说话人」标记；手动指定的句子会被锁定，不会被后续自动说话人分离覆盖。</li>
-        <li><strong>AI 转写修订（审阅制）：</strong>会后一键通读转录、挑出识别错误，逐段列出原文与修正建议，接受才生效；接受后自动重新翻译。</li>
-        <li><strong>崩溃恢复：</strong>会议实时写自动草稿，页面刷新或浏览器崩溃后，历史里一键「恢复到历史记录」。</li>
-        <li><strong>划词解释后台生成：</strong>选中文本的解释在后台完成、自动并入卡片列表，关掉弹窗也不会丢。</li>
-        <li><strong>导出与联动：</strong>新增 docx 导出；AnkiConnect 一键把生词卡同步进本地 Anki（自动去重）；个人词典可拆成多个自定义命名词包。</li>
-        <li><strong>翻译引擎可选：</strong>双语字幕和全文翻译默认用 LLM，Chrome 138+ 可切到浏览器内置的本地翻译（免 Key）；桌面版和 iOS 版现在还能选 Apple 系统翻译（macOS 26+ / iOS 26+），同样本机运行、免 Key。</li>
-        <li><strong>Deepgram 云端识别（BYOK，英文）：</strong>新增一个纯英文场景的云端识别引擎选项。</li>
-        <li><strong>在线体验的限量试用：</strong>内置 Soniox 云端识别限量试用（免 Key，每人每天最多 3 段、单次最长约 10 分钟，总额度先到先得）；标签页音频回归在线体验，走同一试用额度。</li>
-      </ol>
-      <p>外观体系随后扩展——见<a href="#appearance">外观</a>：再加两套内置主题（共九套）、带实时对比度提示和 JSON 导入导出的自定义主题编辑器、界面字体与等宽字体的独立选择器，以及可选的毛玻璃浮层。</p>
-      <p>v0.6 已上线：</p>
-      <ol>
-        <li><strong>词典包扩展——17 包、上千词条：</strong>内置词典扩充到 17 个主题包，多义词按会议语境排序；新增变体匹配（85 条），能识别词条的屈折变化和近似形式——词典收录的是 <i>get the ball rolling</i>，说话人说成 <i>keep the ball rolling</i> 同样命中。</li>
-        <li><strong>Apple 系统翻译扩展到 iOS：</strong>原先仅桌面版可用的 Apple 翻译引擎，现在也跑在 iOS 26+ 上——完全本机处理，不需要 API Key，文本不出设备。</li>
-        <li><strong>iOS 版进入 TestFlight 内测：</strong>JargonSlayer 的 iOS 版现已通过 TestFlight 开放内测（受邀制，iOS 26+），系统语音识别和 Apple 翻译都在手机本地运行。</li>
-        <li><strong>手机主界面重构：</strong>转录占满手机主屏，解释卡片收进底部一条可左右滑动的卡片条——最新卡在最左，点转录里的高亮词直接跳到对应卡片。</li>
-        <li><strong>词典模式成为默认：</strong>新安装默认进入词典模式——内置词典即时检测、完全离线的底座；AI 模式转为可选的 Beta。</li>
-      </ol>
-      <p><strong>说明：</strong>Chrome 插件以 releases 页面的 zip 分发，手动加载安装；暂无网上应用店上架计划。</p>
-      <p>v0.7 已上线：</p>
-      <ol>
-        <li><strong>有道翻译引擎（BYOK，v0.7.1）：</strong>翻译引擎又添一项——除了 LLM、平台自带的本机翻译和 DeepL，还能选有道，自备应用ID/应用密钥，按量计费；只在原生 App（桌面版/iOS）可用，网页版因有道 API 不支持跨域而不提供。</li>
-        <li><strong>会后补全翻译（v0.7.1）：</strong>会议结束后，工具栏一键把没翻译成功的片段用当前配置的翻译引擎补齐。</li>
-        <li><strong>导出跟随翻译（v0.7.1）：</strong>Markdown、docx、复制纪要导出现在带上已有的翻译，不再只认 AI 报告顺带生成的那份；还有没翻译的片段会先问你要不要补全后再导出，剩下的原地标出「未翻译」。</li>
-        <li><strong>存词改进（v0.7.1）：</strong>加入我的词典时记下这个词在会议里实际出现的形式，不只是词典的标准写法。</li>
-        <li><strong>手机端 UI 打磨：</strong>手机宽度下头部收成单行、状态芯片改回完整词而不是缩写、控件尺寸统一。</li>
-        <li><strong>Bit 焕新：</strong>状态栏吉祥物重画了身体、换了更暖的配色，出场动画改成打招呼式。</li>
-        <li><strong>修复：</strong>展开的表达卡片里，原文例句不再被截断在两行。</li>
-        <li><strong>iOS 修复：</strong>导出（Markdown、docx、备份、康奈尔笔记）改走系统分享面板——之前在 iOS 上点导出没有任何反应。</li>
-        <li><strong>词典匹配修复（v0.7.2）：</strong>以括号限定结尾的词条——<i>stochastic gradient descent (SGD)</i>、<i>mode (statistics)</i>——现在能在转录里正确命中（之前从未匹配过）；只启用专业词典包（比如生信、统计）时不再悄悄丢失和其他包撞名的词条，每个启用的包都会显示自己的释义；已安装的词典包和内置词典包撞名时，现在优先显示已安装包的释义。</li>
-        <li><strong>Beta 反馈诊断增强（v0.7.2）：</strong>设置里「诊断信息」的日志查看器现在覆盖全部三个本地日志（Whisper 服务 / 系统/App 音频 / 系统识别），可以选择查看哪一个；新增「导出诊断文件」按钮把诊断信息包存成文件（iOS 上会打开系统分享面板）；Chrome 插件侧边栏首次获得「复制诊断」按钮。</li>
-        <li><strong>本地日志不再可能带上会议原声（v0.7.2）：</strong>桌面版语音识别日志写入逻辑的一处加固修复，堵上了最后一条畸形行可能泄漏原始语音的路径。</li>
-        <li><strong>Chrome 插件升级到 0.7.2（v0.7.2）：</strong>带上了上面的词典可靠性修复；此前版本停留在 0.6.0。</li>
-        <li><strong>API 密钥按提供商隔离（v0.7.3）：</strong>以前切换 LLM 提供商，上一个提供商的 Key 可能被一并发到新提供商那边；现在每个提供商的 Key 各自隔离存储、自动迁移，仍托管在 macOS 钥匙串。</li>
-        <li><strong>说话人改名修复（v0.7.3）：</strong>改名后花名册和实时选择器以前会卡在旧名字，直到会议结束才刷新；现在改名立刻在两处生效。</li>
-        <li><strong>卡片上下文收紧（v0.7.3）：</strong>表达卡片引用的原句以前是整段 60 词左右的 ASR 长句，现在只截取命中词周围的那个分句。</li>
-        <li><strong>误判和释义修复（v0.7.3）：</strong><i>in the red</i> 不再被 <i>the red graph</i> 这类短语带偏；内置释义里错发成字面 <code>1.</code> 的 mean 已经在源头修好，新增构建时的释义检查。</li>
-        <li><strong>会议领域推断更准（v0.7.3）：</strong>生物学讲座里的「thank you for your attention」不再生出 attention 卡片，机器学习讲座里 precision、recall 依旧正常触发。</li>
-        <li><strong>词典多义按会议领域选（v0.7.4）：</strong>讲癌症恶病质时 CAC 解释成 Cancer-Associated Cachexia，不再是获客成本；「IND … or NDA or BLA」里的 NDA 认成新药申请；机器学习语境里 PR 指 precision-recall，不是 Pull Request；领域不明时依然给出一版可用的解释。</li>
-        <li><strong>划词改成先查词典（v0.7.4）：</strong>选中任意文字先查词典，命中的词典包和义项全部列出，不再只留一个赢家；真查不到时结合上下文解释并翻译；「加入我的词典」退到弹窗里的次要位置。</li>
-        <li><strong>转录引擎按类型分组（v0.7.4）：</strong>本地 STT 模型、系统 STT 服务、第三方 STT 提供商三组替换掉原来的一份平铺列表；第三方服务没配 Key 也常驻显示，标注「已配置」或「未配置」。</li>
-        <li><strong>音频来源独立成控件（v0.7.4）：</strong>会议进行中也能随时切换，不再是开会前才能选的浮层；系统/App 音频现在写明：录的是对方的声音，不含你自己的麦克风。</li>
-        <li><strong>连接失败提示更好懂（v0.7.4）：</strong>网页版连不上自建转录服务时，现在给一句人话提示，以前甩的是开发者才看得懂的 socket 报错。</li>
-        <li><strong>API 密钥集中到「密钥」分类（v0.7.4）：</strong>LLM、转录、翻译、说话人分离 token 等 12 个填 Key 入口，此前散在五个不相关的设置分区；现在全部收进 设置 → 密钥 一个界面，存储位置和钥匙串托管不变。</li>
-      </ol>
-      <p>暂缓项：浏览器端 Whisper 实时流、划词联网搜索。</p>
-    </section>
+    <div class="footer">
+      <span>JargonSlayer · <a href="features.html">功能</a> · <a href="changelog.html">更新日志</a> · <a href="advanced.html">高级玩法</a> · <a href="../../privacy.html">隐私</a> · <a href="https://github.com/mianaz/jargonslayer" target="_blank" rel="noopener">GitHub</a></span>
+    </div>
   </main>
 </div>
 </body>
