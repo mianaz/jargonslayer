@@ -114,9 +114,11 @@ describe("StatusLine — iOS build (engine picker)", () => {
     expect(values).toEqual(["osspeech", "soniox", "deepgram", "elevenlabs"]);
     const labelOf = (value: string) =>
       Array.from(engineSelect().querySelectorAll("option")).find((option) => option.value === value)?.textContent;
-    expect(labelOf("soniox")).toBe("Soniox 云端识别 · 未配置");
-    expect(labelOf("deepgram")).toBe("Deepgram 云端识别 · 未配置");
-    expect(labelOf("elevenlabs")).toBe("ElevenLabs 云端识别 · 未配置");
+    // FINDING 12 fix: short NAME half (ENGINE_SELECT_LABEL_OVERRIDE,
+    // StatusLine.tsx) — same narrow-bar constraint applies on iOS.
+    expect(labelOf("soniox")).toBe("Soniox · 未配置");
+    expect(labelOf("deepgram")).toBe("Deepgram · 未配置");
+    expect(labelOf("elevenlabs")).toBe("ElevenLabs · 未配置");
   });
 
   it("select text carries the active engine's own retention color — green for local osspeech, amber for cloud-stored elevenlabs", async () => {

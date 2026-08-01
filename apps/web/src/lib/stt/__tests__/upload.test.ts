@@ -59,6 +59,7 @@ import {
   fetchSidecarHealth,
   ingestUrl,
   importUrlAndTrack,
+  isConventionalSidecarUrl,
   withSidecarHint,
   SIDECAR_UNREACHABLE_HINT,
   type PlainTranscriptSegment,
@@ -1010,5 +1011,33 @@ describe("withSidecarHint — ImportHub sidecar-path error hint (#58 review fix 
 
   it("R7: an ordinary (non-model-load) message is unaffected — still gets the connection advice", () => {
     expect(withSidecarHint("上传失败（500）")).toBe(`上传失败（500）${SIDECAR_UNREACHABLE_HINT}`);
+  });
+});
+
+// ---------------------------------------------------------------
+// isConventionalSidecarUrl (FINDING 3, review round): httpBaseFromWs
+// forces http:+8766 regardless of what whisperUrl actually says — only
+// trustworthy for the conventional ws:8765 pairing this app's own
+// managed sidecar uses. useMeeting.ts's preflightExternalSidecar reads
+// this to decide whether an unreachable probe result may hard-block
+// meeting start.
+// ---------------------------------------------------------------
+
+describe("isConventionalSidecarUrl", () => {
+  it("the default (managed sidecar) URL is conventional", () => {
+    expect(isConventionalSidecarUrl("ws://localhost:8765")).toBe(true);
+    expect(isConventionalSidecarUrl("ws://127.0.0.1:8765")).toBe(true);
+  });
+
+  it("a custom port is NOT conventional (a self-hosted setup this probe can't faithfully reach)", () => {
+    expect(isConventionalSidecarUrl("ws://localhost:9000")).toBe(false);
+  });
+
+  it("wss:// (remote/TLS) is NOT conventional — httpBaseFromWs still forces plain http:", () => {
+    expect(isConventionalSidecarUrl("wss://example.com:8765")).toBe(false);
+  });
+
+  it("a malformed URL is NOT conventional", () => {
+    expect(isConventionalSidecarUrl("not a url")).toBe(false);
   });
 });

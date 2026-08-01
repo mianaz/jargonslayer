@@ -251,6 +251,84 @@ describe("useMeeting — desktop session-start preflight (field-test fix B)", ()
     expect(useApp.getState().toast).toBe("本地 STT 模型尚未就绪。请在 设置 → 转录引擎 配置并启动本地服务后重试。");
   });
 
+  // FINDING 3 fix (the lossy-URL-derivation half): probeSidecar always
+  // probes http://<host>:8766 (httpBaseFromWs) regardless of what
+  // whisperUrl actually says — trustworthy only for the conventional
+  // ws://host:8765 pairing. A custom port (a working self-hosted setup
+  // this probe simply can't reach) must not hard-block Start on a false
+  // reading. RED against the pre-fix code (no isConventionalSidecarUrl
+  // gate at all): engines would stay empty and status "idle" here, same
+  // as the hard-block test above.
+  it("external sidecar down on a NON-conventional whisperUrl (custom port): does not hard-block — proceeds with an advisory toast instead", async () => {
+    mockProbeSidecar.mockResolvedValue({ up: false });
+    useApp.setState({
+      settings: {
+        ...useApp.getState().settings,
+        sidecarMode: "external",
+        whisperUrl: "ws://localhost:9000",
+      },
+    });
+
+    let p: Promise<void>;
+    await act(async () => {
+      p = api!.start();
+      await flush();
+      engines[0]!.startResolve!();
+      await p;
+      engines[0]!.events!.onStatus("listening");
+    });
+
+    expect(mockProbeSidecar).toHaveBeenCalledTimes(1);
+    expect(engines.length).toBe(1); // meeting still starts
+    expect(useApp.getState().status).toBe("listening");
+    expect(useApp.getState().toast).toBe(
+      "未能确认本地 STT 服务状态（非常规地址，已跳过检测）——若启动失败，请检查 设置 → 转录引擎",
+    );
+  });
+
+  // ---------------------------------------------------------------
+  // GESTURE SAFETY (FINDING 3, sharpened by a second review pass):
+  // tabaudio's own start() (tabAudio.ts) calls getDisplayMedia(), which
+  // needs Chrome's transient user activation — an AWAITED probe between
+  // the Start click and that call would consume/exceed the activation
+  // window (Chrome then silently rejects the call or skips the share
+  // picker), breaking a WORKING web capability regardless of whether the
+  // probe URL is even correct. RED against the pre-fix code (which
+  // awaited preflightExternalSidecar unconditionally for every
+  // sidecar-riding engine): engines.length would still be 0 here, stuck
+  // behind the still-unresolved probe promise below.
+  // ---------------------------------------------------------------
+
+  it("tabaudio: never awaits the sidecar probe before attaching — the engine attaches (and would reach getDisplayMedia) while the probe is still unresolved", async () => {
+    useApp.setState({
+      settings: { ...useApp.getState().settings, sidecarMode: "external", engine: "tabaudio" },
+    });
+    let resolveProbe: ((v: { up: boolean }) => void) | null = null;
+    mockProbeSidecar.mockImplementation(
+      () => new Promise<{ up: boolean }>((r) => (resolveProbe = r)),
+    );
+
+    await act(async () => {
+      void api!.start();
+      await flush();
+    });
+
+    // The probe was fired (still the same actionable-message mechanism)
+    // but never awaited ahead of the capture attach — the fake engine
+    // already constructed/attached even though resolveProbe was never
+    // called.
+    expect(mockProbeSidecar).toHaveBeenCalledTimes(1);
+    expect(engines.length).toBe(1);
+
+    // Cleanup: settle both the probe and the fake engine's own start()
+    // so nothing leaks into the next test.
+    await act(async () => {
+      resolveProbe?.({ up: true });
+      engines[0]!.startResolve!();
+      await flush();
+    });
+  });
+
   it("a non-sidecar engine (webspeech): never probes the bootstrap handle either, even in managed mode", async () => {
     useApp.setState({ settings: { ...useApp.getState().settings, engine: "webspeech" } });
 

@@ -20,11 +20,16 @@ import { useLatencyStats } from "@/lib/stt/latencyStats";
 import {
   ENGINE_OPTIONS,
   RETENTION_COPY,
+  deriveEngineForMode,
   engineOptionGate,
   resolveEngineRetentionClass,
   useAudiocapCaps,
 } from "@/lib/stt/engineOptions";
-import { ENGINE_FAMILY_LABEL, ENGINE_FAMILY_ORDER } from "@/lib/stt/engineCapabilities";
+import {
+  ENGINE_FAMILY_LABEL,
+  ENGINE_FAMILY_ORDER,
+  resolveTabAudioCloudProvider,
+} from "@/lib/stt/engineCapabilities";
 import { KEY_STATUS_LABEL, deriveKeyStatus } from "@/lib/settings/keyStatus";
 import { sttProviderKeyValue } from "@/lib/settings/keysCatalog";
 import { useOsSpeechCaps } from "@/lib/desktop/osspeechCaps";
@@ -66,9 +71,11 @@ export const SIDECAR_DOWN_HINT_WEB = "本地 Whisper 未连接——见 设置 �
 const LOCAL_WHISPER_ENGINES = new Set(["whisper", "tabaudio", "appaudio"]);
 
 // This is intentionally two adjacent controls: recognizer family and audio
-// source are independent persisted settings. `engine` still selects the
-// existing implementation, while `mode` records what the user intends to
-// capture; neither write rewrites the other.
+// source are independent persisted settings, and the source dropdown's own
+// onChange below writes both together (mirrors ModeSelector.pickCapture
+// exactly) so `engine` never silently drifts from what `mode` claims is
+// being captured — see AudioSourceDropdown's own doc comment (FINDING 1
+// fix) for the bug this closes.
 const ENGINE_OVERRIDE_HINT = "选择转录服务；音源在左侧单独设置";
 const AUDIO_SOURCE_PLACEHOLDER = "音源";
 const SYSTEM_AUDIO_CAVEAT = "只捕获对方的系统/App 声音，不包含你的麦克风";
@@ -87,10 +94,25 @@ const AUDIO_SOURCE_OPTIONS: readonly AudioSourceOption[] = [
   ...(!IS_DESKTOP && !IS_IOS ? ([{ value: "tab", label: "浏览器标签页" }] as const) : []),
 ] as const;
 
+// FINDING 1 fix (BLOCKER): this used to write `mode` alone, relabeling the
+// capture source in the UI without touching `engine` — the field that
+// actually decides what gets recorded (nothing in lib/stt/useMeeting/any
+// transport ever reads settings.mode at capture time). Picking 麦克风
+// while the engine stayed appaudio left the process tap running under a
+// UI claiming mic-only, and the inverse left the mic hot under a "仅对方"
+// claim — the worst class of bug for a tool whose pitch is transparency.
+// Mirrors ModeSelector.pickCapture exactly: same deriveEngineForMode call,
+// same platform shape, both settings written together in one
+// updateSettings call so mode/engine can never observably diverge.
 function AudioSourceDropdown() {
   const mode = useApp((s) => s.settings.mode);
+  const settings = useApp((s) => s.settings);
+  const status = useApp((s) => s.status);
   const updateSettings = useApp((s) => s.updateSettings);
   const selected = AUDIO_SOURCE_OPTIONS.find((option) => option.value === mode);
+  // Same gate EngineDropdown already uses — the engine can't follow a
+  // source swap mid-capture (connecting/listening), so neither can this.
+  const disabled = isEngineControlBusy(status);
 
   return (
     <select
@@ -99,8 +121,15 @@ function AudioSourceDropdown() {
       data-testid="statusline-audio-source-select"
       title={selected?.caveat ?? "选择要捕获的音频来源"}
       value={selected ? mode : ""}
-      onChange={(e) => updateSettings({ mode: e.target.value as Settings["mode"] })}
-      className="h-full max-w-[7.5rem] shrink-0 border-l border-edge bg-panel2 px-2 font-mono text-fg sm:max-w-[12rem]"
+      disabled={disabled}
+      onChange={(e) => {
+        const nextMode = e.target.value as Settings["mode"];
+        updateSettings({
+          mode: nextMode,
+          engine: deriveEngineForMode(nextMode, { isDesktop: IS_DESKTOP, isIos: IS_IOS }, settings),
+        });
+      }}
+      className="h-full max-w-[7.5rem] shrink-0 border-l border-edge bg-panel2 px-2 font-mono text-fg disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem]"
     >
       {!selected && (
         <option value="" disabled>
@@ -116,10 +145,37 @@ function AudioSourceDropdown() {
   );
 }
 
+// FINDING 12 fix (LOW): short NAME half for the cramped bottom bar (the
+// select is max-w-[7.5rem] below sm — "Soniox 云端识别 · 未配置" truncates
+// on iOS) — a display-only override local to this component, never a
+// change to the shared ENGINE_OPTIONS array (SettingsDialog's own
+// ENGINE_CARDS, the actual source of `label`, keeps the full name).
+const ENGINE_SELECT_LABEL_OVERRIDE: Record<string, string> = {
+  osspeech: "系统",
+  soniox: "Soniox",
+  deepgram: "Deepgram",
+  elevenlabs: "ElevenLabs",
+};
+
 function engineOptionLabel(opt: (typeof ENGINE_OPTIONS)[number], settings: Settings): string {
-  if (!opt.keyField) return opt.label;
-  const status = deriveKeyStatus(sttProviderKeyValue(settings, opt.keyField));
-  return `${opt.label} · ${KEY_STATUS_LABEL[status]}`;
+  const label = ENGINE_SELECT_LABEL_OVERRIDE[opt.value] ?? opt.label;
+  // FINDING 10 fix (MEDIUM): tabaudio-cloud has no static keyField of its
+  // own — its credential resolves via Settings.tabAudioCloudProvider
+  // (resolveTabAudioCloudProvider, engineCapabilities.ts), unlike
+  // Soniox/Deepgram/ElevenLabs' own fixed opt.keyField — so it rendered
+  // bare and selectable with zero keys and no hint, unlike every other
+  // third-party option in this same optgroup. Derive the SAME 已配置/
+  // 未配置 status off whichever provider it would actually run.
+  const keyField =
+    opt.keyField ??
+    (opt.value === "tabaudio-cloud"
+      ? resolveTabAudioCloudProvider(settings) === "deepgram"
+        ? "deepgramKey"
+        : "sonioxKey"
+      : undefined);
+  if (!keyField) return label;
+  const status = deriveKeyStatus(sttProviderKeyValue(settings, keyField));
+  return `${label} · ${KEY_STATUS_LABEL[status]}`;
 }
 
 function EngineDropdown() {

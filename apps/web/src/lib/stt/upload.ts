@@ -116,6 +116,28 @@ export function httpBaseFromWs(whisperUrl: string): string {
   }
 }
 
+/** FINDING 3 fix: whether httpBaseFromWs's forced http:+8766 rewrite is
+ *  still honestly probing the SAME server `whisperUrl` configures — true
+ *  only for the conventional local pairing this app's own managed
+ *  sidecar uses (ws:, port 8765 — the paired --port/--http-port
+ *  convention httpBaseFromWs's own doc comment above describes). A
+ *  self-hosted user on a custom port (ws://localhost:9000), behind a
+ *  single-port reverse proxy, or on wss:// remote can have a perfectly
+ *  working WS transport this probe simply can't reach — the derivation
+ *  silently discards everything about `whisperUrl` except its hostname
+ *  in those cases, so a failed probe there proves nothing. Callers use
+ *  this to decide whether an unreachable probe is trustworthy enough to
+ *  hard-block meeting start (see useMeeting.ts's
+ *  preflightExternalSidecar) or must be downgraded to advisory. */
+export function isConventionalSidecarUrl(whisperUrl: string): boolean {
+  try {
+    const u = new URL(whisperUrl);
+    return u.protocol === "ws:" && u.port === "8765";
+  } catch {
+    return false;
+  }
+}
+
 export async function uploadRecording(
   file: File,
   settings: Settings,

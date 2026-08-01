@@ -12,6 +12,7 @@ import { langPairFromSettings, resolveTranslationProvider, stopSystemTranslator 
 import { diagLog } from "../lib/diag/log";
 import { resetLagStats } from "../lib/stt/latencyStats";
 import { probeSidecar } from "../lib/stt/sidecarHealth";
+import { isConventionalSidecarUrl } from "../lib/stt/upload";
 import { buildMeetingLexicon } from "../lib/stt/lexicon";
 import { SONIOX_PREVIEW_LANE } from "../lib/deployTier";
 import { getPreviewSessionSeconds } from "../lib/stt/soniox";
@@ -142,14 +143,67 @@ function needsExternalSidecarPreflight(settings: Settings): boolean {
   return ridesManagedSidecar(settings.engine) && (!IS_DESKTOP || settings.sidecarMode === "external");
 }
 
+/** FINDING 3 fix (HIGH): probeSidecar goes through httpBaseFromWs, which
+ *  FORCES http:+8766 regardless of what `whisperUrl` actually says — a
+ *  real UX win for the common case (replaces wsTransport's raw developer
+ *  socket error with an actionable product message), but a false
+ *  positive for anyone whose configured URL that forced rewrite can't
+ *  faithfully probe (a custom port, a single-port reverse proxy, wss://
+ *  remote — see isConventionalSidecarUrl's own doc comment, upload.ts).
+ *  Those users have a working WS transport this probe simply can't
+ *  reach, so a hard block there would refuse a Start that used to work,
+ *  with a message pointing at settings that are already correct.
+ *  Smaller-change pick over re-deriving the probe URL from `whisperUrl`
+ *  itself (which would need a second, parallel "how to reach the job
+ *  API" contract wsTransport.ts doesn't have and this hotfix's scope
+ *  doesn't call for): keep hard-blocking exactly the conventional case
+ *  this preflight was built for, downgrade everything else to advisory
+ *  (toast, but still proceed) rather than trying to guess a better probe
+ *  URL. */
 async function preflightExternalSidecar(settings: Settings): Promise<boolean> {
   const result = await probeSidecar(settings);
   useApp.getState().setSidecarUp(result.up);
   if (!result.up) {
+    if (!isConventionalSidecarUrl(settings.whisperUrl)) {
+      useApp
+        .getState()
+        .showToast("未能确认本地 STT 服务状态（非常规地址，已跳过检测）——若启动失败，请检查 设置 → 转录引擎");
+      return false;
+    }
     useApp.getState().showToast("本地 STT 模型尚未就绪。请在 设置 → 转录引擎 配置并启动本地服务后重试。");
     return true;
   }
   return false;
+}
+
+/** GESTURE SAFETY (FINDING 3, sharpened by a second review pass): the
+ *  above preflight's own network round-trip must never sit between the
+ *  user's Start/Resume click and a call that needs Chrome's transient
+ *  user activation. tabaudio's own start() (tabAudio.ts) calls
+ *  getDisplayMedia() — an AWAITED probe here (up to probeSidecar's own
+ *  3s timeout) consumes/exceeds that activation window, so Chrome
+ *  silently rejects the call or skips the share picker entirely: a
+ *  WORKING web capability broken by a preflight this hotfix's own first
+ *  pass framed as desktop-facing, and it fires even when the probe URL
+ *  is perfectly correct — the isConventionalSidecarUrl fix above does
+ *  not touch this failure mode at all.
+ *
+ *  whisper's own start() (whisperSocket.ts) calls getUserMedia()
+ *  instead, which carries no transient-activation requirement, and
+ *  appaudio's capture is a native Tauri IPC call with no DOM gesture
+ *  involved in the first place — both keep the awaited hard-block via
+ *  needsExternalSidecarPreflight/preflightExternalSidecar above
+ *  unchanged. Only tabaudio is exempted here: this function tells a
+ *  caller which of the two shapes to use (a plain `await` for
+ *  everything else, vs. `void preflightExternalSidecar(settings)` for
+ *  tabaudio — fire-and-forget, never gating the click). A down/
+ *  unreachable sidecar still surfaces preflightExternalSidecar's own
+ *  actionable toast on the tabaudio path, just after capture has
+ *  already had its shot at the still-live user gesture — getDisplayMedia
+ *  itself throws its own actionable message on a genuine failure
+ *  (tabAudio.ts's own catch), so nothing is silently swallowed. */
+function needsAwaitedExternalSidecarPreflight(settings: Settings): boolean {
+  return needsExternalSidecarPreflight(settings) && settings.engine !== "tabaudio";
 }
 
 // ---------------------------------------------------------------
@@ -842,7 +896,15 @@ export function useMeeting(): UseMeetingResult {
     // has already run and torn down via runStopFlow), there's nothing
     // here to tear down in the first place.
     if (needsManagedSidecarPreflight(settings) && (await preflightManagedSidecar())) return;
-    if (needsExternalSidecarPreflight(settings) && (await preflightExternalSidecar(settings))) return;
+    // GESTURE SAFETY (FINDING 3): tabaudio is deliberately excluded from
+    // this awaited gate — see needsAwaitedExternalSidecarPreflight's own
+    // doc comment for why an await here would cost it the transient user
+    // activation getDisplayMedia (tabAudio.ts) needs. It still gets the
+    // SAME probe, just fired without gating the click.
+    if (needsAwaitedExternalSidecarPreflight(settings) && (await preflightExternalSidecar(settings))) return;
+    if (needsExternalSidecarPreflight(settings) && !needsAwaitedExternalSidecarPreflight(settings)) {
+      void preflightExternalSidecar(settings);
+    }
 
     diarReadyToastedRef.current = false;
     previewMintNoticeRef.current = false;
@@ -1015,12 +1077,23 @@ export function useMeeting(): UseMeetingResult {
     ) {
       return;
     }
+    // GESTURE SAFETY (FINDING 3): same tabaudio exclusion as start()'s
+    // own call site above — a fresh reattach into tabaudio here still
+    // ends in the SAME getDisplayMedia() call, gated on THIS Resume
+    // click's own transient activation.
     if (
       needsFreshAttach &&
-      needsExternalSidecarPreflight(settings) &&
+      needsAwaitedExternalSidecarPreflight(settings) &&
       (await preflightExternalSidecar(settings))
     ) {
       return;
+    }
+    if (
+      needsFreshAttach &&
+      needsExternalSidecarPreflight(settings) &&
+      !needsAwaitedExternalSidecarPreflight(settings)
+    ) {
+      void preflightExternalSidecar(settings);
     }
     // Engine switch during a retained soft pause (codex v2 review F7):
     // pre-v2, EVERY pause was teardown, so switching engines in

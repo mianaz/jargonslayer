@@ -680,9 +680,12 @@ describe("StatusLine — engine dropdown", () => {
     expect(values).toContain("elevenlabs");
     const labelOf = (value: string) =>
       Array.from(select().querySelectorAll("option")).find((o) => o.value === value)?.textContent;
-    expect(labelOf("soniox")).toBe("Soniox 云端识别 · 未配置");
-    expect(labelOf("deepgram")).toBe("Deepgram 云端识别 · 未配置");
-    expect(labelOf("elevenlabs")).toBe("ElevenLabs 云端识别 · 未配置");
+    // FINDING 12 fix: short NAME half (ENGINE_SELECT_LABEL_OVERRIDE) — the
+    // full "Soniox 云端识别 · 未配置" truncates in this bar's
+    // max-w-[7.5rem] below sm.
+    expect(labelOf("soniox")).toBe("Soniox · 未配置");
+    expect(labelOf("deepgram")).toBe("Deepgram · 未配置");
+    expect(labelOf("elevenlabs")).toBe("ElevenLabs · 未配置");
   });
 
   // Same MEDIUM fix: tabaudio-cloud's "own key" is whichever provider
@@ -728,7 +731,8 @@ describe("StatusLine — engine dropdown", () => {
     });
 
     const deepgram = Array.from(select().querySelectorAll("option")).find((o) => o.value === "deepgram");
-    expect(deepgram?.textContent).toBe("Deepgram 云端识别 · 未配置");
+    // FINDING 12 fix: short label form — see the test above.
+    expect(deepgram?.textContent).toBe("Deepgram · 未配置");
   });
 
   it("keeps all third-party provider choices available even when the selected key is missing", async () => {
@@ -767,10 +771,65 @@ describe("StatusLine — engine dropdown", () => {
     const labelOf = (value: string) =>
       Array.from(select().querySelectorAll("option")).find((o) => o.getAttribute("value") === value)
         ?.textContent;
-    expect(labelOf("soniox")).toBe("Soniox 云端识别 · 已配置");
-    expect(labelOf("deepgram")).toBe("Deepgram 云端识别 · 已配置");
-    expect(labelOf("elevenlabs")).toBe("ElevenLabs 云端识别 · 已配置");
+    // FINDING 12 fix: short label form — see the earlier test above.
+    expect(labelOf("soniox")).toBe("Soniox · 已配置");
+    expect(labelOf("deepgram")).toBe("Deepgram · 已配置");
+    expect(labelOf("elevenlabs")).toBe("ElevenLabs · 已配置");
+    // webspeech has no keyField and isn't in the override map — its own
+    // label is already short, unaffected by either fix.
     expect(labelOf("webspeech")).toBe(ENGINE_OPTIONS.find((o) => o.value === "webspeech")!.label);
+  });
+
+  // FINDING 10 fix (MEDIUM): tabaudio-cloud has no static keyField of its
+  // own (its credential resolves via Settings.tabAudioCloudProvider) — it
+  // used to render bare/selectable with zero keys and no hint, unlike
+  // every other third-party option in this same optgroup, and it would
+  // fail honestly-but-silently at engine start. RED against the pre-fix
+  // code (engineOptionLabel returned opt.label verbatim for a null
+  // keyField, with no tabaudio-cloud special case): both assertions below
+  // would read the bare "标签页音频·云端" label instead.
+  it("FINDING 10: gives tabaudio-cloud a derived 已配置/未配置 hint, off whichever provider it would actually run", async () => {
+    useApp.setState((s) => ({
+      settings: {
+        ...s.settings,
+        engine: "whisper",
+        tabAudioCloudProvider: "soniox",
+        sonioxKey: "",
+        deepgramKey: "",
+        elevenLabsKey: "",
+      },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const labelOf = () =>
+      Array.from(select().querySelectorAll("option")).find((o) => o.value === "tabaudio-cloud")
+        ?.textContent;
+    expect(labelOf()).toContain("未配置");
+
+    await act(async () => {
+      useApp.setState((s) => ({ settings: { ...s.settings, sonioxKey: "sk-test" } }));
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    expect(labelOf()).toContain("已配置");
+
+    // Provider resolved to deepgram: the soniox key set above must NOT
+    // mark it configured — only deepgramKey does.
+    await act(async () => {
+      useApp.setState((s) => ({
+        settings: { ...s.settings, tabAudioCloudProvider: "deepgram", deepgramKey: "" },
+      }));
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    expect(labelOf()).toContain("未配置");
+
+    await act(async () => {
+      useApp.setState((s) => ({ settings: { ...s.settings, deepgramKey: "dg-test" } }));
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    expect(labelOf()).toContain("已配置");
   });
 
   it("changing the value writes settings.engine (same store write as the old mobile <select>)", async () => {
@@ -837,10 +896,37 @@ describe("StatusLine — engine dropdown", () => {
     expect(select().title).toBe("选择转录服务；音源在左侧单独设置");
   });
 
-  it("audio-source control remains enabled mid-session and writes mode without changing engine", async () => {
+  // FINDING 1 fix (BLOCKER): the source dropdown used to write `mode`
+  // alone — nothing in lib/stt/useMeeting/any transport reads
+  // settings.mode at capture time, the ENGINE decides what's actually
+  // recorded, so picking a source without updating the engine left the
+  // UI's claim and the actual capture silently diverging. Disabled while
+  // isEngineControlBusy (mirrors EngineDropdown's own gate — the source
+  // can't be swapped at a moment the engine can't follow either).
+  it("disabled while a meeting is connecting/listening (isEngineControlBusy) — mirrors EngineDropdown's own gate", async () => {
     useApp.setState((s) => ({
       status: "listening",
       settings: { ...s.settings, mode: "mic", engine: "soniox" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    const source = container!.querySelector('[data-testid="statusline-audio-source-select"]') as HTMLSelectElement;
+    expect(source.disabled).toBe(true);
+  });
+
+  it("FINDING 1: changing the source writes a MATCHING engine (mirrors ModeSelector.pickCapture), never just mode", async () => {
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: {
+        ...s.settings,
+        mode: "mic",
+        engine: "soniox",
+        tabAudioCloudProvider: "soniox",
+        sonioxKey: "",
+      },
     }));
     renderStatusLine();
     await act(async () => {
@@ -854,7 +940,11 @@ describe("StatusLine — engine dropdown", () => {
       source.dispatchEvent(new Event("change", { bubbles: true }));
     });
     expect(useApp.getState().settings.mode).toBe("tab");
-    expect(useApp.getState().settings.engine).toBe("soniox");
+    // deriveEngineForMode("tab", web, {tabAudioCloudProvider:"soniox",
+    // sonioxKey:""}) resolves to "tabaudio" (keyless, non-preview — see
+    // engineOptions.deriveEngineForMode.test.ts's own "tab — web" cases)
+    // — the OLD behavior left this at the stale "soniox" instead.
+    expect(useApp.getState().settings.engine).toBe("tabaudio");
   });
 });
 
