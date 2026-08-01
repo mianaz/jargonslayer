@@ -425,6 +425,24 @@ export interface DeriveEnginePlatform {
  *  does NOT re-run migrateSettings/these coercions on every write — it
  *  is a plain merge+persist — so this function, not the later store
  *  write, is what actually guarantees the returned engine is legal. */
+/** The local-sidecar recognizer family (family === "local-model"):
+ *  whisper/appaudio/tabaudio are ONE recognizer (the Python sidecar,
+ *  Whisper or Parakeet per whisperModel) fed by three different audio
+ *  sources. Miana 2026-08-01: the picker presents recognizers, not
+ *  source-variants — the 音源 dropdown owns the source axis. */
+export function isSidecarFamily(kind: STTEngineKind): boolean {
+  const cap = ENGINE_CAPABILITIES[kind as keyof typeof ENGINE_CAPABILITIES];
+  return cap?.family === "local-model";
+}
+
+/** Which sidecar-family engine kind serves a given capture source.
+ *  import/url carry no live source — fall back to the mic lane. */
+export function sidecarEngineForMode(mode: Settings["mode"]): STTEngineKind {
+  if (mode === "system-audio") return "appaudio";
+  if (mode === "tab") return "tabaudio";
+  return "whisper";
+}
+
 export function deriveEngineForMode(
   mode: Settings["mode"],
   platform: DeriveEnginePlatform,
@@ -437,10 +455,16 @@ export function deriveEngineForMode(
 
   let candidate: STTEngineKind;
   if (mode === "system-audio") {
+    // Recognizer stickiness (Miana 2026-08-01): a deliberate 本地模型
+    // pick survives a source flip — whisper(mic) becomes appaudio
+    // (system tap), same sidecar, same models — instead of being
+    // silently swapped to the Apple recognizer.
     candidate = isDesktop
-      ? osspeechFloorMet
-        ? "osspeech"
-        : "appaudio"
+      ? isSidecarFamily(settings.engine)
+        ? "appaudio"
+        : osspeechFloorMet
+          ? "osspeech"
+          : "appaudio"
       : isIos
         ? "osspeech" // unreachable via the real tile set (iOS has no system-audio mode)
         : "webspeech"; // unreachable via the real tile set (web has no system-audio capture)
@@ -456,7 +480,15 @@ export function deriveEngineForMode(
     // survival, store.ts.
     const providerKeyPresent =
       settings.tabAudioCloudProvider === "deepgram" ? !!settings.deepgramKey : !!settings.sonioxKey;
-    candidate = PREVIEW_TIER || providerKeyPresent ? "tabaudio-cloud" : "tabaudio";
+    // Recognizer stickiness (Miana 2026-08-01): an explicit 本地模型
+    // pick keeps the sidecar on a tab flip (whisper -> tabaudio) even
+    // when a cloud key exists — key presence is a default, not an
+    // override of the user's recognizer choice.
+    candidate = isSidecarFamily(settings.engine)
+      ? "tabaudio"
+      : PREVIEW_TIER || providerKeyPresent
+        ? "tabaudio-cloud"
+        : "tabaudio";
   } else {
     // mode === "mic"
     if (isIos) {
@@ -520,9 +552,11 @@ export function deriveEngineForMode(
         ? cloudKeyFor
           ? settings.engine
           : "whisper"
-        : settings.engine === "whisper" || cloudKeyFor
-          ? settings.engine
-          : "webspeech";
+        : isSidecarFamily(settings.engine)
+          ? "whisper" // recognizer stickiness: tabaudio -> whisper on a mic flip, never webspeech
+          : cloudKeyFor
+            ? settings.engine
+            : "webspeech";
     }
   }
 

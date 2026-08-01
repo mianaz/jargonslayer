@@ -128,6 +128,10 @@ describe("deriveEngineForMode", () => {
       ).toBe("whisper");
     });
 
+    it("sidecar-family pick is STICKY: tabaudio + mic flip -> whisper (same recognizer, mic lane), never webspeech", () => {
+      expect(deriveEngineForMode("mic", WEB, settings({ engine: "tabaudio" }))).toBe("whisper");
+    });
+
     it("engine already soniox but only a DEEPGRAM key exists -> reset to webspeech (matching key required)", () => {
       expect(
         deriveEngineForMode("mic", WEB, settings({ engine: "soniox", deepgramKey: "dg-x" })),
@@ -164,10 +168,15 @@ describe("deriveEngineForMode", () => {
       ).toBe("webspeech");
     });
 
-    it("engine is some other value (e.g. tabaudio) + a key exists -> reset to webspeech, not respected", () => {
+    // REVERSED (Miana 2026-08-01, recognizer stickiness): tabaudio is
+    // the same sidecar recognizer as whisper, so a mic flip keeps it
+    // local (-> whisper) instead of resetting to webspeech — the key's
+    // presence is irrelevant either way. A non-sidecar, non-cloud value
+    // (demo) still resets to webspeech below.
+    it("engine tabaudio + a key exists -> whisper (sidecar family sticks), never webspeech", () => {
       expect(
         deriveEngineForMode("mic", WEB, settings({ engine: "tabaudio", sonioxKey: "sk-x" })),
-      ).toBe("webspeech");
+      ).toBe("whisper");
     });
   });
 
@@ -184,6 +193,20 @@ describe("deriveEngineForMode", () => {
 
     it("floor not yet resolved fails OPEN to osspeech", () => {
       expect(deriveEngineForMode("system-audio", DESKTOP, settings())).toBe("osspeech");
+    });
+
+    // Recognizer stickiness (Miana 2026-08-01): the sidecar family is
+    // ONE recognizer across sources — a deliberate 本地模型 pick
+    // survives a source flip as appaudio instead of being silently
+    // swapped to the Apple recognizer.
+    it("sidecar-family pick is STICKY: whisper/tabaudio + system-audio flip -> appaudio even with the floor met", async () => {
+      await setOsSpeechFloor(true);
+      expect(deriveEngineForMode("system-audio", DESKTOP, settings({ engine: "whisper" }))).toBe(
+        "appaudio",
+      );
+      expect(deriveEngineForMode("system-audio", DESKTOP, settings({ engine: "appaudio" }))).toBe(
+        "appaudio",
+      );
     });
   });
 
@@ -212,6 +235,16 @@ describe("deriveEngineForMode", () => {
           settings({ tabAudioCloudProvider: "soniox", sonioxKey: "sk-x" }),
         ),
       ).toBe("tabaudio-cloud");
+    });
+
+    it("sidecar-family pick is STICKY: whisper + tab flip -> tabaudio even with a provider key present (key presence is a default, not an override)", () => {
+      expect(
+        deriveEngineForMode(
+          "tab",
+          WEB,
+          settings({ engine: "whisper", tabAudioCloudProvider: "soniox", sonioxKey: "sk-x" }),
+        ),
+      ).toBe("tabaudio");
     });
 
     it("provider deepgram, deepgram key ABSENT (even though a soniox key exists) -> tabaudio — never silently swaps provider", () => {

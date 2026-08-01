@@ -647,9 +647,12 @@ describe("StatusLine — engine dropdown", () => {
     const values = Array.from(select().querySelectorAll("option"))
       .map((o) => o.getAttribute("value"))
       .filter((v) => v !== "");
+    // Miana 2026-08-01: whisper/tabaudio/appaudio are ONE recognizer
+    // (the local sidecar) — the picker shows a single 本地模型 sentinel;
+    // the 音源 dropdown owns the source axis. Third family renamed
+    // 第三方 STT 提供商 -> 云端 STT 服务 (her taxonomy).
     expect(values).toEqual([
-      "whisper",
-      "tabaudio",
+      "local-sidecar",
       "webspeech",
       "tabaudio-cloud",
       "soniox",
@@ -659,8 +662,43 @@ describe("StatusLine — engine dropdown", () => {
     expect(Array.from(select().querySelectorAll("optgroup")).map((group) => group.label)).toEqual([
       "本地 STT 模型",
       "系统 STT 服务",
-      "第三方 STT 提供商",
+      "云端 STT 服务",
     ]);
+    // The sentinel is SELECTED when the persisted engine is any
+    // sidecar-family kind (engine:"whisper" was set above).
+    expect(select().value).toBe("local-sidecar");
+  });
+
+  it("picking 本地模型 resolves to the sidecar kind serving the CURRENT source (tab -> tabaudio, mic -> whisper)", async () => {
+    useApp.setState((s) => ({
+      status: "idle",
+      settings: { ...s.settings, engine: "tabaudio-cloud", mode: "tab", sonioxKey: "sk-test" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    await act(async () => {
+      select().value = "local-sidecar";
+      select().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // Sticky to the tab source: sidecar's tab lane, NOT whisper+mic —
+    // and mode stays "tab" (modeForPersistedEngine(tabaudio) = tab).
+    expect(useApp.getState().settings.engine).toBe("tabaudio");
+    expect(useApp.getState().settings.mode).toBe("tab");
+
+    await act(async () => {
+      const source = container!.querySelector(
+        '[data-testid="statusline-audio-source-select"]',
+      ) as HTMLSelectElement;
+      source.value = "mic";
+      source.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    // Source flip keeps the recognizer: tabaudio -> whisper, never a
+    // silent swap to webspeech (recognizer stickiness).
+    expect(useApp.getState().settings.engine).toBe("whisper");
+    expect(useApp.getState().settings.mode).toBe("mic");
   });
 
   it("keeps third-party providers visible and labels their real catalog-key status", async () => {

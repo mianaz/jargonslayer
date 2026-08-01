@@ -76,7 +76,9 @@ export const ENGINE_FAMILY_ORDER: readonly EngineFamily[] = [
 export const ENGINE_FAMILY_LABEL: Record<EngineFamily, string> = {
   "local-model": "本地 STT 模型",
   "system-service": "系统 STT 服务",
-  "third-party-provider": "第三方 STT 提供商",
+  // Miana 2026-08-01: 云端, not 第三方 — the recognizer taxonomy she
+  // set is 本地 STT 模型 / 系统 STT 服务 / 云端 STT 服务.
+  "third-party-provider": "云端 STT 服务",
 };
 
 export interface EngineCapability {
@@ -150,7 +152,9 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
   },
   whisper: {
     kind: "whisper",
-    label: "本地 Whisper",
+    // Miana 2026-08-01: not "本地 Whisper" — the sidecar also runs
+    // Parakeet; the recognizer's name is model-agnostic.
+    label: "本地模型",
     family: "local-model",
     retentionClass: "local",
     // faster-whisper default; Parakeet models (same kind, different

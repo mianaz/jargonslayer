@@ -22,7 +22,9 @@ import {
   RETENTION_COPY,
   deriveEngineForMode,
   engineOptionGate,
+  isSidecarFamily,
   resolveEngineRetentionClass,
+  sidecarEngineForMode,
   useAudiocapCaps,
 } from "@/lib/stt/engineOptions";
 import {
@@ -162,6 +164,16 @@ const ENGINE_SELECT_LABEL_OVERRIDE: Record<string, string> = {
   elevenlabs: "ElevenLabs",
 };
 
+// Miana 2026-08-01: the 本地 STT 模型 family (whisper/appaudio/tabaudio)
+// is ONE recognizer — the local sidecar running Whisper or Parakeet —
+// fed by whichever source the 音源 dropdown picks. Listing its
+// source-variants as separate "engines" next to a source dropdown was
+// pure duplication, and "本地 Whisper" misnamed the Parakeet models
+// too. The picker shows one sentinel entry; picking it resolves to the
+// sidecar kind that serves the CURRENT source (sidecarEngineForMode).
+const LOCAL_SIDECAR_VALUE = "local-sidecar";
+export const LOCAL_SIDECAR_LABEL = "本地模型";
+
 function engineOptionLabel(opt: (typeof ENGINE_OPTIONS)[number], settings: Settings): string {
   const label = ENGINE_SELECT_LABEL_OVERRIDE[opt.value] ?? opt.label;
   // FINDING 10 fix (MEDIUM): tabaudio-cloud has no static keyField of its
@@ -195,6 +207,13 @@ function EngineDropdown() {
   const selectedOpt = ENGINE_OPTIONS.find((o) => o.value === engine);
   const selectedGate = selectedOpt ? engineOptionGate(selectedOpt, audiocapCaps, osspeechCaps) : undefined;
 
+  // Which sidecar kind the sentinel resolves to under the CURRENT
+  // source (desktop: whisper/appaudio; web: whisper/tabaudio) — also
+  // supplies the sentinel's gate (preview lock / macOS floor).
+  const localTargetOpt =
+    ENGINE_OPTIONS.find((o) => o.value === sidecarEngineForMode(settings.mode)) ??
+    ENGINE_OPTIONS.find((o) => o.value === "whisper");
+
   // The group structure is projected from ENGINE_CAPABILITIES via
   // ENGINE_OPTIONS.family. An engine cannot be added to the exhaustive
   // capabilities record without selecting one of these families.
@@ -202,6 +221,13 @@ function EngineDropdown() {
     family,
     options: ENGINE_OPTIONS.filter((option) => option.family === family),
   })).filter((group) => group.options.length > 0);
+
+  const selectValue =
+    engine === "demo" || engine === "import"
+      ? ""
+      : isSidecarFamily(engine)
+        ? LOCAL_SIDECAR_VALUE
+        : engine;
 
   const iosTextClass = IS_IOS
     ? engine === "demo" || engine === "import"
@@ -215,14 +241,19 @@ function EngineDropdown() {
       data-testid="statusline-engine-select"
       disabled={disabled}
       title={selectedGate?.title ?? ENGINE_OVERRIDE_HINT}
-      value={engine === "demo" || engine === "import" ? "" : engine}
+      value={selectValue}
       onChange={(e) => {
-        const value = e.target.value as (typeof ENGINE_OPTIONS)[number]["value"] | "";
-        if (value)
-          updateSettings({
-            engine: value,
-            mode: modeForPersistedEngine(value, value, MODE_PLATFORM),
-          });
+        const raw = e.target.value;
+        if (!raw) return;
+        const next = (
+          raw === LOCAL_SIDECAR_VALUE
+            ? (localTargetOpt?.value ?? "whisper")
+            : raw
+        ) as (typeof ENGINE_OPTIONS)[number]["value"];
+        updateSettings({
+          engine: next,
+          mode: modeForPersistedEngine(next, next, MODE_PLATFORM),
+        });
       }}
       className={`h-full max-w-[7.5rem] shrink-0 border-x border-edge bg-panel2 px-2 font-mono disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-[12rem] sm:px-2 ${iosTextClass}`}
     >
@@ -233,14 +264,29 @@ function EngineDropdown() {
       )}
       {groupedOptions.map((group) => (
         <optgroup key={group.family} label={ENGINE_FAMILY_LABEL[group.family]}>
-          {group.options.map((opt) => {
-            const gate = engineOptionGate(opt, audiocapCaps, osspeechCaps);
-            return (
-              <option key={opt.value} value={opt.value} disabled={gate.disabled} title={gate.title}>
-                {engineOptionLabel(opt, settings)}
-              </option>
-            );
-          })}
+          {group.family === "local-model"
+            ? (() => {
+                const gate = localTargetOpt
+                  ? engineOptionGate(localTargetOpt, audiocapCaps, osspeechCaps)
+                  : undefined;
+                return (
+                  <option
+                    value={LOCAL_SIDECAR_VALUE}
+                    disabled={gate?.disabled}
+                    title={gate?.title}
+                  >
+                    {LOCAL_SIDECAR_LABEL}
+                  </option>
+                );
+              })()
+            : group.options.map((opt) => {
+                const gate = engineOptionGate(opt, audiocapCaps, osspeechCaps);
+                return (
+                  <option key={opt.value} value={opt.value} disabled={gate.disabled} title={gate.title}>
+                    {engineOptionLabel(opt, settings)}
+                  </option>
+                );
+              })}
         </optgroup>
       ))}
     </select>
