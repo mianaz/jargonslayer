@@ -5,7 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { CaretDown, CaretRight, Eye, EyeSlash, X } from "@phosphor-icons/react";
-import { useApp } from "@/lib/store";
+import { modeForPersistedEngine, useApp, type ModePlatform } from "@/lib/store";
 import { listAudioInputs } from "@/lib/audio/devices";
 import { testConnection } from "@/lib/llm/client";
 import { resolveTaskCreds, type ResolvedTaskCreds } from "@/lib/llm/taskConfig";
@@ -371,6 +371,11 @@ const ENGINE_CARDS = IS_IOS
   : IS_DESKTOP
     ? ALL_ENGINE_CARDS.filter((c) => c.value !== "webspeech")
     : ALL_ENGINE_CARDS;
+
+// Platform shape for modeForPersistedEngine — same construction
+// StatusLine's MODE_PLATFORM and TutorialOverlay's ITEM 4 fix use for
+// their own paired {engine, mode} writes.
+const MODE_PLATFORM: ModePlatform = IS_IOS ? "ios" : IS_DESKTOP ? "desktop" : "web";
 
 // S11 osspeech blueprint §Q5's 预下载模型 button (see its own JSX below):
 // exported (tech-debt ledger #4, 2026-07-17) so SettingsDialog.desktop.
@@ -3308,7 +3313,25 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                     key={opt.value}
                     type="button"
                     disabled={opt.disabled || previewLocked || floorLocked || engineLockedByMeeting}
-                    onClick={() => patch({ engine: opt.value })}
+                    onClick={() => {
+                      // v0.7.4 osspeech-silence round, last writer:
+                      // every {engine, mode} write site stores the pair
+                      // together (StatusLine's two dropdowns,
+                      // ModeSelector, TutorialOverlay) — this card used
+                      // to write engine alone, leaving a stale mode
+                      // claiming 麦克风 over the system tap until the
+                      // next launch's migrateSettings heal. import/url
+                      // are standalone intent, never clobbered by an
+                      // engine pick (store.ts isModeLegalForPlatform's
+                      // "always fine to keep" ruling).
+                      const keepMode = draft.mode === "import" || draft.mode === "url";
+                      patch({
+                        engine: opt.value,
+                        ...(keepMode
+                          ? null
+                          : { mode: modeForPersistedEngine(opt.value, opt.value, MODE_PLATFORM) }),
+                      });
+                    }}
                     title={
                       previewLocked
                         ? "本地版功能：体验版暂未开放"

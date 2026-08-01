@@ -1627,6 +1627,96 @@ describe("SettingsDialog — 转录引擎 ENGINE_CARDS: 标签页音频·云端 
   }
 });
 
+// ---------------------------------------------------------------
+// v0.7.4 osspeech-silence round, last writer: the 转录引擎 engine
+// cards used to write draft.engine alone — saving a new engine while
+// mode was "mic" left the bottom-bar 音源 claiming 麦克风 over the
+// actual capture path until the next launch's migrateSettings heal.
+// Pins that a card pick stages the SAME back-derived {engine, mode}
+// pair every other write site stores (StatusLine's two dropdowns,
+// ModeSelector, TutorialOverlay), and that import/url — standalone
+// intent (isModeLegalForPlatform's "always fine to keep" ruling) —
+// are never clobbered by an engine pick.
+// ---------------------------------------------------------------
+
+describe("SettingsDialog — 转录引擎 ENGINE_CARDS: a card pick writes the {engine, mode} pair (v0.7.4 last writer)", () => {
+  let container: HTMLDivElement | null = null;
+  let root: Root | null = null;
+
+  function findButtonContaining(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) =>
+      b.textContent?.includes(text),
+    );
+    if (!btn) throw new Error(`button containing "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  function findButtonByText(text: string): HTMLButtonElement {
+    const btn = Array.from(container!.querySelectorAll("button")).find((b) => b.textContent === text);
+    if (!btn) throw new Error(`button "${text}" not found`);
+    return btn as HTMLButtonElement;
+  }
+
+  async function renderDialogWith(settings: Settings) {
+    useApp.setState({ settings, hydrated: true });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+  }
+
+  async function pickCardAndSave(cardText: string) {
+    await act(async () => {
+      findButtonContaining(cardText).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      findButtonByText("保存").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+  }
+
+  beforeEach(() => {
+    (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => root!.unmount());
+    container!.remove();
+    container = null;
+    root = null;
+    resetStore();
+  });
+
+  it("picking 标签页音频·云端 then 保存 persists mode 'tab' alongside the engine (was: engine alone, mode left 'mic')", async () => {
+    await renderDialogWith({ ...DEFAULT_SETTINGS, engine: "webspeech", mode: "mic" });
+
+    await pickCardAndSave("标签页音频·云端");
+
+    expect(useApp.getState().settings.engine).toBe("tabaudio-cloud");
+    expect(useApp.getState().settings.mode).toBe("tab");
+  });
+
+  it("a card pick never clobbers mode 'import' — engine changes, import intent stays", async () => {
+    await renderDialogWith({ ...DEFAULT_SETTINGS, engine: "webspeech", mode: "import" });
+
+    await pickCardAndSave("Soniox 云端识别");
+
+    expect(useApp.getState().settings.engine).toBe("soniox");
+    expect(useApp.getState().settings.mode).toBe("import");
+  });
+
+  it("a card pick never clobbers mode 'url' — engine changes, url intent stays", async () => {
+    await renderDialogWith({ ...DEFAULT_SETTINGS, engine: "webspeech", mode: "url" });
+
+    await pickCardAndSave("Soniox 云端识别");
+
+    expect(useApp.getState().settings.engine).toBe("soniox");
+    expect(useApp.getState().settings.mode).toBe("url");
+  });
+});
+
 // ITEM 2 (fix round, Sol#4 + Lane C flag): 转录引擎 ENGINE_CARDS used to
 // hand-roll its own binary 本地/云端 posture pair — pins that the card
 // grid's retention badge now agrees, byte-for-byte, with RETENTION_COPY
