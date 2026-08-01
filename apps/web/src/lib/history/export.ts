@@ -337,16 +337,146 @@ export function buildObsidianFrontmatter(session: MeetingSession): string {
   return lines.join("\n");
 }
 
+/** Full Markdown payload used by note-taking connectors. Keeping the
+ *  frontmatter composition here prevents Obsidian/manual-share callers
+ *  from each inventing a subtly different report shape. */
+export function buildMarkdownNote(session: MeetingSession): string {
+  return `${buildObsidianFrontmatter(session)}\n\n${buildMarkdownReport(session)}`;
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/** A deliberately small Markdown renderer for clipboard interchange.
+ *  It covers the report syntax JargonSlayer itself emits (headings,
+ *  bullets, quotes, bold speaker labels, paragraphs). The plain-text
+ *  Markdown flavour is written alongside it and remains the source of
+ *  truth for apps that do not accept HTML. */
+export function markdownToClipboardHtml(markdown: string): string {
+  const rendered: string[] = [];
+  let listOpen = false;
+
+  const closeList = () => {
+    if (!listOpen) return;
+    rendered.push("</ul>");
+    listOpen = false;
+  };
+
+  for (const rawLine of markdown.replace(/\r\n/g, "\n").split("\n")) {
+    const line = rawLine.trimEnd();
+    if (!line.trim()) {
+      closeList();
+      continue;
+    }
+
+    const heading = /^(#{1,3})\s+(.+)$/.exec(line);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      rendered.push(`<h${level}>${escapeHtml(heading[2])}</h${level}>`);
+      continue;
+    }
+
+    const bullet = /^\s*-\s+(.+)$/.exec(line);
+    if (bullet) {
+      if (!listOpen) {
+        rendered.push("<ul>");
+        listOpen = true;
+      }
+      rendered.push(`<li>${escapeHtml(bullet[1])}</li>`);
+      continue;
+    }
+
+    const quote = /^>\s?(.*)$/.exec(line);
+    if (quote) {
+      closeList();
+      rendered.push(`<blockquote>${escapeHtml(quote[1])}</blockquote>`);
+      continue;
+    }
+
+    closeList();
+    const speaker = /^\*\*(.+?)\*\*\s+`(.+?)`/.exec(line);
+    if (speaker) {
+      rendered.push(`<p><strong>${escapeHtml(speaker[1])}</strong> <code>${escapeHtml(speaker[2])}</code></p>`);
+      continue;
+    }
+    rendered.push(`<p>${escapeHtml(line.replace(/\s{2}$/, ""))}</p>`);
+  }
+  closeList();
+  return `<article>${rendered.join("\n")}</article>`;
+}
+
 /** Copy text to the system clipboard. Resolves false on failure
  *  (unsupported browser, denied permission) instead of throwing. */
-export async function copyToClipboard(text: string): Promise<boolean> {
+export async function copyToClipboard(text: string, html?: string): Promise<boolean> {
   try {
+    if (
+      html &&
+      typeof ClipboardItem !== "undefined" &&
+      typeof navigator.clipboard?.write === "function"
+    ) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          "text/plain": new Blob([text], { type: "text/plain" }),
+          "text/html": new Blob([html], { type: "text/html" }),
+        }),
+      ]);
+      return true;
+    }
     await navigator.clipboard.writeText(text);
     return true;
   } catch (err) {
+    // Some browsers expose ClipboardItem/write but reject rich writes.
+    // Preserve the existing one-click plain-text path before reporting
+    // a real failure.
+    if (html) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fall through to the shared warning below.
+      }
+    }
     console.warn("[export] copyToClipboard failed", err);
     return false;
   }
+}
+
+/** Copy Markdown with both plain-text and rich HTML clipboard flavours. */
+export function copyMarkdownToClipboard(markdown: string): Promise<boolean> {
+  return copyToClipboard(markdown, markdownToClipboardHtml(markdown));
+}
+
+export type ShareMarkdownResult = "shared" | "downloaded" | "cancelled";
+
+/** Prefer the platform share sheet (where Apple Notes appears), then
+ *  fall back to a normal .md export on platforms without Web Share. */
+export async function shareMarkdownFile(
+  filename: string,
+  markdown: string,
+): Promise<ShareMarkdownResult> {
+  const file = new File([markdown], filename, { type: "text/markdown" });
+  const shareData: ShareData = { title: filename.replace(/\.md$/i, ""), files: [file] };
+  if (
+    typeof navigator.share === "function" &&
+    (!navigator.canShare || navigator.canShare(shareData))
+  ) {
+    try {
+      await navigator.share(shareData);
+      return "shared";
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return "cancelled";
+      console.warn("[export] shareMarkdownFile failed, falling back to download", err);
+    }
+  }
+  await downloadFile(filename, markdown, "text/markdown");
+  return "downloaded";
 }
 
 // Re-exported for consumers that want category labels consistent

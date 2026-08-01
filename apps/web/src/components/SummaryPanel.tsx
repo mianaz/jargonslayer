@@ -10,12 +10,16 @@ import { summarizeApi, NoKeyError } from "@/lib/llm/client";
 import { resolveTaskCreds } from "@/lib/llm/taskConfig";
 import {
   buildAnkiTSV,
+  buildMarkdownNote,
   buildMarkdownReport,
   buildSessionJson,
-  copyToClipboard,
+  copyMarkdownToClipboard,
   downloadBlob,
   downloadFile,
+  shareMarkdownFile,
 } from "@/lib/history/export";
+import { exportSessionToObsidian } from "@/lib/history/connectors/obsidian";
+import { exportSessionToNotionClipboard } from "@/lib/history/connectors/notionClipboard";
 import { buildDocxReport } from "@/lib/history/docx";
 import { findEntryBySurface } from "@/lib/history/glossary";
 import { cardToCustomEntry, termToCustomEntry } from "@jargonslayer/core/types";
@@ -25,7 +29,7 @@ import { runGapFill } from "@/lib/translate/gapfill";
 import { IS_IOS } from "@/lib/platform/ios";
 import CornellNote from "./CornellNote";
 
-type PendingExportKind = "md" | "docx" | "copy";
+type PendingExportKind = "md" | "docx" | "copy" | "obsidian" | "notion" | "apple-notes";
 
 function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const cards = useApp((s) => s.cards);
@@ -92,8 +96,42 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const handleCopy = async () => {
     const session = currentSessionSnapshot();
     if (!session) return;
-    const ok = await copyToClipboard(buildMarkdownReport(session));
+    const ok = await copyMarkdownToClipboard(buildMarkdownReport(session));
     showToast(ok ? "已复制到剪贴板" : "复制失败");
+  };
+
+  const handleObsidian = async () => {
+    const session = currentSessionSnapshot();
+    if (!session) return;
+    const result = await exportSessionToObsidian(session);
+    showToast(
+      result === "opened"
+        ? "已复制纪要，并已尝试打开 Obsidian"
+        : result === "copied-only"
+          ? "未检测到 Obsidian，纪要已复制到剪贴板"
+          : "复制失败，请检查剪贴板权限",
+    );
+  };
+
+  const handleAppleNotes = async () => {
+    const session = currentSessionSnapshot();
+    if (!session) return;
+    const result = await shareMarkdownFile(`${session.title}.md`, buildMarkdownNote(session));
+    if (result === "shared") showToast("已发送到系统分享，可选择“备忘录”");
+    if (result === "downloaded") showToast("已导出 Markdown，可从 Finder 分享到“备忘录”");
+  };
+
+  const handleNotion = async () => {
+    const session = currentSessionSnapshot();
+    if (!session) return;
+    const result = await exportSessionToNotionClipboard(session);
+    showToast(
+      result === "opened"
+        ? "纪要已复制并打开 Notion，直接粘贴即可"
+        : result === "copied-only"
+          ? "纪要已复制；请打开 Notion 后粘贴"
+          : "复制失败，请检查剪贴板权限",
+    );
   };
 
   // buildDocxReport dynamically imports "docx" (kept out of the
@@ -118,13 +156,16 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
   const runExportKind = async (kind: PendingExportKind) => {
     if (kind === "md") handleExport("md");
     else if (kind === "docx") await handleExportDocx();
-    else await handleCopy();
+    else if (kind === "copy") await handleCopy();
+    else if (kind === "obsidian") await handleObsidian();
+    else if (kind === "notion") await handleNotion();
+    else await handleAppleNotes();
   };
 
-  // md/docx/复制纪要 all carry the transcript — gated when bilingual
-  // translation is on and segments are still missing a translation
-  // (JSON/Anki/Cornell are exempt: JSON is raw truth, Anki/Cornell
-  // don't carry the transcript at all — v071 blueprint §Chamber C).
+  // Every PendingExportKind carries the transcript — gated when
+  // bilingual translation is on and segments are still missing a
+  // translation. JSON/Anki/Cornell are exempt: JSON is raw truth,
+  // Anki/Cornell don't carry the transcript at all.
   const requestExport = (kind: PendingExportKind) => {
     if (gate) {
       setPendingExport(kind);
@@ -188,49 +229,77 @@ function ExportRow({ onOpenCornell }: { onOpenCornell: () => void }) {
     <div className="flex flex-wrap gap-2 border-t border-edge p-3">
       <button
         type="button"
-        onClick={() => requestExport("md")}
-        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
-      >
-        导出报告 .md
-      </button>
-      <button
-        type="button"
-        onClick={() => requestExport("docx")}
-        disabled={docxBusy}
-        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {docxBusy ? "生成中…" : "导出 .docx"}
-      </button>
-      <button
-        type="button"
-        onClick={() => handleExport("tsv")}
-        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
-      >
-        导出 Anki .tsv
-      </button>
-      <button
-        type="button"
-        onClick={() => handleExport("json")}
-        className="btn-tactile border border-edge2 px-3 py-1.5 font-mono text-xs text-fg hover:bg-panel3"
-      >
-        导出 JSON
-      </button>
-      <button
-        type="button"
-        data-testid="btn-cornell"
-        onClick={onOpenCornell}
-        className="btn-tactile flex items-center gap-2 border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
-      >
-        <Notebook size={14} weight="regular" />
-        康奈尔笔记
-      </button>
-      <button
-        type="button"
         onClick={() => requestExport("copy")}
-        className="btn-tactile border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
+        className="btn-tactile border border-edge2 bg-panel2 px-3 py-1.5 text-xs text-fg hover:bg-panel3"
       >
         复制纪要
       </button>
+      <details className="group relative">
+        <summary className="btn-tactile cursor-pointer list-none border border-edge2 px-3 py-1.5 text-xs text-fg hover:bg-panel3">
+          分享 / 导出 ▾
+        </summary>
+        <div className="absolute bottom-full left-0 z-30 mb-1 grid min-w-52 gap-1 border border-edge2 bg-panel p-1.5 shadow-xl glassable-panel">
+          <button
+            type="button"
+            onClick={() => requestExport("obsidian")}
+            className="btn-tactile px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel3"
+          >
+            保存到 Obsidian
+          </button>
+          <button
+            type="button"
+            onClick={() => requestExport("apple-notes")}
+            className="btn-tactile px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel3"
+          >
+            Apple 备忘录 / 系统分享
+          </button>
+          <button
+            type="button"
+            onClick={() => requestExport("notion")}
+            className="btn-tactile px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel3"
+          >
+            复制并打开 Notion
+          </button>
+          <button
+            type="button"
+            onClick={() => requestExport("md")}
+            className="btn-tactile px-2.5 py-1.5 text-left font-mono text-xs text-fg hover:bg-panel3"
+          >
+            导出报告 .md
+          </button>
+          <button
+            type="button"
+            onClick={() => requestExport("docx")}
+            disabled={docxBusy}
+            className="btn-tactile px-2.5 py-1.5 text-left font-mono text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {docxBusy ? "生成中…" : "导出 .docx"}
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("tsv")}
+            className="btn-tactile px-2.5 py-1.5 text-left font-mono text-xs text-fg hover:bg-panel3"
+          >
+            导出 Anki .tsv
+          </button>
+          <button
+            type="button"
+            onClick={() => handleExport("json")}
+            className="btn-tactile px-2.5 py-1.5 text-left font-mono text-xs text-fg hover:bg-panel3"
+          >
+            导出 JSON
+          </button>
+          <button
+            type="button"
+            data-testid="btn-cornell"
+            onClick={onOpenCornell}
+            className="btn-tactile flex items-center gap-2 px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel3"
+          >
+            <Notebook size={14} weight="regular" />
+            康奈尔笔记
+          </button>
+        </div>
+      </details>
       {cards.length > 0 && (
         <button
           type="button"

@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildAnkiTSV,
+  buildMarkdownNote,
   buildMarkdownReport,
   buildObsidianFrontmatter,
+  copyToClipboard,
+  markdownToClipboardHtml,
 } from "../export";
 import type { ExpressionCard, Flashcard, MeetingSession, TermCard } from "@jargonslayer/core/types";
 
@@ -376,5 +379,60 @@ describe("buildObsidianFrontmatter — YAML", () => {
     const lines = fm.split("\n");
     expect(lines[0]).toBe("---");
     expect(lines[lines.length - 1]).toBe("---");
+  });
+});
+
+describe("note connector payloads", () => {
+  it("buildMarkdownNote combines Obsidian frontmatter and the full report", () => {
+    const note = buildMarkdownNote(makeSession({ title: "Connected note" }));
+    expect(note).toMatch(/^---\n/);
+    expect(note).toContain("source: jargonslayer");
+    expect(note).toContain("# Connected note");
+    expect(note.indexOf("source: jargonslayer")).toBeLessThan(note.indexOf("# Connected note"));
+  });
+
+  it("renders report Markdown into safe rich clipboard HTML", () => {
+    const html = markdownToClipboardHtml(
+      "# Meeting <unsafe>\n\n- First point\n\n**Speaker** `0:03`  \nHello\n\n> 你好",
+    );
+    expect(html).toContain("<h1>Meeting &lt;unsafe&gt;</h1>");
+    expect(html).toContain("<ul>\n<li>First point</li>\n</ul>");
+    expect(html).toContain("<strong>Speaker</strong>");
+    expect(html).toContain("<blockquote>你好</blockquote>");
+    expect(html).not.toContain("<unsafe>");
+  });
+
+  it("writes rich and plain clipboard formats together when supported", async () => {
+    const write = vi.fn().mockResolvedValue(undefined);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    class FakeClipboardItem {
+      constructor(readonly data: Record<string, Blob>) {}
+    }
+    vi.stubGlobal("ClipboardItem", FakeClipboardItem);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { write, writeText },
+    });
+
+    await expect(copyToClipboard("plain", "<p>rich</p>")).resolves.toBe(true);
+    expect(write).toHaveBeenCalledOnce();
+    expect(writeText).not.toHaveBeenCalled();
+    const item = write.mock.calls[0][0][0] as FakeClipboardItem;
+    expect(Object.keys(item.data).sort()).toEqual(["text/html", "text/plain"]);
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to plain text when a browser rejects a rich clipboard write", async () => {
+    const write = vi.fn().mockRejectedValue(new Error("rich clipboard denied"));
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("ClipboardItem", class FakeClipboardItem {});
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { write, writeText },
+    });
+
+    await expect(copyToClipboard("plain", "<p>rich</p>")).resolves.toBe(true);
+    expect(writeText).toHaveBeenCalledWith("plain");
+    vi.unstubAllGlobals();
   });
 });

@@ -878,6 +878,37 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
   );
 }
 
+function AccountConnectionChip({ connected }: { connected: boolean }) {
+  return (
+    <span
+      data-testid="account-connection-chip"
+      className={`border border-edge px-1.5 py-0.5 text-[10px] whitespace-nowrap ${
+        connected ? "text-lab-green" : "text-mut2"
+      }`}
+    >
+      {connected ? "已连接" : "未连接"}
+    </span>
+  );
+}
+
+function ConnectorStatusChip({
+  label,
+  active = true,
+}: {
+  label: string;
+  active?: boolean;
+}) {
+  return (
+    <span
+      className={`border border-edge px-1.5 py-0.5 text-[10px] whitespace-nowrap ${
+        active ? "text-lab-green" : "text-mut2"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
 /** Restored-backup honesty notice (Sol review 2026-07-20, L finding;
  *  extended to the tab-cloud card too — M2 fix, v0.5 closeout): a
  *  backup restored WITH keys can leave a real sonioxKey in preview
@@ -5410,7 +5441,94 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           >
             <SectionHeading>密钥</SectionHeading>
             <div className="text-xs leading-[1.7] text-mut2">
-              所有凭据集中在此：每个提供方一个字段，状态显示是否已配置。引擎/翻译旁的入口写入同一字段，不会另存一份。
+              账号连接和所有凭据集中在此。OAuth 完成后状态会立即同步；手动填写的 Key 仍按提供方分别保存。
+            </div>
+
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-mut">账号连接</div>
+              <div className="flex items-center justify-between gap-3 border border-edge bg-panel2 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm text-fg">
+                    OpenRouter
+                    <AccountConnectionChip connected={!!draft.apiKeyOpenrouter} />
+                  </div>
+                  <div className="mt-0.5 text-[10px] leading-[1.6] text-mut2">
+                    OAuth 授权后自动生成 Key；连接状态与下方 OpenRouter Key 使用同一份数据
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={connectingOpenRouter || !!proxyDraftDirtyHint}
+                  onClick={() => void handleConnectOpenRouter()}
+                  className="btn-tactile shrink-0 border border-edge px-2.5 py-1.5 text-xs text-fg hover:bg-panel3 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {connectingOpenRouter
+                    ? "连接中…"
+                    : draft.apiKeyOpenrouter
+                      ? "重新连接"
+                      : "连接"}
+                </button>
+              </div>
+
+              {openRouterOauthHint && (
+                <div className="space-y-1 text-xs leading-[1.7] text-warn-soft">
+                  <div>{openRouterOauthHint}</div>
+                  <button
+                    type="button"
+                    onClick={() => void openExternal("https://openrouter.ai/keys")}
+                    className="text-lab-cyan underline decoration-lab-cyan/40"
+                  >
+                    改为手动创建 Key
+                  </button>
+                </div>
+              )}
+
+              {process.env.NEXT_PUBLIC_ENABLE_SUBSCRIPTION_DIRECT === "1" && !IS_IOS && (
+                <>
+                  <div className="flex items-center justify-between gap-3 border border-edge bg-panel2 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm text-fg">
+                        ChatGPT 订阅
+                        <AccountConnectionChip connected={agentHealthState?.codex_logged_in === true} />
+                      </div>
+                      <div className="mt-0.5 text-[10px] leading-[1.6] text-mut2">
+                        使用本机 Codex 登录态；不是 OpenAI API Key
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateSettings({ uiMode: "advanced" });
+                        setActiveCategory("subscriptionDirect");
+                      }}
+                      className="btn-tactile shrink-0 border border-edge px-2.5 py-1.5 text-xs text-fg hover:bg-panel3"
+                    >
+                      查看设置
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 border border-edge bg-panel2 px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 text-sm text-fg">
+                        Claude 订阅
+                        <AccountConnectionChip connected={agentHealthState?.claude_logged_in === true} />
+                      </div>
+                      <div className="mt-0.5 text-[10px] leading-[1.6] text-mut2">
+                        使用本机 Claude Code 登录态；不是 Anthropic API Key
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateSettings({ uiMode: "advanced" });
+                        setActiveCategory("subscriptionDirect");
+                      }}
+                      className="btn-tactile shrink-0 border border-edge px-2.5 py-1.5 text-xs text-fg hover:bg-panel3"
+                    >
+                      查看设置
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
 
             <div className="space-y-3">
@@ -5682,6 +5800,39 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
           >
             <SectionHeading>数据与联动</SectionHeading>
 
+            <div className="grid gap-2 sm:grid-cols-3">
+              <div className="border border-edge bg-panel2 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-sm text-fg">
+                  <span>Obsidian</span>
+                  <ConnectorStatusChip
+                    label={exportFolderName ? "已连接" : "一键导出可用"}
+                    active
+                  />
+                </div>
+                <div className="mt-1 text-[10px] leading-[1.6] text-mut2">
+                  一键复制并打开；选择 vault 文件夹后还可自动写入
+                </div>
+              </div>
+              <div className="border border-edge bg-panel2 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-sm text-fg">
+                  <span>Notion</span>
+                  <ConnectorStatusChip label="快速导出可用" active />
+                </div>
+                <div className="mt-1 text-[10px] leading-[1.6] text-mut2">
+                  当前复制富文本并打开 Notion；直接写入需配置安全的 OAuth 服务端
+                </div>
+              </div>
+              <div className="border border-edge bg-panel2 px-3 py-2">
+                <div className="flex items-center justify-between gap-2 text-sm text-fg">
+                  <span>Apple 备忘录</span>
+                  <ConnectorStatusChip label="无需连接" active />
+                </div>
+                <div className="mt-1 text-[10px] leading-[1.6] text-mut2">
+                  通过系统分享菜单发送 Markdown 文件
+                </div>
+              </div>
+            </div>
+
             {/* S13 iOS mobile-UX round (Part A #5): 选择导出文件夹 rides
                window.showDirectoryPicker — the File System Access API,
                which WebKit has never implemented on ANY platform
@@ -5707,11 +5858,14 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                   onClick={() => void handleChooseExportFolder()}
                   className="btn-tactile border border-edge px-3 py-1.5 text-sm text-fg hover:bg-panel3"
                 >
-                  选择导出文件夹
+                  {exportFolderName ? "更换 Obsidian / 导出文件夹" : "连接 Obsidian / 选择文件夹"}
                 </button>
                 {exportFolderName && (
                   <>
-                    <span className="text-xs text-mut">{exportFolderName}</span>
+                    <span className="flex items-center gap-1 text-xs text-mut">
+                      <span className="text-lab-green">●</span>
+                      {exportFolderName}
+                    </span>
                     <button
                       type="button"
                       onClick={() => void handleClearExportFolder()}
@@ -5723,8 +5877,7 @@ export default function SettingsDialog({ open, onClose }: SettingsDialogProps) {
                 )}
               </div>
               <div className="mt-1 text-xs leading-[1.7] text-mut2">
-                每场会议结束后自动写入 .md + .json，适合 Obsidian vault / git
-                仓库 / 任意目录
+                选择 Obsidian vault 子目录后，每场会议结束自动写入带 frontmatter 的 .md + .json；也可选择 git 仓库或任意目录
               </div>
             </div>
             </>

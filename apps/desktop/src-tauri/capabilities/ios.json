@@ -18,8 +18,10 @@
       "identifier": "opener:allow-open-url",
       "allow": [
         { "url": "https://openrouter.ai/**" },
+        { "url": "https://www.notion.so/**" },
         { "url": "https://github.com/**" },
-        { "url": "https://huggingface.co/**" }
+        { "url": "https://huggingface.co/**" },
+        { "url": "obsidian://**" }
       ]
     },
     "os-speech:default",

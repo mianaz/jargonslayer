@@ -849,6 +849,51 @@ describe("SettingsDialog — 密钥 category (ft6 dedicated keys hub)", () => {
     expect(sonioxRow!.querySelector('[data-testid="key-status-chip"]')!.textContent).toBe("未配置");
   });
 
+  it("synchronizes the OpenRouter OAuth account card with the same saved key used by the credential row", async () => {
+    useApp.setState({
+      settings: {
+        ...DEFAULT_SETTINGS,
+        uiMode: "simple",
+        apiKeyOpenrouter: "sk-oauth-connected",
+      },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    const accountChip = container!.querySelector('[data-testid="account-connection-chip"]');
+    expect(accountChip).not.toBeNull();
+    expect(accountChip!.textContent).toBe("已连接");
+    expect(container!.textContent).toContain("OAuth 完成后状态会立即同步");
+    expect(findButtonByText("重新连接")).not.toBeNull();
+  });
+
+  it("shows an unconnected OpenRouter account card when no OAuth/manual key exists", async () => {
+    useApp.setState({
+      settings: { ...DEFAULT_SETTINGS, uiMode: "simple", apiKeyOpenrouter: "" },
+      hydrated: true,
+    });
+    await act(async () => {
+      root!.render(<SettingsDialog open={true} onClose={() => {}} />);
+    });
+    await flush();
+
+    await act(async () => {
+      clickCategory("密钥");
+    });
+
+    expect(container!.querySelector('[data-testid="account-connection-chip"]')!.textContent).toBe(
+      "未连接",
+    );
+    expect(findButtonByText("连接")).not.toBeNull();
+  });
+
   it("editing a key in 密钥 updates the same Settings field the engine section uses (no duplicated state)", async () => {
     useApp.setState({
       settings: { ...DEFAULT_SETTINGS, uiMode: "simple", engine: "soniox", sonioxKey: "" },
