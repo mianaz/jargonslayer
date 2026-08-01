@@ -601,6 +601,44 @@ fn run_venv_python_streaming(
 
 // ---- start_server / stop_server ----
 
+/// The sidecar's two hardcoded ports — shared by the probe below and the
+/// argv handed to whisper_server.py so they can never drift apart.
+const WS_PORT: u16 = 8765;
+const HTTP_PORT: u16 = 8766;
+
+/// Port-guard: probe-bind a sidecar port before spawning, so a stale
+/// whisper_server.py (force-quit leftover, second app instance) produces
+/// this clear user-facing error instead of letting Python discover the
+/// conflict and die with a raw `OSError: [Errno 48]` traceback in
+/// whisper_server.log (field evidence: v0.7.4 diagnostics, 2026-08-01).
+///
+/// No adoption attempt here on purpose: the TS provision machine's
+/// CHECKING phase already health-probes 8766 and adopts a HEALTHY
+/// instance before start_server is ever invoked — so a busy port at this
+/// point is a holder that failed that health probe (stale/hung), and
+/// failing loudly is the correct answer. Real ownership of adopted
+/// processes stays v1.5 material (see kill_held_child_on_exit).
+///
+/// Two accepted edges: (1) TOCTOU — the port can be taken between this
+/// probe and Python's own bind; Python's EADDRINUSE stays the backstop
+/// for that sliver. (2) std's bind sets SO_REUSEADDR on unix, matching
+/// Python's own bind semantics, so TIME_WAIT remnants from a
+/// just-restarted server (model switch) don't false-positive here.
+fn probe_port_free(port: u16, role: &str) -> Result<(), String> {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(listener) => {
+            drop(listener);
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "port {port} (sidecar {role}) is already in use ({e}) — likely a stale \
+             whisper_server.py left behind by a force-quit, or a second running copy \
+             of the app. Quit the other instance (or run `kill $(lsof -ti tcp:{port})`) \
+             and try again."
+        )),
+    }
+}
+
 #[tauri::command]
 pub async fn start_server(
     app: tauri::AppHandle,
@@ -643,6 +681,12 @@ pub async fn start_server(
         });
     }
 
+    // Probed under the same held lock (sync code, no .await — see the
+    // lock-holding comment above) so two racing start_server calls can't
+    // both pass the probe and race for the real bind.
+    probe_port_free(WS_PORT, "ws")?;
+    probe_port_free(HTTP_PORT, "http")?;
+
     let paths = resolve_app_paths(&app)?;
     let log_dir = paths
         .log_path
@@ -667,9 +711,9 @@ pub async fn start_server(
         "--model".to_string(),
         model,
         "--port".to_string(),
-        "8765".to_string(),
+        WS_PORT.to_string(),
         "--http-port".to_string(),
-        "8766".to_string(),
+        HTTP_PORT.to_string(),
         "--host".to_string(),
         "127.0.0.1".to_string(),
     ];
@@ -952,6 +996,36 @@ mod tests {
             venv_for_model(&paths, "parakeet-tdt-0.6b-v3"),
             paths.mlx_venv_python.as_path()
         );
+    }
+
+    // ---- sidecar port-guard: probe_port_free ----
+    // Both cases use an OS-assigned ephemeral port, never the real
+    // 8765/8766 — those may legitimately be busy on a dev machine with
+    // the app running, and a test must not depend on that.
+
+    #[test]
+    fn probe_port_free_passes_on_a_free_port() {
+        // drop-then-probe has an inherent race — any process on the
+        // machine can grab the freed port inside the window (observed
+        // once on this very test) — so pass if ANY of a few fresh
+        // ephemeral ports probes free.
+        let ok = (0..5).any(|_| {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            drop(listener);
+            probe_port_free(port, "ws").is_ok()
+        });
+        assert!(ok);
+    }
+
+    #[test]
+    fn probe_port_free_names_the_port_and_culprit_when_held() {
+        let holder = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = holder.local_addr().unwrap().port();
+        let err = probe_port_free(port, "http").unwrap_err();
+        assert!(err.contains(&port.to_string()), "{err}");
+        assert!(err.contains("whisper_server.py"), "{err}");
+        assert!(err.contains("http"), "{err}");
     }
 
     // ---- S12a §C Q6/§3.5: hf_extra_env ----
