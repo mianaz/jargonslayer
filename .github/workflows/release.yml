@@ -243,6 +243,44 @@ jobs:
           # steps above just surface a toolchain failure earlier and cheaply).
           npm run tauri:build
 
+      # Tauri notarizes and staples the .app, then wraps it in a DMG — the
+      # DISK IMAGE itself is left un-notarized. That is fine on a machine
+      # that can reach Apple, but a user who is offline or rate-limited
+      # gets a Gatekeeper prompt on the download. The owner's manual
+      # release does this step by hand (ROADMAP "Now" §2); encoding it is
+      # the whole point of automating the train. sha256 must be taken AFTER
+      # stapling, because stapling rewrites the file.
+      - name: notarize + staple the dmg
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          dmg=$(find apps/desktop/src-tauri/target -path "*/bundle/dmg/*.dmg" -type f | head -1)
+          if [ -z "$dmg" ]; then
+            echo "::error::no .dmg under target/*/bundle/dmg/ — tauri build did not bundle. (npm run build:desktop is the frontend export only; the DMG comes from tauri build.)"
+            exit 1
+          fi
+          echo "notarizing $dmg"
+          if [ -n "${APPLE_API_KEY_P8_BASE64:-}" ]; then
+            printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$RUNNER_TEMP/asc-api-key.p8"
+            chmod 600 "$RUNNER_TEMP/asc-api-key.p8"
+            xcrun notarytool submit "$dmg" --key "$RUNNER_TEMP/asc-api-key.p8" \
+              --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait
+          else
+            xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
+              --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          fi
+          xcrun stapler staple "$dmg"
+          # Authoritative check for a disk image: the ticket is attached and
+          # verifies offline. (spctl's install context is advisory here.)
+          xcrun stapler validate "$dmg"
+          echo "DMG_PATH=$dmg" >> "$GITHUB_ENV"
+
       - name: destroy notarization key
         if: always()
         run: rm -f "$RUNNER_TEMP/asc-api-key.p8" || true
@@ -253,18 +291,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist-release
-          found=$(find apps/desktop/src-tauri/target -name "*.dmg" -type f | head -1)
-          if [ -z "$found" ]; then
-            echo "::error::no .dmg produced under target/ — the desktop build did not bundle."; exit 1; fi
-          cp "$found" "dist-release/JargonSlayer-$VERSION.dmg"
+          cp "$DMG_PATH" "dist-release/JargonSlayer-$VERSION.dmg"
+          # AFTER stapling — a checksum taken before it describes a file
+          # nobody will ever download.
           (cd dist-release && shasum -a 256 *.dmg > "JargonSlayer-$VERSION.dmg.sha256")
-          # Gatekeeper's own verdict — a DMG that fails this is worse than
-          # no DMG, because users hit the error instead of the download.
-          # FATAL on purpose: an unsigned/unnotarized DMG must never upload.
-          spctl -a -vvv -t install "dist-release/JargonSlayer-$VERSION.dmg" || {
-            echo "::error::spctl assessment FAILED for JargonSlayer-$VERSION.dmg — Gatekeeper will refuse this DMG. Check notarization stapling; refusing to upload it."
+          xcrun stapler validate "dist-release/JargonSlayer-$VERSION.dmg" || {
+            echo "::error::stapled ticket missing on the copied DMG — refusing to upload."
             exit 1
           }
+          ls -la dist-release
 
       - name: destroy signing keychain
         if: always()
