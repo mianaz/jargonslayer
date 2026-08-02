@@ -1,0 +1,27 @@
+# What sidecar/test_*.py needs to run, and nothing more.
+#
+# The v0.7.5 train first wired these tests into CI with NO pip install at
+# all, on the strength of them passing locally — they only did because
+# this machine already had numpy. On a bare runner 7 of the 10 failed at
+# import. The set below was derived the other way round, in a clean venv,
+# adding one package at a time until all 10 passed:
+#
+#   numpy       whisper_server.py:178 imports it at module scope, so every
+#               test that imports the server needs it (6 files)
+#   websockets  same — module-scope import in the server
+#   tqdm        test_download.py / test_model_registry.py exercise the
+#               download-progress path; normally arrives transitively via
+#               huggingface-hub, which is NOT installed here
+#
+# Deliberately NOT requirements-sidecar.txt: that pulls faster-whisper and
+# its ctranslate2 stack for no extra coverage — the tests stub the heavy
+# backends. test_model_registry.py even asserts that `import
+# faster_whisper.utils` raises while blocked, so a real faster-whisper on
+# the path would be testing something other than what ships.
+#
+# numpy and websockets are held at requirements-sidecar.txt's own pins so
+# CI exercises the versions the desktop app actually bundles. Bump them
+# together.
+numpy==2.5.1
+websockets==13.1
+tqdm==4.70.0

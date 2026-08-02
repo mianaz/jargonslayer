@@ -1,16 +1,22 @@
 // The sidecar's ~7,100 lines of Python tests had no runner: no pytest
-// config, no npm script, no CI step, no doc. ci.yml excluded them on the
-// grounds that there were "no pinned runner deps" — but they need none.
-// Every sidecar/test_*.py is a plain-assert script that stubs its own
-// heavy imports, prints a pass/fail summary and exits non-zero on
-// failure, so a bare interpreter runs all ten green. Wiring them up is
-// this script plus two lines in ci.yml.
+// config, no npm script, no CI step, no doc. Every sidecar/test_*.py is
+// a plain-assert script that stubs its own heavy backends, prints a
+// pass/fail summary and exits non-zero on failure, so all it takes to
+// gate them is this script plus a pip install and two lines in ci.yml.
 //
-// Deliberately NOT installing requirements-sidecar.txt: the files that
-// have optional-import sections (test_model_registry, test_download)
-// print SKIP and continue, so the install would buy a little extra
-// coverage at the cost of pulling faster-whisper + its torch stack into
-// every CI run. Add it if that coverage is ever worth the minutes.
+// That pip install is not optional, and this comment used to claim it
+// was. The first version of this script went in asserting the tests
+// "need no pinned runner deps" because all ten passed locally — they
+// only did because this machine already had numpy. The first CI run
+// after wiring them up failed 7 of 10 at import. The real set is in
+// sidecar/requirements-test.txt, derived in a clean venv rather than
+// inferred, and it is three packages: numpy, websockets, tqdm.
+//
+// Still deliberately NOT requirements-sidecar.txt — see that file's own
+// header for why installing faster-whisper would test the wrong thing.
+//
+// Set PYTHON to point at a specific interpreter (the CI job does not
+// need to; a venv on PATH is enough).
 import { execFileSync } from "node:child_process";
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";

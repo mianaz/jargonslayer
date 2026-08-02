@@ -46,7 +46,10 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run check:versions
-      # No pip install: these run on a bare interpreter by design.
+      # numpy/websockets/tqdm only — NOT requirements-sidecar.txt. See
+      # sidecar/requirements-test.txt for how that set was derived and
+      # why the heavy backends stay out.
+      - run: pip install -r sidecar/requirements-test.txt
       - run: npm run test:sidecar
 
   native:
