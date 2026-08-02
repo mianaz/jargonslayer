@@ -76,6 +76,15 @@ export interface OsSpeechStatusPayload {
   progress?: number;
   resolvedLocale?: string;
   supportedLocales?: string[];
+  // Silent-session hint (2026-08-02 field report): desktop osspeech.rs
+  // attaches this to a session's FINAL status event only — whether any
+  // helper stats line ever reported a nonzero running peak, i.e.
+  // whether the CoreAudio system-audio tap saw real audio at all.
+  // Absent on every non-final event, on iOS (whose plugin lane taps the
+  // MIC — the desktop steer copy below would be wrong there), and on an
+  // older Rust side — which is why handleStatus checks `=== false`,
+  // never mere falsiness.
+  sawAudio?: boolean;
 }
 
 export interface OsSpeechTranscriptPayload {
@@ -154,7 +163,10 @@ export class OsSpeechEngine implements STTEngine {
   private assetCheckingNoticeShown = false;
   private assetDownloadingNoticeShown = false;
 
-  // Recorded at "capturing" (§2.6) — currently diagnostic-only: A3
+  // Recorded at "capturing" (§2.6). Two consumers: (1) the silent-
+  // session hint in handleStatus reads its non-null-ness as "capture
+  // actually started" (a session abandoned during asset download must
+  // not get mic-steering copy); (2) NOT onFinal timing — A3
   // verify-from-source (see this file's onFinal call in handleTranscript)
   // found wsTransport.ts's own onFinal call passes no `startedAt` at all,
   // so this engine matches that semantic by passing none either, rather
@@ -323,6 +335,24 @@ export class OsSpeechEngine implements STTEngine {
       // settle() here too would just relabel it with a less useful
       // neutral one right after.
       if (payload.kind !== "asset-failed") this.assetTracker?.settle();
+    }
+
+    // Silent-session hint (2026-08-02 field report): desktop osspeech is
+    // hard-paired to system-audio (store.ts modeForPersistedEngine) and
+    // taps ONLY system OUTPUT — a user who picked 系统 expecting mic
+    // capture sees a session that "runs" fine (framesOut advancing) yet
+    // transcribes nothing. A clean end with zero finals, a session that
+    // actually reached "capturing", and an explicitly-false `sawAudio`
+    // (the Rust side's whole-session peak==0 verdict — see the payload
+    // field's own doc comment for why `=== false`, and why this can
+    // never fire on iOS) is exactly that confusion: steer once, here
+    // BEFORE the `stopping` branch below, because the common shape of
+    // this failure IS the user giving up and pressing stop — the
+    // "ended" then arrives mid-stop and would never reach the switch.
+    if (payload.kind === "ended" && payload.sawAudio === false && this.finalCount === 0 && this.sessionStartEpoch !== null) {
+      this.events?.onNotice?.(
+        "未检测到系统声音——系统引擎只采集系统播放的音频，不采集麦克风；要转写麦克风请切换到本地模型或云端引擎",
+      );
     }
 
     // "ended" is the one status meaningful even while stopping — see
