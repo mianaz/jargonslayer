@@ -191,9 +191,11 @@ export const ENGINE_CAPABILITIES: Record<LiveEngineKind, EngineCapability> = {
     family: "system-service",
     retentionClass: "local",
     // SpeechAnalyzer's AnalysisContext.contextualStrings — S11's Q11
-    // already ships this (doc §3, Sol F16); Lane B migrates the
-    // existing osSpeech.ts:287 direct store read onto the shared
-    // lexicon builder, which doesn't change this static capability.
+    // (doc §3, Sol F16). The migration off osSpeech.ts's direct store
+    // read landed in v0.4.7 Lane B: osSpeech.ts:249 now projects the
+    // injected lexicon through the shared builder, and there is no
+    // store read left in that file. Either way it never changed this
+    // static capability.
     biasSupport: "context",
     osFloor: "macos26", // iOS osspeech maps this SAME tag onto its own iOS-26 probe (Sol F6)
   },
