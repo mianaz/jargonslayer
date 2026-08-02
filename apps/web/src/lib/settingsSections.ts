@@ -52,8 +52,6 @@ export const SETTINGS_UI_LEVELS = {
   display: "simple",
 } as const satisfies Record<string, UiLevel>;
 
-export type SettingsSectionId = keyof typeof SETTINGS_UI_LEVELS;
-
 /** A row/section is rendered when its own level is "simple" (shown in
  *  every mode) or the dialog's current level is "advanced" (shows
  *  everything). Advanced mode is always a superset of simple mode. */

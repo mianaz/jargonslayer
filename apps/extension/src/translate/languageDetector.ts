@@ -42,10 +42,6 @@ export async function checkLanguageDetectorAvailability(): Promise<CapabilitySta
   }
 }
 
-export function getLanguageDetectorState(): CapabilityState {
-  return cachedState;
-}
-
 async function ensureDetectorReady(
   onProgress?: (state: CapabilityState) => void,
 ): Promise<LanguageDetector> {

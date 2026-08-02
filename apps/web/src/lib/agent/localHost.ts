@@ -31,8 +31,6 @@
 import type { DefineRequest, DefineResult, DetectRequest, DetectResponse, Settings } from "@jargonslayer/core/types";
 import { renderProfileHint } from "@jargonslayer/core/llm/profileHint";
 
-export type SubscriptionProvider = "claude-sub" | "chatgpt-sub";
-
 export interface AgentHealth {
   ok: boolean;
   claude_sdk_available: boolean;

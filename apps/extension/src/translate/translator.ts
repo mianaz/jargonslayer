@@ -56,10 +56,6 @@ export async function checkTranslatorAvailability(): Promise<CapabilityState> {
   }
 }
 
-export function getTranslatorState(): CapabilityState {
-  return cachedState;
-}
-
 /** Ensures a Translator instance exists, triggering the first-use
  *  model download (with progress reported via onProgress) if needed.
  *  Instance is cached module-wide — translate() calls should reuse it

@@ -71,34 +71,6 @@ export type { CallJsonOptions, ProviderCaller };
 // Key / provider resolution
 // ---------------------------------------------------------------
 
-/** Resolve the API key for a request: user-supplied header first
- *  (BYOK, never persisted server-side), falling back to the server
- *  env var. Returns null when neither is configured. */
-export function resolveKey(req: Request): string | null {
-  return req.headers.get("x-jargonslayer-key") || process.env.ANTHROPIC_API_KEY || null;
-}
-
-/** Resolve which LLM provider/endpoint a request targets: header
- *  first (per-browser setting), falling back to server env, falling
- *  back to first-party Anthropic. */
-export function resolveProvider(req: Request): {
-  provider: LlmProvider;
-  baseUrl: string;
-} {
-  const headerProvider = req.headers.get(PROVIDER_HEADERS.provider);
-  const provider: LlmProvider =
-    headerProvider === "openai-compat" || headerProvider === "anthropic"
-      ? headerProvider
-      : process.env.JARGONSLAYER_PROVIDER === "openai-compat"
-        ? "openai-compat"
-        : "anthropic";
-
-  const baseUrl =
-    req.headers.get(PROVIDER_HEADERS.baseUrl) || process.env.JARGONSLAYER_BASE_URL || "";
-
-  return { provider, baseUrl };
-}
-
 /** True when JARGONSLAYER_SHARED_KEY_ONLY strict mode is armed.
  *  Canonical value is "1"; "true" is also accepted so a deploy that
  *  writes the env as a literal boolean-ish string doesn't silently

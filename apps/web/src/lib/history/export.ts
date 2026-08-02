@@ -45,15 +45,6 @@ const ENGINE_LABELS: Record<STTEngineKind, string> = {
   "browser-whisper": IS_DESKTOP ? "内置 Whisper" : "浏览器 Whisper",
 };
 
-const CATEGORY_LABELS: Record<string, string> = {
-  idiom: "习语",
-  slang: "俚语",
-  phrase: "短语",
-  metaphor: "隐喻",
-  indirect: "委婉",
-  other: "其他",
-};
-
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -477,12 +468,6 @@ export async function shareMarkdownFile(
   }
   await downloadFile(filename, markdown, "text/markdown");
   return "downloaded";
-}
-
-// Re-exported for consumers that want category labels consistent
-// with the report (e.g. UI badges) without duplicating the map.
-export function categoryLabel(category: string): string {
-  return CATEGORY_LABELS[category] ?? category;
 }
 
 // Keep type imports referenced for callers that only need the types
