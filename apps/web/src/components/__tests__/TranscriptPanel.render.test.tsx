@@ -562,6 +562,23 @@ describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => 
     });
   }
 
+  // The 60ms of slack above is not a guarantee: the debounce is a REAL
+  // timer, so on a loaded runner it can still be pending when the sleep
+  // returns. CI hit exactly that on 2026-08-01 (run 30707849251, "expected
+  // null not to be null" on a bar that simply had not rendered yet) while
+  // the same commit passed locally and on the next run. Positive
+  // assertions therefore poll for the settled state instead of trusting
+  // the fixed slack. The negative ones need no equivalent — they only have
+  // to let the full debounce elapse, which the sleep already guarantees.
+  async function waitForTouchBar(): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+      if (container!.querySelector('[data-testid="touch-lookup-bar"]')) return;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+    }
+  }
+
   function mount(coarsePointer: boolean): void {
     (
       globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -629,6 +646,7 @@ describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => 
 
     selectSubstring();
     await fireSelectionChangeAndWaitDebounce();
+    await waitForTouchBar();
 
     expect(container!.querySelector('[data-testid="touch-lookup-bar"]')).not.toBeNull();
     expect(container!.querySelector('[data-testid="btn-touch-lookup"]')?.textContent).toBe(
@@ -644,6 +662,7 @@ describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => 
 
     selectSubstring();
     await fireSelectionChangeAndWaitDebounce();
+    await waitForTouchBar();
     const btn = container!.querySelector('[data-testid="btn-touch-lookup"]');
     expect(btn).not.toBeNull();
 
@@ -665,6 +684,7 @@ describe("TranscriptPanel — touch selection action bar (S14.1 item 3)", () => 
 
     selectSubstring();
     await fireSelectionChangeAndWaitDebounce();
+    await waitForTouchBar();
     expect(container!.querySelector('[data-testid="touch-lookup-bar"]')).not.toBeNull();
 
     collapseSelection();
