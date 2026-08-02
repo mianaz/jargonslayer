@@ -256,10 +256,10 @@ describe("CaptureController", () => {
       const { controller, callbacks, fakeEngine } = createHarness();
       await controller.start();
 
-      fakeEngine.getEvents().onNotice?.("一直在说话但识别不出，可能语言不匹配，试试本地 Whisper 或标签页音频模式");
+      fakeEngine.getEvents().onNotice?.("一直在说话但识别不出，可能语言不匹配，试试本地模型或标签页音频模式");
 
       expect(callbacks.onNotice).toHaveBeenCalledWith(
-        "一直在说话但识别不出，可能语言不匹配，试试本地 Whisper 或标签页音频模式",
+        "一直在说话但识别不出，可能语言不匹配，试试本地模型或标签页音频模式",
       );
     });
   });
@@ -283,7 +283,7 @@ describe("CaptureController", () => {
 
       fakeEngine
         .getEvents()
-        .onStatus("error", "语音识别网络错误，Web Speech 需要联网，可切换到本地 Whisper 引擎");
+        .onStatus("error", "语音识别网络错误，Web Speech 需要联网，可切换到本地模型引擎");
 
       expect(callbacks.onGrantNeeded).not.toHaveBeenCalled();
     });
@@ -327,7 +327,7 @@ describe("CaptureController", () => {
 
       fakeEngine
         .getEvents()
-        .onStatus("error", "语音识别网络错误，Web Speech 需要联网，可切换到本地 Whisper 引擎");
+        .onStatus("error", "语音识别网络错误，Web Speech 需要联网，可切换到本地模型引擎");
       await flushAsync();
 
       expect(fakeEngine.stopCalls).toBe(1);
