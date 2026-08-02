@@ -1282,6 +1282,38 @@ describe("StatusLine — 翻译 status chip", () => {
     expect(chip().className).toContain("text-lab-yellow");
     expect(chip().title).toBe("DeepL 429");
   });
+
+  // FT-11 fix: "dead" — same amber structure as 翻译暂停 above (this app's
+  // flat-design law invents no new visual vocabulary), but distinct
+  // copy/testid-carried state so a field session isn't left reading a
+  // silently-dead lane as merely "paused". The STICKINESS itself (a
+  // later retry never flips this back to busy) is queue.ts's own
+  // emitState() contract — covered in queue.test.ts — this component
+  // just renders whatever state it's handed; this test's second render
+  // pins that a subsequent "dead" emission (what a real retry actually
+  // produces, per that contract) renders identically, not a fresh
+  // "busy" flash in between.
+  it("dead shows 翻译失败 in amber, title carries the reason, and stays put across a later retry (another 'dead' emission, not busy)", async () => {
+    useApp.setState((s) => ({
+      status: "listening",
+      settings: { ...s.settings, bilingualTranscript: true },
+      translateStatus: { state: "dead", pending: 0, reason: "系统翻译不可用，双语转录已暂停。可在设置中切换回 AI 模型翻译" },
+    }));
+    renderStatusLine();
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+
+    expect(chip().textContent).toContain("翻译失败");
+    expect(chip().className).toContain("text-lab-yellow");
+    expect(chip().title).toBe("系统翻译不可用，双语转录已暂停。可在设置中切换回 AI 模型翻译");
+
+    useApp.setState({ translateStatus: { state: "dead", pending: 1, reason: undefined } });
+    await act(async () => {
+      root!.render(<StatusLine onOpenTaskCenter={() => {}} />);
+    });
+    expect(chip().textContent).toContain("翻译失败");
+  });
 });
 
 // Bit mascot behavior train (chamber B): the always-on status-line perch

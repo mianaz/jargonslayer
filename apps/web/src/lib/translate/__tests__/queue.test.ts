@@ -560,7 +560,9 @@ describe("TranslateQueue — onState / drain", () => {
   let onTranslations: ReturnType<typeof vi.fn<(map: Record<string, string>, gen: number) => void>>;
   let onError: ReturnType<typeof vi.fn<(msg: string) => void>>;
   let onState: ReturnType<
-    typeof vi.fn<(s: { state: "off" | "busy" | "done" | "stalled"; pending: number; reason?: string }) => void>
+    typeof vi.fn<
+      (s: { state: "off" | "busy" | "done" | "stalled" | "dead"; pending: number; reason?: string }) => void
+    >
   >;
   let queue: TranslateQueue;
 
@@ -696,5 +698,50 @@ describe("TranslateQueue — onState / drain", () => {
     await vi.advanceTimersByTimeAsync(800); // fails -> pauses 60s
 
     await expect(queue.drain(10_000)).resolves.toBe(false);
+  });
+
+  // FT-11 fix: "dead" — a lane that has failed every batch this meeting,
+  // as opposed to "stalled" (a self-healing pause). Uses a plain generic
+  // error (not NoKey/RateLimit/SystemTranslatorUnavailable) so
+  // ERROR_COOLDOWN_MS (5s) drives each retry — the counter itself is
+  // provider-agnostic (queue.ts's own handleError increments it in every
+  // branch), only the wiring here happens to reuse the generic-error path.
+  it("3 consecutive failed batches with nothing ever landed emits 'dead'; a later success clears it; 2 failures alone do NOT (hysteresis)", async () => {
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502"));
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 again"));
+
+    queue.pushSegment(makeSegment("one"));
+    await vi.advanceTimersByTimeAsync(800); // attempt #1 fails (1 consecutive)
+    expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+
+    await vi.advanceTimersByTimeAsync(5_000); // attempt #2 fails (2 consecutive)
+    expect(onState).not.toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+
+    mockTranslateApi.mockRejectedValueOnce(new Error("upstream 502 a third time"));
+    await vi.advanceTimersByTimeAsync(5_000); // attempt #3 fails (3 consecutive) -> dead
+    expect(onState).toHaveBeenCalledWith(expect.objectContaining({ state: "dead" }));
+
+    // A later success clears it — the queue drains to "done".
+    mockTranslateApi.mockResolvedValueOnce({ translations: [{ id: "seg-1", text: "你好" }] });
+    await vi.advanceTimersByTimeAsync(5_000); // attempt #4 lands
+    expect(onState).toHaveBeenLastCalledWith({ state: "done", pending: 0, reason: undefined });
+  });
+
+  it("'dead' is sticky — a later retry (busy) does not flip it back until a translation actually lands", async () => {
+    for (let i = 0; i < 3; i++) {
+      mockTranslateApi.mockRejectedValueOnce(new Error(`upstream 502 #${i}`));
+    }
+    // Never resolves — the retry after "dead" stays in flight (busy),
+    // proving the chip does not flip back to busy on its own.
+    mockTranslateApi.mockImplementationOnce(() => new Promise(() => {}));
+
+    queue.pushSegment(makeSegment("one"));
+    await vi.advanceTimersByTimeAsync(800); // #1 fails
+    await vi.advanceTimersByTimeAsync(5_000); // #2 fails
+    await vi.advanceTimersByTimeAsync(5_000); // #3 fails -> dead
+    expect(onState).toHaveBeenLastCalledWith(expect.objectContaining({ state: "dead" }));
+
+    await vi.advanceTimersByTimeAsync(5_000); // #4 dispatches — would read "busy" without the fix
+    expect(onState).toHaveBeenLastCalledWith(expect.objectContaining({ state: "dead" }));
   });
 });

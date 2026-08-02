@@ -622,21 +622,55 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
   // Mirrors ChromeTranslatorProvider's own lastPair field/rationale —
   // translate(items, lang) only ever receives the TARGET lang.
   private lastPair: TranslationLangPair | null = null;
-  // Set by a FAILED prepare() call; a fresh prepare() clears it first —
-  // same "a later prepare() is a real retry, never a permanent latch"
-  // shape as ChromeTranslatorProvider's own "failed" SessionEntry.
-  private prepareFailed = false;
+
+  // FT-11 fix (field reproduction, six real transcripts — an entire
+  // meeting landed ZERO translations): the OLD `prepareFailed` boolean
+  // was a latch only a FRESH prepare() call could ever clear, but
+  // prepare() runs EXACTLY ONCE per meeting (the Start click — see this
+  // module's own header). One transient prepare failure therefore meant
+  // every LATER translate() threw 'unavailable' without ever touching
+  // the native side again, for the rest of the meeting. `prepared`
+  // replaces that latch with a memoized "the child is warm" promise
+  // that is evicted on rejection (see ensurePrepared below) instead of
+  // staying cached — so the queue's own retry (SYSTEM_UNAVAILABLE_
+  // PAUSE_MS, queue.ts) gets a genuine re-attempt, no second Start/
+  // prepare() call required.
+  private prepared: Promise<void> | null = null;
+
+  // Optional live-settings getter, passed by resolveTranslationProvider
+  // — lets translate() below notice a mid-meeting explainLanguage/
+  // language edit (Settings changed without restarting the meeting) and
+  // re-prepare for the NEW pair instead of latching onto whatever
+  // prepare() captured at Start. The native side already tears down and
+  // respawns its --translate child on a pair change (system_translate_
+  // prepare's own reuse check, systranslate.rs) — this just makes the JS
+  // side actually ask it to. Undefined in unit tests that construct this
+  // provider directly and only ever exercise one pair.
+  constructor(private getSettings?: () => Settings) {}
 
   prepare(pair: TranslationLangPair): void {
     this.lastPair = pair;
-    this.prepareFailed = false;
-    // Fire-and-forget (T1: "catch -> mark unavailable") — wrapped in an
-    // async IIFE so even a SYNCHRONOUS throw from getInvoke() (outside a
-    // Tauri build) never escapes this call site; prepare() itself stays
-    // callable synchronously inside the caller's own user gesture either
-    // way, matching this module's A6 header contract.
-    void (async () => {
-      try {
+    // prepare() itself stays callable synchronously inside the caller's
+    // own user gesture (this module's A6 header contract) even though
+    // ensurePrepared kicks off async work — it never awaits it. A
+    // Tauri invoke has no gesture requirement of its own (unlike
+    // Chrome's Translator API — see this module's header comment), so a
+    // LATER, non-gesture re-prepare from translate() itself (below) is
+    // perfectly legal on this path.
+    void this.ensurePrepared(pair);
+  }
+
+  /** Memoized "the native --translate child is warm for `pair`" promise
+   *  — a later call while this is still pending, or already resolved,
+   *  reuses the SAME promise rather than firing a redundant
+   *  system_translate_prepare invoke. A REJECTED prepare must NOT stay
+   *  cached (that caching was the FT-11 latch): the rejection handler
+   *  below evicts it immediately, so the very next caller — prepare()
+   *  again, OR translate() itself, no second Start click required —
+   *  gets a real retry instead of a replay of the same stale failure. */
+  private ensurePrepared(pair: TranslationLangPair): Promise<void> {
+    if (!this.prepared) {
+      this.prepared = (async () => {
         const invoke = await getInvoke();
         const generation = await invoke<number>("system_translate_prepare", {
           source: pair.source,
@@ -646,24 +680,68 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
         // LATER stopSystemTranslator() call can scope its kill to it —
         // see lastDesktopTranslateGeneration's own doc comment above.
         if (typeof generation === "number") lastDesktopTranslateGeneration = generation;
-      } catch {
-        this.prepareFailed = true;
-      }
-    })();
+      })();
+      // Evict only if this exact promise is still the cached one. A
+      // mid-meeting pair change clears `prepared` and installs a new
+      // one; without the identity check, the OLD promise's late
+      // rejection would then evict its healthy replacement.
+      const inflight = this.prepared;
+      inflight.catch(() => {
+        if (this.prepared === inflight) this.prepared = null;
+      });
+    }
+    return this.prepared;
   }
 
   async translate(
     items: TranslateRequest["segments"],
     lang: string,
   ): Promise<TranslateResponse["translations"]> {
-    const pair = this.lastPair;
-    if (!pair || pair.target !== lang) {
+    const previousPair = this.lastPair;
+    if (!previousPair) {
       throw new SystemTranslatorUnavailableError("unavailable", "系统翻译未就绪");
     }
-    if (this.prepareFailed) {
+    // Refresh from live settings (when resolveTranslationProvider wired
+    // one in — see the constructor's own doc) rather than trusting
+    // whatever prepare() captured at Start: a mid-meeting
+    // explainLanguage/language edit must self-heal on the very next
+    // batch, not throw '系统翻译未就绪' for the rest of the meeting.
+    const pair = this.getSettings ? langPairFromSettings(this.getSettings()) : previousPair;
+    if (pair.target !== lang) {
+      throw new SystemTranslatorUnavailableError("unavailable", "系统翻译未就绪");
+    }
+    if (pair.source !== previousPair.source || pair.target !== previousPair.target) {
+      // The pair changed since the last call — whatever `prepared`
+      // currently caches (ready OR still-failing) belongs to the OLD
+      // pair and must not be reused for this one.
+      this.prepared = null;
+    }
+    this.lastPair = pair;
+
+    try {
+      await this.ensurePrepared(pair);
+    } catch {
       throw new SystemTranslatorUnavailableError("unavailable", "系统翻译不可用");
     }
 
+    return this.runNativeTranslate(items, pair, true);
+  }
+
+  /** The actual system_translate round trip + error classification,
+   *  split out of translate() so the "no --translate child is running"
+   *  branch below can retry it exactly ONCE through a fresh
+   *  ensurePrepared() call — FT-11's second, aggravating latch: the Rust
+   *  ready-timeout branch (systranslate.rs) can return Err WITHOUT
+   *  killing the child, clearing the `running` slot while a healthy
+   *  child sits registered, which is exactly the message system_
+   *  translate throws next. `allowChildRetry` is false on the retry
+   *  attempt itself, so a child that dies again immediately still fails
+   *  fast instead of looping. */
+  private async runNativeTranslate(
+    items: TranslateRequest["segments"],
+    pair: TranslationLangPair,
+    allowChildRetry: boolean,
+  ): Promise<TranslateResponse["translations"]> {
     let res: { id: string; text: string }[];
     try {
       const invoke = await getInvoke();
@@ -673,6 +751,16 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
         target: pair.target,
       });
     } catch (err) {
+      const message = errorMessage(err);
+      if (allowChildRetry && message.includes("no --translate child is running")) {
+        this.prepared = null;
+        try {
+          await this.ensurePrepared(pair);
+        } catch {
+          throw new SystemTranslatorUnavailableError("unavailable", "系统翻译不可用");
+        }
+        return this.runNativeTranslate(items, pair, false);
+      }
       // "not-installed" (the language pair's model isn't downloaded on
       // this device) self-heals once the user downloads it — desktop
       // points at 系统设置 (no headless download trigger exists there
@@ -681,8 +769,10 @@ export class DesktopSystemTranslationProvider implements TranslationProvider {
       // itself exposes a download for. Either way queue.ts's existing
       // "downloading" branch pauses+retries instead of giving up;
       // everything else (child dead, IPC failure, any other native
-      // error) is treated as a flat unavailable.
-      if (errorMessage(err).includes("not-installed")) {
+      // error) is treated as a flat unavailable. Deliberately NOT
+      // retried like the child-dead case above — respawning cannot
+      // install a missing language pack.
+      if (message.includes("not-installed")) {
         throw new SystemTranslatorUnavailableError(
           "downloading",
           IS_IOS ? "系统翻译语言包未安装——请在系统「翻译」App 中下载该语言" : "系统翻译语言包未安装，下载中",
@@ -799,8 +889,14 @@ export function warmSystemTranslateProbeForStartup(settings: Settings): void {
 export function resolveTranslationProvider(getSettings: () => Settings): TranslationProvider {
   const settings = getSettings();
   if (settings.translateEngine === "system") {
+    // getSettings passed straight through so DesktopSystemTranslationProvider
+    // can notice a mid-meeting explainLanguage/language change and
+    // re-prepare (FT-11 fix — see that class's own constructor doc).
+    // ChromeTranslatorProvider needs no equivalent: its own translate()
+    // already reads whatever pair prepare() most recently primed the
+    // module-level session cache for, keyed by pairKey, not a fixed field.
     return NATIVE_SYSTEM_TRANSLATE
-      ? new DesktopSystemTranslationProvider()
+      ? new DesktopSystemTranslationProvider(getSettings)
       : new ChromeTranslatorProvider();
   }
   if (settings.translateEngine === "deepl") {

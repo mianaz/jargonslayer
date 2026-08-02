@@ -113,7 +113,16 @@ describe("DesktopSystemTranslationProvider", () => {
     });
   });
 
-  it("a FAILED prepare() marks the provider unavailable — translate() throws without even calling system_translate", async () => {
+  // RENAMED (FT-11 fix, was "a FAILED prepare() marks the provider
+  // unavailable — translate() throws without even calling
+  // system_translate"): the old `prepareFailed` boolean was exactly the
+  // latch FT-11 reproduced in the field — it could only ever be cleared
+  // by a FRESH prepare() call, and prepare() runs once per meeting.
+  // translate() itself now retries system_translate_prepare on its own
+  // (see providers.ts's own ensurePrepared doc) — this test still fails
+  // (both attempts use the SAME always-rejecting invoke), but it now
+  // fails via TWO attempts, not a permanent, never-retried latch.
+  it("a FAILED prepare() no longer permanently latches — translate() retries system_translate_prepare on its own before giving up", async () => {
     const { invoke, calls } = makeFakeInvoke({
       system_translate_prepare: () => {
         throw new Error("child spawn failed");
@@ -127,10 +136,19 @@ describe("DesktopSystemTranslationProvider", () => {
     await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toMatchObject({
       reason: "unavailable",
     });
-    expect(calls.map((c) => c.cmd)).toEqual(["system_translate_prepare"]);
+    // Two system_translate_prepare attempts (prepare() itself, then
+    // translate()'s own retry) — system_translate is never reached
+    // since both prepares fail.
+    expect(calls.map((c) => c.cmd)).toEqual(["system_translate_prepare", "system_translate_prepare"]);
   });
 
-  it("a LATER prepare() call retries — a fresh success clears the earlier failure's latch", async () => {
+  // RENAMED (FT-11 fix, was "a LATER prepare() call retries — a fresh
+  // success clears the earlier failure's latch"): still true under the
+  // new contract — an explicit second prepare() call (a fresh Start
+  // click) still re-primes — but it's no longer the ONLY way to
+  // recover; see the regression sentinel below for translate() alone
+  // doing the same thing with no second prepare() call at all.
+  it("a LATER prepare() call retries — a fresh success clears the earlier failure", async () => {
     const fail = makeFakeInvoke({
       system_translate_prepare: () => {
         throw new Error("offline");
@@ -154,6 +172,117 @@ describe("DesktopSystemTranslationProvider", () => {
 
     const result = await provider.translate([{ id: "1", text: "hi" }], "zh");
     expect(result).toEqual([{ id: "1", text: "你好" }]);
+  });
+
+  // REGRESSION SENTINEL (FT-11, "the whole point"): fails against the
+  // pre-fix `prepareFailed` boolean latch — that code path can ONLY
+  // ever clear the latch via a fresh prepare() call, and nothing in
+  // production ever issues a second one mid-meeting (see providers.ts's
+  // module header — prepare() runs exactly once, from the Start click).
+  // A field meeting hitting one transient prepare failure landed ZERO
+  // translations for its entire remaining duration. Here, no second
+  // prepare() call is ever made — only translate(), exactly as the live
+  // queue's own 60s SYSTEM_UNAVAILABLE_PAUSE_MS retry does.
+  it("REGRESSION (FT-11): a translate() call alone re-primes after an earlier failed prepare() — no second prepare() call needed, and a translation actually lands", async () => {
+    let prepareCallCount = 0;
+    const { invoke, calls } = makeFakeInvoke({
+      system_translate_prepare: () => {
+        prepareCallCount++;
+        if (prepareCallCount === 1) throw new Error("offline");
+        return undefined;
+      },
+      system_translate: () => [{ id: "1", text: "你好" }],
+    });
+    currentInvoke = invoke;
+    const provider = new DesktopSystemTranslationProvider();
+    provider.prepare(pair); // fails (prepareCallCount -> 1)
+    await flush();
+
+    const result = await provider.translate([{ id: "1", text: "hi" }], "zh");
+    expect(result).toEqual([{ id: "1", text: "你好" }]);
+    expect(calls.map((c) => c.cmd)).toEqual([
+      "system_translate_prepare", // prepare() — fails
+      "system_translate_prepare", // translate()'s own retry — succeeds
+      "system_translate",
+    ]);
+  });
+
+  it("a 'no --translate child is running' system_translate failure triggers exactly ONE automatic re-prepare, then the SAME batch lands", async () => {
+    let translateCallCount = 0;
+    const { invoke, calls } = makeFakeInvoke({
+      system_translate_prepare: () => undefined,
+      system_translate: () => {
+        translateCallCount++;
+        if (translateCallCount === 1) {
+          throw new Error("system_translate: no --translate child is running — call system_translate_prepare first");
+        }
+        return [{ id: "1", text: "你好" }];
+      },
+    });
+    currentInvoke = invoke;
+    const provider = new DesktopSystemTranslationProvider();
+    provider.prepare(pair);
+    await flush();
+
+    const result = await provider.translate([{ id: "1", text: "hi" }], "zh");
+    expect(result).toEqual([{ id: "1", text: "你好" }]);
+    expect(calls.map((c) => c.cmd)).toEqual([
+      "system_translate_prepare", // Start's own prepare()
+      "system_translate", // the child had already died — this fails
+      "system_translate_prepare", // the ONE automatic re-prepare this triggers
+      "system_translate", // retried — now lands
+    ]);
+  });
+
+  it("a 'not-installed' failure does NOT trigger a re-prepare — respawning cannot install a missing language pack", async () => {
+    const { invoke, calls } = makeFakeInvoke({
+      system_translate_prepare: () => undefined,
+      system_translate: () => {
+        throw new Error("language pair not-installed");
+      },
+    });
+    currentInvoke = invoke;
+    const provider = new DesktopSystemTranslationProvider();
+    provider.prepare(pair);
+    await flush();
+
+    await expect(provider.translate([{ id: "1", text: "hi" }], "zh")).rejects.toMatchObject({
+      reason: "downloading",
+    });
+    expect(calls.map((c) => c.cmd)).toEqual(["system_translate_prepare", "system_translate"]);
+  });
+
+  it("a mid-meeting pair change (settings.language edited without restarting) re-prepares instead of throwing '系统翻译未就绪' forever", async () => {
+    let settings = makeSettings({ language: "en-US", explainLanguage: "zh" });
+    const first = makeFakeInvoke({
+      system_translate_prepare: () => 1,
+      system_translate: () => [{ id: "1", text: "你好" }],
+    });
+    currentInvoke = first.invoke;
+    const provider = new DesktopSystemTranslationProvider(() => settings);
+    provider.prepare({ source: "en", target: "zh" });
+    await flush();
+
+    const r1 = await provider.translate([{ id: "1", text: "hi" }], "zh");
+    expect(r1).toEqual([{ id: "1", text: "你好" }]);
+
+    // Settings changed mid-meeting (e.g. the transcript's own source
+    // language changed) — no fresh prepare() call from application
+    // code, unlike a Start click. Target (explainLanguage) stays "zh"
+    // so this exercises the SOURCE half of the pair-change detection,
+    // distinct from the target check translate() already had.
+    settings = makeSettings({ language: "fr-FR", explainLanguage: "zh" });
+    const second = makeFakeInvoke({
+      system_translate_prepare: () => 2,
+      system_translate: () => [{ id: "2", text: "Bonjour traduit" }],
+    });
+    currentInvoke = second.invoke;
+
+    const r2 = await provider.translate([{ id: "2", text: "hi" }], "zh");
+    expect(r2).toEqual([{ id: "2", text: "Bonjour traduit" }]);
+    // The pair change was noticed and re-primed on its own.
+    expect(second.calls.map((c) => c.cmd)).toEqual(["system_translate_prepare", "system_translate"]);
+    expect(second.calls[0].args).toEqual({ source: "fr", target: "zh" });
   });
 
   it("translate() sends {items,source,target} and maps the response back BY ID, not array position — a missing id just drops that one item", async () => {

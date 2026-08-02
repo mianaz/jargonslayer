@@ -196,7 +196,11 @@ export type ToastState =
 // (module below) for what each state means and the useShallow
 // invariant that applies to any selector deriving off this field.
 export interface TranslateStatus {
-  state: "off" | "busy" | "done" | "stalled";
+  // FT-11 fix (queue.ts's own onState doc): "dead" is a sticky terminal
+  // state — no translation has landed all meeting and enough
+  // consecutive batches have failed that the lane is effectively not
+  // working, as opposed to "stalled" (a self-healing pause).
+  state: "off" | "busy" | "done" | "stalled" | "dead";
   pending: number;
   reason?: string;
 }

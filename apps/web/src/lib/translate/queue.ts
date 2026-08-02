@@ -48,7 +48,19 @@ export interface TranslateQueueOptions {
   // NEVER emitted" note): the queue has drained back to fully idle but
   // has NEVER yet landed a translation this meeting — documented as
   // "idle, nothing shown" (the StatusLine chip renders enabled+off
-  // neutrally). The caller still separately derives its OWN "off" from
+  // neutrally). "dead" (FT-11 fix — a distinct terminal state from
+  // "stalled": a merely-paused lane self-heals and eventually shows
+  // "busy"/"done" again, but a lane that has failed EVERY batch this
+  // meeting just oscillates stalled<->busy forever, which reads to a
+  // user as "working, occasionally hiccuping" rather than the truth —
+  // see MAX_CONSECUTIVE_FAILED_BATCHES_DEAD below): no translation has
+  // ever landed AND consecutiveFailedBatches has reached that
+  // threshold. Sticky by construction — emitState checks it BEFORE
+  // stalled/busy/done below, so it keeps winning on every later retry
+  // (never flips back to "busy") until a batch actually lands, which
+  // resets the counter and leaves hasLandedTranslation permanently
+  // true, so "dead" can never re-trigger for the rest of the meeting.
+  // The caller still separately derives its OWN "off" from
   // Settings.bilingualTranscript being off (this queue keeps running
   // even while the toggle is off, just no-opping every enqueue — see
   // pushSegment/backfill/tryFlush's own toggle checks); this class just
@@ -56,7 +68,11 @@ export interface TranslateQueueOptions {
   // identical emissions (same state + pending + reason) are deduped —
   // pushing a 2nd/3rd segment while already "busy" doesn't re-fire the
   // same event.
-  onState?: (s: { state: "off" | "busy" | "done" | "stalled"; pending: number; reason?: string }) => void;
+  onState?: (s: {
+    state: "off" | "busy" | "done" | "stalled" | "dead";
+    pending: number;
+    reason?: string;
+  }) => void;
 }
 
 // ---------------------------------------------------------------
@@ -104,6 +120,15 @@ const SYSTEM_UNAVAILABLE_PAUSE_MS = 60_000;
 // failures (~2.5min at the 30s pause above) gives up on that one
 // batch (segments stay English-only) so the queue can move on.
 const MAX_CONSECUTIVE_RATE_LIMITS = 5;
+// FT-11 fix: a "dead" lane (see onState's own doc above) — 3 straight
+// batch failures of ANY kind, with nothing yet landed this meeting.
+// Deliberately independent of MAX_CONSECUTIVE_RATE_LIMITS/
+// MAX_RETRIES_PER_SEGMENT (which govern what happens to the DATA — drop
+// vs re-queue) — this one only ever governs what the status chip says.
+// 3 lines up with the field report's own timeline: at SYSTEM_UNAVAILABLE_
+// PAUSE_MS (60s), 3 failures is ~2min of silently-stuck translation
+// before the user is told anything is wrong.
+const MAX_CONSECUTIVE_FAILED_BATCHES_DEAD = 3;
 // S14.1 field fix (item 8a, real owner report): "翻译 missing some
 // middle parts if we pause-restart-pause." pushSegment/onFinal have no
 // status gate and nothing resets `pending` on pause (verified by
@@ -164,6 +189,14 @@ export class TranslateQueue {
   // meeting too — same one-shot rationale as noKeyToastShown.
   private systemUnavailableToastShown = false;
   private consecutiveRateLimits = 0; // reset on any successful batch
+  // FT-11 fix: counts ANY handleError() call (every error type, not
+  // just rate limits) since the last landed translation — feeds the
+  // "dead" state (see onState's own doc + MAX_CONSECUTIVE_FAILED_
+  // BATCHES_DEAD above). Reset to 0 the moment a batch actually lands
+  // (attemptTranslate's own success branch), same as
+  // consecutiveRateLimits above but never reset by a mere
+  // retry-eligible failure.
+  private consecutiveFailedBatches = 0;
   // Per-segment generic-error retry attempts so far (S14.1 field fix,
   // item 8a — see MAX_RETRIES_PER_SEGMENT's own doc above for why this
   // replaced a one-shot Set). Not cleared on success for an id that
@@ -174,7 +207,7 @@ export class TranslateQueue {
   // own doc comment for the full state-machine contract.
   private hasLandedTranslation = false; // flips true the first time onTranslations fires with >=1 entry
   private lastEmittedState: {
-    state: "off" | "busy" | "done" | "stalled";
+    state: "off" | "busy" | "done" | "stalled" | "dead";
     pending: number;
     reason?: string;
   } | null = null;
@@ -292,18 +325,30 @@ export class TranslateQueue {
     // Finding 5 fix: queued + in-flight, so a dispatched-but-unresolved
     // batch still counts (see inflightCount's own doc above).
     const pending = this.pending.length + this.inflightCount;
-    let state: "off" | "busy" | "done" | "stalled" = this.isPaused()
-      ? "stalled"
-      : this.inflight || pending > 0
-        ? "busy"
-        : "done";
+    // FT-11 fix: "dead" is checked FIRST, ahead of stalled/busy/done —
+    // this is what makes it sticky (onState's own doc): as long as
+    // nothing has landed and the failure streak stays at/above the
+    // threshold, a later retry's own busy/stalled emission is
+    // pre-empted by this same branch instead of flipping back.
+    let state: "off" | "busy" | "done" | "stalled" | "dead" =
+      !this.hasLandedTranslation && this.consecutiveFailedBatches >= MAX_CONSECUTIVE_FAILED_BATCHES_DEAD
+        ? "dead"
+        : this.isPaused()
+          ? "stalled"
+          : this.inflight || pending > 0
+            ? "busy"
+            : "done";
     // Finding 6 fix: a "done"-shaped drain (fully idle, not paused) that
     // has never landed a single translation reports "off" instead of
     // going silent forever — see onState's own doc for the "idle,
     // nothing shown" contract this documents. `done` itself stays
     // gated on >=1 landed translation, unchanged.
     if (state === "done" && !this.hasLandedTranslation) state = "off";
-    const next = { state, pending, reason: state === "stalled" ? this.currentPauseReason : undefined };
+    const next = {
+      state,
+      pending,
+      reason: state === "stalled" || state === "dead" ? this.currentPauseReason : undefined,
+    };
     const last = this.lastEmittedState;
     if (last && last.state === next.state && last.pending === next.pending && last.reason === next.reason) {
       return;
@@ -417,6 +462,9 @@ export class TranslateQueue {
         // that has never yet succeeded stays silent instead of firing a
         // premature "done".
         this.hasLandedTranslation = true;
+        // FT-11 fix: a genuine landing clears the "dead" failure streak —
+        // see MAX_CONSECUTIVE_FAILED_BATCHES_DEAD's own doc above.
+        this.consecutiveFailedBatches = 0;
         this.opts.onTranslations(map, batch.gen);
       }
       // A partial/empty response is failed-soft by design (see route
@@ -450,6 +498,24 @@ export class TranslateQueue {
     // batch dispatched by a PREVIOUS meeting must not latch/toast onto
     // the current (unrelated) meeting.
     if (batch.gen !== this.opts.getMeetingGen()) return;
+
+    // FT-11 fix: counts toward the "dead" status chip (onState's own
+    // doc) — every branch below either drops or re-queues this batch,
+    // so reaching this point at all is, from the status chip's
+    // perspective, a failure regardless of which specific error it was.
+    this.consecutiveFailedBatches++;
+    if (this.consecutiveFailedBatches === MAX_CONSECUTIVE_FAILED_BATCHES_DEAD && !this.hasLandedTranslation) {
+      // S14.1-style visibility fix, same motivation as the rate-limit/
+      // generic-error diagLogs below: a field session with no devtools
+      // needs 复制诊断信息 to carry this out, not just a chip flip nobody
+      // is there to screenshot in time.
+      diagLog(
+        "error",
+        "translate-queue",
+        "translate queue has failed every batch so far this meeting — reporting 'dead' to the status chip",
+        `consecutiveFailedBatches=${this.consecutiveFailedBatches}`,
+      );
+    }
 
     // v0.5 Wave-1 Feature 6 / A6: a system-provider (e.g. Chrome
     // Translator) failure gets its OWN classification — it must never

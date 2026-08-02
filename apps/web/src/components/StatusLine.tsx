@@ -477,6 +477,30 @@ function TranslateStatusChip() {
     );
   }
 
+  // FT-11 fix: a distinct terminal state from "stalled" above — a
+  // merely-paused lane self-heals and eventually shows busy/done again,
+  // but a lane that has failed every batch this meeting just oscillates
+  // stalled<->busy forever, reading as "working, occasionally
+  // hiccuping" rather than the truth (see queue.ts's own onState doc
+  // for the hysteresis this state is gated on). Byte-for-byte the same
+  // structure as 翻译暂停 above — same styling, same testid, same title
+  // wiring — this app's flat-design law invents no new visual
+  // vocabulary for a fifth state. Sticky: queue.ts's own emitState()
+  // checks "dead" BEFORE busy/stalled/done, so a later retry's busy
+  // emission never overrides it — this chip only ever leaves 翻译失败
+  // once a translation actually lands.
+  if (translateStatus.state === "dead") {
+    return (
+      <span
+        data-testid="statusline-translate-chip"
+        title={translateStatus.reason}
+        className="flex h-full items-center whitespace-nowrap px-2 text-lab-yellow sm:px-3"
+      >
+        翻译失败
+      </span>
+    );
+  }
+
   if (translateStatus.state === "busy") {
     return (
       <span
