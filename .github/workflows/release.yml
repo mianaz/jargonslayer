@@ -118,6 +118,7 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run check:versions
+      - run: npm run test:sidecar
 
   extension:
     name: extension zip

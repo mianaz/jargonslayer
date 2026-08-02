@@ -1,3 +1,13 @@
+# NOT the file the app installs. This is the full dependency surface as
+# RANGES, and the reference requirements-sidecar.txt's exact pins were
+# chosen inside — nothing reads it at build or run time.
+#
+# What the desktop shell actually bundles and provisions via uv is named
+# in apps/desktop/src-tauri/tauri.conf.json: requirements-sidecar.txt
+# (the STT path), requirements-diar.txt, requirements-mlx.lock. The two
+# blocks below the ranges — claude-agent-sdk and pyannote.audio — are
+# deliberately NOT bundled and are installed by hand by whoever wants
+# them; see each block's own note.
 faster-whisper>=1.0,<2.0
 websockets>=12,<14
 numpy>=1.24,<3.0

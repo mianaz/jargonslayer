@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig } from "vitest/config";
 
 // Same non-jsdom, node-env posture as packages/core (see that
@@ -9,6 +10,17 @@ import { defineConfig } from "vitest/config";
 // report for why: no real Chrome 138+ builtin-AI globals or side
 // panel host exist under vitest/node either way).
 export default defineConfig({
+  resolve: {
+    alias: {
+      // Same guard apps/web already carries, and this workspace needs it
+      // for the same reason: seven test files here import
+      // @jargonslayer/core, tsconfig.json maps it to ../../packages/core/src,
+      // and vitest did not. With no node_modules in a linked worktree,
+      // resolution walks up to the PARENT checkout's symlink and the tests
+      // silently exercise a different checkout's core.
+      "@jargonslayer/core": path.resolve(__dirname, "../../packages/core/src"),
+    },
+  },
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],

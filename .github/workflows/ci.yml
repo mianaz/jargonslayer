@@ -1,9 +1,20 @@
 # CI v1 (2026-07-28): the exact gates every release train runs by hand —
 # root vitest + tsc on Linux, cargo/clippy/swift on macOS. Deliberately
-# excluded for now: sidecar Python asserts (no pinned runner deps — the
-# venv is provisioned by the app's own uv flow, not a requirements file)
-# and any bundling/signing (DMG/IPA stay local until the Apple-creds-in-CI
-# decision, ROADMAP D5).
+# excluded: any bundling/signing (DMG/IPA stay local until the
+# Apple-creds-in-CI decision, ROADMAP D5).
+#
+# v0.7.5: the sidecar Python asserts now run here too. The original
+# exclusion assumed they needed the provisioned venv; they do not — every
+# sidecar/test_*.py stubs its own heavy imports and runs green on a bare
+# interpreter, so ~7,100 lines of tests that executed nowhere now gate
+# every push. See scripts/test-sidecar.mjs for why requirements-sidecar
+# is deliberately not installed.
+#
+# Still NOT covered, so nobody mistakes this for total: the iOS plugin's
+# 43 Swift tests under tauri-plugin-os-speech/ios/Tests — they need a
+# SwiftPM restructure first, because a bare `swift test` there also
+# builds the Tauri-dependent glue target, which cannot compile on macOS
+# (that package's Package.swift documents the manual workaround).
 name: CI
 
 on:
@@ -35,6 +46,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run check:versions
+      # No pip install: these run on a bare interpreter by design.
+      - run: npm run test:sidecar
 
   native:
     name: cargo + clippy + swift (macos)
