@@ -434,6 +434,7 @@ struct RawOsSpeechLine {
     frames_out: Option<u64>,
     #[serde(rename = "droppedFrames")]
     dropped_frames: Option<u64>,
+    peak: Option<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -475,12 +476,15 @@ enum ParsedOsSpeechLine {
         message: String,
     },
     /// Forwarded to the log lane only (no status event) — same posture
-    /// as audiocap's own `ParsedAudiocapLine::Stats`. No fields: nothing
-    /// downstream of this parse ever needs the actual counters, only the
-    /// raw line (already mirrored unconditionally — see the session
-    /// task) — this variant exists purely so a well-formed stats line is
-    /// never misclassified as `Unrecognized`.
-    Stats,
+    /// as audiocap's own `ParsedAudiocapLine::Stats`. `peak` (the
+    /// helper's running max |sample| since SESSION START, StatusEvents
+    /// .emitStats — monotone, never reset) is the ONE counter the
+    /// session task now reads: its silent-session latch
+    /// (`saw_nonzero_peak`) feeds the final status event's `sawAudio`
+    /// field. `Option` because older/foreign stats lines may omit it —
+    /// absent must degrade to "no audio evidence", never `Unrecognized`
+    /// (the four counters below stay the shape's required fields).
+    Stats { peak: Option<f64> },
     /// Not valid JSON, valid JSON with an unrecognized/missing "type", or
     /// a known "type" missing the fields that shape requires — never a
     /// panic, always falls back here (mirrors audiocap's own posture for
@@ -542,7 +546,7 @@ fn parse_osspeech_line(line: &str) -> ParsedOsSpeechLine {
             _ => ParsedOsSpeechLine::Unrecognized,
         },
         "stats" => match (raw.overflows, raw.ring_high_water, raw.frames_out, raw.dropped_frames) {
-            (Some(_), Some(_), Some(_), Some(_)) => ParsedOsSpeechLine::Stats,
+            (Some(_), Some(_), Some(_), Some(_)) => ParsedOsSpeechLine::Stats { peak: raw.peak },
             _ => ParsedOsSpeechLine::Unrecognized,
         },
         _ => ParsedOsSpeechLine::Unrecognized,
@@ -1212,6 +1216,16 @@ struct OsSpeechStatusEvent {
     resolved_locale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     supported_locales: Option<Vec<String>>,
+    /// Silent-session hint (2026-08-02 field report): attached ONLY to a
+    /// session's FINAL status event — whether any stats line's running
+    /// `peak` was ever nonzero, i.e. whether the CoreAudio tap saw real
+    /// audio at all vs a whole session of digital silence. JS combines
+    /// this with its own finals count to steer a user who picked 系统
+    /// expecting mic capture (osSpeech.ts's own handleStatus). Absent
+    /// (never null) on every other event, same posture as the fields
+    /// above.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    saw_audio: Option<bool>,
 }
 
 impl OsSpeechStatusEvent {
@@ -1223,6 +1237,7 @@ impl OsSpeechStatusEvent {
             progress: None,
             resolved_locale: None,
             supported_locales: None,
+            saw_audio: None,
         }
     }
 
@@ -1377,6 +1392,11 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
         let mut stderr_lines = LineReassembler::new();
         let mut last_error: Option<(String, String)> = None;
         let mut finished_seen = false;
+        // Silent-session latch — true once ANY stats line reports a
+        // nonzero running `peak` (see ParsedOsSpeechLine::Stats's own
+        // doc comment). Carried out on the final status event's
+        // `sawAudio` field.
+        let mut saw_nonzero_peak = false;
         let mut session_log = OsSpeechSessionLog::open(&app);
         session_log.append(&format!("session start generation={generation}"));
 
@@ -1456,7 +1476,12 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                             ParsedOsSpeechLine::Error { code, message } => {
                                 last_error = Some((code, message));
                             }
-                            ParsedOsSpeechLine::Probe { .. } | ParsedOsSpeechLine::Stats | ParsedOsSpeechLine::Unrecognized => {}
+                            ParsedOsSpeechLine::Stats { peak } => {
+                                if peak.unwrap_or(0.0) > 0.0 {
+                                    saw_nonzero_peak = true;
+                                }
+                            }
+                            ParsedOsSpeechLine::Probe { .. } | ParsedOsSpeechLine::Unrecognized => {}
                         }
                     }
                 }
@@ -1467,11 +1492,12 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                     let outcome = app.state::<OsSpeechState>().finish_session(generation);
                     let kind = final_kind(payload.code, last_error.as_ref().map(|(c, _)| c.as_str()), outcome.stop_was_requested, finished_seen);
                     session_log.append(&format!(
-                        "session end kind={} exit_code={:?} finished_seen={} was_current={}",
+                        "session end kind={} exit_code={:?} finished_seen={} was_current={} saw_nonzero_peak={}",
                         kind.as_str(),
                         payload.code,
                         finished_seen,
-                        outcome.was_current
+                        outcome.was_current,
+                        saw_nonzero_peak
                     ));
                     if outcome.was_current {
                         let message = final_message(kind, payload.code, last_error.as_ref());
@@ -1491,6 +1517,7 @@ fn spawn_os_speech_session_task(app: tauri::AppHandle, generation: u64, mut rx: 
                             OsSpeechStatusEvent {
                                 message,
                                 supported_locales,
+                                saw_audio: Some(saw_nonzero_peak),
                                 ..OsSpeechStatusEvent::kind_only(kind)
                             },
                         );
@@ -1591,7 +1618,7 @@ fn spawn_preinstall_task(app: tauri::AppHandle, attempt: u64, mut rx: tauri::asy
                             ParsedOsSpeechLine::Error { code, message } => {
                                 last_error = Some((code, message));
                             }
-                            ParsedOsSpeechLine::Transcript { .. } | ParsedOsSpeechLine::Probe { .. } | ParsedOsSpeechLine::Stats | ParsedOsSpeechLine::Unrecognized => {}
+                            ParsedOsSpeechLine::Transcript { .. } | ParsedOsSpeechLine::Probe { .. } | ParsedOsSpeechLine::Stats { .. } | ParsedOsSpeechLine::Unrecognized => {}
                         }
                     }
                 }
@@ -1906,8 +1933,16 @@ mod tests {
 
     #[test]
     fn parses_a_stats_line() {
+        // A peak-less stats line (older helper) still parses — `peak`
+        // degrades to None ("no audio evidence"), never Unrecognized.
         let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0}"#;
-        assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Stats);
+        assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Stats { peak: None });
+    }
+
+    #[test]
+    fn a_stats_line_carries_its_peak_through() {
+        let line = r#"{"type":"stats","overflows":0,"ringHighWater":1024,"framesOut":48000,"droppedFrames":0,"peak":0.351,"windowPeak":0.0}"#;
+        assert_eq!(parse_osspeech_line(line), ParsedOsSpeechLine::Stats { peak: Some(0.351) });
     }
 
     #[test]

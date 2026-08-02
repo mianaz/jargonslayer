@@ -465,6 +465,28 @@ describe("OsSpeechEngine", () => {
 
       expect(onStatus).toHaveBeenCalledWith("idle", "capture_ended");
     });
+
+    it("a captured-but-silent session (finals=0, sawAudio=false) notices the mic/system-audio confusion at session end — even when 'ended' arrives mid-stop", async () => {
+      const { emit } = wireFakes();
+      const engine = new OsSpeechEngine();
+      const onNotice = vi.fn();
+      await engine.start({ ...noopEvents(), onNotice } as unknown as STTEvents, OSSPEECH_SETTINGS);
+      emit("osspeech://status", { kind: "capturing", source: "session" });
+
+      // The observed shape of this failure (2026-08-02 field report): the
+      // user watches nothing transcribe and presses stop — the final
+      // "ended" (Rust attaches sawAudio only there) lands during stop()'s
+      // wait window, where every non-"ended" branch is skipped.
+      const stopP = engine.stop();
+      await settle(); // stop_os_speech invoked, now awaiting waitForEndedOrTimeout()
+      emit("osspeech://status", { kind: "ended", source: "session", sawAudio: false });
+      await stopP;
+
+      expect(onNotice).toHaveBeenCalledTimes(1);
+      expect(onNotice).toHaveBeenCalledWith(
+        "未检测到系统声音——系统引擎只采集系统播放的音频，不采集麦克风；要转写麦克风请切换到本地模型或云端引擎",
+      );
+    });
   });
 
   // ---------------------------------------------------------------
